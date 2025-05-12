@@ -88,6 +88,18 @@ export function NavSecondary({
                         <CoinsIcon className="mr-2 h-4 w-4" />
                         <span>Faucet</span>
                       </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => {
+                        localStorage.clear();
+                        toast(
+                          <span className="flex items-center">
+                            <Trash2Icon className="mr-2 h-4 w-4 flex-shrink-0" />
+                            <span>Cache Cleared</span>
+                          </span>
+                        );
+                      }} className="cursor-pointer">
+                        <Trash2Icon className="mr-2 h-4 w-4" />
+                        <span>Clean Cache</span>
+                      </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenuPortal>
                 </DropdownMenu>

@@ -46,8 +46,8 @@ const data = {
     },
     {
       title: "Liquidity",
-      url: "/liquidity",
       icon: LayersIcon,
+      disabled: true,
     },
     {
       title: "Analytics",
