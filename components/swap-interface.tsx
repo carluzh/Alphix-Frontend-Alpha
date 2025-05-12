@@ -823,11 +823,19 @@ export function SwapInterface() {
           displayError = err;
       }
       
-      toast("Swap Failed", {
-        description: displayError,
-        icon: <WarningToastIcon />,
-        duration: 5000,
-      });
+      if (displayError && displayError.toLowerCase().includes("user rejected the request")) {
+        toast("Transaction Rejected", {
+          description: "The transaction request was rejected in your wallet.",
+          icon: <WarningToastIcon />,
+          duration: 5000,
+        });
+      } else {
+        toast("Swap Failed", {
+          description: displayError,
+          icon: <WarningToastIcon />,
+          duration: 5000,
+        });
+      }
       
       // Clear build data on error
       window.swapBuildData = undefined;
