@@ -1,0 +1,23 @@
+
+{
+    "ETH_USDC": 3225.40,
+    "USDC_ETH": 0.00031005, 
+    "ETH_WBTC": 0.0483,
+    "WBTC_ETH": 20.7039,
+    "ETH_DAI": 3220.00,
+    "DAI_ETH": 0.00031056,
+    "ETH_AAVE": 28.5,
+    "AAVE_ETH": 0.035088,
+    "USDC_WBTC": 0.00001498,
+    "WBTC_USDC": 66755.69,
+    "USDC_DAI": 0.9983,
+    "DAI_USDC": 1.0017,
+    "USDC_AAVE": 0.008835,
+    "AAVE_USDC": 113.18,
+    "WBTC_DAI": 66633.54,
+    "DAI_WBTC": 0.00001501,
+    "WBTC_AAVE": 585.15,
+    "AAVE_WBTC": 0.001709,
+    "DAI_AAVE": 0.008823,
+    "AAVE_DAI": 113.34
+  }
