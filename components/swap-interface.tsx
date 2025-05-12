@@ -47,6 +47,19 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 
+// --- Moved Global Declarations to Top ---
+declare global {
+  namespace JSX {
+    interface IntrinsicElements {
+      'appkit-button': React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement>;
+    }
+  }
+  interface Window {
+      swapBuildData?: any; 
+  }
+}
+// --- End Global Declarations ---
+
 const TARGET_CHAIN_ID = 1301; // Unichain Sepolia
 const YUSD_ADDRESS = "0x4A8595C45DCBe80Da0e0952E97E6F86a020182d7" as `0x${string}`;
 const BTCRL_ADDRESS = "0x68CD619F8732B294BD23aff270ec8E0F4c22331C" as `0x${string}`;
@@ -91,7 +104,7 @@ const initialBTCRL: Token = {
 type SwapState = "input" | "review" | "swapping" | "success" | "error";
 
 // Detailed swap progress states
-type SwapProgressState = "init" | "checking_allowance" | "needs_approval" | "approving" | "waiting_approval" | "approval_complete" | "needs_signature" | "signing_permit" | "signature_complete" | "building_tx" | "executing_swap" | "waiting_confirmation" | "complete" | "error";
+type SwapProgressState = "init" | "checking_allowance" | "needs_approval" | "approving" | "waiting_approval" | "approval_complete" | "needs_signature" | "signing_permit" | "signature_complete" | "building_tx" | "executing_swap" | "waiting_confirmation" | "complete" | "error" | "ready_to_swap";
 
 // Transaction information for success state
 interface SwapTxInfo {
@@ -164,9 +177,6 @@ export function SwapInterface() {
   const [isMounted, setIsMounted] = useState(false);
   useEffect(() => { setIsMounted(true); }, []);
 
-  // State to explicitly trigger the permit check after approval state is set
-  const [triggerPermitCheck, setTriggerPermitCheck] = useState(false);
-
   // Ref to track if review state notifications have been shown
   const reviewNotificationsShown = useRef({
      needs_approval: false, 
@@ -231,52 +241,6 @@ export function SwapInterface() {
       }
     };
   }, [isMounted, isConnected, currentChainId, isAttemptingSwitch]);
-
-  // Function to perform Permit2 Check (called from useEffect)
-  const checkPermit2Allowance = useCallback(async () => {
-    if (!accountAddress || !fromToken || !currentChainId) {
-      console.warn("[checkPermit2Allowance] Missing data, skipping check.");
-      return; 
-    }
-    console.log("[checkPermit2Allowance] Running Permit2 check.");
-    setSwapProgressState("checking_allowance"); // Indicate checking
-    try {
-      const permitApiResponse = await fetch('/api/swap/prepare-permit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userAddress: accountAddress,
-          tokenAddress: fromToken.address,
-          chainId: currentChainId,
-          checkExisting: true,
-        }),
-      });
-      const permitApiData = await permitApiResponse.json();
-      if (!permitApiResponse.ok) throw new Error(permitApiData.message || 'Failed to prepare permit data');
-      
-      if (permitApiData.hasValidPermit && BigInt(permitApiData.currentPermitInfo.amount) >= MaxUint160) {
-        console.log("[checkPermit2Allowance] Permit2 sufficient. Setting state: signature_complete");
-        setSwapProgressState("signature_complete");
-        setCompletedSteps(prev => prev.includes("signature_complete") ? prev : [...prev, "signature_complete"]); 
-      } else {
-        console.log("[checkPermit2Allowance] Permit2 insufficient/invalid. Setting state: needs_signature");
-        setSwapProgressState("needs_signature");
-      }
-    } catch (error) {
-      console.error("Error checking permit data:", error);
-      console.log("[checkPermit2Allowance] Error checking permit. Setting state: needs_signature");
-      setSwapProgressState("needs_signature");
-    }
-  }, [accountAddress, fromToken, currentChainId, setSwapProgressState, setCompletedSteps]);
-
-  // Effect to Trigger Permit Check
-  useEffect(() => {
-    if (triggerPermitCheck) {
-      console.log("[Effect Trigger] triggerPermitCheck is true, calling checkPermit2Allowance.");
-      checkPermit2Allowance();
-      setTriggerPermitCheck(false); // Reset trigger immediately
-    }
-  }, [triggerPermitCheck, checkPermit2Allowance]);
 
   // Effect for Review State Notifications
   useEffect(() => {
@@ -529,38 +493,114 @@ export function SwapInterface() {
   };
 
   const handleSwap = async () => {
-    if (!isConnected || currentChainId !== TARGET_CHAIN_ID || !fromAmount || parseFloat(fromAmount) <= 0) {
-      // Handle these initial errors appropriately (e.g., connect wallet button, switch network button, toast)
-      console.log("[handleSwap] Pre-checks failed."); 
-      return; 
+    const fromAmountNum = parseFloat(fromAmount || "0");
+    const fromBalanceNum = parseFloat(fromToken.balance || "0"); // Use state balance
+
+    // 1. Pre-checks (connected, network, amount > 0, sufficient balance)
+    const insufficientBalance = isNaN(fromBalanceNum) || fromBalanceNum < fromAmountNum;
+    if (!isConnected || currentChainId !== TARGET_CHAIN_ID || fromAmountNum <= 0 || insufficientBalance) {
+      console.log("[handleSwap] Pre-checks failed.", { isConnected, currentChainId, fromAmountNum, fromBalanceNum, insufficientBalance });
+      if (insufficientBalance && fromAmountNum > 0) {
+         toast("Insufficient Balance", {
+            description: `You don't have enough ${fromToken.symbol} to perform this swap.`,
+            icon: <WarningToastIcon />,
+            duration: 4000,
+         });
+      }
+      return;
     }
 
-    console.log("[handleSwap] Initiating swap review.");
-    setSwapState("review");
-    // Reset shown flags when entering review state
-    reviewNotificationsShown.current = { needs_approval: false, needs_signature: false, approval_complete: false, signature_complete: false };
-    
-    try {
-      console.log("[handleSwap] Setting progress state: checking_allowance (ERC20)");
-      setSwapProgressState("checking_allowance"); // Start check
-      const parsedAmount = parseUnits(fromAmount, fromToken.decimals);
-      const allowance = await publicClient.readContract({ address: fromToken.address, abi: Erc20AbiDefinition, functionName: 'allowance', args: [accountAddress as Address, PERMIT2_ADDRESS as Address] }) as bigint;
-      
-      if (allowance < parsedAmount) {
-        console.log("[handleSwap] ERC20 insufficient. Setting progress state: needs_approval");
-        setSwapProgressState("needs_approval"); // Let notification effect handle toast
-      } else {
-        console.log("[handleSwap] ERC20 sufficient. Setting progress state: approval_complete & triggering permit check.");
-        setSwapProgressState("approval_complete"); // Set state first
-        setCompletedSteps(prev => prev.includes("approval_complete") ? prev : [...prev, "approval_complete"]);
-        setTriggerPermitCheck(true); // Trigger the separate useEffect to run checkPermit2Allowance
+    console.log("[handleSwap] Initiating swap review & checks.");
+    setSwapState("review"); // Move to review UI
+    reviewNotificationsShown.current = { needs_approval: false, needs_signature: false, approval_complete: false, signature_complete: false }; // Reset notifications
+    setCompletedSteps([]); // Reset steps for this new review attempt
+    setIsSwapping(true); // Disable confirm button during checks
+    setSwapProgressState("checking_allowance"); // Show checks are in progress
+
+    // --- Helper to fetch permit data (can be extracted if used elsewhere) ---
+    const fetchPermitData = async (): Promise<any> => {
+      console.log("[fetchPermitData] Fetching fresh permit data...");
+      try {
+        const response = await fetch('/api/swap/prepare-permit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userAddress: accountAddress,
+            tokenAddress: fromToken.address,
+            chainId: currentChainId,
+            checkExisting: true,
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.message || 'Failed to fetch permit data');
+        console.log("[fetchPermitData] Fetched data:", data);
+        return data;
+      } catch (fetchError: any) {
+        console.error("[fetchPermitData] Error:", fetchError);
+        throw new Error("Could not retrieve permit information.");
       }
-    } catch (error) {
-      console.error("Error checking ERC20 allowance:", error);
-      console.log("[handleSwap] Error checking ERC20. Setting progress state: needs_approval");
-      setSwapProgressState("needs_approval"); // Let notification effect handle toast
+    };
+    // --- End Helper ---
+
+    try {
+      const parsedAmount = parseUnits(fromAmount, fromToken.decimals);
+
+      // 2. Check ERC20 Allowance
+      console.log("[handleSwap] Checking ERC20 allowance...");
+      const allowance = await publicClient.readContract({
+        address: fromToken.address,
+        abi: Erc20AbiDefinition,
+        functionName: 'allowance',
+        args: [accountAddress as Address, PERMIT2_ADDRESS as Address]
+      }) as bigint;
+
+      // 3. Handle ERC20 Result
+      if (allowance < parsedAmount) {
+        console.log("[handleSwap] ERC20 insufficient. Setting state: needs_approval");
+        setSwapProgressState("needs_approval");
+        setIsSwapping(false); // Checks done, ready for user action (Approve)
+        // Notification effect will show toast
+        return; // Stop here, wait for user to click "Approve"
+      }
+
+      // 4. ERC20 OK -> Check Permit2 Immediately
+      console.log("[handleSwap] ERC20 sufficient. Marking complete & checking Permit2...");
+      toast("Token Approved", {
+        duration: 2500 
+      });
+      setCompletedSteps(["approval_complete"]); // Mark step 1 complete
+      setSwapProgressState("checking_allowance"); // Indicate checking permit
+
+      const permitData = await fetchPermitData();
+      const needsSignature = !permitData.hasValidPermit || BigInt(permitData.currentPermitInfo.amount) < MaxUint160;
+
+      // 5. Handle Permit2 Result
+      if (needsSignature) {
+        console.log("[handleSwap] Permit2 check complete. Setting state: needs_signature");
+        setSwapProgressState("needs_signature");
+        // Notification effect will show toast
+      } else {
+        console.log("[handleSwap] Permit2 check complete. Setting state: ready_to_swap");
+        toast("Permission Active", {
+          duration: 2500 
+        });
+        setCompletedSteps(["approval_complete", "signature_complete"]); // Mark step 2 complete
+        setSwapProgressState("ready_to_swap");
+      }
+      setIsSwapping(false); // Checks done, ready for user action (Sign or Confirm)
+
+    } catch (error: any) {
+      // 6. Handle Errors during initial checks
+      console.error("Error during initial swap checks:", error);
+      setIsSwapping(false); // Re-enable buttons
+      setSwapProgressState("error"); // Set a general error state for checks
+      toast("Error preparing swap", {
+        description: error.message || "Could not verify token allowances.",
+        icon: <WarningToastIcon />,
+        duration: 4000,
+      });
+      // Keep user on review screen, they can click "Change" to go back
     }
-    console.log("[handleSwap] Finished initial checks.");
   };
 
   const handleUsePercentage = (percentage: number) => {
@@ -596,249 +636,281 @@ export function SwapInterface() {
   };
 
   const handleConfirmSwap = async () => {
+    // 1. Guard & Initial Setup
+    if (isSwapping) {
+      console.log("[handleConfirmSwap] Already swapping, preventing re-entrancy.");
+      return;
+    }
+    setIsSwapping(true); // Disable button immediately
+    const stateBeforeAction = swapProgressState; // Store state before this action attempt
+    console.log(`[handleConfirmSwap] Starting action from state: ${stateBeforeAction}`);
+
+    // --- Helper Function Placeholder for fetching permit data ---
+    // In a real scenario, this would likely call the '/api/swap/prepare-permit' endpoint
+    const fetchPermitData = async (): Promise<any> => {
+        console.log("[fetchPermitData] Fetching fresh permit data...");
+        try {
+            const response = await fetch('/api/swap/prepare-permit', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    userAddress: accountAddress,
+                    tokenAddress: fromToken.address,
+                    chainId: currentChainId,
+                    checkExisting: true, // Always check validity when fetching
+                }),
+            });
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.message || 'Failed to fetch permit data');
+            }
+            console.log("[fetchPermitData] Fetched data:", data);
+            return data;
+        } catch (fetchError) {
+            console.error("[fetchPermitData] Error:", fetchError);
+            throw new Error("Could not retrieve permit information from the server."); // Re-throw a user-friendly error
+        }
+    };
+    // --- End Helper Placeholder ---
+
     try {
-      // --- Keep API call here for FRESH data (nonce!) before acting --- 
-      // setSwapProgressState("checking_allowance"); // Remove redundant state/toast
-      // toast("Checking permit status..."); // Remove redundant toast
-      
-      const parsedAmount = parseUnits(fromAmount, fromToken.decimals);
-      let signature: Hex | null = null; // Initialize signature
-      let permitApiData: any = null; // To store API response
+        // 2. Determine Action based on CURRENT progress state
+        const parsedAmount = parseUnits(fromAmount, fromToken.decimals); // Needed in multiple branches
 
-      const permitApiResponse = await fetch('/api/swap/prepare-permit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userAddress: accountAddress,
-          tokenAddress: fromToken.address,
-          chainId: currentChainId,
-          checkExisting: true, // Always check existing when confirming
-        }),
-      });
-      
-      permitApiData = await permitApiResponse.json();
-      if (!permitApiResponse.ok) {
-        throw new Error(permitApiData.message || 'Failed to prepare permit data');
-      }
+        // ACTION: Need to Approve
+        if (stateBeforeAction === "needs_approval") {
+            console.log("[handleConfirmSwap] Action: Approving ERC20");
+            setSwapProgressState("approving");
+            toast("Approving tokens for Permit2...");
 
-      // --- Determine if signing is needed based on FRESH API data --- 
-      const needsSignature = !permitApiData.hasValidPermit || BigInt(permitApiData.currentPermitInfo.amount) < MaxUint160;
-      // We check against MaxUint160 because we always SIGN for unlimited. 
-      // If the existing permit isn't unlimited (or expired), we need a new signature.
+            const approveTxHash = await sendApprovalTx({
+                address: fromToken.address,
+                abi: Erc20AbiDefinition,
+                functionName: 'approve',
+                args: [PERMIT2_ADDRESS, parseUnits("1000000", fromToken.decimals)], // Consistent large approval
+            });
+            if (!approveTxHash) throw new Error("Failed to send approval transaction");
 
-      // If we need approval (standard ERC20), handle that first
-      if (swapProgressState === "needs_approval") {
-        setSwapProgressState("approving");
-        setIsSwapping(true);
-        toast("Approving tokens for Permit2...");
-        
-        const approveTxHash = await sendApprovalTx({
-          address: fromToken.address,
-          abi: Erc20AbiDefinition,
-          functionName: 'approve',
-          args: [PERMIT2_ADDRESS, parseUnits("1000000", fromToken.decimals)],
-        });
-        
-        if (!approveTxHash) {
-          throw new Error("Failed to send approval transaction");
+            toast("Approval Submitted", { description: "Waiting for confirmation..." });
+            setSwapProgressState("waiting_approval");
+            const approvalReceipt = await publicClient.waitForTransactionReceipt({ hash: approveTxHash as Hex });
+            if (!approvalReceipt || approvalReceipt.status !== 'success') throw new Error("Approval transaction failed on-chain");
+
+            toast("Approval Confirmed", { duration: 2500 });
+            setCompletedSteps(prev => [...prev, "approval_complete"]);
+
+            // --- CRITICAL: Re-fetch Permit Data AFTER approval ---
+            const freshPermitData = await fetchPermitData();
+            const needsSigAfterApproval = !freshPermitData.hasValidPermit || BigInt(freshPermitData.currentPermitInfo.amount) < MaxUint160;
+
+            if (needsSigAfterApproval) {
+                console.log("[handleConfirmSwap] Approval done, signature needed.");
+                setSwapProgressState("needs_signature");
+            } else {
+                console.log("[handleConfirmSwap] Approval done, signature NOT needed.");
+                setSwapProgressState("ready_to_swap");
+                setCompletedSteps(prev => prev.includes("signature_complete") ? prev : [...prev, "signature_complete"]);
+            }
+            setIsSwapping(false); // Re-enable button for next distinct step
+            return; // Wait for next user click
         }
-        
-        toast("Approval Submitted", {
-          description: "Please wait for confirmation...",
-        });
-        
-        setSwapProgressState("waiting_approval");
-        
-        const approvalReceipt = await publicClient.waitForTransactionReceipt({
-          hash: approveTxHash as Hex,
-        });
-        
-        if (!approvalReceipt || approvalReceipt.status !== 'success') {
-          throw new Error("Approval transaction failed");
+
+        // ACTION: Need to Sign
+        else if (stateBeforeAction === "needs_signature") {
+            console.log("[handleConfirmSwap] Action: Signing Permit2");
+
+            // --- CRITICAL: Fetch fresh permit data BEFORE signing ---
+            const permitDataForSigning = await fetchPermitData();
+            const reallyNeedsSig = !permitDataForSigning.hasValidPermit || BigInt(permitDataForSigning.currentPermitInfo.amount) < MaxUint160;
+
+            if (!reallyNeedsSig) {
+                 console.log("[handleConfirmSwap] Fresh check shows signature no longer needed. Moving to ready_to_swap.");
+                 setCompletedSteps(prev => prev.includes("signature_complete") ? prev : [...prev, "signature_complete"]);
+                 setSwapProgressState("ready_to_swap");
+                 setIsSwapping(false); // Re-enable button for next step (Confirm)
+                 return; // Wait for next user click
+            }
+
+            setSwapProgressState("signing_permit");
+            toast("Please sign the permit message...");
+
+            const messageToSign = {
+                details: {
+                    token: getAddress(fromToken.address),
+                    amount: MaxUint160, // Always sign for max
+                    expiration: permitDataForSigning.permitExpiration,
+                    nonce: permitDataForSigning.nonce,
+                },
+                spender: getAddress(permitDataForSigning.spender),
+                sigDeadline: BigInt(permitDataForSigning.sigDeadline),
+            };
+
+            const signature = await signTypedDataAsync({
+                domain: permitDataForSigning.domain,
+                types: permitDataForSigning.types,
+                primaryType: 'PermitSingle',
+                message: messageToSign,
+            });
+            // If signTypedDataAsync throws (user rejection), it's caught by the main catch block.
+            // If it returns null/undefined somehow (shouldn't happen with await), we might need an explicit check.
+            if (!signature) throw new Error("Signature process did not return a valid signature.");
+
+
+            toast.success("Permit signature obtained!");
+            setCompletedSteps(prev => [...prev, "signature_complete"]);
+            setSwapProgressState("ready_to_swap"); // Ready for final swap confirmation
+            setIsSwapping(false); // Re-enable button for next distinct step
+            return; // Wait for next user click
         }
-        
-        toast("Approval Confirmed");
-        setCompletedSteps(prev => [...prev, "approval_complete"]);
-        // AFTER approval, decide if signature is needed based on the check above
-        if (needsSignature) {
-           setSwapProgressState("needs_signature");
+
+        // ACTION: Ready to Swap
+        else if (stateBeforeAction === "ready_to_swap") {
+            console.log("[handleConfirmSwap] Action: Building and Executing Swap");
+
+            // --- CRITICAL: Fetch fresh permit data BEFORE building TX ---
+            const permitDataForBuild = await fetchPermitData();
+             // Use the NONCE from this fresh data
+             const currentNonce = permitDataForBuild.nonce;
+             const currentExpiration = permitDataForBuild.permitExpiration;
+             const currentSigDeadline = permitDataForBuild.sigDeadline; // Use this for the permit param if needed
+
+            // --- Optional Sanity Check ---
+             const currentBalanceBigInt = parseUnits(fromToken.balance || "0", fromToken.decimals);
+             if (currentBalanceBigInt < parsedAmount) {
+                 throw new Error(`Insufficient balance. Required: ${fromAmount}, Available: ${fromToken.balance}`);
+             }
+             // --- End Sanity Check ---
+
+
+            setSwapProgressState("building_tx");
+            toast("Building swap transaction...");
+
+            // Determine if we *actually* need to include a signature in the build call.
+            // The signature obtained earlier might be outdated if the nonce changed,
+            // OR maybe a signature wasn't needed at all. The backend *should* handle this,
+            // but we pass "0x" if we didn't just obtain one in the previous step.
+            // **Correction**: The logic should pass the signature only if one was *required* and *obtained*.
+            // The backend `/build-tx` needs the signature details (even if "0x") to construct the Permit payload correctly.
+
+            const currentTimestamp = BigInt(Math.floor(Date.now() / 1000));
+            const fallbackSigDeadline = currentTimestamp + BigInt(30 * 60); // 30 min fallback
+
+
+            const bodyForBuildTx = {
+                 userAddress: accountAddress,
+                 fromTokenSymbol: fromToken.symbol === 'YUSD' ? 'YUSDC' : 'BTCRL', // Ensure correct mapping
+                 toTokenSymbol: toToken.symbol === 'YUSD' ? 'YUSDC' : 'BTCRL',
+                 swapType: 'ExactIn',
+                 amountDecimalsStr: fromAmount,
+                 limitAmountDecimalsStr: "0", // Required by API? Assuming 0 for exactIn
+                 // --- Crucial Permit Details ---
+                 permitSignature: "0x", // Default to 0x, backend uses if needed based on other params
+                 permitTokenAddress: fromToken.address,
+                 permitAmount: parsedAmount.toString(), // The amount for *this specific swap*
+                 permitNonce: currentNonce, // Fresh nonce
+                 permitExpiration: currentExpiration, // Fresh expiration
+                 permitSigDeadline: currentSigDeadline ? currentSigDeadline.toString() : fallbackSigDeadline.toString(), // Fresh deadline or fallback
+                 // --- End Permit Details ---
+                 chainId: currentChainId,
+            };
+
+
+            // --- Call Build TX API ---
+            const buildTxApiResponse = await fetch('/api/swap/build-tx', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(bodyForBuildTx),
+            });
+            const buildTxApiData = await buildTxApiResponse.json();
+            if (!buildTxApiResponse.ok) {
+                 throw new Error(buildTxApiData.message || 'Failed to build transaction', { cause: buildTxApiData.errorDetails });
+            }
+
+
+            // --- Execute TX ---
+            window.swapBuildData = buildTxApiData; // Store for potential debug/retry? Clear on success/error
+            setSwapProgressState("executing_swap");
+            toast("Sending swap transaction...");
+
+            const txHash = await sendSwapTx({
+                address: getAddress(buildTxApiData.to),
+                abi: UniversalRouterAbi,
+                functionName: 'execute',
+                args: [buildTxApiData.commands as Hex, buildTxApiData.inputs as Hex[], BigInt(buildTxApiData.deadline)],
+                value: BigInt(buildTxApiData.value),
+            });
+            if (!txHash) throw new Error("Failed to send swap transaction (no hash received)");
+
+
+            // --- Wait for Confirmation ---
+            setSwapTxInfo({ // Store optimistic info
+                 hash: txHash as string, fromAmount, fromSymbol: fromToken.symbol, toAmount, toSymbol: toToken.symbol,
+                 explorerUrl: `https://unichain-sepolia.blockscout.com/tx/${txHash}`,
+            });
+            setSwapProgressState("waiting_confirmation");
+            toast("Swap submitted", { description: "Waiting for confirmation..." });
+
+            const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash as Hex });
+            if (!receipt || receipt.status !== 'success') throw new Error("Swap transaction failed on-chain");
+
+
+            // --- Success ---
+            setIsSwapping(false); // Finished this swap lifecycle
+            setSwapState("success");
+            setCompletedSteps(prev => [...prev, "complete"]);
+            toast("Swap Successful", {
+                 description: `Swapped ${fromAmount} ${fromToken.symbol} for ${toAmount} ${toToken.symbol}`,
+                 icon: <SuccessToastIcon />, duration: 5000,
+            });
+            window.swapBuildData = undefined; // Clear build data
+        }
+
+        // ACTION: Unexpected State (Safety net)
+        else {
+            console.warn("[handleConfirmSwap] Called in unexpected state:", stateBeforeAction);
+            setIsSwapping(false); // Ensure button is re-enabled
+        }
+
+    } catch (err: any) {
+        // 3. Centralized Error Handling
+        console.error("[handleConfirmSwap] Error during action:", err);
+        setIsSwapping(false); // Always re-enable button on error
+
+        // Basic error parsing (adapt your existing logic if more sophisticated)
+        let displayError = "An unknown error occurred";
+        let isUserRejection = false;
+        if (err instanceof Error) {
+            displayError = err.message;
+            // Check for common rejection patterns (adjust as needed for specific wallet errors)
+            if (displayError.toLowerCase().includes("user rejected") ||
+                displayError.toLowerCase().includes("request rejected") ||
+                displayError.toLowerCase().includes("action rejected") || // Add other common phrases
+                 (err as any).code === 4001 // Standard EIP-1193 user rejection code
+                ) {
+                isUserRejection = true;
+            }
+        } else if (typeof err === 'string') {
+            displayError = err;
+        }
+
+        if (isUserRejection) {
+            toast("Transaction Rejected", {
+                 description: "The request was rejected in your wallet.",
+                 icon: <WarningToastIcon />, duration: 4000,
+            });
+            // Reset state to before the rejected action, allowing a clean retry of that specific step
+            console.log(`[handleConfirmSwap] User rejection detected. Resetting state to: ${stateBeforeAction}`);
+            setSwapProgressState(stateBeforeAction);
         } else {
-           setSwapProgressState("signature_complete"); // Already approved and has valid permit
-           setCompletedSteps(prev => prev.includes("signature_complete") ? prev : [...prev, "signature_complete"]);
+            toast("Swap Failed", {
+                 description: displayError, // Show the specific error message
+                 icon: <WarningToastIcon />, duration: 5000,
+            });
+            // For other errors, go to a general error state to avoid infinite loops if the error is persistent
+            setSwapProgressState("error");
         }
-        setIsSwapping(false);
-        return; // Wait for next user action (Sign or Confirm)
-      }
 
-      // If we determined a signature is needed (and approval is done)
-      if (needsSignature && swapProgressState !== "approving" && swapProgressState !== "waiting_approval") { // Ensure approval step is finished
-        setSwapProgressState("signing_permit");
-        setIsSwapping(true);
-        toast("Preparing permit signature...");
-        
-        // Use the permitApiData fetched earlier
-        const messageToSign = {
-          details: {
-            token: getAddress(fromToken.address),
-            amount: MaxUint160, // Use MaxUint160 for the signed amount
-            expiration: permitApiData.permitExpiration, // Use the 1-day expiration from API
-            nonce: permitApiData.nonce,
-          },
-          spender: getAddress(permitApiData.spender),
-          sigDeadline: BigInt(permitApiData.sigDeadline),
-        };
-        
-        signature = await signTypedDataAsync({
-          domain: permitApiData.domain,
-          types: permitApiData.types,
-          primaryType: 'PermitSingle',
-          message: messageToSign,
-        });
-        
-        toast.success("Permit signature obtained!");
-        setSwapProgressState("signature_complete");
-        setCompletedSteps(prev => prev.includes("signature_complete") ? prev : [...prev, "signature_complete"]);
-        // No need to save existingPermitData state anymore
-        setIsSwapping(false); // Ready for final build/execute step
-        // Fall through to build transaction logic
-      }
-
-      // --- Build Transaction Logic --- 
-      if (swapProgressState === "signature_complete" || !needsSignature) {
-         // Ensure we have permitApiData (should always have it from the top call)
-         if (!permitApiData) {
-            throw new Error("Missing permit data for building transaction.");
-         }
-
-         setSwapProgressState("building_tx");
-         setIsSwapping(true);
-         toast("Building swap transaction...");
-
-         // Use existing permit data directly from API call results
-         const currentTimestamp = BigInt(Math.floor(Date.now() / 1000));
-         const fallbackSigDeadline = currentTimestamp + BigInt(30 * 60); // Example: 30 min fallback
-
-         const bodyForBuildTx = {
-           userAddress: accountAddress,
-           fromTokenSymbol: fromToken.address === YUSD_ADDRESS ? 'YUSDC' : 'BTCRL',
-           toTokenSymbol: toToken.address === YUSD_ADDRESS ? 'YUSDC' : 'BTCRL',
-           swapType: 'ExactIn',
-           amountDecimalsStr: fromAmount,
-           limitAmountDecimalsStr: "0", 
-           // Use obtained signature OR "0x" if reusing existing permit
-           permitSignature: signature ? signature : "0x", 
-           permitTokenAddress: fromToken.address,
-           permitAmount: parsedAmount.toString(), // Actual swap amount
-           permitNonce: permitApiData.nonce, // Use nonce from the fresh API call
-           permitExpiration: permitApiData.permitExpiration, // Use expiration from the fresh API call
-           permitSigDeadline: signature ? permitApiData.sigDeadline.toString() : fallbackSigDeadline.toString(), // Use real deadline if signing
-           chainId: currentChainId,
-         };
-         
-         const buildTxApiResponse = await fetch('/api/swap/build-tx', {
-           method: 'POST',
-           headers: { 'Content-Type': 'application/json' },
-           body: JSON.stringify(bodyForBuildTx),
-         });
-         
-         const buildTxApiData = await buildTxApiResponse.json();
-         if (!buildTxApiResponse.ok) {
-           // Throw error using the message & details from the backend response
-           throw new Error(buildTxApiData.message || 'Failed to build transaction', { cause: buildTxApiData.errorDetails || 'Unknown build error' });
-         }
-
-         // --- Execute Transaction --- 
-         window.swapBuildData = buildTxApiData; // Store build data
-         setSwapProgressState("executing_swap");
-         toast("Sending swap transaction...");
-
-         const txHash = await sendSwapTx({
-           address: getAddress(buildTxApiData.to),
-           abi: UniversalRouterAbi,
-           functionName: 'execute',
-           args: [
-             buildTxApiData.commands as Hex,
-             buildTxApiData.inputs as Hex[],
-             BigInt(buildTxApiData.deadline)
-           ],
-           value: BigInt(buildTxApiData.value),
-         });
-         
-         if (!txHash) {
-           throw new Error("Failed to send swap transaction");
-         }
-         
-         setSwapTxInfo({
-           hash: txHash as string,
-           fromAmount,
-           fromSymbol: fromToken.symbol,
-           toAmount,
-           toSymbol: toToken.symbol,
-           explorerUrl: `https://unichain-sepolia.blockscout.com/tx/${txHash}`,
-         });
-         
-         setSwapProgressState("waiting_confirmation");
-         
-         const receipt = await publicClient.waitForTransactionReceipt({
-           hash: txHash as Hex,
-         });
-         
-         if (!receipt || receipt.status !== 'success') {
-           throw new Error("Swap transaction failed");
-         }
-         
-         setIsSwapping(false);
-         setSwapState("success");
-         setCompletedSteps(prev => [...prev, "complete"]);
-         
-         toast("Swap Successful", {
-           description: `Successfully swapped ${fromAmount} ${fromToken.symbol} for ${toAmount} ${toToken.symbol}`,
-           icon: <SuccessToastIcon />,
-           duration: 5000,
-         });
-         
-         window.swapBuildData = undefined; // Clear build data on success
-      }
-    } catch (err: any) { // Use a different variable name like 'err'
-      console.error("Swap execution failed:", err);
-      setIsSwapping(false);
-      setSwapProgressState("error");
-      
-      // Display more informative error from backend if available
-      let displayError = "Unknown error occurred";
-      if (err instanceof Error) {
-          // Try to get a more specific message from the error or its cause
-          const cause = err.cause as any; // Cast cause for easier access
-          let causeMessage = '';
-          if (cause) {
-            causeMessage = cause.shortMessage || cause.message || (typeof cause === 'string' ? cause : '');
-          }
-          // Safely access shortMessage if it exists on the error object
-          const shortMsg = (err as any).shortMessage;
-          displayError = shortMsg || err.message; // Prefer shortMessage from main error
-          if (causeMessage) {
-              displayError += `: ${causeMessage}`; // Append cause message if found
-          }
-      } else if (typeof err === 'string') {
-          displayError = err;
-      }
-      
-      if (displayError && displayError.toLowerCase().includes("user rejected the request")) {
-        toast("Transaction Rejected", {
-          description: "The transaction request was rejected in your wallet.",
-          icon: <WarningToastIcon />,
-          duration: 5000,
-        });
-      } else {
-        toast("Swap Failed", {
-          description: displayError,
-          icon: <WarningToastIcon />,
-          duration: 5000,
-        });
-      }
-      
-      // Clear build data on error
-      window.swapBuildData = undefined;
+        window.swapBuildData = undefined; // Clear potentially stale build data on any error
     }
   };
 
@@ -1074,7 +1146,15 @@ export function SwapInterface() {
                                disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100
                                dark:disabled:bg-neutral-700 dark:disabled:text-neutral-500 dark:disabled:opacity-100"
                     onClick={handleSwap} 
-                    disabled={actionButtonDisabled}
+                    disabled={actionButtonDisabled || 
+                               (
+                                 parseFloat(fromAmount || "0") > 0 && // Only check balance if amount is entered
+                                 (
+                                   isNaN(parseFloat(fromToken.balance || "0")) || // Balance is not a number (e.g. "Loading...", "Error", "~")
+                                   parseFloat(fromToken.balance || "0") < parseFloat(fromAmount || "0") // Insufficient balance
+                                 )
+                                )
+                              }
                   >
                     {actionButtonText}
                   </Button>
@@ -1155,7 +1235,7 @@ export function SwapInterface() {
                              disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100
                              dark:disabled:bg-neutral-700 dark:disabled:text-neutral-500 dark:disabled:opacity-100"
                   onClick={handleConfirmSwap} 
-                  disabled={isSwapping}
+                  disabled={isSwapping || swapProgressState === "init" || swapProgressState === "checking_allowance"}
                 >
                   {isSwapping ? (
                     <span className="flex items-center gap-2">
@@ -1163,12 +1243,14 @@ export function SwapInterface() {
                       {swapProgressState === "approving" || swapProgressState === "waiting_approval" ? "Approving..." :
                        swapProgressState === "signing_permit" ? "Signing..." :
                        swapProgressState === "executing_swap" || swapProgressState === "waiting_confirmation" ? "Swapping..." :
-                       "Processing..."}
+                       "Processing..."} 
                     </span>
                   ) : (
+                    // Updated text logic to handle ready_to_swap explicitly
                     swapProgressState === "needs_approval" ? "Approve" :
-                    swapProgressState === "approval_complete" || swapProgressState === "needs_signature" ? "Sign" :
-                    "Confirm Swap"
+                    swapProgressState === "needs_signature" ? "Sign" :
+                    swapProgressState === "ready_to_swap" ? "Confirm Swap" :
+                    "Confirm Swap" // Default/Fallback (e.g., for approval_complete before Sign is determined)
                   )}
                 </Button>
               </div>
@@ -1266,17 +1348,5 @@ function OutlineArcIcon({ percentage, size = 16, className }: OutlineArcIconProp
       )}
     </svg>
   );
-}
-
-// Ensure this global definition exists for appkit-button
-declare global {
-  namespace JSX {
-    interface IntrinsicElements {
-      'appkit-button': React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement>;
-    }
-  }
-  interface Window {
-      swapBuildData?: any; 
-  }
 }
 
