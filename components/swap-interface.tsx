@@ -48,16 +48,16 @@ import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 
 // --- Moved Global Declarations to Top ---
-declare global {
-  namespace JSX {
-    interface IntrinsicElements {
-      'appkit-button': React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement>;
-    }
-  }
-  interface Window {
-      swapBuildData?: any; 
-  }
-}
+// declare global {
+//   namespace JSX {
+//     interface IntrinsicElements {
+//       'appkit-button': React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement>;
+//     }
+//   }
+//   interface Window {
+//       swapBuildData?: any; 
+//   }
+// }
 // --- End Global Declarations ---
 
 const TARGET_CHAIN_ID = 1301; // Unichain Sepolia

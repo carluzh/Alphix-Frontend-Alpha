@@ -2,7 +2,7 @@
 
 import type * as React from "react"
 import type { LucideIcon } from "lucide-react"
-import { SunIcon, MoonIcon, LaptopIcon, CoinsIcon, Trash2Icon, SettingsIcon } from "lucide-react"
+import { SunIcon, MoonIcon, LaptopIcon, CoinsIcon, Trash2Icon, SettingsIcon, LogOutIcon } from "lucide-react"
 import { useTheme } from "next-themes"
 import { toast } from "sonner"
 
@@ -99,6 +99,41 @@ export function NavSecondary({
                       }} className="cursor-pointer">
                         <Trash2Icon className="mr-2 h-4 w-4" />
                         <span>Clean Cache</span>
+                      </DropdownMenuItem>
+                      <DropdownMenuItem 
+                        onClick={async () => {
+                          try {
+                            const res = await fetch('/api/logout', { method: 'POST' });
+                            if (res.ok) {
+                              toast(
+                                <span className="flex items-center">
+                                  <LogOutIcon className="mr-2 h-4 w-4 flex-shrink-0" />
+                                  <span>Session Reset. Redirecting to login...</span>
+                                </span>
+                              );
+                              setTimeout(() => {
+                                window.location.href = '/login';
+                              }, 1500);
+                            } else {
+                              toast(
+                                <span className="flex items-center">
+                                  <span>Failed to reset session.</span>
+                                </span>
+                              );
+                            }
+                          } catch (error) {
+                            console.error("Failed to reset session:", error);
+                            toast(
+                              <span className="flex items-center">
+                                <span>Error resetting session.</span>
+                              </span>
+                            );
+                          }
+                        }}
+                        className="cursor-pointer"
+                      >
+                        <LogOutIcon className="mr-2 h-4 w-4" />
+                        <span>Reset Session</span>
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenuPortal>

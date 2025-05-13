@@ -41,7 +41,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           <AppKitProvider cookies={cookie}>
             {children}
           </AppKitProvider>
-          <Toaster />
+          <Toaster position="top-right" />
         </ThemeProvider>
       </body>
     </html>

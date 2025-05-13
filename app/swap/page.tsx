@@ -1,8 +1,14 @@
-"use client"
-
 import { AppLayout } from "@/components/app-layout"
 import { SwapInterface } from "@/components/swap-interface"
 import { ScrollRevealTransactions } from "@/components/scroll-reveal-transactions"
+import type { Metadata } from 'next'
+
+export const metadata: Metadata = {
+  title: 'Alphix | Swap',
+  icons: {
+    icon: '/Tab.png',
+  },
+}
 
 export default function Page() {
   return (
