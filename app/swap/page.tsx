@@ -14,7 +14,7 @@ export default function Page() {
   return (
     <AppLayout>
       <div className="flex flex-1 flex-col">
-        <div className="flex flex-1 justify-center pt-16">
+        <div className="flex flex-1 justify-center py-10 md:py-16">
           <div className="w-full max-w-md px-4">
             <SwapInterface />
           </div>

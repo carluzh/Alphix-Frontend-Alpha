@@ -1219,7 +1219,7 @@ export function SwapInterface() {
   }, [fromAmount, fromToken, toToken, isConnected, currentChainId, dynamicFeeLoading, fetchDynamicFeeCallback]);
 
   return (
-    <Card className="mx-auto max-w-md">
+    <Card className="mx-auto max-w-md card-gradient">
       {/* <CardHeader className="pt-6 pb-2">
           <CardTitle className="text-center">Swap Tokens</CardTitle>
       </CardHeader> */} 
@@ -1252,7 +1252,15 @@ export function SwapInterface() {
                     </div>
                     <div className="flex-1">
                       {/* Sell input is now enabled if wallet is connected */}
-                      <Input value={fromAmount} onChange={handleFromAmountChange} onFocus={() => setIsSellInputFocused(true)} onBlur={() => setIsSellInputFocused(false)} className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto" placeholder="0" disabled={!isConnected || isAttemptingSwitch} />
+                      <Input 
+                        value={fromAmount} 
+                        onChange={handleFromAmountChange} 
+                        onFocus={() => setIsSellInputFocused(true)} 
+                        onBlur={() => setIsSellInputFocused(false)} 
+                        className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto input-enhanced" 
+                        placeholder="0" 
+                        disabled={!isConnected || isAttemptingSwitch} 
+                      />
                       <div className="text-right text-xs text-muted-foreground">{formatCurrency((parseFloat(fromAmount || "0") * displayFromToken.usdPrice).toString())}</div>
                     </div>
                   </div>
@@ -1315,11 +1323,7 @@ export function SwapInterface() {
               <div className="mt-6 h-10">
                 {!isMounted ? null : isConnected ? (
                   <Button 
-                    className="w-full 
-                               bg-slate-900 text-slate-50 hover:bg-slate-900/90 
-                               dark:bg-white dark:text-black dark:hover:bg-white/90
-                               disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100
-                               dark:disabled:bg-neutral-700 dark:disabled:text-neutral-500 dark:disabled:opacity-100"
+                    className="w-full btn-primary"
                     onClick={handleSwap} 
                     disabled={actionButtonDisabled || 
                                (
@@ -1334,7 +1338,7 @@ export function SwapInterface() {
                     {actionButtonText}
                   </Button>
                 ) : (
-                  <div className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90">
+                  <div className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md bg-accent text-accent-foreground px-3 text-sm font-medium transition-colors hover:bg-accent/90 shadow-md">
                     <appkit-button className="absolute inset-0 z-10 block h-full w-full cursor-pointer p-0 opacity-0" />
                     <span className="relative z-0 pointer-events-none">{actionButtonText}</span>
                   </div>
