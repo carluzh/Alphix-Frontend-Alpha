@@ -1,7 +1,7 @@
 import { createPublicClient, http } from 'viem';
 import { getTargetChain } from './swap-constants';
 
-const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL || process.env.RPC_URL || "https://unichain-sepolia.drpc.org";
+const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL || process.env.RPC_URL || "https://base-sepolia.drpc.org";
 
 if (!RPC_URL) {
     throw new Error("RPC_URL is not defined in environment variables. Please set NEXT_PUBLIC_RPC_URL or RPC_URL.");

@@ -2,7 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { getAddress, parseUnits, encodeFunctionData, type Address, type Hex, type Abi, TransactionExecutionError } from 'viem';
 import { Token } from '@uniswap/sdk-core';
 import { RoutePlanner, CommandType } from '@uniswap/universal-router-sdk';
-import { Pool as V4Pool, Route as V4Route, PoolKey, V4Planner, Actions, encodeRouteToPath } from '@uniswap/v4-sdk';
+import { Pool, Route as V4Route, PoolKey, V4Planner, Actions, encodeRouteToPath } from '@uniswap/v4-sdk';
 import { BigNumber } from 'ethers'; // For V4Planner compatibility if it expects Ethers BigNumber
 
 import { publicClient } from '../../../lib/viemClient';
@@ -38,6 +38,9 @@ async function prepareV4ExactInSwapData(
         tickSpacing: V4_POOL_TICK_SPACING,
         hooks: V4_POOL_HOOKS
     };
+    console.log("V4 Pool Key (Exact In):", v4PoolKey);
+    const poolIdExactIn = Pool.getPoolId(token0ForV4, token1ForV4, v4PoolKey.fee, v4PoolKey.tickSpacing, v4PoolKey.hooks);
+    console.log("V4 Pool ID (Exact In):", poolIdExactIn);
 
     const v4Planner = new V4Planner();
     v4Planner.addSettle(inputToken, true, BigNumber.from(amountInSmallestUnits.toString())); 
@@ -46,7 +49,7 @@ async function prepareV4ExactInSwapData(
     const placeholderLiquidity = '1000000000000000000';
     const placeholderTick = 0;
 
-    const dummyV4PoolForRoute = new V4Pool(
+    const dummyV4PoolForRoute = new Pool(
         token0ForV4, token1ForV4, v4PoolKey.fee, v4PoolKey.tickSpacing, v4PoolKey.hooks,
         placeholderSqrtPriceX96.toString(), placeholderLiquidity, placeholderTick
     );
@@ -80,12 +83,15 @@ async function prepareV4ExactOutSwapData(
         tickSpacing: V4_POOL_TICK_SPACING,
         hooks: V4_POOL_HOOKS
     };
+    console.log("V4 Pool Key (Exact Out):", v4PoolKey);
+    const poolIdExactOut = Pool.getPoolId(token0ForV4, token1ForV4, v4PoolKey.fee, v4PoolKey.tickSpacing, v4PoolKey.hooks);
+    console.log("V4 Pool ID (Exact Out):", poolIdExactOut);
 
     const placeholderSqrtPriceX96 = (1n << 96n); 
     const placeholderLiquidity = '100000000000000000000'; 
     const placeholderTick = 0;
 
-    const dummyV4PoolForRoute = new V4Pool(
+    const dummyV4PoolForRoute = new Pool(
         token0ForV4, token1ForV4, v4PoolKey.fee, v4PoolKey.tickSpacing, v4PoolKey.hooks,
         placeholderSqrtPriceX96.toString(), placeholderLiquidity, placeholderTick
     );

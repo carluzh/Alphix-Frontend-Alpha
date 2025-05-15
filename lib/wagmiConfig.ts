@@ -14,23 +14,24 @@ if (!projectId) {
   // Consider throwing error if needed: throw new Error('NEXT_PUBLIC_PROJECT_ID is not set');
 }
 
-// Define Unichain Sepolia
-export const unichainSepolia = defineChain({
-  id: 1301,
-  name: 'Unichain Sepolia',
-  nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 },
+
+
+// Define Base Sepolia
+export const baseSepolia = defineChain({
+  id: 84532,
+  name: 'Base Sepolia',
+  nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
   rpcUrls: {
-    default: { http: ['https://unichain-sepolia.drpc.org'] },
-    public: { http: ['https://unichain-sepolia.drpc.org'] },
+    default: { http: ['https://base-sepolia.drpc.org'] },
+    public: { http: ['https://base-sepolia.drpc.org'] },
   },
   blockExplorers: {
-    default: { name: 'Unichain Sepolia Blockscout', url: 'https://unichain-sepolia.blockscout.com/' },
+    default: { name: 'Basescan Sepolia', url: 'https://sepolia.basescan.org' }, // Added Basescan
   },
   testnet: true,
 });
 
-// Define supported networks using wagmi chains, including Unichain Sepolia
-export const networks = [mainnet, polygon, arbitrum, sepolia, unichainSepolia]
+export const networks = [baseSepolia] // Added baseSepolia
 
 // Create the Wagmi adapter instance.
 // The adapter internally creates a wagmi config.

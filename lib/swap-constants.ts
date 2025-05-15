@@ -1,29 +1,29 @@
 import { getAddress, parseAbi, type Address, type Hex, type Chain, type Abi } from 'viem';
 
 // --- Blockchain & Network Configuration ---
-export const CHAIN_ID = 1301; // Unichain Sepolia
-export const CHAIN_NAME = 'Unichain Sepolia';
-export const NATIVE_CURRENCY_NAME = 'Unichain Coin';
+export const CHAIN_ID = 84532; // Base Sepolia
+export const CHAIN_NAME = 'Base Sepolia';
+export const NATIVE_CURRENCY_NAME = 'Ether';
 export const NATIVE_CURRENCY_SYMBOL = 'ETH';
 export const NATIVE_CURRENCY_DECIMALS = 18;
 
 // --- Contract Addresses ---
 export const PERMIT2_ADDRESS_RAW = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
-export const UNIVERSAL_ROUTER_ADDRESS_RAW = '0xf70536b3bcc1bd1a972dc186a2cf84cc6da6be5d';
+export const UNIVERSAL_ROUTER_ADDRESS_RAW = '0x492e6456d9528771018deb9e87ef7750ef184104';
 export const PERMIT2_ADDRESS: Address = getAddress(PERMIT2_ADDRESS_RAW);
 export const UNIVERSAL_ROUTER_ADDRESS: Address = getAddress(UNIVERSAL_ROUTER_ADDRESS_RAW);
 
 // --- TOKEN DEFINITIONS ---
 export const TOKEN_DEFINITIONS = {
-    'YUSDC': {
-        addressRaw: '0x4A8595C45DCBe80Da0e0952E97E6F86a020182d7',
-        decimals: 6,
-        symbol: 'YUSDC'
-    },
     'BTCRL': {
-        addressRaw: '0x68CD619F8732B294BD23aff270ec8E0F4c22331C',
+        addressRaw: '0x13c26fb69d48ED5a72Ce3302FC795082E2427F4D',
         decimals: 8,
         symbol: 'BTCRL'
+    },
+    'YUSDC': {
+        addressRaw: '0x663cF82e49419A3Dc88EEc65c2155b4B2D0fA335',
+        decimals: 6,
+        symbol: 'YUSDC'
     }
 } as const;
 
@@ -31,9 +31,9 @@ export const TOKEN_DEFINITIONS = {
 export type TokenSymbol = keyof typeof TOKEN_DEFINITIONS;
 
 // --- V4 Pool Configuration ---
-export const V4_POOL_FEE = 3000;
+export const V4_POOL_FEE = 8388608; // Updated to match fee from Initialize event log for PoolId 0xBCC2...
 export const V4_POOL_TICK_SPACING = 60;
-export const V4_POOL_HOOKS_RAW = '0xb853E4747E3118dE8C3eD2C47F6Ce1198cF24AC0';
+export const V4_POOL_HOOKS_RAW = '0x94ba380a340E020Dc29D7883f01628caBC975000';
 export const V4_POOL_HOOKS: Address = getAddress(V4_POOL_HOOKS_RAW);
 
 // --- Timing Constants (in seconds) ---

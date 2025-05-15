@@ -22,11 +22,10 @@ import { useAccount, useBalance, useSignTypedData, useWriteContract, useWaitForT
 import { motion, AnimatePresence } from "framer-motion"
 import React from "react"
 import { switchChain } from '@wagmi/core'
-import { config, unichainSepolia } from "../lib/wagmiConfig";
+import { config, baseSepolia } from "../lib/wagmiConfig";
 import { toast } from "sonner";
 import { getAddress, parseUnits, type Address, type Hex } from "viem"
-import { http } from 'wagmi'
-import { createPublicClient } from 'viem'
+import { publicClient } from "../lib/viemClient"; // Import the correctly configured publicClient
 
 import {
   TOKEN_DEFINITIONS,
@@ -60,9 +59,9 @@ import { cn } from "@/lib/utils"
 // }
 // --- End Global Declarations ---
 
-const TARGET_CHAIN_ID = 1301; // Unichain Sepolia
-const YUSD_ADDRESS = "0x4A8595C45DCBe80Da0e0952E97E6F86a020182d7" as `0x${string}`;
-const BTCRL_ADDRESS = "0x68CD619F8732B294BD23aff270ec8E0F4c22331C" as `0x${string}`;
+const TARGET_CHAIN_ID = baseSepolia.id; // Changed from 1301 to baseSepolia.id
+const YUSD_ADDRESS = TOKEN_DEFINITIONS.YUSDC.addressRaw as Address; // UPDATED - Use YUSDC from constants
+const BTCRL_ADDRESS = TOKEN_DEFINITIONS.BTCRL.addressRaw as Address; // UPDATED - Use BTCRL from constants
 const MaxUint160 = BigInt('0xffffffffffffffffffffffffffffffffffffffff'); // 2**160 - 1
 
 // Enhanced Token interface
@@ -79,10 +78,10 @@ interface Token {
 
 // Define our two specific tokens with initial empty balance/value
 const initialYUSD: Token = {
-  address: YUSD_ADDRESS,
-  symbol: "YUSD",
-  name: "Yama USD",
-  decimals: 6,
+  address: YUSD_ADDRESS, // Will use the updated YUSD_ADDRESS
+  symbol: "YUSD", // Internal symbol, matches usage in bodyForSwapTx
+  name: "Yama USD", // Consider "Yama USDC" for clarity if TOKEN_DEFINITIONS.YUSDC.name exists
+  decimals: TOKEN_DEFINITIONS.YUSDC.decimals, // UPDATED - Use YUSDC decimals from constants
   balance: "0.000",
   value: "$0.00",
   icon: "/placeholder.svg?height=32&width=32", // Placeholder icon
@@ -90,10 +89,10 @@ const initialYUSD: Token = {
 };
 
 const initialBTCRL: Token = {
-  address: BTCRL_ADDRESS,
+  address: BTCRL_ADDRESS, // Will use the updated BTCRL_ADDRESS
   symbol: "BTCRL",
-  name: "Bitcoin RL",
-  decimals: 8,
+  name: "Bitcoin RL", // Consider TOKEN_DEFINITIONS.BTCRL.name if exists
+  decimals: TOKEN_DEFINITIONS.BTCRL.decimals, // UPDATED - Use BTCRL decimals from constants
   balance: "0.000",
   value: "$0.00",
   icon: "/placeholder.svg?height=32&width=32", // Placeholder icon
@@ -128,12 +127,6 @@ const WarningToastIcon = () => (
     <path fillRule="evenodd" clipRule="evenodd" d="M19.5 12C19.5 16.1421 16.1421 19.5 12 19.5C7.85786 19.5 4.5 16.1421 4.5 12C4.5 7.85786 7.85786 4.5 12 4.5C16.9706 4.5 19.5 7.85786 19.5 12ZM21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12ZM11.25 13.5V8.25H12.75V13.5H11.25ZM11.25 15.75V14.25H12.75V15.75H11.25Z" fill="#e94c4c"/>
   </svg>
 );
-
-// Create a public client from the chain directly
-const publicClient = createPublicClient({
-  chain: unichainSepolia,
-  transport: http(),
-});
 
 export function SwapInterface() {
   const [swapState, setSwapState] = useState<SwapState>("input")
@@ -231,7 +224,7 @@ export function SwapInterface() {
   useEffect(() => {
     if (isMounted && isConnected && currentChainId !== TARGET_CHAIN_ID && !isAttemptingSwitch) {
       const newToastId = toast("Wrong Network", {
-        description: "Please switch to Unichain Sepolia.",
+        description: "Please switch to Base Sepolia.",
         icon: <WarningToastIcon />,
         duration: 5000, 
       });
@@ -862,7 +855,7 @@ export function SwapInterface() {
 
             setSwapTxInfo({ 
                  hash: txHash as string, fromAmount, fromSymbol: fromToken.symbol, toAmount, toSymbol: toToken.symbol,
-                 explorerUrl: `https://unichain-sepolia.blockscout.com/tx/${txHash}`,
+                 explorerUrl: `${baseSepolia.blockExplorers.default.url}/tx/${txHash}`,
             });
             setSwapProgressState("waiting_confirmation");
             toast("Swap submitted", { description: "Waiting for confirmation..." });
@@ -947,7 +940,7 @@ export function SwapInterface() {
     actionButtonDisabled = true;
   } else if (isConnected) {
     if (currentChainId !== TARGET_CHAIN_ID) {
-      actionButtonText = isAttemptingSwitch ? "Switching..." : `Switch to Unichain Sepolia`; 
+      actionButtonText = isAttemptingSwitch ? "Switching..." : `Switch to Base Sepolia`; 
       actionButtonDisabled = isAttemptingSwitch;
     } else if (isLoadingCurrentFromTokenBalance || isLoadingCurrentToTokenBalance) {
       actionButtonText = "Loading Balances...";
@@ -1315,7 +1308,7 @@ export function SwapInterface() {
                 <Button 
                   variant="link" 
                   className="text-primary dark:text-white hover:text-primary/80 dark:hover:text-white/80" 
-                  onClick={() => window.open(swapTxInfo?.explorerUrl || `https://unichain-sepolia.blockscout.com/`, "_blank")}
+                  onClick={() => window.open(swapTxInfo?.explorerUrl || `https://base-sepolia.blockscout.com/`, "_blank")}
                 >
                   View on Explorer
                   <ExternalLinkIcon className="h-3 w-3 ml-1" />
