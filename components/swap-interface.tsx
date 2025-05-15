@@ -29,6 +29,7 @@ import { publicClient } from "../lib/viemClient"; // Import the correctly config
 
 import {
   TOKEN_DEFINITIONS,
+  TokenSymbol,
   PERMIT2_ADDRESS,
   UNIVERSAL_ROUTER_ADDRESS,
   UniversalRouterAbi,
@@ -46,17 +47,17 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 
-// --- Moved Global Declarations to Top ---
-// declare global {
-//   namespace JSX {
-//     interface IntrinsicElements {
-//       'appkit-button': React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement>;
-//     }
-//   }
-//   interface Window {
-//       swapBuildData?: any; 
-//   }
-// }
+// --- Global Declarations MUST be at the top-level module scope ---
+declare global {
+  namespace JSX {
+    interface IntrinsicElements {
+      'appkit-button': React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement>;
+    }
+  }
+  interface Window {
+      swapBuildData?: any; 
+  }
+}
 // --- End Global Declarations ---
 
 const TARGET_CHAIN_ID = baseSepolia.id; // Changed from 1301 to baseSepolia.id
@@ -152,15 +153,10 @@ export function SwapInterface() {
     fromTokenValue: "$0.00",
     toTokenAmount: "0", 
     toTokenValue: "$0.00",
-    // Original fee/slippage structure, to be zeroed out or placeholders
-    priceImpact: "0.00%",
-    minimumReceived: "0.00",
     fees: [
-      { name: "Protocol", value: "0.00%" },
-      { name: "LP", value: "0.00%" },
-      { name: "Network", value: "0.00%" },
+      { name: "Fee", value: "0.00%" }, 
     ],
-    slippage: "0%",
+    slippage: "0.5%", 
   });
 
   const swapTimerRef = useRef<number | null>(null)
@@ -181,6 +177,14 @@ export function SwapInterface() {
      signature_complete: false 
      // NO permit_check_triggered flag needed here
   });
+
+  // Add state for dynamic fee
+  const [dynamicFeeBps, setDynamicFeeBps] = useState<number | null>(null);
+  const [dynamicFeeLoading, setDynamicFeeLoading] = useState<boolean>(false);
+  const [dynamicFeeError, setDynamicFeeError] = useState<string | null>(null);
+  const isFetchingDynamicFeeRef = useRef(false);
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const intervalTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Add necessary hooks for swap execution
   const { signTypedDataAsync } = useSignTypedData()
@@ -400,27 +404,51 @@ export function SwapInterface() {
     const fromValue = parseFloat(fromAmount);
     if (!isNaN(fromValue) && fromValue > 0 && fromToken.usdPrice > 0 && toToken.usdPrice > 0) {
       const calculatedTo = (fromValue * fromToken.usdPrice) / toToken.usdPrice;
-      setToAmount(calculatedTo.toFixed(toToken.decimals)); // Format to target token's decimals
+      setToAmount(calculatedTo.toFixed(toToken.decimals));
     } else {
-      setToAmount(""); // Clear toAmount if fromAmount is invalid or zero
+      setToAmount("");
     }
-  }, [fromAmount, fromToken.usdPrice, toToken.usdPrice, toToken.decimals]);
+  }, [fromAmount, fromToken, toToken]);
 
   // Update calculatedValues for UI display
   useEffect(() => {
     const fromValueNum = parseFloat(fromAmount);
-    const toValueNum = parseFloat(toAmount);
+    const showFeeDetails = fromValueNum > 0;
+
+    let feeValueString = "0.00%";
+
+    if (showFeeDetails && isConnected && currentChainId === TARGET_CHAIN_ID) {
+      if (dynamicFeeLoading) {
+        if (dynamicFeeBps !== null) { 
+          feeValueString = `${(dynamicFeeBps / 10000).toFixed(2)}% ( refreshing...)`;
+        } else { 
+          feeValueString = "Fetching fee...";
+        }
+      } else if (dynamicFeeError) {
+        feeValueString = "Fee N/A";
+      } else if (dynamicFeeBps !== null) {
+        feeValueString = `${(dynamicFeeBps / 10000).toFixed(2)}%`;
+      } else { 
+        feeValueString = "N/A"; 
+      }
+    } else if (showFeeDetails) { 
+      feeValueString = "N/A";
+    } 
+    
+    const updatedFeesArray = [
+      { name: "Fee", value: feeValueString } // No shimmer property
+    ];
 
     const newFromTokenValue = (!isNaN(fromValueNum) && fromValueNum >= 0 && fromToken.usdPrice)
                               ? (fromValueNum * fromToken.usdPrice)
                               : 0;
-                              
+    const toValueNum = parseFloat(toAmount);
     const newToTokenValue = (!isNaN(toValueNum) && toValueNum >= 0 && toToken.usdPrice)
                             ? (toValueNum * toToken.usdPrice)
                             : 0;
     
-    // For fee display - if fromAmount is 0, show 0 or placeholders, otherwise keep original structure but with 0 values.
-    const showFeeDetails = fromValueNum > 0;
+    const currentToAmount = parseFloat(toAmount) || 0;
+    const minimumReceivedDisplay = showFeeDetails ? formatTokenAmount(currentToAmount.toString(), toToken.decimals) : "0.00";
 
     setCalculatedValues(prev => ({
       ...prev,
@@ -428,14 +456,11 @@ export function SwapInterface() {
       fromTokenValue: formatCurrency(newFromTokenValue.toString()),
       toTokenAmount: formatTokenAmount(toAmount, toToken.decimals),
       toTokenValue: formatCurrency(newToTokenValue.toString()),
-      // Show 0 for these if not calculating real swap, or hide them via conditional render later
-      priceImpact: showFeeDetails ? prev.priceImpact : "0.00%", 
-      minimumReceived: showFeeDetails ? formatTokenAmount(toAmount, toToken.decimals) : "0.00", // Or some other placeholder
-      fees: showFeeDetails ? prev.fees.map(f => ({...f, value: "0.00%"})) : prev.fees.map(f => ({...f, value: "0.00%"})), // Placeholder fees
-      slippage: showFeeDetails ? prev.slippage : "0%",
+      fees: updatedFeesArray, 
+      slippage: prev.slippage, 
     }));
 
-  }, [fromAmount, toAmount, fromToken, toToken, formatTokenAmount]);
+  }, [fromAmount, toAmount, fromToken, toToken, formatTokenAmount, isConnected, currentChainId, dynamicFeeLoading, dynamicFeeError, dynamicFeeBps]);
 
   const handleFromAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
@@ -803,7 +828,38 @@ export function SwapInterface() {
             // --- End Sanity Check ---
 
             setSwapProgressState("building_tx");
-            toast("Building swap transaction...");
+            toast("Fetching dynamic fee & building swap transaction..."); // Updated toast
+
+            // >>> FETCH DYNAMIC FEE FIRST <<<
+            let fetchedDynamicFee: number | null = null;
+            try {
+                const feeResponse = await fetch('/api/swap/get-dynamic-fee', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        fromTokenSymbol: Object.keys(TOKEN_DEFINITIONS).find(key => TOKEN_DEFINITIONS[key as TokenSymbol].addressRaw === fromToken.address),
+                        toTokenSymbol: Object.keys(TOKEN_DEFINITIONS).find(key => TOKEN_DEFINITIONS[key as TokenSymbol].addressRaw === toToken.address),
+                        chainId: TARGET_CHAIN_ID,
+                    }),
+                });
+                const feeData = await feeResponse.json();
+                if (!feeResponse.ok) {
+                    throw new Error(feeData.message || feeData.errorDetails || 'Failed to fetch dynamic fee');
+                }
+                fetchedDynamicFee = Number(feeData.dynamicFee);
+                if (isNaN(fetchedDynamicFee)) {
+                    throw new Error('Dynamic fee received is not a number: ' + feeData.dynamicFee);
+                }
+                console.log("[handleConfirmSwap] Dynamic fee fetched:", fetchedDynamicFee);
+
+            } catch (feeError: any) {
+                console.error("[handleConfirmSwap] Error fetching dynamic fee:", feeError);
+                toast.error("Could not fetch swap fee. Please try again.");
+                setIsSwapping(false);
+                setSwapProgressState("error"); // Or back to "ready_to_swap" to allow retry
+                return;
+            }
+            // >>> END FETCH DYNAMIC FEE <<<
 
             const effectiveTimestamp = BigInt(Math.floor(Date.now() / 1000));
             const effectiveFallbackSigDeadline = effectiveTimestamp + BigInt(30 * 60); // 30 min fallback
@@ -823,6 +879,7 @@ export function SwapInterface() {
                  permitExpiration: permitDetailsToUse.permitExpiration, 
                  permitSigDeadline: permitDetailsToUse.sigDeadline ? permitDetailsToUse.sigDeadline.toString() : effectiveFallbackSigDeadline.toString(),
                  chainId: currentChainId,
+                 dynamicSwapFee: fetchedDynamicFee, // <<< PASS THE FETCHED FEE
             };
 
             // --- Call Build TX API ---
@@ -1045,11 +1102,127 @@ export function SwapInterface() {
 
   const currentPercentage = selectedPercentageIndex === -1 ? 0 : cyclePercentages[selectedPercentageIndex];
 
+  // --- Dynamic Fee Fetching Logic ---
+  const fetchDynamicFeeCallback = useCallback(async () => {
+    if (isFetchingDynamicFeeRef.current) return; // Prevent concurrent fetches
+
+    const currentFromToken = fromToken; // Capture current state for the async function
+    const currentToToken = toToken;
+    const currentFromAmount = fromAmount;
+
+    const fromAmountNum = parseFloat(currentFromAmount);
+    const validAmount = !isNaN(fromAmountNum) && fromAmountNum > 0;
+    const tokensSelected = currentFromToken.address && currentToToken.address && currentFromToken.address !== currentToToken.address;
+    const canFetch = isConnected && currentChainId === TARGET_CHAIN_ID && accountAddress && validAmount && tokensSelected;
+
+    if (!canFetch) {
+      setDynamicFeeBps(null); // Clear fee if conditions aren't met
+      setDynamicFeeLoading(false);
+      // setDynamicFeeError("Cannot fetch fee: Invalid input or network."); // Optional: set error
+      return;
+    }
+
+    console.log("[fetchDynamicFeeCallback] Attempting to fetch dynamic fee...");
+    isFetchingDynamicFeeRef.current = true;
+    setDynamicFeeLoading(true);
+    setDynamicFeeError(null);
+
+    try {
+      const fromTokenSymbol = Object.keys(TOKEN_DEFINITIONS).find(key => TOKEN_DEFINITIONS[key as TokenSymbol].addressRaw === currentFromToken.address) as TokenSymbol | undefined;
+      const toTokenSymbol = Object.keys(TOKEN_DEFINITIONS).find(key => TOKEN_DEFINITIONS[key as TokenSymbol].addressRaw === currentToToken.address) as TokenSymbol | undefined;
+
+      if (!fromTokenSymbol || !toTokenSymbol) {
+        throw new Error("Could not determine token symbols for fee fetching.");
+      }
+
+      const response = await fetch('/api/swap/get-dynamic-fee', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fromTokenSymbol,
+          toTokenSymbol,
+          chainId: TARGET_CHAIN_ID,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.message || data.errorDetails || 'Failed to fetch dynamic fee');
+      }
+      const fee = Number(data.dynamicFee);
+      if (isNaN(fee)) {
+        throw new Error('Dynamic fee received is not a number: ' + data.dynamicFee);
+      }
+      setDynamicFeeBps(fee);
+      console.log("[fetchDynamicFeeCallback] Dynamic fee fetched (bps):", fee);
+    } catch (error: any) {
+      console.error("[fetchDynamicFeeCallback] Error fetching dynamic fee:", error);
+      setDynamicFeeError(error.message || "Failed to load fee");
+      setDynamicFeeBps(null);
+    } finally {
+      setDynamicFeeLoading(false);
+      isFetchingDynamicFeeRef.current = false;
+    }
+  }, [fromToken, toToken, fromAmount, isConnected, currentChainId, accountAddress, TARGET_CHAIN_ID]);
+
+  // Effect for debounced fetch on amount/token change
+  useEffect(() => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+
+    const fromAmountNum = parseFloat(fromAmount);
+    const isValidAmount = !isNaN(fromAmountNum) && fromAmountNum > 0;
+    const areTokensSelected = fromToken.address && toToken.address && fromToken.address !== toToken.address;
+    
+    if (isValidAmount && areTokensSelected && isConnected && currentChainId === TARGET_CHAIN_ID) {
+      debounceTimerRef.current = setTimeout(() => {
+        fetchDynamicFeeCallback();
+      }, 250); // Reduced debounce to 250ms
+    } else {
+      // If conditions are not met, clear any pending fee and hide loading/error
+      setDynamicFeeBps(null);
+      setDynamicFeeLoading(false);
+      setDynamicFeeError(null);
+    }
+
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+    };
+  }, [fromAmount, fromToken, toToken, isConnected, currentChainId, fetchDynamicFeeCallback]);
+
+  // Effect for periodic refresh
+  useEffect(() => {
+    if (intervalTimerRef.current) {
+      clearInterval(intervalTimerRef.current);
+    }
+
+    const fromAmountNum = parseFloat(fromAmount);
+    const isValidAmount = !isNaN(fromAmountNum) && fromAmountNum > 0;
+    const areTokensSelected = fromToken.address && toToken.address && fromToken.address !== toToken.address;
+
+    if (isValidAmount && areTokensSelected && isConnected && currentChainId === TARGET_CHAIN_ID) {
+      intervalTimerRef.current = setInterval(() => {
+        if (!isFetchingDynamicFeeRef.current && !dynamicFeeLoading) { // Check dynamicFeeLoading as well
+          console.log("[Interval] Triggering periodic fee refresh.");
+          fetchDynamicFeeCallback();
+        }
+      }, 30000); // 30 seconds
+    }
+
+    return () => {
+      if (intervalTimerRef.current) {
+        clearInterval(intervalTimerRef.current);
+      }
+    };
+  }, [fromAmount, fromToken, toToken, isConnected, currentChainId, dynamicFeeLoading, fetchDynamicFeeCallback]);
+
   return (
     <Card className="mx-auto max-w-md">
       {/* <CardHeader className="pt-6 pb-2">
           <CardTitle className="text-center">Swap Tokens</CardTitle>
-      </CardHeader> */}
+      </CardHeader> */} 
       <CardContent className="p-6 pt-6">
         <AnimatePresence mode="wait">
           {swapState === "input" && (
@@ -1128,19 +1301,13 @@ export function SwapInterface() {
               </div>
 
               {/* Fee Information - Conditionally Rendered or shows placeholders */}
-              {(parseFloat(fromAmount || "0") > 0 || calculatedValues.priceImpact !== "0.00%") && (
+              {(parseFloat(fromAmount || "0") > 0) && (
                 <div className="space-y-3 text-sm">
                   <div className="flex items-center justify-between">
-                    <span>Fees</span>
-                    <span>{calculatedValues.fees.reduce((sum, fee) => sum + parseFloat(fee.value.replace('%','')),0).toFixed(2)}%</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span>Price Impact</span>
-                    <span>{calculatedValues.priceImpact}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span>Minimum Received</span>
-                    <span>{calculatedValues.minimumReceived} {displayToToken.symbol}</span>
+                    <span>Fee</span> 
+                    <span>
+                      {calculatedValues.fees.length > 0 ? calculatedValues.fees[0].value : '0.00%'}
+                    </span>
                   </div>
                 </div>
               )}

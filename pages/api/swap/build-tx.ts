@@ -256,7 +256,6 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
         const actualLimitAmount = parseUnits(limitAmountDecimalsStr, OUTPUT_TOKEN.decimals); // Assuming ExactIn for limit parsing
 
         // Optional: Add a check here if needed, comparing actualSwapAmount to parsedPermitAmount if that was intended
-        // console.log("Debug: Actual swap amount:", actualSwapAmount, "Permitted amount from request:", parsedPermitAmount)
 
         if (swapType === 'ExactIn') {
             amountInSmallestUnits = actualSwapAmount; // Use the actual amount for the swap
