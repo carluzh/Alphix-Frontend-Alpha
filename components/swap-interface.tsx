@@ -318,6 +318,95 @@ export function SwapInterface() {
   const wrongNetworkToastIdRef = useRef<string | number | undefined>(undefined);
   const [isWrongNetworkToastActive, setIsWrongNetworkToastActive] = useState(false);
 
+  // Effect to fetch dynamic fee for display
+  useEffect(() => {
+    const fetchFee = async () => {
+      if (
+        !isConnected ||
+        currentChainId !== TARGET_CHAIN_ID ||
+        parseFloat(fromAmount || "0") <= 0 ||
+        !fromToken ||
+        !toToken
+      ) {
+        setDynamicFeeBps(null);
+        setDynamicFeeLoading(false);
+        setDynamicFeeError(null);
+        return;
+      }
+
+      // Prevent multiple fetches if one is already in progress
+      if (isFetchingDynamicFeeRef.current) return;
+
+      isFetchingDynamicFeeRef.current = true;
+      setDynamicFeeLoading(true);
+      setDynamicFeeError(null);
+      // console.log("[useEffect Fee] Attempting to fetch dynamic fee...");
+
+      try {
+        const fromTokenSymbol = Object.keys(TOKEN_DEFINITIONS).find(
+          (key) => TOKEN_DEFINITIONS[key as TokenSymbol].addressRaw === fromToken.address
+        );
+        const toTokenSymbol = Object.keys(TOKEN_DEFINITIONS).find(
+          (key) => TOKEN_DEFINITIONS[key as TokenSymbol].addressRaw === toToken.address
+        );
+
+        if (!fromTokenSymbol || !toTokenSymbol) {
+          throw new Error("Could not determine token symbols for fee fetching.");
+        }
+
+        const response = await fetch('/api/swap/get-dynamic-fee', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fromTokenSymbol,
+            toTokenSymbol,
+            chainId: TARGET_CHAIN_ID,
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.message || data.errorDetails || 'Failed to fetch dynamic fee');
+        }
+        const fee = Number(data.dynamicFee);
+        if (isNaN(fee)) {
+          throw new Error('Dynamic fee received is not a number: ' + data.dynamicFee);
+        }
+        // console.log("[useEffect Fee] Dynamic fee fetched:", fee);
+        setDynamicFeeBps(fee);
+        setDynamicFeeLoading(false);
+      } catch (error: any) {
+        console.error("[useEffect Fee] Error fetching dynamic fee:", error.message);
+        setDynamicFeeBps(null);
+        setDynamicFeeLoading(false);
+        setDynamicFeeError(error.message || "Error fetching fee.");
+      } finally {
+        isFetchingDynamicFeeRef.current = false;
+      }
+    };
+
+    // Clear previous debounce timer
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+
+    // Set a new debounce timer
+    debounceTimerRef.current = setTimeout(() => {
+      fetchFee();
+    }, 500); // 500ms debounce
+
+    // Cleanup debounce timer on component unmount or when dependencies change
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+      // Clear interval timer if it's still running (though it's primarily for a different feature)
+      if (intervalTimerRef.current) {
+        clearInterval(intervalTimerRef.current);
+      }
+      isFetchingDynamicFeeRef.current = false; // Reset ref on cleanup
+    };
+  }, [fromToken, toToken, fromAmount, currentChainId, isConnected, TARGET_CHAIN_ID]); // Dependencies
+
   // First, create a completely new function for the Change button
   const handleChangeButton = () => {
     // Force a full state reset by unmounting and remounting
