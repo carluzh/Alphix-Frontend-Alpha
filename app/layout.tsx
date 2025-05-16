@@ -7,6 +7,7 @@ import { cookieToInitialState } from 'wagmi'
 import { headers } from 'next/headers'
 import { ThemeProvider } from "@/components/theme-provider"
 import { Toaster } from "@/components/ui/sonner"
+import type { Metadata } from 'next'
 
 // Load Inter font
 const inter = Inter({
@@ -15,10 +16,15 @@ const inter = Inter({
   variable: "--font-inter",
 })
 
-export const metadata = {
-  title: "Dashboard",
-  description: "Dashboard application",
-    generator: 'v0.dev'
+export const metadata: Metadata = {
+  title: {
+    default: 'Alphix',
+    template: 'Alphix | %s',
+  },
+  description: 'Alphix: Unifying Liquidity on Base. Enhancing DeFi capital efficiency with our dynamic fee hook. Built on Uniswap V4 for security and optimal performance. Explore Unified Pools today!',
+  icons: {
+    icon: '/Tab.png', 
+  },
 }
 
 // Make the layout component async to await headers

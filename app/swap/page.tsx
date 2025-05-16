@@ -4,10 +4,7 @@ import { ScrollRevealTransactions } from "@/components/scroll-reveal-transaction
 import type { Metadata } from 'next'
 
 export const metadata: Metadata = {
-  title: 'Alphix | Swap',
-  icons: {
-    icon: '/Tab.png',
-  },
+  title: 'Swap',
 }
 
 export default function Page() {
