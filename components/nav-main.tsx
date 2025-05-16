@@ -42,7 +42,7 @@ export function NavMain({
       {items.map((item) => {
         const isActive = item.url === pathname;
         const showDot = isActive && item.title !== "Swap";
-        const dotColor = "bg-foreground/70";
+        const dotColor = "bg-white";
 
         return (
           <SidebarMenuItem key={item.title} className="list-none">
@@ -55,7 +55,10 @@ export function NavMain({
                 {item.icon && <item.icon />}
                 <span className="flex-1 truncate">{item.title}</span>
                 {lockedItem === item.title && (
-                  <CustomLockIcon className="h-6 w-6 flex-shrink-0 text-muted-foreground" />
+                  <span className="flex items-center">
+                    <CustomLockIcon className="h-4 w-4 flex-shrink-0 text-muted-foreground mr-0.5" />
+                    <span className="text-[10px] text-muted-foreground">Soon</span>
+                  </span>
                 )}
               </SidebarMenuButton>
             ) : item.title === "Swap" ? (
@@ -74,7 +77,7 @@ export function NavMain({
                 <a href={item.url!} className="flex items-center w-full">
                   {item.icon && <item.icon />}
                   <span className="flex-1 truncate">{item.title}</span>
-                  {showDot && <div className={`h-[6px] w-[6px] rounded-full ${dotColor} mr-1 flex-shrink-0`}></div>}
+                  {showDot && <div className={`h-[5px] w-[5px] rounded-full ${dotColor} mr-1 flex-shrink-0`}></div>}
                 </a>
               </SidebarMenuButton>
             )}

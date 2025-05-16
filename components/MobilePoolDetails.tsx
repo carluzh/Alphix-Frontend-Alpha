@@ -41,7 +41,7 @@ export function MobilePoolDetails({ pool, onBack }: MobilePoolDetailsProps) {
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
               <CardTitle className="text-lg font-medium">{pool.pair || 'Pool Details'}</CardTitle>
-              <Badge variant="outline" className="bg-emerald-500/20 text-emerald-400 border-emerald-700/30">
+              <Badge variant="outline" className="bg-[#e85102]/20 text-[#e85102] border-[#e85102]/30">
                 {pool.apr}
               </Badge>
             </div>

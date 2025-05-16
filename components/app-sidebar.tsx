@@ -5,17 +5,22 @@ import {
   BarChartIcon,
   ClipboardListIcon,
   HelpCircleIcon,
-  LayoutDashboardIcon,
   LockIcon,
   SettingsIcon,
   TrendingUpIcon,
   ArrowRightLeftIcon,
   LayersIcon,
+  GiftIcon,
+  BriefcaseIcon,
+  TrophyIcon,
+  ChartPieIcon,
+  AwardIcon,
+  KeySquareIcon,
 } from "lucide-react"
 import { ReactSVG } from "react-svg"
-import { NavDisabledItems } from "./nav-governance"
 import { NavMain } from "./nav-main"
 import { NavSecondary } from "./nav-secondary"
+import { NavGovernance } from "./nav-governance"
 import { AccountStatus } from "./AccountStatus"
 import {
   Sidebar,
@@ -42,18 +47,33 @@ const data = {
       icon: ArrowRightLeftIcon,
     },
     {
-      title: "Dashboard",
-      icon: LayoutDashboardIcon,
-      disabled: true,
-    },
-    {
       title: "Liquidity",
       url: "/liquidity",
       icon: LayersIcon,
     },
     {
-      title: "Analytics",
-      icon: BarChartIcon,
+      title: "Portfolio",
+      icon: ChartPieIcon,
+      disabled: true,
+    },
+  ],
+  navGovernance: [
+    {
+      title: "Leaderboard",
+      icon: AwardIcon,
+      url: "#",
+      disabled: true,
+    },
+    {
+      title: "Vote",
+      icon: ClipboardListIcon,
+      url: "#",
+      disabled: true,
+    },
+    {
+      title: "Lock",
+      icon: KeySquareIcon,
+      url: "#",
       disabled: true,
     },
   ],
@@ -67,6 +87,7 @@ const data = {
       title: "Documentation",
       url: "#",
       icon: HelpCircleIcon,
+      disabled: true,
     },
   ],
 }
@@ -100,6 +121,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       </SidebarHeader>
       <SidebarContent>
         <NavMain items={data.navMain} />
+        <NavGovernance items={data.navGovernance} className="mt-4" />
         <NavSecondary items={data.navSecondary} className="mt-auto" />
       </SidebarContent>
       <SidebarFooter className="p-2">

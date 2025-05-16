@@ -67,8 +67,8 @@ const pools: Pool[] = [
   {
     id: "yusd-btcrl",
     tokens: [
-      { symbol: "YUSD", icon: "/placeholder.svg?height=32&width=32" },
-      { symbol: "BTCRL", icon: "/placeholder.svg?height=32&width=32" }
+      { symbol: "YUSD", icon: "/YUSD.png" },
+      { symbol: "BTCRL", icon: "/BTCRL.png" }
     ],
     pair: "YUSD / BTCRL",
     volume24h: "$432,187",
@@ -164,7 +164,7 @@ export default function LiquidityPage() {
       header: () => <div className="text-right w-full">APR</div>,
       cell: ({ row }) => (
         <div className="text-right">
-          <Badge variant="outline" className="bg-emerald-500/20 text-emerald-400 border-emerald-700/30">
+          <Badge variant="outline" className="bg-[#e85102]/20 text-[#e85102] border-[#e85102]/30">
             {row.original.apr}
           </Badge>
         </div>

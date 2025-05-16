@@ -27,6 +27,8 @@ import {
   WalletIcon,
   MinusIcon,
   CoinsIcon,
+  InfoIcon,
+  XIcon,
 } from "lucide-react"
 import Image from "next/image"
 import { useAccount, useBalance, useSignTypedData, useWriteContract, useWaitForTransactionReceipt } from "wagmi"
@@ -37,6 +39,7 @@ import { config, baseSepolia } from "../lib/wagmiConfig";
 import { toast } from "sonner";
 import { getAddress, parseUnits, type Address, type Hex } from "viem"
 import { publicClient } from "../lib/viemClient"; // Import the correctly configured publicClient
+import { useIsMobile } from "@/hooks/use-is-mobile"; // Re-added import
 
 import {
   TOKEN_DEFINITIONS,
@@ -57,6 +60,23 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
+
+// Modal Imports
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from "@/components/ui/dialog";
+
+// Chart Import
+import { DynamicFeeChart, generateMockFeeHistory } from "./dynamic-fee-chart";
+import { DynamicFeeChartPreview } from "./dynamic-fee-chart-preview"; // Import the new preview component
+import { PulsatingDot } from "./pulsating-dot"; // Import the new PulsatingDot component
+
+// Define FeeHistoryPoint interface if not already defined/imported (it's defined in dynamic-fee-chart.tsx but not exported from there for direct use here yet)
+// For now, let's assume we can use 'any' or define a local version for the state type if direct import is an issue.
+interface FeeHistoryPoint {
+  timeLabel: string;
+  volumeTvlRatio: number;
+  emaRatio: number;
+  dynamicFee: number;
+}
 
 const TARGET_CHAIN_ID = baseSepolia.id; // Changed from 1301 to baseSepolia.id
 const YUSD_ADDRESS = TOKEN_DEFINITIONS.YUSDC.addressRaw as Address; // UPDATED - Use YUSDC from constants
@@ -83,7 +103,7 @@ const initialYUSD: Token = {
   decimals: TOKEN_DEFINITIONS.YUSDC.decimals, // UPDATED - Use YUSDC decimals from constants
   balance: "0.000",
   value: "$0.00",
-  icon: "/placeholder.svg?height=32&width=32", // Placeholder icon
+  icon: "/YUSD.png", // Placeholder icon
   usdPrice: 1,
 };
 
@@ -94,7 +114,7 @@ const initialBTCRL: Token = {
   decimals: TOKEN_DEFINITIONS.BTCRL.decimals, // UPDATED - Use BTCRL decimals from constants
   balance: "0.000",
   value: "$0.00",
-  icon: "/placeholder.svg?height=32&width=32", // Placeholder icon
+  icon: "/BTCRL.png", // Placeholder icon
   usdPrice: 77000,
 };
 
@@ -275,11 +295,17 @@ function OutlineArcIcon({ actualPercentage, steppedPercentage, hoverPercentage, 
 }
 
 export function SwapInterface() {
+  const isMobile = useIsMobile(); // Re-added hook usage
   const [swapState, setSwapState] = useState<SwapState>("input")
   // Add new states for real swap execution
   const [swapProgressState, setSwapProgressState] = useState<SwapProgressState>("init")
   const [swapTxInfo, setSwapTxInfo] = useState<SwapTxInfo | null>(null)
   const [swapError, setSwapError] = useState<string | null>(null)
+
+  // State for historical fee data
+  const [feeHistoryData, setFeeHistoryData] = useState<FeeHistoryPoint[]>([]);
+  const [isFeeChartPreviewVisible, setIsFeeChartPreviewVisible] = useState(false); // Renamed for clarity
+  const [isFeeChartModalOpen, setIsFeeChartModalOpen] = useState(false); // New state for modal
 
   const [currentPermitDetailsForSign, setCurrentPermitDetailsForSign] = useState<any | null>(null);
   const [obtainedSignature, setObtainedSignature] = useState<Hex | null>(null);
@@ -321,6 +347,13 @@ export function SwapInterface() {
   const [isSellInputFocused, setIsSellInputFocused] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
   useEffect(() => { setIsMounted(true); }, []);
+
+  // Effect to generate mock fee history data once on mount
+  useEffect(() => {
+    if (isMounted) { // Ensure it runs client-side
+      setFeeHistoryData(generateMockFeeHistory());
+    }
+  }, [isMounted]);
 
   // Ref to track if review state notifications have been shown
   const reviewNotificationsShown = useRef({
@@ -650,18 +683,18 @@ export function SwapInterface() {
     if (isConnected && currentChainId === TARGET_CHAIN_ID) {
       if (dynamicFeeLoading) {
         if (dynamicFeeBps !== null) {
-          feePercentageString = `${(dynamicFeeBps / 10000).toFixed(2)}% ( refreshing...)${''}`;
+          // If loading but a previous fee exists, just show the previous fee statically.
+          feePercentageString = `${(dynamicFeeBps / 10000).toFixed(2)}%`;
         } else {
+          // If loading and no previous fee (initial load), show "Fetching fee..."
           feePercentageString = "Fetching fee...";
         }
       } else if (dynamicFeeError) {
         feePercentageString = "Fee N/A";
-      } else if (dynamicFeeBps !== null && fromValueNum > 0) { // Only show actual fee % if amount is entered
+      } else if (dynamicFeeBps !== null) { // Covers amount > 0 and amount === 0 cases if fee is available
         feePercentageString = `${(dynamicFeeBps / 10000).toFixed(2)}%`;
-      } else if (dynamicFeeBps !== null && fromValueNum === 0) { // If fee is fetched but amount is 0, show potential rate
-        feePercentageString = `${(dynamicFeeBps / 10000).toFixed(2)}%`; 
       } else {
-        // If connected, on target chain, but dynamicFeeBps is null (e.g. initial load before any amount or fee fetch)
+        // If not loading, no error, but dynamicFeeBps is null (e.g. initial state before any fetch attempt)
         feePercentageString = "N/A";
       }
     } else {
@@ -1222,6 +1255,24 @@ export function SwapInterface() {
     }
   };
 
+  // This function now toggles the PREVIEW
+  const handleFeePercentageClick = () => {
+    setIsFeeChartPreviewVisible(!isFeeChartPreviewVisible);
+  };
+
+  // This function opens the MODAL
+  const handlePreviewChartClick = () => {
+    if (isMobile) {
+      toast("Not available on mobile (Alpha)", { 
+        duration: 4000
+        // If you have a specific InfoIcon component for sonner, you can add it here
+        // e.g., icon: <InfoIcon />
+      });
+    } else {
+      setIsFeeChartModalOpen(true);
+    }
+  };
+
   // --- RENDER LOGIC --- 
   // Determine which token is YUSD and which is BTCRL for display purposes, regardless of from/to state
   const displayFromToken = fromToken; // This is what's in the 'Sell' slot
@@ -1230,8 +1281,8 @@ export function SwapInterface() {
   // isLoading for balances
   const isLoadingCurrentFromTokenBalance = fromToken.address === YUSD_ADDRESS ? isLoadingYUSDBalance : isLoadingBTCRLBalance;
   const isLoadingCurrentToTokenBalance = toToken.address === YUSD_ADDRESS ? isLoadingYUSDBalance : isLoadingBTCRLBalance;
-
-  // Action button text logic
+  
+  // Action button text logic - RESTORED
   let actionButtonText = "Connect Wallet";
   let actionButtonDisabled = false;
 
@@ -1247,7 +1298,8 @@ export function SwapInterface() {
       actionButtonDisabled = true;
     } else {
       actionButtonText = "Swap";
-      actionButtonDisabled = parseFloat(fromAmount || "0") <= 0; 
+      // Ensure fromAmount is treated as a number for comparison, default to 0 if undefined/empty
+      actionButtonDisabled = parseFloat(fromAmount || "0") <= 0;
     }
   } else {
     // Wallet not connected, button should show "Connect Wallet"
@@ -1255,7 +1307,8 @@ export function SwapInterface() {
     actionButtonText = "Connect Wallet"; 
     actionButtonDisabled = false; // <appkit-button> handles its own state
   }
-  
+  // END RESTORED BLOCK
+
   const userIsOnTargetChain = isConnected && currentChainId === TARGET_CHAIN_ID;
 
   // Add a new helper function to render the step indicator
@@ -1378,307 +1431,333 @@ export function SwapInterface() {
   };
 
   return (
-    <Card className="mx-auto max-w-md card-gradient">
-      {/* <CardHeader className="pt-6 pb-2">
-          <CardTitle className="text-center">Swap Tokens</CardTitle>
-      </CardHeader> */} 
-      <CardContent className="p-6 pt-6">
-        <AnimatePresence mode="wait">
-          {swapState === "input" && (
-            <motion.div key="input" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, y: -20 }} transition={{ duration: 0.2 }}>
-              {/* Sell Section - Uses `displayFromToken` */}
-              <div className="mb-6">
-                <div className="flex items-center justify-between mb-2">
-                  <Label className="text-sm font-medium">Sell</Label>
-                  <div className="flex items-center gap-1">
-                    <Button variant="ghost" className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent" onClick={() => handleUseFullBalance(displayFromToken, true)} disabled={!isConnected}>
-                       Balance: { (isConnected ? (isLoadingCurrentFromTokenBalance ? "Loading..." : displayFromToken.balance) : "~")} {displayFromToken.symbol}
-                    </Button>
-                    <Button 
-                      variant="ghost" 
-                      size="icon" 
-                      className="h-5 w-5 rounded-full hover:bg-muted/40" 
-                      onClick={handleCyclePercentage} 
-                      onMouseEnter={handleMouseEnterArc}
-                      onMouseLeave={handleMouseLeaveArc}
-                      disabled={!isConnected}
-                    >
-                      <OutlineArcIcon 
-                        actualPercentage={actualNumericPercentage} // Pass potentially unclamped value
-                        steppedPercentage={currentSteppedPercentage}
-                        hoverPercentage={hoveredArcPercentage}
-                        isOverLimit={actualNumericPercentage > 100} // ADDED prop
-                        className="h-4 w-4" 
-                        size={16}
-                      />
-                    </Button>
-                  </div>
-                </div>
-                <div className={cn("rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted", { "outline outline-1 outline-muted": isSellInputFocused })}> {/* Corrected cn usage */}
-                  <div className="flex items-center gap-2">
-                    {/* Token Display for FromToken - Non-interactive, shows current fromToken */}
-                    <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
-                      <div className="flex items-center justify-center h-5 w-5 rounded-full bg-zinc-700">
-                        <Image src={displayFromToken.icon} alt={displayFromToken.symbol} width={10} height={10} className="rounded-full"/> 
-                      </div>
-                      <span className="text-sm">{displayFromToken.symbol}</span>
-                       {/* No ChevronDownIcon, as it's not a dropdown for selection now */}
-                    </div>
-                    <div className="flex-1">
-                      {/* Sell input is now enabled if wallet is connected */}
-                      <Input 
-                        value={fromAmount} 
-                        onChange={handleFromAmountChange} 
-                        onFocus={() => setIsSellInputFocused(true)} 
-                        onBlur={() => setIsSellInputFocused(false)} 
-                        className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto input-enhanced" 
-                        placeholder="0" 
-                        disabled={!isConnected || isAttemptingSwitch} 
-                      />
-                      <div className="text-right text-xs text-muted-foreground">{formatCurrency((parseFloat(fromAmount || "0") * displayFromToken.usdPrice).toString())}</div>
+    <div className="flex flex-col gap-4"> {/* Removed items-center */}
+      {/* Main Swap Interface Card */}
+      <Card className="w-full max-w-md card-gradient z-10 mx-auto"> {/* Added mx-auto */}
+        {/* <CardHeader className="pt-6 pb-2">
+            <CardTitle className="text-center">Swap Tokens</CardTitle>
+        </CardHeader> */}
+        <CardContent className="p-6 pt-6">
+          <AnimatePresence mode="wait">
+            {swapState === "input" && (
+              <motion.div key="input" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, y: -20 }} transition={{ duration: 0.2 }}>
+                {/* Sell Section - Uses `displayFromToken` */}
+                <div className="mb-6">
+                  <div className="flex items-center justify-between mb-2">
+                    <Label className="text-sm font-medium">Sell</Label>
+                    <div className="flex items-center gap-1">
+                      <Button variant="ghost" className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent" onClick={() => handleUseFullBalance(displayFromToken, true)} disabled={!isConnected}>
+                         Balance: { (isConnected ? (isLoadingCurrentFromTokenBalance ? "Loading..." : displayFromToken.balance) : "~")} {displayFromToken.symbol}
+                      </Button>
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className="h-5 w-5 rounded-full hover:bg-muted/40" 
+                        onClick={handleCyclePercentage} 
+                        onMouseEnter={handleMouseEnterArc}
+                        onMouseLeave={handleMouseLeaveArc}
+                        disabled={!isConnected}
+                      >
+                        <OutlineArcIcon 
+                          actualPercentage={actualNumericPercentage} // Pass potentially unclamped value
+                          steppedPercentage={currentSteppedPercentage}
+                          hoverPercentage={hoveredArcPercentage}
+                          isOverLimit={actualNumericPercentage > 100} // ADDED prop
+                          className="h-4 w-4" 
+                          size={16}
+                        />
+                      </Button>
                     </div>
                   </div>
-                </div>
-              </div>
-
-              <div className="flex justify-center">
-                <Button variant="ghost" size="icon" className="rounded-full bg-muted/30 z-10 h-8 w-8" onClick={handleSwapTokens} disabled={!isConnected || isAttemptingSwitch}>
-                  <ArrowDownIcon className="h-4 w-4" />
-                  <span className="sr-only">Swap tokens</span>
-                </Button>
-              </div>
-
-              {/* Buy Section - Uses `displayToToken` */}
-              <div className="mb-6 mt-2">
-                <div className="flex items-center justify-between mb-2">
-                  <Label className="text-sm font-medium">Buy</Label>
-                  {/* Balance display for toToken - added for consistency */}
-                   <span className={cn("text-xs text-muted-foreground", { "opacity-50": !isConnected })}> {/* Corrected cn usage */}
-                      Balance: { (isConnected ? (isLoadingCurrentToTokenBalance ? "Loading..." : displayToToken.balance) : "~")} {displayToToken.symbol}
-                    </span>
-                </div>
-                <div className="rounded-lg bg-muted/30 p-4">
-                  <div className="flex items-center gap-2">
-                     {/* Token Display for ToToken - Non-interactive */}
-                    <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
-                      <div className="flex items-center justify-center h-5 w-5 rounded-full bg-zinc-700">
-                         <Image src={displayToToken.icon} alt={displayToToken.symbol} width={10} height={10} className="rounded-full"/>
+                  <div className={cn("rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted", { "outline outline-1 outline-muted": isSellInputFocused })}> {/* Corrected cn usage */}
+                    <div className="flex items-center gap-2">
+                      {/* Token Display for FromToken - Non-interactive, shows current fromToken */}
+                      <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
+                        <Image src={displayFromToken.icon} alt={displayFromToken.symbol} width={20} height={20} className="rounded-full"/>
+                        <span className="text-sm">{displayFromToken.symbol}</span>
+                         {/* No ChevronDownIcon, as it's not a dropdown for selection now */}
                       </div>
-                      <span className="text-sm">{displayToToken.symbol}</span>
-                    </div>
-                    <div className="flex-1">
-                      <Input
-                        value={parseFloat(toAmount || "0") === 0 ? "0" : formatTokenAmount(toAmount, displayToToken.decimals)} // Show "0" if empty/zero
-                        readOnly
-                        disabled={!isConnected || isAttemptingSwitch}
-                        className="border-0 bg-transparent text-right text-xl md:text-xl font-medium text-muted-foreground shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
-                        placeholder="0"
-                      />
-                      <div className="text-right text-xs text-muted-foreground">
-                        {formatCurrency((parseFloat(toAmount || "0") * displayToToken.usdPrice).toString())}
+                      <div className="flex-1">
+                        {/* Sell input is now enabled if wallet is connected */}
+                        <Input 
+                          value={fromAmount} 
+                          onChange={handleFromAmountChange} 
+                          onFocus={() => setIsSellInputFocused(true)} 
+                          onBlur={() => setIsSellInputFocused(false)} 
+                          className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto input-enhanced" 
+                          placeholder="0" 
+                          disabled={!isConnected || isAttemptingSwitch} 
+                        />
+                        <div className="text-right text-xs text-muted-foreground">{formatCurrency((parseFloat(fromAmount || "0") * displayFromToken.usdPrice).toString())}</div>
                       </div>
                     </div>
                   </div>
                 </div>
-              </div>
 
-              {/* Fee Information - Shows if connected on target chain */}
-              {isConnected && currentChainId === TARGET_CHAIN_ID && (
-                <div className="space-y-1 text-sm mt-3"> {/* Adjusted spacing and margin */}
-                  {calculatedValues.fees.map((fee, index) => (
-                    <div key={index} className="flex items-center justify-between">
-                      <span className={cn(
-                        // Both percentage and USD fee labels will now be text-xs and muted
-                        'text-xs text-muted-foreground'
-                        // { 'pl-2': fee.type === 'usd' } // Removed pl-2
-                      )}>
-                        {fee.name}
-                      </span>
-                      <span className={'text-xs'}> {/* Both values will be text-xs */}
-                        {fee.value}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <div className="mt-4 h-10">
-                {!isMounted ? null : isConnected ? (
-                  <Button 
-                    className="w-full btn-primary"
-                    onClick={handleSwap} 
-                    disabled={actionButtonDisabled || 
-                               (
-                                 parseFloat(fromAmount || "0") > 0 && // Only check balance if amount is entered
-                                 (
-                                   isNaN(parseFloat(fromToken.balance || "0")) || // Balance is not a number (e.g. "Loading...", "Error", "~")
-                                   parseFloat(fromToken.balance || "0") < parseFloat(fromAmount || "0") // Insufficient balance
-                                 )
-                                )
-                              }
-                  >
-                    {actionButtonText}
+                <div className="flex justify-center">
+                  <Button variant="ghost" size="icon" className="rounded-full bg-muted/30 z-10 h-8 w-8" onClick={handleSwapTokens} disabled={!isConnected || isAttemptingSwitch}>
+                    <ArrowDownIcon className="h-4 w-4" />
+                    <span className="sr-only">Swap tokens</span>
                   </Button>
-                ) : (
-                  <div className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md bg-accent text-accent-foreground px-3 text-sm font-medium transition-colors hover:bg-accent/90 shadow-md">
-                    <appkit-button className="absolute inset-0 z-10 block h-full w-full cursor-pointer p-0 opacity-0" />
-                    <span className="relative z-0 pointer-events-none">{actionButtonText}</span>
+                </div>
+
+                {/* Buy Section - Uses `displayToToken` */}
+                <div className="mb-6 mt-2">
+                  <div className="flex items-center justify-between mb-2">
+                    <Label className="text-sm font-medium">Buy</Label>
+                    {/* Balance display for toToken - added for consistency */}
+                     <span className={cn("text-xs text-muted-foreground", { "opacity-50": !isConnected })}> {/* Corrected cn usage */}
+                        Balance: { (isConnected ? (isLoadingCurrentToTokenBalance ? "Loading..." : displayToToken.balance) : "~")} {displayToToken.symbol}
+                      </span>
+                  </div>
+                  <div className="rounded-lg bg-muted/30 p-4">
+                    <div className="flex items-center gap-2">
+                       {/* Token Display for ToToken - Non-interactive */}
+                      <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
+                        <Image src={displayToToken.icon} alt={displayToToken.symbol} width={20} height={20} className="rounded-full"/>
+                        <span className="text-sm">{displayToToken.symbol}</span>
+                      </div>
+                      <div className="flex-1">
+                        <Input
+                          value={parseFloat(toAmount || "0") === 0 ? "0" : formatTokenAmount(toAmount, displayToToken.decimals)} // Show "0" if empty/zero
+                          readOnly
+                          disabled={!isConnected || isAttemptingSwitch}
+                          className="border-0 bg-transparent text-right text-xl md:text-xl font-medium text-muted-foreground shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
+                          placeholder="0"
+                        />
+                        <div className="text-right text-xs text-muted-foreground">
+                          {formatCurrency((parseFloat(toAmount || "0") * displayToToken.usdPrice).toString())}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Fee Information - Shows if connected on target chain */}
+                {isConnected && currentChainId === TARGET_CHAIN_ID && (
+                  <div className="space-y-1 text-sm mt-3"> {/* Adjusted spacing and margin */}
+                    {calculatedValues.fees.map((fee, index) => (
+                      <div key={index} className="flex items-center justify-between">
+                        <span className={cn(
+                          'text-xs text-muted-foreground flex items-center'
+                        )}>
+                          {fee.name}
+                        </span>
+                        {/* Conditional rendering for the fee value part */}
+                        {fee.name === "Fee" && feeHistoryData.length > 0 ? (
+                          <Button
+                            variant="link"
+                            onClick={handleFeePercentageClick} 
+                            className="text-xs p-0 h-auto focus-visible:ring-0 focus-visible:ring-offset-0 transition-opacity flex items-center text-foreground hover:no-underline hover:text-[#e85102] gap-1" // Added gap-1, added hover:text-[#e85102]
+                            // style={{ color: '#e85102' }} // Removed inline style for orange color
+                          >
+                            {fee.value}
+                            <PulsatingDot color="#e85102" size={0.95} className="" /> {/* Size reduced by 25%, ml-1 removed */}
+                          </Button>
+                        ) : (
+                          <span className={'text-xs text-foreground'}>
+                            {fee.value}
+                          </span>
+                        )}
+                      </div>
+                    ))}
                   </div>
                 )}
-              </div>
-            </motion.div>
-          )}
 
-          {/* Swapping State UI (largely preserved, uses calculatedValues) */}
-          {swapState === "review" && (
-            <motion.div key="review" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
-              <div className="mb-6 flex items-center justify-between bg-muted/10 rounded-lg p-4 hover:bg-muted/20 transition-colors">
-                <Button variant="ghost" className="flex items-center gap-3 p-0 h-auto hover:bg-transparent" onClick={handleChangeButton}>
-                  <div className="flex items-center justify-center h-10 w-10 rounded-full bg-zinc-700">
-                    <Image src={displayFromToken.icon} alt={displayFromToken.symbol} width={20} height={20} className="rounded-full"/>
-                  </div>
-                  <div className="text-left">
-                    <div className="font-medium">{calculatedValues.fromTokenAmount} {displayFromToken.symbol}</div>
-                    <div className="text-xs text-muted-foreground">{calculatedValues.fromTokenValue}</div>
-                  </div>
-                </Button>
-                <ArrowRightIcon className="h-5 w-5 text-muted-foreground mx-2" />
-                <Button variant="ghost" className="flex items-center gap-3 p-0 h-auto hover:bg-transparent" onClick={handleChangeButton}>
-                  <div className="text-right">
-                    <div className="font-medium">{calculatedValues.toTokenAmount} {displayToToken.symbol}</div>
-                    <div className="text-xs text-muted-foreground">{calculatedValues.toTokenValue}</div>
-                  </div>
-                  <div className="flex items-center justify-center h-10 w-10 rounded-full bg-zinc-700">
-                    <Image src={displayToToken.icon} alt={displayToToken.symbol} width={20} height={20} className="rounded-full"/>
-                  </div>
-                </Button>
-              </div>
-              <div className="rounded-lg border border-slate-300 dark:border-zinc-800 p-4 mb-6 space-y-3 text-sm">
-                {renderStepIndicator("approval", swapProgressState, completedSteps)}
-                {renderStepIndicator("signature", swapProgressState, completedSteps)}
-                {renderStepIndicator("transaction", swapProgressState, completedSteps)}
-              </div>
-              <div className="my-8 flex flex-col items-center justify-center">
-                <motion.div 
-                  className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-slate-900 dark:bg-white"
-                  initial={{ scale: 0.8 }} 
-                  animate={{ scale: 1 }} 
-                  transition={{ type: "spring", stiffness: 300, damping: 20 }}
-                >
-                  {getStepIcon()}
-                </motion.div>
-                <div className="text-center">
-                  <h3 className="text-lg font-medium">
-                    {isSwapping ? (
-                      swapProgressState === "approving" || swapProgressState === "waiting_approval" ? "Approving" :
-                      swapProgressState === "signing_permit" ? "Signing" :
-                      swapProgressState === "executing_swap" || swapProgressState === "waiting_confirmation" ? "Swapping" :
-                      "Processing"
-                    ) : (
-                      "Confirm Swap"
-                    )}
-                  </h3>
-                  <p className="text-muted-foreground mt-1">{displayFromToken.symbol} for {displayToToken.symbol}</p>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <Button 
-                  variant="outline" 
-                  className="border-slate-300 bg-slate-100 hover:bg-slate-200 dark:border-zinc-700 dark:bg-zinc-800 dark:hover:bg-zinc-700 disabled:opacity-50"
-                  onClick={handleChangeButton} 
-                  disabled={isSwapping}
-                >
-                  Change
-                </Button>
-                <Button 
-                  className="bg-slate-900 text-slate-50 hover:bg-slate-900/80 
-                             dark:bg-white dark:text-black dark:hover:bg-white/90 
-                             disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100
-                             dark:disabled:bg-neutral-700 dark:disabled:text-neutral-500 dark:disabled:opacity-100"
-                  onClick={handleConfirmSwap} 
-                  disabled={isSwapping || swapProgressState === "init" || swapProgressState === "checking_allowance"}
-                >
-                  {isSwapping ? (
-                    <span className="flex items-center gap-2">
-                      <RefreshCwIcon className="h-4 w-4 animate-spin" />
-                      {swapProgressState === "approving" || swapProgressState === "waiting_approval" ? "Approving..." :
-                       swapProgressState === "signing_permit" ? "Signing..." :
-                       swapProgressState === "executing_swap" || swapProgressState === "waiting_confirmation" ? "Swapping..." :
-                       "Processing..."} 
-                    </span>
+                <div className="mt-4 h-10">
+                  {!isMounted ? null : isConnected ? (
+                    <Button 
+                      className="w-full btn-primary"
+                      onClick={handleSwap} 
+                      disabled={actionButtonDisabled || 
+                                 (
+                                   parseFloat(fromAmount || "0") > 0 && // Only check balance if amount is entered
+                                   (
+                                     isNaN(parseFloat(fromToken.balance || "0")) || // Balance is not a number (e.g. "Loading...", "Error", "~")
+                                     parseFloat(fromToken.balance || "0") < parseFloat(fromAmount || "0") // Insufficient balance
+                                   )
+                                  )
+                                }
+                      >
+                      {actionButtonText}
+                    </Button>
                   ) : (
-                    // Updated text logic to handle ready_to_swap explicitly
-                    swapProgressState === "needs_approval" ? "Approve" :
-                    swapProgressState === "needs_signature" ? "Sign" :
-                    swapProgressState === "ready_to_swap" ? "Confirm Swap" :
-                    "Confirm Swap" // Default/Fallback (e.g., for approval_complete before Sign is determined)
+                    <div className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md bg-accent text-accent-foreground px-3 text-sm font-medium transition-colors hover:bg-accent/90 shadow-md">
+                      <appkit-button className="absolute inset-0 z-10 block h-full w-full cursor-pointer p-0 opacity-0" />
+                      <span className="relative z-0 pointer-events-none">{actionButtonText}</span>
+                    </div>
                   )}
-                </Button>
-              </div>
-            </motion.div>
-          )}
-
-          {/* Success State UI (largely preserved, uses calculatedValues) */}
-          {swapState === "success" && (
-            <motion.div key="success" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
-               <div className="mb-6 flex items-center justify-between bg-muted/10 rounded-lg p-4 hover:bg-muted/20 transition-colors">
-                <Button variant="ghost" className="flex items-center gap-3 p-0 h-auto hover:bg-transparent" onClick={handleChangeButton}>
-                  <div className="flex items-center justify-center h-10 w-10 rounded-full bg-zinc-700">
-                    <Image src={displayFromToken.icon} alt={displayFromToken.symbol} width={20} height={20} className="rounded-full"/>
-                  </div>
-                  <div className="text-left">
-                    <div className="font-medium">{swapTxInfo?.fromAmount || calculatedValues.fromTokenAmount} {swapTxInfo?.fromSymbol || displayFromToken.symbol}</div>
-                    <div className="text-xs text-muted-foreground">{calculatedValues.fromTokenValue}</div>
-                  </div>
-                </Button>
-                <ArrowRightIcon className="h-5 w-5 text-muted-foreground mx-2" />
-                <Button variant="ghost" className="flex items-center gap-3 p-0 h-auto hover:bg-transparent" onClick={handleChangeButton}> 
-                  <div className="text-right">
-                    <div className="font-medium">{swapTxInfo?.toAmount || calculatedValues.toTokenAmount} {swapTxInfo?.toSymbol || displayToToken.symbol}</div>
-                    <div className="text-xs text-muted-foreground">{calculatedValues.toTokenValue}</div>
-                  </div>
-                  <div className="flex items-center justify-center h-10 w-10 rounded-full bg-zinc-700">
-                    <Image src={displayToToken.icon} alt={displayToToken.symbol} width={20} height={20} className="rounded-full"/>
-                  </div>
-                </Button>
-              </div>
-              <div className="my-8 flex flex-col items-center justify-center">
-                <motion.div 
-                  className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-slate-900 dark:bg-white"
-                  initial={{ scale: 0.8 }} 
-                  animate={{ scale: 1 }} 
-                  transition={{ type: "spring", stiffness: 300, damping: 20 }}
-                >
-                  <CheckIcon className="h-8 w-8 text-slate-50 dark:text-black" />
-                </motion.div>
-                <div className="text-center">
-                   {/* Text color here should adapt by default (e.g. text-foreground) */}
-                  <h3 className="text-lg font-medium">Swapped</h3>
-                  <p className="text-muted-foreground mt-1">{swapTxInfo?.fromSymbol || displayFromToken.symbol} for {swapTxInfo?.toSymbol || displayToToken.symbol}</p>
                 </div>
-              </div>
-              <div className="mb-6 flex items-center justify-center">
+              </motion.div>
+            )}
+
+            {/* Swapping State UI (largely preserved, uses calculatedValues) */}
+            {swapState === "review" && (
+              <motion.div key="review" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
+                <div className="mb-6 flex items-center justify-between bg-muted/10 rounded-lg p-4 hover:bg-muted/20 transition-colors">
+                  <Button variant="ghost" className="flex items-center gap-3 p-0 h-auto hover:bg-transparent" onClick={handleChangeButton}>
+                    <Image src={displayFromToken.icon} alt={displayFromToken.symbol} width={40} height={40} className="rounded-full"/>
+                    <div className="text-left">
+                      <div className="font-medium">{calculatedValues.fromTokenAmount} {displayFromToken.symbol}</div>
+                      <div className="text-xs text-muted-foreground">{calculatedValues.fromTokenValue}</div>
+                    </div>
+                  </Button>
+                  <ArrowRightIcon className="h-5 w-5 text-muted-foreground mx-2" />
+                  <Button variant="ghost" className="flex items-center gap-3 p-0 h-auto hover:bg-transparent" onClick={handleChangeButton}>
+                    <div className="text-right">
+                      <div className="font-medium">{calculatedValues.toTokenAmount} {displayToToken.symbol}</div>
+                      <div className="text-xs text-muted-foreground">{calculatedValues.toTokenValue}</div>
+                    </div>
+                    <Image src={displayToToken.icon} alt={displayToToken.symbol} width={40} height={40} className="rounded-full"/>
+                  </Button>
+                </div>
+                <div className="rounded-lg border border-slate-300 dark:border-zinc-800 p-4 mb-6 space-y-3 text-sm">
+                  {renderStepIndicator("approval", swapProgressState, completedSteps)}
+                  {renderStepIndicator("signature", swapProgressState, completedSteps)}
+                  {renderStepIndicator("transaction", swapProgressState, completedSteps)}
+                </div>
+                <div className="my-8 flex flex-col items-center justify-center">
+                  <motion.div 
+                    className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-slate-900 dark:bg-white"
+                    initial={{ scale: 0.8 }} 
+                    animate={{ scale: 1 }} 
+                    transition={{ type: "spring", stiffness: 300, damping: 20 }}
+                  >
+                    {getStepIcon()}
+                  </motion.div>
+                  <div className="text-center">
+                    <h3 className="text-lg font-medium">
+                      {isSwapping ? (
+                        swapProgressState === "approving" || swapProgressState === "waiting_approval" ? "Approving" :
+                        swapProgressState === "signing_permit" ? "Signing" :
+                        swapProgressState === "executing_swap" || swapProgressState === "waiting_confirmation" ? "Swapping" :
+                        "Processing"
+                      ) : (
+                        "Confirm Swap"
+                      )}
+                    </h3>
+                    <p className="text-muted-foreground mt-1">{displayFromToken.symbol} for {displayToToken.symbol}</p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <Button 
+                    variant="outline" 
+                    className="border-slate-300 bg-slate-100 hover:bg-slate-200 dark:border-zinc-700 dark:bg-zinc-800 dark:hover:bg-zinc-700 disabled:opacity-50"
+                    onClick={handleChangeButton} 
+                    disabled={isSwapping}
+                  >
+                    Change
+                  </Button>
+                  <Button 
+                    className="bg-slate-900 text-slate-50 hover:bg-slate-900/80 
+                               dark:bg-white dark:text-black dark:hover:bg-white/90 
+                               disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100
+                               dark:disabled:bg-neutral-700 dark:disabled:text-neutral-500 dark:disabled:opacity-100"
+                    onClick={handleConfirmSwap} 
+                    disabled={isSwapping || swapProgressState === "init" || swapProgressState === "checking_allowance"}
+                  >
+                    {isSwapping ? (
+                      <span className="flex items-center gap-2">
+                        <RefreshCwIcon className="h-4 w-4 animate-spin" />
+                        {swapProgressState === "approving" || swapProgressState === "waiting_approval" ? "Approving..." :
+                         swapProgressState === "signing_permit" ? "Signing..." :
+                         swapProgressState === "executing_swap" || swapProgressState === "waiting_confirmation" ? "Swapping..." :
+                         "Processing..."} 
+                      </span>
+                    ) : (
+                      // Updated text logic to handle ready_to_swap explicitly
+                      swapProgressState === "needs_approval" ? "Approve" :
+                      swapProgressState === "needs_signature" ? "Sign" :
+                      swapProgressState === "ready_to_swap" ? "Confirm Swap" :
+                      "Confirm Swap" // Default/Fallback (e.g., for approval_complete before Sign is determined)
+                    )}
+                  </Button>
+                </div>
+              </motion.div>
+            )}
+
+            {/* Success State UI (largely preserved, uses calculatedValues) */}
+            {swapState === "success" && (
+              <motion.div key="success" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
+                 <div className="mb-6 flex items-center justify-between bg-muted/10 rounded-lg p-4 hover:bg-muted/20 transition-colors">
+                  <Button variant="ghost" className="flex items-center gap-3 p-0 h-auto hover:bg-transparent" onClick={handleChangeButton}>
+                    <Image src={displayFromToken.icon} alt={displayFromToken.symbol} width={40} height={40} className="rounded-full"/>
+                    <div className="text-left">
+                      <div className="font-medium">{swapTxInfo?.fromAmount || calculatedValues.fromTokenAmount} {swapTxInfo?.fromSymbol || displayFromToken.symbol}</div>
+                      <div className="text-xs text-muted-foreground">{calculatedValues.fromTokenValue}</div>
+                    </div>
+                  </Button>
+                  <ArrowRightIcon className="h-5 w-5 text-muted-foreground mx-2" />
+                  <Button variant="ghost" className="flex items-center gap-3 p-0 h-auto hover:bg-transparent" onClick={handleChangeButton}> 
+                    <div className="text-right">
+                      <div className="font-medium">{swapTxInfo?.toAmount || calculatedValues.toTokenAmount} {swapTxInfo?.toSymbol || displayToToken.symbol}</div>
+                      <div className="text-xs text-muted-foreground">{calculatedValues.toTokenValue}</div>
+                    </div>
+                    <Image src={displayToToken.icon} alt={displayToToken.symbol} width={40} height={40} className="rounded-full"/>
+                  </Button>
+                </div>
+                <div className="my-8 flex flex-col items-center justify-center">
+                  <motion.div 
+                    className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-slate-900 dark:bg-white"
+                    initial={{ scale: 0.8 }} 
+                    animate={{ scale: 1 }} 
+                    transition={{ type: "spring", stiffness: 300, damping: 20 }}
+                  >
+                    <CheckIcon className="h-8 w-8 text-slate-50 dark:text-black" />
+                  </motion.div>
+                  <div className="text-center">
+                     {/* Text color here should adapt by default (e.g. text-foreground) */}
+                    <h3 className="text-lg font-medium">Swapped</h3>
+                    <p className="text-muted-foreground mt-1">{swapTxInfo?.fromSymbol || displayFromToken.symbol} for {swapTxInfo?.toSymbol || displayToToken.symbol}</p>
+                  </div>
+                </div>
+                <div className="mb-6 flex items-center justify-center">
+                  <Button 
+                    variant="link" 
+                    className="text-primary dark:text-white hover:text-primary/80 dark:hover:text-white/80" 
+                    onClick={() => window.open(swapTxInfo?.explorerUrl || `https://base-sepolia.blockscout.com/`, "_blank")}
+                  >
+                    View on Explorer
+                    <ExternalLinkIcon className="h-3 w-3 ml-1" />
+                  </Button>
+                </div>
                 <Button 
-                  variant="link" 
-                  className="text-primary dark:text-white hover:text-primary/80 dark:hover:text-white/80" 
-                  onClick={() => window.open(swapTxInfo?.explorerUrl || `https://base-sepolia.blockscout.com/`, "_blank")}
+                  className="w-full bg-slate-900 text-slate-50 hover:bg-slate-900/80 
+                             dark:bg-white dark:text-black dark:hover:bg-white/90"
+                  onClick={handleChangeButton}
                 >
-                  View on Explorer
-                  <ExternalLinkIcon className="h-3 w-3 ml-1" />
+                  Swap again
                 </Button>
-              </div>
-              <Button 
-                className="w-full bg-slate-900 text-slate-50 hover:bg-slate-900/80 
-                           dark:bg-white dark:text-black dark:hover:bg-white/90"
-                onClick={handleChangeButton}
-              >
-                Swap again
-              </Button>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </CardContent>
-    </Card>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </CardContent>
+      </Card>
+
+      {/* Preview Chart - Conditionally rendered below the main card */}
+      <AnimatePresence>
+        {isFeeChartPreviewVisible && (
+          <motion.div
+            className="w-full max-w-md mx-auto" // Preview matches main card width
+            initial={{ y: -10, opacity: 0, height: 0 }}    
+            animate={{ y: 0, opacity: 1, height: 'auto' }}       
+            exit={{ y: -10, opacity: 0, height: 0 }}       
+            transition={{ type: "spring", stiffness: 300, damping: 30, duration: 0.2 }}
+          >
+            <DynamicFeeChartPreview data={feeHistoryData} onClick={handlePreviewChartClick} />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Full Chart Modal - Controlled by isFeeChartModalOpen - Moved outside the mapping */}
+      <Dialog open={isFeeChartModalOpen} onOpenChange={setIsFeeChartModalOpen}>
+        {/* No DialogTrigger here, it's opened programmatically via the preview click */}
+        <DialogContent className="sm:max-w-3xl p-0 outline-none ring-0 border-0 shadow-2xl rounded-lg">
+          <DynamicFeeChart data={feeHistoryData} />
+          {/* Default Dialog close button will be used */}
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 }
 

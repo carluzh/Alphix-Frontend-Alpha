@@ -53,7 +53,7 @@ export function MobileLiquidityList({ pools, onSelectPool }: MobileLiquidityList
               </div>
               <CardTitle className="text-base font-semibold">{pool.pair}</CardTitle>
             </div>
-            <Badge variant="outline" className="text-xs bg-emerald-500/20 text-emerald-400 border-emerald-700/30">
+            <Badge variant="outline" className="text-xs bg-[#e85102]/20 text-[#e85102] border-[#e85102]/30">
               {pool.apr}
             </Badge>
           </CardHeader>

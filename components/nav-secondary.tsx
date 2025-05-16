@@ -1,5 +1,6 @@
 "use client"
 
+import { useState, useRef, useEffect } from "react"
 import type * as React from "react"
 import type { LucideIcon } from "lucide-react"
 import { SunIcon, MoonIcon, LaptopIcon, CoinsIcon, Trash2Icon, SettingsIcon, LogOutIcon, CheckIcon } from "lucide-react"
@@ -8,7 +9,7 @@ import { toast } from "sonner"
 import { useAccount, useWriteContract, useWaitForTransactionReceipt } from "wagmi"
 import { baseSepolia } from "@/lib/wagmiConfig"
 import { parseAbi } from "viem"
-import { useEffect } from "react"
+import { CustomLockIcon } from "./CustomLockIcon"
 
 import {
   DropdownMenu,
@@ -38,20 +39,44 @@ const WarningToastIcon = () => (
   </svg>
 );
 
+interface NavSecondaryItem {
+  title: string;
+  url: string;
+  icon: LucideIcon;
+  disabled?: boolean;
+}
+
 export function NavSecondary({
   items,
   ...props
 }: {
-  items: {
-    title: string
-    url: string
-    icon: LucideIcon
-  }[]
+  items: NavSecondaryItem[]
 } & React.ComponentPropsWithoutRef<typeof SidebarGroup>) {
   const { setTheme } = useTheme()
   const { address: userAddress, chainId: currentChainId, isConnected } = useAccount()
   const { writeContract, data:hash, isPending: isTxPending, error: writeTxError, reset: resetWriteContract } = useWriteContract()
   const targetChainId = baseSepolia.id
+
+  const [lockedItem, setLockedItem] = useState<string | null>(null)
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+  const handleLockedClick = (itemName: string) => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current)
+    }
+    setLockedItem(itemName)
+    timeoutRef.current = setTimeout(() => {
+      setLockedItem(null)
+    }, 1000)
+  }
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current)
+      }
+    }
+  }, [])
 
   const { 
     isLoading: isConfirming, 
@@ -66,12 +91,7 @@ export function NavSecondary({
 
   useEffect(() => {
     if (isConfirmed) {
-      toast.success(
-        <span className="flex items-center">
-          <CheckIcon className="mr-2 h-4 w-4 flex-shrink-0" />
-          <span>Faucet Success: 100 YUSD and 0.001 BTCRL sent</span>
-        </span>
-      );
+      toast.success("Faucet Success: 100 YUSD and 0.001 BTCRL sent");
       resetWriteContract();
     }
     const anError = writeTxError || receiptError;
@@ -87,13 +107,12 @@ export function NavSecondary({
       if (mainMsg?.toLowerCase().includes("user rejected") || shortMsg?.toLowerCase().includes("user rejected")) {
         finalErrorMessage = "Transaction rejected by user.";
       } else if (mainMsg === "unknown reason") {
-        // If the transaction reverted with "unknown reason", assume it's the rate limit for this specific faucet.
         finalErrorMessage = "Faucet Failure: Tokens available once per day"; 
       } else if (mainMsg?.toLowerCase().includes("once per day") || shortMsg?.toLowerCase().includes("once per day")) {
         finalErrorMessage = "Faucet Failure: Tokens available once per day";
       } else if (shortMsg) {
         finalErrorMessage = `Faucet Failure: ${shortMsg}`;
-      } else if (mainMsg) { // Catch any other message if shortMsg is not available
+      } else if (mainMsg) { 
         finalErrorMessage = `Faucet Failure: ${mainMsg}`;
       }
       
@@ -109,9 +128,9 @@ export function NavSecondary({
   return (
     <SidebarGroup {...props}>
       <SidebarGroupContent>
-        <SidebarMenu>
+        <SidebarMenu className="flex flex-col gap-1">
           {items.map((item) => (
-            <SidebarMenuItem key={item.title}>
+            <SidebarMenuItem key={item.title} className="list-none">
               {item.title === "Settings" ? (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -157,17 +176,14 @@ export function NavSecondary({
                             toast.error("Please connect your wallet first.")
                             return
                           }
-
                           if (currentChainId !== targetChainId) {
                             toast.error(`Please switch to the ${baseSepolia.name} network.`)
                             return
                           }
-
                           if (!userAddress) {
                             toast.error("Could not retrieve wallet address.")
                             return
                           }
-
                           try {
                             const apiRes = await fetch('/api/misc/faucet', {
                               method: 'POST',
@@ -177,18 +193,14 @@ export function NavSecondary({
                               body: JSON.stringify({ userAddress, chainId: targetChainId }),
                             })
                             const faucetTxData = await apiRes.json()
-
                             if (!apiRes.ok) {
                               toast.error(`API Error: ${faucetTxData.message || 'Unknown error'}`, {
                                 icon: <WarningToastIcon />,
                               });
                               return
                             }
-                            
                             console.log("Faucet API response:", faucetTxData)
-
                             toast.info("Sending faucet transaction to wallet...")
-
                             writeContract({
                               address: faucetTxData.to as `0x${string}`,
                               abi: faucetAbi,
@@ -196,9 +208,6 @@ export function NavSecondary({
                               args: [],
                               chainId: faucetTxData.chainId,
                             })
-                            
-                            // Toasts for pending/success/error are now handled by the useEffect watching useWaitForTransactionReceipt
-
                           } catch (error: any) {
                             console.error("Faucet action error:", error)
                             toast.error(`Error during faucet action: ${error.message}`, {
@@ -224,49 +233,29 @@ export function NavSecondary({
                         <Trash2Icon className="mr-2 h-4 w-4" />
                         <span>Clean Cache</span>
                       </DropdownMenuItem>
-                      <DropdownMenuItem 
-                        onClick={async () => {
-                          try {
-                            const res = await fetch('/api/logout', { method: 'POST' });
-                            if (res.ok) {
-                              toast(
-                                <span className="flex items-center">
-                                  <LogOutIcon className="mr-2 h-4 w-4 flex-shrink-0" />
-                                  <span>Session Reset. Redirecting to login...</span>
-                                </span>
-                              );
-                              setTimeout(() => {
-                                window.location.href = '/login';
-                              }, 1500);
-                            } else {
-                              toast(
-                                <span className="flex items-center">
-                                  <span>Failed to reset session.</span>
-                                </span>
-                              );
-                            }
-                          } catch (error) {
-                            console.error("Failed to reset session:", error);
-                            toast(
-                              <span className="flex items-center">
-                                <span>Error resetting session.</span>
-                              </span>
-                            );
-                          }
-                        }}
-                        className="cursor-pointer"
-                      >
-                        <LogOutIcon className="mr-2 h-4 w-4" />
-                        <span>Reset Session</span>
-                      </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenuPortal>
                 </DropdownMenu>
+              ) : item.disabled ? (
+                <SidebarMenuButton
+                  onClick={() => handleLockedClick(item.title)}
+                  className="opacity-75 hover:bg-transparent w-full flex items-center"
+                  tooltip={item.title}
+                >
+                  {item.icon && <item.icon />}
+                  <span className="flex-1 truncate">{item.title}</span>
+                  {lockedItem === item.title && (
+                    <span className="flex items-center">
+                      <CustomLockIcon className="h-4 w-4 flex-shrink-0 text-muted-foreground animate-pulse mr-0.5" />
+                      <span className="text-[10px] text-muted-foreground animate-pulse">Soon</span>
+                    </span>
+                  )}
+                </SidebarMenuButton>
               ) : (
-                <SidebarMenuButton asChild>
-                  <a href={item.url}>
-                    <item.icon />
-                    <span>{item.title}</span>
+                <SidebarMenuButton asChild className="w-full flex items-center" tooltip={item.title}>
+                  <a href={item.url} className="w-full flex items-center">
+                    {item.icon && <item.icon />}
+                    <span className="flex-1 truncate">{item.title}</span>
                   </a>
                 </SidebarMenuButton>
               )}
