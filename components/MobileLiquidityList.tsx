@@ -17,6 +17,12 @@ export function MobileLiquidityList({ pools, onSelectPool }: MobileLiquidityList
 
   return (
     <div className="space-y-4 p-4">
+      <div className="mb-4 px-4">
+        <h2 className="text-xl font-semibold">Liquidity Pools</h2>
+        <p className="text-sm text-muted-foreground">
+          Explore and manage your liquidity positions.
+        </p>
+      </div>
       {pools.map((pool) => (
         <Card 
           key={pool.id} 
