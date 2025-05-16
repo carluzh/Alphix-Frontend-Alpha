@@ -14,14 +14,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
 import Image from "next/image";
 import * as React from "react";
@@ -188,34 +180,6 @@ export default function LiquidityPage() {
         </div>
       ),
     },
-    {
-      id: "actions",
-      header: () => <div className="text-right w-full">Actions</div>,
-      cell: ({ row }) => {
-        const pool = row.original;
-        return (
-          <div className="text-right">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" className="h-8 w-8 p-0">
-                  <span className="sr-only">Open menu</span>
-                  <MoreHorizontal className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                <DropdownMenuItem onClick={() => setSelectedPool(pool.id)}>
-                  View pool details
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem>Add liquidity</DropdownMenuItem>
-                <DropdownMenuItem>View analytics</DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        );
-      },
-    },
   ];
 
   // Initialize the table
@@ -344,7 +308,7 @@ export default function LiquidityPage() {
                           {headerGroup.headers.map((header) => (
                             <TableHead 
                               key={header.id} 
-                              className={`${header.column.id === 'actions' ? 'w-[80px]': ''} ${header.column.id !== 'pair' && header.column.id !== 'actions' ? 'text-right' : ''}`}>
+                              className={`${header.column.id !== 'pair' ? 'text-right' : ''}`}>
                               {header.isPlaceholder
                                 ? null
                                 : flexRender(
@@ -367,9 +331,7 @@ export default function LiquidityPage() {
                           >
                             {row.getVisibleCells().map((cell) => (
                               <TableCell key={cell.id} onClick={() => {
-                                if (!cell.column.id.includes('actions')) {
-                                  setSelectedPool(row.original.id);
-                                }
+                                setSelectedPool(row.original.id);
                               }}>
                                 {flexRender(
                                   cell.column.columnDef.cell,
