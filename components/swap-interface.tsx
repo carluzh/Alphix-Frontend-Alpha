@@ -114,6 +114,13 @@ interface SwapTxInfo {
   explorerUrl: string;
 }
 
+// Interface for Fee Details
+interface FeeDetail {
+  name: string;
+  value: string;
+  type: "percentage" | "usd";
+}
+
 // Inline SVG Icon components for toasts
 const SuccessToastIcon = () => (
   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="opacity-80">
@@ -266,15 +273,22 @@ export function SwapInterface() {
   const [isSwapping, setIsSwapping] = useState(false) // For swap simulation UI
 
   // Simplified calculatedValues - primarily for display consistency
-  const [calculatedValues, setCalculatedValues] = useState({
-    fromTokenAmount: "0", 
+  const [calculatedValues, setCalculatedValues] = useState<{
+    fromTokenAmount: string;
+    fromTokenValue: string;
+    toTokenAmount: string;
+    toTokenValue: string;
+    fees: FeeDetail[]; // UPDATED to use FeeDetail[]
+    slippage: string;
+  }>({
+    fromTokenAmount: "0",
     fromTokenValue: "$0.00",
-    toTokenAmount: "0", 
+    toTokenAmount: "0",
     toTokenValue: "$0.00",
     fees: [
-      { name: "Fee", value: "0.00%" }, 
+      { name: "Fee", value: "N/A", type: "percentage" }, // Initial value updated
     ],
-    slippage: "0.5%", 
+    slippage: "0.5%",
   });
 
   const swapTimerRef = useRef<number | null>(null)
@@ -302,7 +316,7 @@ export function SwapInterface() {
   const [dynamicFeeLoading, setDynamicFeeLoading] = useState<boolean>(false);
   const [dynamicFeeError, setDynamicFeeError] = useState<string | null>(null);
   const isFetchingDynamicFeeRef = useRef(false);
-  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null); // This will be removed
   const intervalTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Add necessary hooks for swap execution
@@ -319,93 +333,79 @@ export function SwapInterface() {
   const [isWrongNetworkToastActive, setIsWrongNetworkToastActive] = useState(false);
 
   // Effect to fetch dynamic fee for display
-  useEffect(() => {
-    const fetchFee = async () => {
-      if (
-        !isConnected ||
-        currentChainId !== TARGET_CHAIN_ID ||
-        parseFloat(fromAmount || "0") <= 0 ||
-        !fromToken ||
-        !toToken
-      ) {
-        setDynamicFeeBps(null);
-        setDynamicFeeLoading(false);
-        setDynamicFeeError(null);
-        return;
-      }
-
-      // Prevent multiple fetches if one is already in progress
-      if (isFetchingDynamicFeeRef.current) return;
-
-      isFetchingDynamicFeeRef.current = true;
-      setDynamicFeeLoading(true);
+  const fetchFee = useCallback(async () => {
+    if (
+      !isConnected ||
+      currentChainId !== TARGET_CHAIN_ID ||
+      // parseFloat(fromAmount || "0") <= 0, // REMOVED: Fee fetch no longer depends on amount being > 0
+      !fromToken ||
+      !toToken
+    ) {
+      setDynamicFeeBps(null);
+      setDynamicFeeLoading(false);
       setDynamicFeeError(null);
-      // console.log("[useEffect Fee] Attempting to fetch dynamic fee...");
-
-      try {
-        const fromTokenSymbol = Object.keys(TOKEN_DEFINITIONS).find(
-          (key) => TOKEN_DEFINITIONS[key as TokenSymbol].addressRaw === fromToken.address
-        );
-        const toTokenSymbol = Object.keys(TOKEN_DEFINITIONS).find(
-          (key) => TOKEN_DEFINITIONS[key as TokenSymbol].addressRaw === toToken.address
-        );
-
-        if (!fromTokenSymbol || !toTokenSymbol) {
-          throw new Error("Could not determine token symbols for fee fetching.");
-        }
-
-        const response = await fetch('/api/swap/get-dynamic-fee', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            fromTokenSymbol,
-            toTokenSymbol,
-            chainId: TARGET_CHAIN_ID,
-          }),
-        });
-        const data = await response.json();
-        if (!response.ok) {
-          throw new Error(data.message || data.errorDetails || 'Failed to fetch dynamic fee');
-        }
-        const fee = Number(data.dynamicFee);
-        if (isNaN(fee)) {
-          throw new Error('Dynamic fee received is not a number: ' + data.dynamicFee);
-        }
-        // console.log("[useEffect Fee] Dynamic fee fetched:", fee);
-        setDynamicFeeBps(fee);
-        setDynamicFeeLoading(false);
-      } catch (error: any) {
-        console.error("[useEffect Fee] Error fetching dynamic fee:", error.message);
-        setDynamicFeeBps(null);
-        setDynamicFeeLoading(false);
-        setDynamicFeeError(error.message || "Error fetching fee.");
-      } finally {
-        isFetchingDynamicFeeRef.current = false;
-      }
-    };
-
-    // Clear previous debounce timer
-    if (debounceTimerRef.current) {
-      clearTimeout(debounceTimerRef.current);
+      return;
     }
 
-    // Set a new debounce timer
-    debounceTimerRef.current = setTimeout(() => {
-      fetchFee();
-    }, 500); // 500ms debounce
+    if (isFetchingDynamicFeeRef.current) return;
 
-    // Cleanup debounce timer on component unmount or when dependencies change
-    return () => {
-      if (debounceTimerRef.current) {
-        clearTimeout(debounceTimerRef.current);
+    isFetchingDynamicFeeRef.current = true;
+    setDynamicFeeLoading(true);
+    setDynamicFeeError(null);
+
+    try {
+      const fromTokenSymbol = Object.keys(TOKEN_DEFINITIONS).find(
+        (key) => TOKEN_DEFINITIONS[key as TokenSymbol].addressRaw === fromToken.address
+      );
+      const toTokenSymbol = Object.keys(TOKEN_DEFINITIONS).find(
+        (key) => TOKEN_DEFINITIONS[key as TokenSymbol].addressRaw === toToken.address
+      );
+
+      if (!fromTokenSymbol || !toTokenSymbol) {
+        throw new Error("Could not determine token symbols for fee fetching.");
       }
-      // Clear interval timer if it's still running (though it's primarily for a different feature)
+
+      const response = await fetch('/api/swap/get-dynamic-fee', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fromTokenSymbol,
+          toTokenSymbol,
+          chainId: TARGET_CHAIN_ID,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.message || data.errorDetails || 'Failed to fetch dynamic fee');
+      }
+      const fee = Number(data.dynamicFee);
+      if (isNaN(fee)) {
+        throw new Error('Dynamic fee received is not a number: ' + data.dynamicFee);
+      }
+      setDynamicFeeBps(fee);
+      setDynamicFeeLoading(false);
+    } catch (error: any) {
+      console.error("[fetchFee] Error fetching dynamic fee:", error.message);
+      setDynamicFeeBps(null);
+      setDynamicFeeLoading(false);
+      setDynamicFeeError(error.message || "Error fetching fee.");
+    } finally {
+      isFetchingDynamicFeeRef.current = false;
+    }
+  }, [isConnected, currentChainId, fromToken, toToken, TARGET_CHAIN_ID]); // TARGET_CHAIN_ID added as it's used in conditions
+
+  useEffect(() => {
+    fetchFee(); // Fetch once on mount / relevant dep change
+
+    intervalTimerRef.current = setInterval(fetchFee, 60000); // Fetch every 60 seconds
+
+    return () => {
       if (intervalTimerRef.current) {
         clearInterval(intervalTimerRef.current);
       }
       isFetchingDynamicFeeRef.current = false; // Reset ref on cleanup
     };
-  }, [fromToken, toToken, fromAmount, currentChainId, isConnected, TARGET_CHAIN_ID]); // Dependencies
+  }, [fetchFee]);
 
   // First, create a completely new function for the Change button
   const handleChangeButton = () => {
@@ -620,33 +620,48 @@ export function SwapInterface() {
 
   // Update calculatedValues for UI display
   useEffect(() => {
-    const fromValueNum = parseFloat(fromAmount);
-    const showFeeDetails = fromValueNum > 0;
+    const fromValueNum = parseFloat(fromAmount || "0");
+    const fromTokenUsdPrice = fromToken.usdPrice || 0; // Ensure usdPrice is a number
 
-    let feeValueString = "0.00%";
+    const updatedFeesArray: FeeDetail[] = [];
 
-    if (showFeeDetails && isConnected && currentChainId === TARGET_CHAIN_ID) {
+    // Fee Percentage
+    let feePercentageString: string;
+    if (isConnected && currentChainId === TARGET_CHAIN_ID) {
       if (dynamicFeeLoading) {
-        if (dynamicFeeBps !== null) { 
-          feeValueString = `${(dynamicFeeBps / 10000).toFixed(2)}% ( refreshing...)${ ''}`; // Updated to use template literal
-        } else { 
-          feeValueString = "Fetching fee...";
+        if (dynamicFeeBps !== null) {
+          feePercentageString = `${(dynamicFeeBps / 10000).toFixed(2)}% ( refreshing...)${''}`;
+        } else {
+          feePercentageString = "Fetching fee...";
         }
       } else if (dynamicFeeError) {
-        feeValueString = "Fee N/A";
-      } else if (dynamicFeeBps !== null) {
-        feeValueString = `${(dynamicFeeBps / 10000).toFixed(2)}%`;
-      } else { 
-        feeValueString = "N/A"; 
+        feePercentageString = "Fee N/A";
+      } else if (dynamicFeeBps !== null && fromValueNum > 0) { // Only show actual fee % if amount is entered
+        feePercentageString = `${(dynamicFeeBps / 10000).toFixed(2)}%`;
+      } else if (dynamicFeeBps !== null && fromValueNum === 0) { // If fee is fetched but amount is 0, show potential rate
+        feePercentageString = `${(dynamicFeeBps / 10000).toFixed(2)}%`; 
+      } else {
+        // If connected, on target chain, but dynamicFeeBps is null (e.g. initial load before any amount or fee fetch)
+        feePercentageString = "N/A";
       }
-    } else if (showFeeDetails) { 
-      feeValueString = "N/A";
-    } 
-    
-    const updatedFeesArray = [
-      { name: "Fee", value: feeValueString } // No shimmer property
-    ];
+    } else {
+      // Not connected or wrong chain
+      feePercentageString = "N/A";
+    }
+    updatedFeesArray.push({ name: "Fee", value: feePercentageString, type: "percentage" });
 
+    // Fee Value (USD) - only if amount > 0, connected, on chain, and fee is available
+    if (fromValueNum > 0 && isConnected && currentChainId === TARGET_CHAIN_ID && dynamicFeeBps !== null && !dynamicFeeLoading && !dynamicFeeError) {
+      const feeInUsd = (fromValueNum * fromTokenUsdPrice) * (dynamicFeeBps / 10000 / 100);
+      let feeValueDisplay: string;
+      if (feeInUsd > 0 && feeInUsd < 0.01) {
+        feeValueDisplay = "< $0.01";
+      } else {
+        feeValueDisplay = formatCurrency(feeInUsd.toString());
+      }
+      updatedFeesArray.push({ name: "Fee Value (USD)", value: feeValueDisplay, type: "usd" });
+    }
+    
     const newFromTokenValue = (!isNaN(fromValueNum) && fromValueNum >= 0 && fromToken.usdPrice)
                               ? (fromValueNum * fromToken.usdPrice)
                               : 0;
@@ -655,8 +670,8 @@ export function SwapInterface() {
                             ? (toValueNum * toToken.usdPrice)
                             : 0;
     
-    const currentToAmount = parseFloat(toAmount) || 0;
-    const minimumReceivedDisplay = showFeeDetails ? formatTokenAmount(currentToAmount.toString(), toToken.decimals) : "0.00";
+    // const currentToAmount = parseFloat(toAmount) || 0; // This line can be removed or kept if used elsewhere, not directly for fees now
+    // const minimumReceivedDisplay = showFeeDetails ? formatTokenAmount(currentToAmount.toString(), toToken.decimals) : "0.00"; // This line can be removed
 
     setCalculatedValues(prev => ({
       ...prev,
@@ -1447,19 +1462,27 @@ export function SwapInterface() {
                 </div>
               </div>
 
-              {/* Fee Information - Conditionally Rendered or shows placeholders */}
-              {(parseFloat(fromAmount || "0") > 0) && (
-                <div className="space-y-3 text-sm">
-                  <div className="flex items-center justify-between">
-                    <span>Fee</span> 
-                    <span>
-                      {calculatedValues.fees.length > 0 ? calculatedValues.fees[0].value : '0.00%'}
-                    </span>
-                  </div>
+              {/* Fee Information - Shows if connected on target chain */}
+              {isConnected && currentChainId === TARGET_CHAIN_ID && (
+                <div className="space-y-1 text-sm mt-3"> {/* Adjusted spacing and margin */}
+                  {calculatedValues.fees.map((fee, index) => (
+                    <div key={index} className="flex items-center justify-between">
+                      <span className={cn(
+                        // Both percentage and USD fee labels will now be text-xs and muted
+                        'text-xs text-muted-foreground'
+                        // { 'pl-2': fee.type === 'usd' } // Removed pl-2
+                      )}>
+                        {fee.name}
+                      </span>
+                      <span className={'text-xs'}> {/* Both values will be text-xs */}
+                        {fee.value}
+                      </span>
+                    </div>
+                  ))}
                 </div>
               )}
 
-              <div className="mt-6 h-10">
+              <div className="mt-4 h-10">
                 {!isMounted ? null : isConnected ? (
                   <Button 
                     className="w-full btn-primary"
