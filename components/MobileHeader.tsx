@@ -36,7 +36,7 @@ export function MobileHeader() {
       <div className="flex-1 flex justify-center">
         <ReactSVG 
           src="/Logo Icon.svg" 
-          className="h-7 w-7"
+          className="h-6 w-6"
           beforeInjection={(svg) => {
             const paths = svg.querySelectorAll('path');
             paths.forEach(path => {

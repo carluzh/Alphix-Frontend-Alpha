@@ -26,6 +26,8 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
+import { useIsMobile } from "@/hooks/use-mobile"
+import { cn } from "@/lib/utils"
 
 const data = {
   user: {
@@ -70,6 +72,8 @@ const data = {
 }
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
+  const isMobile = useIsMobile()
+
   return (
     <Sidebar collapsible="offcanvas" {...props}>
       <SidebarHeader>
@@ -79,7 +83,10 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               asChild 
               className="data-[slot=sidebar-menu-button]:!p-1.5 hover:bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0"
             >
-              <a href="/swap">
+              <a 
+                href="/swap" 
+                className={cn(isMobile && "pt-4")}
+              >
                 <div className="flex items-center">
                   <ReactSVG 
                     src="/logo.svg" 
