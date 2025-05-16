@@ -1,3 +1,14 @@
+declare global {
+  namespace JSX {
+    interface IntrinsicElements {
+      'appkit-button': React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement>;
+    }
+  }
+  interface Window {
+      swapBuildData?: any; 
+  }
+}
+
 "use client"
 
 import { useState, useRef, useEffect, useCallback } from "react"
@@ -46,19 +57,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
-
-// --- Global Declarations MUST be at the top-level module scope ---
-declare global {
-  namespace JSX {
-    interface IntrinsicElements {
-      'appkit-button': React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement>;
-    }
-  }
-  interface Window {
-      swapBuildData?: any; 
-  }
-}
-// --- End Global Declarations ---
 
 const TARGET_CHAIN_ID = baseSepolia.id; // Changed from 1301 to baseSepolia.id
 const YUSD_ADDRESS = TOKEN_DEFINITIONS.YUSDC.addressRaw as Address; // UPDATED - Use YUSDC from constants
@@ -129,6 +127,126 @@ const WarningToastIcon = () => (
   </svg>
 );
 
+// Interface for OutlineArcIcon props
+interface OutlineArcIconProps {
+  actualPercentage: number;
+  steppedPercentage: number;
+  hoverPercentage?: number | null;
+  isOverLimit?: boolean; // ADDED: To indicate actualPercentage > 100%
+  size?: number;
+  className?: string;
+}
+
+// OutlineArcIcon component definition
+function OutlineArcIcon({ actualPercentage, steppedPercentage, hoverPercentage, isOverLimit, size = 16, className }: OutlineArcIconProps) {
+  const r = 6; const cx = 8; const cy = 8; const strokeWidth = 2; // INCREASED strokeWidth
+  const clampedActualPercentageForDisplay = Math.max(0, Math.min(100, actualPercentage));
+  const angleStartOffset = -Math.PI / 2;
+
+  const actualIsAStepValue = [0, 25, 50, 75, 100].includes(clampedActualPercentageForDisplay);
+  const isTrulyManualInputMode = clampedActualPercentageForDisplay > 0 && !actualIsAStepValue;
+
+  let displayPercentage: number;
+  let displayMode: 'over_limit' | 'hover' | 'manual_arc' | 'step_slice_or_line';
+
+  if (isOverLimit) {
+    displayMode = 'over_limit';
+    displayPercentage = 100;
+  } else if (hoverPercentage != null) {
+    displayMode = 'hover';
+    displayPercentage = Math.max(0, Math.min(100, hoverPercentage));
+  } else if (isTrulyManualInputMode) {
+    displayMode = 'manual_arc';
+    displayPercentage = clampedActualPercentageForDisplay;
+  } else {
+    displayMode = 'step_slice_or_line';
+    if (actualIsAStepValue) {
+      displayPercentage = clampedActualPercentageForDisplay;
+    } else {
+      displayPercentage = steppedPercentage;
+    }
+  }
+  
+  let manualArcPathData = "";
+  if (displayMode === 'manual_arc') {
+    const arcAmount = Math.max(1, displayPercentage);
+    const angleEndManual = angleStartOffset + (arcAmount / 100) * (2 * Math.PI);
+    const startXManual = cx + r * Math.cos(angleStartOffset);
+    const startYManual = cy + r * Math.sin(angleStartOffset);
+    const endXManual = cx + r * Math.cos(angleEndManual);
+    const endYManual = cy + r * Math.sin(angleEndManual);
+    const largeArcFlagManual = arcAmount >= 50 ? 1 : 0;
+    manualArcPathData = `M ${startXManual},${startYManual} A ${r},${r} 0 ${largeArcFlagManual} 1 ${endXManual},${endYManual}`;
+  }
+
+  const verticalLinePath = `M ${cx},${cy - r} L ${cx},${cy + r}`;
+  const getPieSlicePath = (percentageToDraw: number): string => {
+    if (percentageToDraw <= 0 || percentageToDraw >= 100) return "";
+    const angleEnd = angleStartOffset + (percentageToDraw / 100) * (2 * Math.PI);
+    const startX = cx + r * Math.cos(angleStartOffset);
+    const startY = cy + r * Math.sin(angleStartOffset);
+    const endX = cx + r * Math.cos(angleEnd);
+    const endY = cy + r * Math.sin(angleEnd);
+    const largeArcFlag = percentageToDraw >= 50 ? 1 : 0;
+    return `M ${cx},${cy} L ${startX},${startY} A ${r},${r} 0 ${largeArcFlag} 1 ${endX},${endY} Z`;
+  };
+
+  const errorRedColor = "#e94c4c";
+  const darkerMutedGray = "#575757"; // UPDATED to #575757
+
+  const baseCircleStroke = 
+    displayMode === 'over_limit' ? errorRedColor :
+    ((displayMode === 'step_slice_or_line' || displayMode === 'hover') && displayPercentage === 100) ? 'currentColor' :
+    darkerMutedGray; // UPDATED to darker gray
+
+  let verticalLineStroke = darkerMutedGray; // UPDATED to darker gray as default
+  if (displayMode === 'over_limit') {
+    verticalLineStroke = errorRedColor;
+  } else if ((displayMode === 'step_slice_or_line' || displayMode === 'hover') && (displayPercentage === 0 || displayPercentage === 100)) {
+    // For 100%, it's currentColor (white). For 0%, it remains darkerMutedGray.
+    verticalLineStroke = displayPercentage === 100 ? 'currentColor' : darkerMutedGray;
+  }
+  
+  const mainPathStroke = displayMode === 'over_limit' ? errorRedColor : 'currentColor';
+  const displayOpacity = 1;
+
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" className={className}>
+      <circle cx={cx} cy={cy} r={r} fill="none" stroke={baseCircleStroke} strokeWidth={strokeWidth} strokeOpacity={displayOpacity} />
+
+      {displayMode === 'manual_arc' ? (
+        manualArcPathData && <path d={manualArcPathData} fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" opacity={displayOpacity} />
+      ) : (displayMode === 'step_slice_or_line' || displayMode === 'hover' || displayMode === 'over_limit') ? (
+        <>
+          {(displayPercentage === 0 || displayPercentage === 100) ? (
+            <path 
+              key={`${displayMode}-line-${displayPercentage}`} // Updated key
+              d={verticalLinePath} 
+              stroke={verticalLineStroke} // CORRECTED: Use new variable
+              fill="none" 
+              strokeWidth={strokeWidth} 
+              strokeLinecap="round" 
+              opacity={displayOpacity} 
+            />
+          ) : (
+            displayPercentage > 0 && ( // CORRECTED: Use displayPercentage
+              <path 
+                key={`${displayMode}-slice-${displayPercentage}`} // Updated key
+                d={getPieSlicePath(displayPercentage)} 
+                fill="none" 
+                stroke={mainPathStroke} // CORRECTED: Use new variable (though often currentColor)
+                strokeWidth={strokeWidth} 
+                strokeLinejoin="round" 
+                opacity={displayOpacity} 
+              />
+            )
+          )}
+        </>
+      ) : null}
+    </svg>
+  );
+}
+
 export function SwapInterface() {
   const [swapState, setSwapState] = useState<SwapState>("input")
   // Add new states for real swap execution
@@ -162,6 +280,7 @@ export function SwapInterface() {
   const swapTimerRef = useRef<number | null>(null)
   const [selectedPercentageIndex, setSelectedPercentageIndex] = useState(-1);
   const cyclePercentages = [25, 50, 75, 100];
+  const [hoveredArcPercentage, setHoveredArcPercentage] = useState<number | null>(null);
 
   const { address: accountAddress, isConnected, chainId: currentChainId } = useAccount()
   const [isAttemptingSwitch, setIsAttemptingSwitch] = useState(false);
@@ -420,7 +539,7 @@ export function SwapInterface() {
     if (showFeeDetails && isConnected && currentChainId === TARGET_CHAIN_ID) {
       if (dynamicFeeLoading) {
         if (dynamicFeeBps !== null) { 
-          feeValueString = `${(dynamicFeeBps / 10000).toFixed(2)}% ( refreshing...)`;
+          feeValueString = `${(dynamicFeeBps / 10000).toFixed(2)}% ( refreshing...)${ ''}`; // Updated to use template literal
         } else { 
           feeValueString = "Fetching fee...";
         }
@@ -1092,131 +1211,47 @@ export function SwapInterface() {
     setToAmount("");
   };
 
+  // Calculate actual percentage based on fromAmount and balance
+  const fromTokenBalance = parseFloat(fromToken.balance || "0"); // Use current fromToken state
+  const fromAmountNum = parseFloat(fromAmount || "0");
+  let actualNumericPercentage = 0;
+  if (fromTokenBalance > 0 && fromAmountNum > 0) {
+    actualNumericPercentage = (fromAmountNum / fromTokenBalance) * 100; // Can be > 100 or < 0 if input is wild
+  }
+  // Do not clamp actualNumericPercentage here, let OutlineArcIcon handle visual clamping / over_limit
+
+  // Determine the stepped percentage for the icon (current selection)
+  const currentSteppedPercentage = selectedPercentageIndex === -1 ? 0 : cyclePercentages[selectedPercentageIndex];
+
   const handleCyclePercentage = () => {
-    let nextIndex = selectedPercentageIndex + 1;
-    if (nextIndex >= cyclePercentages.length) nextIndex = -1;
-    setSelectedPercentageIndex(nextIndex);
-    if (nextIndex !== -1) handleUsePercentage(cyclePercentages[nextIndex]);
-    else setFromAmount("0"); // If cycling back to no percentage, reset amount
+    const currentActualIsOverLimit = actualNumericPercentage > 100;
+
+    if (currentActualIsOverLimit) {
+      handleUsePercentage(100); // Sets input to 100% of balance
+      setSelectedPercentageIndex(cyclePercentages.indexOf(100)); // Sets selected step to 100%
+    } else {
+      let nextIndex = selectedPercentageIndex + 1;
+      if (nextIndex >= cyclePercentages.length) nextIndex = -1; // Cycle back to 0% (manual/reset state)
+      setSelectedPercentageIndex(nextIndex);
+      if (nextIndex !== -1) {
+        handleUsePercentage(cyclePercentages[nextIndex]);
+      } else {
+        setFromAmount("0"); // Reset amount if cycling back to -1 index for 0%
+      }
+    }
+    setHoveredArcPercentage(null); // Clear hover preview on any click
   };
 
-  const currentPercentage = selectedPercentageIndex === -1 ? 0 : cyclePercentages[selectedPercentageIndex];
+  const handleMouseEnterArc = () => {
+    let nextIndexPreview = selectedPercentageIndex + 1;
+    if (nextIndexPreview >= cyclePercentages.length) nextIndexPreview = -1;
+    const nextPercentagePreview = nextIndexPreview === -1 ? 0 : cyclePercentages[nextIndexPreview];
+    setHoveredArcPercentage(nextPercentagePreview);
+  };
 
-  // --- Dynamic Fee Fetching Logic ---
-  const fetchDynamicFeeCallback = useCallback(async () => {
-    if (isFetchingDynamicFeeRef.current) return; // Prevent concurrent fetches
-
-    const currentFromToken = fromToken; // Capture current state for the async function
-    const currentToToken = toToken;
-    const currentFromAmount = fromAmount;
-
-    const fromAmountNum = parseFloat(currentFromAmount);
-    const validAmount = !isNaN(fromAmountNum) && fromAmountNum > 0;
-    const tokensSelected = currentFromToken.address && currentToToken.address && currentFromToken.address !== currentToToken.address;
-    const canFetch = isConnected && currentChainId === TARGET_CHAIN_ID && accountAddress && validAmount && tokensSelected;
-
-    if (!canFetch) {
-      setDynamicFeeBps(null); // Clear fee if conditions aren't met
-      setDynamicFeeLoading(false);
-      // setDynamicFeeError("Cannot fetch fee: Invalid input or network."); // Optional: set error
-      return;
-    }
-
-    console.log("[fetchDynamicFeeCallback] Attempting to fetch dynamic fee...");
-    isFetchingDynamicFeeRef.current = true;
-    setDynamicFeeLoading(true);
-    setDynamicFeeError(null);
-
-    try {
-      const fromTokenSymbol = Object.keys(TOKEN_DEFINITIONS).find(key => TOKEN_DEFINITIONS[key as TokenSymbol].addressRaw === currentFromToken.address) as TokenSymbol | undefined;
-      const toTokenSymbol = Object.keys(TOKEN_DEFINITIONS).find(key => TOKEN_DEFINITIONS[key as TokenSymbol].addressRaw === currentToToken.address) as TokenSymbol | undefined;
-
-      if (!fromTokenSymbol || !toTokenSymbol) {
-        throw new Error("Could not determine token symbols for fee fetching.");
-      }
-
-      const response = await fetch('/api/swap/get-dynamic-fee', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          fromTokenSymbol,
-          toTokenSymbol,
-          chainId: TARGET_CHAIN_ID,
-        }),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.message || data.errorDetails || 'Failed to fetch dynamic fee');
-      }
-      const fee = Number(data.dynamicFee);
-      if (isNaN(fee)) {
-        throw new Error('Dynamic fee received is not a number: ' + data.dynamicFee);
-      }
-      setDynamicFeeBps(fee);
-      console.log("[fetchDynamicFeeCallback] Dynamic fee fetched (bps):", fee);
-    } catch (error: any) {
-      console.error("[fetchDynamicFeeCallback] Error fetching dynamic fee:", error);
-      setDynamicFeeError(error.message || "Failed to load fee");
-      setDynamicFeeBps(null);
-    } finally {
-      setDynamicFeeLoading(false);
-      isFetchingDynamicFeeRef.current = false;
-    }
-  }, [fromToken, toToken, fromAmount, isConnected, currentChainId, accountAddress, TARGET_CHAIN_ID]);
-
-  // Effect for debounced fetch on amount/token change
-  useEffect(() => {
-    if (debounceTimerRef.current) {
-      clearTimeout(debounceTimerRef.current);
-    }
-
-    const fromAmountNum = parseFloat(fromAmount);
-    const isValidAmount = !isNaN(fromAmountNum) && fromAmountNum > 0;
-    const areTokensSelected = fromToken.address && toToken.address && fromToken.address !== toToken.address;
-    
-    if (isValidAmount && areTokensSelected && isConnected && currentChainId === TARGET_CHAIN_ID) {
-      debounceTimerRef.current = setTimeout(() => {
-        fetchDynamicFeeCallback();
-      }, 250); // Reduced debounce to 250ms
-    } else {
-      // If conditions are not met, clear any pending fee and hide loading/error
-      setDynamicFeeBps(null);
-      setDynamicFeeLoading(false);
-      setDynamicFeeError(null);
-    }
-
-    return () => {
-      if (debounceTimerRef.current) {
-        clearTimeout(debounceTimerRef.current);
-      }
-    };
-  }, [fromAmount, fromToken, toToken, isConnected, currentChainId, fetchDynamicFeeCallback]);
-
-  // Effect for periodic refresh
-  useEffect(() => {
-    if (intervalTimerRef.current) {
-      clearInterval(intervalTimerRef.current);
-    }
-
-    const fromAmountNum = parseFloat(fromAmount);
-    const isValidAmount = !isNaN(fromAmountNum) && fromAmountNum > 0;
-    const areTokensSelected = fromToken.address && toToken.address && fromToken.address !== toToken.address;
-
-    if (isValidAmount && areTokensSelected && isConnected && currentChainId === TARGET_CHAIN_ID) {
-      intervalTimerRef.current = setInterval(() => {
-        if (!isFetchingDynamicFeeRef.current && !dynamicFeeLoading) { // Check dynamicFeeLoading as well
-          console.log("[Interval] Triggering periodic fee refresh.");
-          fetchDynamicFeeCallback();
-        }
-      }, 30000); // 30 seconds
-    }
-
-    return () => {
-      if (intervalTimerRef.current) {
-        clearInterval(intervalTimerRef.current);
-      }
-    };
-  }, [fromAmount, fromToken, toToken, isConnected, currentChainId, dynamicFeeLoading, fetchDynamicFeeCallback]);
+  const handleMouseLeaveArc = () => {
+    setHoveredArcPercentage(null);
+  };
 
   return (
     <Card className="mx-auto max-w-md card-gradient">
@@ -1235,12 +1270,27 @@ export function SwapInterface() {
                     <Button variant="ghost" className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent" onClick={() => handleUseFullBalance(displayFromToken, true)} disabled={!isConnected}>
                        Balance: { (isConnected ? (isLoadingCurrentFromTokenBalance ? "Loading..." : displayFromToken.balance) : "~")} {displayFromToken.symbol}
                     </Button>
-                    <Button variant="ghost" size="icon" className="h-5 w-5 rounded-full hover:bg-muted/40" onClick={handleCyclePercentage} disabled={!isConnected}>
-                      <OutlineArcIcon percentage={currentPercentage} className="h-4 w-4" />
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      className="h-5 w-5 rounded-full hover:bg-muted/40" 
+                      onClick={handleCyclePercentage} 
+                      onMouseEnter={handleMouseEnterArc}
+                      onMouseLeave={handleMouseLeaveArc}
+                      disabled={!isConnected}
+                    >
+                      <OutlineArcIcon 
+                        actualPercentage={actualNumericPercentage} // Pass potentially unclamped value
+                        steppedPercentage={currentSteppedPercentage}
+                        hoverPercentage={hoveredArcPercentage}
+                        isOverLimit={actualNumericPercentage > 100} // ADDED prop
+                        className="h-4 w-4" 
+                        size={16}
+                      />
                     </Button>
                   </div>
                 </div>
-                <div className={cn("rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted", { "outline outline-1 outline-muted": isSellInputFocused })}>
+                <div className={cn("rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted", { "outline outline-1 outline-muted": isSellInputFocused })}> {/* Corrected cn usage */}
                   <div className="flex items-center gap-2">
                     {/* Token Display for FromToken - Non-interactive, shows current fromToken */}
                     <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
@@ -1279,7 +1329,7 @@ export function SwapInterface() {
                 <div className="flex items-center justify-between mb-2">
                   <Label className="text-sm font-medium">Buy</Label>
                   {/* Balance display for toToken - added for consistency */}
-                   <span className={cn("text-xs text-muted-foreground", { "opacity-50": !isConnected })}>
+                   <span className={cn("text-xs text-muted-foreground", { "opacity-50": !isConnected })}> {/* Corrected cn usage */}
                       Balance: { (isConnected ? (isLoadingCurrentToTokenBalance ? "Loading..." : displayToToken.balance) : "~")} {displayToToken.symbol}
                     </span>
                 </div>
@@ -1497,35 +1547,6 @@ export function SwapInterface() {
         </AnimatePresence>
       </CardContent>
     </Card>
-  )
-}
-
-// OutlineArcIcon (original, unchanged)
-interface OutlineArcIconProps { percentage: number; size?: number; className?: string; }
-function OutlineArcIcon({ percentage, size = 16, className }: OutlineArcIconProps) {
-  const r = 6; const cx = 8; const cy = 8; const strokeWidth = 2;
-  const clampedPercentage = Math.max(0, Math.min(100, percentage));
-  let pathData = "";
-  if (clampedPercentage > 0 && clampedPercentage < 100) {
-    const angleStart = -Math.PI / 2;
-    const angleEnd = angleStart + (clampedPercentage / 100) * (2 * Math.PI);
-    const startX = cx + r * Math.cos(angleStart); const startY = cy + r * Math.sin(angleStart);
-    const endX = cx + r * Math.cos(angleEnd); const endY = cy + r * Math.sin(angleEnd);
-    const largeArcFlag = clampedPercentage >= 50 ? 1 : 0;
-    pathData = `M ${cx},${cy} L ${startX},${startY} A ${r},${r} 0 ${largeArcFlag} 1 ${endX},${endY} Z`;
-  }
-  return (
-    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" className={className}>
-      {clampedPercentage === 0 && (
-        <path d={`M ${cx},${cy - r} L ${cx},${cy + r} M ${cx},${cy - r} A ${r},${r} 0 0 0 ${cx},${cy + r} M ${cx},${cy - r} A ${r},${r} 0 0 1 ${cx},${cy + r}`} fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" className="opacity-30" />
-      )}
-      {clampedPercentage === 100 && (
-        <path d={`M ${cx},${cy - r} L ${cx},${cy + r} M ${cx},${cy - r} A ${r},${r} 0 0 0 ${cx},${cy + r} M ${cx},${cy - r} A ${r},${r} 0 0 1 ${cx},${cy + r}`} fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" className="opacity-100" />
-      )}
-      {pathData && (
-        <path d={pathData} fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" className="opacity-100" />
-      )}
-    </svg>
   );
 }
 
