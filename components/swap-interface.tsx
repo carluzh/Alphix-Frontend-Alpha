@@ -217,12 +217,32 @@ function OutlineArcIcon({ actualPercentage, steppedPercentage, hoverPercentage, 
   const mainPathStroke = displayMode === 'over_limit' ? errorRedColor : 'currentColor';
   const displayOpacity = 1;
 
+  // Determine if the manual arc should be rendered as a pie slice
+  const shouldManualArcBePieSlice =
+    displayMode === 'manual_arc' &&
+    clampedActualPercentageForDisplay > 20 &&
+    clampedActualPercentageForDisplay < 80;
+
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" className={className}>
       <circle cx={cx} cy={cy} r={r} fill="none" stroke={baseCircleStroke} strokeWidth={strokeWidth} strokeOpacity={displayOpacity} />
 
       {displayMode === 'manual_arc' ? (
-        manualArcPathData && <path d={manualArcPathData} fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" opacity={displayOpacity} />
+        shouldManualArcBePieSlice ? (
+          // Render manual arc as a pie slice if condition met
+          clampedActualPercentageForDisplay > 0 && clampedActualPercentageForDisplay < 100 && // Guard for getPieSlicePath
+          <path
+            d={getPieSlicePath(clampedActualPercentageForDisplay)}
+            fill="none"
+            stroke={mainPathStroke} // Use mainPathStroke for consistency
+            strokeWidth={strokeWidth}
+            strokeLinejoin="round"
+            opacity={displayOpacity}
+          />
+        ) : (
+          // Original manual arc rendering (open arc)
+          manualArcPathData && <path d={manualArcPathData} fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" opacity={displayOpacity} />
+        )
       ) : (displayMode === 'step_slice_or_line' || displayMode === 'hover' || displayMode === 'over_limit') ? (
         <>
           {(displayPercentage === 0 || displayPercentage === 100) ? (
