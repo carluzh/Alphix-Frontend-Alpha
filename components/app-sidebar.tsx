@@ -79,7 +79,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               asChild 
               className="data-[slot=sidebar-menu-button]:!p-1.5 hover:bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0"
             >
-              <a href="/dashboard">
+              <a href="/swap">
                 <div className="flex items-center">
                   <ReactSVG 
                     src="/logo.svg" 
