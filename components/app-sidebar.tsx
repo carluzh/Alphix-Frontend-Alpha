@@ -16,6 +16,7 @@ import {
   ChartPieIcon,
   AwardIcon,
   KeySquareIcon,
+  GaugeIcon,
 } from "lucide-react"
 import { ReactSVG } from "react-svg"
 import { NavMain } from "./nav-main"
@@ -59,8 +60,8 @@ const data = {
   ],
   navGovernance: [
     {
-      title: "Leaderboard",
-      icon: AwardIcon,
+      title: "Lock",
+      icon: KeySquareIcon,
       url: "#",
       disabled: true,
     },
@@ -71,8 +72,14 @@ const data = {
       disabled: true,
     },
     {
-      title: "Lock",
-      icon: KeySquareIcon,
+      title: "Gauges",
+      icon: GaugeIcon,
+      url: "#",
+      disabled: true,
+    },
+    {
+      title: "Leaderboard",
+      icon: AwardIcon,
       url: "#",
       disabled: true,
     },
