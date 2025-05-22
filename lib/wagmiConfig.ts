@@ -22,8 +22,8 @@ export const baseSepolia = defineChain({
   name: 'Base Sepolia',
   nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
   rpcUrls: {
-    default: { http: ['https://base-sepolia.drpc.org'] },
-    public: { http: ['https://base-sepolia.drpc.org'] },
+    default: { http: ['https://sepolia.base.org', 'https://base-sepolia.drpc.org'] },
+    public: { http: ['https://sepolia.base.org', 'https://base-sepolia.drpc.org'] },
   },
   blockExplorers: {
     default: { name: 'Basescan Sepolia', url: 'https://sepolia.basescan.org' }, // Added Basescan

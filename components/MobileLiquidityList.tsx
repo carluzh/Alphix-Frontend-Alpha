@@ -10,6 +10,15 @@ interface MobileLiquidityListProps {
   onSelectPool: (poolId: string) => void;
 }
 
+// Helper function to format USD values, similar to the one in app/liquidity/page.tsx
+const formatUSD = (value: number) => {
+  if (value < 0.01 && value > 0) return "< $0.01"; // Handle very small positive values
+  if (value === 0) return "$0.00";
+  if (Math.abs(value) < 0.01) return "< $0.01"; // For small negative values if they ever occur
+  if (Math.abs(value) < 1000) return `$${value.toFixed(2)}`;
+  return `$${(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+};
+
 export function MobileLiquidityList({ pools, onSelectPool }: MobileLiquidityListProps) {
   if (!pools || pools.length === 0) {
     return <div className="p-4 text-center text-muted-foreground">No pools available.</div>;
@@ -53,17 +62,25 @@ export function MobileLiquidityList({ pools, onSelectPool }: MobileLiquidityList
               </div>
               <CardTitle className="text-base font-semibold">{pool.pair}</CardTitle>
             </div>
-            <Badge variant="outline" className="text-xs bg-[#e85102]/20 text-[#e85102] border-[#e85102]/30">
+            <Badge className="bg-[#e85102]/20 text-[#e85102] rounded-md hover:bg-[#e85102]/20">
               {pool.apr}
             </Badge>
           </CardHeader>
           <CardContent className="px-4 pb-4 pt-2">
             <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
               <div className="text-muted-foreground">Volume (24h)</div>
-              <div className="text-right font-medium">{pool.volume24h}</div>
+              <div className="text-right font-medium">
+                {typeof pool.volume24hUSD === 'number' 
+                  ? formatUSD(pool.volume24hUSD) 
+                  : pool.volume24h}
+              </div>
               
               <div className="text-muted-foreground">Liquidity</div>
-              <div className="text-right font-medium">{pool.liquidity}</div>
+              <div className="text-right font-medium">
+                {typeof pool.tvlUSD === 'number' 
+                  ? formatUSD(pool.tvlUSD) 
+                  : pool.liquidity}
+              </div>
             </div>
           </CardContent>
         </Card>

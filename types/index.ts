@@ -1,4 +1,4 @@
-export type Pool = {
+export interface Pool {
   id: string;
   tokens: {
     symbol: string;
@@ -9,7 +9,14 @@ export type Pool = {
   volume7d: string;
   fees24h: string;
   fees7d: string;
+  volume24hUSD?: number;
+  fees24hUSD?: number;
+  volume7dUSD?: number;
+  fees7dUSD?: number;
   liquidity: string;
+  tvlUSD?: number;
   apr: string;
-  highlighted: boolean; // Keep highlighted as boolean, page.tsx uses it.
-}; 
+  highlighted: boolean;
+  positionsCount?: number;
+  dynamicFeeBps?: number;
+} 

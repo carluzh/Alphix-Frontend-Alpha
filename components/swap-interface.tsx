@@ -67,7 +67,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 // Chart Import
 import { DynamicFeeChart, generateMockFeeHistory } from "./dynamic-fee-chart";
 import { DynamicFeeChartPreview } from "./dynamic-fee-chart-preview"; // Import the new preview component
-import { PulsatingDot } from "./pulsating-dot"; // Import the new PulsatingDot component
+import { PulsatingDot } from "./pulsating-dot"; // Corrected: PulsatingDotIcon changed to PulsatingDot, assuming it's the intended export
+import { getFromCache, setToCache, getPoolDynamicFeeCacheKey } from "@/lib/client-cache"; // Import cache functions
 
 // Define FeeHistoryPoint interface if not already defined/imported (it's defined in dynamic-fee-chart.tsx but not exported from there for direct use here yet)
 // For now, let's assume we can use 'any' or define a local version for the state type if direct import is an issue.
@@ -390,11 +391,38 @@ export function SwapInterface() {
     if (
       !isConnected ||
       currentChainId !== TARGET_CHAIN_ID ||
-      // parseFloat(fromAmount || "0") <= 0, // REMOVED: Fee fetch no longer depends on amount being > 0
       !fromToken ||
       !toToken
     ) {
       setDynamicFeeBps(null);
+      setDynamicFeeLoading(false);
+      setDynamicFeeError(null);
+      return;
+    }
+
+    const fromTokenSymbolForCache = Object.keys(TOKEN_DEFINITIONS).find(
+      (key) => TOKEN_DEFINITIONS[key as TokenSymbol].addressRaw === fromToken.address
+    ) as TokenSymbol | undefined;
+    const toTokenSymbolForCache = Object.keys(TOKEN_DEFINITIONS).find(
+      (key) => TOKEN_DEFINITIONS[key as TokenSymbol].addressRaw === toToken.address
+    ) as TokenSymbol | undefined;
+
+    if (!fromTokenSymbolForCache || !toTokenSymbolForCache) {
+      console.error("[fetchFee] Could not determine token symbols for cache key.");
+      setDynamicFeeError("Token configuration error for fee.");
+      setDynamicFeeLoading(false);
+      return;
+    }
+
+    const cacheKey = getPoolDynamicFeeCacheKey(fromTokenSymbolForCache, toTokenSymbolForCache, TARGET_CHAIN_ID);
+    const cachedFee = getFromCache<{ dynamicFee: string }>(cacheKey);
+
+    if (cachedFee) {
+      console.log(`[Cache HIT] Using cached dynamic fee for ${fromTokenSymbolForCache}-${toTokenSymbolForCache}:`, cachedFee.dynamicFee);
+      const fee = Number(cachedFee.dynamicFee);
+      if (!isNaN(fee)) {
+        setDynamicFeeBps(fee);
+      }
       setDynamicFeeLoading(false);
       setDynamicFeeError(null);
       return;
@@ -405,25 +433,15 @@ export function SwapInterface() {
     isFetchingDynamicFeeRef.current = true;
     setDynamicFeeLoading(true);
     setDynamicFeeError(null);
+    console.log(`[Cache MISS] Fetching dynamic fee from API for ${fromTokenSymbolForCache}-${toTokenSymbolForCache}`);
 
     try {
-      const fromTokenSymbol = Object.keys(TOKEN_DEFINITIONS).find(
-        (key) => TOKEN_DEFINITIONS[key as TokenSymbol].addressRaw === fromToken.address
-      );
-      const toTokenSymbol = Object.keys(TOKEN_DEFINITIONS).find(
-        (key) => TOKEN_DEFINITIONS[key as TokenSymbol].addressRaw === toToken.address
-      );
-
-      if (!fromTokenSymbol || !toTokenSymbol) {
-        throw new Error("Could not determine token symbols for fee fetching.");
-      }
-
       const response = await fetch('/api/swap/get-dynamic-fee', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          fromTokenSymbol,
-          toTokenSymbol,
+          fromTokenSymbol: fromTokenSymbolForCache, // Use determined symbol
+          toTokenSymbol: toTokenSymbolForCache,   // Use determined symbol
           chainId: TARGET_CHAIN_ID,
         }),
       });
@@ -436,6 +454,8 @@ export function SwapInterface() {
         throw new Error('Dynamic fee received is not a number: ' + data.dynamicFee);
       }
       setDynamicFeeBps(fee);
+      setToCache(cacheKey, { dynamicFee: data.dynamicFee }); // Cache the raw string from API
+      console.log(`[Cache SET] Cached dynamic fee for ${fromTokenSymbolForCache}-${toTokenSymbolForCache}:`, data.dynamicFee);
       setDynamicFeeLoading(false);
     } catch (error: any) {
       console.error("[fetchFee] Error fetching dynamic fee:", error.message);
@@ -445,7 +465,7 @@ export function SwapInterface() {
     } finally {
       isFetchingDynamicFeeRef.current = false;
     }
-  }, [isConnected, currentChainId, fromToken, toToken, TARGET_CHAIN_ID]); // TARGET_CHAIN_ID added as it's used in conditions
+  }, [isConnected, currentChainId, fromToken, toToken, TARGET_CHAIN_ID]);
 
   useEffect(() => {
     fetchFee(); // Fetch once on mount / relevant dep change
