@@ -100,6 +100,11 @@ async function fetchRollingVolumeAndFeesForApi(
         totalFeesUSD += parseFloat(swap.feesUSD);
     }
 
+    // START: Quick Band-aid Fix for potential 2x counting issue
+    totalVolumeUSD /= 2;
+    totalFeesUSD /= 2;
+    // END: Quick Band-aid Fix
+
     // Return the total volume and fees formatted as strings
     return {
         volumeUSD: totalVolumeUSD.toFixed(18), // Adjust decimal places as needed

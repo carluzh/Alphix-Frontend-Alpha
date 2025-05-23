@@ -41,8 +41,6 @@ export function NavMain({
     <SidebarMenu className="mt-2 flex flex-col gap-2">
       {items.map((item) => {
         const isActive = item.url === pathname;
-        const showDot = isActive && item.title !== "Swap";
-        const dotColor = "bg-white";
 
         return (
           <SidebarMenuItem key={item.title} className="list-none">
@@ -64,8 +62,9 @@ export function NavMain({
             ) : item.title === "Swap" ? (
               <SidebarMenuButton
                 tooltip="Swap"
-                className="min-w-8 bg-primary text-primary-foreground duration-200 ease-linear hover:bg-primary/90 hover:text-primary-foreground active:bg-primary/90 active:text-primary-foreground w-full"
+                className="w-full"
                 asChild
+                isActive={isActive}
               >
                 <a href={item.url!} className="flex items-center w-full">
                   {item.icon ? <item.icon /> : <PlusCircleIcon />}
@@ -73,11 +72,10 @@ export function NavMain({
                 </a>
               </SidebarMenuButton>
             ) : (
-              <SidebarMenuButton tooltip={item.title} asChild className="w-full">
+              <SidebarMenuButton tooltip={item.title} asChild className="w-full" isActive={isActive}>
                 <a href={item.url!} className="flex items-center w-full">
                   {item.icon && <item.icon />}
                   <span className="flex-1 truncate">{item.title}</span>
-                  {showDot && <div className={`h-[5px] w-[5px] rounded-full ${dotColor} mr-1 flex-shrink-0`}></div>}
                 </a>
               </SidebarMenuButton>
             )}

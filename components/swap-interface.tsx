@@ -652,7 +652,7 @@ export function SwapInterface() {
   }, [btcrlBalanceData, btcrlBalanceError, isLoadingBTCRLBalance, currentChainId, isConnected]);
 
   // Helper function to format currency
-  const formatCurrency = (valueString: string): string => {
+  const formatCurrency = useCallback((valueString: string): string => {
     // Remove '$' or '~$' and any existing commas for robust parsing
     const cleanedString = valueString.replace(/[$,~]/g, ''); 
     const numberValue = parseFloat(cleanedString);
@@ -665,20 +665,33 @@ export function SwapInterface() {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     }).format(numberValue);
-  };
+  }, []); // Added useCallback with empty dependency array
 
-  // Helper function to format token amount
-  const formatTokenAmount = useCallback((amountString: string, tokenDecimals: number): string => {
+  // Helper function to format token amount for display (Review, Success, Balances)
+  // Uses hardcoded decimals (8 for BTCRL, 2 for YUSDC) and special < 0.001 display.
+  const formatTokenAmountDisplay = useCallback((amountString: string, tokenSymbol: string): string => {
     try {
       const amount = parseFloat(amountString);
-      if (isNaN(amount) || amount === 0) return "0"; // Return "0" for invalid or zero input
-      // Show significant digits based on token decimals, capping at 3 for these views
-      return amount.toFixed(Math.min(tokenDecimals, 3)); // Changed from 6 to 3
+
+      if (isNaN(amount) || amount === 0) return "0"; // Return "0" for invalid or zero input or exact zero
+
+      // Handle very small positive numbers with special string FIRST
+      if (amount > 0 && amount < 0.001) return "< 0.001";
+
+      // Determine decimals for display based on symbol
+      const displayDecimals = tokenSymbol === 'BTCRL' ? 8 : 2; // Hardcoded decimals for YUSDC (assuming others use 2)
+
+      // Format with determined decimals
+      return amount.toFixed(displayDecimals);
+
     } catch (error) {
-      console.error("Error formatting token amount:", error);
-      return amountString;
+      console.error("Error formatting token amount display:", error);
+      return amountString; // Return original string on error
     }
-  }, []);
+  }, []); // Dependency on useCallback - no external dependencies needed here typically
+
+  // The formatTokenAmount function will now be removed or replaced by formatTokenAmountDisplay where needed.
+  // The Buy input will use its specific toFixed logic.
 
   // Effect to calculate toAmount
   useEffect(() => {
@@ -748,15 +761,15 @@ export function SwapInterface() {
 
     setCalculatedValues(prev => ({
       ...prev,
-      fromTokenAmount: formatTokenAmount(fromAmount, fromToken.decimals),
+      fromTokenAmount: formatTokenAmountDisplay(fromAmount, fromToken.symbol),
       fromTokenValue: formatCurrency(newFromTokenValue.toString()),
-      toTokenAmount: formatTokenAmount(toAmount, toToken.decimals),
+      toTokenAmount: formatTokenAmountDisplay(toAmount, toToken.symbol),
       toTokenValue: formatCurrency(newToTokenValue.toString()),
       fees: updatedFeesArray, 
       slippage: prev.slippage, 
     }));
 
-  }, [fromAmount, toAmount, fromToken, toToken, formatTokenAmount, isConnected, currentChainId, dynamicFeeLoading, dynamicFeeError, dynamicFeeBps]);
+  }, [fromAmount, toAmount, fromToken, toToken, formatCurrency, isConnected, currentChainId, dynamicFeeLoading, dynamicFeeError, dynamicFeeBps, formatTokenAmountDisplay]); // Added formatTokenAmountDisplay dependency
 
   const handleFromAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
@@ -929,9 +942,8 @@ export function SwapInterface() {
       const balance = Number.parseFloat(fromToken.balance);
       if (isNaN(balance) || balance <= 0) return;
       const amount = balance * (percentage / 100);
-      // Format to a reasonable number of decimals, respecting token's own decimals
-      setFromAmount(amount.toFixed(Math.min(fromToken.decimals, 6))); 
-      setSelectedPercentageIndex(cyclePercentages.indexOf(percentage));
+      // Set the amount with the token's actual decimals for input precision
+      setFromAmount(amount.toFixed(fromToken.decimals)); // Use actual token decimals for setting input
     } catch (error) {
       console.error("Error parsing fromToken balance for percentage:", error);
     }
@@ -944,8 +956,8 @@ export function SwapInterface() {
       if (isNaN(numericBalance) || numericBalance <= 0) return;
 
       if (isFrom) {
-        setFromAmount(balanceToUse); // Set the full balance string
-        setSelectedPercentageIndex(cyclePercentages.indexOf(100));
+        // Set the full balance formatted to the token's actual decimals for input precision
+        setFromAmount(numericBalance.toFixed(token.decimals)); // Use actual token decimals for setting input
       } else {
         // This case might not be used if toToken input is always calculated
         console.warn("Setting 'toAmount' based on 'toToken' balance is not directly supported by this UI logic.");
@@ -1220,7 +1232,7 @@ export function SwapInterface() {
             setSwapState("success");
             setCompletedSteps(prev => [...prev, "complete"]);
             toast("Swap Successful", {
-                 description: `Swapped ${fromAmount} ${fromToken.symbol} for ${toAmount} ${toToken.symbol}`,
+                 description: `Swapped ${formatTokenAmountDisplay(swapTxInfo?.fromAmount || '0', fromToken.symbol)} ${swapTxInfo?.fromSymbol || fromToken.symbol} for ${formatTokenAmountDisplay(swapTxInfo?.toAmount || '0', toToken.symbol)} ${swapTxInfo?.toSymbol || toToken.symbol}`,
                  icon: <SuccessToastIcon />, duration: 5000,
             });
             window.swapBuildData = undefined; 
@@ -1508,7 +1520,10 @@ export function SwapInterface() {
                           placeholder="0" 
                           disabled={!isConnected || isAttemptingSwitch} 
                         />
-                        <div className="text-right text-xs text-muted-foreground">{formatCurrency((parseFloat(fromAmount || "0") * displayFromToken.usdPrice).toString())}</div>
+                        {/* Display formatted currency value below the amount */}
+                        <div className="text-right text-xs text-muted-foreground">
+                          {formatCurrency((parseFloat(fromAmount || "0") * displayFromToken.usdPrice).toString())}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -1539,12 +1554,17 @@ export function SwapInterface() {
                       </div>
                       <div className="flex-1">
                         <Input
-                          value={parseFloat(toAmount || "0") === 0 ? "0" : formatTokenAmount(toAmount, displayToToken.decimals)} // Show "0" if empty/zero
+                          value={
+                            parseFloat(toAmount || "0") === 0 
+                              ? "0" 
+                              : parseFloat(toAmount || "0").toFixed(displayToToken.symbol === 'BTCRL' ? 8 : 2)
+                          }
                           readOnly
                           disabled={!isConnected || isAttemptingSwitch}
-                          className="border-0 bg-transparent text-right text-xl md:text-xl font-medium text-muted-foreground shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
+                          className="border-0 bg-transparent text-right text-xl md:text-xl font-medium text-muted-foreground shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto" // Kept text-xl size
                           placeholder="0"
                         />
+                        {/* Value display below the 'Buy' input */}
                         <div className="text-right text-xs text-muted-foreground">
                           {formatCurrency((parseFloat(toAmount || "0") * displayToToken.usdPrice).toString())}
                         </div>
@@ -1603,6 +1623,7 @@ export function SwapInterface() {
                     </Button>
                   ) : (
                     <div className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md bg-accent text-accent-foreground px-3 text-sm font-medium transition-colors hover:bg-accent/90 shadow-md">
+                      {/* The problematic appkit-button */}
                       <appkit-button className="absolute inset-0 z-10 block h-full w-full cursor-pointer p-0 opacity-0" />
                       <span className="relative z-0 pointer-events-none">{actionButtonText}</span>
                     </div>
@@ -1617,15 +1638,31 @@ export function SwapInterface() {
                 <div className="mb-6 flex items-center justify-between bg-muted/10 rounded-lg p-4 hover:bg-muted/20 transition-colors">
                   <Button variant="ghost" className="flex items-center gap-3 p-0 h-auto hover:bg-transparent" onClick={handleChangeButton}>
                     <Image src={displayFromToken.icon} alt={displayFromToken.symbol} width={40} height={40} className="rounded-full"/>
-                    <div className="text-left">
-                      <div className="font-medium">{calculatedValues.fromTokenAmount} {displayFromToken.symbol}</div>
+                    <div className="text-left flex flex-col"> {/* Use flex-col for amount above value */}
+                      <div className="font-medium flex items-baseline"> {/* Flex for amount and symbol, align baseline */}
+                        {calculatedValues.fromTokenAmount === "< 0.001" ? (
+                          <span className="text-sm text-muted-foreground">{calculatedValues.fromTokenAmount}</span> // Smaller, greyish
+                        ) : (
+                          // Ensure this branch returns a single element if it wasn't before
+                          <span>{calculatedValues.fromTokenAmount}</span> // Default styling for the amount
+                        )}
+                        <span className="ml-1 text-sm text-muted-foreground">{displayFromToken.symbol}</span> {/* Symbol always smaller and greyish */}
+                      </div>
                       <div className="text-xs text-muted-foreground">{calculatedValues.fromTokenValue}</div>
                     </div>
                   </Button>
                   <ArrowRightIcon className="h-5 w-5 text-muted-foreground mx-2" />
-                  <Button variant="ghost" className="flex items-center gap-3 p-0 h-auto hover:bg-transparent" onClick={handleChangeButton}>
-                    <div className="text-right">
-                      <div className="font-medium">{calculatedValues.toTokenAmount} {displayToToken.symbol}</div>
+                  <Button variant="ghost" className="flex items-center gap-3 p-0 h-auto hover:bg-transparent" onClick={handleChangeButton}> 
+                    <div className="text-right flex flex-col"> {/* Use flex-col for amount above value */}
+                       <div className="font-medium flex items-baseline"> {/* Flex for amount and symbol, align baseline */}
+                        {calculatedValues.toTokenAmount === "< 0.001" ? (
+                          <span className="text-sm text-muted-foreground">{calculatedValues.toTokenAmount}</span> // Smaller, greyish
+                        ) : (
+                          // Ensure this branch returns a single element if it wasn't before
+                          <span>{calculatedValues.toTokenAmount}</span> // Default styling for the amount
+                        )}
+                         <span className="ml-1 text-sm text-muted-foreground">{displayToToken.symbol}</span> {/* Symbol always smaller and greyish */}
+                       </div>
                       <div className="text-xs text-muted-foreground">{calculatedValues.toTokenValue}</div>
                     </div>
                     <Image src={displayToToken.icon} alt={displayToToken.symbol} width={40} height={40} className="rounded-full"/>
@@ -1702,26 +1739,42 @@ export function SwapInterface() {
                  <div className="mb-6 flex items-center justify-between bg-muted/10 rounded-lg p-4 hover:bg-muted/20 transition-colors">
                   <Button variant="ghost" className="flex items-center gap-3 p-0 h-auto hover:bg-transparent" onClick={handleChangeButton}>
                     <Image src={displayFromToken.icon} alt={displayFromToken.symbol} width={40} height={40} className="rounded-full"/>
-                    <div className="text-left">
-                      <div className="font-medium">{swapTxInfo?.fromAmount || calculatedValues.fromTokenAmount} {swapTxInfo?.fromSymbol || displayFromToken.symbol}</div>
+                    <div className="text-left flex flex-col"> {/* Use flex-col for amount above value */}
+                      <div className="font-medium flex items-baseline"> {/* Flex for amount and symbol, align baseline */}
+                        {(swapTxInfo?.fromAmount ? formatTokenAmountDisplay(swapTxInfo.fromAmount, displayFromToken.symbol) : calculatedValues.fromTokenAmount) === "< 0.001" ? (
+                            <span className="text-sm text-muted-foreground">{swapTxInfo?.fromAmount ? formatTokenAmountDisplay(swapTxInfo.fromAmount, displayFromToken.symbol) : calculatedValues.fromTokenAmount}</span> // Smaller, greyish
+                        ) : (
+                            <span>{swapTxInfo?.fromAmount ? formatTokenAmountDisplay(swapTxInfo.fromAmount, displayFromToken.symbol) : calculatedValues.fromTokenAmount}</span> // Default styling for the amount
+                        )}
+                        <span className="ml-1 text-sm text-muted-foreground">{swapTxInfo?.fromSymbol || displayFromToken.symbol}</span> {/* Symbol always smaller and greyish */}
+                      </div>
                       <div className="text-xs text-muted-foreground">{calculatedValues.fromTokenValue}</div>
                     </div>
                   </Button>
                   <ArrowRightIcon className="h-5 w-5 text-muted-foreground mx-2" />
+                  {/* Ensure the Button and structure for the "to" token is similar and includes the icon */}
                   <Button variant="ghost" className="flex items-center gap-3 p-0 h-auto hover:bg-transparent" onClick={handleChangeButton}> 
-                    <div className="text-right">
-                      <div className="font-medium">{swapTxInfo?.toAmount || calculatedValues.toTokenAmount} {swapTxInfo?.toSymbol || displayToToken.symbol}</div>
+                    <div className="text-right flex flex-col"> {/* Use flex-col for amount above value */}
+                       <div className="font-medium flex items-baseline"> {/* Flex for amount and symbol, align baseline */}
+                        {(swapTxInfo?.toAmount ? formatTokenAmountDisplay(swapTxInfo.toAmount, displayToToken.symbol) : calculatedValues.toTokenAmount) === "< 0.001" ? (
+                          <span className="text-sm text-muted-foreground">{swapTxInfo?.toAmount ? formatTokenAmountDisplay(swapTxInfo.toAmount, displayToToken.symbol) : calculatedValues.toTokenAmount}</span> // Smaller, greyish
+                        ) : (
+                          <span>{swapTxInfo?.toAmount ? formatTokenAmountDisplay(swapTxInfo.toAmount, displayToToken.symbol) : calculatedValues.toTokenAmount}</span> // Default styling for the amount
+                        )}
+                         <span className="ml-1 text-sm text-muted-foreground">{swapTxInfo?.toSymbol || displayToToken.symbol}</span> {/* Symbol always smaller and greyish */}
+                       </div>
                       <div className="text-xs text-muted-foreground">{calculatedValues.toTokenValue}</div>
                     </div>
+                    {/* Add the missing Image component for the "to" token icon */}
                     <Image src={displayToToken.icon} alt={displayToToken.symbol} width={40} height={40} className="rounded-full"/>
                   </Button>
-                </div>
+                 </div>
                 <div className="my-8 flex flex-col items-center justify-center">
                   <motion.div 
                     className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-slate-900 dark:bg-white"
                     initial={{ scale: 0.8 }} 
                     animate={{ scale: 1 }} 
-                    transition={{ type: "spring", stiffness: 300, damping: 20 }}
+                    transition={{ type: "spring", stiffness: 300, damping: 20 }} 
                   >
                     <CheckIcon className="h-8 w-8 text-slate-50 dark:text-black" />
                   </motion.div>
@@ -1777,7 +1830,7 @@ export function SwapInterface() {
           {/* Default Dialog close button will be used */}
         </DialogContent>
       </Dialog>
-    </div>
+    </div> // Ensure this closing div is correct
   );
 }
 
