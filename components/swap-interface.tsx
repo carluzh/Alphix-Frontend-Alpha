@@ -155,6 +155,13 @@ const WarningToastIcon = () => (
   </svg>
 );
 
+// ADDED: Info Toast Icon
+const InfoToastIcon = () => (
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="opacity-80">
+    <path fillRule="evenodd" clipRule="evenodd" d="M12 3C7.02944 3 3 7.02944 3 12C3 16.9706 7.02944 21 12 21C16.9706 21 21 16.9706 21 12C21 7.02944 16.9706 3 12 3ZM19.5 12C19.5 16.1421 16.1421 19.5 12 19.5C7.85786 19.5 4.5 16.1421 4.5 12C4.5 7.85786 7.85786 4.5 12 4.5C16.9706 4.5 19.5 7.85786 19.5 12ZM11.25 13.5V8.25H12.75V13.5H11.25ZM11.25 15.75V14.25H12.75V15.75H11.25Z" fill="#f2d769"/> {/* Yellow color */}
+  </svg>
+);
+
 // Interface for OutlineArcIcon props
 interface OutlineArcIconProps {
   actualPercentage: number;
@@ -531,17 +538,18 @@ export function SwapInterface() {
       // Handle Warning Toasts
       if (swapProgressState === "needs_approval" && !reviewNotificationsShown.current.needs_approval) {
         console.log("%%% TOASTING: Approval Required %%%");
-        toast("Approval Required", { description: `Permit2 needs approval to spend your ${fromToken.symbol}.`, icon: <WarningToastIcon />, duration: 4000 });
+        toast("Approval Required", { description: `Permit2 needs approval to spend your ${fromToken.symbol}.`, icon: <InfoToastIcon />, duration: 4000 }); // UPDATED ICON
         reviewNotificationsShown.current.needs_approval = true;
       } else if (swapProgressState === "needs_signature" && !reviewNotificationsShown.current.needs_signature) {
         console.log("%%% TOASTING: Signature Required %%%");
-        toast("Signature Required", { description: `Permit2 allowance needs to be granted or renewed via signature.`, icon: <WarningToastIcon />, duration: 4000 });
+        toast("Signature Required", { description: `Permit2 allowance needs to be granted or renewed via signature.`, icon: <InfoToastIcon />, duration: 4000 }); // UPDATED ICON
         reviewNotificationsShown.current.needs_signature = true;
       // Handle Positive Toasts
       } else if (swapProgressState === "approval_complete" && !reviewNotificationsShown.current.approval_complete) {
         console.log("%%% TOASTING: Token Approved %%%");
         toast("Token Approved", {
-          duration: 2500 
+          duration: 2500,
+          icon: <SuccessToastIcon /> // ENSURED ICON
         });
         reviewNotificationsShown.current.approval_complete = true;
       } else if (swapProgressState === "signature_complete" && !reviewNotificationsShown.current.signature_complete) {
@@ -719,8 +727,9 @@ export function SwapInterface() {
           // If loading but a previous fee exists, just show the previous fee statically.
           feePercentageString = `${(dynamicFeeBps / 10000).toFixed(2)}%`;
         } else {
-          // If loading and no previous fee (initial load), show "Fetching fee..."
-          feePercentageString = "Fetching fee...";
+          // If loading and no previous fee (initial load), set to "N/A".
+          // The animated icon will be displayed by the render logic due to dynamicFeeLoading being true.
+          feePercentageString = "N/A";
         }
       } else if (dynamicFeeError) {
         feePercentageString = "Fee N/A";
@@ -828,15 +837,9 @@ export function SwapInterface() {
 
     // 1. Pre-checks (connected, network, amount > 0, sufficient balance)
     const insufficientBalance = isNaN(fromBalanceNum) || fromBalanceNum < fromAmountNum;
-    if (!isConnected || currentChainId !== TARGET_CHAIN_ID || fromAmountNum <= 0 || insufficientBalance) {
+    if (!isConnected || currentChainId !== TARGET_CHAIN_ID || fromAmountNum <= 0) { // REMOVED insufficientBalance check here
       console.log("[handleSwap] Pre-checks failed.", { isConnected, currentChainId, fromAmountNum, fromBalanceNum, insufficientBalance });
-      if (insufficientBalance && fromAmountNum > 0) {
-         toast("Insufficient Balance", {
-            description: `You don't have enough ${fromToken.symbol} to perform this swap.`,
-            icon: <WarningToastIcon />,
-            duration: 4000,
-         });
-      }
+      // Removed the "Insufficient Balance" toast here as per user request
       return;
     }
 
@@ -896,7 +899,7 @@ export function SwapInterface() {
       // 4. ERC20 OK -> Check Permit2 Immediately
       console.log("[handleSwap] ERC20 sufficient. Marking complete & checking Permit2...");
       toast("Token Approved", {
-        duration: 2500 
+        duration: 2500,
       });
       setCompletedSteps(["approval_complete"]); // Mark step 1 complete
       setSwapProgressState("checking_allowance"); // Indicate checking permit
@@ -914,7 +917,7 @@ export function SwapInterface() {
         // Notification effect will show toast
       } else {
         console.log("[handleSwap] Permit2 check complete. Setting state: ready_to_swap");
-        toast("Permission Active", {
+        toast("Permission Granted", {
           duration: 2500 
         });
         setCompletedSteps(["approval_complete", "signature_complete"]); // Mark step 2 complete
@@ -1028,7 +1031,9 @@ export function SwapInterface() {
             const approvalReceipt = await publicClient.waitForTransactionReceipt({ hash: approveTxHash as Hex });
             if (!approvalReceipt || approvalReceipt.status !== 'success') throw new Error("Approval transaction failed on-chain");
 
-            toast("Approval Confirmed", { duration: 2500 });
+            toast("Approval Confirmed", { duration: 2500,
+          icon: <SuccessToastIcon /> // ENSURED ICON
+             });
             setCompletedSteps(prev => [...prev, "approval_complete"]);
 
             // --- CRITICAL: Re-fetch Permit Data AFTER approval ---
@@ -1058,7 +1063,9 @@ export function SwapInterface() {
             if (!currentPermitDetailsForSign) {
               // This should not happen if logic is correct, but as a safeguard:
               console.error("[handleConfirmSwap] Error: currentPermitDetailsForSign is null before signing.");
-              toast.error("Error preparing signature. Please try again.");
+              toast.error("Error preparing signature. Please try again.", {
+                icon: <WarningToastIcon /> // ENSURED ICON
+              });
               setIsSwapping(false);
               setSwapProgressState("error");
               return;
@@ -1136,7 +1143,7 @@ export function SwapInterface() {
             // --- End Sanity Check ---
 
             setSwapProgressState("building_tx");
-            toast("Fetching dynamic fee & building swap transaction..."); // Updated toast
+            toast("Building swap transaction...");
 
             // >>> FETCH DYNAMIC FEE FIRST <<<
             let fetchedDynamicFee: number | null = null;
@@ -1162,7 +1169,9 @@ export function SwapInterface() {
 
             } catch (feeError: any) {
                 console.error("[handleConfirmSwap] Error fetching dynamic fee:", feeError);
-                toast.error("Could not fetch swap fee. Please try again.");
+                toast.error("Could not fetch swap fee. Please try again.", {
+                  icon: <WarningToastIcon /> // ENSURED ICON
+                });
                 setIsSwapping(false);
                 setSwapProgressState("error"); // Or back to "ready_to_swap" to allow retry
                 return;
@@ -1231,11 +1240,19 @@ export function SwapInterface() {
             setIsSwapping(false); 
             setSwapState("success");
             setCompletedSteps(prev => [...prev, "complete"]);
+
+            let descriptionMessage = "Swap details unavailable. Amounts could not be determined.";
+            if (swapTxInfo && typeof swapTxInfo.fromAmount === 'string' && typeof swapTxInfo.toAmount === 'string' && swapTxInfo.fromSymbol && swapTxInfo.toSymbol) {
+                const displayFromAmount = formatTokenAmountDisplay(swapTxInfo.fromAmount, swapTxInfo.fromSymbol);
+                const displayToAmount = formatTokenAmountDisplay(swapTxInfo.toAmount, swapTxInfo.toSymbol);
+                descriptionMessage = `Swapped ${displayFromAmount} ${swapTxInfo.fromSymbol} for ${displayToAmount} ${swapTxInfo.toSymbol}`;
+            }
+
             toast("Swap Successful", {
-                 description: `Swapped ${formatTokenAmountDisplay(swapTxInfo?.fromAmount || '0', fromToken.symbol)} ${swapTxInfo?.fromSymbol || fromToken.symbol} for ${formatTokenAmountDisplay(swapTxInfo?.toAmount || '0', toToken.symbol)} ${swapTxInfo?.toSymbol || toToken.symbol}`,
+                 description: descriptionMessage,
                  icon: <SuccessToastIcon />, duration: 5000,
             });
-            window.swapBuildData = undefined; 
+            window.swapBuildData = undefined;
         }
 
         // ACTION: Unexpected State (Safety net)
@@ -1462,6 +1479,8 @@ export function SwapInterface() {
     setHoveredArcPercentage(null);
   };
 
+  const strokeWidth = 2; // Define strokeWidth for the SVG rect elements
+
   return (
     <div className="flex flex-col gap-4"> {/* Removed items-center */}
       {/* Main Swap Interface Card */}
@@ -1495,8 +1514,6 @@ export function SwapInterface() {
                           steppedPercentage={currentSteppedPercentage}
                           hoverPercentage={hoveredArcPercentage}
                           isOverLimit={actualNumericPercentage > 100} // ADDED prop
-                          className="h-4 w-4" 
-                          size={16}
                         />
                       </Button>
                     </div>
@@ -1583,19 +1600,61 @@ export function SwapInterface() {
                         )}>
                           {fee.name}
                         </span>
-                        {/* Conditional rendering for the fee value part */}
-                        {fee.name === "Fee" && feeHistoryData.length > 0 ? (
-                          <Button
-                            variant="link"
-                            onClick={handleFeePercentageClick} 
-                            className="text-xs p-0 h-auto focus-visible:ring-0 focus-visible:ring-offset-0 transition-opacity flex items-center text-foreground hover:no-underline hover:text-[#e85102] gap-1" // Added gap-1, added hover:text-[#e85102]
-                            // style={{ color: '#e85102' }} // Removed inline style for orange color
-                          >
-                            {fee.value}
-                            <PulsatingDot color="#e85102" size={0.95} className="" /> {/* Size reduced by 25%, ml-1 removed */}
-                          </Button>
-                        ) : (
-                          <span className={'text-xs text-foreground'}>
+                        {/* Conditional rendering for the VALUE/ICON part */}
+                        {fee.name === "Fee" ? (
+                          dynamicFeeLoading ? (
+                            // CASE 1: Fee is loading, show animated icon
+                            <motion.svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              width="15"
+                              height="15"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              className="flex-shrink-0 -translate-y-0.5"
+                            >
+                              {[
+                                { x: 8, initialHeight: 7, fullHeight: 10 },
+                                { x: 13, initialHeight: 12, fullHeight: 15 },
+                                { x: 18, initialHeight: 10, fullHeight: 13 },
+                              ].map((bar, i) => {
+                                return (
+                                  <motion.line
+                                    key={i}
+                                    x1={bar.x}
+                                    y1={24}
+                                    x2={bar.x}
+                                    y2={24 - bar.initialHeight}
+                                    fill="currentColor"
+                                    stroke="currentColor"
+                                    strokeWidth={strokeWidth}
+                                    strokeLinecap="round"
+                                    animate={{
+                                      y2: [24 - bar.initialHeight, 24 - bar.fullHeight, 24 - bar.initialHeight],
+                                    }}
+                                    transition={{
+                                      duration: 0.8,
+                                      repeat: Infinity,
+                                      ease: "easeInOut",
+                                      delay: i * 0.15,
+                                    }}
+                                  />
+                                );
+                              })}
+                            </motion.svg>
+                          ) : ( // If it's the Fee row and not loading
+                            // CASE 2: Fee data is available (or error/N/A), show static value. Click removed.
+                            // The Button wrapper is removed, and onClick for preview toggling is removed.
+                            <span className={'text-xs text-foreground'}>
+                              {fee.value}
+                            </span>
+                          )
+                        ) : ( // If it's NOT the "Fee" row (e.g., "Fee Value (USD)")
+                          // CASE 4: Other fee details
+                          <span className={'text-xs text-muted-foreground'}>
                             {fee.value}
                           </span>
                         )}
@@ -1809,8 +1868,17 @@ export function SwapInterface() {
 
       {/* Preview Chart - Conditionally rendered below the main card */}
       <AnimatePresence>
-        {isFeeChartPreviewVisible && (
+        {/* 
+          Show preview if:
+          - Not loading dynamic fee
+          - No error with dynamic fee
+          - Dynamic fee bps is available (successfully fetched)
+          - Fee history data is available
+          - User is connected and on the target chain
+        */}
+        {!dynamicFeeLoading && !dynamicFeeError && dynamicFeeBps !== null && feeHistoryData.length > 0 && isConnected && currentChainId === TARGET_CHAIN_ID && (
           <motion.div
+            key="dynamic-fee-preview-auto" // New key for AnimatePresence
             className="w-full max-w-md mx-auto" // Preview matches main card width
             initial={{ y: -10, opacity: 0, height: 0 }}    
             animate={{ y: 0, opacity: 1, height: 'auto' }}       
