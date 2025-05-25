@@ -1,14 +1,3 @@
-declare global {
-  namespace JSX {
-    interface IntrinsicElements {
-      'appkit-button': React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement>;
-    }
-  }
-  interface Window {
-      swapBuildData?: any; 
-  }
-}
-
 "use client"
 
 import { useState, useRef, useEffect, useCallback } from "react"
@@ -35,11 +24,11 @@ import { useAccount, useBalance, useSignTypedData, useWriteContract, useWaitForT
 import { motion, AnimatePresence } from "framer-motion"
 import React from "react"
 import { switchChain } from '@wagmi/core'
-import { config, baseSepolia } from "../lib/wagmiConfig";
+import { config, baseSepolia } from "../../lib/wagmiConfig";
 import { toast } from "sonner";
 import { getAddress, parseUnits, type Address, type Hex } from "viem"
-import { publicClient } from "../lib/viemClient"; // Import the correctly configured publicClient
-import { useIsMobile } from "@/hooks/use-is-mobile"; // Re-added import
+import { publicClient } from "../../lib/viemClient";
+import { useIsMobile } from "@/hooks/use-is-mobile";
 
 import {
   TOKEN_DEFINITIONS,
@@ -65,10 +54,15 @@ import { cn } from "@/lib/utils"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from "@/components/ui/dialog";
 
 // Chart Import
-import { DynamicFeeChart, generateMockFeeHistory } from "./dynamic-fee-chart";
-import { DynamicFeeChartPreview } from "./dynamic-fee-chart-preview"; // Import the new preview component
-import { PulsatingDot } from "./pulsating-dot"; // Corrected: PulsatingDotIcon changed to PulsatingDot, assuming it's the intended export
-import { getFromCache, setToCache, getPoolDynamicFeeCacheKey } from "@/lib/client-cache"; // Import cache functions
+import { DynamicFeeChart, generateMockFeeHistory } from "../dynamic-fee-chart";
+import { DynamicFeeChartPreview } from "../dynamic-fee-chart-preview";
+import { PulsatingDot } from "../pulsating-dot";
+import { getFromCache, setToCache, getPoolDynamicFeeCacheKey } from "@/lib/client-cache";
+
+// Import the new view components
+import { SwapInputView } from './SwapInputView';
+import { SwapReviewView } from './SwapReviewView';
+import { SwapSuccessView } from './SwapSuccessView';
 
 // Define FeeHistoryPoint interface if not already defined/imported (it's defined in dynamic-fee-chart.tsx but not exported from there for direct use here yet)
 // For now, let's assume we can use 'any' or define a local version for the state type if direct import is an issue.
@@ -1123,7 +1117,9 @@ export function SwapInterface() {
             
             if (!currentPermitDetailsForSign || (needsSignatureCheck && !obtainedSignature)) {
                  console.error("[handleConfirmSwap] Error: Permit details missing, or signature was required but not obtained.");
-                 toast.error("Critical error in swap preparation. Please start over.");
+                 toast.error("Critical error in swap preparation. Please start over.", {
+                  icon: <WarningToastIcon /> // ENSURED ICON
+                 });
                  setIsSwapping(false);
                  setSwapProgressState("error"); 
                  // Consider a full reset: handleChangeButton();
@@ -1528,14 +1524,14 @@ export function SwapInterface() {
                       </div>
                       <div className="flex-1">
                         {/* Sell input is now enabled if wallet is connected */}
-                        <Input 
-                          value={fromAmount} 
-                          onChange={handleFromAmountChange} 
-                          onFocus={() => setIsSellInputFocused(true)} 
-                          onBlur={() => setIsSellInputFocused(false)} 
-                          className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto input-enhanced" 
-                          placeholder="0" 
-                          disabled={!isConnected || isAttemptingSwitch} 
+                        <Input
+                          value={fromAmount}
+                          onChange={handleFromAmountChange}
+                          onFocus={() => setIsSellInputFocused(true)}
+                          onBlur={() => setIsSellInputFocused(false)}
+                          className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto input-enhanced focus-visible:rounded-none focus-visible:outline-none"
+                          placeholder="0"
+                          disabled={!isConnected || isAttemptingSwitch}
                         />
                         {/* Display formatted currency value below the amount */}
                         <div className="text-right text-xs text-muted-foreground">
@@ -1572,13 +1568,13 @@ export function SwapInterface() {
                       <div className="flex-1">
                         <Input
                           value={
-                            parseFloat(toAmount || "0") === 0 
-                              ? "0" 
+                            parseFloat(toAmount || "0") === 0
+                              ? "0"
                               : parseFloat(toAmount || "0").toFixed(displayToToken.symbol === 'BTCRL' ? 8 : 2)
                           }
                           readOnly
                           disabled={!isConnected || isAttemptingSwitch}
-                          className="border-0 bg-transparent text-right text-xl md:text-xl font-medium text-muted-foreground shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto" // Kept text-xl size
+                          className="border-0 bg-transparent text-right text-xl md:text-xl font-medium text-muted-foreground shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto focus-visible:rounded-none focus-visible:outline-none" // Kept text-xl size
                           placeholder="0"
                         />
                         {/* Value display below the 'Buy' input */}
@@ -1693,174 +1689,28 @@ export function SwapInterface() {
 
             {/* Swapping State UI (largely preserved, uses calculatedValues) */}
             {swapState === "review" && (
-              <motion.div key="review" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
-                <div className="mb-6 flex items-center justify-between bg-muted/10 rounded-lg p-4 hover:bg-muted/20 transition-colors">
-                  <Button variant="ghost" className="flex items-center gap-3 p-0 h-auto hover:bg-transparent" onClick={handleChangeButton}>
-                    <Image src={displayFromToken.icon} alt={displayFromToken.symbol} width={40} height={40} className="rounded-full"/>
-                    <div className="text-left flex flex-col"> {/* Use flex-col for amount above value */}
-                      <div className="font-medium flex items-baseline"> {/* Flex for amount and symbol, align baseline */}
-                        {calculatedValues.fromTokenAmount === "< 0.001" ? (
-                          <span className="text-sm text-muted-foreground">{calculatedValues.fromTokenAmount}</span> // Smaller, greyish
-                        ) : (
-                          // Ensure this branch returns a single element if it wasn't before
-                          <span>{calculatedValues.fromTokenAmount}</span> // Default styling for the amount
-                        )}
-                        <span className="ml-1 text-sm text-muted-foreground">{displayFromToken.symbol}</span> {/* Symbol always smaller and greyish */}
-                      </div>
-                      <div className="text-xs text-muted-foreground">{calculatedValues.fromTokenValue}</div>
-                    </div>
-                  </Button>
-                  <ArrowRightIcon className="h-5 w-5 text-muted-foreground mx-2" />
-                  <Button variant="ghost" className="flex items-center gap-3 p-0 h-auto hover:bg-transparent" onClick={handleChangeButton}> 
-                    <div className="text-right flex flex-col"> {/* Use flex-col for amount above value */}
-                       <div className="font-medium flex items-baseline"> {/* Flex for amount and symbol, align baseline */}
-                        {calculatedValues.toTokenAmount === "< 0.001" ? (
-                          <span className="text-sm text-muted-foreground">{calculatedValues.toTokenAmount}</span> // Smaller, greyish
-                        ) : (
-                          // Ensure this branch returns a single element if it wasn't before
-                          <span>{calculatedValues.toTokenAmount}</span> // Default styling for the amount
-                        )}
-                         <span className="ml-1 text-sm text-muted-foreground">{displayToToken.symbol}</span> {/* Symbol always smaller and greyish */}
-                       </div>
-                      <div className="text-xs text-muted-foreground">{calculatedValues.toTokenValue}</div>
-                    </div>
-                    <Image src={displayToToken.icon} alt={displayToToken.symbol} width={40} height={40} className="rounded-full"/>
-                  </Button>
-                </div>
-                <div className="rounded-lg border border-slate-300 dark:border-zinc-800 p-4 mb-6 space-y-3 text-sm">
-                  {renderStepIndicator("approval", swapProgressState, completedSteps)}
-                  {renderStepIndicator("signature", swapProgressState, completedSteps)}
-                  {renderStepIndicator("transaction", swapProgressState, completedSteps)}
-                </div>
-                <div className="my-8 flex flex-col items-center justify-center">
-                  <motion.div 
-                    className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-slate-900 dark:bg-white"
-                    initial={{ scale: 0.8 }} 
-                    animate={{ scale: 1 }} 
-                    transition={{ type: "spring", stiffness: 300, damping: 20 }}
-                  >
-                    {getStepIcon()}
-                  </motion.div>
-                  <div className="text-center">
-                    <h3 className="text-lg font-medium">
-                      {isSwapping ? (
-                        swapProgressState === "approving" || swapProgressState === "waiting_approval" ? "Approving" :
-                        swapProgressState === "signing_permit" ? "Signing" :
-                        swapProgressState === "executing_swap" || swapProgressState === "waiting_confirmation" ? "Swapping" :
-                        "Processing"
-                      ) : (
-                        "Confirm Swap"
-                      )}
-                    </h3>
-                    <p className="text-muted-foreground mt-1">{displayFromToken.symbol} for {displayToToken.symbol}</p>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <Button 
-                    variant="outline" 
-                    className="border-slate-300 bg-slate-100 hover:bg-slate-200 dark:border-zinc-700 dark:bg-zinc-800 dark:hover:bg-zinc-700 disabled:opacity-50"
-                    onClick={handleChangeButton} 
-                    disabled={isSwapping}
-                  >
-                    Change
-                  </Button>
-                  <Button 
-                    className="bg-slate-900 text-slate-50 hover:bg-slate-900/80 
-                               dark:bg-white dark:text-black dark:hover:bg-white/90 
-                               disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100
-                               dark:disabled:bg-neutral-700 dark:disabled:text-neutral-500 dark:disabled:opacity-100"
-                    onClick={handleConfirmSwap} 
-                    disabled={isSwapping || swapProgressState === "init" || swapProgressState === "checking_allowance"}
-                  >
-                    {isSwapping ? (
-                      <span className="flex items-center gap-2">
-                        <RefreshCwIcon className="h-4 w-4 animate-spin" />
-                        {swapProgressState === "approving" || swapProgressState === "waiting_approval" ? "Approving..." :
-                         swapProgressState === "signing_permit" ? "Signing..." :
-                         swapProgressState === "executing_swap" || swapProgressState === "waiting_confirmation" ? "Swapping..." :
-                         "Processing..."} 
-                      </span>
-                    ) : (
-                      // Updated text logic to handle ready_to_swap explicitly
-                      swapProgressState === "needs_approval" ? "Approve" :
-                      swapProgressState === "needs_signature" ? "Sign" :
-                      swapProgressState === "ready_to_swap" ? "Confirm Swap" :
-                      "Confirm Swap" // Default/Fallback (e.g., for approval_complete before Sign is determined)
-                    )}
-                  </Button>
-                </div>
-              </motion.div>
+              <SwapReviewView
+                displayFromToken={displayFromToken}
+                displayToToken={displayToToken}
+                calculatedValues={calculatedValues}
+                handleChangeButton={handleChangeButton}
+                handleConfirmSwap={handleConfirmSwap}
+                swapProgressState={swapProgressState}
+                completedSteps={completedSteps}
+                isSwapping={isSwapping}
+              />
             )}
 
             {/* Success State UI (largely preserved, uses calculatedValues) */}
             {swapState === "success" && (
-              <motion.div key="success" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
-                 <div className="mb-6 flex items-center justify-between bg-muted/10 rounded-lg p-4 hover:bg-muted/20 transition-colors">
-                  <Button variant="ghost" className="flex items-center gap-3 p-0 h-auto hover:bg-transparent" onClick={handleChangeButton}>
-                    <Image src={displayFromToken.icon} alt={displayFromToken.symbol} width={40} height={40} className="rounded-full"/>
-                    <div className="text-left flex flex-col"> {/* Use flex-col for amount above value */}
-                      <div className="font-medium flex items-baseline"> {/* Flex for amount and symbol, align baseline */}
-                        {(swapTxInfo?.fromAmount ? formatTokenAmountDisplay(swapTxInfo.fromAmount, displayFromToken.symbol) : calculatedValues.fromTokenAmount) === "< 0.001" ? (
-                            <span className="text-sm text-muted-foreground">{swapTxInfo?.fromAmount ? formatTokenAmountDisplay(swapTxInfo.fromAmount, displayFromToken.symbol) : calculatedValues.fromTokenAmount}</span> // Smaller, greyish
-                        ) : (
-                            <span>{swapTxInfo?.fromAmount ? formatTokenAmountDisplay(swapTxInfo.fromAmount, displayFromToken.symbol) : calculatedValues.fromTokenAmount}</span> // Default styling for the amount
-                        )}
-                        <span className="ml-1 text-sm text-muted-foreground">{swapTxInfo?.fromSymbol || displayFromToken.symbol}</span> {/* Symbol always smaller and greyish */}
-                      </div>
-                      <div className="text-xs text-muted-foreground">{calculatedValues.fromTokenValue}</div>
-                    </div>
-                  </Button>
-                  <ArrowRightIcon className="h-5 w-5 text-muted-foreground mx-2" />
-                  {/* Ensure the Button and structure for the "to" token is similar and includes the icon */}
-                  <Button variant="ghost" className="flex items-center gap-3 p-0 h-auto hover:bg-transparent" onClick={handleChangeButton}> 
-                    <div className="text-right flex flex-col"> {/* Use flex-col for amount above value */}
-                       <div className="font-medium flex items-baseline"> {/* Flex for amount and symbol, align baseline */}
-                        {(swapTxInfo?.toAmount ? formatTokenAmountDisplay(swapTxInfo.toAmount, displayToToken.symbol) : calculatedValues.toTokenAmount) === "< 0.001" ? (
-                          <span className="text-sm text-muted-foreground">{swapTxInfo?.toAmount ? formatTokenAmountDisplay(swapTxInfo.toAmount, displayToToken.symbol) : calculatedValues.toTokenAmount}</span> // Smaller, greyish
-                        ) : (
-                          <span>{swapTxInfo?.toAmount ? formatTokenAmountDisplay(swapTxInfo.toAmount, displayToToken.symbol) : calculatedValues.toTokenAmount}</span> // Default styling for the amount
-                        )}
-                         <span className="ml-1 text-sm text-muted-foreground">{swapTxInfo?.toSymbol || displayToToken.symbol}</span> {/* Symbol always smaller and greyish */}
-                       </div>
-                      <div className="text-xs text-muted-foreground">{calculatedValues.toTokenValue}</div>
-                    </div>
-                    {/* Add the missing Image component for the "to" token icon */}
-                    <Image src={displayToToken.icon} alt={displayToToken.symbol} width={40} height={40} className="rounded-full"/>
-                  </Button>
-                 </div>
-                <div className="my-8 flex flex-col items-center justify-center">
-                  <motion.div 
-                    className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-slate-900 dark:bg-white"
-                    initial={{ scale: 0.8 }} 
-                    animate={{ scale: 1 }} 
-                    transition={{ type: "spring", stiffness: 300, damping: 20 }} 
-                  >
-                    <CheckIcon className="h-8 w-8 text-slate-50 dark:text-black" />
-                  </motion.div>
-                  <div className="text-center">
-                     {/* Text color here should adapt by default (e.g. text-foreground) */}
-                    <h3 className="text-lg font-medium">Swapped</h3>
-                    <p className="text-muted-foreground mt-1">{swapTxInfo?.fromSymbol || displayFromToken.symbol} for {swapTxInfo?.toSymbol || displayToToken.symbol}</p>
-                  </div>
-                </div>
-                <div className="mb-6 flex items-center justify-center">
-                  <Button 
-                    variant="link" 
-                    className="text-primary dark:text-white hover:text-primary/80 dark:hover:text-white/80" 
-                    onClick={() => window.open(swapTxInfo?.explorerUrl || `https://base-sepolia.blockscout.com/`, "_blank")}
-                  >
-                    View on Explorer
-                    <ExternalLinkIcon className="h-3 w-3 ml-1" />
-                  </Button>
-                </div>
-                <Button 
-                  className="w-full bg-slate-900 text-slate-50 hover:bg-slate-900/80 
-                             dark:bg-white dark:text-black dark:hover:bg-white/90"
-                  onClick={handleChangeButton}
-                >
-                  Swap again
-                </Button>
-              </motion.div>
+              <SwapSuccessView
+                displayFromToken={displayFromToken}
+                displayToToken={displayToToken}
+                calculatedValues={calculatedValues} // Pass the whole object, child will pick what it needs
+                swapTxInfo={swapTxInfo}
+                handleChangeButton={handleChangeButton} // Ensure this is the correct handler for "Swap Again"
+                formatTokenAmountDisplay={formatTokenAmountDisplay}
+              />
             )}
           </AnimatePresence>
         </CardContent>

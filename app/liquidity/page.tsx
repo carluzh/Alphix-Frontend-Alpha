@@ -67,6 +67,7 @@ import { type Hex, formatUnits as viemFormatUnits, parseUnits, type Abi } from "
 import { position_manager_abi } from "../../lib/abis/PositionManager_abi";
 import { getFromCache, setToCache, getUserPositionsCacheKey, getPoolStatsCacheKey, getPoolDynamicFeeCacheKey } from "../../lib/client-cache"; // Import cache functions
 import { TickRangeControl } from "@/components/TickRangeControl";
+import { Pool } from "../../types"; // Import Pool interface from types
 // import { DEFAULT_TICK_SPACING } from "@/components/TickRangeControl"; // Assuming DEFAULT_TICK_SPACING is exported or accessible
 
 const SDK_MIN_TICK = -887272;
@@ -848,7 +849,7 @@ function AddLiquidityModal({ isOpen, onOpenChange, onLiquidityAdded, selectedPoo
           </Button>
           {/* Separate buttons for approve/mint if preferred, or keep combined logic based on 'step' */}
           {/* Example of separate buttons that could be shown based on 'step' after prepare is done */}
-          {/* {step === 'approve' && <Button onClick={handleApprove} disabled={isWorking || isApproveWritePending || isApproving || isMintSendPending} className="w-full">{(isWorking || isApproveWritePending || isApproving) ? <RefreshCwIcon className="animate-spin mr-2" /> : null}Approve {preparedTxData?.approvalTokenSymbol}</Button>} */}
+          {/* {step === 'approve' && <Button onClick={handleApprove} disabled={isWorking || isApproveWritePending || isApproving || isMintSendPending} className="w-full">{(isWorking || isApproveWritePending || isApproving) ? <RefreshCwIcon className="animate-spin mr-2" /> : null}Approve ${preparedTxData?.approvalTokenSymbol}</Button>} */}
           {/* {step === 'mint' && <Button onClick={handleMint} disabled={isWorking || isMintSendPending || isMintConfirming || isApproveWritePending} className="w-full">{(isWorking || isMintSendPending || isMintConfirming) ? <RefreshCwIcon className="animate-spin mr-2" /> : null}Confirm Mint</Button>} */}
         </DialogFooter>
       </DialogContent>
@@ -926,26 +927,6 @@ const PositionCard = ({ position }: { position: ProcessedPosition }) => {
   );
 };
 
-// Pool data interface
-interface Pool {
-  id: string;
-  tokens: { symbol: string; icon: string }[];
-  pair: string;
-  volume24h: string; // Keep for initial display, will be updated
-  volume7d: string; // Keep for initial display, will be updated
-  fees24h: string;  // Keep for initial display, will be updated
-  fees7d: string;   // Keep for initial display, will be updated
-  volume24hUSD?: number; // For fetched numeric data
-  fees24hUSD?: number;   // For fetched numeric data
-  volume7dUSD?: number;  // For fetched numeric data
-  fees7dUSD?: number;    // For fetched numeric data
-  liquidity: string;
-  tvlUSD?: number; // For fetched numeric TVL data
-  apr: string;
-  highlighted: boolean;
-  positionsCount?: number; // Number of user positions in this pool
-}
-
 // Mock pools data - in a real app, this would come from an API
 const mockPools: Pool[] = [
   {
@@ -964,8 +945,10 @@ const mockPools: Pool[] = [
     fees24h: "Loading...",   // Initial display
     fees7d: "Loading...",     // Initial display
     liquidity: "Loading...", // Initial display for TVL
-    apr: "8.4%",
+    apr: "Loading...", // Changed from undefined back to "Loading..." to fix linter error
     highlighted: true,
+    volumeChangeDirection: 'loading', // Initialize volume change direction
+    tvlChangeDirection: 'loading', // Initialize TVL change direction
   }
 ];
 
@@ -1063,33 +1046,91 @@ export default function LiquidityPage() {
       let volume7dUSD: number | undefined = cachedStats?.volume7dUSD;
       let fees7dUSD: number | undefined = cachedStats?.fees7dUSD;
       let tvlUSD: number | undefined = cachedStats?.tvlUSD;
-      let calculatedApr = cachedStats?.apr || "Loading..."; // Default to loading or existing cached APR
+      let calculatedApr = cachedStats?.apr || "Loading...";
+      let volume48hUSD: number | undefined = cachedStats?.volume48hUSD; // Added for 48h volume
+      let volumeChangeDirection: 'up' | 'down' | 'neutral' | 'loading' = cachedStats?.volumeChangeDirection || 'loading'; // Added for volume change
+      let tvlYesterdayUSD: number = cachedStats?.tvlYesterdayUSD ?? 0; // Added for TVL from yesterday, initialized to 0
+      let tvlChangeDirection: 'up' | 'down' | 'neutral' | 'loading' = cachedStats?.tvlChangeDirection || 'loading'; // Added for TVL change
 
       try {
-        // Fetch volume/TVL only if not fully available in cache (or if we decide to always refresh parts)
-        if (volume24hUSD === undefined || tvlUSD === undefined || fees24hUSD === undefined ) { // Simplified condition: if core stats missing, fetch all
-          console.log(`Fetching core stats (vol/tvl/fees) for ${apiPoolId}`);
-          const [res24h, res7d, resTvl] = await Promise.all([
+        // Fetch data only if we don't have all the required data cached or if a direction is still loading
+        if (volume24hUSD === undefined || tvlUSD === undefined || fees24hUSD === undefined || volume48hUSD === undefined || tvlYesterdayUSD === undefined || volumeChangeDirection === 'loading' || tvlChangeDirection === 'loading') { // Added checks for loading states
+          console.log(`Fetching core stats (vol/tvl/fees), 48h volume, and chart data for ${apiPoolId}`);
+          const [res24h, res7d, resTvl, res48h, resChartData] = await Promise.all([
             fetch(`/api/liquidity/get-rolling-volume-fees?poolId=${apiPoolId}&days=1`),
             fetch(`/api/liquidity/get-rolling-volume-fees?poolId=${apiPoolId}&days=7`),
-            fetch(`/api/liquidity/get-pool-tvl?poolId=${apiPoolId}`)
+            fetch(`/api/liquidity/get-pool-tvl?poolId=${apiPoolId}`),
+            fetch(`/api/liquidity/get-rolling-volume-fees?poolId=${apiPoolId}&days=2`), // Fetch 48h volume
+            fetch(`/api/liquidity/chart-data/${apiPoolId}?numDays=2`), // Fetch last 2 days of chart data for TVL comparison
           ]);
 
-          if (!res24h.ok || !res7d.ok || !resTvl.ok) {
-            console.error(`Failed to fetch some core stats for ${apiPoolId}.`);
-            // Fallback to existing cached values if any, or keep as undefined
+          if (!res24h.ok || !res7d.ok || !resTvl.ok || !res48h.ok || !resChartData.ok) { // Added resChartData.ok
+            console.error(`Failed to fetch some core stats, 48h volume, or chart data for ${apiPoolId}.`);
+            // On fetch failure, set change directions to neutral
+            volumeChangeDirection = 'neutral';
+            tvlChangeDirection = 'neutral';
+            // Don't return here, allow partial updates if some data was cached
           } else {
             const data24h = await res24h.json();
             const data7d = await res7d.json();
             const dataTvl = await resTvl.json();
+            const data48h = await res48h.json(); // Process 48h data
+            const chartData = await resChartData.json(); // Process chart data
 
             console.log(`[LiquidityPage] Raw TVL data for ${apiPoolId}:`, dataTvl);
+            console.log(`[LiquidityPage] Raw chart data for ${apiPoolId}:`, chartData);
 
             volume24hUSD = parseFloat(data24h.volumeUSD);
             fees24hUSD = parseFloat(data24h.feesUSD);
             volume7dUSD = parseFloat(data7d.volumeUSD);
             fees7dUSD = parseFloat(data7d.feesUSD);
             tvlUSD = parseFloat(dataTvl.tvlUSD);
+            volume48hUSD = parseFloat(data48h.volumeUSD); // Store 48h volume
+
+            // Calculate volume change direction if both 24h and 48h volumes are available and valid
+            if (volume24hUSD !== undefined && volume48hUSD !== undefined && !isNaN(volume24hUSD) && !isNaN(volume48hUSD)) { // Added isNaN checks
+                const volumePrevious24h = volume48hUSD - volume24hUSD; // Volume from 24h to 48h ago
+                if (volume24hUSD > volumePrevious24h) {
+                    volumeChangeDirection = 'up';
+                } else if (volume24hUSD < volumePrevious24h) {
+                    volumeChangeDirection = 'down';
+                } else {
+                    volumeChangeDirection = 'neutral';
+                }
+            } else {
+                 volumeChangeDirection = 'neutral'; // Cannot determine change
+            }
+
+            // Calculate TVL change direction if current TVL and yesterday's TVL are available and valid
+            if (tvlUSD !== undefined && chartData && chartData.length >= 2 && !isNaN(tvlUSD)) { // Added isNaN check for tvlUSD
+                // Find yesterday's data more robustly
+                const yesterday = new Date();
+                yesterday.setDate(yesterday.getDate() - 1);
+                const yesterdayDateString = yesterday.toISOString().split('T')[0];
+
+                const yesterdayData = chartData.find((d: { date: string, tvlUSD: number }) => d.date === yesterdayDateString && typeof d.tvlUSD === 'number');
+
+                if (yesterdayData && typeof yesterdayData.tvlUSD === 'number') {
+                    // Now that we found yesterdayData with valid tvlUSD, assign it
+                    tvlYesterdayUSD = yesterdayData.tvlUSD;
+                    // Perform comparison using the guaranteed number type
+                    if (tvlUSD > tvlYesterdayUSD) {
+                        tvlChangeDirection = 'up';
+                    } else if (tvlUSD < tvlYesterdayUSD) {
+                        tvlChangeDirection = 'down';
+                    } else {
+                        tvlChangeDirection = 'neutral';
+                    }
+                } else {
+                    // If yesterday's data isn't found, or its tvlUSD is invalid
+                    tvlChangeDirection = 'neutral'; // Assume neutral if no reliable historical data for comparison
+                }
+            } else if (tvlUSD !== undefined && !isNaN(tvlUSD)) { // If we have current TVL but not enough historical data (less than 2 days)
+                tvlChangeDirection = 'neutral'; // Assume neutral if not enough data
+            } else {
+                // If current TVL is not available or is invalid
+                tvlChangeDirection = 'neutral'; // Cannot determine change without current TVL
+            }
           }
         }
 
@@ -1152,15 +1193,32 @@ export default function LiquidityPage() {
           fees7dUSD,
           tvlUSD,
           apr: calculatedApr,
+          volume48hUSD, // Include 48h volume in cached stats
+          volumeChangeDirection, // Include volume change direction
+          tvlYesterdayUSD, // Include yesterday's TVL in cached stats
+          tvlChangeDirection, // Include TVL change direction
         };
-        // Cache the combined stats including the newly calculated APR
+        // Cache the combined stats including the newly calculated APR and volume change
         setToCache(statsCacheKey, completeFetchedStats);
         console.log(`[Cache SET] Cached combined stats for pool: ${pool.pair}, API ID: ${apiPoolId}`);
         return completeFetchedStats;
 
-      } catch (error) {
-        console.error(`Error fetching stats for ${pool.pair}:`, error);
-        return {}; // Return empty on error
+      } catch (error: any) { // Catch any errors during the fetch or processing
+        console.error(`Error fetching or processing stats for ${pool.pair}:`, error);
+        // Keep existing cached data if available, otherwise set to undefined/neutral
+        const errorStats: Partial<Pool> = {
+            volume24hUSD: cachedStats?.volume24hUSD,
+            fees24hUSD: cachedStats?.fees24hUSD,
+            volume7dUSD: cachedStats?.volume7dUSD,
+            fees7dUSD: cachedStats?.fees7dUSD,
+            tvlUSD: cachedStats?.tvlUSD,
+            apr: cachedStats?.apr || "N/A", // Keep cached APR or set to N/A
+            volume48hUSD: cachedStats?.volume48hUSD,
+            volumeChangeDirection: cachedStats?.volumeChangeDirection || 'neutral',
+            tvlYesterdayUSD: cachedStats?.tvlYesterdayUSD,
+            tvlChangeDirection: cachedStats?.tvlChangeDirection || 'neutral'
+        };
+         return errorStats; // Return the partial stats with neutral/cached values on error
       }
     };
 
@@ -1225,31 +1283,38 @@ export default function LiquidityPage() {
           <div className="flex items-center gap-2">
             <div className="relative w-14 h-7">
               <div className="absolute top-0 left-0 w-7 h-7 rounded-full overflow-hidden bg-background border border-border/50">
-                <Image 
-                  src={pool.tokens[0].icon} 
-                  alt={pool.tokens[0].symbol} 
-                  width={28} 
-                  height={28} 
-                  className="w-full h-full object-cover" 
+                <Image
+                  src={pool.tokens[0].icon}
+                  alt={pool.tokens[0].symbol}
+                  width={28}
+                  height={28}
+                  className="w-full h-full object-cover"
                 />
               </div>
               <div className="absolute top-0 left-4 w-7 h-7 rounded-full overflow-hidden bg-background border border-border/50">
-                <Image 
-                  src={pool.tokens[1].icon} 
-                  alt={pool.tokens[1].symbol} 
-                  width={28} 
-                  height={28} 
-                  className="w-full h-full object-cover" 
+                <Image
+                  src={pool.tokens[1].icon}
+                  alt={pool.tokens[1].symbol}
+                  width={28}
+                  height={28}
+                  className="w-full h-full object-cover"
                 />
               </div>
             </div>
             <div className="flex flex-col">
               <span className="font-medium">{pool.pair}</span>
-              {pool.positionsCount !== undefined && pool.positionsCount > 0 && (
-                <span className="text-xs text-muted-foreground">
-                  {pool.positionsCount} {pool.positionsCount === 1 ? 'position' : 'positions'}
-                </span>
-              )}
+              <div className="text-xs h-4 text-muted-foreground flex items-center">
+                {isLoadingPositions ? (
+                  <div className="h-3 w-16 bg-muted/60 rounded loading-skeleton"></div>
+                ) : pool.positionsCount !== undefined && pool.positionsCount > 0 ? (
+                    <span>
+                      {pool.positionsCount} {pool.positionsCount === 1 ? 'position' : 'positions'}
+                    </span>
+                  ) : (
+                    <span className="invisible">0 positions</span>
+                  )
+                }
+              </div>
             </div>
           </div>
         );
@@ -1260,16 +1325,35 @@ export default function LiquidityPage() {
       header: () => <div className="text-right w-full">Volume (24h)</div>,
       cell: ({ row }) => (
         <div className="text-right flex items-center justify-end gap-1">
-          {typeof row.original.volume24hUSD === 'number' ? formatUSD(row.original.volume24hUSD) : row.original.volume24h}
-          {/* Update icon logic if needed based on actual data later */}
-          {typeof row.original.volume24hUSD === 'number' && row.original.volume24hUSD > 0 && (
-            <Image
-              src="/arrow_up.svg"
-              alt="Volume Increase Icon"
-              width={8}
-              height={8}
-              className="text-green-500"
-            />
+          {typeof row.original.volume24hUSD === 'number' ? (
+            <>
+              {formatUSD(row.original.volume24hUSD)}
+              {/* Conditionally render arrow based on volumeChangeDirection */}
+              {row.original.volumeChangeDirection === 'up' && (
+                <Image
+                  src="/arrow_up.svg"
+                  alt="Volume Increase Icon"
+                  width={8}
+                  height={8}
+                  className="text-green-500"
+                />
+              )}
+              {row.original.volumeChangeDirection === 'down' && (
+                <Image
+                  src="/arrow_down.svg"
+                  alt="Volume Decrease Icon"
+                  width={8}
+                  height={8}
+                  className="text-red-500"
+                />
+              )}
+              {/* Neutral or loading state can render nothing or a placeholder */}
+               {row.original.volumeChangeDirection === 'loading' && (
+                 <div className="inline-block h-3 w-3 bg-muted/60 rounded-full loading-skeleton"></div> // Optional loading indicator
+              )}
+            </>
+          ) : (
+            <div className="inline-block h-4 w-16 bg-muted/60 rounded loading-skeleton"></div>
           )}
         </div>
       ),
@@ -1281,7 +1365,15 @@ export default function LiquidityPage() {
     {
       accessorKey: "volume7d",
       header: () => <div className="text-right w-full">Volume (7d)</div>,
-      cell: ({ row }) => <div className="text-right">{typeof row.original.volume7dUSD === 'number' ? formatUSD(row.original.volume7dUSD) : row.original.volume7d}</div>,
+      cell: ({ row }) => (
+        <div className="text-right flex items-center justify-end">
+          {typeof row.original.volume7dUSD === 'number' ? (
+            formatUSD(row.original.volume7dUSD)
+          ) : (
+            <div className="inline-block h-4 w-16 bg-muted/60 rounded loading-skeleton"></div>
+          )}
+        </div>
+      ),
       meta: {
         hideOnMobile: true,
         hidePriority: 2,
@@ -1290,7 +1382,15 @@ export default function LiquidityPage() {
     {
       accessorKey: "fees24h",
       header: () => <div className="text-right w-full">Fees (24h)</div>,
-      cell: ({ row }) => <div className="text-right">{typeof row.original.fees24hUSD === 'number' ? formatUSD(row.original.fees24hUSD) : row.original.fees24h}</div>,
+      cell: ({ row }) => (
+         <div className="text-right flex items-center justify-end">
+          {typeof row.original.fees24hUSD === 'number' ? (
+            formatUSD(row.original.fees24hUSD)
+          ) : (
+            <div className="inline-block h-4 w-12 bg-muted/60 rounded loading-skeleton"></div>
+          )}
+        </div>
+      ),
       meta: {
         hideOnMobile: true,
         hidePriority: 2,
@@ -1299,26 +1399,63 @@ export default function LiquidityPage() {
     {
       accessorKey: "fees7d",
       header: () => <div className="text-right w-full">Fees (7d)</div>,
-      cell: ({ row }) => <div className="text-right">{typeof row.original.fees7dUSD === 'number' ? formatUSD(row.original.fees7dUSD) : row.original.fees7d}</div>,
-      meta: {
-        hideOnMobile: true,
-        hidePriority: 1,
-      }
+      cell: ({ row }) => (
+        <div className="text-right flex items-center justify-end">
+          {typeof row.original.fees7dUSD === 'number' ? (
+            formatUSD(row.original.fees7dUSD)
+          ) : (
+            <div className="inline-block h-4 w-12 bg-muted/60 rounded loading-skeleton"></div>
+          )}
+        </div>
+      ),
     },
     {
       accessorKey: "liquidity",
       header: () => <div className="text-right w-full">Liquidity</div>,
-      cell: ({ row }) => <div className="text-right">{typeof row.original.tvlUSD === 'number' ? formatUSD(row.original.tvlUSD) : row.original.liquidity}</div>,
+      cell: ({ row }) => (
+         <div className="text-right flex items-center justify-end gap-1">
+          {typeof row.original.tvlUSD === 'number' ? (
+            <>
+              {formatUSD(row.original.tvlUSD)}
+              {/* Conditionally render arrow based on tvlChangeDirection */}
+              {(row.original.tvlChangeDirection === 'up' || row.original.tvlChangeDirection === 'neutral') && (
+                <Image
+                  src="/arrow_up.svg"
+                  alt="Liquidity Increase Icon"
+                  width={8}
+                  height={8}
+                  className="text-green-500"
+                />
+              )}
+              {row.original.tvlChangeDirection === 'down' && (
+                <Image
+                  src="/arrow_down.svg"
+                  alt="Liquidity Decrease Icon"
+                  width={8}
+                  height={8}
+                  className="text-red-500"
+                />
+              )}
+               {/* Loading state */}
+               {row.original.tvlChangeDirection === 'loading' && (
+                 <div className="inline-block h-3 w-3 bg-muted/60 rounded-full loading-skeleton"></div> // Optional loading indicator
+              )}
+            </>
+          ) : (
+            <div className="inline-block h-4 w-20 bg-muted/60 rounded loading-skeleton"></div>
+          )}
+        </div>
+      ),
     },
     {
       accessorKey: "apr",
       header: () => <div className="text-right w-full flex items-center justify-end">Yield</div>,
       cell: ({ row }) => {
-        const aprValue = parseFloat(row.original.apr.replace('%', ''));
-        const formattedAPR = aprValue.toFixed(2) + '%';
-        // Determine the initial size based on the badge
-        const initialWidthClass = 'w-16'; // Approximate width of the badge
-        const initialHeightClass = 'h-6'; // Approximate height of the badge
+        const isAprCalculated = row.original.apr !== undefined && row.original.apr !== "Loading..." && row.original.apr !== "N/A";
+        const formattedAPR = isAprCalculated ? parseFloat(row.original.apr.replace('%', '')).toFixed(2) + '%' : undefined;
+
+        const initialWidthClass = 'w-16';
+        const initialHeightClass = 'h-6';
 
         return (
           <div className={`relative flex items-center ${initialWidthClass} ${initialHeightClass} rounded-md bg-green-500/20 text-green-500 overflow-hidden ml-auto
@@ -1328,15 +1465,20 @@ export default function LiquidityPage() {
                       transition-all duration-300 ease-in-out cursor-pointer`}
                onClick={(e) => handleAddLiquidity(e, row.original.id)}
           >
-            {/* Percentage Text - visible by default, hidden on hover, centered within this container */}
-            <span className="absolute inset-0 flex items-center justify-center opacity-100 group-hover:opacity-0 transition-opacity duration-300 ease-in-out">
-              {formattedAPR}
-            </span>
-            {/* Add Liquidity Text - hidden by default, visible on hover, centered within this container */}
-            <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 ease-in-out px-2 whitespace-nowrap">
-                <PlusIcon className="w-4 h-4 mr-2" />
-                Add Liquidity
-            </div>
+            {isAprCalculated ? (
+              <>
+                 <span className="absolute inset-0 flex items-center justify-center opacity-100 group-hover:opacity-0 transition-opacity duration-300 ease-in-out">
+                  {formattedAPR}
+                </span>
+                <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 ease-in-out px-2 whitespace-nowrap">
+                    <PlusIcon className="w-4 h-4 mr-2" />
+                    Add Liquidity
+                </div>
+              </>
+            ) : (
+             // Show nothing when not calculated
+             null
+            )}
           </div>
         );
       },
@@ -1346,7 +1488,7 @@ export default function LiquidityPage() {
   // Filter columns based on screen size and priority
   const visibleColumns = useMemo(() => {
     if (isMobile) {
-       return columns; 
+       return columns;
     }
     
     if (windowWidth < 900) { 

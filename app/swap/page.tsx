@@ -1,5 +1,5 @@
 import { AppLayout } from "@/components/app-layout"
-import { SwapInterface } from "@/components/swap-interface"
+import { SwapInterface } from "@/components/swap/swap-interface"
 import { ScrollRevealTransactions } from "@/components/scroll-reveal-transactions"
 import type { Metadata } from 'next'
 

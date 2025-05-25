@@ -19,4 +19,8 @@ export interface Pool {
   highlighted: boolean;
   positionsCount?: number;
   dynamicFeeBps?: number;
+  volume48hUSD?: number;
+  volumeChangeDirection?: 'up' | 'down' | 'neutral' | 'loading';
+  tvlYesterdayUSD?: number;
+  tvlChangeDirection?: 'up' | 'down' | 'neutral' | 'loading';
 } 

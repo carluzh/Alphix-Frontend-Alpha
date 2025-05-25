@@ -118,3 +118,20 @@ body {
 .input-enhanced {
   @apply bg-background/50 border-input/50 focus-visible:border-accent focus-visible:ring-1 focus-visible:ring-accent/30 transition-all duration-300;
 }
+
+/* Loading Skeleton Styles */
+/* The @keyframes shimmer rule has been removed */
+
+.loading-skeleton {
+  /* Base background color */
+  background-color: rgba(55, 65, 81, 0.7); /* A muted dark grey */
+
+  /* Ensure block/inline-block display as needed by layout */
+  display: inline-block;
+  vertical-align: middle; /* Helps with vertical alignment if needed */
+}
+
+/* Add rounded corners if desired, as included in the HTML */
+.loading-skeleton.rounded {
+  border-radius: 0.25rem; /* Or your preferred border-radius value */
+}
