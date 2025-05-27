@@ -203,6 +203,10 @@ export function AddLiquidityModal({
 
   const [isPoolStateLoading, setIsPoolStateLoading] = useState<boolean>(false);
 
+  // State for capital efficiency enhanced APR
+  const [capitalEfficiencyFactor, setCapitalEfficiencyFactor] = useState<number>(1);
+  const [enhancedAprDisplay, setEnhancedAprDisplay] = useState<string>(poolApr || "Yield N/A");
+
   const getTokenIcon = (symbol?: string) => {
     if (symbol?.toUpperCase().includes("YUSD")) return "/YUSD.png";
     if (symbol?.toUpperCase().includes("BTCRL")) return "/BTCRL.png";
@@ -818,8 +822,6 @@ export function AddLiquidityModal({
     setTickLower(sdkMinTick.toString());
     setTickUpper(sdkMaxTick.toString());
     setInitialDefaultApplied(true);
-    setMinPriceInputString(baseTokenForPriceDisplay === token0Symbol ? "0" : "∞");
-    setMaxPriceInputString(baseTokenForPriceDisplay === token0Symbol ? "∞" : "0");
   };
 
   const handleSwapTokens = () => {
@@ -1277,6 +1279,135 @@ export function AddLiquidityModal({
   */
   // --- END Effect to fetch Pool APR data ---
 
+  // Effect to calculate Capital Efficiency and Enhanced APR
+  useEffect(() => {
+    // Initialize or reset if poolApr is not valid or not yet loaded
+    if (!poolApr || ["Loading APR...", "APR N/A", "APR Error", "Yield N/A", "Fees N/A"].includes(poolApr)) {
+      setEnhancedAprDisplay(poolApr || "Yield N/A");
+      setCapitalEfficiencyFactor(1);
+      return;
+    }
+
+    const tl = parseInt(tickLower);
+    const tu = parseInt(tickUpper);
+    // Ensure currentPoolTick is also treated as an integer for comparison
+    const cPt = currentPoolTick !== null ? Math.round(Number(currentPoolTick)) : null;
+
+    const numericBaseApr = parseFloat(poolApr.replace("%", ""));
+    if (isNaN(numericBaseApr)) {
+        setEnhancedAprDisplay(poolApr); // Fallback if APR parsing fails
+        setCapitalEfficiencyFactor(1);
+        return;
+    }
+
+    if (isNaN(tl) || isNaN(tu) || tl >= tu) {
+      setCapitalEfficiencyFactor(1);
+      // If range is invalid, display base APR if in range (or no current price), or 0% if out of range.
+      // For an invalid range, it's always out of range conceptually unless it's full range.
+      if (activePreset === "Full Range") { // Keep full range APR if invalid ticks occur in full range mode
+         setEnhancedAprDisplay(poolApr);
+      } else { // For any other invalid range, it's out of range.
+         setEnhancedAprDisplay("0.00% (Out of Range)");
+      }
+      return;
+    }
+
+    let M = 1;
+    let concentrationMethod = 'Full Range'; // For logging
+
+    // Calculate M based on active preset or manual ticks
+    if (activePreset === "Full Range" || (tl <= sdkMinTick && tu >= sdkMaxTick)) {
+      M = 1;
+      concentrationMethod = 'Full Range';
+    } else if (activePreset && ["±3%", "±8%", "±15%"].includes(activePreset)) {
+        // Use the new simplified formula for percentage presets
+        let percentage = 0;
+        if (activePreset === "±3%") percentage = 0.03;
+        else if (activePreset === "±8%") percentage = 0.08;
+        else if (activePreset === "±15%") percentage = 0.15;
+
+        if (percentage > 0) {
+             M = 1 / (2 * percentage);
+             concentrationMethod = `Preset ${activePreset} (Formula)`;
+        } else {
+             M = 1; // Should not happen with current presets, but as a safety
+             concentrationMethod = 'Preset Zero Range?';
+        }
+         M = Math.min(M, 500); // Apply the same cap as the tick-based method
+    }
+     else {
+      // Use the existing tick-based calculation for manual ranges (activePreset is null)
+      const P_lower = Math.pow(1.0001, tl);
+      const P_upper = Math.pow(1.0001, tu);
+
+      concentrationMethod = 'Manual Range (Tick Formula)';
+
+      console.log("--- M Calculation Details (Concentrated Range) ---");
+      console.log("tl:", tl, "tu:", tu);
+      console.log("P_lower (1.0001^tl):", P_lower, "P_upper (1.0001^tu):", P_upper);
+
+      if (P_lower <= 0 || !isFinite(P_upper) || P_lower >= P_upper) {
+        M = 1; // Invalid range for concentration formula
+        console.log("M Calculation: Invalid P_lower/P_upper, M = 1");
+      } else {
+        const priceRatio = P_upper / P_lower;
+        const ratio_pow_025 = Math.pow(priceRatio, 0.25);
+        console.log("priceRatio (Pu/Pl):", priceRatio, "ratio_pow_025 (priceRatio^0.25):", ratio_pow_025);
+
+        if (Math.abs(ratio_pow_025 - 1) < 1e-9) { // Pu is extremely close to Pl
+            M = 500; // Cap for extremely narrow ranges
+            console.log("M Calculation: ratio_pow_025 very close to 1, M capped at 500");
+        } else {
+            const denominator = ratio_pow_025 - (1 / ratio_pow_025);
+            if (Math.abs(denominator) < 1e-9) {
+                M = 500; // Denominator too small, cap M
+                console.log("M Calculation: Denominator too small, M capped at 500");
+            } else {
+                M = 2 / denominator;
+                console.log("M Calculation: M = 2 / denominator =", M);
+            }
+        }
+      }
+      M = Math.max(1, M); // Ensure factor is at least 1 (should be, unless P_lower > P_upper was missed)
+      M = Math.min(M, 500); // General cap for sanity, adjustable
+      console.log("M Calculation: M after min(1) and max(500) caps:", M);
+    }
+    setCapitalEfficiencyFactor(parseFloat(M.toFixed(2)));
+
+    // If not full range, and current price is outside the selected ticks, APR is 0
+    if (activePreset !== "Full Range" && !(tl <= sdkMinTick && tu >= sdkMaxTick) && cPt !== null && (cPt < tl || cPt > tu)) {
+        setEnhancedAprDisplay("0.00% (Out of Range)");
+    } else {
+        const boostedNumericApr = numericBaseApr * M;
+         // Apply a cap to the displayed APR for very narrow ranges, matching the M cap
+        const cappedBoostedNumericApr = Math.min(boostedNumericApr, numericBaseApr * 500); 
+        setEnhancedAprDisplay(`${cappedBoostedNumericApr.toFixed(2)}%`);
+    }
+
+    // --- APR DEBUG LOGGING ---
+    console.log("--- APR Calculation Debug ---");
+    console.log("Input poolApr (prop):", poolApr);
+    console.log("Parsed Numeric Base APR:", numericBaseApr);
+    console.log("Selected Ticks (Lower, Upper):", tl, tu);
+    console.log("Current Pool Tick (parsed int):", cPt);
+    console.log("Active Preset:", activePreset);
+    console.log("Concentration Method Used:", concentrationMethod); // Log the method used
+    console.log("Calculated Capital Efficiency Factor (M):", M);
+    if (activePreset !== "Full Range" && !(tl <= sdkMinTick && tu >= sdkMaxTick) && cPt !== null && (cPt < tl || cPt > tu)) {
+      console.log("Condition: Price out of selected range (for non-full range).");
+      console.log("Final Enhanced APR Display (should be 0% out of range):", enhancedAprDisplay);
+    } else {
+      const boostedNumericApr = numericBaseApr * M; // Recalculate for logging consistency if needed
+      const cappedBoostedNumericApr = Math.min(boostedNumericApr, numericBaseApr * 500);
+      console.log("Calculated Boosted Numeric APR (Base * M):", boostedNumericApr);
+      console.log("Capped Boosted Numeric APR:", cappedBoostedNumericApr); // Log the capped value
+      console.log("Final Enhanced APR Display:", `${cappedBoostedNumericApr.toFixed(2)}%`); // Log what it should be before state update completes
+    }
+    console.log("Actual state for enhancedAprDisplay (after set attempt):", enhancedAprDisplay);
+    // --- END APR DEBUG LOGGING ---
+
+  }, [poolApr, activePreset, tickLower, tickUpper, sdkMinTick, sdkMaxTick, currentPoolTick]);
+
   // Effect to update price input strings when underlying ticks or base display token changes
   useEffect(() => {
     const numTickLower = parseInt(tickLower);
@@ -1288,87 +1419,143 @@ export function AddLiquidityModal({
     const decimalsForToken0Display = TOKEN_DEFINITIONS[token0Symbol]?.displayDecimals ?? (token0Symbol === 'BTCRL' ? 8 : 4);
     const decimalsForToken1Display = TOKEN_DEFINITIONS[token1Symbol]?.displayDecimals ?? (token1Symbol === 'BTCRL' ? 8 : 4);
 
-    // Values from API (via calculatedData state)
     const rawApiPriceAtTickLower = calculatedData?.priceAtTickLower ? parseFloat(calculatedData.priceAtTickLower) : null;
     const rawApiPriceAtTickUpper = calculatedData?.priceAtTickUpper ? parseFloat(calculatedData.priceAtTickUpper) : null;
 
+    // Define token decimals early for use in both branches
+    const token0Dec = TOKEN_DEFINITIONS[token0Symbol]?.decimals;
+    const token1Dec = TOKEN_DEFINITIONS[token1Symbol]?.decimals;
+
     if (baseTokenForPriceDisplay === token0Symbol) {
-        // Display prices as Token0 per Token1 (e.g., YUSDC per BTCRL)
-        if (rawApiPriceAtTickLower !== null) {
-            valForMinInput = rawApiPriceAtTickLower;
+        // UI Displays: Price of Token1 in terms of Token0 (e.g., BTCRL per YUSDC)
+        if (token0Dec !== undefined && token1Dec !== undefined) {
+            const decimalAdjFactor = Math.pow(10, token1Dec - token0Dec);
+
+            // Min Price (T1 in T0) at numTickLower
+            if (rawApiPriceAtTickLower !== null) { // rawApiPriceAtTickLower is Price(T0 per T1)
+                if (rawApiPriceAtTickLower === 0) valForMinInput = Infinity;
+                else valForMinInput = 1 / rawApiPriceAtTickLower;
         } else if (!isNaN(numTickLower)) {
             if (numTickLower === sdkMinTick) valForMinInput = 0;
-            else valForMinInput = Math.pow(1.0001, numTickLower);
+                else valForMinInput = Math.pow(1.0001, numTickLower) * decimalAdjFactor;
+            } else {
+                valForMinInput = NaN;
         }
 
-        if (rawApiPriceAtTickUpper !== null) {
-            valForMaxInput = rawApiPriceAtTickUpper;
+            // Max Price (T1 in T0) at numTickUpper
+            if (rawApiPriceAtTickUpper !== null) { // rawApiPriceAtTickUpper is Price(T0 per T1)
+                if (rawApiPriceAtTickUpper === 0) valForMaxInput = Infinity;
+                else valForMaxInput = 1 / rawApiPriceAtTickUpper;
         } else if (!isNaN(numTickUpper)) {
             if (numTickUpper === sdkMaxTick) valForMaxInput = Infinity;
-            else valForMaxInput = Math.pow(1.0001, numTickUpper);
+                else valForMaxInput = Math.pow(1.0001, numTickUpper) * decimalAdjFactor;
+            } else {
+                valForMaxInput = NaN;
+            }
+        } else {
+            valForMinInput = NaN;
+            valForMaxInput = NaN;
         }
-        
-        if (valForMinInput !== null && valForMaxInput !== null && valForMinInput > valForMaxInput) {
-            // This case implies API might have returned priceAtTickLower > priceAtTickUpper, or fallback calc was unusual.
-            // For non-inverted display, price at lower tick should be lower.
-            [valForMinInput, valForMaxInput] = [valForMaxInput, valForMinInput]; 
-        }
-
     } else { // baseTokenForPriceDisplay === token1Symbol
-        // Display prices as Token1 per Token0 (e.g., BTCRL per YUSDC)
-        let price1: number | null = null; // Value derived from rawApiPriceAtTickUpper
-        let price2: number | null = null; // Value derived from rawApiPriceAtTickLower
+        // UI Displays: Price of Token0 in terms of Token1 (e.g., YUSDC per BTCRL)
+        if (token0Dec !== undefined && token1Dec !== undefined) {
+            const decimalAdjFactor = Math.pow(10, token0Dec - token1Dec);
 
-        if (rawApiPriceAtTickUpper !== null && rawApiPriceAtTickUpper !== 0) {
-            price1 = 1 / rawApiPriceAtTickUpper;
-        } else if (!isNaN(numTickUpper)) {
-            if (numTickUpper === sdkMaxTick) price1 = 0; // Max tick for T0/T1 means min price (0) for T1/T0
-            else {
-                const fallbackUpper = Math.pow(1.0001, numTickUpper);
-                if (fallbackUpper === 0) price1 = Infinity;
-                else price1 = 1 / fallbackUpper;
+            // Min Price (T0 in T1) at numTickUpper
+            if (rawApiPriceAtTickUpper !== null) { // rawApiPriceAtTickUpper is Price(T0 per T1)
+                if (rawApiPriceAtTickUpper === 0) valForMinInput = Infinity;
+                else valForMinInput = 1 / (1 / rawApiPriceAtTickUpper); // Price(T0/T1) = 1 / Price(T1/T0) ; P(T1/T0) at TickUpper is rawApiPriceAtTickUpper
+            } else if (!isNaN(numTickUpper)) { // Upper tick corresponds to the MIN T0/T1 price
+                // P_raw(T1/T0) at numTickUpper = 1.0001^numTickUpper
+                // P_raw(T0/T1) at numTickUpper = 1 / (1.0001^numTickUpper) = 1.0001^(-numTickUpper)
+                // Price (T0 in T1) = P_raw(T0/T1) * decimalAdjFactor
+                if (numTickUpper === sdkMaxTick) valForMinInput = 0; // At T1/T0 price of Inf, T0/T1 price is 0
+                else valForMinInput = Math.pow(1.0001, -numTickUpper) * decimalAdjFactor;
+            } else {
+                valForMinInput = NaN;
             }
-        }
 
-        if (rawApiPriceAtTickLower !== null && rawApiPriceAtTickLower !== 0) {
-            price2 = 1 / rawApiPriceAtTickLower;
-        } else if (!isNaN(numTickLower)) {
-            if (numTickLower === sdkMinTick) price2 = Infinity; // Min tick for T0/T1 means max price (Inf) for T1/T0
-            else {
-                const fallbackLower = Math.pow(1.0001, numTickLower); // Corrected variable name
-                if (fallbackLower === 0) price2 = Infinity;
-                else price2 = 1 / fallbackLower;
+            // Max Price (T0 in T1) at numTickLower
+            if (rawApiPriceAtTickLower !== null) { // rawApiPriceAtTickLower is Price(T0 per T1)
+                 if (rawApiPriceAtTickLower === 0) valForMaxInput = Infinity;
+                 else valForMaxInput = 1 / (1 / rawApiPriceAtTickLower); // Price(T0/T1) = 1 / Price(T1/T0) ; P(T1/T0) at TickLower is rawApiPriceAtTickLower
+            } else if (!isNaN(numTickLower)) { // Lower tick corresponds to the MAX T0/T1 price
+                // P_raw(T1/T0) at numTickLower = 1.0001^numTickLower
+                // P_raw(T0/T1) at numTickLower = 1 / (1.0001^numTickLower) = 1.0001^(-numTickLower)
+                // Price (T0 in T1) = P_raw(T0/T1) * decimalAdjFactor
+                if (numTickLower === sdkMinTick) valForMaxInput = Infinity; // At T1/T0 price of 0, T0/T1 price is Inf
+                else valForMaxInput = Math.pow(1.0001, -numTickLower) * decimalAdjFactor;
+            } else {
+                valForMaxInput = NaN;
             }
+        } else {
+            valForMinInput = NaN;
+            valForMaxInput = NaN;
         }
-        
-        if (price1 !== null && price2 !== null) {
-            valForMinInput = Math.min(price1, price2);
-            valForMaxInput = Math.max(price1, price2);
-        } else if (price1 !== null) { 
-            valForMinInput = price1;
-            valForMaxInput = price1; 
-        } else if (price2 !== null) {
-            valForMinInput = price2;
-            valForMaxInput = price2;
-        }
+    }
+
+    // Ensure min < max after all calculations, only if both are finite numbers
+    // This check is only logically necessary when displaying Token1/Token0 price.
+    // When displaying Token0/Token1 price, the min/max are naturally derived from upper/lower ticks respectively.
+    if (baseTokenForPriceDisplay === token0Symbol && valForMinInput !== null && valForMaxInput !== null && isFinite(valForMinInput) && isFinite(valForMaxInput) && valForMinInput > valForMaxInput) {
+        [valForMinInput, valForMaxInput] = [valForMaxInput, valForMinInput];
     }
 
     let finalMinPriceString = "";
     let finalMaxPriceString = "";
     const displayDecimals = baseTokenForPriceDisplay === token0Symbol ? decimalsForToken0Display : decimalsForToken1Display;
 
+    // Formatting for Min Price String
     if (valForMinInput !== null) {
-        if (valForMinInput === 0 && baseTokenForPriceDisplay === token0Symbol && numTickLower === sdkMinTick) finalMinPriceString = "0";
-        else if (valForMinInput === 0 && baseTokenForPriceDisplay === token1Symbol && numTickUpper === sdkMaxTick) finalMinPriceString = "0";
-        else if (!isFinite(valForMinInput)) finalMinPriceString = "∞";
-        else finalMinPriceString = valForMinInput.toFixed(displayDecimals);
+        if (valForMinInput >= 0 && valForMinInput < 1e-11) { // Ensure positive or zero, then check if very small
+            finalMinPriceString = "0";
+        } else if (!isFinite(valForMinInput) || valForMinInput > 1e30) { // Check if Infinity or very large
+            finalMinPriceString = "∞";
+        } else { // Otherwise, format as a number
+            finalMinPriceString = valForMinInput.toFixed(displayDecimals);
+        }
     }
+
+    // Formatting for Max Price String
     if (valForMaxInput !== null) {
-        if (valForMaxInput === Infinity && baseTokenForPriceDisplay === token0Symbol && numTickUpper === sdkMaxTick) finalMaxPriceString = "∞";
-        else if (valForMaxInput === Infinity && baseTokenForPriceDisplay === token1Symbol && numTickLower === sdkMinTick) finalMaxPriceString = "∞";
-        else if (!isFinite(valForMaxInput)) finalMaxPriceString = "∞";
-        else finalMaxPriceString = valForMaxInput.toFixed(displayDecimals);
+        if (valForMaxInput >= 0 && valForMaxInput < 1e-11) { // Ensure positive or zero, then check if very small
+            finalMaxPriceString = "0";
+        } else if (!isFinite(valForMaxInput) || valForMaxInput > 1e30) { // Check if Infinity or very large
+            finalMaxPriceString = "∞";
+        } else { // Otherwise, format as a number
+            finalMaxPriceString = valForMaxInput.toFixed(displayDecimals);
+        }
     }
+
+    // --- BEGIN USER REQUESTED LOG ---
+    // Corrected variable names for logging
+    const logTickUpper = numTickUpper; // Use numTickUpper
+    const logCurrentPoolTick = currentPoolTick !== null ? Number(currentPoolTick) : null; // Use currentPoolTick
+
+    const token0Decimals_forLog = TOKEN_DEFINITIONS[token0Symbol]?.decimals ?? 18;
+    const token1Decimals_forLog = TOKEN_DEFINITIONS[token1Symbol]?.decimals ?? 18;
+    const decimalAdjustmentFactor_forLog = Math.pow(10, token1Decimals_forLog - token0Decimals_forLog);
+
+    const pTickAtCurrent_forLog = logCurrentPoolTick !== null ? Math.pow(1.0001, logCurrentPoolTick) : null;
+    const pTickAtUpper_forLog = !isNaN(logTickUpper) ? Math.pow(1.0001, logTickUpper) : null;
+
+    const actualPriceT1perT0AtCurrentPoolTick_forLog = pTickAtCurrent_forLog !== null ? pTickAtCurrent_forLog * decimalAdjustmentFactor_forLog : null;
+    const actualPriceT1perT0AtUpperTick_forLog = pTickAtUpper_forLog !== null ? pTickAtUpper_forLog * decimalAdjustmentFactor_forLog : null;
+
+    const displayDecimalsForT0_forLog = TOKEN_DEFINITIONS[token0Symbol]?.displayDecimals ?? 2;
+
+    console.log("--- Maximum Price Debug ---");
+    console.log(`Token0: ${token0Symbol} (Decimals: ${token0Decimals_forLog}), Token1: ${token1Symbol} (Decimals: ${token1Decimals_forLog})`);
+    console.log(`Decimal Adjustment Factor (10^(T1_decimals-T0_decimals)): ${decimalAdjustmentFactor_forLog}`);
+    console.log("Current Pool Tick (raw):", currentPoolTick);
+    console.log("Upper Tick (raw string):", tickUpper);
+    console.log("Market Current Price (state, T0 per T1, adjusted):", currentPrice);
+    console.log(`P_tick at Current Pool Tick: ${pTickAtCurrent_forLog ? pTickAtCurrent_forLog.toFixed(4) : "N/A"}`);
+    console.log(`P_tick at Upper Tick: ${pTickAtUpper_forLog ? pTickAtUpper_forLog.toFixed(4) : "N/A"}`);
+    console.log(`Price of ${token1Symbol} in ${token0Symbol} (at Current Pool Tick, adj. for token decimals):`, actualPriceT1perT0AtCurrentPoolTick_forLog ? actualPriceT1perT0AtCurrentPoolTick_forLog.toFixed(displayDecimalsForT0_forLog) : "N/A");
+    console.log(`Price of ${token1Symbol} in ${token0Symbol} (at Upper Tick, adj. for token decimals):`, actualPriceT1perT0AtUpperTick_forLog ? actualPriceT1perT0AtUpperTick_forLog.toFixed(displayDecimalsForT0_forLog) : "N/A");
+    console.log("Max Price String (UI value):", finalMaxPriceString);
+    // --- END USER REQUESTED LOG ---
 
     /* eslint-disable no-console */
     console.log('[AddLiquidityModal] Setting Price Strings:', {
@@ -1383,8 +1570,7 @@ export function AddLiquidityModal({
     setMinPriceInputString(finalMinPriceString);
     setMaxPriceInputString(finalMaxPriceString);
 
-  }, [tickLower, tickUpper, baseTokenForPriceDisplay, token0Symbol, token1Symbol, sdkMinTick, sdkMaxTick, calculatedData]);
-
+  }, [tickLower, tickUpper, baseTokenForPriceDisplay, token0Symbol, token1Symbol, sdkMinTick, sdkMaxTick, calculatedData, currentPoolTick]); // Added currentPoolTick to dependencies
   // Effect to auto-apply active percentage preset when currentPrice changes OR when activePreset changes
   useEffect(() => {
     // Ensure currentPrice is valid and we have a preset that requires calculation
@@ -1701,16 +1887,42 @@ export function AddLiquidityModal({
                         </Button>
                       ))}
                     </div>
-                    <span className="h-8 flex items-center bg-green-500/20 text-green-500 px-2 py-0.5 rounded-sm text-xs font-medium">
-                      {poolApr ? poolApr : "Yield N/A"} {/* Display passed APR */}
+                    <TooltipProvider delayDuration={100}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="h-8 flex items-center bg-green-500/20 text-green-500 px-2 py-0.5 rounded-sm text-xs font-medium cursor-help">
+                            {enhancedAprDisplay}
                     </span>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="max-w-xs">
+                          <p className="text-sm font-medium mb-1">Predicted APR</p>
+                          <p className="text-xs text-muted-foreground">
+                            Calculated using current volume and adjusted by a capital efficiency factor of 
+                            <span className="font-semibold text-foreground"> {capitalEfficiencyFactor.toLocaleString(undefined, {minimumFractionDigits: 1, maximumFractionDigits: 2})}x</span>. Actual returns might deviate.
+                            {activePreset !== "Full Range" && !(parseInt(tickLower) <= sdkMinTick && parseInt(tickUpper) >= sdkMaxTick)}
+                          </p>
+                          {poolApr && !["Loading APR...", "APR N/A", "APR Error", "Yield N/A", "Fees N/A"].includes(poolApr) && enhancedAprDisplay !== poolApr && enhancedAprDisplay !== "0.00% (Out of Range)" &&
+                            <p className="text-xs text-muted-foreground mt-1.5">
+                              Base Pool APR: <span className="font-semibold text-foreground">{poolApr}</span>
+                            </p>
+                          }
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
                   </div>
 
                   {/* --- BEGIN Recharts Graph --- */}
                   <div className="w-full h-52 relative rounded-md border bg-muted/30" ref={chartContainerRef} style={{ cursor: isPanning ? 'grabbing' : 'grab' }}>
                     {isPoolStateLoading ? (
                         <div className="absolute inset-0 flex items-center justify-center bg-muted/50 z-20">
-                            <RefreshCwIcon className="h-6 w-6 animate-spin text-muted-foreground" />
+                            {/* <RefreshCwIcon className="h-6 w-6 animate-spin text-muted-foreground" /> */}
+                            <Image 
+                              src="/logo_icon_white.svg" 
+                              alt="Loading..." 
+                              width={32} // Adjust size as needed
+                              height={32} // Adjust size as needed
+                              className="animate-pulse opacity-75" // Pulsating effect
+                            />
                         </div>
                     ) : !isPoolStateLoading && chartData.length === 0 ? (
                         <div className="absolute inset-0 flex items-center justify-center bg-muted/50 z-20">
@@ -1792,6 +2004,9 @@ export function AddLiquidityModal({
                             <p>The minimum price at which your position earns fees. Beyond this point, your position converts fully to {token1Symbol}.</p>
                           </TooltipContent>
                         </Tooltip>
+                        {isPoolStateLoading ? (
+                          <div className="h-5 w-24 bg-muted/40 rounded-md animate-pulse ml-auto"></div>
+                        ) : (
                         <Input
                           id="minPriceInput"
                           type="text"
@@ -1804,6 +2019,7 @@ export function AddLiquidityModal({
                           className="w-28 border-0 bg-transparent text-right text-xs font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto no-arrows"
                           placeholder="0.00" // Changed placeholder
                         />
+                        )}
                       </div>
                       <div className="flex justify-between items-center">
                          <Tooltip>
@@ -1814,6 +2030,9 @@ export function AddLiquidityModal({
                             <p>The maximum price at which your position earns fees. Beyond this point, your position converts fully to {token0Symbol}.</p>
                           </TooltipContent>
                         </Tooltip>
+                        {isPoolStateLoading ? (
+                          <div className="h-5 w-24 bg-muted/40 rounded-md animate-pulse ml-auto"></div>
+                        ) : (
                         <Input
                           id="maxPriceInput"
                           type="text"
@@ -1826,6 +2045,7 @@ export function AddLiquidityModal({
                           className="w-28 border-0 bg-transparent text-right text-xs font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto no-arrows"
                           placeholder="0.00" // Changed placeholder
                         />
+                        )}
                       </div>
                     </div>
                   </TooltipProvider>
@@ -1834,11 +2054,25 @@ export function AddLiquidityModal({
                     <div className="border-t border-border/70 my-2" />
                     <div className="flex justify-between items-center space-x-2">
                       <span className="text-xs text-muted-foreground">
-                        {currentPrice && !isCalculating ? (
+                        {isPoolStateLoading ? (
+                          <div className="h-4 w-40 bg-muted/40 rounded animate-pulse"></div>
+                        ) : currentPrice && !isCalculating ? (
                           baseTokenForPriceDisplay === token0Symbol ? (
-                            `1 ${token1Symbol} = ${parseFloat(currentPrice).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: TOKEN_DEFINITIONS[token0Symbol]?.displayDecimals || 2 })} ${token0Symbol}`
+                            // User wants to see: "1 [Token1] = X [Token0]"
+                            // currentPrice is Price of T0 in T1 (e.g., YUSDC per BTCRL)
+                            // So, to get Price of T1 in T0, we need 1 / currentPrice
+                            `1 ${token1Symbol} = ${(1 / parseFloat(currentPrice)).toLocaleString(undefined, { 
+                              minimumFractionDigits: TOKEN_DEFINITIONS[token0Symbol]?.displayDecimals || 2, 
+                              maximumFractionDigits: TOKEN_DEFINITIONS[token0Symbol]?.displayDecimals || (token0Symbol === 'BTCRL' || token0Symbol === 'YUSDC' ? 4 : 5) // Increased max for precision
+                            })} ${token0Symbol}`
                           ) : (
-                            `1 ${token0Symbol} = ${(1 / parseFloat(currentPrice)).toLocaleString(undefined, { minimumFractionDigits: TOKEN_DEFINITIONS[token1Symbol]?.displayDecimals || (token1Symbol === 'BTCRL' ? 6 : 2), maximumFractionDigits: TOKEN_DEFINITIONS[token1Symbol]?.displayDecimals || (token1Symbol === 'BTCRL' ? 8 : 4)})} ${token1Symbol}`
+                            // User wants to see: "1 [Token0] = Y [Token1]"
+                            // currentPrice is Price of T0 in T1 (e.g., YUSDC per BTCRL)
+                            // This is already the value we need.
+                            `1 ${token0Symbol} = ${parseFloat(currentPrice).toLocaleString(undefined, { 
+                              minimumFractionDigits: TOKEN_DEFINITIONS[token1Symbol]?.displayDecimals || (token1Symbol === 'BTCRL' || token1Symbol === 'YUSDC' ? 6 : 4), // Adjusted min for small values
+                              maximumFractionDigits: TOKEN_DEFINITIONS[token1Symbol]?.displayDecimals || (token1Symbol === 'BTCRL' || token1Symbol === 'YUSDC' ? 8 : 5) // Increased max for precision
+                            })} ${token1Symbol}`
                           )
                         ) : isCalculating ? (
                           "Calculating price..."
