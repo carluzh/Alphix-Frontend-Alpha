@@ -229,7 +229,7 @@ export function DynamicFeeChart({ data }: DynamicFeeChartProps) {
             />
             <Line
               yAxisId="right"
-              type="monotone"
+              type="stepAfter"
               dataKey="dynamicFee"
               strokeWidth={2}
               dot={false}

@@ -59,64 +59,59 @@ function calculatePriceString(
     poolSortedToken0: Token, // Token that sorts first by address (e.g., BTCRL)
     poolSortedToken1: Token, // Token that sorts second by address (e.g., YUSDC)
     desiredPriceOfToken: Token, // The token WE WANT THE PRICE OF
-    desiredPriceInToken: Token  // The token WE WANT THE PRICE IN TERMS OF
+    desiredPriceInToken: Token,  // The token WE WANT THE PRICE IN TERMS OF
+    callContext: string // Added for logging context e.g., "currentPrice", "priceAtTickLower"
 ): string {
-    // sqrtPriceX96_JSBI from the pool is sqrt(poolSortedToken1_amount_smallest_units / poolSortedToken0_amount_smallest_units) * 2^96
-    // So, (sqrtPriceX96_JSBI / 2^96)^2 = poolSortedToken1_amount_smallest_units / poolSortedToken0_amount_smallest_units
-    // Let this raw ratio be R_raw = (poolSortedToken1_units / poolSortedToken0_units)
+    console.log(`\\n[calculatePriceString CALLED - Context: ${callContext}]`);
+    console.log(`  Input sqrtPriceX96: ${sqrtPriceX96_JSBI.toString()}`);
+    console.log(`  poolSortedToken0: ${poolSortedToken0.symbol} (Decimals: ${poolSortedToken0.decimals}, Address: ${poolSortedToken0.address})`);
+    console.log(`  poolSortedToken1: ${poolSortedToken1.symbol} (Decimals: ${poolSortedToken1.decimals}, Address: ${poolSortedToken1.address})`);
+    console.log(`  desiredPriceOfToken: ${desiredPriceOfToken.symbol} (Decimals: ${desiredPriceOfToken.decimals}, Address: ${desiredPriceOfToken.address})`);
+    console.log(`  desiredPriceInToken: ${desiredPriceInToken.symbol} (Decimals: ${desiredPriceInToken.decimals}, Address: ${desiredPriceInToken.address})`);
 
-    // Numerator and denominator for the R_raw ratio:
-    const R_raw_numerator = JSBI.multiply(sqrtPriceX96_JSBI, sqrtPriceX96_JSBI); // Corresponds to poolSortedToken1 units
-    const R_raw_denominator = JSBI.exponentiate(JSBI.BigInt(2), JSBI.BigInt(192)); // Corresponds to poolSortedToken0 units
+    // poolSortedToken0 is BTCRL (decimals 8)
+    // poolSortedToken1 is YUSDC (decimals 6)
+    // sqrtPriceX96_JSBI corresponds to sqrt(YUSDC_raw_units / BTCRL_raw_units) * 2^96
 
-    console.log(`[API] Calculated R_raw_numerator (poolT1 units part): ${R_raw_numerator.toString()}`);
-    console.log(`[API] Calculated R_raw_denominator (poolT0 units part): ${R_raw_denominator.toString()}`);
-    // R_raw = R_raw_numerator / R_raw_denominator is a small number (e.g., YUSDC/BTCRL ~1e-9)
+    const Q96 = JSBI.exponentiate(JSBI.BigInt(2), JSBI.BigInt(96));
 
-    let priceToFormat: Price<Token, Token>;
+    // Numerator for (YUSDC_raw_units / BTCRL_raw_units) ratio is sqrtPriceX96_JSBI^2
+    // Denominator for (YUSDC_raw_units / BTCRL_raw_units) ratio is (2^96)^2
+    const raw_YUSDC_units_part = JSBI.multiply(sqrtPriceX96_JSBI, sqrtPriceX96_JSBI);
+    const raw_BTCRL_units_part = JSBI.multiply(Q96, Q96);
 
-    // Price constructor: new Price(baseCurrency, quoteCurrency, denominator_raw_amount_of_base, numerator_raw_amount_of_quote)
-    // The price is (numerator_raw_amount_of_quote / denominator_raw_amount_of_base) units of quoteCurrency per unit of baseCurrency.
+    // Price<poolSortedToken0, poolSortedToken1> means Price of poolSortedToken1 (YUSDC) in terms of poolSortedToken0 (BTCRL)
+    // Constructor: new Price(baseCurrency, quoteCurrency, denominator_raw_amount_of_base, numerator_raw_amount_of_quote)
+    const price_YUSDC_per_BTCRL = new Price(
+        poolSortedToken0, // Base currency: BTCRL
+        poolSortedToken1, // Quote currency: YUSDC
+        raw_BTCRL_units_part, // Denominator: raw amount of BTCRL (base)
+        raw_YUSDC_units_part  // Numerator: raw amount of YUSDC (quote)
+    );
+    console.log(`  Intermediate calculated price_YUSDC_per_BTCRL: ${price_YUSDC_per_BTCRL.toSignificant(18)}`);
+
+    let finalPriceObject: Price<Token, Token>;
 
     if (desiredPriceOfToken.equals(poolSortedToken1) && desiredPriceInToken.equals(poolSortedToken0)) {
-        // We want Price of poolSortedToken1 (e.g., YUSDC) in terms of poolSortedToken0 (e.g., BTCRL)
-        // Base: poolSortedToken1 (YUSDC). Quote: poolSortedToken0 (BTCRL).
-        // We need raw_BTCRL_amount / raw_YUSDC_amount. This is 1 / R_raw.
-        // raw_YUSDC_amount = R_raw_numerator
-        // raw_BTCRL_amount = R_raw_denominator
-        priceToFormat = new Price(
-            poolSortedToken1,     // Base currency (YUSDC)
-            poolSortedToken0,     // Quote currency (BTCRL)
-            R_raw_numerator,      // Denominator: raw amount of base (YUSDC units)
-            R_raw_denominator     // Numerator: raw amount of quote (BTCRL units)
-        );
-        console.log(`[API] Price of ${poolSortedToken1.symbol} in ${poolSortedToken0.symbol} (using R_raw_den/R_raw_num): ${priceToFormat.toSignificant(18)}`);
-
+        // We want Price of poolSortedToken1 (YUSDC) in terms of poolSortedToken0 (BTCRL)
+        console.log("  Branch: Desired Price of YUSDC in terms of BTCRL. Using direct intermediate price.");
+        finalPriceObject = price_YUSDC_per_BTCRL;
     } else if (desiredPriceOfToken.equals(poolSortedToken0) && desiredPriceInToken.equals(poolSortedToken1)) {
-        // We want Price of poolSortedToken0 (e.g., BTCRL) in terms of poolSortedToken1 (e.g., YUSDC)
-        // Base: poolSortedToken0 (BTCRL). Quote: poolSortedToken1 (YUSDC).
-        // We need raw_YUSDC_amount / raw_BTCRL_amount. This is R_raw.
-        // raw_BTCRL_amount = R_raw_denominator
-        // raw_YUSDC_amount = R_raw_numerator
-        priceToFormat = new Price(
-            poolSortedToken0,     // Base currency (BTCRL)
-            poolSortedToken1,     // Quote currency (YUSDC)
-            R_raw_denominator,    // Denominator: raw amount of base (BTCRL units)
-            R_raw_numerator     // Numerator: raw amount of quote (YUSDC units)
-        );
-        console.log(`[API] Price of ${poolSortedToken0.symbol} in ${poolSortedToken1.symbol} (using R_raw_num/R_raw_den): ${priceToFormat.toSignificant(18)}`);
+        // We want Price of poolSortedToken0 (BTCRL) in terms of poolSortedToken1 (YUSDC)
+        console.log("  Branch: Desired Price of BTCRL in terms of YUSDC. Inverting intermediate price.");
+        finalPriceObject = price_YUSDC_per_BTCRL.invert();
     } else {
-        console.warn(`[API] Price calculation: Desired pair (${desiredPriceOfToken.symbol}/${desiredPriceInToken.symbol}) does not directly match sorted pool pair (${poolSortedToken0.symbol}/${poolSortedToken1.symbol}) or its inverse. This indicates a potential logic issue in the calling code or token definitions.`);
-        // Fallback to a default or error state; for now, trying to construct with desired tokens directly,
-        // but this might not be meaningful if sqrtPriceX96 isn't for this exact pair.
-        // This path should ideally not be taken.
-        priceToFormat = new Price(desiredPriceOfToken, desiredPriceInToken, JSBI.BigInt(1), JSBI.BigInt(1)); // Placeholder 1:1 price
-        return "ErrorInPriceCalc";
+        console.warn(`  [calculatePriceString - ${callContext}] Desired pair (${desiredPriceOfToken.symbol}/${desiredPriceInToken.symbol}) does not directly match sorted pool pair.`);
+        return "ErrorInPriceCalcLogic";
     }
     
-    const result = priceToFormat.toSignificant(8); // Use 8 for more precision in UI if needed
-    console.log(`[API] Final calculated price string for ${desiredPriceOfToken.symbol}/${desiredPriceInToken.symbol}: ${result}`);
-    return result;
+    const highPrecisionPrice = finalPriceObject.toSignificant(18);
+    console.log(`  Final Price object output (toSignificant(18)): ${highPrecisionPrice}`);
+    
+    const finalResult = finalPriceObject.toSignificant(8); 
+    console.log(`  Final formatted price string (toSignificant(8)): ${finalResult}`);
+    console.log(`[calculatePriceString END - Context: ${callContext}]\n`);
+    return finalResult;
 }
 
 export default async function handler(
@@ -207,7 +202,11 @@ export default async function handler(
         console.log("[API DEBUG] State View Address:", STATE_VIEW_ADDRESS);
 
         // --- Fetch Pool Slot0 ---
-        let slot0;
+        let rawSqrtPriceX96String: string;
+        let currentTickFromSlot0: number;
+        let lpFeeFromSlot0: number;
+        let currentSqrtPriceX96_JSBI: JSBI;
+
         try {
             console.log("[API DEBUG] Calling getSlot0 with Pool ID:", poolId);
             const slot0DataViem = await publicClient.readContract({
@@ -217,30 +216,37 @@ export default async function handler(
                 args: [poolId as Hex]
             }) as readonly [bigint, number, number, number]; // [sqrtPriceX96, tick, protocolFee, lpFee]
 
-            slot0 = {
-                sqrtPriceX96: slot0DataViem[0].toString(),
-                tick: Number(slot0DataViem[1]),
-                lpFee: Number(slot0DataViem[3]) 
-            };
+            rawSqrtPriceX96String = slot0DataViem[0].toString();
+            currentTickFromSlot0 = Number(slot0DataViem[1]);
+            lpFeeFromSlot0 = Number(slot0DataViem[3]); 
+            currentSqrtPriceX96_JSBI = JSBI.BigInt(rawSqrtPriceX96String);
+
         } catch (error) {
             console.error("API Error (calculate-liquidity-parameters) fetching pool slot0 data:", error);
             return res.status(500).json({ message: "Failed to fetch current pool data for calculation.", error });
         }
 
         // Log raw slot0 data after fetching
-        console.log("[API DEBUG] Raw slot0 data fetched:", slot0);
+        console.log("[API DEBUG] Raw slot0 data processed:", { rawSqrtPriceX96String, currentTickFromSlot0, lpFeeFromSlot0 });
 
         // --- Create V4Pool for Calculation ---
         const v4PoolForCalc = new V4Pool(
             sortedSdkToken0,
             sortedSdkToken1,
-            slot0.lpFee, 
+            lpFeeFromSlot0, 
             DEFAULT_TICK_SPACING,
-            ETHERS_ADDRESS_ZERO as `0x${string}`, // hooks not strictly needed for calc if only using fromAmount0/1
-            slot0.sqrtPriceX96,
-            JSBI.BigInt(0), // currentLiquidity, not strictly needed for fromAmount0/1
-            slot0.tick
+            ETHERS_ADDRESS_ZERO as `0x${string}`, 
+            currentSqrtPriceX96_JSBI, // Use JSBI instance
+            JSBI.BigInt(0), 
+            currentTickFromSlot0 // Use numeric tick
         );
+
+        console.log(`  Input Token: ${inputTokenSymbol} (${sdkInputToken.address}), Parsed Amount: ${parsedInputAmount.toString()}`);
+        console.log(`  Sorted Token0: ${sortedSdkToken0.symbol} (${sortedSdkToken0.address})`);
+        console.log(`  Sorted Token1: ${sortedSdkToken1.symbol} (${sortedSdkToken1.address})`);
+        console.log(`  Pool Current Tick from v4PoolForCalc: ${v4PoolForCalc.tickCurrent}`); // From constructed pool
+        console.log(`  Pool SqrtPriceX96 from v4PoolForCalc: ${v4PoolForCalc.sqrtRatioX96.toString()}`); // From constructed pool
+        console.log(`  Final Tick Lower: ${finalTickLower}, Final Tick Upper: ${finalTickUpper}`);
 
         // --- Calculate Position based on inputTokenSymbol ---
         let positionForCalc: V4Position;
@@ -268,6 +274,41 @@ export default async function handler(
         const calculatedAmountSorted0 = positionForCalc.mintAmounts.amount0.toString(); 
         const calculatedAmountSorted1 = positionForCalc.mintAmounts.amount1.toString();
 
+        // Check for impractically large calculated amounts before proceeding
+        const MAX_REASONABLE_AMOUNT_STR_LEN = 70; // Heuristic: numbers like 1e+69 are usually > 70 chars
+        let parsedCalcAmount0: bigint;
+        let parsedCalcAmount1: bigint;
+
+        try {
+            parsedCalcAmount0 = BigInt(calculatedAmountSorted0);
+            parsedCalcAmount1 = BigInt(calculatedAmountSorted1);
+        } catch (e) {
+            console.error("[API calc-params] Error parsing SDK mintAmounts to BigInt. Values:", calculatedAmountSorted0, calculatedAmountSorted1);
+            return res.status(400).json({
+                message: "Calculated token amounts from SDK are not valid numbers (e.g., contains \"e+\"). This may be due to an extremely narrow price range for the input amount.",
+                error: "SDK amount parsing error"
+            });
+        }
+        
+        // Check if parsed amounts exceed a practical limit (e.g. maxUint256, though amounts should be much smaller)
+        // This catches cases where the SDK might return an absurdly large number for one token amount due to a tiny range.
+        const MAX_UINT_256 = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffn;
+        if (parsedCalcAmount0 > MAX_UINT_256 || parsedCalcAmount1 > MAX_UINT_256) {
+            console.warn("[API calc-params] Impractically large BigInt amount from SDK. A0:", parsedCalcAmount0.toString(), "A1:", parsedCalcAmount1.toString());
+             return res.status(400).json({
+                message: "Calculated dependent token amount is astronomically large (exceeds max representable values for tokens) for the selected price range and input amount. Please widen the price range or reduce the input amount.",
+                error: "Impractical dependent amount (overflow-like)"
+            });
+        }
+        // The previous string length check can be a secondary heuristic if needed, but BigInt comparison is more direct.
+        // if (calculatedAmountSorted0.length > MAX_REASONABLE_AMOUNT_STR_LEN || calculatedAmountSorted1.length > MAX_REASONABLE_AMOUNT_STR_LEN) {
+        //     console.warn("[API calc-params] Impractically large calculated amount string from SDK for range/input. A0:", calculatedAmountSorted0, "A1:", calculatedAmountSorted1);
+        //     return res.status(400).json({
+        //         message: "Calculated dependent token amount is impractically large for the selected price range and input amount. Please widen the price range or reduce the input amount.",
+        //         error: "Impractical dependent amount"
+        //     });
+        // }
+
         // --- Map calculated amounts back to original token0Symbol and token1Symbol ---
         let finalAmount0: string;
         let finalAmount1: string;
@@ -282,59 +323,60 @@ export default async function handler(
             finalAmount1 = calculatedAmountSorted0;
         }
         
-        const currentSqrtPriceX96 = JSBI.BigInt(slot0.sqrtPriceX96);
-        const sqrtPriceX96AtTickLower = TickMath.getSqrtRatioAtTick(finalTickLower);
-        const sqrtPriceX96AtTickUpper = TickMath.getSqrtRatioAtTick(finalTickUpper);
+        // const currentSqrtPriceX96 = JSBI.BigInt(slot0.sqrtPriceX96); // This was based on the old slot0 object structure
 
         // Calculate human-readable prices of original token1Symbol in terms of original token0Symbol
-        console.log("[API] Calculating Current Price String...");
+        console.log("[API] Calculating Current Price String using currentSqrtPriceX96_JSBI...");
         console.log("[API] Inputs to calculatePriceString - current:", { 
-            sqrtPriceX96_Value: currentSqrtPriceX96.toString(),
+            sqrtPriceX96_Value: currentSqrtPriceX96_JSBI.toString(),
             poolSortedToken0: sortedSdkToken0, 
             poolSortedToken1: sortedSdkToken1, 
             desiredPriceOfToken: sdkToken1Original, 
             desiredPriceInToken: sdkToken0Original 
         });
         const priceOfReqToken1InReqToken0_Current = calculatePriceString(
-            currentSqrtPriceX96,
+            currentSqrtPriceX96_JSBI, // Pass the JSBI object from slot0
             sortedSdkToken0, 
             sortedSdkToken1, 
             sdkToken1Original, // Price OF this token (e.g. BTCRL)
-            sdkToken0Original  // Price IN TERMS OF this token (e.g. YUSDC)
+            sdkToken0Original,  // Price IN TERMS OF this token (e.g. YUSDC)
+            "currentPrice" // context
         );
         console.log("[API] Calculated Current Price String:", priceOfReqToken1InReqToken0_Current);
 
         console.log("[API] Calculating Price String at Tick Lower...");
         console.log("[API] Inputs to calculatePriceString - lower:", { 
-            sqrtPriceX96_Value: sqrtPriceX96AtTickLower.toString(),
+            sqrtPriceX96_Value: TickMath.getSqrtRatioAtTick(finalTickLower).toString(),
             poolSortedToken0: sortedSdkToken0, 
             poolSortedToken1: sortedSdkToken1, 
             desiredPriceOfToken: sdkToken1Original, 
             desiredPriceInToken: sdkToken0Original 
         });
         const priceOfReqToken1InReqToken0_Lower = calculatePriceString(
-            sqrtPriceX96AtTickLower,
+            TickMath.getSqrtRatioAtTick(finalTickLower),
             sortedSdkToken0, 
             sortedSdkToken1, 
             sdkToken1Original, 
-            sdkToken0Original
+            sdkToken0Original,
+            "priceAtTickLower" // context
         );
          console.log("[API] Calculated Price String at Tick Lower:", priceOfReqToken1InReqToken0_Lower);
 
         console.log("[API] Calculating Price String at Tick Upper...");
          console.log("[API] Inputs to calculatePriceString - upper:", { 
-            sqrtPriceX96_Value: sqrtPriceX96AtTickUpper.toString(),
+            sqrtPriceX96_Value: TickMath.getSqrtRatioAtTick(finalTickUpper).toString(),
             poolSortedToken0: sortedSdkToken0, 
             poolSortedToken1: sortedSdkToken1, 
             desiredPriceOfToken: sdkToken1Original, 
             desiredPriceInToken: sdkToken0Original 
         });
         const priceOfReqToken1InReqToken0_Upper = calculatePriceString(
-            sqrtPriceX96AtTickUpper,
+            TickMath.getSqrtRatioAtTick(finalTickUpper),
             sortedSdkToken0, 
             sortedSdkToken1, 
             sdkToken1Original, 
-            sdkToken0Original
+            sdkToken0Original,
+            "priceAtTickUpper" // context
         );
         console.log("[API] Calculated Price String at Tick Upper:", priceOfReqToken1InReqToken0_Upper);
 
@@ -344,7 +386,7 @@ export default async function handler(
             finalTickUpper: finalTickUpper,
             amount0: finalAmount0, 
             amount1: finalAmount1, 
-            currentPoolTick: slot0.tick,
+            currentPoolTick: currentTickFromSlot0, // Return the tick from slot0 directly
             currentPrice: priceOfReqToken1InReqToken0_Current,
             priceAtTickLower: priceOfReqToken1InReqToken0_Lower,
             priceAtTickUpper: priceOfReqToken1InReqToken0_Upper,

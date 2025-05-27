@@ -18,17 +18,27 @@ export const TOKEN_DEFINITIONS = {
     'BTCRL': {
         addressRaw: '0x13c26fb69d48ED5a72Ce3302FC795082E2427F4D',
         decimals: 8,
-        symbol: 'BTCRL'
+        symbol: 'BTCRL',
+        displayDecimals: 6
     },
     'YUSDC': {
         addressRaw: '0x663cF82e49419A3Dc88EEc65c2155b4B2D0fA335',
         decimals: 6,
-        symbol: 'YUSDC'
+        symbol: 'YUSDC',
+        displayDecimals: 2
     }
 } as const;
 
 // Define a type for the token symbols for better type safety
 export type TokenSymbol = keyof typeof TOKEN_DEFINITIONS;
+
+// Explicitly define the type for a single token definition including displayDecimals
+export interface TokenDefinition {
+    readonly addressRaw: string;
+    readonly decimals: number;
+    readonly symbol: TokenSymbol;
+    readonly displayDecimals?: number; // Optional, as it's newly added
+}
 
 // --- V4 Pool Configuration ---
 export const V4_POOL_FEE = 8388608; // Updated to match fee from Initialize event log for PoolId 0xBCC2...

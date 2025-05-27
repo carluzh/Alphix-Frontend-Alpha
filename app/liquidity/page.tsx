@@ -11,7 +11,6 @@ import {
   Dialog, 
   DialogContent, 
   DialogHeader, 
-  DialogTitle, 
   DialogDescription, 
   DialogFooter,
   DialogTrigger,
@@ -68,6 +67,7 @@ import { position_manager_abi } from "../../lib/abis/PositionManager_abi";
 import { getFromCache, setToCache, getUserPositionsCacheKey, getPoolStatsCacheKey, getPoolDynamicFeeCacheKey } from "../../lib/client-cache"; // Import cache functions
 import { TickRangeControl } from "@/components/TickRangeControl";
 import { Pool } from "../../types"; // Import Pool interface from types
+import { AddLiquidityModal } from "@liquidity/AddLiquidityModal";
 // import { DEFAULT_TICK_SPACING } from "@/components/TickRangeControl"; // Assuming DEFAULT_TICK_SPACING is exported or accessible
 
 const SDK_MIN_TICK = -887272;
@@ -75,6 +75,26 @@ const SDK_MAX_TICK = 887272;
 const DEFAULT_TICK_SPACING = 60; // Define it locally
 const TICK_BARS_COUNT = 31; // More bars for finer visualization
 const TICKS_PER_BAR = 10 * DEFAULT_TICK_SPACING; // Each bar represents 10× tickspacing
+
+const mockPools: Pool[] = [
+  {
+    id: "yusdc-btcrl",
+    tokens: [
+      { symbol: "YUSDC", icon: "/YUSD.png" },
+      { symbol: "BTCRL", icon: "/BTCRL.png" }
+    ],
+    pair: "YUSDC / BTCRL",
+    volume24h: "Loading...",
+    volume7d: "Loading...",
+    fees24h: "Loading...",
+    fees7d: "Loading...",
+    liquidity: "Loading...",
+    apr: "Loading...",
+    highlighted: true,
+    volumeChangeDirection: 'loading',
+    tvlChangeDirection: 'loading',
+  }
+];
 
 declare module '@tanstack/react-table' {
   interface TableMeta<TData extends RowData> {
@@ -98,36 +118,6 @@ const chartConfig = {
   tvl: { label: "TVL", color: "hsl(var(--chart-2))" },
 } satisfies ChartConfig;
 
-const formatTokenDisplayAmount = (amount: string) => {
-  const num = parseFloat(amount);
-  if (isNaN(num)) return amount;
-  if (num === 0) return "0.00";
-  if (num < 0.0001) return "< 0.0001";
-  return num.toFixed(4);
-};
-
-// Mock function to calculate USD value (in a real app, you'd use actual price feeds)
-const calculateTotalValueUSD = (position: ProcessedPosition) => {
-  // This is a placeholder. In a real app, you would:
-  // 1. Get current token prices from an API or state
-  // 2. Multiply each token amount by its price
-  // 3. Sum them up
-  
-  // For this demo, let's use mock prices
-  const mockPrices: Record<string, number> = {
-    YUSDC: 1.0,
-    BTCRL: 61000.0,
-    // Add other token prices as needed
-  };
-  
-  const token0Value = parseFloat(position.token0.amount) * 
-    (mockPrices[position.token0.symbol] || 1.0);
-  const token1Value = parseFloat(position.token1.amount) * 
-    (mockPrices[position.token1.symbol] || 1.0);
-  
-  return token0Value + token1Value;
-};
-
 // Format USD value
 const formatUSD = (value: number) => {
   if (value < 0.01) return "< $0.01";
@@ -135,836 +125,21 @@ const formatUSD = (value: number) => {
   return `$${(value).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 };
 
-// TickRangeVisualization Component inspired by dynamic-fee-chart-preview
-const TickRangeVisualization = ({ 
-  tickLower, 
-  tickUpper, 
-  currentTick 
-}: { 
-  tickLower: number; 
-  tickUpper: number; 
-  currentTick: number; 
-}) => {
-  // Calculate center of the visualization
-  const centerBarIndex = Math.floor(TICK_BARS_COUNT / 2);
-  
-  // Calculate start tick of the center bar
-  const centerBarStartTick = Math.floor(currentTick / TICKS_PER_BAR) * TICKS_PER_BAR;
-  
-  // Generate bars centered around the current tick
-  const bars = Array.from({ length: TICK_BARS_COUNT }, (_, i) => {
-    const offset = i - centerBarIndex;
-    const barStartTick = centerBarStartTick + (offset * TICKS_PER_BAR);
-    const barEndTick = barStartTick + TICKS_PER_BAR;
-    
-    // Check various conditions
-    const containsCurrentTick = currentTick >= barStartTick && currentTick < barEndTick;
-    const containsPosition = 
-      (barStartTick <= tickUpper && barEndTick > tickLower) || 
-      (tickLower <= barStartTick && tickUpper >= barEndTick);
-    
-    return { containsCurrentTick, containsPosition };
-  });
-
-  return (
-    <div className="w-full flex justify-center my-1">
-      <div className="flex space-x-[1px]">
-        {bars.map((bar, i) => {
-          let bgColor = "bg-muted/30";
-          if (bar.containsCurrentTick) {
-            bgColor = "bg-white";
-          } else if (bar.containsPosition) {
-            bgColor = "bg-orange-500/80";
-          }
-          
-          return (
-            <div 
-              key={i}
-              className={`h-4 w-[2px] rounded-full ${bgColor}`}
-            />
-          );
-        })}
-      </div>
-    </div>
-  );
-};
-
-// Define SDK Tick Constants within AddLiquidityModal scope or import from a shared constants file
-const MIN_SDK_TICK_FOR_MODAL = -887272;
-const MAX_SDK_TICK_FOR_MODAL = 887272;
-
-// Add Liquidity Modal Component
-interface AddLiquidityModalProps {
-  isOpen: boolean;
-  onOpenChange: (isOpen: boolean) => void;
-  onLiquidityAdded: () => void; // Callback to refresh positions
-  selectedPoolId?: string; // Add selected pool ID
-}
-
-// Debounce function
-function debounce<F extends (...args: any[]) => any>(func: F, waitFor: number) {
-  let timeout: NodeJS.Timeout | null = null;
-
-  const debounced = (...args: Parameters<F>) => {
-    if (timeout !== null) {
-      clearTimeout(timeout);
-      timeout = null;
-    }
-    timeout = setTimeout(() => func(...args), waitFor);
-  };
-
-  return debounced as (...args: Parameters<F>) => ReturnType<F> | void;
-}
-
-function AddLiquidityModal({ isOpen, onOpenChange, onLiquidityAdded, selectedPoolId }: AddLiquidityModalProps) {
-  const { address: accountAddress, chainId } = useAccount();
-  const [token0Symbol, setToken0Symbol] = useState<TokenSymbol>('YUSDC');
-  const [token1Symbol, setToken1Symbol] = useState<TokenSymbol>('BTCRL');
-  const [amount0, setAmount0] = useState<string>("");
-  const [amount1, setAmount1] = useState<string>("");
-  const [tickLower, setTickLower] = useState<string>(MIN_SDK_TICK_FOR_MODAL.toString());
-  const [tickUpper, setTickUpper] = useState<string>(MAX_SDK_TICK_FOR_MODAL.toString());
-  const [currentPoolTick, setCurrentPoolTick] = useState<number | null>(null);
-  const [activeInputSide, setActiveInputSide] = useState<'amount0' | 'amount1' | null>(null);
-  const [isCalculating, setIsCalculating] = useState(false);
-  const [calculatedData, setCalculatedData] = useState<{
-    liquidity: string;
-    finalTickLower: number;
-    finalTickUpper: number;
-    calculatedAmount0: string;
-    calculatedAmount1: string;
-  } | null>(null);
-  const [currentPrice, setCurrentPrice] = useState<string | null>(null);
-  const [priceAtTickLower, setPriceAtTickLower] = useState<string | null>(null);
-  const [priceAtTickUpper, setPriceAtTickUpper] = useState<string | null>(null);
-  
-  const [isWorking, setIsWorking] = useState(false);
-  const [step, setStep] = useState<'input' | 'approve' | 'mint'>('input');
-  const [preparedTxData, setPreparedTxData] = useState<any>(null);
-
-  const [initialDefaultApplied, setInitialDefaultApplied] = useState(false);
-
-  // Use the selectedPoolId to set the tokens when the modal opens
-  useEffect(() => {
-    if (isOpen && selectedPoolId) {
-      const parts = selectedPoolId.split('-');
-      if (parts.length === 2) {
-        const t0 = parts[0].toUpperCase() as TokenSymbol;
-        const t1 = parts[1].toUpperCase() as TokenSymbol;
-        if (TOKEN_DEFINITIONS[t0] && TOKEN_DEFINITIONS[t1]) {
-          setToken0Symbol(t0);
-          setToken1Symbol(t1);
-          setAmount0("");
-          setAmount1("");
-          setTickLower(MIN_SDK_TICK_FOR_MODAL.toString());
-          setTickUpper(MAX_SDK_TICK_FOR_MODAL.toString());
-          setCurrentPoolTick(null);
-          setCalculatedData(null);
-          setActiveInputSide(null);
-          setCurrentPrice(null); // Reset price info
-          setPriceAtTickLower(null); // Reset price info
-          setPriceAtTickUpper(null); // Reset price info
-          setInitialDefaultApplied(false);
-        }
-      }
-    }
-  }, [isOpen, selectedPoolId]);
-
-  // Effect to reset default application flag and ticks when tokens change
-  useEffect(() => {
-    setInitialDefaultApplied(false);
-    setTickLower(MIN_SDK_TICK_FOR_MODAL.toString());
-    setTickUpper(MAX_SDK_TICK_FOR_MODAL.toString());
-    // Resetting amounts and other derived states might be needed too if they shouldn't persist across token pairs
-    setAmount0("");
-    setAmount1("");
-    setCalculatedData(null);
-    setCurrentPoolTick(null); // Also reset currentPoolTick to ensure fresh fetch and default logic trigger
-    setPriceAtTickLower(null);
-    setPriceAtTickUpper(null);
-    setCurrentPrice(null);
-  }, [token0Symbol, token1Symbol, chainId]);
-
-  // Debounced calculation function
-  const debouncedCalculateDependentAmount = useCallback(
-    debounce(async (currentAmount0: string, currentAmount1: string, currentTickLower: string, currentTickUpper: string, inputSide: 'amount0' | 'amount1') => {
-      if (!chainId) return;
-
-      const tl = parseInt(currentTickLower);
-      const tu = parseInt(currentTickUpper);
-
-      if (isNaN(tl) || isNaN(tu) || tl >= tu) {
-        setCalculatedData(null);
-        if (inputSide === 'amount0') setAmount1(""); else setAmount0("");
-        toast.info("Invalid Range", { description: "Min tick must be less than max tick." });
-        return;
-      }
-
-      const primaryAmount = inputSide === 'amount0' ? currentAmount0 : currentAmount1;
-      const primaryTokenSymbol = inputSide === 'amount0' ? token0Symbol : token1Symbol;
-      const secondaryTokenSymbol = inputSide === 'amount0' ? token1Symbol : token0Symbol;
-      
-      if (!primaryAmount || parseFloat(primaryAmount) <= 0) {
-        setCalculatedData(null);
-        if (inputSide === 'amount0') setAmount1(""); else setAmount0("");
-        return;
-      }
-
-      setIsCalculating(true);
-      setCalculatedData(null); 
-
-      try {
-        const response = await fetch('/api/liquidity/calculate-liquidity-parameters', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            token0Symbol,
-            token1Symbol,
-            inputAmount: primaryAmount,
-            inputTokenSymbol: primaryTokenSymbol,
-            userTickLower: tl,
-            userTickUpper: tu,
-            chainId,
-          }),
-        });
-
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.message || "Failed to calculate parameters.");
-        }
-
-        const result = await response.json();
-        
-        // The API is expected to return amounts in their smallest unit (e.g., wei)
-        // and final snapped ticks, and liquidity.
-        // It should also return which amount was the input ('amount0' or 'amount1')
-        // and the corresponding calculated amount for the other token.
-
-        setCalculatedData({
-            liquidity: result.liquidity, 
-            finalTickLower: result.finalTickLower, 
-            finalTickUpper: result.finalTickUpper, 
-            calculatedAmount0: result.amount0, 
-            calculatedAmount1: result.amount1,
-        });
-
-        if (typeof result.currentPoolTick === 'number') {
-            setCurrentPoolTick(result.currentPoolTick);
-        }
-        // Store new price information from API result
-        if (result.currentPrice) setCurrentPrice(result.currentPrice);
-        if (result.priceAtTickLower) setPriceAtTickLower(result.priceAtTickLower);
-        if (result.priceAtTickUpper) setPriceAtTickUpper(result.priceAtTickUpper);
-
-        // Update the non-active input field with the calculated amount, formatted for display
-        if (inputSide === 'amount0') {
-            setAmount1(formatTokenDisplayAmount(viemFormatUnits(BigInt(result.amount1), TOKEN_DEFINITIONS[secondaryTokenSymbol]?.decimals || 18)));
-        } else {
-            setAmount0(formatTokenDisplayAmount(viemFormatUnits(BigInt(result.amount0), TOKEN_DEFINITIONS[secondaryTokenSymbol]?.decimals || 18)));
-        }
-        // Update ticks to snapped values from API if they changed
-        if (result.finalTickLower.toString() !== currentTickLower) {
-            setTickLower(result.finalTickLower.toString());
-    }
-        if (result.finalTickUpper.toString() !== currentTickUpper) {
-            setTickUpper(result.finalTickUpper.toString());
-        }
-
-        if (!initialDefaultApplied && result.currentPoolTick !== null && result.currentPoolTick !== undefined) {
-          const LOG_1_0001 = 0.0000999950003;
-          const PRICE_CHANGE_LOWER_RATIO = 0.25; // -75%
-          const PRICE_CHANGE_UPPER_RATIO = 1.75; // +75%
-
-          const deltaTickLower = Math.round(Math.log(PRICE_CHANGE_LOWER_RATIO) / LOG_1_0001);
-          const deltaTickUpper = Math.round(Math.log(PRICE_CHANGE_UPPER_RATIO) / LOG_1_0001);
-
-          let defaultLower = result.currentPoolTick + deltaTickLower;
-          let defaultUpper = result.currentPoolTick + deltaTickUpper;
-
-          defaultLower = Math.round(defaultLower / DEFAULT_TICK_SPACING) * DEFAULT_TICK_SPACING;
-          defaultUpper = Math.round(defaultUpper / DEFAULT_TICK_SPACING) * DEFAULT_TICK_SPACING;
-          
-          defaultLower = Math.max(MIN_SDK_TICK_FOR_MODAL, Math.min(MAX_SDK_TICK_FOR_MODAL, defaultLower));
-          defaultUpper = Math.max(MIN_SDK_TICK_FOR_MODAL, Math.min(MAX_SDK_TICK_FOR_MODAL, defaultUpper));
-
-          if (defaultLower >= defaultUpper) { 
-            setTickLower(MIN_SDK_TICK_FOR_MODAL.toString());
-            setTickUpper(MAX_SDK_TICK_FOR_MODAL.toString());
-            // If falling back to full range, ensure prices are consistent or cleared
-            setPriceAtTickLower(result.priceAtTickLower);
-            setPriceAtTickUpper(result.priceAtTickUpper);
-          } else {
-            setTickLower(defaultLower.toString());
-            setTickUpper(defaultUpper.toString());
-            // Since we set new default ticks, the prices from the API (result.priceAtTickLower/Upper)
-            // which were for result.finalTickLower/Upper are now stale for these new default ticks.
-            // Clear them to trigger "Loading..." in TickRangeControl.
-            setPriceAtTickLower(null);
-            setPriceAtTickUpper(null);
-          }
-          setInitialDefaultApplied(true); 
-        } else {
-          // This branch is taken if initial default was already applied, or not applicable.
-          // The ticks from API (result.finalTickLower/Upper) are the current effective ticks.
-          // The prices (result.priceAtTickLower/Upper) correspond to these ticks.
-          setTickLower(result.finalTickLower.toString());
-          setTickUpper(result.finalTickUpper.toString());
-          setPriceAtTickLower(result.priceAtTickLower);
-          setPriceAtTickUpper(result.priceAtTickUpper);
-        }
-
-      } catch (error: any) {
-        console.error("Error calculating dependent amount:", error);
-        toast.error("Calculation Error", { description: error.message || "Could not estimate amounts." });
-        setCalculatedData(null);
-        // Clear the dependent amount field on error
-        if (inputSide === 'amount0') setAmount1(""); else setAmount0("");
-      } finally {
-        setIsCalculating(false);
-      }
-    }, 500),
-    [token0Symbol, token1Symbol, chainId, initialDefaultApplied]
-  );
-
-  // useEffect for dynamic amount calculation
-  useEffect(() => {
-    if (activeInputSide) {
-        if (activeInputSide === 'amount0') {
-            debouncedCalculateDependentAmount(amount0, amount1, tickLower, tickUpper, 'amount0');
-        } else if (activeInputSide === 'amount1') {
-            debouncedCalculateDependentAmount(amount0, amount1, tickLower, tickUpper, 'amount1');
-    }
-    } else {
-        // If no active input side (e.g. only ticks changed), recalculate based on a sensible primary
-        // For instance, if amount0 has a value, use it as primary. Otherwise, if amount1 has a value, use it.
-        // This handles cases where ticks change after amounts have been set.
-        if (parseFloat(amount0) > 0) {
-            debouncedCalculateDependentAmount(amount0, amount1, tickLower, tickUpper, 'amount0');
-        } else if (parseFloat(amount1) > 0) {
-            debouncedCalculateDependentAmount(amount0, amount1, tickLower, tickUpper, 'amount1');
-        } else {
-            // Both amounts are zero or invalid, clear calculated data
-            setCalculatedData(null);
-            // setAmount0(""); // Optionally clear amounts if ticks change and no valid base amount
-            // setAmount1("");
-        }
-    }
-  }, [amount0, amount1, tickLower, tickUpper, activeInputSide, token0Symbol, token1Symbol, debouncedCalculateDependentAmount]);
-
-
-  const handlePrepareMint = async (isAfterApproval = false) => {
-    if (!accountAddress || !chainId) {
-      toast.error("Please connect your wallet.");
-      return;
-    }
-    // Use amounts from calculatedData if available, otherwise state, ensuring they are valid numbers
-    const finalAmount0 = calculatedData?.calculatedAmount0 ? viemFormatUnits(BigInt(calculatedData.calculatedAmount0), TOKEN_DEFINITIONS[token0Symbol]?.decimals || 18) : amount0;
-    const finalAmount1 = calculatedData?.calculatedAmount1 ? viemFormatUnits(BigInt(calculatedData.calculatedAmount1), TOKEN_DEFINITIONS[token1Symbol]?.decimals || 18) : amount1;
-
-    const amount0Num = parseFloat(finalAmount0);
-    const amount1Num = parseFloat(finalAmount1);
-    const finalTickLowerNum = calculatedData?.finalTickLower ?? parseInt(tickLower); // Use calculated if available
-    const finalTickUpperNum = calculatedData?.finalTickUpper ?? parseInt(tickUpper);
-
-    if ((isNaN(amount0Num) || amount0Num <= 0) && (isNaN(amount1Num) || amount1Num <= 0)) {
-      toast.error("Please enter or calculate a valid amount for at least one token.");
-      return;
-    }
-    if (isNaN(finalTickLowerNum) || isNaN(finalTickUpperNum) || finalTickLowerNum >= finalTickUpperNum) {
-      toast.error("Invalid tick range provided or calculated.");
-      return;
-    }
-    if (token0Symbol === token1Symbol) {
-      toast.error("Tokens cannot be the same.");
-      return;
-    }
-    setIsWorking(true);
-    if (!isAfterApproval) setStep('input');
-    toast.loading("Preparing transaction...", { id: "prepare-mint" });
-    try {
-      const response = await fetch('/api/liquidity/prepare-mint-tx', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userAddress: accountAddress,
-          token0Symbol,
-          token1Symbol,
-          amount0Desired: finalAmount0, 
-          amount1Desired: finalAmount1,
-          userTickLower: finalTickLowerNum,
-          userTickUpper: finalTickUpperNum,
-          chainId: chainId ?? baseSepolia.id,
-        }),
-      });
-      toast.dismiss("prepare-mint");
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.message || "Failed to prepare transaction.");
-      }
-      setPreparedTxData(data);
-      if (data.needsApproval) {
-        toast.info(`Approval needed for ${data.approvalTokenSymbol}`, {
-          description: `You need to approve the Position Manager to use your ${data.approvalTokenSymbol}.`
-        });
-        setStep('approve');
-      } else {
-        toast.success("Transaction ready to mint!");
-        setStep('mint');
-      }
-    } catch (error: any) {
-      toast.dismiss("prepare-mint");
-      toast.error("Error preparing transaction", { description: error.message });
-      console.error("Prepare mint error:", error);
-    } finally {
-      if (!isAfterApproval) setIsWorking(false);
-    }
-  };
-
-  const { data: approveTxHash, error: approveWriteError, isPending: isApproveWritePending, writeContractAsync: approveERC20Async, reset: resetApproveWriteContract } = useWriteContract();
-  const { isLoading: isApproving, isSuccess: isApproved, error: approveReceiptError } = useWaitForTransactionReceipt({ hash: approveTxHash });
-  const { data: mintTxHash, error: mintSendError, isPending: isMintSendPending, sendTransactionAsync, reset: resetSendTransaction } = useSendTransaction();
-  const { isLoading: isMintConfirming, isSuccess: isMintConfirmed, error: mintReceiptError } = useWaitForTransactionReceipt({ hash: mintTxHash });
-
-  useEffect(() => {
-    if (isApproved) {
-      toast.success("Approval successful!");
-      resetApproveWriteContract();
-      if (preparedTxData) {
-        handlePrepareMint(true);
-      }
-    }
-    if (approveWriteError || approveReceiptError) {
-      const errorMsg = approveWriteError?.message || approveReceiptError?.message || "Approval transaction failed.";
-      toast.error("Approval failed", { description: errorMsg });
-      setIsWorking(false);
-      resetApproveWriteContract();
-    }
-  }, [isApproved, approveWriteError, approveReceiptError, preparedTxData, resetApproveWriteContract, handlePrepareMint]);
-
-  useEffect(() => {
-    if (isMintConfirmed) {
-      toast.success("Liquidity minted successfully!", { id: "mint-tx" });
-      onLiquidityAdded();
-      onOpenChange(false);
-      resetSendTransaction();
-    }
-    if (mintSendError || mintReceiptError) {
-      const errorMsg = mintSendError?.message || mintReceiptError?.message || "Minting transaction failed.";
-      toast.error("Minting failed", { id: "mint-tx", description: errorMsg });
-      console.error("Full minting error object:", mintSendError || mintReceiptError);
-      setIsWorking(false);
-      resetSendTransaction();
-    }
-  }, [isMintConfirmed, mintSendError, mintReceiptError, onLiquidityAdded, onOpenChange, resetSendTransaction]);
-
-  const resetForm = () => {
-    setToken0Symbol('YUSDC');
-    setToken1Symbol('BTCRL');
-    setAmount0("");
-    setAmount1("");
-    setTickLower(MIN_SDK_TICK_FOR_MODAL.toString());
-    setTickUpper(MAX_SDK_TICK_FOR_MODAL.toString());
-    setCurrentPoolTick(null);
-    setActiveInputSide(null);
-    setCalculatedData(null);
-    setCurrentPrice(null); // Reset price info
-    setPriceAtTickLower(null); // Reset price info
-    setPriceAtTickUpper(null); // Reset price info
-    setIsWorking(false);
-    setStep('input');
-    setPreparedTxData(null);
-    setInitialDefaultApplied(false);
-  };
-
-  const handleSetFullRange = () => {
-    setTickLower(MIN_SDK_TICK_FOR_MODAL.toString());
-    setTickUpper(MAX_SDK_TICK_FOR_MODAL.toString());
-    setInitialDefaultApplied(true);
-  };
-
-  const handleSwapTokens = () => {
-    setToken0Symbol(token1Symbol);
-    setToken1Symbol(token0Symbol);
-    setAmount0(amount1);
-    setAmount1(amount0);
-    setActiveInputSide(activeInputSide === 'amount0' ? 'amount1' : activeInputSide === 'amount1' ? 'amount0' : null);
-    setCalculatedData(null); // Clear old calculations
-  };
-
-  const handleApprove = async () => {
-    if (!preparedTxData?.needsApproval || !approveERC20Async) return;
-    setIsWorking(true);
-    toast.loading(`Approving ${preparedTxData.approvalTokenSymbol}...`, { id: "approve-tx" });
-    try {
-      const approvalAmountBigInt = BigInt(preparedTxData.approvalAmount); 
-      await approveERC20Async({
-        address: preparedTxData.approvalTokenAddress as `0x${string}`,
-        abi: ERC20_ABI,
-        functionName: 'approve',
-        args: [preparedTxData.approveToAddress as `0x${string}`, approvalAmountBigInt],
-      });
-    } catch (err: any) {
-      toast.dismiss("approve-tx");
-      console.error("Full approval error object:", err);
-      let detailedErrorMessage = "Unknown error during approval.";
-      if (err instanceof Error) {
-        detailedErrorMessage = err.message;
-        if ((err as any).shortMessage) { detailedErrorMessage = (err as any).shortMessage; }
-      }
-      toast.error("Failed to send approval transaction.", { description: detailedErrorMessage });
-      setIsWorking(false);
-      resetApproveWriteContract();
-    }
-  };
-
-  const handleMint = async () => {
-    if (!preparedTxData || preparedTxData.needsApproval || !sendTransactionAsync) return;
-    if (!preparedTxData.transaction || typeof preparedTxData.transaction.data !== 'string') {
-      toast.error("Minting Error", { description: "Transaction data is missing or invalid. Please try preparing again." });
-      setStep('input'); 
-      setIsWorking(false);
-      return;
-    }
-    setIsWorking(true);
-    toast.loading("Sending mint transaction...", { id: "mint-tx" });
-    try {
-      const { to, data, value: txValueString } = preparedTxData.transaction;
-      const txParams: { to: `0x${string}`; data: Hex; value?: bigint } = {
-        to: to as `0x${string}`,
-        data: data as Hex,
-      };
-      if (txValueString && BigInt(txValueString) > 0n) {
-        txParams.value = BigInt(txValueString);
-      }
-      await sendTransactionAsync(txParams);
-    } catch (err: any) { 
-      console.error("Direct sendTransactionAsync error:", err);
-      let detailedErrorMessage = "Unknown error sending mint transaction.";
-      if (err instanceof Error) {
-        detailedErrorMessage = err.message;
-        if ((err as any).shortMessage) { detailedErrorMessage = (err as any).shortMessage; }
-      }
-      toast.error("Failed to send mint transaction.", { id: "mint-tx", description: detailedErrorMessage });
-      setIsWorking(false);
-      resetSendTransaction();
-    }
-  };
-
-  const getTokenIcon = (symbol?: string) => {
-    if (symbol?.toUpperCase().includes("YUSD")) return "/YUSD.png";
-    if (symbol?.toUpperCase().includes("BTCRL")) return "/BTCRL.png";
-    return "/default-token.png";
-  };
-
-  console.log("[AddLiquidityModal] Token0 check before useBalance:", { 
-    symbol: token0Symbol, 
-    addressRaw: TOKEN_DEFINITIONS[token0Symbol]?.addressRaw 
-  });
-  const { data: token0BalanceData, isLoading: isLoadingToken0Balance } = useBalance({
-    address: accountAddress,
-    token: TOKEN_DEFINITIONS[token0Symbol]?.addressRaw as `0x${string}` | undefined,
-    chainId,
-    query: { enabled: !!accountAddress && !!chainId && !!TOKEN_DEFINITIONS[token0Symbol]?.addressRaw },
-  });
-
-  console.log("[AddLiquidityModal] Token1 check before useBalance:", { 
-    symbol: token1Symbol, 
-    addressRaw: TOKEN_DEFINITIONS[token1Symbol]?.addressRaw 
-  });
-  const { data: token1BalanceData, isLoading: isLoadingToken1Balance } = useBalance({
-    address: accountAddress,
-    token: TOKEN_DEFINITIONS[token1Symbol]?.addressRaw as `0x${string}` | undefined,
-    chainId,
-    query: { enabled: !!accountAddress && !!chainId && !!TOKEN_DEFINITIONS[token1Symbol]?.addressRaw },
-  });
-
-  const getFormattedDisplayBalance = (numericBalance: number | undefined, tokenSymbolForDecimals: TokenSymbol): string => {
-    if (numericBalance === undefined || isNaN(numericBalance)) {
-      numericBalance = 0;
-    }
-    if (numericBalance === 0) {
-      return "0.000";
-    } else if (numericBalance > 0 && numericBalance < 0.001) {
-      return "< 0.001";
-    } else {
-      const displayDecimals = tokenSymbolForDecimals === 'BTCRL' ? 8 : 2;
-      return numericBalance.toFixed(displayDecimals);
-    }
-  };
-
-  const displayToken0Balance = isLoadingToken0Balance ? "Loading..." : (token0BalanceData ? getFormattedDisplayBalance(parseFloat(token0BalanceData.formatted), token0Symbol) : "~");
-  const displayToken1Balance = isLoadingToken1Balance ? "Loading..." : (token1BalanceData ? getFormattedDisplayBalance(parseFloat(token1BalanceData.formatted), token1Symbol) : "~");
-
-  const removeNumberInputArrows = () => {
-    const style = document.createElement('style');
-    style.innerHTML = `
-      input[type=number]::-webkit-inner-spin-button,
-      input[type=number]::-webkit-outer-spin-button {
-        -webkit-appearance: none;
-        margin: 0;
-      }
-      input[type=number] {
-        -moz-appearance: textfield;
-      }
-      .no-arrows::-webkit-inner-spin-button,
-      .no-arrows::-webkit-outer-spin-button {
-        -webkit-appearance: none;
-        margin: 0;
-      }
-      .no-arrows {
-        -moz-appearance: textfield;
-      }
-    `;
-    document.head.appendChild(style);
-  };
-
-  useEffect(() => {
-    removeNumberInputArrows();
-  }, []);
-
-  // Log props just before rendering TickRangeControl
-  console.log("[AddLiquidityModal] About to render, props for TickRangeControl:", {
-    currentPrice,
-    priceAtTickLower,
-    priceAtTickUpper,
-    token0Symbol,
-    token1Symbol,
-    currentPoolTick
-  });
-
-  return (
-    <Dialog open={isOpen} onOpenChange={(open) => { 
-        if (!isWorking) { 
-            onOpenChange(open); 
-            if (!open) {
-                resetForm();
-            }
-        }
-    }}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>Add Liquidity</DialogTitle>
-          <DialogDescription>
-            Provide liquidity to a pool. Select tokens, amounts, and price range.
-          </DialogDescription>
-        </DialogHeader>
-        
-        <Card className="w-full card-gradient border-0 shadow-none">
-          <CardContent className="px-4 py-6 space-y-4">
-            {/* Token A Section */}
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                  <Label className="text-sm font-medium">Token A</Label>
-                   <div className="flex items-center gap-1">
-                     <span className="text-xs text-muted-foreground">Balance: {displayToken0Balance} {token0Symbol}</span>
-            </div>
-            </div>
-              <div className="rounded-lg bg-muted/30 p-4">
-                  <div className="flex items-center gap-2">
-                    <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
-                      <Image src={getTokenIcon(token0Symbol)} alt={token0Symbol} width={20} height={20} className="rounded-full"/>
-                      <span className="text-sm font-medium">{token0Symbol}</span>
-          </div>
-                    <div className="flex-1">
-                       <Input
-                          id="amount0"
-                          placeholder="0.0"
-                          value={amount0}
-                          onChange={(e) => { setAmount0(e.target.value); setActiveInputSide('amount0'); }}
-                          type="number"
-                          disabled={isWorking || isCalculating && activeInputSide === 'amount1'}
-                          className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto no-arrows"
-                       />
-          </div>
-            </div>
-              </div>
-            </div>
-
-            {/* Token B Section */}
-              <div>
-              <div className="flex items-center justify-between mb-2">
-                  <Label className="text-sm font-medium">Token B</Label>
-                  <div className="flex items-center gap-1">
-                     <span className="text-xs text-muted-foreground">Balance: {displayToken1Balance} {token1Symbol}</span>
-              </div>
-            </div>
-              <div className="rounded-lg bg-muted/30 p-4">
-                <div className="flex items-center gap-2">
-                  <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
-                     <Image src={getTokenIcon(token1Symbol)} alt={token1Symbol} width={20} height={20} className="rounded-full"/>
-                    <span className="text-sm font-medium">{token1Symbol}</span>
-                  </div>
-                  <div className="flex-1">
-                      <Input
-                          id="amount1"
-                          placeholder="0.0"
-                          value={amount1}
-                          onChange={(e) => { setAmount1(e.target.value); setActiveInputSide('amount1'); }}
-                          type="number"
-                          disabled={isWorking || isCalculating && activeInputSide === 'amount0'}
-                          className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto no-arrows"
-                      />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Price Range Section - Replaced with TickRangeControl */}
-            <TickRangeControl
-                tickLower={tickLower}
-                tickUpper={tickUpper}
-                currentPoolTick={currentPoolTick}
-                onTickLowerChange={(value) => { 
-                    setTickLower(value); 
-                    setActiveInputSide(null); 
-                    setInitialDefaultApplied(true);
-                }}
-                onTickUpperChange={(value) => { 
-                    setTickUpper(value); 
-                    setActiveInputSide(null); 
-                    setInitialDefaultApplied(true);
-                }}
-                onSetFullRange={handleSetFullRange}
-                disabled={isWorking || isCalculating}
-                minTickBoundary={MIN_SDK_TICK_FOR_MODAL}
-                maxTickBoundary={MAX_SDK_TICK_FOR_MODAL}
-                tickSpacing={DEFAULT_TICK_SPACING} 
-                token0Symbol={token0Symbol}
-                token1Symbol={token1Symbol}
-                currentPrice={currentPrice}
-                priceAtTickLower={priceAtTickLower}
-                priceAtTickUpper={priceAtTickUpper}
-            />
-          </CardContent>
-        </Card>
-
-        <DialogFooter className="mt-2">
-          <Button 
-            onClick={() => handlePrepareMint(false)} 
-            disabled={isWorking || isCalculating || isApproveWritePending || isMintSendPending || (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0")) || !calculatedData}
-            className="w-full"
-          >
-            {(isWorking || isCalculating || isApproveWritePending || isMintSendPending) ? <RefreshCwIcon className="animate-spin mr-2" /> : null}
-            {step === 'input' ? 'Preview & Prepare' : step === 'approve' ? `Approve ${preparedTxData?.approvalTokenSymbol}` : 'Confirm Mint'}
-          </Button>
-          {/* Separate buttons for approve/mint if preferred, or keep combined logic based on 'step' */}
-          {/* Example of separate buttons that could be shown based on 'step' after prepare is done */}
-          {/* {step === 'approve' && <Button onClick={handleApprove} disabled={isWorking || isApproveWritePending || isApproving || isMintSendPending} className="w-full">{(isWorking || isApproveWritePending || isApproving) ? <RefreshCwIcon className="animate-spin mr-2" /> : null}Approve ${preparedTxData?.approvalTokenSymbol}</Button>} */}
-          {/* {step === 'mint' && <Button onClick={handleMint} disabled={isWorking || isMintSendPending || isMintConfirming || isApproveWritePending} className="w-full">{(isWorking || isMintSendPending || isMintConfirming) ? <RefreshCwIcon className="animate-spin mr-2" /> : null}Confirm Mint</Button>} */}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-// Position Card Component
-const PositionCard = ({ position }: { position: ProcessedPosition }) => {
-  // Helper function to get token icon
-  const getTokenIcon = (symbol?: string) => {
-    if (symbol?.toUpperCase().includes("YUSD")) return "/YUSD.png";
-    if (symbol?.toUpperCase().includes("BTCRL")) return "/BTCRL.png";
-    return "/default-token.png";
-  };
-
-  // Calculate total value for the position
-  const totalValueUSD = calculateTotalValueUSD(position);
-  
-  // Estimate current tick based on isInRange status
-  const estimatedCurrentTick = position.isInRange 
-    ? Math.floor((position.tickLower + position.tickUpper) / 2)
-    : (position.tickLower > 0 
-        ? position.tickLower - TICKS_PER_BAR 
-        : position.tickUpper + TICKS_PER_BAR);
-
-  return (
-    <Card className="w-full shadow-md rounded-lg hover:shadow-lg transition-shadow bg-muted/30">
-      <CardHeader className="flex flex-row items-start justify-between pb-2 pt-3 px-4">
-        <div className="space-y-0.5">
-          <div className="flex items-center gap-2">
-            <div className="relative w-14 h-7">
-              <div className="absolute top-0 left-0 w-7 h-7 rounded-full overflow-hidden bg-background border border-border/50">
-                <Image src={getTokenIcon(position.token0.symbol)} alt={position.token0.symbol || 'Token 0'} width={28} height={28} className="w-full h-full object-cover" />
-              </div>
-              <div className="absolute top-0 left-4 w-7 h-7 rounded-full overflow-hidden bg-background border border-border/50">
-                <Image src={getTokenIcon(position.token1.symbol)} alt={position.token1.symbol || 'Token 1'} width={28} height={28} className="w-full h-full object-cover" />
-              </div>
-            </div>
-            <CardTitle className="text-base font-medium">
-              {position.token0.symbol || 'N/A'} / {position.token1.symbol || 'N/A'}
-            </CardTitle>
-          </div>
-          <CardDescription className="text-xs text-muted-foreground">
-            {formatUSD(totalValueUSD)}
-          </CardDescription>
-        </div>
-        <Badge variant={position.isInRange ? "default" : "secondary"} 
-           className={position.isInRange ? "bg-green-500/20 text-green-700 border-green-500/30" : "bg-orange-500/20 text-orange-700 border-orange-500/30"}>
-          {position.isInRange ? "In Range" : "Out of Range"}
-        </Badge>
-      </CardHeader>
-      <CardContent className="px-4 pb-4 pt-1">
-        <div className="flex flex-col gap-2">
-          <div className="w-full">
-            <TickRangeVisualization
-              tickLower={position.tickLower}
-              tickUpper={position.tickUpper}
-              currentTick={estimatedCurrentTick}
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-2 mt-2 text-sm">
-            <div>
-              <div className="text-muted-foreground text-xs">Token 0</div>
-              <div>{formatTokenDisplayAmount(position.token0.amount)} {position.token0.symbol}</div>
-            </div>
-            <div>
-              <div className="text-muted-foreground text-xs">Token 1</div>
-              <div>{formatTokenDisplayAmount(position.token1.amount)} {position.token1.symbol}</div>
-            </div>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-};
-
-// Mock pools data - in a real app, this would come from an API
-const mockPools: Pool[] = [
-  {
-    id: "yusdc-btcrl", // This will be used as poolId for the API
-    // For testing, we'll use the example poolId directly later in the fetch logic if needed
-    // but the structure here is based on pair symbols.
-    // The actual pool ID on-chain for YUSDC/BTCRL might be different and should be mapped correctly.
-    // For now, the API will use this `id` field.
-    tokens: [
-      { symbol: "YUSDC", icon: "/YUSD.png" },
-      { symbol: "BTCRL", icon: "/BTCRL.png" }
-    ],
-    pair: "YUSDC / BTCRL",
-    volume24h: "Loading...", // Initial display
-    volume7d: "Loading...", // Initial display
-    fees24h: "Loading...",   // Initial display
-    fees7d: "Loading...",     // Initial display
-    liquidity: "Loading...", // Initial display for TVL
-    apr: "Loading...", // Changed from undefined back to "Loading..." to fix linter error
-    highlighted: true,
-    volumeChangeDirection: 'loading', // Initialize volume change direction
-    tvlChangeDirection: 'loading', // Initialize TVL change direction
-  }
-];
-
 export default function LiquidityPage() {
   const [isLoadingPositions, setIsLoadingPositions] = useState(false);
   const [userPositions, setUserPositions] = useState<ProcessedPosition[]>([]); // Added state for all user positions
   const [activeChart, setActiveChart] = React.useState<keyof typeof chartConfig>("volume");
   const [sorting, setSorting] = React.useState<SortingState>([]);
+
   const [poolsData, setPoolsData] = useState<Pool[]>(mockPools); // State for dynamic pool data
   const isMobile = useIsMobile();
   const { address: accountAddress, isConnected, chain } = useAccount();
-  const [addLiquidityOpen, setAddLiquidityOpen] = useState(false);
   const [selectedPoolId, setSelectedPoolId] = useState<string>("");
   const [windowWidth, setWindowWidth] = useState<number>(
     typeof window !== 'undefined' ? window.innerWidth : 1200
   );
+  const [addLiquidityOpen, setAddLiquidityOpen] = useState(false);
+  const [selectedPoolApr, setSelectedPoolApr] = useState<string | undefined>(undefined);
 
   // Add resize listener
   useEffect(() => {
@@ -1458,12 +633,13 @@ export default function LiquidityPage() {
         const initialHeightClass = 'h-6';
 
         return (
-          <div className={`relative flex items-center ${initialWidthClass} ${initialHeightClass} rounded-md bg-green-500/20 text-green-500 overflow-hidden ml-auto
-                      group-hover:w-32 group-hover:h-8
-                      group-hover:bg-transparent group-hover:text-foreground group-hover:border group-hover:border-border
-                      group-hover:hover:bg-accent group-hover:hover:text-accent-foreground
-                      transition-all duration-300 ease-in-out cursor-pointer`}
-               onClick={(e) => handleAddLiquidity(e, row.original.id)}
+          <div 
+            onClick={(e) => handleAddLiquidity(e, row.original.id)}
+            className={`relative flex items-center ${initialWidthClass} ${initialHeightClass} rounded-md bg-green-500/20 text-green-500 overflow-hidden ml-auto
+                        group-hover:w-32 group-hover:h-8
+                        group-hover:bg-transparent group-hover:text-foreground group-hover:border group-hover:border-border
+                        group-hover:hover:bg-accent group-hover:hover:text-accent-foreground
+                        transition-all duration-300 ease-in-out cursor-pointer`}
           >
             {isAprCalculated ? (
               <>
@@ -1476,8 +652,10 @@ export default function LiquidityPage() {
                 </div>
               </>
             ) : (
-             // Show nothing when not calculated
-             null
+             <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 ease-in-out px-2 whitespace-nowrap">
+                 <PlusIcon className="w-4 h-4 mr-2" />
+                 Add Liquidity
+             </div>
             )}
           </div>
         );
@@ -1517,13 +695,16 @@ export default function LiquidityPage() {
     },
   });
 
-  const handlePoolClick = (poolId: string) => {
-    toast.info("Pool details will be available in a few days.");
+  const handleAddLiquidity = (e: React.MouseEvent, poolId: string) => {
+    e.stopPropagation(); // Prevent row click if APR cell itself is handling it
+    setSelectedPoolId(poolId); 
+    const pool = poolsWithPositionCounts.find(p => p.id === poolId);
+    setSelectedPoolApr(pool?.apr); // Store the APR for the selected pool
+    setAddLiquidityOpen(true);
   };
 
-  const handleAddLiquidity = (e: React.MouseEvent, poolId: string) => {
-    e.stopPropagation();
-    toast.info("Adding liquidity will be available in a few days.");
+  const handlePoolClick = (poolId: string) => {
+    toast.info("Pool details will be available in a few days.");
   };
 
   return (
@@ -1608,12 +789,12 @@ export default function LiquidityPage() {
           </div>
         </div>
       </div>
-      
       {/* Add Liquidity Modal */}
       <AddLiquidityModal
         isOpen={addLiquidityOpen}
         onOpenChange={setAddLiquidityOpen}
         selectedPoolId={selectedPoolId}
+        poolApr={selectedPoolApr}
         onLiquidityAdded={() => {
           // Fetch all user positions again after adding liquidity
           if (isConnected && accountAddress) {
@@ -1629,6 +810,9 @@ export default function LiquidityPage() {
               });
           }
         }}
+        sdkMinTick={SDK_MIN_TICK}
+        sdkMaxTick={SDK_MAX_TICK}
+        defaultTickSpacing={DEFAULT_TICK_SPACING}
       />
     </AppLayout>
   );

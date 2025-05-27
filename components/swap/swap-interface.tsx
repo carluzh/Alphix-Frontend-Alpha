@@ -306,6 +306,8 @@ export function SwapInterface() {
 
   // State for historical fee data
   const [feeHistoryData, setFeeHistoryData] = useState<FeeHistoryPoint[]>([]);
+  const [isFeeHistoryLoading, setIsFeeHistoryLoading] = useState(false);
+  const [feeHistoryError, setFeeHistoryError] = useState<string | null>(null);
   const [isFeeChartPreviewVisible, setIsFeeChartPreviewVisible] = useState(false); // Renamed for clarity
   const [isFeeChartModalOpen, setIsFeeChartModalOpen] = useState(false); // New state for modal
 
@@ -1477,6 +1479,66 @@ export function SwapInterface() {
 
   const strokeWidth = 2; // Define strokeWidth for the SVG rect elements
 
+  // Effect to fetch historical fee data
+  useEffect(() => {
+    const fetchHistoricalFeeData = async () => {
+      if (!isConnected || currentChainId !== TARGET_CHAIN_ID || !fromToken || !toToken) {
+        setFeeHistoryData([]); // Clear data if not connected or tokens not set
+        setIsFeeChartPreviewVisible(false);
+        return;
+      }
+
+      // --- IMPORTANT: Pool ID Derivation Placeholder ---
+      // The following poolId is a placeholder based on your example.
+      // You MUST replace this with actual logic to determine the correct poolId
+      // for the selected fromToken and toToken pair. This might involve:
+      // 1. A lookup in TOKEN_DEFINITIONS or a similar constants file if pools are predefined for pairs.
+      // 2. A call to another utility/API that can resolve a token pair to a pool address.
+      // 3. Modifying the get-historical-dynamic-fees API to accept token symbols and resolve poolId internally.
+      const poolIdForFeeHistory = "0xbcc20db9b797e211e508500469e553111c6fa8d80f7896e6db60167bcf18ce13"; // EXAMPLE Placeholder
+      // --- End Placeholder ---
+
+      if (!poolIdForFeeHistory) {
+          console.warn("SwapInterface: poolIdForFeeHistory could not be determined. Skipping historical fee fetch.");
+          setFeeHistoryData([]);
+          setIsFeeChartPreviewVisible(false);
+          return;
+      }
+
+      setIsFeeHistoryLoading(true);
+      setFeeHistoryError(null);
+      setIsFeeChartPreviewVisible(false); // Hide while loading new data
+
+      try {
+        // Default to 30 days for the preview chart
+        const response = await fetch(`/api/liquidity/get-historical-dynamic-fees?poolId=${poolIdForFeeHistory}&days=30`);
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.message || `Failed to fetch historical fee data: ${response.statusText}`);
+        }
+        const data: FeeHistoryPoint[] = await response.json();
+        
+        if (data && data.length > 0) {
+            setFeeHistoryData(data);
+            setIsFeeChartPreviewVisible(true); // Show preview if data is successfully loaded
+        } else {
+            setFeeHistoryData([]);
+            setIsFeeChartPreviewVisible(false); // Keep hidden if no data
+        }
+
+      } catch (error: any) {
+        console.error("Failed to fetch historical fee data:", error);
+        setFeeHistoryError(error.message || "Could not load fee history.");
+        setFeeHistoryData([]);
+        setIsFeeChartPreviewVisible(false);
+      } finally {
+        setIsFeeHistoryLoading(false);
+      }
+    };
+
+    fetchHistoricalFeeData();
+  }, [fromToken, toToken, isConnected, currentChainId, TARGET_CHAIN_ID]); // Dependencies: fromToken, toToken, isConnected, currentChainId
+
   return (
     <div className="flex flex-col gap-4"> {/* Removed items-center */}
       {/* Main Swap Interface Card */}
@@ -1720,13 +1782,15 @@ export function SwapInterface() {
       <AnimatePresence>
         {/* 
           Show preview if:
-          - Not loading dynamic fee
-          - No error with dynamic fee
-          - Dynamic fee bps is available (successfully fetched)
-          - Fee history data is available
+          - Not loading dynamic fee (for current fee)
+          - No error with dynamic fee (for current fee)
+          - Dynamic fee bps is available (successfully fetched for current fee)
+          - Historical Fee history data is available AND not loading AND no error
           - User is connected and on the target chain
         */}
-        {!dynamicFeeLoading && !dynamicFeeError && dynamicFeeBps !== null && feeHistoryData.length > 0 && isConnected && currentChainId === TARGET_CHAIN_ID && (
+        {!dynamicFeeLoading && !dynamicFeeError && dynamicFeeBps !== null && 
+         !isFeeHistoryLoading && !feeHistoryError && feeHistoryData.length > 0 && // Check historical data state
+         isConnected && currentChainId === TARGET_CHAIN_ID && isFeeChartPreviewVisible && (
           <motion.div
             key="dynamic-fee-preview-auto" // New key for AnimatePresence
             className="w-full max-w-md mx-auto" // Preview matches main card width

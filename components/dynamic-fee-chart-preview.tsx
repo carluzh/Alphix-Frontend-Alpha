@@ -23,18 +23,43 @@ export function DynamicFeeChartPreview({ data, onClick }: DynamicFeeChartPreview
   }
 
   // Prepare data for the preview chart (dynamicFee and EMA), normalized
+  const initialFee = data[0].dynamicFee;
+  const initialEma = data[0].emaRatio;
+
+  // Calculate max absolute EMA ratio in the dataset if initialEma is 0
+  let maxAbsEmaRatio = 0;
+  if (initialEma === 0) {
+    data.forEach(point => {
+      if (Math.abs(point.emaRatio) > maxAbsEmaRatio) {
+        maxAbsEmaRatio = Math.abs(point.emaRatio);
+      }
+    });
+  }
+
   const chartData = data.map((point, index) => {
-    const initialFee = data[0].dynamicFee;
-    const initialEma = data[0].emaRatio;
+    let normalizedEma;
+    if (initialEma !== 0) {
+      normalizedEma = (point.emaRatio / initialEma) * 100;
+    } else {
+      // initialEma is 0
+      if (maxAbsEmaRatio !== 0) {
+        // If there's variation later, normalize against the max absolute value in the series
+        // This scales the line to show its shape, with its peak (or trough) scaled towards 100 or -100
+        normalizedEma = (point.emaRatio / maxAbsEmaRatio) * 100;
+      } else {
+        // All emaRatios are 0 (or initialEma was 0 and no other variation)
+        normalizedEma = 100; // Flat line at 100 as a baseline if no variation from 0
+      }
+    }
+
     return {
       name: index, // Simple index for X-axis
-      // Normalize: (current / initial) * 100. Handle initial value being 0 to avoid division by zero.
-      fee: initialFee !== 0 ? (point.dynamicFee / initialFee) * 100 : 100, 
-      ema: initialEma !== 0 ? (point.emaRatio / initialEma) * 100 : 100, 
+      fee: initialFee !== 0 ? (point.dynamicFee / initialFee) * 100 : 100,
+      ema: normalizedEma,
     };
   });
 
-  const actualDataLength = chartData.length; // Get the length directly from our data
+  const actualDataLength = chartData.length;
 
   // Re-calculate min/max for the Y-axis domain based on normalized data
   const yDomainPadding = 0.01; // 1% padding to prevent touching edges
@@ -78,7 +103,7 @@ export function DynamicFeeChartPreview({ data, onClick }: DynamicFeeChartPreview
                 ]}
               />
               <Line
-                type="monotone"
+                type="stepAfter"
                 dataKey="fee"
                 stroke={"#e85102"} // Same color as main chart's dynamic fee
                 strokeWidth={1.5}
