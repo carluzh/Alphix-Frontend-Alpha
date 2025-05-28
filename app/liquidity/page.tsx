@@ -635,7 +635,7 @@ export default function LiquidityPage() {
         return (
           <div 
             onClick={(e) => handleAddLiquidity(e, row.original.id)}
-            className={`relative flex items-center ${initialWidthClass} ${initialHeightClass} rounded-md bg-green-500/20 text-green-500 overflow-hidden ml-auto
+            className={`relative flex items-center ${initialWidthClass} ${initialHeightClass} rounded-md ${isAprCalculated ? 'bg-green-500/20 text-green-500' : 'bg-muted/60'} overflow-hidden ml-auto
                         group-hover:w-32 group-hover:h-8
                         group-hover:bg-transparent group-hover:text-foreground group-hover:border group-hover:border-border
                         group-hover:hover:bg-accent group-hover:hover:text-accent-foreground

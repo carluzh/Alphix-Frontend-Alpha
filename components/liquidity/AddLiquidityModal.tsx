@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
-import { PlusIcon, RefreshCwIcon, XIcon, CheckIcon, MinusIcon, ZoomInIcon, ZoomOutIcon, RefreshCcwIcon, InfinityIcon, InfoIcon } from "lucide-react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { PlusIcon, RefreshCwIcon, XIcon, CheckIcon, MinusIcon, ZoomInIcon, ZoomOutIcon, RefreshCcwIcon, InfinityIcon, InfoIcon, ActivityIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -24,12 +24,13 @@ import {
     useSignTypedData
 } from "wagmi";
 import { toast } from "sonner";
-import { TOKEN_DEFINITIONS, TokenSymbol, V4_POOL_FEE, V4_POOL_TICK_SPACING, V4_POOL_HOOKS } from "@/lib/swap-constants"; // Adjusted path
-import { baseSepolia } from "@/lib/wagmiConfig"; // Adjusted path
-import { ERC20_ABI } from "@/lib/abis/erc20"; // Adjusted path
-import { type Hex, formatUnits as viemFormatUnits, getAddress, parseUnits as viemParseUnits } from "viem"; // Removed parseAbiItem here
-import { Token } from '@uniswap/sdk-core'; // Added for pool ID derivation
-import { Pool as V4Pool } from "@uniswap/v4-sdk"; // Added for pool ID derivation
+import { TOKEN_DEFINITIONS, TokenSymbol, V4_POOL_FEE, V4_POOL_TICK_SPACING, V4_POOL_HOOKS } from "@/lib/swap-constants";
+import { baseSepolia } from "@/lib/wagmiConfig";
+import { ERC20_ABI } from "@/lib/abis/erc20";
+import { type Hex, formatUnits as viemFormatUnits, getAddress, parseUnits as viemParseUnits } from "viem"; 
+import { Token } from '@uniswap/sdk-core'; 
+import { Pool as V4PoolSDK, Position as V4PositionSDK } from "@uniswap/v4-sdk";
+import JSBI from "jsbi"; 
 import {
   Tooltip,
   TooltipContent,
@@ -39,14 +40,16 @@ import {
 import { 
   ResponsiveContainer, 
   ComposedChart, 
-  Area, 
-  Line, 
   XAxis, 
   YAxis, 
   CartesianGrid, 
   Tooltip as RechartsTooltip, 
   ReferenceArea, 
-  ReferenceLine 
+  ReferenceLine, 
+  Label as RechartsChartLabel, // Explicit import for Recharts Label
+  Bar,
+  Cell,
+  Area // Added Area import
 } from 'recharts';
 import { motion } from "framer-motion";
 
@@ -181,15 +184,86 @@ export function AddLiquidityModal({
   const [baseTokenForPriceDisplay, setBaseTokenForPriceDisplay] = useState<TokenSymbol>(token0Symbol);
 
   // --- BEGIN New Chart State ---
-  interface ChartDataPoint {
-    price: number;
-    liquidity: number;
-  }
-  const [chartData, setChartData] = useState<Array<ChartDataPoint>>([]);
-  const [xDomain, setXDomain] = useState<[number, number]>([30000, 50000]);
+  const [xDomain, setXDomain] = useState<[number, number]>([-120000, 120000]); // Default wide tick range
   const [currentPriceLine, setCurrentPriceLine] = useState<number | null>(null);
   const [mockSelectedPriceRange, setMockSelectedPriceRange] = useState<[number, number] | null>(null);
   // --- END New Chart State ---
+
+  // --- BEGIN Custom X-Axis Tick State ---
+  interface CustomAxisLabel {
+    tickValue: number;    // The actual tick value for positioning or data mapping
+    displayLabel: string; // The string to display (price)
+  }
+  const [customXAxisTicks, setCustomXAxisTicks] = useState<CustomAxisLabel[]>([]);
+  // --- END Custom X-Axis Tick State ---
+
+  // --- BEGIN useEffect to calculate custom X-axis ticks ---
+  useEffect(() => {
+    if (xDomain && xDomain[0] !== undefined && xDomain[1] !== undefined && token0Symbol && token1Symbol) {
+      const [minTickDomain, maxTickDomain] = xDomain;
+      const desiredTickCount = 3; 
+      const newLabels: CustomAxisLabel[] = [];
+
+      const token0Def = TOKEN_DEFINITIONS[token0Symbol];
+      const token1Def = TOKEN_DEFINITIONS[token1Symbol];
+      const displayDecimals = baseTokenForPriceDisplay === token0Symbol 
+        ? (token0Def?.displayDecimals ?? (token0Symbol === 'BTCRL' ? 8 : 4)) 
+        : (token1Def?.displayDecimals ?? (token1Symbol === 'BTCRL' ? 8 : 4));
+
+      if (minTickDomain === maxTickDomain) {
+        // Simplified: just show one label if domain is a single point
+        // Price calculation for a single tick
+        let priceAtTick = NaN;
+        if (token0Def?.decimals !== undefined && token1Def?.decimals !== undefined) {
+          const decimalAdjFactor = baseTokenForPriceDisplay === token0Symbol 
+            ? Math.pow(10, token1Def.decimals - token0Def.decimals)
+            : Math.pow(10, token0Def.decimals - token1Def.decimals);
+          const rawPrice = Math.pow(1.0001, minTickDomain);
+          priceAtTick = baseTokenForPriceDisplay === token0Symbol ? rawPrice * decimalAdjFactor : (1 / rawPrice) * decimalAdjFactor;
+        }
+        newLabels.push({ 
+          tickValue: minTickDomain, 
+          displayLabel: isNaN(priceAtTick) ? minTickDomain.toString() : priceAtTick.toLocaleString(undefined, { maximumFractionDigits: displayDecimals, minimumFractionDigits: 2 })
+        });
+      } else if (isFinite(minTickDomain) && isFinite(maxTickDomain)) {
+        const range = maxTickDomain - minTickDomain;
+        const step = range / (desiredTickCount > 1 ? desiredTickCount - 1 : 1);
+        
+        for (let i = 0; i < desiredTickCount; i++) {
+          const tickVal = Math.round(minTickDomain + (i * step));
+          let priceAtTick = NaN;
+
+          if (token0Def?.decimals !== undefined && token1Def?.decimals !== undefined) {
+            // Price of token1 in terms of token0: P_t1_t0 = (1.0001)^tick * 10^(t1_decimals - t0_decimals)
+            // Price of token0 in terms of token1: P_t0_t1 = (1.0001)^(-tick) * 10^(t0_decimals - t1_decimals)
+            const rawPriceFactor = Math.pow(1.0001, tickVal);
+
+            if (baseTokenForPriceDisplay === token0Symbol) { // Display price of T1 in T0
+              const decimalAdj = Math.pow(10, token1Def.decimals - token0Def.decimals);
+              priceAtTick = rawPriceFactor * decimalAdj;
+            } else { // Display price of T0 in T1
+              const decimalAdj = Math.pow(10, token0Def.decimals - token1Def.decimals);
+              priceAtTick = (1 / rawPriceFactor) * decimalAdj; 
+            }
+          }
+          newLabels.push({ 
+            tickValue: tickVal, 
+            displayLabel: isNaN(priceAtTick) ? tickVal.toString() : priceAtTick.toLocaleString(undefined, { maximumFractionDigits: displayDecimals, minimumFractionDigits: Math.min(2, displayDecimals) }) 
+          });
+        }
+        // If displaying price of Token0 in terms of Token1, reverse the labels to maintain ascending visual order
+        if (baseTokenForPriceDisplay === token1Symbol) {
+          newLabels.reverse();
+        }
+      } 
+      setCustomXAxisTicks(newLabels);
+    } else {
+      // Handle non-finite domains if necessary, for now, clear ticks
+      setCustomXAxisTicks([]); // This should be an empty array of CustomAxisLabel
+      return;
+    }
+  }, [xDomain, baseTokenForPriceDisplay, token0Symbol, token1Symbol]);
+  // --- END useEffect to calculate custom X-axis ticks ---
 
   // --- BEGIN Panning State ---
   const [isPanning, setIsPanning] = useState(false);
@@ -206,6 +280,120 @@ export function AddLiquidityModal({
   // State for capital efficiency enhanced APR
   const [capitalEfficiencyFactor, setCapitalEfficiencyFactor] = useState<number>(1);
   const [enhancedAprDisplay, setEnhancedAprDisplay] = useState<string>(poolApr || "Yield N/A");
+
+  // --- BEGIN Liquidity Depth Data State ---
+  interface HookPosition {
+    tickLower: number;
+    tickUpper: number;
+    liquidity: string;
+  }
+  const [rawHookPositions, setRawHookPositions] = useState<HookPosition[] | null>(null);
+  const [isFetchingLiquidityDepth, setIsFetchingLiquidityDepth] = useState<boolean>(false);
+  // --- END Liquidity Depth Data State ---
+
+  // --- BEGIN Liquidity Delta Events State ---
+  interface Token0DepthDeltaEvent { // Renamed interface
+    tick: number;
+    change: bigint; // Using JavaScript BigInt for amount0 equivalent
+  }
+  const [token0DepthDeltaEvents, setToken0DepthDeltaEvents] = useState<Token0DepthDeltaEvent[] | null>(null); // Renamed state
+  // --- END Liquidity Delta Events State ---
+
+  // --- BEGIN Aggregated & Sorted Tick States ---
+  const [aggregatedToken0ChangesByTick, setAggregatedToken0ChangesByTick] = useState<Map<number, bigint> | null>(null);
+  const [sortedUniqueTicksWithToken0Changes, setSortedUniqueTicksWithToken0Changes] = useState<number[] | null>(null);
+  // --- END Aggregated & Sorted Tick States ---
+
+  // --- BEGIN Simplified Chart Plot Data ---
+  const [simplifiedChartPlotData, setSimplifiedChartPlotData] = useState<Array<{ tick: number; cumulativeUnifiedValue: number }> | null>(null);
+  // --- END Simplified Chart Plot Data ---
+
+  // --- BEGIN Processed Position Details State ---
+  interface ProcessedPositionDetail {
+    tickLower: number;
+    tickUpper: number;
+    liquidity: string;
+    amount0: string;
+    amount1: string;
+    numericAmount0: number;
+    numericAmount1: number;
+    unifiedValueInToken0: number; 
+  }
+  const [processedPositions, setProcessedPositions] = useState<ProcessedPositionDetail[] | null>(null);
+  // --- END Processed Position Details State ---
+
+  // --- BEGIN Unified Value Delta Events State ---
+  interface UnifiedValueDeltaEvent {
+    tick: number;
+    changeInUnifiedValue: number;
+  }
+  const [unifiedValueDeltaEvents, setUnifiedValueDeltaEvents] = useState<UnifiedValueDeltaEvent[] | null>(null);
+  // --- END Unified Value Delta Events State ---
+
+  // --- BEGIN Aggregated & Sorted Unified Value Changes States ---
+  const [aggregatedUnifiedValueChangesByTick, setAggregatedUnifiedValueChangesByTick] = useState<Map<number, number> | null>(null);
+  const [sortedNetUnifiedValueChanges, setSortedNetUnifiedValueChanges] = useState<Array<{ tick: number; netUnifiedToken0Change: number }> | null>(null);
+  // --- END Aggregated & Sorted Unified Value Changes States ---
+
+  // --- BEGIN Derived Pool Tokens (for labels/formatting) ---
+  const { poolToken0, poolToken1 } = useMemo(() => {
+    if (!token0Symbol || !token1Symbol || !chainId) return { poolToken0: null, poolToken1: null };
+    const currentToken0Def = TOKEN_DEFINITIONS[token0Symbol!]; // Renamed to avoid conflict
+    const currentToken1Def = TOKEN_DEFINITIONS[token1Symbol!]; // Renamed to avoid conflict
+    if (!currentToken0Def || !currentToken1Def) return { poolToken0: null, poolToken1: null };
+
+    // Create SDK Token instances using the modal's currently selected token0Symbol and token1Symbol
+    const sdkBaseToken0 = new Token(chainId, getAddress(currentToken0Def.addressRaw), currentToken0Def.decimals, currentToken0Def.symbol);
+    const sdkBaseToken1 = new Token(chainId, getAddress(currentToken1Def.addressRaw), currentToken1Def.decimals, currentToken1Def.symbol);
+
+    // Sort them to get the canonical poolToken0 and poolToken1
+    const [pt0, pt1] = sdkBaseToken0.sortsBefore(sdkBaseToken1)
+      ? [sdkBaseToken0, sdkBaseToken1]
+      : [sdkBaseToken1, sdkBaseToken0];
+    return { poolToken0: pt0, poolToken1: pt1 };
+  }, [token0Symbol, token1Symbol, chainId]);
+  // --- END Derived Pool Tokens ---
+
+  // --- BEGIN State for Pool's Current SqrtPriceX96 ---
+  // TODO: This state needs to be populated reliably, ideally from the same source as currentPoolTick (e.g., get-pool-state API call)
+  const [currentPoolSqrtPriceX96, setCurrentPoolSqrtPriceX96] = useState<string | null>(null); // Store as string, convert to JSBI when used
+  // --- END State for Pool's Current SqrtPriceX96 ---
+
+  // Define Subgraph URL - consider moving to a constants file if used elsewhere
+  const SUBGRAPH_URL = "https://api.studio.thegraph.com/query/111443/alphix-v-4/version/latest";
+
+  // Helper function to get the canonical on-chain pool ID (Bytes! string)
+  const getDerivedOnChainPoolId = useCallback((): string | null => {
+    if (!token0Symbol || !token1Symbol || !chainId) return null;
+
+    const token0Def = TOKEN_DEFINITIONS[token0Symbol];
+    const token1Def = TOKEN_DEFINITIONS[token1Symbol];
+
+    if (!token0Def || !token1Def) return null;
+
+    try {
+      const sdkToken0 = new Token(chainId, getAddress(token0Def.addressRaw), token0Def.decimals);
+      const sdkToken1 = new Token(chainId, getAddress(token1Def.addressRaw), token1Def.decimals);
+
+      const [sortedSdkToken0, sortedSdkToken1] = sdkToken0.sortsBefore(sdkToken1)
+        ? [sdkToken0, sdkToken1]
+        : [sdkToken1, sdkToken0];
+      
+      // Ensure V4_POOL_HOOKS is defined and is a valid Address type if needed by V4PoolSDK.getPoolId
+      // For now, assuming V4_POOL_HOOKS from constants is correctly formatted (e.g. Hex)
+      const poolIdBytes32 = V4PoolSDK.getPoolId(
+        sortedSdkToken0,
+        sortedSdkToken1,
+        V4_POOL_FEE, // Assuming this is a number or compatible type
+        V4_POOL_TICK_SPACING, // Assuming this is a number or compatible type
+        V4_POOL_HOOKS as Hex // Make sure V4_POOL_HOOKS is compatible, cast if necessary
+      );
+      return poolIdBytes32.toLowerCase();
+    } catch (error) {
+      console.error("[AddLiquidityModal] Error deriving on-chain pool ID:", error);
+      return null;
+    }
+  }, [token0Symbol, token1Symbol, chainId]);
 
   const getTokenIcon = (symbol?: string) => {
     if (symbol?.toUpperCase().includes("YUSD")) return "/YUSD.png";
@@ -256,7 +444,7 @@ export function AddLiquidityModal({
           setActivePreset("±15%"); // Reset preset on pool change
           setBaseTokenForPriceDisplay(t0); // Reset base token for price display
           // Reset chart specific states too
-          setChartData([]);
+          setXDomain([-120000, 120000]);
           setCurrentPriceLine(null);
           setMockSelectedPriceRange(null);
           // Do not reset xDomain here, allow it to be driven by new data or reset explicitly if needed
@@ -279,14 +467,17 @@ export function AddLiquidityModal({
     setActivePreset("±15%"); // Reset preset on token/chain change
     setBaseTokenForPriceDisplay(token0Symbol); // Reset base token for price display
     // Reset chart specific states too
-    setChartData([]);
+    setXDomain([-120000, 120000]);
     setCurrentPriceLine(null);
     setMockSelectedPriceRange(null);
   }, [token0Symbol, token1Symbol, chainId, sdkMinTick, sdkMaxTick]);
 
   // Effect to fetch initial pool state (current price and tick)
   useEffect(() => {
-    if (isOpen && token0Symbol && token1Symbol && chainId && !calculatedData && !initialDefaultApplied) {
+    // Only fetch initial pool state if the modal is open, essential params are present,
+    // and we haven't already applied defaults based on a fetched current price.
+    // The key is to get the current market price when the context changes (new pool, or first open).
+    if (isOpen && token0Symbol && token1Symbol && chainId && !initialDefaultApplied) {
       const fetchPoolState = async () => {
         setIsPoolStateLoading(true);
         // toast.loading("Fetching pool data...", { id: "pool-state-fetch" }); // Redundant if preset application shows loading
@@ -310,21 +501,65 @@ export function AddLiquidityModal({
           // toast.dismiss("pool-state-fetch");
 
           if (poolState.currentPrice && typeof poolState.currentPoolTick === 'number') {
-            setCurrentPrice(poolState.currentPrice); // This will trigger the preset application effect
+            setCurrentPrice(poolState.currentPrice); 
             setCurrentPoolTick(poolState.currentPoolTick);
-             const numericCurrentPrice = parseFloat(poolState.currentPrice);
+
+            // Consume sqrtPriceX96 from the API response
+            if (poolState.sqrtPriceX96) { 
+              setCurrentPoolSqrtPriceX96(poolState.sqrtPriceX96.toString()); 
+              console.log("[AddLiquidityModal] sqrtPriceX96 set from API:", poolState.sqrtPriceX96.toString());
+            } else {
+              console.warn("[AddLiquidityModal] sqrtPriceX96 not found in get-pool-state response. Token0 depth calculations might be affected.");
+              setCurrentPoolSqrtPriceX96(null); 
+            }
+            
+            const numericCurrentPrice = parseFloat(poolState.currentPrice);
             if (!isNaN(numericCurrentPrice)) {
-                setCurrentPriceLine(numericCurrentPrice);
-                 // Initialize xDomain centered around the new current price, chart effect might refine this.
-                setXDomain([numericCurrentPrice * 0.5, numericCurrentPrice * 1.5]);
+                setCurrentPriceLine(numericCurrentPrice); // This is for a potential price-based reference line, distinct from tick-based xDomain
+                
+                // Calculate xDomain based on currentPoolTick and +/- 0.50% price change
+                if (typeof poolState.currentPoolTick === 'number') {
+                  const centerTick = poolState.currentPoolTick;
+                  const percentage = 0.30; // 30% price deviation
+                  
+                  // tick = ln(price) / ln(1.0001)
+                  // price = (1.0001)^tick
+                  // For a % change from current price P_current (derived from currentTick):
+                  // P_upper = P_current * (1 + percentage)
+                  // P_lower = P_current * (1 - percentage)
+                  // tick_upper = ln( P_current * (1 + percentage) ) / ln(1.0001)
+                  //            = ( ln(P_current) + ln(1+percentage) ) / ln(1.0001)
+                  //            = currentTick + ln(1+percentage) / ln(1.0001)
+                  // tick_lower = currentTick + ln(1-percentage) / ln(1.0001)
+
+                  const tickDeltaUpper = Math.log(1 + percentage) / Math.log(1.0001);
+                  const tickDeltaLower = Math.log(1 - percentage) / Math.log(1.0001); // This will be negative
+
+                  const domainTickLower = Math.round(centerTick + tickDeltaLower);
+                  const domainTickUpper = Math.round(centerTick + tickDeltaUpper);
+                  
+                  setXDomain([domainTickLower, domainTickUpper]);
+                  console.log(`[AddLiquidityModal] Initial xDomain set around currentPoolTick ${centerTick}: [${domainTickLower}, ${domainTickUpper}] for +/-50% price range.`);
+                } else {
+                  // Fallback if currentPoolTick is not available, use price-based domain as before
+                  setXDomain([numericCurrentPrice * 0.5, numericCurrentPrice * 1.5]); 
+                }
+            } else {
+                setCurrentPriceLine(null); // Explicitly set to null if parsing fails
+                // Fallback xDomain if price is invalid and tick is not available
+                setXDomain([-120000, 120000]); 
             }
           } else {
+            setCurrentPriceLine(null); // Set to null if data is incomplete
+            setCurrentPoolSqrtPriceX96(null); // Also clear if main data is incomplete
             throw new Error("Pool state data is incomplete.");
           }
         } catch (error: any) {
-          // toast.dismiss("pool-state-fetch");
           toast.error("Pool Data Error", { description: error.message });
-          // Potentially clear currentPrice/Tick or set to error state if needed
+          setCurrentPriceLine(null); // Explicitly set to null on any fetch/processing error
+          setCurrentPoolSqrtPriceX96(null); // Clear on error
+          // Consider resetting xDomain to a default on error
+          // setXDomain([30000, 50000]); 
         } finally {
           setIsPoolStateLoading(false);
         }
@@ -412,17 +647,18 @@ export function AddLiquidityModal({
             setCurrentPoolTick(result.currentPoolTick); // Update from this more comprehensive call
         }
         if (result.currentPrice) {
-            setCurrentPrice(result.currentPrice); // Update from this more comprehensive call
+            setCurrentPrice(result.currentPrice); 
             const numericCurrentPrice = parseFloat(result.currentPrice);
             if (!isNaN(numericCurrentPrice)) {
                 setCurrentPriceLine(numericCurrentPrice); 
-                // Update xDomain to be centered around the new current price
-                // This will be further adjusted by generateMockData if it sets a different domain based on data points
-                // Only update if significantly different or not yet set properly
-                if (xDomain[0] === 30000 && xDomain[1] === 50000 || Math.abs( (xDomain[0]+xDomain[1])/2 - numericCurrentPrice) > numericCurrentPrice * 0.25 ) {
-                  setXDomain([numericCurrentPrice * 0.5, numericCurrentPrice * 1.5]); 
-                }
+                // if (xDomain[0] === 30000 && xDomain[1] === 50000 || Math.abs( (xDomain[0]+xDomain[1])/2 - numericCurrentPrice) > numericCurrentPrice * 0.25 ) {
+                //   setXDomain([numericCurrentPrice * 0.5, numericCurrentPrice * 1.5]); 
+                // }
+            } else {
+                setCurrentPriceLine(null); // Reset if parsing currentPrice fails
             }
+        } else {
+             setCurrentPriceLine(null); // Reset if no currentPrice in result
         }
         if (result.priceAtTickLower) setPriceAtTickLower(result.priceAtTickLower);
         if (result.priceAtTickUpper) setPriceAtTickUpper(result.priceAtTickUpper);
@@ -504,6 +740,11 @@ export function AddLiquidityModal({
       } catch (error: any) {
         toast.error("Calculation Error", { description: error.message || "Could not estimate amounts." });
         setCalculatedData(null);
+        setCurrentPrice(null);      
+        setCurrentPoolTick(null);   
+        setPriceAtTickLower(null);  
+        setPriceAtTickUpper(null);  
+        setCurrentPriceLine(null);  
         if (inputSide === 'amount0' && amount1 !== "Error") setAmount1(""); 
         else if (inputSide === 'amount1' && amount0 !== "Error") setAmount0("");
       } finally {
@@ -663,6 +904,7 @@ export function AddLiquidityModal({
         }
       } else {
         toast.success("Transaction ready to mint!");
+        setPermit2StepsCompletedCount(maxPermit2StepsInCurrentTx); // <-- ADD THIS LINE
         setStep('mint');
       }
     } catch (error: any) {
@@ -984,78 +1226,6 @@ export function AddLiquidityModal({
     return basePrice * Math.pow(1 + priceChangePerTick * tickSpacing, numTicks / 100); // Reduced impact for wider view
   }, []);
 
-  // Generate Mock Chart Data
-  useEffect(() => {
-    // If currentPriceLine becomes null (e.g. pool change), clear existing chart data to force loading/unavailable state
-    if (currentPriceLine === null && chartData.length > 0) {
-        setChartData([]);
-        // Optionally reset xDomain if it shouldn't persist without a current price context
-        // setXDomain([30000, 50000]); // Or some other default if needed
-    }
-
-    if (currentPriceLine !== null) { // Only generate data if we have a current price
-        const generateMockData = (basePriceForChart?: number, centerTickForChart?: number): Array<ChartDataPoint> => {
-          const data: Array<ChartDataPoint> = [];
-          const basePrice = basePriceForChart ?? 40000; 
-          const priceRange = basePrice * 1; // Make price range relative to basePrice (e.g., 50% on each side)
-          const numDataPoints = 200;
-          // Center peak liquidity around the basePrice, or adjust based on centerTick if provided
-          let peakLiquidityPrice = basePrice; 
-          // TODO: If centerTickForChart is provided, adjust peakLiquidityPrice to align better with it if needed.
-          // This might involve converting centerTickForChart to a price using Math.pow(1.0001, centerTickForChart)
-          // and then deciding how it influences the mock distribution peak.
-
-          for (let i = 0; i < numDataPoints; i++) {
-            const price = (basePrice - (priceRange / 2)) + (priceRange / numDataPoints) * i;
-            const distanceToPeak = Math.abs(price - peakLiquidityPrice);
-            const liquidityFactor = Math.max(0, 1 - (distanceToPeak / (priceRange / 2))); // Liquidity decreases linearly from peak
-            const liquidity = liquidityFactor * 1000 + Math.random() * 200; // Base liquidity + random variation
-            data.push({ price: parseFloat(price.toFixed(2)), liquidity: parseFloat(liquidity.toFixed(2)) });
-          }
-          data.sort((a, b) => a.price - b.price);
-          return data;
-        };
-
-        // Regenerate mock data if currentPriceLine or currentPoolTick changes significantly,
-        // or if chartData is empty (initial load).
-        // The primary trigger for debouncedCalculateDependentAmount will set currentPriceLine and currentPoolTick.
-        // This effect now primarily reacts to currentPriceLine being populated.
-        if (currentPriceLine !== null) {
-            const mockData = generateMockData(currentPriceLine ?? undefined, currentPoolTick ?? undefined);
-            setChartData(mockData);
-
-            if (mockData.length > 0) {
-              const minP = mockData[0].price;
-              const maxP = mockData[mockData.length - 1].price;
-              // Update xDomain if currentPriceLine is available and xDomain is still at default or price is out of view
-              if (currentPriceLine < xDomain[0] || currentPriceLine > xDomain[1] || (xDomain[0] === 30000 && xDomain[1] === 50000)) {
-                // Center domain around current price, using a portion of the mock data's overall range as spread
-                const spread = (maxP - minP) / 2; // Example spread, can be adjusted
-                setXDomain([Math.max(minP, currentPriceLine - spread /2), Math.min(maxP, currentPriceLine + spread/2)]);
-              } else if (xDomain[0] === 30000 && xDomain[1] === 50000){ // If domain is default and price is within, use mock data range
-                 setXDomain([minP, maxP]);
-              }
-
-              // Set mock selected range based on the new xDomain or a default if tick-based prices aren't ready
-              if (!priceAtTickLower || !priceAtTickUpper) {
-                 setMockSelectedPriceRange([minP + (maxP - minP) * 0.1, maxP - (maxP - minP) * 0.1]); 
-              }
-            } else {
-               setChartData([]); // Ensure chart data is empty if mockData generation results in empty array
-            }
-        } else {
-            setChartData([]); // Explicitly clear chart data if currentPriceLine is null
-        }
-    }
-    
-    // Initial currentPoolTick setting (if still null after other effects)
-    if (currentPoolTick === null) {
-        const initialCurrentTick = Math.round(((sdkMinTick + sdkMaxTick) / 2) / defaultTickSpacing) * defaultTickSpacing;
-        setCurrentPoolTick(initialCurrentTick);
-    }
-
-  }, [currentPriceLine, currentPoolTick, sdkMinTick, sdkMaxTick, defaultTickSpacing, priceAtTickLower, priceAtTickUpper, xDomain]); // Dependencies for chart data regeneration
-
 
   const handleGraphZoomIn = () => {
     setXDomain(prevDomain => {
@@ -1068,18 +1238,20 @@ export function AddLiquidityModal({
   const handleGraphZoomOut = () => {
     setXDomain(prevDomain => {
       const range = prevDomain[1] - prevDomain[0];
-      const newRange = Math.min(range * 1.25, chartData[chartData.length-1]?.price - chartData[0]?.price || range * 1.25); // Zoom out by 25%
+      const newRange = Math.min(range * 1.25, xDomain[1] - xDomain[0] || range * 1.25); // Zoom out by 25% // Fallback if chartData is gone
       const mid = (prevDomain[0] + prevDomain[1]) / 2;
-      const fullMin = chartData.length > 0 ? chartData[0].price : 0;
-      const fullMax = chartData.length > 0 ? chartData[chartData.length-1].price : 100;
+      const fullMin = 0; // Placeholder, will be dynamic with real data
+      const fullMax = 100000; // Placeholder
       const potentialMin = mid - newRange / 2;
       const potentialMax = mid + newRange / 2;
       return [Math.max(fullMin, potentialMin), Math.min(fullMax, potentialMax)];
     });
   };
   const handleGraphResetZoom = () => {
-    if (chartData.length > 0) {
-      setXDomain([chartData[0].price, chartData[chartData.length - 1].price]);
+    if (currentPriceLine !== null) {
+      setXDomain([currentPriceLine * 0.5, currentPriceLine * 1.5]);
+    } else {
+      setXDomain([30000, 50000]); // Default initial xDomain from state
     }
   };
 
@@ -1094,7 +1266,7 @@ export function AddLiquidityModal({
   };
 
   const handlePanMouseMove = (e: any) => {
-    if (isPanning && e && e.chartX && panStartXRef.current !== null && panStartDomainRef.current !== null && chartData.length > 0) {
+    if (isPanning && e && e.chartX && panStartXRef.current !== null && panStartDomainRef.current !== null) {
       const currentChartX = e.chartX;
       const dxChartPixels = currentChartX - panStartXRef.current;
 
@@ -1242,7 +1414,7 @@ export function AddLiquidityModal({
             ? [sdkToken0, sdkToken1]
             : [sdkToken1, sdkToken0];
           
-          const poolIdBytes32 = V4Pool.getPoolId(
+          const poolIdBytes32 = V4PoolSDK.getPoolId(
             sortedSdkToken0,
             sortedSdkToken1,
             V4_POOL_FEE,
@@ -1637,6 +1809,343 @@ export function AddLiquidityModal({
     }
   }, [currentPrice, currentPoolTick, activePreset, defaultTickSpacing, sdkMinTick, sdkMaxTick, token0Symbol, token1Symbol, tickLower, tickUpper]);
 
+  // --- BEGIN Fetch Liquidity Depth Data ---
+  useEffect(() => {
+    const fetchLiquidityDepthData = async () => {
+      if (!isOpen || !selectedPoolId || !chainId || currentPoolTick === null) {
+        // Clear previous data if conditions are not met (e.g., modal closed, pool changed before tick loaded)
+        setRawHookPositions(null);
+        return;
+      }
+
+      const derivedOnChainPoolId = getDerivedOnChainPoolId();
+      if (!derivedOnChainPoolId) {
+        console.warn("[AddLiquidityModal] Could not derive on-chain pool ID. Skipping liquidity depth fetch.");
+        setRawHookPositions(null);
+        return;
+      }
+
+      setIsFetchingLiquidityDepth(true);
+      console.log(`[AddLiquidityModal] Fetching liquidity depth for human-readable ID: ${selectedPoolId}, on-chain ID: ${derivedOnChainPoolId}`);
+      toast.loading("Fetching liquidity depth...", { id: "liquidity-depth-fetch" });
+
+      try {
+        const graphqlQuery = {
+          query: `
+            query GetAllHookPositionsForDepth {
+              hookPositions(first: 1000, orderBy: liquidity, orderDirection: desc) { # Fetches top 1000 by liquidity
+                pool # Fetch pool ID string directly
+                tickLower
+                tickUpper
+                liquidity
+              }
+            }
+          `,
+          // No variables needed for this broad query
+        };
+
+        const queryPayload = { query: graphqlQuery.query };
+        console.log("[AddLiquidityModal] Sending GraphQL query (broad fetch):", queryPayload.query);
+
+        const response = await fetch(SUBGRAPH_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(queryPayload),
+        });
+
+        console.log("[AddLiquidityModal] Raw response status:", {
+          ok: response.ok,
+          status: response.status,
+          statusText: response.statusText,
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`Network response was not ok: ${response.status} ${response.statusText}. Details: ${errorText}`);
+        }
+
+        const result = await response.json();
+        console.log("[AddLiquidityModal] Full GraphQL JSON response:", JSON.stringify(result, null, 2));
+
+        if (result.errors) {
+          console.error("[AddLiquidityModal] GraphQL errors from subgraph:", result.errors);
+          throw new Error(`GraphQL error: ${result.errors.map((e: any) => e.message).join(', ')}`);
+        }
+
+        if (result.data && result.data.hookPositions) {
+          // Adjust type hint for allFetchedPositions
+          const allFetchedPositions = result.data.hookPositions as Array<HookPosition & { pool: string }>; 
+          console.log(`[AddLiquidityModal] Subgraph returned ${allFetchedPositions.length} total hookPositions before client-side filtering.`);
+          
+          // Detailed logging for comparison
+          console.log("[AddLiquidityModal] Comparing pool IDs for filtering:");
+          allFetchedPositions.forEach((pos, index) => {
+            if (pos.pool) { // Check pos.pool directly
+              console.log(`  Position ${index} pool: "${pos.pool.toLowerCase()}" (length: ${pos.pool.length})`);
+            } else {
+              console.log(`  Position ${index} has no pool string.`);
+            }
+          });
+          console.log(`  Derived on-chain pool ID: "${derivedOnChainPoolId}" (length: ${derivedOnChainPoolId.length})`);
+
+          // Filter client-side using pos.pool directly
+          const relevantPositions = allFetchedPositions.filter(
+            pos => pos.pool && pos.pool.toLowerCase().trim() === derivedOnChainPoolId.trim()
+          );
+
+          setRawHookPositions(relevantPositions);
+          console.log(`[AddLiquidityModal] Successfully processed: ${relevantPositions.length} relevant positions for pool ${derivedOnChainPoolId}.`, relevantPositions);
+          toast.success("Liquidity depth loaded!", { id: "liquidity-depth-fetch" });
+        } else {
+          setRawHookPositions([]);
+          console.warn("[AddLiquidityModal] No hookPositions found in GraphQL response or unexpected data structure.");
+          toast.info("No liquidity depth data found.", { id: "liquidity-depth-fetch" });
+        }
+
+      } catch (error: any) {
+        console.error("[AddLiquidityModal] Error fetching liquidity depth data:", error);
+        toast.error("Liquidity Depth Error", { id: "liquidity-depth-fetch", description: error.message });
+        setRawHookPositions(null); // Clear data on error
+      } finally {
+        setIsFetchingLiquidityDepth(false);
+        // Ensure toast is dismissed if it wasn't replaced by success/error/info
+        if (toast.dismiss && document.querySelector('[data-sonner-toast][data-id="liquidity-depth-fetch"]')) {
+            toast.dismiss("liquidity-depth-fetch");
+        }
+      }
+    };
+
+    fetchLiquidityDepthData();
+  }, [isOpen, selectedPoolId, chainId, currentPoolTick, token0Symbol, token1Symbol, getDerivedOnChainPoolId]); // Dependencies ensure re-fetch on pool change when modal is open and tick is known
+  // --- END Fetch Liquidity Depth Data ---
+
+  // --- BEGIN Process Raw Positions into Token0 Depth Delta Events ---
+  useEffect(() => {
+    if (
+      rawHookPositions && rawHookPositions.length > 0 &&
+      currentPoolTick !== null &&
+      currentPoolSqrtPriceX96 !== null && // Ensure sqrtPriceX96 is available
+      token0Symbol && token1Symbol && chainId &&
+      poolToken0 && poolToken1 // Ensure poolToken0 and poolToken1 are available for decimal formatting
+    ) {
+      console.log(
+        "[AddLiquidityModal] Processing raw positions into ProcessedPositionDetail. Input count:",
+        rawHookPositions.length,
+        "Current Pool Tick:", currentPoolTick,
+        "Current SqrtPriceX96:", currentPoolSqrtPriceX96
+      );
+      const newProcessedPositions: ProcessedPositionDetail[] = [];
+      // const currentDerivedPoolId = getDerivedOnChainPoolId(); // Not strictly needed if filtering already happened
+
+      const token0Def = TOKEN_DEFINITIONS[token0Symbol];
+      const token1Def = TOKEN_DEFINITIONS[token1Symbol];
+
+      if (!token0Def || !token1Def) {
+        console.error("[AddLiquidityModal] Token definitions not found for position detail calculation.");
+        setProcessedPositions(null);
+        return;
+      }
+
+      try {
+        const sdkBaseToken0 = new Token(chainId, getAddress(token0Def.addressRaw), token0Def.decimals);
+        const sdkBaseToken1 = new Token(chainId, getAddress(token1Def.addressRaw), token1Def.decimals);
+        const [sdkSortedToken0, sdkSortedToken1] = sdkBaseToken0.sortsBefore(sdkBaseToken1) 
+            ? [sdkBaseToken0, sdkBaseToken1] 
+            : [sdkBaseToken1, sdkBaseToken0];
+
+        // Convert currentPoolSqrtPriceX96 string to JSBI for the SDK
+        const poolSqrtPriceX96JSBI = JSBI.BigInt(currentPoolSqrtPriceX96);
+
+        const poolForCalculations = new V4PoolSDK(
+          sdkSortedToken0,
+          sdkSortedToken1,
+          V4_POOL_FEE,
+          V4_POOL_TICK_SPACING,
+          V4_POOL_HOOKS as Hex,
+          poolSqrtPriceX96JSBI, 
+          JSBI.BigInt(0), // Placeholder liquidity for the pool object
+          currentPoolTick
+        );
+
+        for (const position of rawHookPositions) {
+          // Assuming rawHookPositions are already filtered for the current pool
+          if (position.tickLower !== undefined && position.tickUpper !== undefined && position.liquidity !== undefined) {
+            const v4Position = new V4PositionSDK({
+              pool: poolForCalculations,
+              tickLower: Number(position.tickLower),
+              tickUpper: Number(position.tickUpper),
+              liquidity: JSBI.BigInt(position.liquidity)
+            });
+
+            // amount0 and amount1 from the SDK are for the sorted pool tokens
+            const calculatedAmount0_JSBI = v4Position.amount0.quotient;
+            const calculatedAmount1_JSBI = v4Position.amount1.quotient;
+
+            // Format them into strings using the correct decimals
+            // poolToken0 and poolToken1 from useMemo are already sorted correctly.
+            const formattedAmount0 = viemFormatUnits(BigInt(calculatedAmount0_JSBI.toString()), poolToken0.decimals);
+            const formattedAmount1 = viemFormatUnits(BigInt(calculatedAmount1_JSBI.toString()), poolToken1.decimals);
+            
+            const numericAmount0 = parseFloat(formattedAmount0);
+            const numericAmount1 = parseFloat(formattedAmount1);
+
+            let unifiedValue = numericAmount0;
+            if (currentPrice && numericAmount1 > 0) {
+              const price = parseFloat(currentPrice);
+              if (!isNaN(price) && price > 0) {
+                // currentPrice is price of T0 in T1. To convert T1 amount to T0 equivalent, we use this directly.
+                // If currentPrice were price of T1 in T0, we would divide by price.
+                unifiedValue += numericAmount1 * price; 
+              }
+            }
+
+            newProcessedPositions.push({
+              tickLower: Number(position.tickLower),
+              tickUpper: Number(position.tickUpper),
+              liquidity: position.liquidity,
+              amount0: formattedAmount0,
+              amount1: formattedAmount1,
+              numericAmount0: numericAmount0,
+              numericAmount1: numericAmount1,
+              unifiedValueInToken0: unifiedValue,
+            });
+          } else {
+            console.warn("[AddLiquidityModal] Skipping position due to undefined tickLower, tickUpper, or liquidity:", position);
+          }
+        }
+        setProcessedPositions(newProcessedPositions);
+        console.log(
+          "[AddLiquidityModal] Generated Processed Position Details:", 
+          newProcessedPositions
+        );
+      } catch (error) {
+        console.error("[AddLiquidityModal] Error processing positions into ProcessedPositionDetail:", error);
+        setProcessedPositions(null);
+      }
+    } else if (rawHookPositions === null) {
+      setProcessedPositions(null); 
+    } else if (rawHookPositions && rawHookPositions.length === 0) {
+        setProcessedPositions([]);
+        console.log("[AddLiquidityModal] No raw positions to process into ProcessedPositionDetail.");
+    }
+     // If prerequisites are not met, allow previous data to persist until new valid data is processed or rawHookPositions becomes null.
+
+  }, [rawHookPositions, currentPoolTick, currentPoolSqrtPriceX96, token0Symbol, token1Symbol, chainId, poolToken0, poolToken1, currentPrice]); // Added poolToken0, poolToken1, currentPrice
+  // --- END Process Raw Positions into Token0 Depth Delta Events ---
+
+  // --- BEGIN Process Unified Values from Positions (Delta Events, Aggregation, Sorting) ---
+  useEffect(() => {
+    if (processedPositions && processedPositions.length > 0) {
+      console.log("[AddLiquidityModal] Step 1: Generating Unified Value Delta Events. Input position count:", processedPositions.length);
+      const newDeltaEvents: UnifiedValueDeltaEvent[] = [];
+      for (const pos of processedPositions) {
+        if (pos.unifiedValueInToken0 !== 0) { // Only create events if there's a non-zero change
+          newDeltaEvents.push({ tick: pos.tickLower, changeInUnifiedValue: pos.unifiedValueInToken0 });
+          newDeltaEvents.push({ tick: pos.tickUpper, changeInUnifiedValue: -pos.unifiedValueInToken0 });
+        }
+      }
+      setUnifiedValueDeltaEvents(newDeltaEvents);
+      console.log("[AddLiquidityModal] Generated Unified Value Delta Events (first 20):");
+      console.table(newDeltaEvents.slice(0, 20));
+
+      // Step 2: Aggregate Unified Value Changes per Tick
+      console.log("[AddLiquidityModal] Step 2: Aggregating Unified Value delta events. Input event count:", newDeltaEvents.length);
+      const newAggregatedChanges = new Map<number, number>();
+      for (const event of newDeltaEvents) {
+        const currentChangeForTick = newAggregatedChanges.get(event.tick) || 0;
+        newAggregatedChanges.set(event.tick, currentChangeForTick + event.changeInUnifiedValue);
+      }
+      setAggregatedUnifiedValueChangesByTick(newAggregatedChanges);
+      // Log the map entries for verification
+      const aggregatedMapEntriesForLog = Array.from(newAggregatedChanges.entries()).map(([tick, change]) => ({ tick, netChange: change.toFixed(8) }));
+      console.log("[AddLiquidityModal] Aggregated Unified Value changes by tick (first 10 entries):");
+      console.table(aggregatedMapEntriesForLog.slice(0, 10));
+
+      // Step 3: Sort Unique Ticks with Aggregated Changes
+      console.log("[AddLiquidityModal] Step 3: Sorting unique ticks with aggregated Unified Value changes.");
+      const sortedTicks = Array.from(newAggregatedChanges.keys()).sort((a, b) => a - b);
+      const newSortedNetChanges: Array<{ tick: number; netUnifiedToken0Change: number }> = sortedTicks.map(tick => ({
+        tick: tick,
+        netUnifiedToken0Change: newAggregatedChanges.get(tick) || 0
+      }));
+      setSortedNetUnifiedValueChanges(newSortedNetChanges);
+      console.log("[AddLiquidityModal] Sorted Net Unified Value Changes (first 20 ticks):");
+      console.table(newSortedNetChanges.slice(0, 20).map(e => ({tick: e.tick, netUnifiedToken0Change: e.netUnifiedToken0Change.toFixed(8)})));
+
+    } else if (processedPositions === null) {
+      setUnifiedValueDeltaEvents(null);
+      setAggregatedUnifiedValueChangesByTick(null);
+      setSortedNetUnifiedValueChanges(null);
+    } else { // processedPositions is an empty array
+      setUnifiedValueDeltaEvents([]);
+      setAggregatedUnifiedValueChangesByTick(new Map());
+      setSortedNetUnifiedValueChanges([]);
+      console.log("[AddLiquidityModal] No processed positions to generate unified value changes from.");
+    }
+  }, [processedPositions]);
+  // --- END Process Unified Values from Positions ---
+
+  // --- BEGIN Create Simplified Plot Data (Tick vs. Cumulative Unified Value) ---
+  useEffect(() => {
+    // Early exit removed, this effect is now active
+
+    if (sortedNetUnifiedValueChanges && sortedNetUnifiedValueChanges.length > 0 && poolToken0) {
+      console.log("[AddLiquidityModal] Creating Cumulative Unified Value Plot Data. Input event count:", sortedNetUnifiedValueChanges.length);
+      
+      const newData: Array<{ tick: number; cumulativeUnifiedValue: number }> = [];
+      let currentCumulativeValue = 0;
+
+      // Assuming sortedNetUnifiedValueChanges is already sorted by tick
+      for (let i = 0; i < sortedNetUnifiedValueChanges.length; i++) {
+        const changeEvent = sortedNetUnifiedValueChanges[i];
+        
+        // Add a point just before the current changeEvent.tick to maintain the step shape
+        // This is important if there's a gap between the previous event's tick and the current one.
+        if (newData.length > 0) {
+          const prevDataPoint = newData[newData.length - 1];
+          if (changeEvent.tick > prevDataPoint.tick) {
+            newData.push({ tick: changeEvent.tick, cumulativeUnifiedValue: prevDataPoint.cumulativeUnifiedValue });
+          }
+        } else if (i === 0 && changeEvent.tick > sdkMinTick) {
+          // Optional: Add an initial point at sdkMinTick (or chart_min_display_tick) if the very first event is not at the start.
+          // This makes the chart start from a defined y-level (e.g., 0) at the beginning of the x-axis.
+          // newData.push({ tick: sdkMinTick, cumulativeUnifiedValue: 0 }); 
+          // For now, we start the step directly from the first event's tick value if it's not the absolute min.
+          // If the first event IS sdkMinTick, this block is skipped, and the first point will correctly reflect its cumulative value.
+        }
+
+        currentCumulativeValue += changeEvent.netUnifiedToken0Change;
+        // If the current tick already exists (due to the step point added above), update it.
+        // Otherwise, add a new point.
+        if (newData.length > 0 && newData[newData.length - 1].tick === changeEvent.tick) {
+          newData[newData.length - 1].cumulativeUnifiedValue = currentCumulativeValue;
+        } else {
+          newData.push({ tick: changeEvent.tick, cumulativeUnifiedValue: currentCumulativeValue });
+        }
+      }
+      
+      setSimplifiedChartPlotData(newData);
+      console.log("[AddLiquidityModal] Generated Cumulative Unified Value Plot Data (first 20 points):");
+      console.table(newData.slice(0, 20).map(p => ({ tick: p.tick, cumulativeUnifiedValue: p.cumulativeUnifiedValue.toFixed(poolToken0?.decimals || 2) })) );
+    } else if (sortedNetUnifiedValueChanges === null || (sortedNetUnifiedValueChanges && sortedNetUnifiedValueChanges.length === 0)) {
+      setSimplifiedChartPlotData(null); // Clear if no data or explicitly empty array
+    } else if (!poolToken0) {
+      console.warn("[AddLiquidityModal] Cannot generate cumulative plot data: poolToken0 invalid.");
+      setSimplifiedChartPlotData(null);
+    }
+  }, [sortedNetUnifiedValueChanges, poolToken0, sdkMinTick]); 
+  // --- END Create Simplified Plot Data (Tick vs. Cumulative Unified Value) ---
+
+  // --- BEGIN Log Processed Position Details ---
+  useEffect(() => {
+    if (processedPositions) {
+      console.log("[AddLiquidityModal] Processed Position Details for Logging:", processedPositions);
+    }
+  }, [processedPositions]);
+  // --- END Log Processed Position Details ---
+
 
   // Debounced function to update tickLower from minPriceInputString
   const debouncedUpdateTickLower = useCallback(
@@ -1700,7 +2209,7 @@ export function AddLiquidityModal({
         }
       }
     }, 750), 
-    [baseTokenForPriceDisplay, token0Symbol, token1Symbol, defaultTickSpacing, sdkMinTick, sdkMaxTick, tickLower, tickUpper, setTickLower, setTickUpper, setInitialDefaultApplied] // Added all dependencies
+    [baseTokenForPriceDisplay, token0Symbol, token1Symbol, defaultTickSpacing, sdkMinTick, sdkMaxTick, tickLower, tickUpper, setTickLower, setTickUpper, setInitialDefaultApplied]
   );
 
   // Debounced function to update tickUpper from maxPriceInputString
@@ -1761,7 +2270,7 @@ export function AddLiquidityModal({
         }
       }
     }, 750),
-    [baseTokenForPriceDisplay, token0Symbol, token1Symbol, defaultTickSpacing, sdkMinTick, sdkMaxTick, tickLower, tickUpper, setTickLower, setTickUpper, setInitialDefaultApplied] // Added all dependencies
+    [baseTokenForPriceDisplay, token0Symbol, token1Symbol, defaultTickSpacing, sdkMinTick, sdkMaxTick, tickLower, tickUpper, setTickLower, setTickUpper, setInitialDefaultApplied]
   );
 
   // New handler for signing and submitting Permit2 message
@@ -1835,6 +2344,27 @@ export function AddLiquidityModal({
       // setPermit2SignatureRequest(null);
     }
   };
+
+  // --- BEGIN Custom Recharts Tooltip (Updated for Cumulative) ---
+  const CustomTooltip = ({ active, payload, label, poolToken0Symbol }: any) => { 
+    if (active && payload && payload.length) {
+      const tooltipData = payload[0].payload; 
+      const formattedTickLabel = label ? label.toLocaleString() : 'N/A'; 
+      const cumulativeValue = tooltipData.cumulativeUnifiedValue ? tooltipData.cumulativeUnifiedValue.toLocaleString(undefined, {maximumFractionDigits: 8}) : 'N/A';
+      const poolTokenSymbolDisplay = poolToken0Symbol || '';
+
+      return (
+        <div className="bg-background border border-border shadow-lg p-2 rounded-md text-xs">
+          <p className="font-semibold text-foreground/90">{`Tick: ${formattedTickLabel}`}</p>
+          <p style={{ color: payload[0].fill }}>
+            {`Cumulative Liquidity (${poolTokenSymbolDisplay}): ${cumulativeValue}`}
+          </p>
+        </div>
+      );
+    }
+    return null;
+  };
+  // --- END Custom Recharts Tooltip (Updated for Cumulative) ---
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => { 
@@ -1915,86 +2445,171 @@ export function AddLiquidityModal({
                   <div className="w-full h-52 relative rounded-md border bg-muted/30" ref={chartContainerRef} style={{ cursor: isPanning ? 'grabbing' : 'grab' }}>
                     {isPoolStateLoading ? (
                         <div className="absolute inset-0 flex items-center justify-center bg-muted/50 z-20">
-                            {/* <RefreshCwIcon className="h-6 w-6 animate-spin text-muted-foreground" /> */}
                             <Image 
                               src="/logo_icon_white.svg" 
                               alt="Loading..." 
-                              width={32} // Adjust size as needed
-                              height={32} // Adjust size as needed
-                              className="animate-pulse opacity-75" // Pulsating effect
+                              width={32}
+                              height={32}
+                              className="animate-pulse opacity-75"
                             />
                         </div>
-                    ) : !isPoolStateLoading && chartData.length === 0 ? (
+                    ) : !isPoolStateLoading && currentPriceLine === null ? (
                         <div className="absolute inset-0 flex items-center justify-center bg-muted/50 z-20">
                             <span className="text-muted-foreground text-sm px-4 text-center">
-                                {currentPriceLine === null ? "Loading pool data for chart..." : "Chart data unavailable for current price."}
+                                {"Pool data unavailable for chart."}
                             </span>
                         </div>
                     ) : null}
                     <ResponsiveContainer width="100%" height="100%">
                       <ComposedChart 
-                        data={chartData}
-                        margin={{ top: 5, right: 5, bottom: 5, left: 5 }}
+                        data={simplifiedChartPlotData || []} 
+                        margin={{ top: 2, right: 20, bottom: 5, left: 5 }} // Reduced top margin
                         onMouseDown={handlePanMouseDown}
                         onMouseMove={handlePanMouseMove}
                         onMouseUp={handlePanMouseUpOrLeave}
                         onMouseLeave={handlePanMouseUpOrLeave}
                       >
+                        {/* <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.3} /> */}
                         <XAxis 
-                          dataKey="price" 
+                          dataKey="tick" 
                           type="number" 
                           domain={xDomain} 
                           allowDataOverflow 
-                          hide={false}
-                          tick={false}
+                          // tick={{ fontSize: 10, dy: 7 }} // Remove default tick styling, dy was for pushing down
+                          tick={false} // Hide default Recharts ticks and labels
+                          axisLine={false} // Hide X-axis line
+                          // tickFormatter={(value) => value.toLocaleString(undefined, {minimumFractionDigits: 0})} // Formatter will be used in custom div
+                          height={1} // Minimize height as it's now invisible
+                          tickMargin={0} 
+                        >
+                           {/* <RechartsChartLabel 
+                            offset={-15} 
+                            position="insideBottom" 
+                            fontSize={10}
+                            fill="#a1a1aa"
+                          >
+                            Tick
+                          </RechartsChartLabel> */}
+                        </XAxis>
+                        
+                        <YAxis 
+                          hide={true} // Hide the Y-axis
+                          yAxisId="leftCumulativeUnifiedValueAxis" 
+                          orientation="left" 
+                          dataKey="cumulativeUnifiedValue" 
+                          type="number"
+                          allowDecimals={true}
+                          tick={{ fontSize: 10 }}
+                          tickFormatter={(value) => value.toLocaleString(undefined, {maximumFractionDigits: 2, minimumFractionDigits: 2})} 
                           axisLine={{ stroke: "#a1a1aa", strokeOpacity: 0.5 }}
-                          height={10}
-                        />
-                        <YAxis allowDataOverflow domain={['auto', 'auto']} hide={true} yAxisId={0} />
+                          tickLine={{ stroke: "#a1a1aa", strokeOpacity: 0.5 }}
+                        >
+                          {/* <RechartsChartLabel 
+                            angle={-90} 
+                            position="insideLeft" 
+                            style={{ textAnchor: 'middle', fontSize: 10, fill:'#a1a1aa' }}
+                          >
+                            {poolToken0 ? `Cumulative Liquidity (in ${poolToken0.symbol})` : "Cumulative Unified Liquidity"}
+                          </RechartsChartLabel> */}
+                        </YAxis>
+
+                        {/* Hidden Y-Axis for any other reference lines if needed, not directly used by main data now */}
+                        <YAxis hide={true} yAxisId="rightHiddenMiscAxis" /> 
                         
-                        <Area type="stepAfter" dataKey="liquidity" stroke="#888888" fill="#888888" fillOpacity={0.2} name="Liquidity" yAxisId={0}/>
+                        {/* <RechartsTooltip 
+                          content={<CustomTooltip poolToken0Symbol={poolToken0?.symbol} />} 
+                          cursor={{ strokeDasharray: '3 3' }}
+                        /> */}
                         
-                        {mockSelectedPriceRange && mockSelectedPriceRange[0] < mockSelectedPriceRange[1] && (
+                        {simplifiedChartPlotData && simplifiedChartPlotData.length > 0 && (
+                          <Area 
+                            type="stepBefore" 
+                            dataKey="cumulativeUnifiedValue" // Changed dataKey
+                            yAxisId="leftCumulativeUnifiedValueAxis" // Changed YAxis ID
+                            name={poolToken0 ? `Cumulative Liquidity (in ${poolToken0.symbol})` : "Cumulative Unified Liquidity"} // Updated Name
+                            stroke="hsl(var(--chart-2))" 
+                            fill="hsl(var(--chart-2))"   
+                            fillOpacity={0.2}
+                            strokeWidth={1.5}
+                          />
+                        )}
+                        
+                        {currentPoolTick !== null && (
+                          <ReferenceLine 
+                            x={currentPoolTick} 
+                            stroke="#e85102" // Orange color for current tick line
+                            strokeWidth={1.5} 
+                            ifOverflow="extendDomain" // Ensures the line is visible even if currentPoolTick is outside the initial xDomain
+                            yAxisId="leftCumulativeUnifiedValueAxis" // Associate with an axis, even if hidden for rendering
+                          />
+                        )}
+                        
+                        {/* ReferenceArea and ReferenceLine are based on PRICE, which is not the X-axis now. Temporarily disable them. */}
+                        {/* {mockSelectedPriceRange && mockSelectedPriceRange[0] < mockSelectedPriceRange[1] && (
                            <ReferenceArea 
                              x1={mockSelectedPriceRange[0]} 
                              x2={mockSelectedPriceRange[1]} 
-                             yAxisId={0} 
+                             yAxisId="rightHiddenMiscAxis" 
                              strokeOpacity={0} 
                              fill="#e85102" 
                              fillOpacity={0.25} 
                              ifOverflow="hidden"
                              shape={<RoundedTopReferenceArea />}
                            />
-                        )}
+                        )} 
                         
                         {currentPriceLine !== null && (
-                          <ReferenceLine x={currentPriceLine} stroke="#e85102" strokeWidth={1.5} ifOverflow="extendDomain" yAxisId={0}/>
+                          <ReferenceLine 
+                            x={currentPriceLine} 
+                            stroke="#e85102" 
+                            strokeWidth={1.5} 
+                            ifOverflow="extendDomain" 
+                            yAxisId="rightHiddenMiscAxis" 
+                          />
+                        )} */}
+                        {/* ReferenceArea based on selected Ticks */}
+                        {isOpen && !isPoolStateLoading && parseInt(tickLower) < parseInt(tickUpper) && isFinite(parseInt(tickLower)) && isFinite(parseInt(tickUpper)) && (
+                          <ReferenceArea 
+                            x1={parseInt(tickLower)} 
+                            x2={parseInt(tickUpper)} 
+                            yAxisId="leftCumulativeUnifiedValueAxis" // Should use the same YAxis as the main data
+                            strokeOpacity={0} 
+                            fill="#e85102" 
+                            fillOpacity={0.25} 
+                            ifOverflow="extendDomain" // Use extendDomain to ensure visibility if range is outside initial xDomain
+                            shape={<RoundedTopReferenceArea />} // Assuming this shape is still desired
+                          />
+                        )}
+                        
+                        {currentPoolTick !== null && (
+                          <ReferenceLine 
+                            x={currentPoolTick} 
+                            stroke="#e85102" 
+                            strokeWidth={1.5} 
+                            ifOverflow="extendDomain" 
+                            yAxisId="leftCumulativeUnifiedValueAxis" // Associate with an axis, even if hidden for rendering
+                          />
                         )}
                       </ComposedChart>
                     </ResponsiveContainer>
-                    {/* Graph Controls Overlay - only show if chart is active */} 
-                    {!isPoolStateLoading && chartData.length > 0 && (
-                        <div className="absolute top-2 right-2 flex flex-col space-y-1 z-10">
-                            <Button variant="outline" size="icon" className="h-7 w-7" onClick={handleGraphZoomIn}><ZoomInIcon className="h-4 w-4" /></Button>
-                            <Button variant="outline" size="icon" className="h-7 w-7" onClick={handleGraphZoomOut}><ZoomOutIcon className="h-4 w-4" /></Button>
-                            <Button variant="outline" size="icon" className="h-7 w-7" onClick={handleGraphResetZoom}><RefreshCcwIcon className="h-4 w-4" /></Button>
-                        </div>
-                    )}
-                    {/* Re-implementing Custom X-Axis Price Labels for even spacing and dynamic values based on xDomain - only show if chart is active */} 
-                    {!isPoolStateLoading && chartData.length > 0 && (
-                        <div className="flex justify-between text-xs text-muted-foreground px-1 mt-1">
-                            <span>{xDomain[0].toFixed(0)}</span>
-                            <span>{(xDomain[0] + (xDomain[1]-xDomain[0])*0.25).toFixed(0)}</span>
-                            <span>{(xDomain[0] + (xDomain[1]-xDomain[0])*0.5).toFixed(0)}</span>
-                            <span>{(xDomain[0] + (xDomain[1]-xDomain[0])*0.75).toFixed(0)}</span>
-                            <span>{xDomain[1].toFixed(0)}</span>
-                        </div>
-                    )}
+                    {/* Graph Controls Overlay - only show if chart is active. Zoom/Pan might need tick-based logic. */}
+                    {/* {!isPoolStateLoading && currentPriceLine !== null && ( ... )} */}
+                    
                   </div>
                   {/* --- END Recharts Graph --- */}
 
+                  {/* --- BEGIN Custom X-Axis Labels Div --- */}
+                  <div className="flex justify-between w-full px-[5px] box-border !mt-1"> {/* Match chart right/left margin approx. */}
+                    {customXAxisTicks.map((labelItem, index) => (
+                      <span key={index} className="text-xs text-muted-foreground">
+                        {labelItem.displayLabel}
+                      </span>
+                    ))}
+                  </div>
+                  {/* --- END Custom X-Axis Labels Div --- */}
+
                   <TooltipProvider delayDuration={100}>
-                    <div className="space-y-2 pt-3 mt-2">
+                    <div className="space-y-1">
                       <div className="flex justify-between items-center">
                         <Tooltip>
                           <TooltipTrigger asChild>
@@ -2011,13 +2626,10 @@ export function AddLiquidityModal({
                           id="minPriceInput"
                           type="text"
                           value={minPriceInputString} 
-                          onChange={(e) => {
-                            setMinPriceInputString(e.target.value);
-                            debouncedUpdateTickLower(e.target.value);
-                          }}
-                          onFocus={(e) => e.target.select()}
-                          className="w-28 border-0 bg-transparent text-right text-xs font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto no-arrows"
-                          placeholder="0.00" // Changed placeholder
+                          readOnly={true}
+                          onClick={(e) => (e.target as HTMLInputElement).select()} // Allow selection on click
+                          className="w-28 border-0 bg-transparent text-right text-xs font-medium text-foreground shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto no-arrows cursor-default"
+                          placeholder="0.00"
                         />
                         )}
                       </div>
@@ -2037,13 +2649,10 @@ export function AddLiquidityModal({
                           id="maxPriceInput"
                           type="text"
                           value={maxPriceInputString} 
-                          onChange={(e) => {
-                            setMaxPriceInputString(e.target.value);
-                            debouncedUpdateTickUpper(e.target.value);
-                          }}
-                          onFocus={(e) => e.target.select()}
-                          className="w-28 border-0 bg-transparent text-right text-xs font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto no-arrows"
-                          placeholder="0.00" // Changed placeholder
+                          readOnly={true}
+                          onClick={(e) => (e.target as HTMLInputElement).select()} // Allow selection on click
+                          className="w-28 border-0 bg-transparent text-right text-xs font-medium text-foreground shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto no-arrows cursor-default"
+                          placeholder="0.00"
                         />
                         )}
                       </div>
@@ -2197,44 +2806,7 @@ export function AddLiquidityModal({
                             <span>Send Mint Transaction</span> 
                             <span>
                                 {isMintConfirming || isMintSendPending ? 
-                                  <motion.svg // Heartbeat Icon Copied from SwapInputView
-                                    xmlns="http://www.w3.org/2000/svg"
-                                    width="15"
-                                    height="15"
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    strokeWidth="2.5" // Adjusted stroke width for better visibility
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    className="flex-shrink-0"
-                                  >
-                                    {[ // Simplified to one pulsing line for a cleaner look here
-                                      { x: 12, initialHeight: 8, fullHeight: 14 },
-                                    ].map((bar, i) => {
-                                      return (
-                                        <motion.line
-                                          key={i}
-                                          x1={bar.x}
-                                          y1={24}
-                                          x2={bar.x}
-                                          y2={24 - bar.initialHeight}
-                                          fill="currentColor"
-                                          stroke="currentColor"
-                                          strokeLinecap="round"
-                                          animate={{
-                                            y2: [24 - bar.initialHeight, 24 - bar.fullHeight, 24 - bar.initialHeight],
-                                          }}
-                                          transition={{
-                                            duration: 0.8,
-                                            repeat: Infinity,
-                                            ease: "easeInOut",
-                                            delay: i * 0.15,
-                                          }}
-                                        />
-                                      );
-                                    })}
-                                  </motion.svg>
+                                  <ActivityIcon className="h-4 w-4 animate-pulse text-muted-foreground" />
                                  : isMintConfirmed ? <CheckIcon className="h-4 w-4 text-green-500" /> 
                                  : <MinusIcon className="h-4 w-4" />}
                             </span>
@@ -2253,11 +2825,11 @@ export function AddLiquidityModal({
                       }}
                       disabled={isCalculating || 
                                 (step ==='approve' && (isApproveWritePending || isApproving)) || 
-                                (step === 'permit2Sign' && (isPermit2SendPending || isPermit2Confirming)) || 
+                                (step === 'permit2Sign' && (isPermit2SendPending || isPermit2Confirming)) || // Ensured isPermit2Confirming is checked
                                 (step ==='mint' && (isMintSendPending || isMintConfirming))}
                       className="border-slate-300 bg-slate-100 hover:bg-slate-200 dark:border-zinc-700 dark:bg-zinc-800 dark:hover:bg-zinc-700 disabled:opacity-50"
                     >
-                      {step === 'approve' || step === 'mint' || step === 'permit2Sign' ? 'Cancel & Edit' : 'Change Pool'} {/* Added permit2Sign */}
+                      {step === 'approve' || step === 'mint' || step === 'permit2Sign' ? 'Cancel & Edit' : 'Change Pool'}
                     </Button>
                     <Button
                       onClick={() => {
@@ -2266,12 +2838,12 @@ export function AddLiquidityModal({
                         else if (step === 'permit2Sign') handleSignAndSubmitPermit2(); 
                         else if (step === 'mint') handleMint();
                       }}
-                      disabled={                        isWorking ||
+                      disabled={isWorking || // Re-checked this whole block
                         isCalculating ||
                         isPoolStateLoading || 
                         isApproveWritePending ||
                         isPermit2SendPending || 
-                        isMintSendPending ||
+                        isMintSendPending || // Ensured isMintSendPending is checked
                         (step === 'input' && ((!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0")) || !calculatedData))
                       }
                     >
