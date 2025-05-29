@@ -534,24 +534,23 @@ export function SwapInterface() {
       // Handle Warning Toasts
       if (swapProgressState === "needs_approval" && !reviewNotificationsShown.current.needs_approval) {
         console.log("%%% TOASTING: Approval Required %%%");
-        toast("Approval Required", { description: `Permit2 needs approval to spend your ${fromToken.symbol}.`, icon: <InfoToastIcon />, duration: 4000 }); // UPDATED ICON
+        toast("Approval Required", { description: `Permit2 needs approval to spend your ${fromToken.symbol}.`, duration: 4000 }); // Removed InfoToastIcon
         reviewNotificationsShown.current.needs_approval = true;
       } else if (swapProgressState === "needs_signature" && !reviewNotificationsShown.current.needs_signature) {
         console.log("%%% TOASTING: Signature Required %%%");
-        toast("Signature Required", { description: `Permit2 allowance needs to be granted or renewed via signature.`, icon: <InfoToastIcon />, duration: 4000 }); // UPDATED ICON
+        toast("Signature Required", { description: `Permit2 allowance needs to be granted or renewed via signature.`, duration: 4000 }); // Removed InfoToastIcon
         reviewNotificationsShown.current.needs_signature = true;
       // Handle Positive Toasts
       } else if (swapProgressState === "approval_complete" && !reviewNotificationsShown.current.approval_complete) {
         console.log("%%% TOASTING: Token Approved %%%");
         toast("Token Approved", {
-          duration: 2500,
-          icon: <SuccessToastIcon /> // ENSURED ICON
+          duration: 2500
         });
         reviewNotificationsShown.current.approval_complete = true;
       } else if (swapProgressState === "signature_complete" && !reviewNotificationsShown.current.signature_complete) {
         console.log("%%% TOASTING: Permit Active %%%");
         toast("Permission Active", {
-          duration: 2500 
+          duration: 2500
         });
         reviewNotificationsShown.current.signature_complete = true;
       }
@@ -914,7 +913,8 @@ export function SwapInterface() {
       } else {
         console.log("[handleSwap] Permit2 check complete. Setting state: ready_to_swap");
         toast("Permission Granted", {
-          duration: 2500 
+          duration: 2500,
+          icon: <SuccessToastIcon />
         });
         setCompletedSteps(["approval_complete", "signature_complete"]); // Mark step 2 complete
         setSwapProgressState("ready_to_swap");
@@ -937,32 +937,79 @@ export function SwapInterface() {
 
   const handleUsePercentage = (percentage: number) => {
     try {
-      // Use the live fetched balance from the *current* fromToken state
-      const balance = Number.parseFloat(fromToken.balance);
-      if (isNaN(balance) || balance <= 0) return;
-      const amount = balance * (percentage / 100);
-      // Set the amount with the token's actual decimals for input precision
-      setFromAmount(amount.toFixed(fromToken.decimals)); // Use actual token decimals for setting input
+      // Get the exact balance data directly from the balance hooks
+      let exactBalanceData;
+      if (fromToken.address === YUSD_ADDRESS) {
+        exactBalanceData = yusdBalanceData;
+      } else if (fromToken.address === BTCRL_ADDRESS) {
+        exactBalanceData = btcrlBalanceData;
+      } else {
+        // For any other tokens in the future, we'd need to add their balance data here
+        console.warn(`No direct balance data source found for token ${fromToken.symbol}`);
+        return;
+      }
+
+      // Use the exact formatted value from the blockchain if available
+      if (exactBalanceData && exactBalanceData.formatted) {
+        // Parse the exact blockchain value
+        const exactBalance = exactBalanceData.formatted;
+        const exactNumericBalance = parseFloat(exactBalance);
+        
+        if (isNaN(exactNumericBalance) || exactNumericBalance <= 0) {
+          console.warn(`Invalid or zero balance for ${fromToken.symbol}`);
+          return;
+        }
+
+        // Calculate the exact percentage amount
+        const exactAmount = exactNumericBalance * (percentage / 100);
+        
+        // Set the amount directly using the formatted string to preserve precision
+        // This matches the logic in handleUseFullBalance for consistency
+        if (percentage === 100) {
+          // For 100%, use the exact blockchain value directly
+          setFromAmount(exactBalance);
+          console.log(`Setting 100% exact balance for ${fromToken.symbol}: ${exactBalance}`);
+        } else {
+          // For other percentages, calculate and format to the token's decimals
+          setFromAmount(exactAmount.toFixed(fromToken.decimals));
+          console.log(`Setting ${percentage}% of exact balance for ${fromToken.symbol}: ${exactAmount.toFixed(fromToken.decimals)}`);
+        }
+      } else {
+        console.warn(`No valid balance data for ${fromToken.symbol}`);
+      }
     } catch (error) {
-      console.error("Error parsing fromToken balance for percentage:", error);
+      console.error("Error using exact balance for percentage calculation:", error);
     }
   };
   
   const handleUseFullBalance = (token: Token, isFrom: boolean) => {
     try {
-      const balanceToUse = token.balance; // Use the already fetched and formatted balance string
-      const numericBalance = Number.parseFloat(balanceToUse);
-      if (isNaN(numericBalance) || numericBalance <= 0) return;
-
-      if (isFrom) {
-        // Set the full balance formatted to the token's actual decimals for input precision
-        setFromAmount(numericBalance.toFixed(token.decimals)); // Use actual token decimals for setting input
+      // Get the exact balance data directly from the balance hooks
+      let exactBalanceData;
+      if (token.address === YUSD_ADDRESS) {
+        exactBalanceData = yusdBalanceData;
+      } else if (token.address === BTCRL_ADDRESS) {
+        exactBalanceData = btcrlBalanceData;
       } else {
-        // This case might not be used if toToken input is always calculated
-        console.warn("Setting 'toAmount' based on 'toToken' balance is not directly supported by this UI logic.");
+        // For any other tokens in the future, we'd need to add their balance data here
+        console.warn(`No direct balance data source found for token ${token.symbol}`);
+        return;
+      }
+
+      // Use the exact formatted value from the blockchain if available
+      if (exactBalanceData && exactBalanceData.formatted) {
+        if (isFrom) {
+          // Set EXACTLY what the blockchain reports - no parsing/formatting that might round
+          setFromAmount(exactBalanceData.formatted);
+          console.log(`Setting exact balance for ${token.symbol}: ${exactBalanceData.formatted}`);
+        } else {
+          console.warn("Setting 'toAmount' based on 'toToken' balance is not directly supported");
+        }
+      } else {
+        console.warn(`No valid balance data for ${token.symbol}`);
       }
     } catch (error) {
-      console.error(`Error parsing balance for ${token.symbol}:`, error);
+      console.error(`Error using exact balance for ${token.symbol}:`, error);
     }
   };
 
@@ -1027,9 +1074,9 @@ export function SwapInterface() {
             const approvalReceipt = await publicClient.waitForTransactionReceipt({ hash: approveTxHash as Hex });
             if (!approvalReceipt || approvalReceipt.status !== 'success') throw new Error("Approval transaction failed on-chain");
 
-            toast("Approval Confirmed", { duration: 2500,
-          icon: <SuccessToastIcon /> // ENSURED ICON
-             });
+            toast("Approval Confirmed", { 
+              duration: 2500
+            });
             setCompletedSteps(prev => [...prev, "approval_complete"]);
 
             // --- CRITICAL: Re-fetch Permit Data AFTER approval ---
@@ -1102,7 +1149,7 @@ export function SwapInterface() {
             if (!signatureFromSigning) throw new Error("Signature process did not return a valid signature.");
             setObtainedSignature(signatureFromSigning); // Store the obtained signature
 
-            toast.success("Permit signature obtained!");
+            toast.success("Permit signature received!");
             setCompletedSteps(prev => [...prev, "signature_complete"]);
             setSwapProgressState("ready_to_swap"); 
             setIsSwapping(false); 
@@ -1239,15 +1286,8 @@ export function SwapInterface() {
             setSwapState("success");
             setCompletedSteps(prev => [...prev, "complete"]);
 
-            let descriptionMessage = "Swap details unavailable. Amounts could not be determined.";
-            if (swapTxInfo && typeof swapTxInfo.fromAmount === 'string' && typeof swapTxInfo.toAmount === 'string' && swapTxInfo.fromSymbol && swapTxInfo.toSymbol) {
-                const displayFromAmount = formatTokenAmountDisplay(swapTxInfo.fromAmount, swapTxInfo.fromSymbol);
-                const displayToAmount = formatTokenAmountDisplay(swapTxInfo.toAmount, swapTxInfo.toSymbol);
-                descriptionMessage = `Swapped ${displayFromAmount} ${swapTxInfo.fromSymbol} for ${displayToAmount} ${swapTxInfo.toSymbol}`;
-            }
 
             toast("Swap Successful", {
-                 description: descriptionMessage,
                  icon: <SuccessToastIcon />, duration: 5000,
             });
             window.swapBuildData = undefined;
@@ -1441,6 +1481,16 @@ export function SwapInterface() {
   let actualNumericPercentage = 0;
   if (fromTokenBalance > 0 && fromAmountNum > 0) {
     actualNumericPercentage = (fromAmountNum / fromTokenBalance) * 100; // Can be > 100 or < 0 if input is wild
+    
+    // Special case: If we're using the exact balance from the blockchain, force it to 100%
+    // This ensures the vertical line UI shows up when using handleUseFullBalance
+    if (fromToken.address === YUSD_ADDRESS && yusdBalanceData && 
+        fromAmount === yusdBalanceData.formatted) {
+      actualNumericPercentage = 100;
+    } else if (fromToken.address === BTCRL_ADDRESS && btcrlBalanceData && 
+              fromAmount === btcrlBalanceData.formatted) {
+      actualNumericPercentage = 100;
+    }
   }
   // Do not clamp actualNumericPercentage here, let OutlineArcIcon handle visual clamping / over_limit
 
@@ -1451,7 +1501,8 @@ export function SwapInterface() {
     const currentActualIsOverLimit = actualNumericPercentage > 100;
 
     if (currentActualIsOverLimit) {
-      handleUsePercentage(100); // Sets input to 100% of balance
+      // Use handleUseFullBalance directly which now uses exact blockchain data
+      handleUseFullBalance(fromToken, true);
       setSelectedPercentageIndex(cyclePercentages.indexOf(100)); // Sets selected step to 100%
     } else {
       let nextIndex = selectedPercentageIndex + 1;

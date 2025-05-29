@@ -17,16 +17,11 @@ import { cn } from "@/lib/utils";
 import Image from "next/image";
 import { 
     useAccount, 
-    useWriteContract, 
-    useSendTransaction, 
-    useWaitForTransactionReceipt,
-    useBalance,
-    useSignTypedData
+    useBalance
 } from "wagmi";
 import { toast } from "sonner";
 import { TOKEN_DEFINITIONS, TokenSymbol, V4_POOL_FEE, V4_POOL_TICK_SPACING, V4_POOL_HOOKS } from "@/lib/swap-constants";
 import { baseSepolia } from "@/lib/wagmiConfig";
-import { ERC20_ABI } from "@/lib/abis/erc20";
 import { type Hex, formatUnits as viemFormatUnits, getAddress, parseUnits as viemParseUnits } from "viem"; 
 import { Token } from '@uniswap/sdk-core'; 
 import { Pool as V4PoolSDK, Position as V4PositionSDK } from "@uniswap/v4-sdk";
@@ -46,19 +41,25 @@ import {
   Tooltip as RechartsTooltip, 
   ReferenceArea, 
   ReferenceLine, 
-  Label as RechartsChartLabel, // Explicit import for Recharts Label
+  Label as RechartsChartLabel, 
   Bar,
   Cell,
-  Area // Added Area import
+  Area
 } from 'recharts';
 import { motion } from "framer-motion";
+import { useAddLiquidityTransaction } from "./useAddLiquidityTransaction";
 
 // Utility function (copied from app/liquidity/page.tsx)
 const formatTokenDisplayAmount = (amount: string) => {
   const num = parseFloat(amount);
   if (isNaN(num)) return amount;
   if (num === 0) return "0.00";
-  if (num < 0.0001) return "< 0.0001";
+  
+  // Ensure very small positive values always show "< 0.0001" instead of "0.0000"
+  if (num > 0 && num < 0.0001) {
+    return "< 0.0001";
+  }
+  
   return num.toFixed(4);
 };
 
@@ -76,40 +77,6 @@ function debounce<F extends (...args: any[]) => any>(func: F, waitFor: number) {
 
   return debounced as (...args: Parameters<F>) => ReturnType<F> | void;
 }
-
-// Minimal ABI for Permit2.permit function, defined as a full ABI array for robustness
-const PERMIT2_PERMIT_ABI_MINIMAL = [
-  {
-    "inputs": [
-      { "internalType": "address", "name": "owner", "type": "address" },
-      {
-        "components": [
-          {
-            "components": [
-              { "internalType": "address", "name": "token", "type": "address" },
-              { "internalType": "uint160", "name": "amount", "type": "uint160" },
-              { "internalType": "uint48", "name": "expiration", "type": "uint48" },
-              { "internalType": "uint48", "name": "nonce", "type": "uint48" }
-            ],
-            "internalType": "struct ISignatureTransfer.PermitDetails",
-            "name": "details",
-            "type": "tuple"
-          },
-          { "internalType": "address", "name": "spender", "type": "address" },
-          { "internalType": "uint256", "name": "sigDeadline", "type": "uint256" }
-        ],
-        "internalType": "struct ISignatureTransfer.PermitSingle",
-        "name": "permitSingle",
-        "type": "tuple"
-      },
-      { "internalType": "bytes", "name": "signature", "type": "bytes" }
-    ],
-    "name": "permit",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  }
-] as const; // Use 'as const' for better type inference with Viem
 
 export interface AddLiquidityModalProps {
   isOpen: boolean;
@@ -132,7 +99,7 @@ export function AddLiquidityModal({
   defaultTickSpacing,
   poolApr // Destructure new prop
 }: AddLiquidityModalProps) {
-  const { address: accountAddress, chainId } = useAccount();
+  const { address: accountAddress, chainId, isConnected } = useAccount(); // Added isConnected
   const [token0Symbol, setToken0Symbol] = useState<TokenSymbol>('YUSDC');
   const [token1Symbol, setToken1Symbol] = useState<TokenSymbol>('BTCRL');
   const [amount0, setAmount0] = useState<string>("");
@@ -146,42 +113,69 @@ export function AddLiquidityModal({
     liquidity: string;
     finalTickLower: number;
     finalTickUpper: number;
-    amount0: string; // Renamed from calculatedAmount0 for consistency with API response
-    amount1: string; // Renamed from calculatedAmount1
-    currentPoolTick?: number; // Added from API response
-    currentPrice?: string;    // Added from API response
+    amount0: string; 
+    amount1: string; 
+    currentPoolTick?: number; 
+    currentPrice?: string;    
     priceAtTickLower?: string;
     priceAtTickUpper?: string;
   } | null>(null);
-  // Keep separate state for currentPrice, priceAtTickLower/Upper for now, as other parts of the modal might use them directly.
-  // The calculatedData object will now also hold them for the price string effect.
   const [currentPrice, setCurrentPrice] = useState<string | null>(null);
   const [priceAtTickLower, setPriceAtTickLower] = useState<string | null>(null);
   const [priceAtTickUpper, setPriceAtTickUpper] = useState<string | null>(null);
   
-  const [isWorking, setIsWorking] = useState(false);
-  const [step, setStep] = useState<'input' | 'approve' | 'mint' | 'permit2Sign'>('input');
-  const [preparedTxData, setPreparedTxData] = useState<any>(null);
+  // Use the transaction hook
+  const {
+    isWorking,
+    step,
+    preparedTxData,
+    permit2SignatureRequest,
+    // Remove tokenApprovalStatus, tokensRequiringApproval, permit2StepsCompletedCount, maxPermit2StepsInCurrentTx
+    // tokenApprovalStatus, 
+    // tokensRequiringApproval, 
+    // permit2StepsCompletedCount, 
+    // maxPermit2StepsInCurrentTx,
+    involvedTokensCount, // NEW
+    completedTokensCount, // NEW
+    
+    isApproveWritePending,
+    isApproving,
+    isPermit2SendPending,
+    isPermit2Confirming,
+    isMintSendPending,
+    isMintConfirming,
+    
+    handlePrepareMint,
+    handleApprove,
+    handleSignAndSubmitPermit2,
+    handleMint,
+    resetTransactionState,
+    
+    // Remove setTokensRequiringApproval, setMaxPermit2StepsInCurrentTx
+    // setTokensRequiringApproval, 
+    // setMaxPermit2StepsInCurrentTx, 
+  } = useAddLiquidityTransaction({
+    token0Symbol,
+    token1Symbol,
+    amount0,
+    amount1,
+    tickLower,
+    tickUpper,
+    activeInputSide,
+    calculatedData,
+    onLiquidityAdded,
+    onOpenChange,
+  });
 
-  // New state for Permit2 signature request details
-  const [permit2SignatureRequest, setPermit2SignatureRequest] = useState<{
-    domain: any;
-    types: any;
-    primaryType: string;
-    message: any;
-    permit2Address: Hex;
-    approvalTokenSymbol: TokenSymbol; 
-  } | null>(null);
+  const prevCalculationDeps = useRef({
+    amount0,
+    amount1,
+    tickLower,
+    tickUpper,
+    activeInputSide
+  });
 
-  // Replace existing states for tracking Permit2 steps
-  const [permit2StepsCompletedCount, setPermit2StepsCompletedCount] = useState<number>(0);
-  const [maxPermit2StepsInCurrentTx, setMaxPermit2StepsInCurrentTx] = useState<number>(0);
-
-  // Add new states to track token approvals by token symbol
-  const [tokenApprovalStatus, setTokenApprovalStatus] = useState<{
-    [tokenSymbol: string]: boolean
-  }>({});
-  const [tokensRequiringApproval, setTokensRequiringApproval] = useState<number>(0);
+  const [isInsufficientBalance, setIsInsufficientBalance] = useState(false);
 
   const [activePreset, setActivePreset] = useState<string | null>("±15%");
   const [baseTokenForPriceDisplay, setBaseTokenForPriceDisplay] = useState<TokenSymbol>(token0Symbol);
@@ -474,13 +468,9 @@ export function AddLiquidityModal({
 
   // Effect to fetch initial pool state (current price and tick)
   useEffect(() => {
-    // Only fetch initial pool state if the modal is open, essential params are present,
-    // and we haven't already applied defaults based on a fetched current price.
-    // The key is to get the current market price when the context changes (new pool, or first open).
     if (isOpen && token0Symbol && token1Symbol && chainId && !initialDefaultApplied) {
       const fetchPoolState = async () => {
         setIsPoolStateLoading(true);
-        // toast.loading("Fetching pool data...", { id: "pool-state-fetch" }); // Redundant if preset application shows loading
         try {
           const response = await fetch('/api/liquidity/get-pool-state', {
             method: 'POST',
@@ -493,81 +483,56 @@ export function AddLiquidityModal({
           });
           
           if (!response.ok) {
-            // toast.dismiss("pool-state-fetch");
             const errorData = await response.json();
             throw new Error(errorData.message || "Failed to fetch initial pool state.");
           }
           const poolState = await response.json();
-          // toast.dismiss("pool-state-fetch");
 
           if (poolState.currentPrice && typeof poolState.currentPoolTick === 'number') {
             setCurrentPrice(poolState.currentPrice); 
             setCurrentPoolTick(poolState.currentPoolTick);
 
-            // Consume sqrtPriceX96 from the API response
             if (poolState.sqrtPriceX96) { 
               setCurrentPoolSqrtPriceX96(poolState.sqrtPriceX96.toString()); 
-              console.log("[AddLiquidityModal] sqrtPriceX96 set from API:", poolState.sqrtPriceX96.toString());
             } else {
-              console.warn("[AddLiquidityModal] sqrtPriceX96 not found in get-pool-state response. Token0 depth calculations might be affected.");
               setCurrentPoolSqrtPriceX96(null); 
             }
             
             const numericCurrentPrice = parseFloat(poolState.currentPrice);
             if (!isNaN(numericCurrentPrice)) {
-                setCurrentPriceLine(numericCurrentPrice); // This is for a potential price-based reference line, distinct from tick-based xDomain
-                
-                // Calculate xDomain based on currentPoolTick and +/- 0.50% price change
+                setCurrentPriceLine(numericCurrentPrice);
                 if (typeof poolState.currentPoolTick === 'number') {
                   const centerTick = poolState.currentPoolTick;
-                  const percentage = 0.30; // 30% price deviation
-                  
-                  // tick = ln(price) / ln(1.0001)
-                  // price = (1.0001)^tick
-                  // For a % change from current price P_current (derived from currentTick):
-                  // P_upper = P_current * (1 + percentage)
-                  // P_lower = P_current * (1 - percentage)
-                  // tick_upper = ln( P_current * (1 + percentage) ) / ln(1.0001)
-                  //            = ( ln(P_current) + ln(1+percentage) ) / ln(1.0001)
-                  //            = currentTick + ln(1+percentage) / ln(1.0001)
-                  // tick_lower = currentTick + ln(1-percentage) / ln(1.0001)
-
+                  const percentage = 0.30;
                   const tickDeltaUpper = Math.log(1 + percentage) / Math.log(1.0001);
-                  const tickDeltaLower = Math.log(1 - percentage) / Math.log(1.0001); // This will be negative
-
+                  const tickDeltaLower = Math.log(1 - percentage) / Math.log(1.0001);
                   const domainTickLower = Math.round(centerTick + tickDeltaLower);
                   const domainTickUpper = Math.round(centerTick + tickDeltaUpper);
-                  
                   setXDomain([domainTickLower, domainTickUpper]);
                 } else {
-                  // Fallback if currentPoolTick is not available, use price-based domain as before
                   setXDomain([numericCurrentPrice * 0.5, numericCurrentPrice * 1.5]); 
                 }
             } else {
-                setCurrentPriceLine(null); // Explicitly set to null if parsing fails
-                // Fallback xDomain if price is invalid and tick is not available
+                setCurrentPriceLine(null);
                 setXDomain([-120000, 120000]); 
             }
           } else {
-            setCurrentPriceLine(null); // Set to null if data is incomplete
-            setCurrentPoolSqrtPriceX96(null); // Also clear if main data is incomplete
+            setCurrentPriceLine(null);
+            setCurrentPoolSqrtPriceX96(null);
             throw new Error("Pool state data is incomplete.");
           }
         } catch (error: any) {
           toast.error("Pool Data Error", { description: error.message });
-          setCurrentPriceLine(null); // Explicitly set to null on any fetch/processing error
-          setCurrentPoolSqrtPriceX96(null); // Clear on error
-          // Consider resetting xDomain to a default on error
-          // setXDomain([30000, 50000]); 
+          setCurrentPriceLine(null);
+          setCurrentPoolSqrtPriceX96(null);
         } finally {
           setIsPoolStateLoading(false);
         }
       };
       fetchPoolState();
     }
-  }, [isOpen, token0Symbol, token1Symbol, chainId, initialDefaultApplied, calculatedData]); // Added calculatedData to prevent re-fetch if amounts already caused a calculation
+  }, [isOpen, token0Symbol, token1Symbol, chainId, initialDefaultApplied, calculatedData]);
 
-  // Create a single debounced function that handles both amount calculation and token approval checks
   const debouncedCalculateAmountAndCheckApprovals = useCallback(
     debounce(async (currentAmount0: string, currentAmount1: string, currentTickLower: string, currentTickUpper: string, inputSide: 'amount0' | 'amount1') => {
       if (!chainId) return;
@@ -586,7 +551,6 @@ export function AddLiquidityModal({
       const primaryTokenSymbol = inputSide === 'amount0' ? token0Symbol : token1Symbol;
       const secondaryTokenSymbol = inputSide === 'amount0' ? token1Symbol : token0Symbol;
       
-      // Early return if primaryAmount is "Error" or not a parsable number
       if (primaryAmount === "Error" || isNaN(parseFloat(primaryAmount))) {
         setCalculatedData(null);
         if (inputSide === 'amount0' && currentAmount1 !== "Error") setAmount1("");
@@ -603,20 +567,7 @@ export function AddLiquidityModal({
       setIsCalculating(true);
       setCalculatedData(null); 
 
-      // Track tokens needed for approval
-      let tokensNeeded = 0;
-      if (parseFloat(currentAmount0 || "0") > 0) tokensNeeded += 1;
-      if (parseFloat(currentAmount1 || "0") > 0) tokensNeeded += 1;
-      setTokensRequiringApproval(tokensNeeded);
-      
-      // For backward compatibility with existing logic
-      let potentialMaxSteps = 0;
-      if (parseFloat(currentAmount0 || "0") > 0) potentialMaxSteps += 2;
-      if (parseFloat(currentAmount1 || "0") > 0) potentialMaxSteps += 2;
-      setMaxPermit2StepsInCurrentTx(potentialMaxSteps);
-
       try {
-        // STEP 1: Calculate liquidity parameters
         const calcResponse = await fetch('/api/liquidity/calculate-liquidity-parameters', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -669,58 +620,39 @@ export function AddLiquidityModal({
 
         if (inputSide === 'amount0') {
           try {
-            setAmount1(formatTokenDisplayAmount(viemFormatUnits(BigInt(result.amount1), TOKEN_DEFINITIONS[secondaryTokenSymbol]?.decimals || 18)));
+            const rawFormattedAmount = viemFormatUnits(BigInt(result.amount1), TOKEN_DEFINITIONS[secondaryTokenSymbol]?.decimals || 18);
+            const displayAmount = formatTokenDisplayAmount(rawFormattedAmount);
+            console.log('[Debug] Calculating amount1:', { 
+              rawFormattedAmount, 
+              numericValue: parseFloat(rawFormattedAmount),
+              displayAmount 
+            });
+            setAmount1(displayAmount);
           } catch (e) {
+            console.error('[Debug] Error formatting amount1:', e);
             setAmount1("Error");
             toast.error("Calculation Error", { description: "Could not parse calculated amount for the other token. The amount might be too large or invalid." });
             setCalculatedData(null);
           }
         } else {
           try {
-            setAmount0(formatTokenDisplayAmount(viemFormatUnits(BigInt(result.amount0), TOKEN_DEFINITIONS[secondaryTokenSymbol]?.decimals || 18)));
+            const rawFormattedAmount = viemFormatUnits(BigInt(result.amount0), TOKEN_DEFINITIONS[secondaryTokenSymbol]?.decimals || 18);
+            const displayAmount = formatTokenDisplayAmount(rawFormattedAmount);
+            console.log('[Debug] Calculating amount0:', { 
+              rawFormattedAmount, 
+              numericValue: parseFloat(rawFormattedAmount),
+              displayAmount 
+            });
+            setAmount0(displayAmount);
           } catch (e) {
+            console.error('[Debug] Error formatting amount0:', e);
             setAmount0("Error");
             toast.error("Calculation Error", { description: "Could not parse calculated amount for the other token. The amount might be too large or invalid." });
             setCalculatedData(null);
           }
         }
 
-        // STEP 2: After calculation succeeds, check token approvals if connected and not in transaction
-        if (
-          accountAddress && 
-          chainId && 
-          (parseFloat(currentAmount0 || "0") > 0 || parseFloat(currentAmount1 || "0") > 0) &&
-          step === 'input' &&
-          !isWorking
-        ) {
-          try {
-            const approvalResponse = await fetch('/api/liquidity/check-token-approvals', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                userAddress: accountAddress,
-                token0Symbol,
-                token1Symbol,
-                amount0: currentAmount0,
-                amount1: currentAmount1,
-                chainId: chainId,
-              }),
-            });
-            
-            if (approvalResponse.ok) {
-              const data = await approvalResponse.json();
-              
-              // Update token approval status
-              setTokenApprovalStatus(prev => ({
-                ...prev,
-                [token0Symbol]: !data.needsToken0Approval,
-                [token1Symbol]: !data.needsToken1Approval
-              }));
-            }
-          } catch (error) {
-            console.error("[AddLiquidityModal] Error checking token approvals:", error);
-          }
-        }
+        // Approval checking logic is now part of the useAddLiquidityTransaction hook's handlePrepareMint
         
       } catch (error: any) {
         toast.error("Calculation Error", { description: error.message || "Could not estimate amounts." });
@@ -736,275 +668,159 @@ export function AddLiquidityModal({
         setIsCalculating(false);
       }
     }, 700),
-    [accountAddress, chainId, token0Symbol, token1Symbol, step, isWorking]
+    [accountAddress, chainId, token0Symbol, token1Symbol] // Removed setTokensRequiringApproval, setMaxPermit2StepsInCurrentTx, step, isWorking
   );
 
-  // Replace the two separate useEffect hooks with a single one that uses the combined function
   useEffect(() => {
-    if (activeInputSide) {
-      if (activeInputSide === 'amount0') {
-        debouncedCalculateAmountAndCheckApprovals(amount0, amount1, tickLower, tickUpper, 'amount0');
-      } else if (activeInputSide === 'amount1') {
-        debouncedCalculateAmountAndCheckApprovals(amount0, amount1, tickLower, tickUpper, 'amount1');
+    const currentDeps = { amount0, amount1, tickLower, tickUpper, activeInputSide };
+    let shouldCallDebouncedCalc = false;
+
+    if (activeInputSide === 'amount0') {
+      if (
+        currentDeps.amount0 !== prevCalculationDeps.current.amount0 ||
+        currentDeps.tickLower !== prevCalculationDeps.current.tickLower ||
+        currentDeps.tickUpper !== prevCalculationDeps.current.tickUpper ||
+        currentDeps.activeInputSide !== prevCalculationDeps.current.activeInputSide
+      ) {
+        shouldCallDebouncedCalc = true;
+      }
+    } else if (activeInputSide === 'amount1') {
+      if (
+        currentDeps.amount1 !== prevCalculationDeps.current.amount1 ||
+        currentDeps.tickLower !== prevCalculationDeps.current.tickLower ||
+        currentDeps.tickUpper !== prevCalculationDeps.current.tickUpper ||
+        currentDeps.activeInputSide !== prevCalculationDeps.current.activeInputSide
+      ) {
+        shouldCallDebouncedCalc = true;
       }
     } else {
-      if (parseFloat(amount0) > 0) {
-        debouncedCalculateAmountAndCheckApprovals(amount0, amount1, tickLower, tickUpper, 'amount0');
-      } else if (parseFloat(amount1) > 0) {
-        debouncedCalculateAmountAndCheckApprovals(amount0, amount1, tickLower, tickUpper, 'amount1');
-      } else {
-        setCalculatedData(null);
-      }
-    }
-  }, [amount0, amount1, tickLower, tickUpper, activeInputSide, debouncedCalculateAmountAndCheckApprovals]);
-
-  const handlePrepareMint = async (isAfterApproval = false) => {
-    if (!accountAddress || !chainId) {
-      toast.error("Please connect your wallet.");
-      return;
-    }
-
-    // Determine inputAmount and inputTokenSymbol based on activeInputSide or filled amounts
-    let finalInputAmount: string | undefined;
-    let finalInputTokenSymbol: TokenSymbol | undefined;
-
-    if (activeInputSide === 'amount0' && amount0 && parseFloat(amount0) > 0) {
-        finalInputAmount = amount0;
-        finalInputTokenSymbol = token0Symbol;
-    } else if (activeInputSide === 'amount1' && amount1 && parseFloat(amount1) > 0) {
-        finalInputAmount = amount1;
-        finalInputTokenSymbol = token1Symbol;
-    } else if (amount0 && parseFloat(amount0) > 0 && (!amount1 || parseFloat(amount1) <= 0)) {
-        // If only amount0 is filled and no active side, assume amount0 is the input
-        finalInputAmount = amount0;
-        finalInputTokenSymbol = token0Symbol;
-    } else if (amount1 && parseFloat(amount1) > 0 && (!amount0 || parseFloat(amount0) <= 0)) {
-        // If only amount1 is filled and no active side, assume amount1 is the input
-        finalInputAmount = amount1;
-        finalInputTokenSymbol = token1Symbol;
-    } else if (amount0 && parseFloat(amount0) > 0) {
-        // Fallback: if both potentially filled but no activeInputSide, prefer amount0 as input
-        // This case should ideally be covered by activeInputSide or clear one field logic
-        finalInputAmount = amount0;
-        finalInputTokenSymbol = token0Symbol;
-    } else if (amount1 && parseFloat(amount1) > 0) {
-        // Fallback: if only amount1 is filled
-        finalInputAmount = amount1;
-        finalInputTokenSymbol = token1Symbol;
-    }
-
-    if (!finalInputAmount || !finalInputTokenSymbol) {
-        toast.error("Please enter an amount for at least one token.");
-        // Ensure not to proceed if these are undefined.
-        // This check might be redundant if the button is disabled correctly, but good for safety.
-        return;
-    }
-
-    const finalTickLowerNum = calculatedData?.finalTickLower ?? parseInt(tickLower);
-    const finalTickUpperNum = calculatedData?.finalTickUpper ?? parseInt(tickUpper);
-
-    if (isNaN(finalTickLowerNum) || isNaN(finalTickUpperNum) || finalTickLowerNum >= finalTickUpperNum) {
-      toast.error("Invalid tick range provided or calculated.");
-      return;
-    }
-    if (token0Symbol === token1Symbol) {
-      toast.error("Tokens cannot be the same.");
-      return;
-    }
-    setIsWorking(true);
-    if (!isAfterApproval) setStep('input');
-    toast.loading("Preparing transaction...", { id: "prepare-mint" });
-    try {
-      const response = await fetch('/api/liquidity/prepare-mint-tx', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userAddress: accountAddress,
-          token0Symbol, 
-          token1Symbol,
-          inputAmount: finalInputAmount,         
-          inputTokenSymbol: finalInputTokenSymbol, 
-          userTickLower: finalTickLowerNum,
-          userTickUpper: finalTickUpperNum,
-          chainId: chainId ?? baseSepolia.id,
-        }),
-      });
-      toast.dismiss("prepare-mint");
-      const data = await response.json();
-
-      if (!response.ok) {
-        const err = new Error(data.message || "Failed to prepare transaction.");
-        throw err; 
-      }
-
-      setPreparedTxData(data); // Store the raw data
-
-      if (data.needsApproval) {
-        if (data.approvalType === 'ERC20_TO_PERMIT2') {
-          toast.info(`ERC20 Approval for Permit2 needed for ${data.approvalTokenSymbol}`, {
-            description: `You need to approve Permit2 to use your ${data.approvalTokenSymbol}.`
-          });
-          setStep('approve'); 
-        } else if (data.approvalType === 'PERMIT2_SIGNATURE_FOR_PM') {
-          toast.info(`Permit2 Signature needed for ${data.approvalTokenSymbol}`, {
-            description: `Please sign the message to allow the Position Manager to use your ${data.approvalTokenSymbol} via Permit2.`
-          });
-          setPermit2SignatureRequest({
-            domain: data.signatureDetails.domain,
-            types: data.signatureDetails.types,
-            primaryType: data.signatureDetails.primaryType,
-            message: data.signatureDetails.message,
-            permit2Address: data.permit2Address,
-            approvalTokenSymbol: data.approvalTokenSymbol
-          });
-          setStep('permit2Sign');
-        } else {
-          // Fallback for unknown approval type, though backend should be specific
-          toast.error("Unknown Approval Needed", { description: "An unspecified approval is required." });
-          setStep('input'); // Or some error step
+      // No active input side, but amounts or ticks might have changed (e.g. "Use Full Balance", or initial tick setting)
+      if (
+        currentDeps.amount0 !== prevCalculationDeps.current.amount0 ||
+        currentDeps.amount1 !== prevCalculationDeps.current.amount1 ||
+        currentDeps.tickLower !== prevCalculationDeps.current.tickLower ||
+        currentDeps.tickUpper !== prevCalculationDeps.current.tickUpper
+      ) {
+        // Only calculate if there's something to calculate with
+        if (parseFloat(currentDeps.amount0) > 0 || parseFloat(currentDeps.amount1) > 0) {
+            shouldCallDebouncedCalc = true;
         }
-      } else {
-        toast.success("Transaction ready to mint!");
-        setPermit2StepsCompletedCount(maxPermit2StepsInCurrentTx); // <-- ADD THIS LINE
-        setStep('mint');
       }
-    } catch (error: any) {
-      toast.dismiss("prepare-mint");
-      // Check if the error message indicates the specific Permit2 spender allowance issue
-      if (error && typeof error.message === 'string' && 
-          (error.message.includes("Position Manager does not have sufficient allowance from Permit2") || 
-           error.message.includes("Permit2 allowance for the Position Manager to spend") /* Catches expiration too */) 
-         ) {
-           toast.error("Permit2 Authorization Incomplete", { 
-               description: error.message + " This step often requires signing a message or a separate one-time transaction to authorize the Position Manager via Permit2.",
-               duration: 12000 // Longer duration for this important message
-           });
-      } else {
-           toast.error("Error Preparing Transaction", { description: error.message || "Unknown error during preparation." });
-      }
-      
-    } finally {
-      if (!isAfterApproval) setIsWorking(false);
     }
-  };
 
-  const { data: approveTxHash, error: approveWriteError, isPending: isApproveWritePending, writeContractAsync: approveERC20Async, reset: resetApproveWriteContract } = useWriteContract();
-  const { isLoading: isApproving, isSuccess: isApproved, error: approveReceiptError } = useWaitForTransactionReceipt({ hash: approveTxHash });
-  const { data: mintTxHash, error: mintSendError, isPending: isMintSendPending, sendTransactionAsync, reset: resetSendTransaction } = useSendTransaction();
-  const { isLoading: isMintConfirming, isSuccess: isMintConfirmed, error: mintReceiptError } = useWaitForTransactionReceipt({ hash: mintTxHash });
+    if (shouldCallDebouncedCalc) {
+        const inputSideForCalc = activeInputSide || (parseFloat(amount0) > 0 ? 'amount0' : parseFloat(amount1) > 0 ? 'amount1' : null);
+        if (inputSideForCalc) {
+            const primaryAmount = inputSideForCalc === 'amount0' ? amount0 : amount1;
+            const tlNum = parseInt(tickLower);
+            const tuNum = parseInt(tickUpper);
+            const ticksAreValid = !isNaN(tlNum) && !isNaN(tuNum) && tlNum < tuNum;
 
-  // Wagmi hooks for Permit2.permit() transaction
-  const { 
-    data: permit2TxHash, 
-    error: permit2SendError, 
-    isPending: isPermit2SendPending, 
-    writeContractAsync: permit2WriteContractAsync, // Using writeContractAsync for Permit2.permit
-    reset: resetPermit2WriteContract 
-  } = useWriteContract();
-  const { 
-    isLoading: isPermit2Confirming, 
-    isSuccess: isPermit2Confirmed, 
-    error: permit2ReceiptError 
-  } = useWaitForTransactionReceipt({ hash: permit2TxHash });
-
-  useEffect(() => {
-    if (isApproved) {
-      toast.success("Approval successful!");
-      
-      // If we have approval token info in preparedTxData
-      if (preparedTxData?.approvalTokenSymbol) {
-        // Mark this token as fully approved
-        const approvedToken = preparedTxData.approvalTokenSymbol as TokenSymbol;
-        setTokenApprovalStatus(prev => ({
-          ...prev,
-          [approvedToken]: true
-        }));
-      }
-      
-      // Keep original counter for backward compatibility
-      setPermit2StepsCompletedCount(prev => prev + 1);
-      
-      resetApproveWriteContract(); 
-      if (preparedTxData) {
-        handlePrepareMint(true); 
-      }
-      setIsWorking(false); 
+            if (parseFloat(primaryAmount || "0") > 0 && ticksAreValid) {
+                debouncedCalculateAmountAndCheckApprovals(amount0, amount1, tickLower, tickUpper, inputSideForCalc);
+            }
+             // If primary amount is zero/invalid but was the active side, or ticks invalid, clear the other amount & calculated data.
+            else if ((parseFloat(primaryAmount || "0") <= 0 && activeInputSide === inputSideForCalc) || !ticksAreValid) {
+                if (inputSideForCalc === 'amount0') setAmount1(""); else setAmount0("");
+                setCalculatedData(null);
+                if (!ticksAreValid && (parseFloat(amount0) > 0 || parseFloat(amount1) > 0)){
+                    toast.info("Invalid Range", { description: "Min tick must be less than max tick." });
+                }
+            }
+        } else {
+             // Both amounts are effectively zero, or became zero/invalid, ensure cleanup
+            setAmount0("");
+            setAmount1("");
+            setCalculatedData(null);
+            if (preparedTxData !== null || step !== 'input') {
+                resetTransactionState();
+            }
+        }
+    } else if (parseFloat(amount0) <= 0 && parseFloat(amount1) <= 0) {
+        // Fallback: ensure cleanup if all amounts are zero or invalid, and no calculation was triggered.
+        // This handles cases where inputs are cleared without changing activeInputSide significantly.
+        setCalculatedData(null);
+        if (preparedTxData !== null || step !== 'input') {
+            resetTransactionState();
+        }
     }
-    if (approveWriteError || approveReceiptError) {
-      const errorMsg = approveWriteError?.message || approveReceiptError?.message || "Approval transaction failed.";
-      toast.error("Approval failed", { description: errorMsg });
-      setIsWorking(false);
-      resetApproveWriteContract();
-      setPreparedTxData(null);
-      setStep('input'); 
-    }
-  }, [isApproved, approveWriteError, approveReceiptError, preparedTxData, resetApproveWriteContract, handlePrepareMint]);
 
-  const resetInternalTxState = useCallback(() => {
-    setStep('input');
-    setPreparedTxData(null);
-    setPermit2SignatureRequest(null); 
-    setIsWorking(false);
-    setPermit2StepsCompletedCount(0); 
-    setMaxPermit2StepsInCurrentTx(0); 
-    setTokenApprovalStatus({});
-    setTokensRequiringApproval(0);
-    resetApproveWriteContract();
-    resetSendTransaction();
-    resetPermit2WriteContract();
-  }, [resetApproveWriteContract, resetSendTransaction, resetPermit2WriteContract]);
+    prevCalculationDeps.current = currentDeps;
+
+  }, [
+    amount0,
+    amount1,
+    tickLower,
+    tickUpper,
+    activeInputSide,
+    debouncedCalculateAmountAndCheckApprovals,
+    preparedTxData, 
+    step,           
+    resetTransactionState,
+    setAmount0, // Added because they are used in the effect
+    setAmount1, // Added because they are used in the effect
+    setCalculatedData // Added because it's used in the effect
+  ]);
 
   useEffect(() => {
-    if (isMintConfirmed) {
-      toast.success("Liquidity minted successfully!", { id: "mint-tx" });
-      onLiquidityAdded();
-      resetInternalTxState(); // Explicitly reset internal TX state here
-      onOpenChange(false);    // Then close the modal
-      resetSendTransaction(); // Wagmi hook reset
-    }
-    if (mintSendError || mintReceiptError) {
-      const errorMsg = mintSendError?.message || mintReceiptError?.message || "Minting transaction failed.";
-      toast.error("Minting failed", { id: "mint-tx", description: errorMsg });
-      
-      setIsWorking(false);
-      resetSendTransaction();
-      // If minting fails, allow user to try again or adjust
-      setStep('mint'); // Stay on mint step, or consider 'input' if full reset is better
-      // setPreparedTxData(null); // Optional: force re-preparation if mint fails catastrophically
-    }
-  }, [isMintConfirmed, mintSendError, mintReceiptError, onLiquidityAdded, onOpenChange, resetSendTransaction, resetInternalTxState]);
+    const t0Def = TOKEN_DEFINITIONS[token0Symbol];
+    const t1Def = TOKEN_DEFINITIONS[token1Symbol];
+    let insufficient = false;
 
-  // useEffect to handle Permit2.permit() transaction result
-  useEffect(() => {
-    if (isPermit2Confirmed) {
-      toast.success("Permit2 call successful!", { id: "permit2-submit" });
-      
-      // If we have token info in permit2SignatureRequest
-      if (permit2SignatureRequest?.approvalTokenSymbol) {
-        // Mark this token as fully approved since the permit2 signature was successful
-        const approvedToken = permit2SignatureRequest.approvalTokenSymbol;
-        setTokenApprovalStatus(prev => ({
-          ...prev,
-          [approvedToken]: true
-        }));
-      }
-      
-      // Keep original counter for backward compatibility
-      setPermit2StepsCompletedCount(prev => prev + 1);
-      
-      resetPermit2WriteContract();
-      if (preparedTxData) {
-        handlePrepareMint(true); 
-      }
-      setIsWorking(false);
+    if (!t0Def || !t1Def) {
+      setIsInsufficientBalance(false);
+      return;
     }
-    if (permit2SendError || permit2ReceiptError) {
-      const errorMsg = permit2SendError?.message || permit2ReceiptError?.message || "Permit2 transaction failed.";
-      toast.error("Permit2 Submission Failed", { id: "permit2-submit", description: errorMsg });
-      setIsWorking(false);
-      resetPermit2WriteContract();
+
+    const isAmount0InputPositive = parseFloat(amount0 || "0") > 0;
+    const isAmount1InputPositive = parseFloat(amount1 || "0") > 0;
+
+    let valueToCheck0AsWei: bigint | null = null;
+    if (isAmount0InputPositive) {
+      try { valueToCheck0AsWei = viemParseUnits(amount0, t0Def.decimals); } catch { /* ignore error if not a valid number */ }
+    } else if (calculatedData && BigInt(calculatedData.amount0) > 0n && isAmount1InputPositive) {
+      // If amount0 is not directly input but is calculated as needed due to amount1 input
+      valueToCheck0AsWei = BigInt(calculatedData.amount0);
     }
-  }, [isPermit2Confirmed, permit2SendError, permit2ReceiptError, preparedTxData, resetPermit2WriteContract, handlePrepareMint]);
+
+    let valueToCheck1AsWei: bigint | null = null;
+    if (isAmount1InputPositive) {
+      try { valueToCheck1AsWei = viemParseUnits(amount1, t1Def.decimals); } catch { /* ignore error if not a valid number */ }
+    } else if (calculatedData && BigInt(calculatedData.amount1) > 0n && isAmount0InputPositive) {
+      // If amount1 is not directly input but is calculated as needed due to amount0 input
+      valueToCheck1AsWei = BigInt(calculatedData.amount1);
+    }
+
+    if (valueToCheck0AsWei !== null && valueToCheck0AsWei > 0n && token0BalanceData?.value) {
+      if (valueToCheck0AsWei > token0BalanceData.value) {
+        insufficient = true;
+      }
+    }
+    
+    if (!insufficient && valueToCheck1AsWei !== null && valueToCheck1AsWei > 0n && token1BalanceData?.value) {
+      if (valueToCheck1AsWei > token1BalanceData.value) {
+        insufficient = true;
+      }
+    }
+    
+    // Additional check: if calculatedData is present and an amount is required (positive) but its input field is zero/empty.
+    // This covers scenarios where one input field is cleared after a calculation that determined both amounts were needed.
+    if (!insufficient && calculatedData) {
+        if (!isAmount0InputPositive && BigInt(calculatedData.amount0) > 0n && token0BalanceData?.value) {
+            if (BigInt(calculatedData.amount0) > token0BalanceData.value) {
+                insufficient = true;
+            }
+        }
+        if (!insufficient && !isAmount1InputPositive && BigInt(calculatedData.amount1) > 0n && token1BalanceData?.value) {
+            if (BigInt(calculatedData.amount1) > token1BalanceData.value) {
+                insufficient = true;
+            }
+        }
+    }
+
+    setIsInsufficientBalance(insufficient);
+
+  }, [amount0, amount1, token0Symbol, token1Symbol, calculatedData, token0BalanceData, token1BalanceData]);
 
   const resetForm = () => {
     setToken0Symbol('YUSDC');
@@ -1018,25 +834,16 @@ export function AddLiquidityModal({
     setCalculatedData(null);
     setCurrentPrice(null); 
     setPriceAtTickLower(null); 
-    setPriceAtTickUpper(null); 
-    setIsWorking(false);
-    setStep('input');
-    setPreparedTxData(null);
+    setPriceAtTickUpper(null);
+    resetTransactionState(); // Use the hook's function
     setInitialDefaultApplied(false);
     setActivePreset("±15%");
     setBaseTokenForPriceDisplay(token0Symbol);
-    setPermit2SignatureRequest(null); // Reset Permit2 request state here too
-
-    // Explicitly reset wagmi hook states
-    resetApproveWriteContract();
-    resetSendTransaction();
-    resetPermit2WriteContract(); // Reset Permit2 hook
-
-    // Chart related state resets
-    // setPoolDailyFeesUSD(null);
+    // setPermit2SignatureRequest(null); // This state is now in the hook
   };
 
   const handleSetFullRange = () => {
+    if (preparedTxData) resetTransactionState();
     setTickLower(sdkMinTick.toString());
     setTickUpper(sdkMaxTick.toString());
     setInitialDefaultApplied(true);
@@ -1049,80 +856,6 @@ export function AddLiquidityModal({
     setAmount1(amount0);
     setActiveInputSide(activeInputSide === 'amount0' ? 'amount1' : activeInputSide === 'amount1' ? 'amount0' : null);
     setCalculatedData(null); 
-  };
-
-  const handleApprove = async () => {
-    if (!preparedTxData?.needsApproval || !approveERC20Async) return;
-
-    if (!accountAddress || chainId === undefined || chainId === null) {
-      toast.error("Wallet not connected or chain not identified. Please reconnect.");
-      setIsWorking(false);
-      return;
-    }
-
-    setIsWorking(true);
-    toast.loading(`Approving ${preparedTxData.approvalTokenSymbol}...`, { id: "approve-tx" });
-    try {
-      const approvalAmountBigInt = BigInt(preparedTxData.approvalAmount);
-
-      if (chainId !== baseSepolia.id) {
-        toast.error("Network Mismatch", { description: `Please switch to ${baseSepolia.name} to approve this transaction.` });
-        setIsWorking(false);
-        return;
-      }
-
-      await approveERC20Async({
-        address: preparedTxData.approvalTokenAddress as `0x${string}`,
-        abi: ERC20_ABI,
-        functionName: 'approve',
-        args: [preparedTxData.approveToAddress as `0x${string}`, approvalAmountBigInt],
-        account: accountAddress,
-        chain: baseSepolia,
-      });
-    } catch (err: any) {
-      toast.dismiss("approve-tx");
-      
-      let detailedErrorMessage = "Unknown error during approval.";
-      if (err instanceof Error) {
-        detailedErrorMessage = err.message;
-        if ((err as any).shortMessage) { detailedErrorMessage = (err as any).shortMessage; }
-      }
-      toast.error("Failed to send approval transaction.", { description: detailedErrorMessage });
-      setIsWorking(false);
-      resetApproveWriteContract();
-    }
-  };
-
-  const handleMint = async () => {
-    if (!preparedTxData || preparedTxData.needsApproval || !sendTransactionAsync) return;
-    if (!preparedTxData.transaction || typeof preparedTxData.transaction.data !== 'string') {
-      toast.error("Minting Error", { description: "Transaction data is missing or invalid. Please try preparing again." });
-      setStep('input'); 
-      setIsWorking(false);
-      return;
-    }
-    setIsWorking(true);
-    toast.loading("Sending mint transaction...", { id: "mint-tx" });
-    try {
-      const { to, data, value: txValueString } = preparedTxData.transaction;
-      const txParams: { to: `0x${string}`; data: Hex; value?: bigint } = {
-        to: to as `0x${string}`,
-        data: data as Hex,
-      };
-      if (txValueString && BigInt(txValueString) > 0n) {
-        txParams.value = BigInt(txValueString);
-      }
-      await sendTransactionAsync(txParams);
-    } catch (err: any) { 
-      let detailedErrorMessage = "Unknown error sending mint transaction.";
-      if (err instanceof Error) {
-        detailedErrorMessage = err.message;
-        if ((err as any).shortMessage) { detailedErrorMessage = (err as any).shortMessage; }
-      }
-      toast.error("Failed to send mint transaction.", { id: "mint-tx", description: detailedErrorMessage });
-      setIsWorking(false);
-      resetSendTransaction();
-    }
   };
 
   const getFormattedDisplayBalance = (numericBalance: number | undefined, tokenSymbolForDecimals: TokenSymbol): string => {
@@ -1671,6 +1404,7 @@ export function AddLiquidityModal({
 
         if (newTickUpper - newTickLower >= defaultTickSpacing) {
             if (newTickLower.toString() !== tickLower || newTickUpper.toString() !== tickUpper) {
+                if (preparedTxData) resetTransactionState();
                 setTickLower(newTickLower.toString());
                 setTickUpper(newTickUpper.toString());
                 setInitialDefaultApplied(true); 
@@ -1680,12 +1414,13 @@ export function AddLiquidityModal({
         }
     } else if (activePreset === "Full Range") {
         if (tickLower !== sdkMinTick.toString() || tickUpper !== sdkMaxTick.toString()) {
+            if (preparedTxData) resetTransactionState();
             setTickLower(sdkMinTick.toString());
             setTickUpper(sdkMaxTick.toString());
             setInitialDefaultApplied(true); 
         }
     }
-  }, [currentPrice, currentPoolTick, activePreset, defaultTickSpacing, sdkMinTick, sdkMaxTick, token0Symbol, token1Symbol, tickLower, tickUpper]);
+  }, [currentPrice, currentPoolTick, activePreset, defaultTickSpacing, sdkMinTick, sdkMaxTick, token0Symbol, token1Symbol, tickLower, tickUpper, preparedTxData, resetTransactionState]);
 
   // --- BEGIN Fetch Liquidity Depth Data ---
   useEffect(() => {
@@ -2119,78 +1854,6 @@ export function AddLiquidityModal({
     [baseTokenForPriceDisplay, token0Symbol, token1Symbol, defaultTickSpacing, sdkMinTick, sdkMaxTick, tickLower, tickUpper, setTickLower, setTickUpper, setInitialDefaultApplied]
   );
 
-  // New handler for signing and submitting Permit2 message
-  const { signTypedDataAsync } = useSignTypedData();
-
-  const handleSignAndSubmitPermit2 = async () => {
-    if (!permit2SignatureRequest || !accountAddress || !chainId) {
-      toast.error("Permit2 Error", { description: "Missing data for Permit2 signature." });
-      return;
-    }
-
-    setIsWorking(true);
-    toast.loading(`Requesting signature for ${permit2SignatureRequest.approvalTokenSymbol}...`, { id: "permit2-sign" });
-
-    try {
-      const { domain, types, primaryType, message, permit2Address, approvalTokenSymbol } = permit2SignatureRequest;
-      
-      // Ensure message values are correctly typed for signing and for contract call
-      const typedMessage = {
-        details: {
-          token: message.details.token as Hex,
-          amount: BigInt(message.details.amount), // uint160 -> BigInt
-          expiration: Number(message.details.expiration), // uint48 -> Number
-          nonce: Number(message.details.nonce), // uint48 -> Number
-        },
-        spender: message.spender as Hex,
-        sigDeadline: BigInt(message.sigDeadline), // uint256 -> BigInt
-      };
-
-      const signature = await signTypedDataAsync({
-        domain,
-        types,
-        primaryType,
-        message: typedMessage, // Use the structured message with BigInts
-        account: accountAddress,
-      });
-
-      toast.dismiss("permit2-sign");
-      toast.loading(`Submitting Permit2 for ${approvalTokenSymbol}...`, { id: "permit2-submit" });
-
-      if (!permit2WriteContractAsync) {
-        throw new Error ("Permit2 write function not available.");
-      }
-
-      await permit2WriteContractAsync({
-        address: permit2Address,
-        abi: PERMIT2_PERMIT_ABI_MINIMAL, // Pass the full ABI array
-        functionName: 'permit',
-        args: [
-          accountAddress, // owner
-          typedMessage,   // permitSingle (already structured correctly for ABI)
-          signature       // signature
-        ],
-        account: accountAddress,
-        chain: baseSepolia, // Ensure chain is specified if not default
-      });
-      // Success will be handled by the useEffect watching isPermit2Confirmed
-
-    } catch (err: any) {
-      toast.dismiss("permit2-sign");
-      toast.dismiss("permit2-submit");
-      let detailedErrorMessage = "Permit2 operation failed.";
-      if (err instanceof Error) {
-        detailedErrorMessage = err.message;
-        if ((err as any).shortMessage) { detailedErrorMessage = (err as any).shortMessage; }
-      }
-      toast.error("Permit2 Error", { description: detailedErrorMessage });
-      setIsWorking(false);
-      // Optionally reset to 'input' or allow retry of signing
-      // setStep('input'); 
-      // setPermit2SignatureRequest(null);
-    }
-  };
-
   // --- BEGIN Custom Recharts Tooltip (Updated for Cumulative) ---
   const CustomTooltip = ({ active, payload, label, poolToken0Symbol, token0, token1, baseTokenForPrice }: any) => { 
     if (active && payload && payload.length && token0 && token1) {
@@ -2289,7 +1952,7 @@ export function AddLiquidityModal({
           aria-label="Add Liquidity"
           className={cn(
             "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%] sm:rounded-lg",
-            "sm:max-w-4xl"
+            "sm:max-w-4xl" // Keep the larger modal size
           )}
         >
           <div className="flex flex-col md:flex-row gap-6">
@@ -2304,6 +1967,7 @@ export function AddLiquidityModal({
                           size="sm"
                           className="h-8 px-2 text-xs rounded-md"
                           onClick={() => {
+                            if (preparedTxData) resetTransactionState();
                             setActivePreset("Full Range");
                             handleSetFullRange();
                           }}
@@ -2318,8 +1982,7 @@ export function AddLiquidityModal({
                           size="sm"
                           className={`h-8 px-2 text-xs rounded-md ${index === 0 ? '' : 'ml-1'}`}
                           onClick={() => {
-                            // Set the active preset. The useEffect watching [currentPrice, activePreset] will handle tick changes.
-                            // Removed the conditional toast based on currentPrice/currentPoolTick as the useEffect handles it.
+                            if (preparedTxData) resetTransactionState();
                             setActivePreset(preset); 
                           }}
                         >
@@ -2332,7 +1995,7 @@ export function AddLiquidityModal({
                         <TooltipTrigger asChild>
                           <span className="h-8 flex items-center bg-green-500/20 text-green-500 px-2 py-0.5 rounded-sm text-xs font-medium cursor-help">
                             {enhancedAprDisplay}
-                    </span>
+                          </span>
                         </TooltipTrigger>
                         <TooltipContent side="top" className="max-w-xs">
                           <p className="text-sm font-medium mb-1">Predicted APR</p>
@@ -2373,37 +2036,24 @@ export function AddLiquidityModal({
                     <ResponsiveContainer width="100%" height="100%">
                       <ComposedChart 
                         data={simplifiedChartPlotData || []} 
-                        margin={{ top: 2, right: 5, bottom: 5, left: 5 }} // Reduced right margin to match left
+                        margin={{ top: 2, right: 5, bottom: 5, left: 5 }}
                         onMouseDown={handlePanMouseDown}
                         onMouseMove={handlePanMouseMove}
                         onMouseUp={handlePanMouseUpOrLeave}
                         onMouseLeave={handlePanMouseUpOrLeave}
                       >
-                        {/* <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.3} /> */}
                         <XAxis 
                           dataKey="tick" 
                           type="number" 
                           domain={xDomain} 
                           allowDataOverflow 
-                          // tick={{ fontSize: 10, dy: 7 }} // Remove default tick styling, dy was for pushing down
-                          tick={false} // Hide default Recharts ticks and labels
-                          axisLine={false} // Hide X-axis line
-                          // tickFormatter={(value) => value.toLocaleString(undefined, {minimumFractionDigits: 0})} // Formatter will be used in custom div
-                          height={1} // Minimize height as it's now invisible
+                          tick={false}
+                          axisLine={false}
+                          height={1}
                           tickMargin={0} 
-                        >
-                           {/* <RechartsChartLabel 
-                            offset={-15} 
-                            position="insideBottom" 
-                            fontSize={10}
-                            fill="#a1a1aa"
-                          >
-                            Tick
-                          </RechartsChartLabel> */}
-                        </XAxis>
-                        
+                        />
                         <YAxis 
-                          hide={true} // Hide the Y-axis
+                          hide={true}
                           yAxisId="leftCumulativeUnifiedValueAxis" 
                           orientation="left"
                           dataKey="cumulativeUnifiedValue" 
@@ -2413,25 +2063,15 @@ export function AddLiquidityModal({
                           tickFormatter={(value) => value.toLocaleString(undefined, {maximumFractionDigits: 2, minimumFractionDigits: 2})} 
                           axisLine={{ stroke: "#a1a1aa", strokeOpacity: 0.5 }}
                           tickLine={{ stroke: "#a1a1aa", strokeOpacity: 0.5 }}
-                        >
-                          {/* <RechartsChartLabel 
-                            angle={-90} 
-                            position="insideLeft" 
-                            style={{ textAnchor: 'middle', fontSize: 10, fill:'#a1a1aa' }}
-                          >
-                            {poolToken0 ? `Cumulative Liquidity (in ${poolToken0.symbol})` : "Cumulative Unified Liquidity"}
-                          </RechartsChartLabel> */}
-                        </YAxis>
-
-                        {/* Hidden Y-Axis for any other reference lines if needed, not directly used by main data now */}
+                        />
                         <YAxis hide={true} yAxisId="rightHiddenMiscAxis" /> 
                         
                         {simplifiedChartPlotData && simplifiedChartPlotData.length > 0 && (
                           <Area 
                             type="stepBefore" 
-                            dataKey="displayCumulativeValue" // Use the scaled value
-                            yAxisId="leftCumulativeUnifiedValueAxis" // Changed YAxis ID
-                            name={poolToken0 ? `Cumulative Liquidity (in ${poolToken0.symbol})` : "Cumulative Unified Liquidity"} // Updated Name
+                            dataKey="displayCumulativeValue"
+                            yAxisId="leftCumulativeUnifiedValueAxis"
+                            name={poolToken0 ? `Cumulative Liquidity (in ${poolToken0.symbol})` : "Cumulative Unified Liquidity"}
                             stroke="hsl(var(--chart-2))" 
                             fill="hsl(var(--chart-2))"   
                             fillOpacity={0.2}
@@ -2442,47 +2082,23 @@ export function AddLiquidityModal({
                         {currentPoolTick !== null && (
                           <ReferenceLine 
                             x={currentPoolTick} 
-                            stroke="#e85102" // Orange color for current tick line
+                            stroke="#e85102"
                             strokeWidth={1.5} 
-                            ifOverflow="extendDomain" // Ensures the line is visible even if currentPoolTick is outside the initial xDomain
-                            yAxisId="leftCumulativeUnifiedValueAxis" // Associate with an axis, even if hidden for rendering
+                            ifOverflow="extendDomain"
+                            yAxisId="leftCumulativeUnifiedValueAxis"
                           />
                         )}
                         
-                        {/* ReferenceArea and ReferenceLine are based on PRICE, which is not the X-axis now. Temporarily disable them. */}
-                        {/* {mockSelectedPriceRange && mockSelectedPriceRange[0] < mockSelectedPriceRange[1] && (
-                           <ReferenceArea 
-                             x1={mockSelectedPriceRange[0]} 
-                             x2={mockSelectedPriceRange[1]} 
-                             yAxisId="rightHiddenMiscAxis" 
-                             strokeOpacity={0} 
-                             fill="#e85102" 
-                             fillOpacity={0.25} 
-                             ifOverflow="hidden"
-                             shape={<RoundedTopReferenceArea />}
-                           />
-                        )} 
-                        
-                        {currentPriceLine !== null && (
-                          <ReferenceLine 
-                            x={currentPriceLine} 
-                            stroke="#e85102" 
-                            strokeWidth={1.5} 
-                            ifOverflow="extendDomain" 
-                            yAxisId="rightHiddenMiscAxis" 
-                          />
-                        )} */}
-                        {/* ReferenceArea based on selected Ticks */}
                         {isOpen && !isPoolStateLoading && parseInt(tickLower) < parseInt(tickUpper) && isFinite(parseInt(tickLower)) && isFinite(parseInt(tickUpper)) && (
                           <ReferenceArea 
                             x1={parseInt(tickLower)} 
                             x2={parseInt(tickUpper)} 
-                            yAxisId="leftCumulativeUnifiedValueAxis" // Should use the same YAxis as the main data
+                            yAxisId="leftCumulativeUnifiedValueAxis"
                             strokeOpacity={0} 
                             fill="#e85102" 
                             fillOpacity={0.25} 
-                            ifOverflow="extendDomain" // Use extendDomain to ensure visibility if range is outside initial xDomain
-                            shape={<RoundedTopReferenceArea />} // Assuming this shape is still desired
+                            ifOverflow="extendDomain"
+                            shape={<RoundedTopReferenceArea />}
                           />
                         )}
                         
@@ -2492,19 +2108,16 @@ export function AddLiquidityModal({
                             stroke="#e85102" 
                             strokeWidth={1.5} 
                             ifOverflow="extendDomain" 
-                            yAxisId="leftCumulativeUnifiedValueAxis" // Associate with an axis, even if hidden for rendering
+                            yAxisId="leftCumulativeUnifiedValueAxis"
                           />
                         )}
                       </ComposedChart>
                     </ResponsiveContainer>
-                    {/* Graph Controls Overlay - only show if chart is active. Zoom/Pan might need tick-based logic. */}
-                    {/* {!isPoolStateLoading && currentPriceLine !== null && ( ... )} */}
-                    
                   </div>
                   {/* --- END Recharts Graph --- */}
 
                   {/* --- BEGIN Custom X-Axis Labels Div --- */}
-                  <div className="flex justify-between w-full px-[5px] box-border !mt-1"> {/* Match chart right/left margin approx. */}
+                  <div className="flex justify-between w-full px-[5px] box-border !mt-1">
                     {customXAxisTicks.map((labelItem, index) => (
                       <span key={index} className="text-xs text-muted-foreground">
                         {labelItem.displayLabel}
@@ -2560,20 +2173,14 @@ export function AddLiquidityModal({
                           <div className="h-4 w-40 bg-muted/40 rounded animate-pulse"></div>
                         ) : currentPrice && !isCalculating ? (
                           baseTokenForPriceDisplay === token0Symbol ? (
-                            // User wants to see: "1 [Token1] = X [Token0]"
-                            // currentPrice is Price of T0 in T1 (e.g., YUSDC per BTCRL)
-                            // So, to get Price of T1 in T0, we need 1 / currentPrice
                             `1 ${token1Symbol} = ${(1 / parseFloat(currentPrice)).toLocaleString(undefined, { 
                               minimumFractionDigits: TOKEN_DEFINITIONS[token0Symbol]?.displayDecimals || 2, 
-                              maximumFractionDigits: TOKEN_DEFINITIONS[token0Symbol]?.displayDecimals || (token0Symbol === 'BTCRL' || token0Symbol === 'YUSDC' ? 4 : 5) // Increased max for precision
+                              maximumFractionDigits: TOKEN_DEFINITIONS[token0Symbol]?.displayDecimals || (token0Symbol === 'BTCRL' || token0Symbol === 'YUSDC' ? 4 : 5)
                             })} ${token0Symbol}`
                           ) : (
-                            // User wants to see: "1 [Token0] = Y [Token1]"
-                            // currentPrice is Price of T0 in T1 (e.g., YUSDC per BTCRL)
-                            // This is already the value we need.
                             `1 ${token0Symbol} = ${parseFloat(currentPrice).toLocaleString(undefined, { 
-                              minimumFractionDigits: TOKEN_DEFINITIONS[token1Symbol]?.displayDecimals || (token1Symbol === 'BTCRL' || token1Symbol === 'YUSDC' ? 6 : 4), // Adjusted min for small values
-                              maximumFractionDigits: TOKEN_DEFINITIONS[token1Symbol]?.displayDecimals || (token1Symbol === 'BTCRL' || token1Symbol === 'YUSDC' ? 8 : 5) // Increased max for precision
+                              minimumFractionDigits: TOKEN_DEFINITIONS[token1Symbol]?.displayDecimals || (token1Symbol === 'BTCRL' || token1Symbol === 'YUSDC' ? 6 : 4),
+                              maximumFractionDigits: TOKEN_DEFINITIONS[token1Symbol]?.displayDecimals || (token1Symbol === 'BTCRL' || token1Symbol === 'YUSDC' ? 8 : 5)
                             })} ${token1Symbol}`
                           )
                         ) : isCalculating ? (
@@ -2630,8 +2237,13 @@ export function AddLiquidityModal({
                                   id="amount0"
                                   placeholder="0.0"
                                   value={amount0}
-                                  onChange={(e) => { setAmount0(e.target.value); setActiveInputSide('amount0'); }} 
-                                  type="number"
+                                  onChange={(e) => { 
+                                    const newValue = e.target.value; 
+                                    if (preparedTxData) { resetTransactionState(); } 
+                                    setAmount0(newValue); 
+                                    setActiveInputSide('amount0'); 
+                                  }} 
+                                  type={amount0.startsWith('<') ? "text" : "number"}
                                   disabled={isWorking || isCalculating && activeInputSide === 'amount1'}
                                   className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto no-arrows"
                                />
@@ -2666,8 +2278,13 @@ export function AddLiquidityModal({
                                 id="amount1"
                                 placeholder="0.0"
                                 value={amount1}
-                                onChange={(e) => { setAmount1(e.target.value); setActiveInputSide('amount1'); }} 
-                                type="number"
+                                onChange={(e) => { 
+                                  const newValue = e.target.value; 
+                                  if (preparedTxData) { resetTransactionState(); } 
+                                  setAmount1(newValue); 
+                                  setActiveInputSide('amount1'); 
+                                }} 
+                                type={amount1.startsWith('<') ? "text" : "number"}
                                 disabled={isWorking || isCalculating && activeInputSide === 'amount0'}
                                 className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto no-arrows"
                             />
@@ -2682,15 +2299,14 @@ export function AddLiquidityModal({
                         <div className="flex items-center justify-between">
                             <span>Token Approvals</span>
                             <span>
-                              { (step === 'approve' && (isApproveWritePending || isApproving)) || (step === 'permit2Sign' && (isPermit2SendPending || isPermit2Confirming)) 
+                              { (step === 'approve' && (isApproveWritePending || isApproving)) || 
+                                (step === 'permit2Sign' && (isPermit2SendPending || isPermit2Confirming)) 
                                 ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
-                                : Object.values(tokenApprovalStatus).filter(Boolean).length >= tokensRequiringApproval && tokensRequiringApproval > 0 
-                                  ? <CheckIcon className="h-4 w-4 text-green-500" />
-                                  : step === 'approve' || step === 'permit2Sign' || (preparedTxData?.approvalType === 'ERC20_TO_PERMIT2') || (preparedTxData?.approvalType === 'PERMIT2_SIGNATURE_FOR_PM')
-                                    ? <span className="text-xs font-mono">{`${Object.values(tokenApprovalStatus).filter(Boolean).length}/${tokensRequiringApproval > 0 ? tokensRequiringApproval : '-'}`}</span>
-                                    : tokensRequiringApproval === 0 // No amounts entered
-                                      ? <MinusIcon className="h-4 w-4" />
-                                      : <span className="text-xs font-mono">{`0/${tokensRequiringApproval > 0 ? tokensRequiringApproval : '-'}`}</span>
+                                : (
+                                  <span className={`text-xs font-mono ${completedTokensCount === involvedTokensCount && involvedTokensCount > 0 ? 'text-green-500' : ''}`}>
+                                    {`${completedTokensCount}/${involvedTokensCount > 0 ? involvedTokensCount : '-'}`}
+                                  </span>
+                                )
                               }
                             </span>
                         </div>
@@ -2699,7 +2315,7 @@ export function AddLiquidityModal({
                             <span>
                                 {isMintConfirming || isMintSendPending ? 
                                   <ActivityIcon className="h-4 w-4 animate-pulse text-muted-foreground" />
-                                 : isMintConfirmed ? <CheckIcon className="h-4 w-4 text-green-500" /> 
+                                 : isMintConfirming ? <CheckIcon className="h-4 w-4 text-green-500" />  // Changed from isMintConfirmed
                                  : <MinusIcon className="h-4 w-4" />}
                             </span>
                         </div>
@@ -2709,44 +2325,59 @@ export function AddLiquidityModal({
                     <Button
                       variant="outline"
                       onClick={() => {
-                        if (step === 'approve' || step === 'mint' || step === 'permit2Sign') { // Added permit2Sign
-                          resetInternalTxState(); 
+                        if (step === 'approve' || step === 'mint' || step === 'permit2Sign') {
+                          resetTransactionState(); 
                         } else {
                           onOpenChange(false);
                         }
                       }}
                       disabled={isCalculating || 
                                 (step ==='approve' && (isApproveWritePending || isApproving)) || 
-                                (step === 'permit2Sign' && (isPermit2SendPending || isPermit2Confirming)) || // Ensured isPermit2Confirming is checked
+                                (step === 'permit2Sign' && (isPermit2SendPending || isPermit2Confirming)) ||
                                 (step ==='mint' && (isMintSendPending || isMintConfirming))}
                       className="border-slate-300 bg-slate-100 hover:bg-slate-200 dark:border-zinc-700 dark:bg-zinc-800 dark:hover:bg-zinc-700 disabled:opacity-50"
                     >
                       {step === 'approve' || step === 'mint' || step === 'permit2Sign' ? 'Cancel & Edit' : 'Change Pool'}
                     </Button>
-                    <Button
-                      onClick={() => {
-                        if (step === 'input') handlePrepareMint(false);
-                        else if (step === 'approve') handleApprove();
-                        else if (step === 'permit2Sign') handleSignAndSubmitPermit2(); 
-                        else if (step === 'mint') handleMint();
-                      }}
-                      disabled={isWorking || // Re-checked this whole block
-                        isCalculating ||
-                        isPoolStateLoading || 
-                        isApproveWritePending ||
-                        isPermit2SendPending || 
-                        isMintSendPending || // Ensured isMintSendPending is checked
-                        (step === 'input' && ((!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0")) || !calculatedData))
-                      }
-                    >
-                      {isPoolStateLoading ? 'Loading Pool...' 
-                        : step === 'input' ? 'Deposit' 
-                        : step === 'approve' ? `Approve ${preparedTxData?.approvalTokenSymbol || 'Token'} for Permit2` 
-                        : step === 'permit2Sign' ? `Sign for ${permit2SignatureRequest?.approvalTokenSymbol || 'Token'} via Permit2`
-                        : step === 'mint' ? 'Confirm Mint' 
-                        : 'Processing...' 
-                      }
-                    </Button>
+                    {!isConnected ? (
+                      <div className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md bg-accent text-accent-foreground px-3 text-sm font-medium transition-colors hover:bg-accent/90 shadow-md">
+                        {/* 
+                          The AppKit button will handle the wallet connection. 
+                          Ensure your project has AppKit configured for this to work.
+                          If you are using a different wallet connection library (e.g. Web3Modal, RainbowKit directly),
+                          you might need to use its specific button component here.
+                        */}
+                        <appkit-button className="absolute inset-0 z-10 block h-full w-full cursor-pointer p-0 opacity-0" />
+                        <span className="relative z-0 pointer-events-none">Connect Wallet</span>
+                      </div>
+                    ) : (
+                      <Button
+                        onClick={() => {
+                          if (step === 'input') handlePrepareMint(); // User explicitly clicks to prepare/proceed
+                          else if (step === 'approve') handleApprove();
+                          else if (step === 'permit2Sign') handleSignAndSubmitPermit2();
+                          else if (step === 'mint') handleMint();
+                        }}
+                        disabled={isWorking || 
+                          isCalculating ||
+                          isPoolStateLoading || 
+                          isApproveWritePending ||
+                          isPermit2SendPending || 
+                          isMintSendPending ||
+                          // Disable main button if in input step, no amounts, AND no existing preparedTxData to re-attempt/proceed with.
+                          (step === 'input' && (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0")) && !preparedTxData) ||
+                          (step === 'input' && isInsufficientBalance) // New condition: disable if insufficient balance in input step
+                        }
+                      >
+                        {isPoolStateLoading ? 'Loading Pool...' 
+                          : step === 'input' ? (preparedTxData && (parseFloat(amount0 || "0") > 0 || parseFloat(amount1 || "0") > 0) ? 'Proceed' : 'Prepare Deposit') 
+                          : step === 'approve' ? `Approve ${preparedTxData?.approvalTokenSymbol || 'Token'}` 
+                          : step === 'permit2Sign' ? 'Sign Permissions'
+                          : step === 'mint' ? 'Confirm Mint' 
+                          : 'Processing...' 
+                        }
+                      </Button>
+                    )}
                   </DialogFooter>
                 </CardContent>
               </Card>
