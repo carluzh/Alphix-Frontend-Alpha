@@ -79,7 +79,7 @@ const BTCRL_ADDRESS = TOKEN_DEFINITIONS.BTCRL.addressRaw as Address; // UPDATED 
 const MaxUint160 = BigInt('0xffffffffffffffffffffffffffffffffffffffff'); // 2**160 - 1
 
 // Enhanced Token interface
-interface Token {
+export interface Token {
   address: `0x${string}`;
   symbol: string;
   name: string;
@@ -93,13 +93,13 @@ interface Token {
 // Define our two specific tokens with initial empty balance/value
 const initialYUSD: Token = {
   address: YUSD_ADDRESS, // Will use the updated YUSD_ADDRESS
-  symbol: "YUSD", // Internal symbol, matches usage in bodyForSwapTx
+  symbol: "YUSDC", // Update to match TOKEN_DEFINITIONS
   name: "Yama USD", // Consider "Yama USDC" for clarity if TOKEN_DEFINITIONS.YUSDC.name exists
   decimals: TOKEN_DEFINITIONS.YUSDC.decimals, // UPDATED - Use YUSDC decimals from constants
   balance: "0.000",
   value: "$0.00",
   icon: "/YUSD.png", // Placeholder icon
-  usdPrice: 1,
+  usdPrice: 1, // Will be updated dynamically
 };
 
 const initialBTCRL: Token = {
@@ -110,7 +110,7 @@ const initialBTCRL: Token = {
   balance: "0.000",
   value: "$0.00",
   icon: "/BTCRL.png", // Placeholder icon
-  usdPrice: 77000,
+  usdPrice: 77000, // Will be updated dynamically
 };
 
 // Enhanced swap flow states
@@ -130,7 +130,7 @@ interface SwapTxInfo {
 }
 
 // Interface for Fee Details
-interface FeeDetail {
+export interface FeeDetail {
   name: string;
   value: string;
   type: "percentage" | "usd";
@@ -157,7 +157,7 @@ const InfoToastIcon = () => (
 );
 
 // Interface for OutlineArcIcon props
-interface OutlineArcIconProps {
+export interface OutlineArcIconProps {
   actualPercentage: number;
   steppedPercentage: number;
   hoverPercentage?: number | null;
@@ -167,7 +167,7 @@ interface OutlineArcIconProps {
 }
 
 // OutlineArcIcon component definition
-function OutlineArcIcon({ actualPercentage, steppedPercentage, hoverPercentage, isOverLimit, size = 16, className }: OutlineArcIconProps) {
+export function OutlineArcIcon({ actualPercentage, steppedPercentage, hoverPercentage, isOverLimit, size = 16, className }: OutlineArcIconProps) {
   const r = 6; const cx = 8; const cy = 8; const strokeWidth = 2; // INCREASED strokeWidth
   const clampedActualPercentageForDisplay = Math.max(0, Math.min(100, actualPercentage));
   const angleStartOffset = -Math.PI / 2;
@@ -297,12 +297,34 @@ function OutlineArcIcon({ actualPercentage, steppedPercentage, hoverPercentage, 
 }
 
 export function SwapInterface() {
-  const isMobile = useIsMobile(); // Re-added hook usage
-  const [swapState, setSwapState] = useState<SwapState>("input")
-  // Add new states for real swap execution
-  const [swapProgressState, setSwapProgressState] = useState<SwapProgressState>("init")
-  const [swapTxInfo, setSwapTxInfo] = useState<SwapTxInfo | null>(null)
-  const [swapError, setSwapError] = useState<string | null>(null)
+  // Mobile check for responsive behaviors
+  const isMobile = useIsMobile();
+  const [isMounted, setIsMounted] = useState(false);
+  useEffect(() => { setIsMounted(true); }, []);
+  
+  const [swapState, setSwapState] = useState<SwapState>("input");
+  const [swapProgressState, setSwapProgressState] = useState<SwapProgressState>("init");
+  const [isSwapping, setIsSwapping] = useState(false);
+  const [completedSteps, setCompletedSteps] = useState<SwapProgressState[]>([]);
+  const [isAttemptingSwitch, setIsAttemptingSwitch] = useState(false);
+  const [isWrongNetworkToastActive, setIsWrongNetworkToastActive] = useState(false);
+  const wrongNetworkToastIdRef = useRef<string | number | undefined>(undefined);
+  const swapTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const reviewNotificationsShown = useRef({ needs_approval: false, needs_signature: false, approval_complete: false, signature_complete: false });
+  const [isSellInputFocused, setIsSellInputFocused] = useState(false);
+  
+  // V4 Quoter states
+  const [quoteLoading, setQuoteLoading] = useState(false);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
+
+  // Tokens for swap (with token data stored in state)
+  const [fromToken, setFromToken] = useState<Token>(initialYUSD);
+  const [toToken, setToToken] = useState<Token>(initialBTCRL);
+  const [fromAmount, setFromAmount] = useState("");
+  const [toAmount, setToAmount] = useState("");
+
+  const [swapTxInfo, setSwapTxInfo] = useState<SwapTxInfo | null>(null);
+  const [swapError, setSwapError] = useState<string | null>(null);
 
   // State for historical fee data
   const [feeHistoryData, setFeeHistoryData] = useState<FeeHistoryPoint[]>([]);
@@ -314,13 +336,29 @@ export function SwapInterface() {
   const [currentPermitDetailsForSign, setCurrentPermitDetailsForSign] = useState<any | null>(null);
   const [obtainedSignature, setObtainedSignature] = useState<Hex | null>(null);
 
-  const [fromToken, setFromToken] = useState<Token>(initialYUSD);
-  const [toToken, setToToken] = useState<Token>(initialBTCRL);
+  const [selectedPercentageIndex, setSelectedPercentageIndex] = useState(-1);
+  const cyclePercentages = [25, 50, 75, 100];
+  const [hoveredArcPercentage, setHoveredArcPercentage] = useState<number | null>(null);
 
-  const [fromAmount, setFromAmount] = useState("0");
-  const [toAmount, setToAmount] = useState("");
+  const { address: accountAddress, isConnected, chainId: currentChainId } = useAccount();
 
-  const [isSwapping, setIsSwapping] = useState(false) // For swap simulation UI
+  // Add state for dynamic fee
+  const [dynamicFeeBps, setDynamicFeeBps] = useState<number | null>(null);
+  const [dynamicFeeLoading, setDynamicFeeLoading] = useState<boolean>(false);
+  const [dynamicFeeError, setDynamicFeeError] = useState<string | null>(null);
+  const isFetchingDynamicFeeRef = useRef(false);
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null); // This will be removed
+  const intervalTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Add necessary hooks for swap execution
+  const { signTypedDataAsync } = useSignTypedData();
+  const { data: swapTxHash, writeContractAsync: sendSwapTx, isPending: isSwapTxPending, error: swapTxError } = useWriteContract();
+  const { data: approvalTxHash, writeContractAsync: sendApprovalTx, isPending: isApprovalTxPending, error: approvalTxError } = useWriteContract();
+  
+  const { isLoading: isConfirmingSwap, isSuccess: isSwapConfirmed, error: swapConfirmError } = 
+    useWaitForTransactionReceipt({ hash: swapTxHash });
+  const { isLoading: isConfirmingApproval, isSuccess: isApprovalConfirmed, error: approvalConfirmError } = 
+    useWaitForTransactionReceipt({ hash: approvalTxHash });
 
   // Simplified calculatedValues - primarily for display consistency
   const [calculatedValues, setCalculatedValues] = useState<{
@@ -341,53 +379,12 @@ export function SwapInterface() {
     slippage: "0.5%",
   });
 
-  const swapTimerRef = useRef<number | null>(null)
-  const [selectedPercentageIndex, setSelectedPercentageIndex] = useState(-1);
-  const cyclePercentages = [25, 50, 75, 100];
-  const [hoveredArcPercentage, setHoveredArcPercentage] = useState<number | null>(null);
-
-  const { address: accountAddress, isConnected, chainId: currentChainId } = useAccount()
-  const [isAttemptingSwitch, setIsAttemptingSwitch] = useState(false);
-  const [isSellInputFocused, setIsSellInputFocused] = useState(false);
-  const [isMounted, setIsMounted] = useState(false);
-  useEffect(() => { setIsMounted(true); }, []);
-
   // Effect to generate mock fee history data once on mount
   useEffect(() => {
     if (isMounted) { // Ensure it runs client-side
       setFeeHistoryData(generateMockFeeHistory());
     }
   }, [isMounted]);
-
-  // Ref to track if review state notifications have been shown
-  const reviewNotificationsShown = useRef({
-     needs_approval: false, 
-     needs_signature: false, 
-     approval_complete: false, 
-     signature_complete: false 
-     // NO permit_check_triggered flag needed here
-  });
-
-  // Add state for dynamic fee
-  const [dynamicFeeBps, setDynamicFeeBps] = useState<number | null>(null);
-  const [dynamicFeeLoading, setDynamicFeeLoading] = useState<boolean>(false);
-  const [dynamicFeeError, setDynamicFeeError] = useState<string | null>(null);
-  const isFetchingDynamicFeeRef = useRef(false);
-  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null); // This will be removed
-  const intervalTimerRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Add necessary hooks for swap execution
-  const { signTypedDataAsync } = useSignTypedData()
-  const { data: swapTxHash, writeContractAsync: sendSwapTx, isPending: isSwapTxPending, error: swapTxError } = useWriteContract()
-  const { data: approvalTxHash, writeContractAsync: sendApprovalTx, isPending: isApprovalTxPending, error: approvalTxError } = useWriteContract()
-  
-  const { isLoading: isConfirmingSwap, isSuccess: isSwapConfirmed, error: swapConfirmError } = 
-    useWaitForTransactionReceipt({ hash: swapTxHash })
-  const { isLoading: isConfirmingApproval, isSuccess: isApprovalConfirmed, error: approvalConfirmError } = 
-    useWaitForTransactionReceipt({ hash: approvalTxHash })
-
-  const wrongNetworkToastIdRef = useRef<string | number | undefined>(undefined);
-  const [isWrongNetworkToastActive, setIsWrongNetworkToastActive] = useState(false);
 
   // Effect to fetch dynamic fee for display
   const fetchFee = useCallback(async () => {
@@ -504,9 +501,6 @@ export function SwapInterface() {
     
     // Note: We're NOT clearing existingPermitData
   };
-
-  // First, add state to track completed steps
-  const [completedSteps, setCompletedSteps] = useState<SwapProgressState[]>([]);
 
   // Effect for handling wrong network notification
   useEffect(() => {
@@ -693,19 +687,84 @@ export function SwapInterface() {
     }
   }, []); // Dependency on useCallback - no external dependencies needed here typically
 
-  // The formatTokenAmount function will now be removed or replaced by formatTokenAmountDisplay where needed.
-  // The Buy input will use its specific toFixed logic.
-
-  // Effect to calculate toAmount
+  // Replace the useEffect that calculates toAmount with V4 Quoter
   useEffect(() => {
     const fromValue = parseFloat(fromAmount);
-    if (!isNaN(fromValue) && fromValue > 0 && fromToken.usdPrice > 0 && toToken.usdPrice > 0) {
-      const calculatedTo = (fromValue * fromToken.usdPrice) / toToken.usdPrice;
-      setToAmount(calculatedTo.toFixed(toToken.decimals));
-    } else {
+    
+    // If invalid input or tokens, clear the output
+    if (isNaN(fromValue) || fromValue <= 0 || !fromToken || !toToken) {
       setToAmount("");
+      return;
     }
-  }, [fromAmount, fromToken, toToken]);
+    
+    // Set a debounce timer to prevent too many API calls during fast typing
+    const timer = setTimeout(async () => {
+      // Only call the API if we're connected and on the right network
+      if (isConnected && currentChainId === TARGET_CHAIN_ID) {
+        try {
+          // Show subtle loading state
+          setQuoteLoading(true);
+          console.log('🔍 V4 Quoter: Fetching quote for', fromAmount, fromToken.symbol, '→', toToken.symbol);
+          
+          const response = await fetch('/api/swap/get-quote', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              fromTokenSymbol: fromToken.symbol === 'YUSDC' ? 'YUSDC' : 'BTCRL', // Always use valid TOKEN_DEFINITIONS keys
+              toTokenSymbol: toToken.symbol === 'YUSDC' ? 'YUSDC' : 'BTCRL', // Always use valid TOKEN_DEFINITIONS keys
+              amountDecimalsStr: fromAmount,
+              chainId: currentChainId,
+              debug: true // Use debug mode to avoid contract call errors
+            }),
+          });
+
+          const data = await response.json();
+          console.log('📊 V4 Quoter Response:', data);
+          
+          if (response.ok && data.success) {
+            // Set the quoted amount in the UI
+            setToAmount(data.toAmount);
+            setQuoteError(null);
+            console.log('✅ V4 Quoter: Quote successful -', fromAmount, fromToken.symbol, '→', data.toAmount, toToken.symbol);
+          } else {
+            console.error('❌ V4 Quoter Error:', data.error);
+            
+            // Show a toast with the error
+            toast.error(`Quote Error: ${data.error || 'Failed to get quote'}`);
+            
+            setQuoteError(data.error || 'Failed to get quote');
+            
+            // Fallback to the calculation using current prices
+            const calculatedTo = (fromValue * fromToken.usdPrice) / toToken.usdPrice;
+            setToAmount(calculatedTo.toFixed(toToken.decimals));
+            console.log('⚠️ V4 Quoter: Falling back to calculated price. From: $' + fromToken.usdPrice + ', To: $' + toToken.usdPrice);
+          }
+        } catch (error: any) {
+          console.error('❌ V4 Quoter Exception:', error);
+          
+          // Show a toast with the error
+          toast.error(`Quote Error: ${error.message || 'Failed to fetch quote'}`);
+          
+          setQuoteError('Failed to fetch quote');
+          
+          // Fallback to the calculation using current prices
+          const calculatedTo = (fromValue * fromToken.usdPrice) / toToken.usdPrice;
+          setToAmount(calculatedTo.toFixed(toToken.decimals));
+          console.log('⚠️ V4 Quoter: Falling back to calculated price. From: $' + fromToken.usdPrice + ', To: $' + toToken.usdPrice);
+        } finally {
+          // Clear loading state
+          setQuoteLoading(false);
+        }
+      } else {
+        // Fallback to the calculation using current prices
+        const calculatedTo = (fromValue * fromToken.usdPrice) / toToken.usdPrice;
+        setToAmount(calculatedTo.toFixed(toToken.decimals));
+        console.log('ℹ️ V4 Quoter: Using calculated price (not connected or wrong network). From: $' + fromToken.usdPrice + ', To: $' + toToken.usdPrice);
+      }
+    }, 500); // 500ms debounce
+    
+    return () => clearTimeout(timer);
+  }, [fromAmount, fromToken, toToken, isConnected, currentChainId, TARGET_CHAIN_ID]);
 
   // Update calculatedValues for UI display
   useEffect(() => {
@@ -1197,8 +1256,12 @@ export function SwapInterface() {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        fromTokenSymbol: Object.keys(TOKEN_DEFINITIONS).find(key => TOKEN_DEFINITIONS[key as TokenSymbol].addressRaw === fromToken.address),
-                        toTokenSymbol: Object.keys(TOKEN_DEFINITIONS).find(key => TOKEN_DEFINITIONS[key as TokenSymbol].addressRaw === toToken.address),
+                        fromTokenSymbol: Object.keys(TOKEN_DEFINITIONS).find(key => 
+                            TOKEN_DEFINITIONS[key as TokenSymbol].addressRaw === fromToken.address
+                        ) as TokenSymbol,
+                        toTokenSymbol: Object.keys(TOKEN_DEFINITIONS).find(key => 
+                            TOKEN_DEFINITIONS[key as TokenSymbol].addressRaw === toToken.address
+                        ) as TokenSymbol,
                         chainId: TARGET_CHAIN_ID,
                     }),
                 });
@@ -1228,8 +1291,8 @@ export function SwapInterface() {
 
             const bodyForSwapTx = {
                  userAddress: accountAddress,
-                 fromTokenSymbol: fromToken.symbol === 'YUSD' ? 'YUSDC' : 'BTCRL', 
-                 toTokenSymbol: toToken.symbol === 'YUSD' ? 'YUSDC' : 'BTCRL',
+                 fromTokenSymbol: fromToken.symbol === 'YUSDC' ? 'YUSDC' : 'BTCRL', // Always use valid TOKEN_DEFINITIONS keys
+                 toTokenSymbol: toToken.symbol === 'YUSDC' ? 'YUSDC' : 'BTCRL', // Always use valid TOKEN_DEFINITIONS keys
                  swapType: 'ExactIn', // Assuming ExactIn, adjust if dynamic
                  amountDecimalsStr: fromAmount, // The actual amount user wants to swap
                  limitAmountDecimalsStr: "0", // Placeholder for min received, API might calculate or take this
@@ -1590,6 +1653,98 @@ export function SwapInterface() {
     fetchHistoricalFeeData();
   }, [fromToken, toToken, isConnected, currentChainId, TARGET_CHAIN_ID]); // Dependencies: fromToken, toToken, isConnected, currentChainId
 
+  // Helper functions for action button text and disabled state
+  const getActionButtonText = (): string => {
+    if (!isMounted) {
+      return "Loading...";
+    } else if (isConnected) {
+      if (currentChainId !== TARGET_CHAIN_ID) {
+        return isAttemptingSwitch ? "Switching..." : "Switch to Base Sepolia";
+      } else if (isLoadingCurrentFromTokenBalance || isLoadingCurrentToTokenBalance) {
+        return "Loading Balances...";
+      } else {
+        return "Swap";
+      }
+    } else {
+      return "Connect Wallet";
+    }
+  };
+
+  const getActionButtonDisabled = (): boolean => {
+    if (!isMounted) {
+      return true;
+    } else if (isConnected) {
+      if (currentChainId !== TARGET_CHAIN_ID) {
+        return isAttemptingSwitch;
+      } else if (isLoadingCurrentFromTokenBalance || isLoadingCurrentToTokenBalance) {
+        return true;
+      } else {
+        return parseFloat(fromAmount || "0") <= 0;
+      }
+    } else {
+      return false; // <appkit-button> handles its own state
+    }
+  };
+
+  // Add state for token prices
+  const [tokenPrices, setTokenPrices] = useState<{
+    BTC: number;
+    USDC: number;
+    timestamp?: number;
+  }>({
+    BTC: 77000, // Default fallback price
+    USDC: 1,    // Default fallback price
+  });
+  
+  // Effect to fetch token prices periodically
+  useEffect(() => {
+    if (!isMounted) return;
+    
+    // Function to fetch prices
+    const fetchPrices = async () => {
+      try {
+        const response = await fetch('/api/prices/get-token-prices');
+        if (!response.ok) {
+          throw new Error(`Error fetching prices: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        console.log('📈 Token prices fetched:', data);
+        
+        setTokenPrices(data);
+      } catch (error) {
+        console.error('Error fetching token prices:', error);
+        // Keep using existing prices as fallback
+      }
+    };
+    
+    // Fetch prices immediately
+    fetchPrices();
+    
+    // Set up periodic refresh (every 5 minutes)
+    const priceRefreshInterval = setInterval(fetchPrices, 5 * 60 * 1000);
+    
+    return () => {
+      clearInterval(priceRefreshInterval);
+    };
+  }, [isMounted]);
+  
+  // Update token price when tokenPrices changes
+  useEffect(() => {
+    if (!tokenPrices) return;
+    
+    setFromToken(prev => ({
+      ...prev,
+      usdPrice: prev.symbol === 'BTCRL' ? tokenPrices.BTC : tokenPrices.USDC
+    }));
+    
+    setToToken(prev => ({
+      ...prev,
+      usdPrice: prev.symbol === 'BTCRL' ? tokenPrices.BTC : tokenPrices.USDC
+    }));
+    
+  }, [tokenPrices]);
+
   return (
     <div className="flex flex-col gap-4"> {/* Removed items-center */}
       {/* Main Swap Interface Card */}
@@ -1600,204 +1755,39 @@ export function SwapInterface() {
         <CardContent className="p-6 pt-6">
           <AnimatePresence mode="wait">
             {swapState === "input" && (
-              <motion.div key="input" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, y: -20 }} transition={{ duration: 0.2 }}>
-                {/* Sell Section - Uses `displayFromToken` */}
-                <div className="mb-6">
-                  <div className="flex items-center justify-between mb-2">
-                    <Label className="text-sm font-medium">Sell</Label>
-                    <div className="flex items-center gap-1">
-                      <Button variant="ghost" className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent" onClick={() => handleUseFullBalance(displayFromToken, true)} disabled={!isConnected}>
-                         Balance: { (isConnected ? (isLoadingCurrentFromTokenBalance ? "Loading..." : displayFromToken.balance) : "~")} {displayFromToken.symbol}
-                      </Button>
-                      <Button 
-                        variant="ghost" 
-                        size="icon" 
-                        className="h-5 w-5 rounded-full hover:bg-muted/40" 
-                        onClick={handleCyclePercentage} 
-                        onMouseEnter={handleMouseEnterArc}
-                        onMouseLeave={handleMouseLeaveArc}
-                        disabled={!isConnected}
-                      >
-                        <OutlineArcIcon 
-                          actualPercentage={actualNumericPercentage} // Pass potentially unclamped value
-                          steppedPercentage={currentSteppedPercentage}
-                          hoverPercentage={hoveredArcPercentage}
-                          isOverLimit={actualNumericPercentage > 100} // ADDED prop
-                        />
-                      </Button>
-                    </div>
-                  </div>
-                  <div className={cn("rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted", { "outline outline-1 outline-muted": isSellInputFocused })}> {/* Corrected cn usage */}
-                    <div className="flex items-center gap-2">
-                      {/* Token Display for FromToken - Non-interactive, shows current fromToken */}
-                      <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
-                        <Image src={displayFromToken.icon} alt={displayFromToken.symbol} width={20} height={20} className="rounded-full"/>
-                        <span className="text-sm">{displayFromToken.symbol}</span>
-                         {/* No ChevronDownIcon, as it's not a dropdown for selection now */}
-                      </div>
-                      <div className="flex-1">
-                        {/* Sell input is now enabled if wallet is connected */}
-                        <Input
-                          value={fromAmount}
-                          onChange={handleFromAmountChange}
-                          onFocus={() => setIsSellInputFocused(true)}
-                          onBlur={() => setIsSellInputFocused(false)}
-                          className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto input-enhanced focus-visible:rounded-none focus-visible:outline-none"
-                          placeholder="0"
-                          disabled={!isConnected || isAttemptingSwitch}
-                        />
-                        {/* Display formatted currency value below the amount */}
-                        <div className="text-right text-xs text-muted-foreground">
-                          {formatCurrency((parseFloat(fromAmount || "0") * displayFromToken.usdPrice).toString())}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex justify-center">
-                  <Button variant="ghost" size="icon" className="rounded-full bg-muted/30 z-10 h-8 w-8" onClick={handleSwapTokens} disabled={!isConnected || isAttemptingSwitch}>
-                    <ArrowDownIcon className="h-4 w-4" />
-                    <span className="sr-only">Swap tokens</span>
-                  </Button>
-                </div>
-
-                {/* Buy Section - Uses `displayToToken` */}
-                <div className="mb-6 mt-2">
-                  <div className="flex items-center justify-between mb-2">
-                    <Label className="text-sm font-medium">Buy</Label>
-                    {/* Balance display for toToken - added for consistency */}
-                     <span className={cn("text-xs text-muted-foreground", { "opacity-50": !isConnected })}> {/* Corrected cn usage */}
-                        Balance: { (isConnected ? (isLoadingCurrentToTokenBalance ? "Loading..." : displayToToken.balance) : "~")} {displayToToken.symbol}
-                      </span>
-                  </div>
-                  <div className="rounded-lg bg-muted/30 p-4">
-                    <div className="flex items-center gap-2">
-                       {/* Token Display for ToToken - Non-interactive */}
-                      <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
-                        <Image src={displayToToken.icon} alt={displayToToken.symbol} width={20} height={20} className="rounded-full"/>
-                        <span className="text-sm">{displayToToken.symbol}</span>
-                      </div>
-                      <div className="flex-1">
-                        <Input
-                          value={
-                            parseFloat(toAmount || "0") === 0
-                              ? "0"
-                              : parseFloat(toAmount || "0").toFixed(displayToToken.symbol === 'BTCRL' ? 8 : 2)
-                          }
-                          readOnly
-                          disabled={!isConnected || isAttemptingSwitch}
-                          className="border-0 bg-transparent text-right text-xl md:text-xl font-medium text-muted-foreground shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto focus-visible:rounded-none focus-visible:outline-none" // Kept text-xl size
-                          placeholder="0"
-                        />
-                        {/* Value display below the 'Buy' input */}
-                        <div className="text-right text-xs text-muted-foreground">
-                          {formatCurrency((parseFloat(toAmount || "0") * displayToToken.usdPrice).toString())}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Fee Information - Shows if connected on target chain */}
-                {isConnected && currentChainId === TARGET_CHAIN_ID && (
-                  <div className="space-y-1 text-sm mt-3"> {/* Adjusted spacing and margin */}
-                    {calculatedValues.fees.map((fee, index) => (
-                      <div key={index} className="flex items-center justify-between">
-                        <span className={cn(
-                          'text-xs text-muted-foreground flex items-center'
-                        )}>
-                          {fee.name}
-                        </span>
-                        {/* Conditional rendering for the VALUE/ICON part */}
-                        {fee.name === "Fee" ? (
-                          dynamicFeeLoading ? (
-                            // CASE 1: Fee is loading, show animated icon
-                            <motion.svg
-                              xmlns="http://www.w3.org/2000/svg"
-                              width="15"
-                              height="15"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              className="flex-shrink-0 -translate-y-0.5"
-                            >
-                              {[
-                                { x: 8, initialHeight: 7, fullHeight: 10 },
-                                { x: 13, initialHeight: 12, fullHeight: 15 },
-                                { x: 18, initialHeight: 10, fullHeight: 13 },
-                              ].map((bar, i) => {
-                                return (
-                                  <motion.line
-                                    key={i}
-                                    x1={bar.x}
-                                    y1={24}
-                                    x2={bar.x}
-                                    y2={24 - bar.initialHeight}
-                                    fill="currentColor"
-                                    stroke="currentColor"
-                                    strokeWidth={strokeWidth}
-                                    strokeLinecap="round"
-                                    animate={{
-                                      y2: [24 - bar.initialHeight, 24 - bar.fullHeight, 24 - bar.initialHeight],
-                                    }}
-                                    transition={{
-                                      duration: 0.8,
-                                      repeat: Infinity,
-                                      ease: "easeInOut",
-                                      delay: i * 0.15,
-                                    }}
-                                  />
-                                );
-                              })}
-                            </motion.svg>
-                          ) : ( // If it's the Fee row and not loading
-                            // CASE 2: Fee data is available (or error/N/A), show static value. Click removed.
-                            // The Button wrapper is removed, and onClick for preview toggling is removed.
-                            <span className={'text-xs text-foreground'}>
-                              {fee.value}
-                            </span>
-                          )
-                        ) : ( // If it's NOT the "Fee" row (e.g., "Fee Value (USD)")
-                          // CASE 4: Other fee details
-                          <span className={'text-xs text-muted-foreground'}>
-                            {fee.value}
-                          </span>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                <div className="mt-4 h-10">
-                  {!isMounted ? null : isConnected ? (
-                    <Button 
-                      className="w-full btn-primary"
-                      onClick={handleSwap} 
-                      disabled={actionButtonDisabled || 
-                                 (
-                                   parseFloat(fromAmount || "0") > 0 && // Only check balance if amount is entered
-                                   (
-                                     isNaN(parseFloat(fromToken.balance || "0")) || // Balance is not a number (e.g. "Loading...", "Error", "~")
-                                     parseFloat(fromToken.balance || "0") < parseFloat(fromAmount || "0") // Insufficient balance
-                                   )
-                                  )
-                                }
-                      >
-                      {actionButtonText}
-                    </Button>
-                  ) : (
-                    <div className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md bg-accent text-accent-foreground px-3 text-sm font-medium transition-colors hover:bg-accent/90 shadow-md">
-                      {/* The problematic appkit-button */}
-                      <appkit-button className="absolute inset-0 z-10 block h-full w-full cursor-pointer p-0 opacity-0" />
-                      <span className="relative z-0 pointer-events-none">{actionButtonText}</span>
-                    </div>
-                  )}
-                </div>
-              </motion.div>
+              <SwapInputView
+                displayFromToken={displayFromToken}
+                displayToToken={displayToToken}
+                fromAmount={fromAmount}
+                toAmount={toAmount}
+                handleFromAmountChange={handleFromAmountChange}
+                handleSwapTokens={handleSwapTokens}
+                handleUseFullBalance={handleUseFullBalance}
+                handleCyclePercentage={handleCyclePercentage}
+                handleMouseEnterArc={handleMouseEnterArc}
+                handleMouseLeaveArc={handleMouseLeaveArc}
+                actualNumericPercentage={actualNumericPercentage}
+                currentSteppedPercentage={currentSteppedPercentage}
+                hoveredArcPercentage={hoveredArcPercentage}
+                isSellInputFocused={isSellInputFocused}
+                setIsSellInputFocused={setIsSellInputFocused}
+                formatCurrency={formatCurrency}
+                isConnected={isConnected}
+                isAttemptingSwitch={isAttemptingSwitch}
+                isLoadingCurrentFromTokenBalance={isLoadingCurrentFromTokenBalance}
+                isLoadingCurrentToTokenBalance={isLoadingCurrentToTokenBalance}
+                calculatedValues={calculatedValues}
+                dynamicFeeLoading={dynamicFeeLoading}
+                quoteLoading={quoteLoading}
+                quoteError={quoteError}
+                actionButtonText={getActionButtonText()}
+                actionButtonDisabled={getActionButtonDisabled()}
+                handleSwap={handleSwap}
+                isMounted={isMounted}
+                currentChainId={currentChainId}
+                TARGET_CHAIN_ID={TARGET_CHAIN_ID}
+                strokeWidth={2}
+              />
             )}
 
             {/* Swapping State UI (largely preserved, uses calculatedValues) */}

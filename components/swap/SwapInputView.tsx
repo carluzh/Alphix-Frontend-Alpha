@@ -38,6 +38,8 @@ interface SwapInputViewProps {
     fees: FeeDetail[];
   };
   dynamicFeeLoading: boolean;
+  quoteLoading: boolean;
+  quoteError?: string | null;
   actionButtonText: string;
   actionButtonDisabled: boolean;
   handleSwap: () => void;
@@ -70,6 +72,8 @@ export function SwapInputView({
   isLoadingCurrentToTokenBalance,
   calculatedValues,
   dynamicFeeLoading,
+  quoteLoading,
+  quoteError,
   actionButtonText,
   actionButtonDisabled,
   handleSwap,
@@ -148,24 +152,38 @@ export function SwapInputView({
         <div className="rounded-lg bg-muted/30 p-4">
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
-              <Image src={displayToToken.icon} alt={displayToToken.symbol} width={20} height={20} className="rounded-full"/>
-              <span className="text-sm">{displayToToken.symbol}</span>
+              <Image src={displayToToken.icon} alt={displayToToken.symbol} width={20} height={20} className="rounded-full" />
+              <span className="text-sm font-medium">{displayToToken.symbol}</span>
             </div>
             <div className="flex-1">
-              <Input
-                value={
-                  parseFloat(toAmount || "0") === 0
-                    ? "0"
-                    : parseFloat(toAmount || "0").toFixed(displayToToken.symbol === 'BTCRL' ? 8 : 2)
-                }
-                readOnly
-                disabled={!isConnected || isAttemptingSwitch}
-                className="border-0 bg-transparent text-right text-xl md:text-xl font-medium text-muted-foreground shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto focus-visible:rounded-none focus-visible:outline-none"
-                placeholder="0"
-              />
-              <div className="text-right text-xs text-muted-foreground">
-                {formatCurrency((parseFloat(toAmount || "0") * displayToToken.usdPrice).toString())}
-              </div>
+              {quoteError ? (
+                <div className="text-right text-xl md:text-xl font-medium text-red-500 h-auto p-0">
+                  Error: {quoteError}
+                </div>
+              ) : (
+                <>
+                  <Input
+                    value={
+                      parseFloat(toAmount || "0") === 0
+                        ? "0"
+                        : parseFloat(toAmount || "0").toFixed(displayToToken.symbol === 'BTCRL' ? 8 : 2)
+                    }
+                    readOnly
+                    disabled={!isConnected || isAttemptingSwitch}
+                    className={cn(
+                      "text-right text-xl md:text-xl font-medium h-auto p-0 focus-visible:ring-0 focus-visible:ring-offset-0 border-0 bg-transparent",
+                      { "text-muted-foreground animate-pulse": quoteLoading }
+                    )}
+                    placeholder="0.00"
+                  />
+                  <div className={cn(
+                    "text-right text-xs text-muted-foreground",
+                    { "animate-pulse": quoteLoading }
+                  )}>
+                    {formatCurrency((parseFloat(toAmount || "0") * displayToToken.usdPrice).toString())}
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -258,7 +276,7 @@ export function SwapInputView({
           </Button>
         ) : (
           <div className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md bg-accent text-accent-foreground px-3 text-sm font-medium transition-colors hover:bg-accent/90 shadow-md">
-            <appkit-button className="absolute inset-0 z-10 block h-full w-full cursor-pointer p-0 opacity-0" />
+            <div data-appkit-button className="absolute inset-0 z-10 block h-full w-full cursor-pointer p-0 opacity-0" />
             <span className="relative z-0 pointer-events-none">{actionButtonText}</span>
           </div>
         )}
