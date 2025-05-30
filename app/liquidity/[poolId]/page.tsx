@@ -29,8 +29,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { 
   Select,
   SelectContent,
@@ -39,18 +37,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useWriteContract, useWaitForTransactionReceipt, useSendTransaction } from "wagmi";
-import { ERC20_ABI } from "../../../lib/abis/erc20";
 import { baseSepolia } from "../../../lib/wagmiConfig";
-import { getFromCache, setToCache, getUserPositionsCacheKey, getPoolStatsCacheKey, getPoolDynamicFeeCacheKey } from "../../../lib/client-cache"; // Import cache functions
-import type { Pool } from "../../../types"; // Import the main Pool type for stats
-
-// Define the structure of the chart data points from the API
-interface ChartDataPoint {
-  date: string; // YYYY-MM-DD
-  volumeUSD: number;
-  tvlUSD: number;
-  // apr?: number; // Optional, if your API provides it
-}
+import { getFromCache, setToCache, getUserPositionsCacheKey, getPoolStatsCacheKey, getPoolDynamicFeeCacheKey } from "../../../lib/client-cache";
+import type { Pool } from "../../../types";
+import { AddLiquidityForm } from "../../../components/liquidity/AddLiquidityForm";
 
 // Import TanStack Table components
 import {
@@ -70,6 +60,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+
+// Define the structure of the chart data points from the API
+interface ChartDataPoint {
+  date: string; // YYYY-MM-DD
+  volumeUSD: number;
+  tvlUSD: number;
+  // apr?: number; // Optional, if your API provides it
+}
 
 // Reusing components from the main liquidity page
 const SDK_MIN_TICK = -887272;
@@ -170,88 +168,7 @@ const TickRangeVisualization = ({
   );
 };
 
-// Position Card Component
-const PositionCard = ({ position }: { position: ProcessedPosition }) => {
-  // Helper function to get token icon
-  const getTokenIcon = (symbol?: string) => {
-    if (symbol?.toUpperCase().includes("YUSD")) return "/YUSD.png";
-    if (symbol?.toUpperCase().includes("BTCRL")) return "/BTCRL.png";
-    return "/default-token.png";
-  };
-
-  // Calculate total value for the position
-  const totalValueUSD = calculateTotalValueUSD(position);
-  
-  // Estimate current tick based on isInRange status
-  const estimatedCurrentTick = position.isInRange 
-    ? Math.floor((position.tickLower + position.tickUpper) / 2)
-    : (position.tickLower > 0 
-        ? position.tickLower - TICKS_PER_BAR 
-        : position.tickUpper + TICKS_PER_BAR);
-
-  return (
-    <Card className="w-full shadow-md rounded-lg hover:shadow-lg transition-shadow bg-muted/30">
-      <CardHeader className="flex flex-row items-start justify-between pb-2 pt-3 px-4">
-        <div className="space-y-0.5">
-          <div className="flex items-center gap-2">
-            <div className="relative w-14 h-7">
-              <div className="absolute top-0 left-0 w-7 h-7 rounded-full overflow-hidden bg-background border border-border/50">
-                <Image src={getTokenIcon(position.token0.symbol)} alt={position.token0.symbol || 'Token 0'} width={28} height={28} className="w-full h-full object-cover" />
-              </div>
-              <div className="absolute top-0 left-4 w-7 h-7 rounded-full overflow-hidden bg-background border border-border/50">
-                <Image src={getTokenIcon(position.token1.symbol)} alt={position.token1.symbol || 'Token 1'} width={28} height={28} className="w-full h-full object-cover" />
-              </div>
-            </div>
-            <CardTitle className="text-base font-medium">
-              {position.token0.symbol || 'N/A'} / {position.token1.symbol || 'N/A'}
-            </CardTitle>
-          </div>
-          <CardDescription className="text-xs text-muted-foreground">
-            {formatUSD(totalValueUSD)}
-          </CardDescription>
-        </div>
-        <Badge variant={position.isInRange ? "default" : "secondary"} 
-           className={position.isInRange ? "bg-green-500/20 text-green-700 border-green-500/30" : "bg-orange-500/20 text-orange-700 border-orange-500/30"}>
-           {position.isInRange ? "In Range" : "Out of Range"}
-        </Badge>
-      </CardHeader>
-      <CardContent className="px-4 pb-4 pt-1">
-        <div className="flex flex-col gap-2">
-          <div className="w-full">
-            <TickRangeVisualization
-              tickLower={position.tickLower}
-              tickUpper={position.tickUpper}
-              currentTick={estimatedCurrentTick}
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-2 mt-2 text-sm">
-            <div>
-              <div className="text-muted-foreground text-xs">Token 0</div>
-              <div>{formatTokenDisplayAmount(position.token0.amount)} {position.token0.symbol}</div>
-            </div>
-            <div>
-              <div className="text-muted-foreground text-xs">Token 1</div>
-              <div>{formatTokenDisplayAmount(position.token1.amount)} {position.token1.symbol}</div>
-            </div>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-};
-
 // Sample chart data for the pool - THIS WILL BE REPLACED BY API DATA
-// const chartData = Array.from({ length: 60 }, (_, i) => {
-//   const date = new Date();
-//   date.setDate(date.getDate() - i);
-//   return {
-//     date: date.toISOString().split('T')[0],
-//     volume: Math.floor(Math.random() * 200000) + 100000,
-//     tvl: Math.floor(Math.random() * 100000) + 1000000,
-//     apr: (Math.random() * 10 + 5) / 100, // 5-15% APR
-//   };
-// }).reverse();
-
 const chartConfig = {
   views: { label: "Daily Values" },
   volume: { label: "Volume", color: "hsl(var(--chart-1))" },
@@ -287,334 +204,6 @@ const mockPoolsData = {
 interface PoolDetailData extends Pool { // Extend the main Pool type
   // Add any specific fields needed for this page that are not in the global Pool type
   // For now, the global Pool type should cover what we fetch (volume, fees, tvl USD values)
-}
-
-// Renamed from AddLiquidityModal and adapted for inline use
-interface InlineAddLiquidityFormProps {
-  poolId: string;
-  onLiquidityAdded: () => void;
-  poolPairSymbol?: string; // Optional: for display in the form title
-}
-
-function InlineAddLiquidityForm({ poolId, onLiquidityAdded, poolPairSymbol }: InlineAddLiquidityFormProps) {
-  const { address: accountAddress, chainId } = useAccount();
-  const [token0Symbol, setToken0Symbol] = useState<TokenSymbol>('YUSDC');
-  const [token1Symbol, setToken1Symbol] = useState<TokenSymbol>('BTCRL');
-  const [inputAmount, setInputAmount] = useState("");
-  const [inputTokenSymbol, setInputTokenSymbol] = useState<TokenSymbol>('YUSDC'); // Which token the amount is for
-  const [tickLower, setTickLower] = useState("");
-  const [tickUpper, setTickUpper] = useState("");
-  
-  const [isWorking, setIsWorking] = useState(false);
-  const [step, setStep] = useState<'input' | 'approve' | 'mint'>('input');
-  const [preparedTxData, setPreparedTxData] = useState<any>(null); // To store data from prepare-mint-tx API
-
-  // Use the poolId to set default token pair
-  useEffect(() => {
-    // Derive tokens from poolId if provided, otherwise use defaults (though should always be provided)
-    if (poolId) {
-      const parts = poolId.split('-');
-      if (parts.length === 2) {
-        const T0 = parts[0].toUpperCase() as TokenSymbol;
-        const T1 = parts[1].toUpperCase() as TokenSymbol;
-        if (TOKEN_DEFINITIONS[T0] && TOKEN_DEFINITIONS[T1]) {
-          setToken0Symbol(T0);
-          setToken1Symbol(T1);
-          setInputTokenSymbol(T0); // Default input token to the first token of the pair
-        } else {
-          console.warn(`Tokens for poolId '${poolId}' not found in TOKEN_DEFINITIONS. Using defaults.`);
-          // Fallback to YUSDC/BTCRL if symbols from poolId aren't in definitions
-          setToken0Symbol('YUSDC');
-          setToken1Symbol('BTCRL');
-          setInputTokenSymbol('YUSDC');
-        }
-      } else {
-        console.warn(`Invalid poolId format: '${poolId}'. Using default tokens.`);
-        setToken0Symbol('YUSDC');
-        setToken1Symbol('BTCRL');
-        setInputTokenSymbol('YUSDC');
-      }
-    } else {
-      // Default if poolId somehow isn't passed (shouldn't happen in this context)
-      setToken0Symbol('YUSDC');
-      setToken1Symbol('BTCRL');
-      setInputTokenSymbol('YUSDC');
-    }
-  }, [poolId]);
-
-  // For ERC20 Approve calls (still uses useWriteContract for specific function calls)
-  const { data: approveTxHash, error: approveWriteError, isPending: isApproveWritePending, writeContractAsync: approveERC20Async, reset: resetApproveWriteContract } = useWriteContract();
-  const { isLoading: isApproving, isSuccess: isApproved, error: approveReceiptError } = useWaitForTransactionReceipt({ hash: approveTxHash });
-
-  // For the main Mint transaction (uses useSendTransaction for pre-built tx)
-  const { data: mintTxHash, error: mintSendError, isPending: isMintSendPending, sendTransactionAsync, reset: resetSendTransaction } = useSendTransaction();
-  const { isLoading: isMintConfirming, isSuccess: isMintConfirmed, error: mintReceiptError } = useWaitForTransactionReceipt({ hash: mintTxHash });
-
-  // Combined useEffect for ERC20 approvals
-  useEffect(() => {
-    if (isApproved) {
-      toast.success("Approval successful!");
-      resetApproveWriteContract(); 
-      if (preparedTxData) { // Ensure preparedTxData is available
-        handlePrepareMint(true); // Re-check/prepare for next action (mint or another approval)
-      }
-    }
-    if (approveWriteError || approveReceiptError) {
-      const errorMsg = approveWriteError?.message || approveReceiptError?.message || "Approval transaction failed.";
-      toast.error("Approval failed", { description: errorMsg });
-      setIsWorking(false);
-      // setStep('input'); // Or stay on approve step for user to retry?
-      resetApproveWriteContract();
-    }
-  }, [isApproved, approveWriteError, approveReceiptError, preparedTxData, resetApproveWriteContract]); // Removed onLiquidityAdded, onOpenChange for this specific effect
-
-  // Combined useEffect for Mint transaction confirmation
-  useEffect(() => {
-    if (isMintConfirmed) {
-      toast.success("Liquidity minted successfully!", { id: "mint-tx" });
-      onLiquidityAdded();
-      resetSendTransaction();
-      resetForm(); // Reset form after successful mint
-    }
-    if (mintSendError || mintReceiptError) {
-      const errorMsg = mintSendError?.message || mintReceiptError?.message || "Minting transaction failed.";
-      toast.error("Minting failed", { id: "mint-tx", description: errorMsg });
-      console.error("Full minting error object:", mintSendError || mintReceiptError);
-      setIsWorking(false);
-      resetSendTransaction();
-    }
-  }, [isMintConfirmed, mintSendError, mintReceiptError, onLiquidityAdded, resetSendTransaction]);
-
-  const resetForm = () => {
-    // Don't reset token selections since they're based on the poolId
-    setInputAmount("");
-    // setInputTokenSymbol remains based on derived token0Symbol
-    setTickLower("");
-    setTickUpper("");
-    setIsWorking(false);
-    setStep('input');
-    setPreparedTxData(null);
-    // Ensure inputTokenSymbol is reset to the current token0Symbol of the pool if needed
-    if (poolId) {
-      const parts = poolId.split('-');
-      if (parts.length === 2) {
-        const T0 = parts[0].toUpperCase() as TokenSymbol;
-        if (TOKEN_DEFINITIONS[T0]) {
-          setInputTokenSymbol(T0);
-        }
-      }
-    }
-  };
-
-  const handleSetFullRange = () => {
-    setTickLower(SDK_MIN_TICK.toString());
-    setTickUpper(SDK_MAX_TICK.toString());
-  };
-
-  const handlePrepareMint = async (isAfterApproval = false) => {
-    if (!accountAddress || !chainId) {
-      toast.error("Please connect your wallet.");
-      return;
-    }
-    if (parseFloat(inputAmount) <= 0 || !tickLower || !tickUpper) {
-      toast.error("Please fill all fields correctly.");
-      return;
-    }
-    if (token0Symbol === token1Symbol) {
-      toast.error("Tokens cannot be the same.");
-      return;
-    }
-
-    setIsWorking(true);
-    if (!isAfterApproval) setStep('input');
-    toast.loading("Preparing transaction...", { id: "prepare-mint" });
-
-    try {
-      const response = await fetch('/api/liquidity/prepare-mint-tx', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userAddress: accountAddress,
-          token0Symbol,
-          token1Symbol,
-          inputAmount,
-          inputTokenSymbol,
-          userTickLower: parseInt(tickLower),
-          userTickUpper: parseInt(tickUpper),
-          chainId: chainId ?? baseSepolia.id,
-        }),
-      });
-
-      toast.dismiss("prepare-mint");
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || "Failed to prepare transaction.");
-      }
-
-      setPreparedTxData(data);
-      if (data.needsApproval) {
-        toast.info(`Approval needed for ${data.approvalTokenSymbol}`, {
-          description: `You need to approve the Position Manager to use your ${data.approvalTokenSymbol}.`
-        });
-        setStep('approve');
-      } else {
-        toast.success("Transaction ready to mint!");
-        setStep('mint');
-      }
-    } catch (error: any) {
-      toast.dismiss("prepare-mint");
-      toast.error("Error preparing transaction", { description: error.message });
-      console.error("Prepare mint error:", error);
-    } finally {
-      if (!isAfterApproval) setIsWorking(false);
-    }
-  };
-
-  const handleApprove = async () => {
-    if (!preparedTxData?.needsApproval || !approveERC20Async) return;
-    setIsWorking(true);
-    toast.loading(`Approving ${preparedTxData.approvalTokenSymbol}...`, { id: "approve-tx" });
-
-    try {
-      const approvalAmountBigInt = BigInt(preparedTxData.approvalAmount); 
-
-      await approveERC20Async({ // Use specific async function for approve
-        address: preparedTxData.approvalTokenAddress as `0x${string}`,
-        abi: ERC20_ABI,
-        functionName: 'approve',
-        args: [preparedTxData.approveToAddress as `0x${string}`, approvalAmountBigInt],
-      });
-      // No need to call handlePrepareMint(true) here, useEffect for isApproved will handle it
-    } catch (err: any) {
-      toast.dismiss("approve-tx");
-      console.error("Full approval error object:", err);
-      let detailedErrorMessage = "Unknown error during approval.";
-      if (err instanceof Error) {
-        detailedErrorMessage = err.message;
-        if ((err as any).shortMessage) { detailedErrorMessage = (err as any).shortMessage; }
-      }
-      toast.error("Failed to send approval transaction.", { description: detailedErrorMessage });
-      setIsWorking(false);
-      resetApproveWriteContract(); // Reset on direct catch
-    }
-  };
-
-  const handleMint = async () => {
-    if (!preparedTxData || preparedTxData.needsApproval || !sendTransactionAsync) return;
-    
-    if (!preparedTxData.transaction || typeof preparedTxData.transaction.data !== 'string') {
-      toast.error("Minting Error", { description: "Transaction data is missing or invalid. Please try preparing again." });
-      setStep('input'); 
-      setIsWorking(false);
-      return;
-    }
-
-    setIsWorking(true);
-    toast.loading("Sending mint transaction...", { id: "mint-tx" });
-
-    try {
-      const { to, data, value: txValueString } = preparedTxData.transaction;
-      console.log("MINTING ARGS:", { to, data, value: txValueString });
-
-      const txParams: { to: `0x${string}`; data: Hex; value?: bigint } = {
-        to: to as `0x${string}`,
-        data: data as Hex,
-      };
-
-      if (txValueString && BigInt(txValueString) > 0n) {
-        txParams.value = BigInt(txValueString);
-      }
-
-      await sendTransactionAsync(txParams);
-    } catch (err: any) { 
-      console.error("Direct sendTransactionAsync error:", err);
-      let detailedErrorMessage = "Unknown error sending mint transaction.";
-      if (err instanceof Error) {
-        detailedErrorMessage = err.message;
-        if ((err as any).shortMessage) { detailedErrorMessage = (err as any).shortMessage; }
-      }
-      toast.error("Failed to send mint transaction.", { id: "mint-tx", description: detailedErrorMessage });
-      setIsWorking(false);
-      resetSendTransaction();
-    }
-  };
-
-  // This component is no longer a Dialog, so we render its content directly in a Card.
-  return (
-    <Card className="w-full">
-      <CardHeader>
-        <CardTitle>Add Liquidity</CardTitle>
-        {poolPairSymbol && 
-          <CardDescription>
-            To {poolPairSymbol} pool. Set amount and price range.
-          </CardDescription>
-        }
-      </CardHeader>
-      <CardContent className="space-y-4 py-2">
-        <div>
-          <Label htmlFor="inputAmount">Amount of {TOKEN_DEFINITIONS[inputTokenSymbol]?.symbol || 'Token'} to provide</Label>
-          <Input id="inputAmount" placeholder="0.0" value={inputAmount} onChange={(e) => setInputAmount(e.target.value)} type="number" disabled={isWorking}/>
-          <div className="text-xs text-muted-foreground mt-1">Specify which token this amount is for:</div>
-          <Select value={inputTokenSymbol} onValueChange={(val: TokenSymbol) => setInputTokenSymbol(val)} disabled={isWorking}>
-              <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                  <SelectItem value={token0Symbol}>{TOKEN_DEFINITIONS[token0Symbol]?.symbol || 'Token A'}</SelectItem>
-                  <SelectItem value={token1Symbol}>{TOKEN_DEFINITIONS[token1Symbol]?.symbol || 'Token B'}</SelectItem>
-              </SelectContent>
-          </Select>
-        </div>
-        <div>
-          <div className="flex justify-between items-center mb-1">
-            <Label>Price Range (Ticks)</Label>
-            <Button variant="outline" size="sm" onClick={handleSetFullRange} disabled={isWorking}>Set Full Range</Button>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <Label htmlFor="tickLower" className="text-xs">Tick Lower</Label>
-              <Input id="tickLower" placeholder="Min Tick" value={tickLower} onChange={(e) => setTickLower(e.target.value)} type="number" disabled={isWorking}/>
-            </div>
-            <div>
-              <Label htmlFor="tickUpper" className="text-xs">Tick Upper</Label>
-              <Input id="tickUpper" placeholder="Max Tick" value={tickUpper} onChange={(e) => setTickUpper(e.target.value)} type="number" disabled={isWorking}/>
-            </div>
-          </div>
-          {preparedTxData && !preparedTxData.needsApproval && preparedTxData.details && (
-            <Card className="mt-4 p-3 text-xs bg-muted/50">
-              <CardContent className="space-y-1 p-0">
-                <div className="font-medium mb-1">Estimated Position:</div>
-                <div>
-                  {preparedTxData.details.token0.symbol}: {/* Added space here */}
-                  {formatTokenDisplayAmount(
-                      viemFormatUnits(
-                          BigInt(preparedTxData.details.token0.amount), 
-                          TOKEN_DEFINITIONS[preparedTxData.details.token0.symbol as TokenSymbol]?.decimals || 18
-                      )
-                  )}
-                </div>
-                <div>
-                  {preparedTxData.details.token1.symbol}: {/* Added space here */}
-                  {formatTokenDisplayAmount(
-                      viemFormatUnits(
-                          BigInt(preparedTxData.details.token1.amount), 
-                          TOKEN_DEFINITIONS[preparedTxData.details.token1.symbol as TokenSymbol]?.decimals || 18
-                      )
-                  )}
-                </div>
-                <div>Liquidity: {preparedTxData.details.liquidity}</div>
-                <div>Ticks: {preparedTxData.details.finalTickLower} - {preparedTxData.details.finalTickUpper}</div>
-              </CardContent>
-            </Card>
-          )}
-        </div>
-      </CardContent>
-      <CardFooter className="mt-2">
-        {step === 'input' && <Button onClick={() => handlePrepareMint(false)} disabled={isWorking || isApproveWritePending || isMintSendPending} className="w-full">{(isWorking || isApproveWritePending || isMintSendPending) ? <RefreshCwIcon className="animate-spin mr-2" /> : null}Preview & Prepare</Button>}
-        {step === 'approve' && <Button onClick={handleApprove} disabled={isWorking || isApproveWritePending || isApproving || isMintSendPending} className="w-full">{(isWorking || isApproveWritePending || isApproving) ? <RefreshCwIcon className="animate-spin mr-2" /> : null}Approve {preparedTxData?.approvalTokenSymbol}</Button>}
-        {step === 'mint' && <Button onClick={handleMint} disabled={isWorking || isMintSendPending || isMintConfirming || isApproveWritePending} className="w-full">{(isWorking || isMintSendPending || isMintConfirming) ? <RefreshCwIcon className="animate-spin mr-2" /> : null}Confirm Mint</Button>}
-      </CardFooter>
-    </Card>
-  );
 }
 
 export default function PoolDetailPage() {
@@ -722,9 +311,6 @@ export default function PoolDetailPage() {
       sorting, // sorting from useState
     },
   });
-
-  // Get pool data based on poolId
-  // const poolData = mockPoolsData[poolId as keyof typeof mockPoolsData]; // Old way
 
   // Fetch user positions for this pool and pool stats
   const fetchPageData = async () => {
@@ -1001,8 +587,8 @@ export default function PoolDetailPage() {
           
           {/* Main content area with two columns */}
           <div className="flex flex-col lg:flex-row gap-6">
-            {/* Left Column: Stats and Graph (takes up 2/3 on larger screens) */}
-            <div className="lg:w-2/3 space-y-6">
+            {/* Left Column: Stats and Graph (takes up 3/4 on larger screens) */}
+            <div className="lg:w-3/4 space-y-6">
               {/* Pool stats */}
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
                 <Card>
@@ -1052,13 +638,6 @@ export default function PoolDetailPage() {
                         >
                           TVL
                         </Button>
-                        {/* <Button 
-                          variant={activeChart === 'apr' ? 'secondary' : 'ghost'} 
-                          size="sm" 
-                          onClick={() => setActiveChart('apr')}
-                        >
-                          APR
-                        </Button> */} {/* Removed APR button */}
                       </div>
                     </div>
                   </CardHeader>
@@ -1074,7 +653,7 @@ export default function PoolDetailPage() {
                       ) : apiChartData.length > 0 ? (
                       <BarChart
                         accessibilityLayer
-                          data={apiChartData} // Use API fetched data
+                        data={apiChartData} // Use API fetched data
                         margin={{
                           left: 25,
                           right: 25,
@@ -1098,11 +677,11 @@ export default function PoolDetailPage() {
                           }}
                         />
                         <ChartTooltip
-                            cursor={false} // Added cursor={false} for better UX on BarChart
+                          cursor={false} // Added cursor={false} for better UX on BarChart
                           content={
                             <ChartTooltipContent
                               className="w-[150px]"
-                                nameKey="views" // This might need adjustment if 'views' is not a direct key in your data
+                              nameKey="views" // This might need adjustment if 'views' is not a direct key in your data
                               labelFormatter={(value) => {
                                 return new Date(value).toLocaleDateString("en-US", {
                                   month: "short",
@@ -1110,24 +689,24 @@ export default function PoolDetailPage() {
                                   year: "numeric",
                                 });
                               }}
-                                // Formatter to display the correct data based on activeChart
-                                formatter={(value, name, entry) => {
-                                  const dataKey = activeChart === 'volume' ? 'volumeUSD' : 'tvlUSD';
-                                  const label = chartConfig[activeChart]?.label || activeChart;
-                                  if (entry.payload && typeof entry.payload[dataKey] === 'number') {
-                                    return [
-                                      activeChart === 'volume' || activeChart === 'tvl' 
-                                        ? formatUSD(entry.payload[dataKey]) 
-                                        : entry.payload[dataKey].toLocaleString(), 
-                                      label
-                                    ];
-                                  }
-                                  return [value, name];
-                                }}
+                              // Formatter to display the correct data based on activeChart
+                              formatter={(value, name, entry) => {
+                                const dataKey = activeChart === 'volume' ? 'volumeUSD' : 'tvlUSD';
+                                const label = chartConfig[activeChart]?.label || activeChart;
+                                if (entry.payload && typeof entry.payload[dataKey] === 'number') {
+                                  return [
+                                    activeChart === 'volume' || activeChart === 'tvl' 
+                                      ? formatUSD(entry.payload[dataKey]) 
+                                      : entry.payload[dataKey].toLocaleString(), 
+                                    label
+                                  ];
+                                }
+                                return [value, name];
+                              }}
                             />
                           }
                         />
-                          <Bar dataKey={activeChart === 'volume' ? 'volumeUSD' : 'tvlUSD'} fill={chartConfig[activeChart]?.color || `var(--color-${activeChart})`} />
+                        <Bar dataKey={activeChart === 'volume' ? 'volumeUSD' : 'tvlUSD'} fill={chartConfig[activeChart]?.color || `var(--color-${activeChart})`} />
                       </BarChart>
                       ) : (
                         <div className="flex justify-center items-center h-full text-muted-foreground">
@@ -1140,14 +719,23 @@ export default function PoolDetailPage() {
               </div>
             </div>
 
-            {/* Right Column: Inline Add Liquidity Form (takes up 1/3 on larger screens) */}
-            <div className="lg:w-1/3" ref={addLiquidityFormRef}>
+            {/* Right Column: Add Liquidity Form (takes up 1/4 on larger screens) */}
+            <div className="lg:w-1/4" ref={addLiquidityFormRef}>
               {poolId && currentPoolData && (
-                <InlineAddLiquidityForm 
-                  poolId={poolId} 
-                  onLiquidityAdded={fetchPageData} // Changed from fetchUserPositions to re-fetch all page data (incl. stats)
-                  poolPairSymbol={currentPoolData.pair}
-                />
+                <Card className="w-full">
+                  <CardContent className="pt-6">
+                    <AddLiquidityForm
+                      selectedPoolId={poolId}
+                      poolApr={currentPoolData?.apr}
+                      onLiquidityAdded={() => {
+                        fetchPageData();
+                      }}
+                      sdkMinTick={SDK_MIN_TICK}
+                      sdkMaxTick={SDK_MAX_TICK}
+                      defaultTickSpacing={DEFAULT_TICK_SPACING}
+                    />
+                  </CardContent>
+                </Card>
               )}
             </div>
           </div>

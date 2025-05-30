@@ -68,6 +68,7 @@ import { getFromCache, setToCache, getUserPositionsCacheKey, getPoolStatsCacheKe
 import { TickRangeControl } from "@/components/TickRangeControl";
 import { Pool } from "../../types"; // Import Pool interface from types
 import { AddLiquidityModal } from "@liquidity/AddLiquidityModal";
+import { useRouter } from "next/navigation";
 // import { DEFAULT_TICK_SPACING } from "@/components/TickRangeControl"; // Assuming DEFAULT_TICK_SPACING is exported or accessible
 
 const SDK_MIN_TICK = -887272;
@@ -140,6 +141,7 @@ export default function LiquidityPage() {
   );
   const [addLiquidityOpen, setAddLiquidityOpen] = useState(false);
   const [selectedPoolApr, setSelectedPoolApr] = useState<string | undefined>(undefined);
+  const router = useRouter();
 
   // Add resize listener
   useEffect(() => {
@@ -704,7 +706,7 @@ export default function LiquidityPage() {
   };
 
   const handlePoolClick = (poolId: string) => {
-    toast.info("Pool details will be available in a few days.");
+    router.push(`/liquidity/${poolId}`);
   };
 
   return (
