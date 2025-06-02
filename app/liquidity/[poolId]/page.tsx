@@ -1,12 +1,14 @@
 "use client";
 
 import { AppLayout } from "@/components/app-layout";
-import { useState, useEffect, useRef } from "react";
-import { ArrowRightLeftIcon, PlusIcon, MinusIcon, ArrowLeftIcon, RefreshCwIcon, ChevronLeftIcon } from "lucide-react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { ArrowRightLeftIcon, PlusIcon, MinusIcon, ArrowLeftIcon, RefreshCwIcon, ChevronLeftIcon, Trash2Icon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import Image from "next/image";
 import { useRouter, useParams } from "next/navigation";
 import { useAccount } from "wagmi";
@@ -41,6 +43,9 @@ import { baseSepolia } from "../../../lib/wagmiConfig";
 import { getFromCache, setToCache, getUserPositionsCacheKey, getPoolStatsCacheKey, getPoolDynamicFeeCacheKey } from "../../../lib/client-cache";
 import type { Pool } from "../../../types";
 import { AddLiquidityForm } from "../../../components/liquidity/AddLiquidityForm";
+import { useBurnLiquidity, type BurnPositionData } from "@/components/liquidity/useBurnLiquidity";
+import { useIncreaseLiquidity, type IncreasePositionData } from "@/components/liquidity/useIncreaseLiquidity";
+import { useDecreaseLiquidity, type DecreasePositionData } from "@/components/liquidity/useDecreaseLiquidity";
 
 // Import TanStack Table components
 import {
@@ -60,6 +65,16 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 // Define the structure of the chart data points from the API
 interface ChartDataPoint {
@@ -213,7 +228,7 @@ export default function PoolDetailPage() {
   const [userPositions, setUserPositions] = useState<ProcessedPosition[]>([]);
   const [isLoadingPositions, setIsLoadingPositions] = useState(false);
   const [activeChart, setActiveChart] = useState<keyof Pick<typeof chartConfig, 'volume' | 'tvl'>>("volume");
-  const { address: accountAddress, isConnected } = useAccount();
+  const { address: accountAddress, isConnected, chainId } = useAccount();
   const [sorting, setSorting] = useState<SortingState>([]); // Added for table sorting
   const addLiquidityFormRef = useRef<HTMLDivElement>(null); // Ref for scrolling to form
 
@@ -222,6 +237,61 @@ export default function PoolDetailPage() {
   // State for API-fetched chart data
   const [apiChartData, setApiChartData] = useState<ChartDataPoint[]>([]);
   const [isLoadingChartData, setIsLoadingChartData] = useState(false);
+
+  // State for managing active tab (Deposit/Withdraw/Swap) - Lifted from AddLiquidityForm
+  const [activeTab, setActiveTab] = useState<'deposit' | 'withdraw' | 'swap'>('deposit');
+
+  // State for burn confirmation dialog
+  const [showBurnConfirmDialog, setShowBurnConfirmDialog] = useState(false);
+  const [positionToBurn, setPositionToBurn] = useState<ProcessedPosition | null>(null);
+
+  // New state for increase/decrease modals
+  const [showIncreaseModal, setShowIncreaseModal] = useState(false);
+  const [showDecreaseModal, setShowDecreaseModal] = useState(false);
+  const [positionToModify, setPositionToModify] = useState<ProcessedPosition | null>(null);
+
+  // State for increase modal inputs
+  const [increaseAmount0, setIncreaseAmount0] = useState<string>("");
+  const [increaseAmount1, setIncreaseAmount1] = useState<string>("");
+  const [increaseActiveInputSide, setIncreaseActiveInputSide] = useState<'amount0' | 'amount1' | null>(null);
+  const [isIncreaseCalculating, setIsIncreaseCalculating] = useState(false);
+
+  // State for decrease modal inputs
+  const [decreaseAmount0, setDecreaseAmount0] = useState<string>("");
+  const [decreaseAmount1, setDecreaseAmount1] = useState<string>("");
+  const [decreaseActiveInputSide, setDecreaseActiveInputSide] = useState<'amount0' | 'amount1' | null>(null);
+  const [isDecreaseCalculating, setIsDecreaseCalculating] = useState(false);
+  const [isFullBurn, setIsFullBurn] = useState(false);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+
+  // Memoized callback functions to prevent infinite re-renders
+  const onLiquidityBurnedCallback = useCallback(() => {
+    toast.success("Position burn successful! Refreshing your positions...");
+    setRefreshTrigger(prev => prev + 1); // Trigger refresh
+  }, []);
+
+  const onLiquidityIncreasedCallback = useCallback(() => {
+    toast.success("Position increased successfully! Refreshing your positions...");
+    setRefreshTrigger(prev => prev + 1); // Trigger refresh
+  }, []);
+
+  const onLiquidityDecreasedCallback = useCallback(() => {
+    toast.success("Position modified successfully! Refreshing your positions...");
+    setRefreshTrigger(prev => prev + 1); // Trigger refresh
+  }, []);
+
+  // Initialize the liquidity modification hooks
+  const { burnLiquidity, isLoading: isBurningLiquidity } = useBurnLiquidity({
+    onLiquidityBurned: onLiquidityBurnedCallback
+  });
+
+  const { increaseLiquidity, isLoading: isIncreasingLiquidity } = useIncreaseLiquidity({
+    onLiquidityIncreased: onLiquidityIncreasedCallback,
+  });
+
+  const { decreaseLiquidity, isLoading: isDecreasingLiquidity } = useDecreaseLiquidity({
+    onLiquidityDecreased: onLiquidityDecreasedCallback,
+  });
 
   // Define columns for the User Positions table (can be defined early)
   const positionColumns: ColumnDef<ProcessedPosition>[] = [
@@ -298,22 +368,71 @@ export default function PoolDetailPage() {
         );
       },
     },
+    {
+      id: "actions",
+      header: "Actions",
+      cell: ({ row }) => {
+        const position = row.original;
+        return (
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-green-600 hover:text-green-700 hover:bg-green-500/10 p-1.5 h-auto"
+              onClick={() => handleIncreasePosition(position)}
+              disabled={isBurningLiquidity || isIncreasingLiquidity || isDecreasingLiquidity}
+            >
+              <PlusIcon className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-orange-600 hover:text-orange-700 hover:bg-orange-500/10 p-1.5 h-auto"
+              onClick={() => handleDecreasePosition(position)}
+              disabled={isBurningLiquidity || isIncreasingLiquidity || isDecreasingLiquidity}
+            >
+              <MinusIcon className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-red-500 hover:text-red-600 hover:bg-red-500/10 p-1.5 h-auto"
+              onClick={() => handleBurnPosition(position)}
+              disabled={isBurningLiquidity && positionToBurn?.positionId === position.positionId}
+            >
+              {isBurningLiquidity && positionToBurn?.positionId === position.positionId 
+                ? <RefreshCwIcon className="h-4 w-4 animate-spin" /> 
+                : <Trash2Icon className="h-4 w-4" />}
+            </Button>
+          </div>
+        );
+      },
+    },
   ];
+
+  // Memoize table data and config to prevent unnecessary re-renders
+  const memoizedPositions = useMemo(() => userPositions, [userPositions]);
+  const memoizedColumns = useMemo(() => positionColumns, [
+    isBurningLiquidity, 
+    isIncreasingLiquidity, 
+    isDecreasingLiquidity, 
+    positionToBurn?.positionId
+  ]);
 
   // Initialize the table instance (Hook call)
   const positionsTable = useReactTable({
-    data: userPositions, // Initialized as []
-    columns: positionColumns,
+    data: memoizedPositions,
+    columns: memoizedColumns,
     getCoreRowModel: getCoreRowModel(),
-    onSortingChange: setSorting, // setSorting from useState
+    onSortingChange: setSorting,
     getSortedRowModel: getSortedRowModel(),
     state: {
-      sorting, // sorting from useState
+      sorting,
     },
   });
 
   // Fetch user positions for this pool and pool stats
-  const fetchPageData = async () => {
+  const fetchPageData = useCallback(async () => {
     if (!poolId) return;
 
     // Start loading chart data
@@ -517,16 +636,330 @@ export default function PoolDetailPage() {
     } else {
       setUserPositions([]);
     }
-  };
+  }, [poolId, isConnected, accountAddress, refreshTrigger]); // Add useCallback dependencies
 
   useEffect(() => {
     fetchPageData();
-  }, [poolId, isConnected, accountAddress]); // Re-fetch if these change
+  }, [fetchPageData]); // Re-fetch if fetchPageData changes
 
   // Calculate total liquidity value
   const totalLiquidity = userPositions.reduce((sum, pos) => {
     return sum + calculateTotalValueUSD(pos);
   }, 0);
+
+  // Handle burn position
+  const handleBurnPosition = (position: ProcessedPosition) => {
+    if (!position.positionId || !position.token0.symbol || !position.token1.symbol) {
+      toast.error("Cannot burn position: Missing critical position data (ID or token symbols).");
+      return;
+    }
+    setPositionToBurn(position);
+    setShowBurnConfirmDialog(true);
+  };
+
+  const confirmBurnPosition = () => {
+    if (positionToBurn && positionToBurn.positionId && positionToBurn.token0.symbol && positionToBurn.token1.symbol) {
+      const burnData: BurnPositionData = {
+        tokenId: positionToBurn.positionId,
+        token0Symbol: positionToBurn.token0.symbol as TokenSymbol,
+        token1Symbol: positionToBurn.token1.symbol as TokenSymbol,
+        poolId: positionToBurn.poolId,
+        tickLower: positionToBurn.tickLower,
+        tickUpper: positionToBurn.tickUpper,
+      };
+      burnLiquidity(burnData);
+    }
+    setShowBurnConfirmDialog(false);
+    setPositionToBurn(null);
+  };
+
+  // Handle increase position
+  const handleIncreasePosition = (position: ProcessedPosition) => {
+    if (!position.positionId || !position.token0.symbol || !position.token1.symbol) {
+      toast.error("Cannot increase position: Missing critical position data (ID or token symbols).");
+      return;
+    }
+    setPositionToModify(position);
+    // Reset increase state
+    setIncreaseAmount0("");
+    setIncreaseAmount1("");
+    setIncreaseActiveInputSide(null);
+    setShowIncreaseModal(true);
+  };
+
+  // Handle decrease position
+  const handleDecreasePosition = (position: ProcessedPosition) => {
+    if (!position.positionId || !position.token0.symbol || !position.token1.symbol) {
+      toast.error("Cannot decrease position: Missing critical position data (ID or token symbols).");
+      return;
+    }
+    setPositionToModify(position);
+    // Reset decrease state
+    setDecreaseAmount0("");
+    setDecreaseAmount1("");
+    setDecreaseActiveInputSide(null);
+    setIsFullBurn(false);
+    setShowDecreaseModal(true);
+  };
+
+  // Helper function for debounced calculations (simplified version)
+  const debounce = (func: Function, waitFor: number) => {
+    let timeout: ReturnType<typeof setTimeout>;
+    return (...args: any[]) => {
+      clearTimeout(timeout);
+      timeout = setTimeout(() => func(...args), waitFor);
+    };
+  };
+
+  // Calculate corresponding amount for increase
+  const calculateIncreaseAmount = useCallback(
+    debounce(async (inputAmount: string, inputSide: 'amount0' | 'amount1') => {
+      if (!positionToModify || !inputAmount || parseFloat(inputAmount) <= 0) {
+        if (inputSide === 'amount0') setIncreaseAmount1("");
+        else setIncreaseAmount0("");
+        return;
+      }
+
+      setIsIncreaseCalculating(true);
+      try {
+        // For out-of-range positions, use single-token approach immediately
+        if (!positionToModify.isInRange) {
+          console.log("Position is out of range, using single-token approach");
+          if (inputSide === 'amount0') {
+            setIncreaseAmount1("0");
+          } else {
+            setIncreaseAmount0("0");
+          }
+          setIsIncreaseCalculating(false);
+          return;
+        }
+
+        // For in-range positions, use the API for proper calculations
+        const calcResponse = await fetch('/api/liquidity/calculate-liquidity-parameters', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            token0Symbol: positionToModify.token0.symbol,
+            token1Symbol: positionToModify.token1.symbol,
+            inputAmount: inputAmount,
+            inputTokenSymbol: inputSide === 'amount0' ? positionToModify.token0.symbol : positionToModify.token1.symbol,
+            userTickLower: positionToModify.tickLower,
+            userTickUpper: positionToModify.tickUpper,
+            chainId: chainId,
+          }),
+        });
+
+        if (!calcResponse.ok) {
+          const errorData = await calcResponse.json();
+          throw new Error(errorData.message || "Failed to calculate parameters.");
+        }
+
+        const result = await calcResponse.json();
+
+        if (inputSide === 'amount0') {
+          // We input amount0, so set the calculated amount1
+          const amount1InWei = result.amount1;
+          const token1Decimals = TOKEN_DEFINITIONS[positionToModify.token1.symbol as TokenSymbol]?.decimals || 18;
+          const formattedAmount1 = viemFormatUnits(BigInt(amount1InWei), token1Decimals);
+          setIncreaseAmount1(formatTokenDisplayAmount(formattedAmount1));
+        } else {
+          // We input amount1, so set the calculated amount0
+          const amount0InWei = result.amount0;
+          const token0Decimals = TOKEN_DEFINITIONS[positionToModify.token0.symbol as TokenSymbol]?.decimals || 18;
+          const formattedAmount0 = viemFormatUnits(BigInt(amount0InWei), token0Decimals);
+          setIncreaseAmount0(formatTokenDisplayAmount(formattedAmount0));
+        }
+      } catch (error: any) {
+        console.error("Error calculating increase amount:", error);
+        toast.error("Calculation Error", { description: error.message || "Could not calculate corresponding amount." });
+        if (inputSide === 'amount0') setIncreaseAmount1("");
+        else setIncreaseAmount0("");
+      } finally {
+        setIsIncreaseCalculating(false);
+      }
+    }, 500),
+    [positionToModify, chainId]
+  );
+
+  // Calculate corresponding amount for decrease
+  const calculateDecreaseAmount = useCallback(
+    debounce(async (inputAmount: string, inputSide: 'amount0' | 'amount1') => {
+      if (!positionToModify || !inputAmount || parseFloat(inputAmount) <= 0) {
+        if (inputSide === 'amount0') setDecreaseAmount1("");
+        else setDecreaseAmount0("");
+        return;
+      }
+
+      setIsDecreaseCalculating(true);
+      try {
+        // For out-of-range positions, allow single-token withdrawal
+        if (!positionToModify.isInRange) {
+          console.log("Position is out of range, using single-token withdrawal approach");
+          
+          const maxAmount0 = parseFloat(positionToModify.token0.amount);
+          const maxAmount1 = parseFloat(positionToModify.token1.amount);
+          const inputAmountNum = parseFloat(inputAmount);
+          
+          // For out-of-range positions, allow withdrawing just the token the user inputs
+          if (inputSide === 'amount0') {
+            setDecreaseAmount1("0");
+            // Check if this is effectively a full burn (withdrawing most/all of token0)
+            const isNearFullBurn = inputAmountNum >= maxAmount0 * 0.99;
+            if (isNearFullBurn) {
+              // If withdrawing almost all of token0, also withdraw all of token1
+              setDecreaseAmount1(formatTokenDisplayAmount(maxAmount1.toString()));
+            }
+            setIsFullBurn(isNearFullBurn);
+          } else {
+            setDecreaseAmount0("0");
+            // Check if this is effectively a full burn (withdrawing most/all of token1)
+            const isNearFullBurn = inputAmountNum >= maxAmount1 * 0.99;
+            if (isNearFullBurn) {
+              // If withdrawing almost all of token1, also withdraw all of token0
+              setDecreaseAmount0(formatTokenDisplayAmount(maxAmount0.toString()));
+            }
+            setIsFullBurn(isNearFullBurn);
+          }
+          
+          setIsDecreaseCalculating(false);
+          return;
+        }
+
+        // For in-range positions, use the API for proper calculations
+        const calcResponse = await fetch('/api/liquidity/calculate-liquidity-parameters', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            token0Symbol: positionToModify.token0.symbol,
+            token1Symbol: positionToModify.token1.symbol,
+            inputAmount: inputAmount,
+            inputTokenSymbol: inputSide === 'amount0' ? positionToModify.token0.symbol : positionToModify.token1.symbol,
+            userTickLower: positionToModify.tickLower,
+            userTickUpper: positionToModify.tickUpper,
+            chainId: chainId,
+          }),
+        });
+
+        if (!calcResponse.ok) {
+          const errorData = await calcResponse.json();
+          throw new Error(errorData.message || "Failed to calculate parameters.");
+        }
+
+        const result = await calcResponse.json();
+
+        if (inputSide === 'amount0') {
+          // We input amount0, so set the calculated amount1
+          const amount1InWei = result.amount1;
+          const token1Decimals = TOKEN_DEFINITIONS[positionToModify.token1.symbol as TokenSymbol]?.decimals || 18;
+          const formattedAmount1 = viemFormatUnits(BigInt(amount1InWei), token1Decimals);
+          setDecreaseAmount1(formatTokenDisplayAmount(formattedAmount1));
+        } else {
+          // We input amount1, so set the calculated amount0
+          const amount0InWei = result.amount0;
+          const token0Decimals = TOKEN_DEFINITIONS[positionToModify.token0.symbol as TokenSymbol]?.decimals || 18;
+          const formattedAmount0 = viemFormatUnits(BigInt(amount0InWei), token0Decimals);
+          setDecreaseAmount0(formatTokenDisplayAmount(formattedAmount0));
+        }
+
+        // Check if this is effectively a full burn
+        const maxAmount0 = parseFloat(positionToModify.token0.amount);
+        const maxAmount1 = parseFloat(positionToModify.token1.amount);
+        const inputAmount0 = inputSide === 'amount0' ? parseFloat(inputAmount) : parseFloat(decreaseAmount0);
+        const inputAmount1 = inputSide === 'amount1' ? parseFloat(inputAmount) : parseFloat(decreaseAmount1);
+        
+        const isNearFullBurn = (inputAmount0 >= maxAmount0 * 0.99) || (inputAmount1 >= maxAmount1 * 0.99);
+        setIsFullBurn(isNearFullBurn);
+      } catch (error: any) {
+        console.error("Error calculating decrease amount:", error);
+        toast.error("Calculation Error", { description: error.message || "Could not calculate corresponding amount." });
+        if (inputSide === 'amount0') setDecreaseAmount1("");
+        else setDecreaseAmount0("");
+      } finally {
+        setIsDecreaseCalculating(false);
+      }
+    }, 500),
+    [positionToModify, chainId, decreaseAmount0, decreaseAmount1]
+  );
+
+  // Handle max button clicks for decrease
+  const handleMaxDecrease = (tokenSide: 'amount0' | 'amount1') => {
+    if (!positionToModify) return;
+    
+    if (tokenSide === 'amount0') {
+      setDecreaseAmount0(positionToModify.token0.amount);
+      setDecreaseAmount1(positionToModify.token1.amount);
+    } else {
+      setDecreaseAmount1(positionToModify.token1.amount);
+      setDecreaseAmount0(positionToModify.token0.amount);
+    }
+    setDecreaseActiveInputSide(tokenSide);
+    setIsFullBurn(true);
+  };
+
+  // Handle increase transaction
+  const handleConfirmIncrease = () => {
+    if (!positionToModify || (!increaseAmount0 && !increaseAmount1)) {
+      toast.error("Please enter at least one amount to add");
+      return;
+    }
+    
+    // For out-of-range positions, ensure at least one amount is greater than 0
+    if (!positionToModify.isInRange) {
+      const amount0Num = parseFloat(increaseAmount0 || "0");
+      const amount1Num = parseFloat(increaseAmount1 || "0");
+      if (amount0Num <= 0 && amount1Num <= 0) {
+        toast.error("Please enter a valid amount to add");
+        return;
+      }
+    }
+
+    const increaseData: IncreasePositionData = {
+      tokenId: positionToModify.positionId,
+      token0Symbol: positionToModify.token0.symbol as TokenSymbol,
+      token1Symbol: positionToModify.token1.symbol as TokenSymbol,
+      additionalAmount0: increaseAmount0 || "0",
+      additionalAmount1: increaseAmount1 || "0",
+      poolId: positionToModify.poolId,
+      tickLower: positionToModify.tickLower,
+      tickUpper: positionToModify.tickUpper,
+    };
+
+    increaseLiquidity(increaseData);
+    setShowIncreaseModal(false);
+  };
+
+  // Handle decrease transaction
+  const handleConfirmDecrease = () => {
+    if (!positionToModify || (!decreaseAmount0 && !decreaseAmount1)) {
+      toast.error("Please enter at least one amount to remove");
+      return;
+    }
+    
+    // For out-of-range positions, ensure at least one amount is greater than 0
+    if (!positionToModify.isInRange) {
+      const amount0Num = parseFloat(decreaseAmount0 || "0");
+      const amount1Num = parseFloat(decreaseAmount1 || "0");
+      if (amount0Num <= 0 && amount1Num <= 0) {
+        toast.error("Please enter a valid amount to remove");
+        return;
+      }
+    }
+
+    const decreaseData: DecreasePositionData = {
+      tokenId: positionToModify.positionId,
+      token0Symbol: positionToModify.token0.symbol as TokenSymbol,
+      token1Symbol: positionToModify.token1.symbol as TokenSymbol,
+      decreaseAmount0: decreaseAmount0 || "0",
+      decreaseAmount1: decreaseAmount1 || "0",
+      isFullBurn: isFullBurn,
+      poolId: positionToModify.poolId,
+      tickLower: positionToModify.tickLower,
+      tickUpper: positionToModify.tickUpper,
+    };
+
+    decreaseLiquidity(decreaseData);
+    setShowDecreaseModal(false);
+  };
 
   // Early return for loading state AFTER all hooks have been called
   if (!poolId || !currentPoolData) return (
@@ -720,10 +1153,44 @@ export default function PoolDetailPage() {
             </div>
 
             {/* Right Column: Add Liquidity Form (takes up 1/4 on larger screens) */}
-            <div className="lg:w-1/4" ref={addLiquidityFormRef}>
-              {poolId && currentPoolData && (
-                <Card className="w-full">
-                  <CardContent className="pt-6">
+            <div className="w-[450px] h-[700px]" ref={addLiquidityFormRef}>
+              {/* Tabs for Swap/Deposit/Withdraw - MOVED HERE */}
+              <div className="flex border-b border-border mb-4 px-6 pt-6">
+                <button
+                  className={`py-2 px-4 text-sm font-medium ${activeTab === 'deposit' 
+                    ? 'text-foreground border-b-2 border-primary' 
+                    : 'text-muted-foreground hover:text-foreground/80'}`}
+                  onClick={() => setActiveTab('deposit')}
+                >
+                  Deposit
+                </button>
+                <button
+                  className={`py-2 px-4 text-sm font-medium ${activeTab === 'withdraw' 
+                    ? 'text-foreground border-b-2 border-primary' 
+                    : 'text-muted-foreground hover:text-foreground/80'}`}
+                  onClick={() => {
+                    setActiveTab('withdraw');
+                    toast.info("Withdraw functionality coming soon");
+                  }}
+                >
+                  Withdraw
+                </button>
+                <button
+                  className={`py-2 px-4 text-sm font-medium ${activeTab === 'swap' 
+                    ? 'text-foreground border-b-2 border-primary' 
+                    : 'text-muted-foreground hover:text-foreground/80'}`}
+                  onClick={() => {
+                    setActiveTab('swap');
+                    toast.info("Swap functionality coming soon");
+                  }}
+                >
+                  Swap
+                </button>
+              </div>
+
+              {poolId && currentPoolData && activeTab === 'deposit' && ( // Only render form if activeTab is 'deposit'
+                <Card className="w-full shadow-none border-none"> {/* Adjusted Card styling */}
+                  <CardContent className="pt-0"> {/* Adjusted padding */}
                     <AddLiquidityForm
                       selectedPoolId={poolId}
                       poolApr={currentPoolData?.apr}
@@ -733,9 +1200,17 @@ export default function PoolDetailPage() {
                       sdkMinTick={SDK_MIN_TICK}
                       sdkMaxTick={SDK_MAX_TICK}
                       defaultTickSpacing={DEFAULT_TICK_SPACING}
+                      activeTab={activeTab} // Pass activeTab state down
                     />
                   </CardContent>
                 </Card>
+              )}
+              
+              {/* Placeholder content for Withdraw and Swap */}              
+              {activeTab !== 'deposit' && (
+                <div className="flex items-center justify-center h-full bg-muted/20 rounded-lg mx-6 mb-6">
+                   <span className="text-muted-foreground capitalize">{activeTab} functionality coming soon</span>
+                </div>
               )}
             </div>
           </div>
@@ -815,6 +1290,296 @@ export default function PoolDetailPage() {
           </div>
         </div>
       </div>
+
+      {/* Burn Confirmation Dialog */}
+      <AlertDialog open={showBurnConfirmDialog} onOpenChange={setShowBurnConfirmDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirm Burn Liquidity Position</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to permanently burn this liquidity position? This action will remove your
+              liquidity and transfer the underlying tokens (and any accrued fees) to your wallet.
+              This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {positionToBurn && (
+            <div className="text-sm my-4 p-3 border rounded-md bg-muted/30">
+              <p><strong>Position ID:</strong> {positionToBurn.positionId}</p>
+              <p><strong>Pair:</strong> {positionToBurn.token0.symbol} / {positionToBurn.token1.symbol}</p>
+              <p><strong>Amount {positionToBurn.token0.symbol}:</strong> {formatTokenDisplayAmount(positionToBurn.token0.amount)}</p>
+              <p><strong>Amount {positionToBurn.token1.symbol}:</strong> {formatTokenDisplayAmount(positionToBurn.token1.amount)}</p>
+            </div>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setPositionToBurn(null)} disabled={isBurningLiquidity}>Cancel</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={confirmBurnPosition} 
+              disabled={isBurningLiquidity}
+              className="bg-red-600 hover:bg-red-700 text-white"
+            >
+              {isBurningLiquidity ? <RefreshCwIcon className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Confirm Burn
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Increase Position Modal */}
+      <Dialog open={showIncreaseModal} onOpenChange={setShowIncreaseModal}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Increase Liquidity Position</DialogTitle>
+            <DialogDescription>
+              Add more liquidity to your existing position.
+            </DialogDescription>
+          </DialogHeader>
+          {positionToModify && (
+            <div className="space-y-4">
+              <div className="text-sm p-3 border rounded-md bg-muted/30">
+                <p><strong>Current Position:</strong></p>
+                <p>{positionToModify.token0.symbol}: {formatTokenDisplayAmount(positionToModify.token0.amount)}</p>
+                <p>{positionToModify.token1.symbol}: {formatTokenDisplayAmount(positionToModify.token1.amount)}</p>
+                {!positionToModify.isInRange && (
+                  <p className="text-orange-600 text-xs mt-2">
+                    ⚠️ Out of range: You can add only one token at a time
+                  </p>
+                )}
+              </div>
+              <div className="space-y-3">
+                <div>
+                  <Label htmlFor="increase-amount0">Additional {positionToModify.token0.symbol}</Label>
+                  <Input
+                    id="increase-amount0"
+                    type="number"
+                    placeholder="0.0"
+                    className="mt-1"
+                    value={increaseAmount0}
+                    onChange={(e) => {
+                      const newValue = e.target.value;
+                      setIncreaseAmount0(newValue);
+                      setIncreaseActiveInputSide('amount0');
+                      if (newValue && parseFloat(newValue) > 0) {
+                        calculateIncreaseAmount(newValue, 'amount0');
+                      } else {
+                        setIncreaseAmount1("");
+                      }
+                    }}
+                    disabled={isIncreaseCalculating && increaseActiveInputSide === 'amount1'}
+                  />
+                  {isIncreaseCalculating && increaseActiveInputSide === 'amount0' && (
+                    <div className="text-xs text-muted-foreground mt-1">Calculating...</div>
+                  )}
+                </div>
+                <div>
+                  <Label htmlFor="increase-amount1">Additional {positionToModify.token1.symbol}</Label>
+                  <Input
+                    id="increase-amount1"
+                    type="number"
+                    placeholder="0.0"
+                    className="mt-1"
+                    value={increaseAmount1}
+                    onChange={(e) => {
+                      const newValue = e.target.value;
+                      setIncreaseAmount1(newValue);
+                      setIncreaseActiveInputSide('amount1');
+                      if (newValue && parseFloat(newValue) > 0) {
+                        calculateIncreaseAmount(newValue, 'amount1');
+                      } else {
+                        setIncreaseAmount0("");
+                      }
+                    }}
+                    disabled={isIncreaseCalculating && increaseActiveInputSide === 'amount0'}
+                  />
+                  {isIncreaseCalculating && increaseActiveInputSide === 'amount1' && (
+                    <div className="text-xs text-muted-foreground mt-1">Calculating...</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button 
+              variant="outline" 
+              onClick={() => setShowIncreaseModal(false)}
+              disabled={isIncreasingLiquidity}
+            >
+              Cancel
+            </Button>
+            <Button 
+              onClick={handleConfirmIncrease}
+              disabled={
+                isIncreasingLiquidity ||
+                isIncreaseCalculating ||
+                (positionToModify?.isInRange ? 
+                  // For in-range positions, require both amounts
+                  (!increaseAmount0 || !increaseAmount1 || parseFloat(increaseAmount0) <= 0 || parseFloat(increaseAmount1) <= 0) :
+                  // For out-of-range positions, require at least one amount
+                  ((!increaseAmount0 || parseFloat(increaseAmount0) <= 0) && (!increaseAmount1 || parseFloat(increaseAmount1) <= 0))
+                )
+              }
+            >
+              {isIncreasingLiquidity ? (
+                <>
+                  <RefreshCwIcon className="mr-2 h-4 w-4 animate-spin" />
+                  Adding...
+                </>
+              ) : (
+                "Add Liquidity"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Decrease Position Modal */}
+      <Dialog open={showDecreaseModal} onOpenChange={setShowDecreaseModal}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Decrease Liquidity Position</DialogTitle>
+            <DialogDescription>
+              Remove liquidity from your existing position.
+            </DialogDescription>
+          </DialogHeader>
+          {positionToModify && (
+            <div className="space-y-4">
+              <div className="text-sm p-3 border rounded-md bg-muted/30">
+                <p><strong>Current Position:</strong></p>
+                <div className="flex justify-between items-center">
+                  <span>{positionToModify.token0.symbol}: {formatTokenDisplayAmount(positionToModify.token0.amount)}</span>
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    className="text-xs text-blue-600 h-6"
+                    onClick={() => handleMaxDecrease('amount0')}
+                    disabled={isDecreaseCalculating || isDecreasingLiquidity}
+                  >
+                    Max
+                  </Button>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span>{positionToModify.token1.symbol}: {formatTokenDisplayAmount(positionToModify.token1.amount)}</span>
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    className="text-xs text-blue-600 h-6"
+                    onClick={() => handleMaxDecrease('amount1')}
+                    disabled={isDecreaseCalculating || isDecreasingLiquidity}
+                  >
+                    Max
+                  </Button>
+                </div>
+                {!positionToModify.isInRange && (
+                  <p className="text-orange-600 text-xs mt-2">
+                    ⚠️ Out of range: You can remove one token at a time, or use Max for full withdrawal
+                  </p>
+                )}
+              </div>
+              <div className="space-y-3">
+                <div>
+                  <Label htmlFor="decrease-amount0">Remove {positionToModify.token0.symbol}</Label>
+                  <Input
+                    id="decrease-amount0"
+                    type="number"
+                    placeholder="0.0"
+                    className="mt-1"
+                    max={positionToModify.token0.amount}
+                    value={decreaseAmount0}
+                    onChange={(e) => {
+                      const newValue = e.target.value;
+                      const maxAmount = parseFloat(positionToModify.token0.amount);
+                      if (parseFloat(newValue) > maxAmount) {
+                        setDecreaseAmount0(maxAmount.toString());
+                        return;
+                      }
+                      setDecreaseAmount0(newValue);
+                      setDecreaseActiveInputSide('amount0');
+                      if (newValue && parseFloat(newValue) > 0) {
+                        calculateDecreaseAmount(newValue, 'amount0');
+                      } else {
+                        setDecreaseAmount1("");
+                        setIsFullBurn(false);
+                      }
+                    }}
+                    disabled={isDecreaseCalculating && decreaseActiveInputSide === 'amount1'}
+                  />
+                  {isDecreaseCalculating && decreaseActiveInputSide === 'amount0' && (
+                    <div className="text-xs text-muted-foreground mt-1">Calculating...</div>
+                  )}
+                </div>
+                <div>
+                  <Label htmlFor="decrease-amount1">Remove {positionToModify.token1.symbol}</Label>
+                  <Input
+                    id="decrease-amount1"
+                    type="number"
+                    placeholder="0.0"
+                    className="mt-1"
+                    max={positionToModify.token1.amount}
+                    value={decreaseAmount1}
+                    onChange={(e) => {
+                      const newValue = e.target.value;
+                      const maxAmount = parseFloat(positionToModify.token1.amount);
+                      if (parseFloat(newValue) > maxAmount) {
+                        setDecreaseAmount1(maxAmount.toString());
+                        return;
+                      }
+                      setDecreaseAmount1(newValue);
+                      setDecreaseActiveInputSide('amount1');
+                      if (newValue && parseFloat(newValue) > 0) {
+                        calculateDecreaseAmount(newValue, 'amount1');
+                      } else {
+                        setDecreaseAmount0("");
+                        setIsFullBurn(false);
+                      }
+                    }}
+                    disabled={isDecreaseCalculating && decreaseActiveInputSide === 'amount0'}
+                  />
+                  {isDecreaseCalculating && decreaseActiveInputSide === 'amount1' && (
+                    <div className="text-xs text-muted-foreground mt-1">Calculating...</div>
+                  )}
+                </div>
+              </div>
+              {isFullBurn && (
+                <div className="text-center text-sm text-orange-600 bg-orange-50 p-2 rounded">
+                  This will burn the entire position
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button 
+              variant="outline" 
+              onClick={() => setShowDecreaseModal(false)}
+              disabled={isDecreasingLiquidity}
+            >
+              Cancel
+            </Button>
+            <Button 
+              onClick={handleConfirmDecrease}
+              variant={isFullBurn ? "destructive" : "default"}
+              disabled={
+                isDecreasingLiquidity ||
+                isDecreaseCalculating ||
+                (positionToModify?.isInRange ? 
+                  // For in-range positions, require both amounts
+                  (!decreaseAmount0 || !decreaseAmount1 || parseFloat(decreaseAmount0) <= 0 || parseFloat(decreaseAmount1) <= 0) :
+                  // For out-of-range positions, require at least one amount
+                  ((!decreaseAmount0 || parseFloat(decreaseAmount0) <= 0) && (!decreaseAmount1 || parseFloat(decreaseAmount1) <= 0))
+                )
+              }
+            >
+              {isDecreasingLiquidity ? (
+                <>
+                  <RefreshCwIcon className="mr-2 h-4 w-4 animate-spin" />
+                  {isFullBurn ? "Burning..." : "Withdrawing..."}
+                </>
+              ) : (
+                isFullBurn ? "Burn Position" : "Withdraw"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
     </AppLayout>
   );
-} 
+}

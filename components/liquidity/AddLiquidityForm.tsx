@@ -123,6 +123,8 @@ interface DepthChartDataPoint {
   isUserPosition?: boolean;
   price?: number;
   value?: number;
+  cumulativeUnifiedValue?: number; // Added to fix linter error
+  displayCumulativeValue?: number; // Added to fix linter error
 }
 
 export interface AddLiquidityFormProps {
@@ -132,6 +134,7 @@ export interface AddLiquidityFormProps {
   sdkMaxTick: number;
   defaultTickSpacing: number;
   poolApr?: string;
+  activeTab: 'deposit' | 'withdraw' | 'swap'; // Added activeTab prop
 }
 
 export function AddLiquidityForm({ 
@@ -140,7 +143,8 @@ export function AddLiquidityForm({
   sdkMinTick,
   sdkMaxTick,
   defaultTickSpacing,
-  poolApr
+  poolApr,
+  activeTab // Accept activeTab from props
 }: AddLiquidityFormProps) {
   // Basic state management
   const [token0Symbol, setToken0Symbol] = useState<TokenSymbol>('YUSDC');
@@ -182,7 +186,6 @@ export function AddLiquidityForm({
   const [baseTokenForPriceDisplay, setBaseTokenForPriceDisplay] = useState<TokenSymbol>('YUSDC');
   
   // UI flow management
-  const [activeTab, setActiveTab] = useState<'deposit' | 'withdraw' | 'swap'>('deposit');
   const [depositStep, setDepositStep] = useState<'range' | 'amount'>('range');
   
   // Chart state
@@ -222,8 +225,6 @@ export function AddLiquidityForm({
     
     isApproveWritePending,
     isApproving,
-    isPermit2SendPending,
-    isPermit2Confirming,
     isMintSendPending,
     isMintConfirming,
     
@@ -1890,7 +1891,8 @@ export function AddLiquidityForm({
 
   return (
     <div className="space-y-4">
-      {/* Tabs for Swap/Deposit/Withdraw */}
+      {/* Tabs for Swap/Deposit/Withdraw - MOVED TO PARENT COMPONENT */}
+      {/*
       <div className="flex border-b border-border mb-4">
         <button
           className={`py-2 px-4 text-sm font-medium ${activeTab === 'deposit' 
@@ -1923,6 +1925,7 @@ export function AddLiquidityForm({
           Swap
         </button>
       </div>
+      */}
 
       {/* Deposit Tab Content */}
       {activeTab === 'deposit' && (
@@ -2198,25 +2201,6 @@ export function AddLiquidityForm({
                 </div>
               </div>
 
-              {/* Transaction Steps */}
-              <div className="p-3 border border-dashed rounded-md bg-muted/10 mb-4">
-                <p className="text-sm font-medium mb-2 text-foreground/80">Transaction Steps</p>
-                <div className="space-y-1.5 text-xs text-muted-foreground">
-                  <div className="flex items-center justify-between">
-                    <span>Select Price Range</span>
-                    <CheckIcon className="h-4 w-4 text-green-500" />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span>Token Approvals</span>
-                    <MinusIcon className="h-4 w-4" />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span>Send Mint Transaction</span>
-                    <MinusIcon className="h-4 w-4" />
-                  </div>
-                </div>
-              </div>
-
               {/* Continue Button */}
               {!isConnected ? (
                 <div className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md bg-accent text-accent-foreground px-3 text-sm font-medium transition-colors hover:bg-accent/90 shadow-md">
@@ -2339,7 +2323,7 @@ export function AddLiquidityForm({
                 </div>
               </div>
 
-              {/* Transaction Steps */}
+              {/* Transaction Steps Re-added for 'amount' step */}
               <div className="p-3 border border-dashed rounded-md bg-muted/10 mb-4">
                 <p className="text-sm font-medium mb-2 text-foreground/80">Transaction Steps</p>
                 <div className="space-y-1.5 text-xs text-muted-foreground">
@@ -2355,7 +2339,7 @@ export function AddLiquidityForm({
                     <span>Token Approvals</span>
                     <span>
                       { (step === 'approve' && (isApproveWritePending || isApproving)) || 
-                        (step === 'permit2Sign' && (isPermit2SendPending || isPermit2Confirming)) 
+                        (step === 'permit2Sign' && isWorking) 
                         ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
                         : (
                           <span className={`text-xs font-mono ${completedTokensCount === involvedTokensCount && involvedTokensCount > 0 ? 'text-green-500' : ''}`}>
@@ -2377,7 +2361,7 @@ export function AddLiquidityForm({
                 </div>
               </div>
 
-              {/* Action Button */}
+              {/* Continue Button */}
               {!isConnected ? (
                 <div className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md bg-accent text-accent-foreground px-3 text-sm font-medium transition-colors hover:bg-accent/90 shadow-md">
                   <span className="relative z-0">Connect Wallet</span>
@@ -2395,7 +2379,6 @@ export function AddLiquidityForm({
                     isCalculating ||
                     isPoolStateLoading || 
                     isApproveWritePending ||
-                    isPermit2SendPending || 
                     isMintSendPending ||
                     (step === 'input' && (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0")) && !preparedTxData) ||
                     (step === 'input' && isInsufficientBalance)
@@ -2404,7 +2387,7 @@ export function AddLiquidityForm({
                   {isPoolStateLoading ? 'Loading Pool...' 
                     : step === 'input' ? (preparedTxData && (parseFloat(amount0 || "0") > 0 || parseFloat(amount1 || "0") > 0) ? 'Proceed' : 'Prepare Deposit') 
                     : step === 'approve' ? `Approve ${preparedTxData?.approvalTokenSymbol || 'Token'}` 
-                    : step === 'permit2Sign' ? 'Sign Permissions'
+                                              : step === 'permit2Sign' ? 'Sign Permission'
                     : step === 'mint' ? 'Confirm Mint' 
                     : 'Processing...' 
                   }

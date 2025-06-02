@@ -1,4 +1,5 @@
 import { getAddress, parseAbi, type Address, type Hex, type Chain, type Abi } from 'viem';
+import { position_manager_abi } from './abis/PositionManager_abi';
 
 // --- Blockchain & Network Configuration ---
 export const CHAIN_ID = 84532; // Base Sepolia
@@ -73,6 +74,10 @@ export const PERMIT_TYPES = {
         { name: 'details', type: 'PermitDetails' }, { name: 'spender', type: 'address' },
         { name: 'sigDeadline', type: 'uint256' },
     ],
+    PermitBatch: [
+        { name: 'details', type: 'PermitDetails[]' }, { name: 'spender', type: 'address' },
+        { name: 'sigDeadline', type: 'uint256' },
+    ],
 } as const;
 
 // --- ABI Definitions ---
@@ -108,4 +113,13 @@ export const getTargetChain = (rpcUrl: string) => ({
         default: { http: [rpcUrl] },
         public: { http: [rpcUrl] }
     },
-} as const satisfies Chain); 
+} as const satisfies Chain);
+
+// --- V4 Position Manager Configuration ---
+// These constants are needed for the burn liquidity functionality
+export const V4_POSITION_MANAGER_ADDRESS_RAW = '0x4b2c77d209d3405f41a037ec6c77f7f5b8e2ca80'; // TODO: Replace with actual address
+export const V4_POSITION_MANAGER_ADDRESS: Address = getAddress(V4_POSITION_MANAGER_ADDRESS_RAW);
+
+// Empty bytes constant for hook data
+export const EMPTY_BYTES = '0x' as const;
+export const V4_POSITION_MANAGER_ABI = position_manager_abi;

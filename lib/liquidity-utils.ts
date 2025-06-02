@@ -219,11 +219,11 @@ export async function prepareAddLiquidityTx(
 
     const mintParams = {
         key: {
-            currency0: keyForMint.currency0,
-            currency1: keyForMint.currency1,
+            currency0: keyForMint.currency0 as `0x${string}`,
+            currency1: keyForMint.currency1 as `0x${string}`,
             fee: keyForMint.fee,
             tickSpacing: keyForMint.tickSpacing,
-            hooks: keyForMint.hooks,
+            hooks: keyForMint.hooks as `0x${string}`,
         },
         tickLower,
         tickUpper,
@@ -232,7 +232,7 @@ export async function prepareAddLiquidityTx(
         amount1Min: amount1Min,
         recipient: RECIPIENT_ADDRESS,
         deadline: deadline,
-        data: '0x' as Hex, 
+        data: '0x' as `0x${string}`, 
     };
 
     const data = encodeFunctionData({

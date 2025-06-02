@@ -140,8 +140,6 @@ export function AddLiquidityModal({
     
     isApproveWritePending,
     isApproving,
-    isPermit2SendPending,
-    isPermit2Confirming,
     isMintSendPending,
     isMintConfirming,
     
@@ -2300,7 +2298,7 @@ export function AddLiquidityModal({
                             <span>Token Approvals</span>
                             <span>
                               { (step === 'approve' && (isApproveWritePending || isApproving)) || 
-                                (step === 'permit2Sign' && (isPermit2SendPending || isPermit2Confirming)) 
+                                (step === 'permit2Sign' && isWorking) 
                                 ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
                                 : (
                                   <span className={`text-xs font-mono ${completedTokensCount === involvedTokensCount && involvedTokensCount > 0 ? 'text-green-500' : ''}`}>
@@ -2333,7 +2331,7 @@ export function AddLiquidityModal({
                       }}
                       disabled={isCalculating || 
                                 (step ==='approve' && (isApproveWritePending || isApproving)) || 
-                                (step === 'permit2Sign' && (isPermit2SendPending || isPermit2Confirming)) ||
+                                (step === 'permit2Sign' && isWorking) ||
                                 (step ==='mint' && (isMintSendPending || isMintConfirming))}
                       className="border-slate-300 bg-slate-100 hover:bg-slate-200 dark:border-zinc-700 dark:bg-zinc-800 dark:hover:bg-zinc-700 disabled:opacity-50"
                     >
@@ -2362,7 +2360,6 @@ export function AddLiquidityModal({
                           isCalculating ||
                           isPoolStateLoading || 
                           isApproveWritePending ||
-                          isPermit2SendPending || 
                           isMintSendPending ||
                           // Disable main button if in input step, no amounts, AND no existing preparedTxData to re-attempt/proceed with.
                           (step === 'input' && (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0")) && !preparedTxData) ||
@@ -2372,7 +2369,7 @@ export function AddLiquidityModal({
                         {isPoolStateLoading ? 'Loading Pool...' 
                           : step === 'input' ? (preparedTxData && (parseFloat(amount0 || "0") > 0 || parseFloat(amount1 || "0") > 0) ? 'Proceed' : 'Prepare Deposit') 
                           : step === 'approve' ? `Approve ${preparedTxData?.approvalTokenSymbol || 'Token'}` 
-                          : step === 'permit2Sign' ? 'Sign Permissions'
+                          : step === 'permit2Sign' ? 'Sign Permission'
                           : step === 'mint' ? 'Confirm Mint' 
                           : 'Processing...' 
                         }

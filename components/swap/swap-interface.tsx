@@ -117,10 +117,10 @@ const initialBTCRL: Token = {
 type SwapState = "input" | "review" | "swapping" | "success" | "error";
 
 // Detailed swap progress states
-type SwapProgressState = "init" | "checking_allowance" | "needs_approval" | "approving" | "waiting_approval" | "approval_complete" | "needs_signature" | "signing_permit" | "signature_complete" | "building_tx" | "executing_swap" | "waiting_confirmation" | "complete" | "error" | "ready_to_swap";
+export type SwapProgressState = "init" | "checking_allowance" | "needs_approval" | "approving" | "waiting_approval" | "approval_complete" | "needs_signature" | "signing_permit" | "signature_complete" | "building_tx" | "executing_swap" | "waiting_confirmation" | "complete" | "error" | "ready_to_swap";
 
 // Transaction information for success state
-interface SwapTxInfo {
+export interface SwapTxInfo {
   hash: string;
   fromAmount: string;
   fromSymbol: string;

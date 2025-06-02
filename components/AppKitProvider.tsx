@@ -1,7 +1,7 @@
 'use client'
 
 // Import config, adapter, networks etc. needed for BOTH provider and init
-import { config, wagmiAdapter, projectId, networks as wagmiNetworks, unichainSepolia, baseSepolia } from '@/lib/wagmiConfig' 
+import { config, wagmiAdapter, projectId, networks as wagmiNetworks, baseSepolia } from '@/lib/wagmiConfig' 
 import { createAppKit } from '@reown/appkit'
 // Removed import of non-existent provider
 // Import AppKit networks separately for initialization

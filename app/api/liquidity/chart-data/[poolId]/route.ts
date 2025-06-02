@@ -51,12 +51,10 @@ const getSubgraphPoolId = (friendlyPoolId: string): string => {
 
 export async function GET(
   request: NextRequest,
-  context: { params: { poolId: string } }
+  context: { params: Promise<{ poolId: string }> }
 ) {
-  // Explicitly destructure params from context right away
-  const { params } = context;
-
-  const friendlyPoolId = params.poolId; // Access params directly
+  // Await params as required by Next.js 15+
+  const { poolId: friendlyPoolId } = await context.params;
 
   if (!friendlyPoolId) {
     return Response.json({ message: 'poolId is required' }, { status: 400 });

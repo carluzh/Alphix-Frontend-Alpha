@@ -42,7 +42,7 @@ async function getRollingVolumeAndFees(poolId: string, days: number): Promise<{ 
 
   const variables = {
     poolId: poolId,
-    cutoffTimestamp: BigInt.fromI32(cutoffTimestampInSeconds).toString(), // Ensure timestamp is string for BigInt
+    cutoffTimestamp: BigInt(cutoffTimestampInSeconds).toString(), // Ensure timestamp is string for BigInt
   };
 
   try {
