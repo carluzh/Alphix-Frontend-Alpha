@@ -17,6 +17,7 @@ import {
   AwardIcon,
   KeySquareIcon,
   GaugeIcon,
+  CoinsIcon,
 } from "lucide-react"
 import { ReactSVG } from "react-svg"
 import { NavMain } from "./nav-main"
@@ -51,6 +52,11 @@ const data = {
       title: "Liquidity",
       url: "/liquidity",
       icon: LayersIcon,
+    },
+    {
+      title: "Faucet",
+      icon: CoinsIcon,
+      isFaucet: true,
     },
     {
       title: "Portfolio",
@@ -112,12 +118,12 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               className="data-[slot=sidebar-menu-button]:!p-1.5 hover:bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0"
             >
               <a 
-                href="/swap" 
+                href="/" 
                 className={cn(isMobile && "pt-4")}
               >
                 <div className="flex items-center">
                   <ReactSVG 
-                    src="/logo.svg" 
+                    src="/Logo Type (white).svg" 
                     className="h-6 w-28 text-slate-900 dark:text-white"
                   />
                 </div>

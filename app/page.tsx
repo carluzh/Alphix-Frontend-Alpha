@@ -198,7 +198,7 @@ export default function Home() {
                       }}
                     ></span>
                   </span>
-                  Private Alpha v0
+                  Private Alpha
                 </Badge>
               </div>
               
@@ -244,12 +244,12 @@ export default function Home() {
               
               {/* Main heading */}
               <h1 className="text-5xl mb-6" style={{ fontFamily: 'Inter, sans-serif', fontWeight: 550 }}>
-                We build better markets.<br /><span style={{ display: 'block', marginTop: '0.75rem' }}>For Everyone.</span>
+                We Build Better Markets.<br /><span style={{ display: 'block', marginTop: '0.75rem' }}>For Everyone.</span>
               </h1>
               
               {/* Subtitle */}
               <p className="text-xl mb-8" style={{ fontFamily: 'Inter, sans-serif', marginTop: '-4px', color: '#c2c2c1' }}>
-                A single pool. Innovative Features at your fingertips.<br />Dynamic Fees. Rehypothecation. Automated Concentration.
+                Innovative Features at your Fingertips.<br />Dynamic Fees. Rehypothecation. Liquidity Automation.
               </p>
               
               {/* Action buttons */}
@@ -344,11 +344,11 @@ export default function Home() {
             
             <div className="flex flex-col lg:flex-row lg:items-end gap-10">
               <h2 className="text-5xl" style={{ fontFamily: 'Inter, sans-serif', fontWeight: 450 }}>
-                To unify AMM<br />innovation.
+                To Unify AMM<br />Innovation.
               </h2>
               
               <p className="text-base max-w-lg lg:self-end" style={{ fontFamily: 'Inter, sans-serif', color: '#c2c2c1', lineHeight: '1.5' }}>
-                Hooks create modular AMM innovation. We serve as the aggregation layer on top of existing infrastructure to build and consolidate exciting features into a single, powerful pool.
+                Hooks create modular AMM innovation. We serve as the aggregation layer on top of existing infrastructure to build and consolidate exciting features into a single pool.
               </p>
             </div>
           </div>

@@ -332,6 +332,7 @@ export function SwapInterface() {
   const [feeHistoryError, setFeeHistoryError] = useState<string | null>(null);
   const [isFeeChartPreviewVisible, setIsFeeChartPreviewVisible] = useState(false); // Renamed for clarity
   const [isFeeChartModalOpen, setIsFeeChartModalOpen] = useState(false); // New state for modal
+  const isFetchingFeeHistoryRef = useRef(false); // Prevent duplicate API calls
 
   const [currentPermitDetailsForSign, setCurrentPermitDetailsForSign] = useState<any | null>(null);
   const [obtainedSignature, setObtainedSignature] = useState<Hex | null>(null);
@@ -379,12 +380,7 @@ export function SwapInterface() {
     slippage: "0.5%",
   });
 
-  // Effect to generate mock fee history data once on mount
-  useEffect(() => {
-    if (isMounted) { // Ensure it runs client-side
-      setFeeHistoryData(generateMockFeeHistory());
-    }
-  }, [isMounted]);
+  // Mock data generation removed - using real API data instead
 
   // Effect to fetch dynamic fee for display
   const fetchFee = useCallback(async () => {
@@ -1415,8 +1411,6 @@ export function SwapInterface() {
     if (isMobile) {
       toast("Not available on mobile (Alpha)", { 
         duration: 4000
-        // If you have a specific InfoIcon component for sonner, you can add it here
-        // e.g., icon: <InfoIcon />
       });
     } else {
       setIsFeeChartModalOpen(true);
@@ -1596,9 +1590,23 @@ export function SwapInterface() {
   // Effect to fetch historical fee data
   useEffect(() => {
     const fetchHistoricalFeeData = async () => {
+      console.log('🔄 fetchHistoricalFeeData triggered', {
+        isConnected,
+        currentChainId,
+        TARGET_CHAIN_ID,
+        fromTokenSymbol: fromToken?.symbol,
+        toTokenSymbol: toToken?.symbol
+      });
+      
       if (!isConnected || currentChainId !== TARGET_CHAIN_ID || !fromToken || !toToken) {
         setFeeHistoryData([]); // Clear data if not connected or tokens not set
         setIsFeeChartPreviewVisible(false);
+        return;
+      }
+
+      // Prevent duplicate API calls
+      if (isFetchingFeeHistoryRef.current) {
+        console.log('🚫 Skipping duplicate fee history fetch request');
         return;
       }
 
@@ -1619,6 +1627,7 @@ export function SwapInterface() {
           return;
       }
 
+      isFetchingFeeHistoryRef.current = true;
       setIsFeeHistoryLoading(true);
       setFeeHistoryError(null);
       setIsFeeChartPreviewVisible(false); // Hide while loading new data
@@ -1647,11 +1656,12 @@ export function SwapInterface() {
         setIsFeeChartPreviewVisible(false);
       } finally {
         setIsFeeHistoryLoading(false);
+        isFetchingFeeHistoryRef.current = false;
       }
     };
 
     fetchHistoricalFeeData();
-  }, [fromToken, toToken, isConnected, currentChainId, TARGET_CHAIN_ID]); // Dependencies: fromToken, toToken, isConnected, currentChainId
+  }, [fromToken?.symbol, toToken?.symbol, isConnected, currentChainId, TARGET_CHAIN_ID]); // Dependencies: only token symbols, not full objects
 
   // Helper functions for action button text and disabled state
   const getActionButtonText = (): string => {
@@ -1849,6 +1859,7 @@ export function SwapInterface() {
       <Dialog open={isFeeChartModalOpen} onOpenChange={setIsFeeChartModalOpen}>
         {/* No DialogTrigger here, it's opened programmatically via the preview click */}
         <DialogContent className="sm:max-w-3xl p-0 outline-none ring-0 border-0 shadow-2xl rounded-lg">
+          <DialogTitle className="sr-only">Dynamic Fee Chart</DialogTitle>
           <DynamicFeeChart data={feeHistoryData} />
           {/* Default Dialog close button will be used */}
         </DialogContent>

@@ -147,9 +147,11 @@ export function DynamicFeeChart({ data }: DynamicFeeChartProps) {
               axisLine={false}
               tickMargin={10}
               tickFormatter={(value, index) => {
+                // Ensure value is a string before using string methods
+                const valueStr = String(value);
                 const approxTotalDays = data.length / 4; 
                 if (data.length > 30 && index % Math.floor(data.length / (approxTotalDays / 5)) !== 0 && index !== data.length -1) return ''; 
-                return value.startsWith("D") ? value.split(" H")[0] : value;
+                return valueStr.startsWith("D") ? valueStr.split(" H")[0] : valueStr;
               }}
               tick={{ fontSize: '0.75rem' }}
             />

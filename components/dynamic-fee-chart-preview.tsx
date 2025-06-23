@@ -3,7 +3,6 @@
 import { LineChart, Line, ResponsiveContainer, XAxis, YAxis } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { ArrowRightIcon } from "lucide-react";
-import { motion } from "framer-motion";
 
 interface FeeHistoryPoint {
   timeLabel: string;
@@ -59,8 +58,6 @@ export function DynamicFeeChartPreview({ data, onClick }: DynamicFeeChartPreview
     };
   });
 
-  const actualDataLength = chartData.length;
-
   // Re-calculate min/max for the Y-axis domain based on normalized data
   const yDomainPadding = 0.01; // 1% padding to prevent touching edges
   const allNormalizedValues = chartData.flatMap(d => [d.fee, d.ema]);
@@ -107,35 +104,8 @@ export function DynamicFeeChartPreview({ data, onClick }: DynamicFeeChartPreview
                 dataKey="fee"
                 stroke={"#e85102"} // Same color as main chart's dynamic fee
                 strokeWidth={1.5}
-                dot={(props: any) => {
-                  const { cx, cy, stroke, index, payload } = props; // Removed dataLength from destructuring
-
-                  if (index === actualDataLength - 1) { // Use actualDataLength from closure
-                    // Render pulsating dot for the LAST point
-                    return (
-                      <g key={`pulsating-dot-${index}-${payload?.name}`}>
-                        <motion.circle
-                          cx={cx}
-                          cy={cy}
-                          r={2.5} 
-                          fill={stroke as string}
-                          animate={{
-                            scale: [1, 1.8, 1, 1.8, 1],
-                            opacity: [0.2, 0.5, 0, 0.5, 0],
-                          }}
-                          transition={{
-                            duration: 6,
-                            repeat: Infinity,
-                            ease: "easeInOut",
-                          }}
-                        />
-                        <circle cx={cx} cy={cy} r={2.5} fill={stroke as string} /> 
-                      </g>
-                    );
-                  } else {
-                    return <g key={`empty-dot-${index}-${payload?.name}`} />;
-                  }
-                }}
+                dot={false}
+                activeDot={false}
               />
               <Line // New line for EMA
                 type="monotone"
@@ -144,6 +114,7 @@ export function DynamicFeeChartPreview({ data, onClick }: DynamicFeeChartPreview
                 strokeWidth={1}
                 strokeDasharray="3 3" // Dashed line for EMA
                 dot={false}
+                activeDot={false}
               />
             </LineChart>
           </ResponsiveContainer>
