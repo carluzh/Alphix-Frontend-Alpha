@@ -276,7 +276,7 @@ export function SwapInputView({
           </Button>
         ) : (
           <div className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md bg-accent text-accent-foreground px-3 text-sm font-medium transition-colors hover:bg-accent/90 shadow-md">
-            <div data-appkit-button className="absolute inset-0 z-10 block h-full w-full cursor-pointer p-0 opacity-0" />
+            <appkit-button className="absolute inset-0 z-10 block h-full w-full cursor-pointer p-0 opacity-0" />
             <span className="relative z-0 pointer-events-none">{actionButtonText}</span>
           </div>
         )}

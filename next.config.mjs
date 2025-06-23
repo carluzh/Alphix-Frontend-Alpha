@@ -27,15 +27,16 @@ const nextConfig = {
     parallelServerBuildTraces: true,
     parallelServerCompiles: true,
   },
-  async redirects() {
-    return [
-      {
-        source: '/',
-        destination: '/swap',
-        permanent: true,
-      },
-    ];
-  },
+  // Removed redirect from root to swap to allow marketing page at root
+  // async redirects() {
+  //   return [
+  //     {
+  //       source: '/',
+  //       destination: '/swap',
+  //       permanent: true,
+  //     },
+  //   ];
+  // },
 }
 
 if (userConfig) {

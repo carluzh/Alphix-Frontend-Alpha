@@ -8,6 +8,7 @@ export function middleware(request: NextRequest) {
 
   // Allow requests to certain paths to pass through without auth check
   if (
+    pathname === '/' || // Allow marketing page at root
     pathname.startsWith('/login') || 
     pathname.startsWith('/api') || 
     pathname.startsWith('/_next') || // Next.js internal assets
