@@ -452,7 +452,7 @@ export default function Home() {
             </div>
             
             {/* Resources and Connect - closer together on the right */}
-            <div className="flex flex-col sm:flex-row gap-4">
+            <div className="flex flex-col sm:flex-row gap-8">
               {/* Resources */}
               <div>
                 <h3 className="text-sm font-medium mb-4" style={{ fontFamily: 'Consolas, monospace', fontWeight: 500, color: '#a5a5a5' }}>
@@ -482,7 +482,7 @@ export default function Home() {
                     className="block text-sm text-[#c2c2c1] hover:text-white transition-colors cursor-pointer text-left"
                     style={{ fontFamily: 'Inter, sans-serif' }}
                   >
-                    Contact Us
+                    Mail
                   </button>
                   <a 
                     href="https://x.com/AlphixFi" 
@@ -521,6 +521,12 @@ function Navbar({
   isMobileMenuOpen: boolean;
   setIsMobileMenuOpen: (open: boolean) => void;
 }) {
+  const handleComingSoon = () => {
+    toast.info("Coming Soon", {
+      position: "bottom-right",
+    });
+  };
+
   return (
     <>
       <nav 
@@ -546,6 +552,7 @@ function Navbar({
               variant="ghost"
               className="text-sm px-4 py-2 h-auto bg-transparent hover:bg-[#1e1d1b] text-[#a5a5a5] hover:text-white rounded-md cursor-pointer"
               style={{ fontFamily: 'Consolas, monospace', fontWeight: 500 }}
+              onClick={handleComingSoon}
             >
               Documentation
             </Button>
@@ -553,6 +560,7 @@ function Navbar({
               variant="ghost"
               className="text-sm px-4 py-2 h-auto bg-transparent hover:bg-[#1e1d1b] text-[#a5a5a5] hover:text-white rounded-md cursor-pointer"
               style={{ fontFamily: 'Consolas, monospace', fontWeight: 500 }}
+              onClick={handleComingSoon}
             >
               Analytics
             </Button>
@@ -560,11 +568,12 @@ function Navbar({
               variant="ghost"
               className="text-sm px-4 py-2 h-auto bg-transparent hover:bg-[#1e1d1b] text-[#a5a5a5] hover:text-white rounded-md cursor-pointer"
               style={{ fontFamily: 'Consolas, monospace', fontWeight: 500 }}
+              onClick={handleComingSoon}
             >
               Security
             </Button>
             <a 
-              href="https://twitter.com" 
+              href="https://x.com/AlphixFi" 
               target="_blank" 
               rel="noopener noreferrer" 
               className="ml-2 flex items-center justify-center w-8 h-8 rounded-full hover:bg-[#1e1d1b] transition-colors cursor-pointer group"
@@ -607,7 +616,10 @@ function Navbar({
                 variant="ghost"
                 className="w-full text-left justify-start text-base px-4 py-3 h-auto bg-transparent hover:bg-[#1e1d1b] text-[#a5a5a5] hover:text-white rounded-md cursor-pointer"
                 style={{ fontFamily: 'Consolas, monospace', fontWeight: 500 }}
-                onClick={() => setIsMobileMenuOpen(false)}
+                onClick={() => {
+                  setIsMobileMenuOpen(false);
+                  handleComingSoon();
+                }}
               >
                 Documentation
               </Button>
@@ -615,7 +627,10 @@ function Navbar({
                 variant="ghost"
                 className="w-full text-left justify-start text-base px-4 py-3 h-auto bg-transparent hover:bg-[#1e1d1b] text-[#a5a5a5] hover:text-white rounded-md cursor-pointer"
                 style={{ fontFamily: 'Consolas, monospace', fontWeight: 500 }}
-                onClick={() => setIsMobileMenuOpen(false)}
+                onClick={() => {
+                  setIsMobileMenuOpen(false);
+                  handleComingSoon();
+                }}
               >
                 Analytics
               </Button>
@@ -623,13 +638,16 @@ function Navbar({
                 variant="ghost"
                 className="w-full text-left justify-start text-base px-4 py-3 h-auto bg-transparent hover:bg-[#1e1d1b] text-[#a5a5a5] hover:text-white rounded-md cursor-pointer"
                 style={{ fontFamily: 'Consolas, monospace', fontWeight: 500 }}
-                onClick={() => setIsMobileMenuOpen(false)}
+                onClick={() => {
+                  setIsMobileMenuOpen(false);
+                  handleComingSoon();
+                }}
               >
                 Security
               </Button>
               <div className="pt-4 border-t border-white/10">
                 <a 
-                  href="https://twitter.com" 
+                  href="https://x.com/AlphixFi" 
                   target="_blank" 
                   rel="noopener noreferrer" 
                   className="flex items-center justify-center w-10 h-10 rounded-md hover:bg-[#1e1d1b] transition-colors cursor-pointer group"
