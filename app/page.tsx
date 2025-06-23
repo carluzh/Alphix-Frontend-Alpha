@@ -173,7 +173,7 @@ export default function Home() {
             <div className="absolute top-[45%] transform -translate-y-1/2">
               {/* Badges */}
               <div className="flex flex-wrap gap-2 mb-4">
-                <Badge variant="default" className="flex items-center bg-[#1e1d1b] text-white">
+                <Badge variant="default" className="flex items-center bg-[#1e1d1b] text-white hover:bg-[#1e1d1b]">
                   <span 
                     style={{
                       display: 'inline-block',
@@ -198,7 +198,7 @@ export default function Home() {
                       }}
                     ></span>
                   </span>
-                  Private Alpha <span style={{ fontFamily: 'Consolas, monospace' }}>v0</span>
+                  Private Alpha v0
                 </Badge>
               </div>
               
@@ -337,7 +337,7 @@ export default function Home() {
           <div className="mb-10">
             {/* Badge */}
             <div className="flex flex-wrap gap-2 mb-6">
-              <Badge variant="default" className="flex items-center bg-[#1e1d1b] text-white">
+              <Badge variant="default" className="flex items-center bg-[#1e1d1b] text-white hover:bg-[#1e1d1b]">
                 <span style={{ fontFamily: 'Inter, sans-serif' }}>Our Vision</span>
               </Badge>
             </div>
