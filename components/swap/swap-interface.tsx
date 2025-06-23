@@ -1587,21 +1587,33 @@ export function SwapInterface() {
 
   const strokeWidth = 2; // Define strokeWidth for the SVG rect elements
 
-  // Effect to fetch historical fee data
+  // Effect to fetch historical fee data - with session caching
   useEffect(() => {
     const fetchHistoricalFeeData = async () => {
-      console.log('🔄 fetchHistoricalFeeData triggered', {
-        isConnected,
-        currentChainId,
-        TARGET_CHAIN_ID,
-        fromTokenSymbol: fromToken?.symbol,
-        toTokenSymbol: toToken?.symbol
-      });
-      
       if (!isConnected || currentChainId !== TARGET_CHAIN_ID || !fromToken || !toToken) {
         setFeeHistoryData([]); // Clear data if not connected or tokens not set
         setIsFeeChartPreviewVisible(false);
         return;
+      }
+
+      // Create cache key for this session
+      const poolIdForFeeHistory = "0xbcc20db9b797e211e508500469e553111c6fa8d80f7896e6db60167bcf18ce13";
+      const cacheKey = `feeHistory_${poolIdForFeeHistory}_30days`;
+      
+      // Check if we already have data in sessionStorage
+      try {
+        const cachedData = sessionStorage.getItem(cacheKey);
+        if (cachedData) {
+          const parsedData = JSON.parse(cachedData);
+          console.log('📊 Using cached fee history data');
+          setFeeHistoryData(parsedData);
+          setIsFeeChartPreviewVisible(true);
+          setIsFeeHistoryLoading(false);
+          setFeeHistoryError(null);
+          return;
+        }
+      } catch (error) {
+        console.warn('Failed to load cached fee history data:', error);
       }
 
       // Prevent duplicate API calls
@@ -1610,16 +1622,6 @@ export function SwapInterface() {
         return;
       }
 
-      // --- IMPORTANT: Pool ID Derivation Placeholder ---
-      // The following poolId is a placeholder based on your example.
-      // You MUST replace this with actual logic to determine the correct poolId
-      // for the selected fromToken and toToken pair. This might involve:
-      // 1. A lookup in TOKEN_DEFINITIONS or a similar constants file if pools are predefined for pairs.
-      // 2. A call to another utility/API that can resolve a token pair to a pool address.
-      // 3. Modifying the get-historical-dynamic-fees API to accept token symbols and resolve poolId internally.
-      const poolIdForFeeHistory = "0xbcc20db9b797e211e508500469e553111c6fa8d80f7896e6db60167bcf18ce13"; // EXAMPLE Placeholder
-      // --- End Placeholder ---
-
       if (!poolIdForFeeHistory) {
           console.warn("SwapInterface: poolIdForFeeHistory could not be determined. Skipping historical fee fetch.");
           setFeeHistoryData([]);
@@ -1627,13 +1629,13 @@ export function SwapInterface() {
           return;
       }
 
+      console.log('🔄 Fetching fresh fee history data');
       isFetchingFeeHistoryRef.current = true;
       setIsFeeHistoryLoading(true);
       setFeeHistoryError(null);
-      setIsFeeChartPreviewVisible(false); // Hide while loading new data
+      setIsFeeChartPreviewVisible(false);
 
       try {
-        // Default to 30 days for the preview chart
         const response = await fetch(`/api/liquidity/get-historical-dynamic-fees?poolId=${poolIdForFeeHistory}&days=30`);
         if (!response.ok) {
           const errorData = await response.json();
@@ -1642,11 +1644,18 @@ export function SwapInterface() {
         const data: FeeHistoryPoint[] = await response.json();
         
         if (data && data.length > 0) {
+            // Cache the data in sessionStorage
+            try {
+              sessionStorage.setItem(cacheKey, JSON.stringify(data));
+            } catch (error) {
+              console.warn('Failed to cache fee history data:', error);
+            }
+            
             setFeeHistoryData(data);
-            setIsFeeChartPreviewVisible(true); // Show preview if data is successfully loaded
+            setIsFeeChartPreviewVisible(true);
         } else {
             setFeeHistoryData([]);
-            setIsFeeChartPreviewVisible(false); // Keep hidden if no data
+            setIsFeeChartPreviewVisible(false);
         }
 
       } catch (error: any) {
@@ -1660,8 +1669,10 @@ export function SwapInterface() {
       }
     };
 
+    // Only fetch once per session by checking if we're connected and on the right chain
+    // Don't depend on token symbols to prevent constant refetching
     fetchHistoricalFeeData();
-  }, [fromToken?.symbol, toToken?.symbol, isConnected, currentChainId, TARGET_CHAIN_ID]); // Dependencies: only token symbols, not full objects
+  }, [isConnected, currentChainId, TARGET_CHAIN_ID]); // Removed token dependencies to prevent constant refetching
 
   // Helper functions for action button text and disabled state
   const getActionButtonText = (): string => {
