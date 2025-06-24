@@ -130,7 +130,7 @@ export function DynamicFeeChart({ data }: DynamicFeeChartProps) {
       <CardHeader className="w-full pt-4 pb-2">
       </CardHeader>
       <CardContent className="w-full">
-        <ChartContainer config={chartConfig} className="h-[300px] w-full">
+        <ChartContainer config={chartConfig} className="h-[300px] w-full [&_.recharts-wrapper]:outline-none [&_.recharts-wrapper]:focus:outline-none [&_.recharts-surface]:outline-none">
           <LineChart
             data={data}
             margin={{

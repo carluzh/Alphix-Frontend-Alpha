@@ -7,6 +7,8 @@ import { cookieToInitialState } from 'wagmi'
 import { headers } from 'next/headers'
 import { ThemeProvider } from "@/components/theme-provider"
 import { Toaster } from "@/components/ui/sonner"
+import { Analytics } from '@vercel/analytics/react'
+import { SpeedInsights } from '@vercel/speed-insights/next'
 import type { Metadata } from 'next'
 
 // Load Inter font
@@ -48,6 +50,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             {children}
           </AppKitProvider>
           <Toaster position="top-right" />
+          <Analytics />
+          <SpeedInsights />
         </ThemeProvider>
       </body>
     </html>

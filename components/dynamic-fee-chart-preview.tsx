@@ -84,7 +84,7 @@ export function DynamicFeeChartPreview({ data, onClick }: DynamicFeeChartPreview
         <ArrowRightIcon className="h-4 w-4 text-muted-foreground group-hover:text-white transition-colors duration-150" />
       </CardHeader>
       <CardContent className="px-2 pb-2 pt-0 h-[80px]">
-        <div className="w-full h-full cursor-pointer">
+        <div className="w-full h-full cursor-pointer [&_.recharts-wrapper]:outline-none [&_.recharts-wrapper]:focus:outline-none [&_.recharts-surface]:outline-none">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart 
               data={chartData}
