@@ -20,6 +20,7 @@ import {
   CoinsIcon,
 } from "lucide-react"
 import { ReactSVG } from "react-svg"
+import { useTheme } from "next-themes"
 import { NavMain } from "./nav-main"
 import { NavSecondary } from "./nav-secondary"
 import { NavGovernance } from "./nav-governance"
@@ -107,6 +108,7 @@ const data = {
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const isMobile = useIsMobile()
+  const { resolvedTheme } = useTheme()
 
   return (
     <Sidebar collapsible="offcanvas" {...props}>
@@ -123,7 +125,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               >
                 <div className="flex items-center">
                   <ReactSVG 
-                    src="/Logo Type (white).svg" 
+                    src={resolvedTheme === "dark" ? "/Logo Type (white).svg" : "/Logo Type (black).svg"}
                     className="h-6 w-28 text-slate-900 dark:text-white"
                   />
                 </div>

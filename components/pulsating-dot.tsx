@@ -7,17 +7,21 @@ interface PulsatingDotProps {
   color: string;
   size?: number; // Radius of the inner static dot
   className?: string;
+  pulseBaseRadius?: number; // New prop: Base radius for the pulsating circle before scaling
 }
 
 export const PulsatingDot: React.FC<PulsatingDotProps> = ({
   color,
-  size = 2,
+  size = 2, // Default static dot size (radius)
   className = '',
+  pulseBaseRadius, // Destructure new prop
 }) => {
-  // Calculate viewBox and center based on the potential size of the pulsating outer dot
-  // Outer dot scale goes up to 1.8 * size for radius. Diameter = 2 * 1.8 * size = 3.6 * size
-  // Add some padding, e.g., 1 unit around.
-  const svgSize = size * 3.6 + 2; 
+  // Calculate viewBox based on the maximum potential size of the pulsating outer dot
+  // Max scale is 1.8, applied to pulseBaseRadius (which can default to size if not provided)
+  const effectivePulseBaseRadius = pulseBaseRadius || size;
+  const maxPulsationDiameter = effectivePulseBaseRadius * 1.8 * 2; // Diameter = radius * scale * 2
+  const svgPadding = 2; // Extra padding around for overflow
+  const svgSize = maxPulsationDiameter + svgPadding; 
   const center = svgSize / 2;
 
   return (
@@ -26,7 +30,7 @@ export const PulsatingDot: React.FC<PulsatingDotProps> = ({
       height={svgSize}
       viewBox={`0 0 ${svgSize} ${svgSize}`}
       className={className}
-      style={{ overflow: 'visible' }} // Ensure halo isn't clipped by svg boundaries if calculations are tight
+      style={{ overflow: 'visible' }} // Ensure halo isn't clipped by svg boundaries
     >
       {/* Inner static dot */}
       <circle cx={center} cy={center} r={size} fill={color} />
@@ -34,18 +38,17 @@ export const PulsatingDot: React.FC<PulsatingDotProps> = ({
       <motion.circle
         cx={center}
         cy={center}
-        r={size} // Base radius, will be scaled
+        r={effectivePulseBaseRadius} // Use effectivePulseBaseRadius as base for animation
         fill={color}
-        // stroke={color} // Stroke can make it look thicker than intended with fill
-        // strokeWidth="0.5"
         animate={{
-          scale: [1, 1.8, 1, 1.8, 1], // Adjusted scale for smaller halo
-          opacity: [0.2, 0.5, 0, 0.5, 0], // Adjusted opacity
+          scale: [0.3, 1.8, 0.3], // Start and reset at a much smaller scale to appear to grow from behind
+          opacity: [0.8, 0, 0],   // Fade out, then stay invisible at the end to force a "pop" on repeat
         }}
         transition={{
-          duration: 6, // Slowed down animation to 6 seconds
+          duration: 1.5, // Total duration of one pulse cycle
+          times: [0, 0.7, 1], // Keyframe times: 0%, 70%, 100%
           repeat: Infinity,
-          ease: 'easeInOut',
+          ease: 'linear', // Linear transition for a sharp fade-out and instantaneous reset
         }}
       />
     </svg>

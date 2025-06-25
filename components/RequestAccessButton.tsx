@@ -104,21 +104,19 @@ export function RequestAccessButton({ className, style }: RequestAccessButtonPro
       {state === 'button' && (
         <Button 
           variant="ghost" 
-          className={`flex items-center px-4 py-4 h-12 bg-transparent hover:bg-[#1e1d1b] rounded-md group cursor-pointer ${className}`}
+          className={`relative flex items-center px-4 py-4 h-12 bg-transparent hover:bg-[#1e1d1b] rounded-md group cursor-pointer ${className}`}
           style={style}
           onClick={handleButtonClick}
         >
-          <div className="flex items-center justify-center">
-            <span className="text-base" style={{
-              background: 'linear-gradient(90deg, #FFFFFF 0%, #888888 100%)',
-              WebkitBackgroundClip: 'text',
-              WebkitTextFillColor: 'transparent',
-              backgroundClip: 'text'
-            }}>
-              Request Access
-            </span>
-            <ChevronRight className="ml-1 h-4 w-4 text-[#888888]" style={{ transform: 'translateY(2px)' }} />
-          </div>
+          <span className="text-base pr-6" style={{
+            background: 'linear-gradient(90deg, #FFFFFF 0%, #888888 100%)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            backgroundClip: 'text'
+          }}>
+            Request Access
+          </span>
+          <ChevronRight className="absolute right-5 h-4 w-4 text-[#888888] transition-transform group-hover:translate-x-2 translate-y-[2px]" />
         </Button>
       )}
 
@@ -132,7 +130,7 @@ export function RequestAccessButton({ className, style }: RequestAccessButtonPro
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               onKeyDown={handleKeyDown}
-              className={`bg-transparent border-[#333] text-white placeholder:text-[#888888] focus:border-[#333] focus:ring-0 focus:ring-offset-0 focus:outline-none focus-visible:ring-0 focus-visible:border-[#333] h-12 pr-10 ${
+              className={`bg-transparent border-[#333] text-white placeholder:text-[#888888] focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 h-12 pr-10 ${
                 state === 'error' ? 'border-red-500 focus-visible:border-red-500' : ''
               }`}
             />

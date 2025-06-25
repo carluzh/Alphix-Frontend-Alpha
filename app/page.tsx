@@ -1,12 +1,14 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { motion } from 'framer-motion';
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ChevronRight, Menu, X } from "lucide-react";
 import { RequestAccessButton } from "@/components/RequestAccessButton";
 import DisplayCards from "@/components/ui/display-cards";
 import { toast } from "sonner";
+import { PulsatingDot } from "@/components/pulsating-dot";
 
 import {
   Card,
@@ -153,6 +155,31 @@ export default function Home() {
 
   return (
     <div className="bg-black" style={{background: '#0a0908'}}>
+      {/* CSS Keyframes for interactive animations */}
+      <style jsx>{`
+        @keyframes swapSlideIn {
+          0% {
+            opacity: 0;
+            transform: translateY(calc(-50% + 40px)) perspective(1000px) rotateY(-5deg);
+          }
+          100% {
+            opacity: 1;
+            transform: translateY(calc(-50% - 20px)) perspective(1000px) rotateY(-5deg);
+          }
+        }
+        
+        @keyframes swapSlideInLarge {
+          0% {
+            opacity: 0;
+            transform: translateY(calc(-50% + 50px)) perspective(1000px) rotateY(-5deg);
+          }
+          100% {
+            opacity: 1;
+            transform: translateY(calc(-50% - 20px)) perspective(1000px) rotateY(-5deg);
+          }
+        }
+      `}</style>
+
       {/* Navbar */}
       <Navbar 
         showNavbar={showNavbar} 
@@ -172,88 +199,97 @@ export default function Home() {
             {/* Main content positioned in center-upper area */}
             <div className="absolute top-[45%] transform -translate-y-1/2">
               {/* Badges */}
-              <div className="flex flex-wrap gap-2 mb-4">
-                <Badge variant="default" className="flex items-center bg-[#1e1d1b] text-white hover:bg-[#1e1d1b]">
-                  <span 
-                    style={{
-                      display: 'inline-block',
-                      width: '5px',
-                      height: '5px',
-                      backgroundColor: '#22c55e',
-                      borderRadius: '50%',
-                      marginRight: '8px',
-                      position: 'relative'
-                    }}
-                  >
-                    <span 
-                      style={{
-                        position: 'absolute',
-                        top: '-1.5px',
-                        left: '-1.5px',
-                        width: '8px',
-                        height: '8px',
-                        backgroundColor: 'rgba(34, 197, 94, 0.4)',
-                        borderRadius: '50%',
-                        animation: 'pulse 1.5s infinite'
-                      }}
-                    ></span>
-                  </span>
+              <motion.div 
+                className="flex flex-wrap gap-2 mb-4"
+                initial={{ opacity: 0, y: -20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.6, delay: 1.8, ease: "easeOut" }}
+              >
+                <Badge variant="default" className="flex items-center bg-[#1e1d1b] text-white pl-1.5 pr-3 py-1 transition-all duration-300 hover:bg-[#2a2928]" style={{ fontFamily: 'Inter, sans-serif', fontWeight: 450 }}>
+                  <PulsatingDot color="#22c55e" size={2.5} pulseBaseRadius={4} className="mr-1" />
                   Private Alpha
                 </Badge>
-              </div>
-              
-              {/* Add keyframes animation for pulse */}
-              <style jsx>{`
-                @keyframes pulse {
-                  0% {
-                    transform: scale(0.8);
-                    opacity: 0.8;
-                  }
-                  70% {
-                    transform: scale(1.8);
-                    opacity: 0;
-                  }
-                  100% {
-                    transform: scale(0.8);
-                    opacity: 0;
-                  }
-                }
-                
-                @keyframes swapSlideIn {
-                  0% {
-                    opacity: 0;
-                    transform: translateY(calc(-50% + 40px)) perspective(1000px) rotateY(-5deg);
-                  }
-                  100% {
-                    opacity: 1;
-                    transform: translateY(calc(-50% - 20px)) perspective(1000px) rotateY(-5deg);
-                  }
-                }
-                
-                @keyframes swapSlideInLarge {
-                  0% {
-                    opacity: 0;
-                    transform: translateY(calc(-50% + 50px)) perspective(1000px) rotateY(-5deg);
-                  }
-                  100% {
-                    opacity: 1;
-                    transform: translateY(calc(-50% - 20px)) perspective(1000px) rotateY(-5deg);
-                  }
-                }
-              `}</style>
+              </motion.div>
               
               {/* Main heading */}
-              <h1 className="text-5xl mb-6" style={{ fontFamily: 'Inter, sans-serif', fontWeight: 550 }}>
-                We Build Better Markets.<br /><span style={{ display: 'block', marginTop: '0.75rem' }}>For Everyone.</span>
-              </h1>
+              <div className="text-5xl mb-6" style={{ fontFamily: 'Inter, sans-serif', fontWeight: 550 }}>
+                {/* First line: "We Build Better Markets." */}
+                <div className="mb-3">
+                  {"We Build Better Markets.".split(" ").map((word, index, array) => (
+                    <span key={index}>
+                      <motion.span
+                        className="inline-block"
+                        initial={{ 
+                          opacity: 0, 
+                          y: 20, 
+                          filter: "blur(8px)" 
+                        }}
+                        animate={{ 
+                          opacity: 1, 
+                          y: 0, 
+                          filter: "blur(0px)" 
+                        }}
+                        transition={{ 
+                          duration: 0.8, 
+                          delay: index * 0.15,
+                          ease: "easeOut" 
+                        }}
+                      >
+                        {word}
+                      </motion.span>
+                      {index < array.length - 1 && " "}
+                    </span>
+                  ))}
+                </div>
+                
+                {/* Second line: "For Everyone." */}
+                <div style={{ marginTop: '0.75rem' }}>
+                  {"For Everyone.".split(" ").map((word, index, array) => (
+                    <span key={index}>
+                      <motion.span
+                        className="inline-block"
+                        initial={{ 
+                          opacity: 0, 
+                          y: 20, 
+                          filter: "blur(8px)" 
+                        }}
+                        animate={{ 
+                          opacity: 1, 
+                          y: 0, 
+                          filter: "blur(0px)" 
+                        }}
+                        transition={{ 
+                          duration: 0.8, 
+                          delay: 1.2 + index * 0.15, // Increased delay for bigger gap between lines
+                          ease: "easeOut" 
+                        }}
+                      >
+                        {word}
+                      </motion.span>
+                      {index < array.length - 1 && " "}
+                    </span>
+                  ))}
+                </div>
+              </div>
               
               {/* Subtitle */}
-              <p className="text-xl mb-8" style={{ fontFamily: 'Inter, sans-serif', marginTop: '-4px', color: '#c2c2c1' }}>
+              <motion.p 
+                className="text-xl mb-8" 
+                style={{ fontFamily: 'Inter, sans-serif', marginTop: '-4px', color: 'rgba(255, 255, 255, 0.65)' }}
+                initial={{ opacity: 0, y: 20, filter: "blur(4px)" }}
+                animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+                transition={{ duration: 0.6, delay: 1.8, ease: "easeOut" }}
+              >
                 Innovative Features at your Fingertips.<br />Dynamic Fees. Rehypothecation. Liquidity Automation.
-              </p>
+              </motion.p>
               
               {/* Action buttons */}
-              <div className="flex items-center gap-6">
+              <motion.div 
+                className="flex items-center gap-6"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.6, delay: 2.1, ease: "easeOut" }}
+              >
                 <Button 
                   variant="alphix"
                   className="text-base flex items-center px-4 py-4 h-11 rounded-md cursor-pointer" 
@@ -269,7 +305,7 @@ export default function Home() {
                     fontFamily: 'Inter, sans-serif'
                   }}
                 />
-              </div>
+              </motion.div>
             </div>
             
             {/* Swap Component Image - Large screens (2xl+) */}
@@ -337,19 +373,25 @@ export default function Home() {
           <div className="mb-10">
             {/* Badge */}
             <div className="flex flex-wrap gap-2 mb-6">
-              <Badge variant="default" className="flex items-center bg-[#1e1d1b] text-white hover:bg-[#1e1d1b]">
-                <span style={{ fontFamily: 'Inter, sans-serif' }}>Our Vision</span>
+              <Badge variant="default" className="flex items-center bg-[#1e1d1b] text-white px-3 py-1 transition-all duration-300 hover:bg-[#2a2928]" style={{ fontFamily: 'Inter, sans-serif', fontWeight: 450 }}>
+                Our Vision
               </Badge>
             </div>
             
-            <div className="flex flex-col lg:flex-row lg:items-end gap-10">
-              <h2 className="text-5xl" style={{ fontFamily: 'Inter, sans-serif', fontWeight: 450 }}>
-                To Unify AMM<br />Innovation.
-              </h2>
+            <div className="relative">
+              <div className="grid grid-cols-1 md:grid-cols-3">
+                <div className="md:col-span-2">
+                  <h2 className="text-5xl" style={{ fontFamily: 'Inter, sans-serif', fontWeight: 450 }}>
+                    To Unify AMM<br /><span style={{ display: 'block', marginTop: '0.75rem' }}>Innovation.</span>
+                  </h2>
+                </div>
+              </div>
               
-              <p className="text-base max-w-lg lg:self-end" style={{ fontFamily: 'Inter, sans-serif', color: '#c2c2c1', lineHeight: '1.5' }}>
-                Hooks create modular AMM innovation. We serve as the aggregation layer on top of existing infrastructure to build and consolidate exciting features into a single pool.
-              </p>
+              <div className="absolute top-0 left-[calc(33.333%-0.125rem)] hidden md:block">
+                <p className="text-base pl-0 max-w-lg" style={{ fontFamily: 'Inter, sans-serif', color: 'rgba(255, 255, 255, 0.65)', lineHeight: '1.5' }}>
+                  Hooks create modular AMM innovation. We serve as the aggregation layer on top of existing infrastructure to build and consolidate exciting features into a single pool.
+                </p>
+              </div>
             </div>
           </div>
 
@@ -361,10 +403,10 @@ export default function Home() {
             <div className="grid grid-cols-1 md:grid-cols-3">
               {/* Section 1 */}
               <div className="p-12 pb-24 relative overflow-hidden">
-                <h3 className="relative z-20 text-xl font-medium text-white mb-4" style={{ fontFamily: 'Inter, sans-serif' }}>
+                <h3 className="relative z-20 text-xl font-medium text-white mb-2" style={{ fontFamily: 'Inter, sans-serif' }}>
                   Composable Features
                 </h3>
-                <p className="relative z-20 text-base mb-4" style={{ fontFamily: 'Inter, sans-serif', color: '#c2c2c1', lineHeight: '1.5' }}>
+                <p className="relative z-20 text-base mb-6" style={{ fontFamily: 'Inter, sans-serif', color: 'rgba(255, 255, 255, 0.65)', lineHeight: '1.5', fontWeight: 300 }}>
                   Continuously expanding to improve efficiency and user experience.
                 </p>
                 
@@ -382,10 +424,10 @@ export default function Home() {
 
               {/* Section 2 */}
               <div className="p-12 relative">
-                <h3 className="relative z-20 text-xl font-medium text-white mb-4" style={{ fontFamily: 'Inter, sans-serif' }}>
+                <h3 className="relative z-20 text-xl font-medium text-white mb-2" style={{ fontFamily: 'Inter, sans-serif' }}>
                   Infrastructure Agnostic
                 </h3>
-                <p className="relative z-20 text-base" style={{ fontFamily: 'Inter, sans-serif', color: '#c2c2c1', lineHeight: '1.5' }}>
+                <p className="relative z-20 text-base mb-6" style={{ fontFamily: 'Inter, sans-serif', color: 'rgba(255, 255, 255, 0.65)', lineHeight: '1.5', fontWeight: 300 }}>
                   Flexible foundation that adapts to different pool types and environments.
                 </p>
                 
@@ -400,10 +442,10 @@ export default function Home() {
 
               {/* Section 3 */}
               <div className="p-12">
-                <h3 className="relative z-20 text-xl font-medium text-white mb-4" style={{ fontFamily: 'Inter, sans-serif' }}>
+                <h3 className="relative z-20 text-xl font-medium text-white mb-2" style={{ fontFamily: 'Inter, sans-serif' }}>
                   Crafted to Perfection
                 </h3>
-                <p className="relative z-20 text-base" style={{ fontFamily: 'Inter, sans-serif', color: '#c2c2c1', lineHeight: '1.5' }}>
+                <p className="relative z-20 text-base mb-6" style={{ fontFamily: 'Inter, sans-serif', color: 'rgba(255, 255, 255, 0.65)', lineHeight: '1.5', fontWeight: 300 }}>
                   Abstracting complexity through a simple, elegant interface.
                 </p>
                 
