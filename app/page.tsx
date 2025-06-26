@@ -382,13 +382,13 @@ export default function Home() {
             <div className="relative">
               <div className="grid grid-cols-1 md:grid-cols-3">
                 <div className="md:col-span-2">
-                  <h2 className="text-5xl" style={{ fontFamily: 'Inter, sans-serif', fontWeight: 450 }}>
+                  <h2 className="text-5xl min-[1010px]:text-4xl 2xl:text-5xl" style={{ fontFamily: 'Inter, sans-serif', fontWeight: 450 }}>
                     To Unify AMM<br /><span style={{ display: 'block', marginTop: '0.75rem' }}>Innovation.</span>
                   </h2>
                 </div>
               </div>
               
-              <div className="absolute top-0 left-[calc(33.333%-0.125rem)] hidden md:block">
+              <div className="relative mt-6 md:absolute md:top-0 md:left-[calc(33.333%-0.125rem)] md:mt-0">
                 <p className="text-base pl-0 max-w-lg" style={{ fontFamily: 'Inter, sans-serif', color: 'rgba(255, 255, 255, 0.65)', lineHeight: '1.5' }}>
                   Hooks create modular AMM innovation. We serve as the aggregation layer on top of existing infrastructure to build and consolidate exciting features into a single pool.
                 </p>
@@ -401,27 +401,36 @@ export default function Home() {
             {/* Top horizontal divider line */}
             <div className="w-full h-0.5 bg-white/5 z-30 relative"></div>
             
-            <div className="grid grid-cols-1 md:grid-cols-3">
+            <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3">
               {/* Section 1 */}
-              <div className="p-12 pb-24 relative overflow-hidden">
-                <h3 className="relative z-20 text-xl font-medium text-white mb-2" style={{ fontFamily: 'Inter, sans-serif' }}>
-                  Composable Features
-                </h3>
-                <p className="relative z-20 text-base mb-6" style={{ fontFamily: 'Inter, sans-serif', color: 'rgba(255, 255, 255, 0.65)', lineHeight: '1.5', fontWeight: 300 }}>
-                  Continuously expanding to improve efficiency and user experience.
-                </p>
-                
-                {/* DisplayCards component */}
-                <div className="flex justify-center mt-12 relative" style={{ transform: 'translateX(-2.5rem) scale(1.1)' }}>
-                  <DisplayCards />
+              <div className="p-12 pb-24 relative overflow-hidden lg:col-span-2 2xl:col-span-1">
+                <div className="lg:grid lg:grid-cols-2 lg:items-center lg:gap-8 2xl:block">
+                  <div>
+                    <h3 className="relative z-20 text-xl font-medium text-white mb-2" style={{ fontFamily: 'Inter, sans-serif' }}>
+                      Composable Features
+                    </h3>
+                    <p className="relative z-20 text-base mb-6" style={{ fontFamily: 'Inter, sans-serif', color: 'rgba(255, 255, 255, 0.65)', lineHeight: '1.5', fontWeight: 300 }}>
+                      Continuously expanding to improve efficiency and user experience.
+                    </p>
+                  </div>
+                  
+                  {/* DisplayCards component */}
+                  <div className="flex justify-center mt-12 relative scale-[1.1] -translate-x-6 lg:mt-0 lg:scale-100 lg:translate-x-0 lg:-translate-y-4 2xl:mt-12 2xl:scale-110 2xl:-translate-x-10 2xl:translate-y-4">
+                    <DisplayCards />
+                  </div>
                 </div>
 
                 {/* Right Edge Shadow */}
-                <div className="absolute top-12 right-0 w-48 bg-gradient-to-l from-[#0a0908] from-50% to-transparent pointer-events-none z-10" style={{ height: 'calc(100% - 6rem)' }} />
                 
                 {/* Vertical divider line - right */}
-                <div className="hidden md:block absolute top-0 right-0 w-0.5 bg-white/5 z-20" style={{ height: 'calc(100% - 3rem)' }}></div>
+                <div className="hidden 2xl:block absolute top-0 right-0 w-0.5 bg-white/5 z-20" style={{ height: 'calc(100% - 3rem)' }}></div>
               </div>
+
+              {/* Mobile-only divider */}
+              <div className="w-full h-0.5 bg-white/5 lg:hidden mt-10"></div>
+
+              {/* Horizontal divider for tablet view */}
+              <div className="hidden lg:block 2xl:hidden col-span-2 w-full h-0.5 bg-white/5"></div>
 
               {/* Section 2 */}
               <div className="p-12 relative">
@@ -433,13 +442,16 @@ export default function Home() {
                 </p>
                 
                 {/* Image */}
-                <div className="flex justify-center items-center w-full aspect-square">
+                <div className="flex justify-center items-center w-full lg:aspect-square scale-90">
                   <img src="/InfraAgnostic.png" alt="Infrastructure Agnostic" className="w-full" />
                 </div>
                 
                 {/* Vertical divider line - right */}
-                <div className="hidden md:block absolute top-0 right-0 w-0.5 bg-white/5" style={{ height: 'calc(100% - 3rem)' }}></div>
+                <div className="hidden lg:block absolute top-0 right-0 w-0.5 bg-white/5" style={{ height: 'calc(100% - 3rem)' }}></div>
               </div>
+
+              {/* Mobile-only divider */}
+              <div className="w-full h-0.5 bg-white/5 lg:hidden"></div>
 
               {/* Section 3 */}
               <div className="p-12">
@@ -451,7 +463,7 @@ export default function Home() {
                 </p>
                 
                 {/* Image */}
-                <div className="flex justify-center items-center w-full aspect-square relative overflow-hidden -mt-12 z-0">
+                <div className="flex justify-center items-center w-full aspect-square relative overflow-hidden -mt-12 z-0 lg:scale-80 2xl:scale-100">
                   <img src="/TemporaryCraft.png" alt="Crafted to Perfection" className="w-[100%] max-w-none z-0" />
                   <div className="absolute inset-0 pointer-events-none z-0" style={{
                     background: 'radial-gradient(circle, transparent 40%, #0a0908 85%, #0a0908 100%)'
