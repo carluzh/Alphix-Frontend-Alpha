@@ -9,6 +9,7 @@ import { RequestAccessButton } from "@/components/RequestAccessButton";
 import DisplayCards from "@/components/ui/display-cards";
 import { toast } from "sonner";
 import { PulsatingDot } from "@/components/pulsating-dot";
+import { MockSwapComponent } from "@/components/swap/MockSwapComponent";
 
 import {
   Card,
@@ -308,9 +309,9 @@ export default function Home() {
               </motion.div>
             </div>
             
-            {/* Swap Component Image - Large screens (2xl+) */}
+            {/* Swap Component - Large screens (2xl+) */}
             <div 
-              className="absolute right-[-80px] top-1/2 z-10 hidden 2xl:block" 
+              className="absolute right-[-20px] top-1/2 z-10 hidden 2xl:block" 
               style={{ 
                 opacity: animationFinished ? 1 : 0,
                 animation: animationFinished ? 'none' : 'swapSlideInLarge 1.2s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards',
@@ -324,20 +325,20 @@ export default function Home() {
               onMouseLeave={handleMouseLeave}
               onAnimationEnd={handleAnimationEnd}
             >
-              <img 
-                src="/Swap-Component.png" 
-                alt="Swap Component Interface" 
-                className="w-auto h-auto max-h-[700px] max-w-[650px] lg:max-w-[750px] object-contain cursor-pointer"
+              <div 
+                className="cursor-pointer"
                 style={{ 
-                  filter: 'drop-shadow(0 4px 20px rgba(0, 0, 0, 0.25))',
+                  filter: 'drop-shadow(0 4px 20px rgba(0, 0, 0, 0.25))'
                 }}
                 onClick={handleNavigateToSwap}
-              />
+              >
+                <MockSwapComponent zoom={1.2} />
+              </div>
             </div>
             
-            {/* Swap Component Image - Medium screens (custom breakpoint to 2xl) - scaled down 20% */}
+            {/* Swap Component - Medium screens (custom breakpoint to 2xl) */}
             <div 
-              className="absolute right-[-40px] top-1/2 z-10 hidden min-[1010px]:block 2xl:hidden" 
+              className="absolute right-[0px] top-1/2 z-10 hidden min-[1010px]:block 2xl:hidden" 
               style={{ 
                 opacity: animationFinished ? 1 : 0,
                 animation: animationFinished ? 'none' : 'swapSlideIn 1.2s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards',
@@ -351,15 +352,15 @@ export default function Home() {
               onMouseLeave={handleMouseLeave}
               onAnimationEnd={handleAnimationEnd}
             >
-              <img 
-                src="/Swap-Component.png" 
-                alt="Swap Component Interface" 
-                className="w-auto h-auto max-h-[560px] max-w-[520px] object-contain cursor-pointer"
+              <div 
+                className="cursor-pointer"
                 style={{ 
-                  filter: 'drop-shadow(0 4px 20px rgba(0, 0, 0, 0.25))',
+                  filter: 'drop-shadow(0 4px 20px rgba(0, 0, 0, 0.25))'
                 }}
                 onClick={handleNavigateToSwap}
-              />
+              >
+                <MockSwapComponent zoom={0.9} />
+              </div>
             </div>
             
           </div>
