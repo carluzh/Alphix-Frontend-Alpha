@@ -10,6 +10,7 @@ import DisplayCards from "@/components/ui/display-cards";
 import { toast } from "sonner";
 import { PulsatingDot } from "@/components/pulsating-dot";
 import { MockSwapComponent } from "@/components/swap/MockSwapComponent";
+import { useRouter } from 'next/navigation';
 
 import {
   Card,
@@ -21,6 +22,7 @@ import {
 
 
 export default function Home() {
+  const router = useRouter();
   const textContainerRef = useRef<HTMLDivElement>(null);
   const [rightMargin, setRightMargin] = useState(0);
   const [showNavbar, setShowNavbar] = useState(true);
@@ -33,8 +35,14 @@ export default function Home() {
   const [isHovering, setIsHovering] = useState(false);
   const [animationFinished, setAnimationFinished] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isPoolsImageHovered, setIsPoolsImageHovered] = useState(false);
 
   const words = ['dynamic', 'composable', 'efficient', 'unified', 'here'];
+
+  const imageStyle = {
+    transform: `perspective(1000px) rotateY(-12deg) rotateX(4deg) ${isPoolsImageHovered ? 'translateY(-8px)' : ''}`,
+    transition: 'transform 0.3s ease-in-out',
+  };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!animationFinished) return;
@@ -476,15 +484,100 @@ export default function Home() {
             <div className="w-full h-0.5 bg-white/5 -mt-12"></div>
           </div>
 
-          {/* Commented out Unified Pools Section */}
-          {/*
-          <div className="mt-32 relative">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
-              ...
+          <div className="mt-32">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-16 items-start">
+              {/* Left side with title and description */}
+              <div className="space-y-6">
+                <div className="flex flex-wrap gap-2">
+                  <Badge variant="default" className="flex items-center bg-[#1e1d1b] text-white px-3 py-1 transition-all duration-300 hover:bg-[#2a2928]" style={{ fontFamily: 'Inter, sans-serif', fontWeight: 450 }}>
+                    Product
+                  </Badge>
+                </div>
+                <h2 className="text-5xl min-[1010px]:text-4xl 2xl:text-5xl" style={{ fontFamily: 'Inter, sans-serif', fontWeight: 450 }}>
+                  Unified Pools
+                </h2>
+                <p className="text-base" style={{ fontFamily: 'Inter, sans-serif', color: 'rgba(255, 255, 255, 0.65)', lineHeight: '1.5' }}>
+                  Our Dynamic Fee Algorithm is the first feature offered through Unified Pools. It was built to counteract the liquidity fragmentation inherent in today's static fee-tier AMMs, creating a more efficient market for traders and liquidity providers.
+                </p>
+              </div>
+              
+              {/* Right side with angled image */}
+              <div 
+                className="relative w-full flex items-start justify-center mt-8 md:mt-0 cursor-pointer"
+                onMouseEnter={() => setIsPoolsImageHovered(true)}
+                onMouseLeave={() => setIsPoolsImageHovered(false)}
+                onClick={() => router.push('/swap')}
+              >
+                <div className="relative w-full max-w-full" style={imageStyle}>
+                  <div className="relative">
+                    <img 
+                      src="/Unified-Hook.png" 
+                      alt="Unified Pools Architecture" 
+                      className="w-full rounded-lg shadow-2xl"
+                    />
+                    <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-[#0a0908] to-transparent"></div>
+                  </div>
+                </div>
+              </div>
             </div>
-            ...
+
+            {/* Features in a horizontal row */}
+            <div className="mt-24 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-x-8 gap-y-10">
+              {/* Feature 1: Adaptive Pricing */}
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center gap-3">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-area-chart text-white flex-shrink-0">
+                    <path d="M3 3v18h18"/>
+                    <path d="M7 12v5h12V8l-5 5-4-4Z"/>
+                  </svg>
+                  <h4 className="text-base font-medium text-white">Adaptive Pricing</h4>
+                </div>
+                <p className="text-sm" style={{ color: 'rgba(255, 255, 255, 0.65)' }}>Dynamic fees respond to Volume and TVL in real-time for optimal performance.</p>
+              </div>
+              
+              {/* Feature 2: Capital Efficiency */}
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center gap-3">
+                   <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-chevrons-up text-white flex-shrink-0">
+                    <path d="m17 11-5-5-5 5"/>
+                    <path d="m17 18-5-5-5 5"/>
+                  </svg>
+                  <h4 className="text-base font-medium text-white">Capital Efficiency</h4>
+                </div>
+                <p className="text-sm" style={{ color: 'rgba(255, 255, 255, 0.65)' }}>Optimized fee structure maximizes liquidity usage and provider returns.</p>
+              </div>
+              
+              {/* Feature 3: Trustless */}
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center gap-3">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-loader text-white flex-shrink-0">
+                    <line x1="12" x2="12" y1="2" y2="6"/>
+                    <line x1="12" x2="12" y1="18" y2="22"/>
+                    <line x1="4.93" x2="7.76" y1="4.93" y2="7.76"/>
+                    <line x1="16.24" x2="19.07" y1="16.24" y2="19.07"/>
+                    <line x1="2" x2="6" y1="12" y2="12"/>
+                    <line x1="18" x2="22" y1="12" y2="12"/>
+                    <line x1="4.93" x2="7.76" y1="19.07" y2="16.24"/>
+                    <line x1="16.24" x2="19.07" y1="7.76" y2="4.93"/>
+                  </svg>
+                  <h4 className="text-base font-medium text-white">Trustless</h4>
+                </div>
+                <p className="text-sm" style={{ color: 'rgba(255, 255, 255, 0.65)' }}>All data is sourced on-chain directly without relying on external oracles.</p>
+              </div>
+              
+              {/* Feature 4: Enhanced Security */}
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center gap-3">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-blocks text-white flex-shrink-0">
+                    <rect width="7" height="7" x="14" y="3" rx="1"/>
+                    <path d="M10 21V8a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-5a1 1 0 0 0-1-1H3"/>
+                  </svg>
+                  <h4 className="text-base font-medium text-white">Enhanced Security</h4>
+                </div>
+                <p className="text-sm" style={{ color: 'rgba(255, 255, 255, 0.65)' }}>Built on battle-tested infrastructure with minimal attack vectors.</p>
+              </div>
+            </div>
           </div>
-          */}
         </div>
       </section>
 
