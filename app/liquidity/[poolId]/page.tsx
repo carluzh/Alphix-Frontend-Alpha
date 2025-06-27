@@ -15,6 +15,12 @@ import { useAccount } from "wagmi";
 import { toast } from "sonner";
 import type { ProcessedPosition } from "../../../pages/api/liquidity/get-positions";
 import { TOKEN_DEFINITIONS, TokenSymbol } from "../../../lib/swap-constants";
+import { 
+  getPoolConfig, 
+  getPoolTokens, 
+  getPoolDisplayName,
+  isPoolEnabled 
+} from "../../../lib/pools-config";
 import { formatUnits as viemFormatUnits, type Hex } from "viem";
 import { Bar, BarChart, CartesianGrid, XAxis } from "recharts";
 import {
@@ -191,20 +197,22 @@ const chartConfig = {
   // apr: { label: "APR", color: "#e85102" }, // Removed APR from chart config for now
 } satisfies ChartConfig;
 
-// Mock pool data - in a real app, this would come from an API based on poolId
-// This mockPoolsData is now primarily for fallback display of token symbols/pair name if needed
-// Actual stats like volume, TVL, APR should be fetched or come from cache.
-const mockPoolsData = {
-  "yusdc-btcrl": {
-    id: "yusdc-btcrl", // This is the key, matches poolId from URL
-    // The actual on-chain pool ID used for API calls needs to be managed carefully.
-    // For yusdc-btcrl, we might use the known hardcoded one for API calls.
-    apiId: "0xbcc20db9b797e211e508500469e553111c6fa8d80f7896e6db60167bcf18ce13", // Store the API-specific ID
+// Dynamic pool data generation from configuration
+const getPoolDataFromConfig = (poolId: string) => {
+  const poolConfig = getPoolConfig(poolId);
+  if (!poolConfig) return null;
+  
+  const tokens = getPoolTokens(poolId);
+  if (!tokens) return null;
+  
+  return {
+    id: poolConfig.id,
+    apiId: poolConfig.apiId,
     tokens: [
-      { symbol: "YUSDC", icon: "/YUSD.png" },
-      { symbol: "BTCRL", icon: "/BTCRL.png" }
+      { symbol: tokens.token0.symbol, icon: tokens.token0.icon },
+      { symbol: tokens.token1.symbol, icon: tokens.token1.icon }
     ],
-    pair: "YUSDC / BTCRL",
+    pair: poolConfig.name,
     // Static/fallback values - these will be replaced by fetched/cached data
     volume24h: "Loading...",
     volume7d: "Loading...",
@@ -212,8 +220,7 @@ const mockPoolsData = {
     fees7d: "Loading...",
     liquidity: "Loading...",
     apr: "Loading..."
-  }
-  // Add other known pools if necessary, or have a more dynamic way to get basic pool info
+  };
 };
 
 interface PoolDetailData extends Pool { // Extend the main Pool type
@@ -465,16 +472,22 @@ export default function PoolDetailPage() {
         setIsLoadingChartData(false);
       });
 
-    const basePoolInfo = mockPoolsData[poolId as keyof typeof mockPoolsData];
+    // Check if pool exists and is enabled
+    if (!isPoolEnabled(poolId)) {
+      toast.error("Pool not found or is disabled.");
+      router.push('/liquidity');
+      return;
+    }
+
+    const basePoolInfo = getPoolDataFromConfig(poolId);
     if (!basePoolInfo) {
       toast.error("Pool configuration not found for this ID.");
       router.push('/liquidity');
       return;
     }
 
-    // Determine the API ID (could be from basePoolInfo or derived)
-    // For yusdc-btcrl, we use the hardcoded one if basePoolInfo provides it.
-    const apiPoolIdToUse = basePoolInfo.apiId || poolId; 
+    // Get the API ID from configuration
+    const apiPoolIdToUse = basePoolInfo.apiId; 
 
     // 1. Fetch/Cache Pool Stats (Volume, Fees, TVL)
     let poolStats: Partial<Pool> | null = getFromCache(getPoolStatsCacheKey(apiPoolIdToUse));
@@ -515,9 +528,9 @@ export default function PoolDetailPage() {
 
     // 2. Fetch/Cache Dynamic Fee for APR Calculation
     let dynamicFeeBps: number | null = null;
-    const [token0SymbolStr, token1SymbolStr] = basePoolInfo.pair.split(' / ');
-    const fromTokenSymbolForFee = TOKEN_DEFINITIONS[token0SymbolStr?.trim() as TokenSymbol]?.symbol;
-    const toTokenSymbolForFee = TOKEN_DEFINITIONS[token1SymbolStr?.trim() as TokenSymbol]?.symbol;
+    const poolTokens = getPoolTokens(poolId);
+    const fromTokenSymbolForFee = poolTokens?.token0.symbol;
+    const toTokenSymbolForFee = poolTokens?.token1.symbol;
 
     if (fromTokenSymbolForFee && toTokenSymbolForFee && baseSepolia.id) {
       const feeCacheKey = getPoolDynamicFeeCacheKey(fromTokenSymbolForFee, toTokenSymbolForFee, baseSepolia.id);

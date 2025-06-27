@@ -28,6 +28,7 @@ import { config, baseSepolia } from "../../lib/wagmiConfig";
 import { toast } from "sonner";
 import { getAddress, parseUnits, type Address, type Hex } from "viem"
 import { publicClient } from "../../lib/viemClient";
+import { getPoolConfig } from "../../lib/pools-config";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 
 import {
@@ -1596,8 +1597,9 @@ export function SwapInterface() {
         return;
       }
 
-      // Create cache key for this session
-      const poolIdForFeeHistory = "0xbcc20db9b797e211e508500469e553111c6fa8d80f7896e6db60167bcf18ce13";
+      // Get pool ID from configuration
+      const defaultPoolConfig = getPoolConfig('yusdc-btcrl'); // Use the default pool for now
+      const poolIdForFeeHistory = defaultPoolConfig?.apiId || "0xbcc20db9b797e211e508500469e553111c6fa8d80f7896e6db60167bcf18ce13";
       const cacheKey = `feeHistory_${poolIdForFeeHistory}_30days`;
       
       // Check if we already have data in sessionStorage

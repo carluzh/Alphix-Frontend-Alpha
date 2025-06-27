@@ -5,6 +5,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 
 import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from "../../../lib/abis/state_view_abi";
 import { TOKEN_DEFINITIONS, TokenSymbol } from "../../../lib/swap-constants";
+import { CONTRACT_ADDRESSES } from "../../../lib/pools-config";
 import { publicClient } from "../../../lib/viemClient";
 import {
     isAddress,
@@ -13,9 +14,9 @@ import {
     type Hex
 } from "viem";
 
-// Contract addresses & constants
-const STATE_VIEW_ADDRESS = getAddress("0x571291b572ed32ce6751a2cb2486ebee8defb9b4"); // Ensure this is correct
-const DEFAULT_HOOK_ADDRESS = getAddress("0x94ba380a340E020Dc29D7883f01628caBC975000"); // Ensure this is correct
+// Contract addresses & constants from configuration
+const STATE_VIEW_ADDRESS = CONTRACT_ADDRESSES.STATE_VIEW;
+const DEFAULT_HOOK_ADDRESS = CONTRACT_ADDRESSES.DEFAULT_HOOKS;
 const DEFAULT_FEE = 8388608; // Uniswap V4 default pool fee
 const DEFAULT_TICK_SPACING = 60; // Uniswap V4 default tick spacing
 

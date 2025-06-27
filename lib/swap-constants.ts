@@ -1,58 +1,72 @@
 import { getAddress, parseAbi, type Address, type Hex, type Chain, type Abi } from 'viem';
 import { position_manager_abi } from './abis/PositionManager_abi';
 
-// --- Blockchain & Network Configuration ---
-export const CHAIN_ID = 84532; // Base Sepolia
-export const CHAIN_NAME = 'Base Sepolia';
-export const NATIVE_CURRENCY_NAME = 'Ether';
-export const NATIVE_CURRENCY_SYMBOL = 'ETH';
-export const NATIVE_CURRENCY_DECIMALS = 18;
+// Import from centralized configuration
+import { 
+  NETWORK_CONFIG, 
+  CONTRACT_ADDRESSES, 
+  TOKENS, 
+  POOLS,
+  TIMING,
+  type TokenSymbol,
+  type TokenDefinition as NewTokenDefinition
+} from './pools-config';
 
-// --- Contract Addresses ---
-export const PERMIT2_ADDRESS_RAW = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
-export const UNIVERSAL_ROUTER_ADDRESS_RAW = '0x492e6456d9528771018deb9e87ef7750ef184104';
-export const PERMIT2_ADDRESS: Address = getAddress(PERMIT2_ADDRESS_RAW);
-export const UNIVERSAL_ROUTER_ADDRESS: Address = getAddress(UNIVERSAL_ROUTER_ADDRESS_RAW);
+// --- Re-export Network Configuration (for backwards compatibility) ---
+export const CHAIN_ID = NETWORK_CONFIG.CHAIN_ID;
+export const CHAIN_NAME = NETWORK_CONFIG.CHAIN_NAME;
+export const NATIVE_CURRENCY_NAME = NETWORK_CONFIG.NATIVE_CURRENCY.name;
+export const NATIVE_CURRENCY_SYMBOL = NETWORK_CONFIG.NATIVE_CURRENCY.symbol;
+export const NATIVE_CURRENCY_DECIMALS = NETWORK_CONFIG.NATIVE_CURRENCY.decimals;
 
-// --- TOKEN DEFINITIONS ---
-export const TOKEN_DEFINITIONS = {
-    'BTCRL': {
-        addressRaw: '0x13c26fb69d48ED5a72Ce3302FC795082E2427F4D',
-        decimals: 8,
-        symbol: 'BTCRL',
-        displayDecimals: 6
-    },
-    'YUSDC': {
-        addressRaw: '0x663cF82e49419A3Dc88EEc65c2155b4B2D0fA335',
-        decimals: 6,
-        symbol: 'YUSDC',
-        displayDecimals: 2
+// --- Re-export Contract Addresses (for backwards compatibility) ---
+export const PERMIT2_ADDRESS_RAW = CONTRACT_ADDRESSES.PERMIT2.toLowerCase();
+export const UNIVERSAL_ROUTER_ADDRESS_RAW = CONTRACT_ADDRESSES.UNIVERSAL_ROUTER.toLowerCase();
+export const PERMIT2_ADDRESS: Address = CONTRACT_ADDRESSES.PERMIT2;
+export const UNIVERSAL_ROUTER_ADDRESS: Address = CONTRACT_ADDRESSES.UNIVERSAL_ROUTER;
+
+// --- Re-export Token Definitions (for backwards compatibility) ---
+// Convert new format to old format for existing code
+export const TOKEN_DEFINITIONS = Object.fromEntries(
+  Object.entries(TOKENS).map(([key, token]) => [
+    key,
+    {
+      addressRaw: token.address.toLowerCase(),
+      decimals: token.decimals,
+      symbol: token.symbol,
+      displayDecimals: token.displayDecimals
     }
-} as const;
+  ])
+) as Record<string, {
+  readonly addressRaw: string;
+  readonly decimals: number;
+  readonly symbol: string;
+  readonly displayDecimals: number;
+}>;
 
-// Define a type for the token symbols for better type safety
-export type TokenSymbol = keyof typeof TOKEN_DEFINITIONS;
+// Keep the old TokenSymbol type for backwards compatibility
+export type { TokenSymbol };
 
-// Explicitly define the type for a single token definition including displayDecimals
+// Legacy TokenDefinition interface for backwards compatibility
 export interface TokenDefinition {
     readonly addressRaw: string;
     readonly decimals: number;
     readonly symbol: TokenSymbol;
-    readonly displayDecimals?: number; // Optional, as it's newly added
+    readonly displayDecimals?: number;
 }
 
-// --- V4 Pool Configuration ---
-export const V4_POOL_FEE = 8388608; // Updated to match fee from Initialize event log for PoolId 0xBCC2...
-export const V4_POOL_TICK_SPACING = 60;
-export const V4_POOL_HOOKS_RAW = '0x94ba380a340E020Dc29D7883f01628caBC975000';
-export const V4_POOL_HOOKS: Address = getAddress(V4_POOL_HOOKS_RAW);
+// --- Re-export V4 Pool Configuration (for backwards compatibility) ---
+// Use the first pool as the default for legacy constants
+const defaultPool = POOLS['yusdc-btcrl'];
+export const V4_POOL_FEE = defaultPool.fee;
+export const V4_POOL_TICK_SPACING = defaultPool.tickSpacing;
+export const V4_POOL_HOOKS_RAW = defaultPool.hooks.toLowerCase();
+export const V4_POOL_HOOKS: Address = defaultPool.hooks;
 
-// --- Timing Constants (in seconds) ---
-// These might be more dynamic or configured elsewhere in a real app,
-// but for now, they can reside here or be determined by API routes.
-export const PERMIT_EXPIRATION_DURATION_SECONDS = 60 * 60 * 24 * 30; // 30 days
-export const PERMIT_SIG_DEADLINE_DURATION_SECONDS = 60 * 30; // 30 minutes
-export const TX_DEADLINE_SECONDS = 60 * 30; // 30 minutes
+// --- Re-export Timing Constants (for backwards compatibility) ---
+export const PERMIT_EXPIRATION_DURATION_SECONDS = TIMING.PERMIT_EXPIRATION_DURATION_SECONDS;
+export const PERMIT_SIG_DEADLINE_DURATION_SECONDS = TIMING.PERMIT_SIG_DEADLINE_DURATION_SECONDS;
+export const TX_DEADLINE_SECONDS = TIMING.TX_DEADLINE_SECONDS;
 
 // --- EIP-712 Permit2 Domain and Types ---
 // The domain will be constructed in the API route if chainId can vary.

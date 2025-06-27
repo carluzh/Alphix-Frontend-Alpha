@@ -59,6 +59,13 @@ import {
 import { toast } from "sonner";
 import Link from "next/link";
 import { TOKEN_DEFINITIONS, TokenSymbol } from "../../lib/swap-constants";
+import { 
+  getEnabledPools, 
+  getPoolConfig, 
+  getPoolTokens, 
+  type PoolConfig, 
+  POOLS 
+} from "../../lib/pools-config";
 import { baseSepolia } from "../../lib/wagmiConfig";
 import { ethers } from "ethers";
 import { ERC20_ABI } from "../../lib/abis/erc20";
@@ -77,25 +84,31 @@ const DEFAULT_TICK_SPACING = 60; // Define it locally
 const TICK_BARS_COUNT = 31; // More bars for finer visualization
 const TICKS_PER_BAR = 10 * DEFAULT_TICK_SPACING; // Each bar represents 10× tickspacing
 
-const mockPools: Pool[] = [
-  {
-    id: "yusdc-btcrl",
-    tokens: [
-      { symbol: "YUSDC", icon: "/YUSD.png" },
-      { symbol: "BTCRL", icon: "/BTCRL.png" }
-    ],
-    pair: "YUSDC / BTCRL",
-    volume24h: "Loading...",
-    volume7d: "Loading...",
-    fees24h: "Loading...",
-    fees7d: "Loading...",
-    liquidity: "Loading...",
-    apr: "Loading...",
-    highlighted: true,
-    volumeChangeDirection: 'loading',
-    tvlChangeDirection: 'loading',
-  }
-];
+// Generate initial pools from configuration
+const generateInitialPools = (): Pool[] => {
+  return getEnabledPools().map(poolConfig => {
+    const tokens = getPoolTokens(poolConfig.id);
+    return {
+      id: poolConfig.id,
+      tokens: tokens ? [
+        { symbol: tokens.token0.symbol, icon: tokens.token0.icon },
+        { symbol: tokens.token1.symbol, icon: tokens.token1.icon }
+      ] : [],
+      pair: poolConfig.name,
+      volume24h: "Loading...",
+      volume7d: "Loading...",
+      fees24h: "Loading...",
+      fees7d: "Loading...",
+      liquidity: "Loading...",
+      apr: "Loading...",
+      highlighted: poolConfig.highlighted || false,
+      volumeChangeDirection: 'loading' as const,
+      tvlChangeDirection: 'loading' as const,
+    };
+  });
+};
+
+const initialPools: Pool[] = generateInitialPools();
 
 declare module '@tanstack/react-table' {
   interface TableMeta<TData extends RowData> {
@@ -132,7 +145,7 @@ export default function LiquidityPage() {
   const [activeChart, setActiveChart] = React.useState<keyof typeof chartConfig>("volume");
   const [sorting, setSorting] = React.useState<SortingState>([]);
 
-  const [poolsData, setPoolsData] = useState<Pool[]>(mockPools); // State for dynamic pool data
+  const [poolsData, setPoolsData] = useState<Pool[]>(initialPools); // State for dynamic pool data
   const isMobile = useIsMobile();
   const { address: accountAddress, isConnected, chain } = useAccount();
   const [selectedPoolId, setSelectedPoolId] = useState<string>("");
@@ -204,7 +217,8 @@ export default function LiquidityPage() {
   // useEffect to fetch rolling volume and fees for each pool
   useEffect(() => {
     const fetchPoolStats = async (pool: Pool): Promise<Partial<Pool>> => {
-      const apiPoolId = pool.id === 'yusdc-btcrl' ? "0xbcc20db9b797e211e508500469e553111c6fa8d80f7896e6db60167bcf18ce13" : pool.id;
+      const poolConfig = getPoolConfig(pool.id);
+      const apiPoolId = poolConfig?.apiId || pool.id;
       const statsCacheKey = getPoolStatsCacheKey(apiPoolId);
       let cachedStats = getFromCache<Partial<Pool>>(statsCacheKey);
 
@@ -312,9 +326,9 @@ export default function LiquidityPage() {
         }
 
         // Fetch dynamic fee for APR calculation
-        const [token0SymbolStr, token1SymbolStr] = pool.pair.split(' / ');
-        const fromTokenSymbolForFee = TOKEN_DEFINITIONS[token0SymbolStr?.trim() as TokenSymbol]?.symbol;
-        const toTokenSymbolForFee = TOKEN_DEFINITIONS[token1SymbolStr?.trim() as TokenSymbol]?.symbol;
+        const poolTokens = getPoolTokens(pool.id);
+        const fromTokenSymbolForFee = poolTokens?.token0.symbol;
+        const toTokenSymbolForFee = poolTokens?.token1.symbol;
 
         let dynamicFeeBps: number | null = null;
         if (fromTokenSymbolForFee && toTokenSymbolForFee && baseSepolia.id) {
