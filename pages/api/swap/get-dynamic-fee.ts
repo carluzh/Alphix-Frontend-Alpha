@@ -1,7 +1,8 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getAddress, type Address } from 'viem';
 import { publicClient } from '../../../lib/viemClient';
-import { V4_POOL_HOOKS_RAW, V4_POOL_TICK_SPACING, TOKEN_DEFINITIONS } from '../../../lib/swap-constants'; // Removed V4_POOL_FEE as it's not directly used here for PoolKey arg
+import { V4_POOL_HOOKS_RAW, V4_POOL_TICK_SPACING } from '../../../lib/swap-constants'; // Removed V4_POOL_FEE as it's not directly used here for PoolKey arg
+import { getToken, createTokenSDK } from '../../../lib/pools-config';
 import { Token } from '@uniswap/sdk-core';
 
 // ABI for the getDynamicFee function expecting a PoolKey struct
@@ -42,15 +43,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             return res.status(400).json({ message: 'Missing required parameters: fromTokenSymbol, toTokenSymbol, chainId' });
         }
 
-        const fromTokenConfig = TOKEN_DEFINITIONS[fromTokenSymbol as keyof typeof TOKEN_DEFINITIONS];
-        const toTokenConfig = TOKEN_DEFINITIONS[toTokenSymbol as keyof typeof TOKEN_DEFINITIONS];
+        const fromTokenConfig = getToken(fromTokenSymbol);
+        const toTokenConfig = getToken(toTokenSymbol);
 
         if (!fromTokenConfig || !toTokenConfig) {
             return res.status(400).json({ message: 'Invalid token symbol(s).' });
         }
 
-        const tokenA = new Token(Number(chainId), getAddress(fromTokenConfig.addressRaw), fromTokenConfig.decimals, fromTokenConfig.symbol);
-        const tokenB = new Token(Number(chainId), getAddress(toTokenConfig.addressRaw), toTokenConfig.decimals, toTokenConfig.symbol);
+        const tokenA = createTokenSDK(fromTokenSymbol, Number(chainId));
+        const tokenB = createTokenSDK(toTokenSymbol, Number(chainId));
+        
+        if (!tokenA || !tokenB) {
+            return res.status(400).json({ message: 'Failed to create token instances.' });
+        }
 
         const token0ForPoolKey = tokenA.sortsBefore(tokenB) ? tokenA : tokenB;
         const token1ForPoolKey = tokenA.sortsBefore(tokenB) ? tokenB : tokenA;

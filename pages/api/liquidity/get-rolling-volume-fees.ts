@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { getPoolSubgraphId } from '../../../lib/pools-config';
 
 // Use the subgraph URL from get-positions.ts
 const SUBGRAPH_URL = "https://api.studio.thegraph.com/query/111443/alphix-v-4/version/latest";
@@ -48,15 +49,18 @@ async function fetchRollingVolumeAndFeesForApi(
     poolId: string,
     days: number
 ): Promise<RollingVolumeAndFees> {
+    // Convert friendly pool ID to subgraph ID
+    const subgraphId = getPoolSubgraphId(poolId) || poolId;
+    
     const nowInSeconds = Math.floor(Date.now() / 1000);
     const cutoffTimestampInSeconds = nowInSeconds - (days * 24 * 60 * 60);
 
     const variables = {
-        poolId: poolId.toLowerCase(), // Ensure poolId is lowercase for subgraph
+        poolId: subgraphId.toLowerCase(), // Ensure poolId is lowercase for subgraph
         cutoffTimestamp: BigInt(cutoffTimestampInSeconds).toString(), // Use BigInt constructor and convert to string
     };
 
-    console.log(`API: Fetching ${days}d volume/fees for pool: ${poolId}`);
+    console.log(`API: Fetching ${days}d volume/fees for pool: ${poolId} (subgraph ID: ${subgraphId})`);
 
     const response = await fetch(SUBGRAPH_URL, {
         method: 'POST',

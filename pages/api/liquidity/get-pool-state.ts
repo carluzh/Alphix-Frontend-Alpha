@@ -5,6 +5,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 
 import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from "../../../lib/abis/state_view_abi";
 import { TOKEN_DEFINITIONS, TokenSymbol } from "../../../lib/swap-constants";
+import { TOKEN_DEFINITIONS as POOLS_TOKEN_DEFINITIONS } from "../../../lib/pools-config";
 import { publicClient } from "../../../lib/viemClient";
 import {
     isAddress,
@@ -118,13 +119,13 @@ export default async function handler(
         } = req.body;
 
         // --- Input Validation ---
-        if (!TOKEN_DEFINITIONS[token0Symbol] || !TOKEN_DEFINITIONS[token1Symbol]) {
+        if (!POOLS_TOKEN_DEFINITIONS[token0Symbol] || !POOLS_TOKEN_DEFINITIONS[token1Symbol]) {
             return res.status(400).json({ message: "Invalid token symbol(s) provided." });
         }
         // TODO: Add validation for chainId
 
-        const token0Config = TOKEN_DEFINITIONS[token0Symbol];
-        const token1Config = TOKEN_DEFINITIONS[token1Symbol];
+        const token0Config = POOLS_TOKEN_DEFINITIONS[token0Symbol];
+        const token1Config = POOLS_TOKEN_DEFINITIONS[token1Symbol];
 
         // --- SDK Token Objects (using original symbols from request) ---
         const sdkToken0Req = new Token(chainId, getAddress(token0Config.addressRaw), token0Config.decimals, token0Config.symbol);
@@ -135,14 +136,15 @@ export default async function handler(
             ? [sdkToken0Req, sdkToken1Req]
             : [sdkToken1Req, sdkToken0Req];
 
-        const poolKey: PoolKey = {
-            currency0: sortedSdkToken0.address as `0x${string}`,
-            currency1: sortedSdkToken1.address as `0x${string}`,
-            fee: DEFAULT_FEE,
-            tickSpacing: DEFAULT_TICK_SPACING,
-            hooks: DEFAULT_HOOK_ADDRESS
-        };
-        const poolId = V4Pool.getPoolId(sortedSdkToken0, sortedSdkToken1, poolKey.fee, poolKey.tickSpacing, poolKey.hooks);
+        // Use configured pool ID from pools.json instead of deriving
+        const { getPoolByTokens } = await import('../../../lib/pools-config');
+        const poolConfig = getPoolByTokens(token0Symbol, token1Symbol);
+        
+        if (!poolConfig) {
+            return res.status(400).json({ message: `No pool configuration found for ${token0Symbol}/${token1Symbol}` });
+        }
+        
+        const poolId = poolConfig.subgraphId;
 
         // --- Fetch Pool Slot0 ---
         let slot0;

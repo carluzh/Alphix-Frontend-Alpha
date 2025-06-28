@@ -31,8 +31,14 @@ import { publicClient } from "../../lib/viemClient";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 
 import {
-  TOKEN_DEFINITIONS,
+  getAllTokens,
+  getToken,
+  createTokenSDK,
   TokenSymbol,
+  TOKEN_DEFINITIONS,
+  CHAIN_ID
+} from "@/lib/pools-config"
+import {
   PERMIT2_ADDRESS,
   UNIVERSAL_ROUTER_ADDRESS,
   UniversalRouterAbi,
@@ -74,9 +80,32 @@ interface FeeHistoryPoint {
 }
 
 const TARGET_CHAIN_ID = baseSepolia.id; // Changed from 1301 to baseSepolia.id
-const YUSD_ADDRESS = TOKEN_DEFINITIONS.YUSDC.addressRaw as Address; // UPDATED - Use YUSDC from constants
-const BTCRL_ADDRESS = TOKEN_DEFINITIONS.BTCRL.addressRaw as Address; // UPDATED - Use BTCRL from constants
 const MaxUint160 = BigInt('0xffffffffffffffffffffffffffffffffffffffff'); // 2**160 - 1
+
+// Helper function to create Token instances from pools config
+const createTokenFromConfig = (tokenSymbol: string): Token | null => {
+  const tokenConfig = getToken(tokenSymbol);
+  if (!tokenConfig) return null;
+  
+  return {
+    address: tokenConfig.address as Address,
+    symbol: tokenConfig.symbol,
+    name: tokenConfig.name,
+    decimals: tokenConfig.decimals,
+    balance: "0.000",
+    value: "$0.00",
+    icon: tokenConfig.icon,
+    usdPrice: tokenSymbol === 'YUSDC' ? 1 : tokenSymbol === 'BTCRL' ? 77000 : 1, // Temporary mock prices
+  };
+};
+
+// Get available tokens for swap
+const getAvailableTokens = (): Token[] => {
+  const allTokens = getAllTokens();
+  return Object.keys(allTokens)
+    .map(createTokenFromConfig)
+    .filter(Boolean) as Token[];
+};
 
 // Enhanced Token interface
 export interface Token {
@@ -90,27 +119,13 @@ export interface Token {
   usdPrice: number; // Fixed USD price
 }
 
-// Define our two specific tokens with initial empty balance/value
-const initialYUSD: Token = {
-  address: YUSD_ADDRESS, // Will use the updated YUSD_ADDRESS
-  symbol: "YUSDC", // Update to match TOKEN_DEFINITIONS
-  name: "Yama USD", // Consider "Yama USDC" for clarity if TOKEN_DEFINITIONS.YUSDC.name exists
-  decimals: TOKEN_DEFINITIONS.YUSDC.decimals, // UPDATED - Use YUSDC decimals from constants
-  balance: "0.000",
-  value: "$0.00",
-  icon: "/YUSD.png", // Placeholder icon
-  usdPrice: 1, // Will be updated dynamically
-};
-
-const initialBTCRL: Token = {
-  address: BTCRL_ADDRESS, // Will use the updated BTCRL_ADDRESS
-  symbol: "BTCRL",
-  name: "Bitcoin RL", // Consider TOKEN_DEFINITIONS.BTCRL.name if exists
-  decimals: TOKEN_DEFINITIONS.BTCRL.decimals, // UPDATED - Use BTCRL decimals from constants
-  balance: "0.000",
-  value: "$0.00",
-  icon: "/BTCRL.png", // Placeholder icon
-  usdPrice: 77000, // Will be updated dynamically
+// Initialize default tokens (YUSDC and BTCRL as defaults)
+const getInitialTokens = () => {
+  const availableTokens = getAvailableTokens();
+  const defaultFrom = availableTokens.find(t => t.symbol === 'YUSDC') || availableTokens[0];
+  const defaultTo = availableTokens.find(t => t.symbol === 'BTCRL') || availableTokens[1];
+  
+  return { defaultFrom, defaultTo, availableTokens };
 };
 
 // Enhanced swap flow states
@@ -317,9 +332,13 @@ export function SwapInterface() {
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [quoteError, setQuoteError] = useState<string | null>(null);
 
+  // Initialize tokens dynamically
+  const { defaultFrom, defaultTo, availableTokens } = getInitialTokens();
+
   // Tokens for swap (with token data stored in state)
-  const [fromToken, setFromToken] = useState<Token>(initialYUSD);
-  const [toToken, setToToken] = useState<Token>(initialBTCRL);
+  const [fromToken, setFromToken] = useState<Token>(defaultFrom);
+  const [toToken, setToToken] = useState<Token>(defaultTo);
+  const [tokenList] = useState<Token[]>(availableTokens);
   const [fromAmount, setFromAmount] = useState("");
   const [toAmount, setToAmount] = useState("");
 
@@ -570,20 +589,20 @@ export function SwapInterface() {
   // --- Balance Fetching --- 
   const { data: yusdBalanceData, isLoading: isLoadingYUSDBalance, error: yusdBalanceError } = useBalance({
     address: accountAddress,
-    token: YUSD_ADDRESS,
+    token: TOKEN_DEFINITIONS.YUSDC?.addressRaw as `0x${string}`,
     chainId: TARGET_CHAIN_ID,
   });
 
   const { data: btcrlBalanceData, isLoading: isLoadingBTCRLBalance, error: btcrlBalanceError } = useBalance({
     address: accountAddress,
-    token: BTCRL_ADDRESS,
+    token: TOKEN_DEFINITIONS.BTCRL?.addressRaw as `0x${string}`,
     chainId: TARGET_CHAIN_ID,
   });
 
   // Update YUSD balance in whichever state (fromToken or toToken) holds YUSD
   useEffect(() => {
     const applyUpdate = (prevTokenState: Token): Token => {
-      if (prevTokenState.address !== YUSD_ADDRESS) return prevTokenState;
+      if (prevTokenState.address !== TOKEN_DEFINITIONS.YUSDC?.addressRaw) return prevTokenState;
 
       const numericBalance = yusdBalanceData ? parseFloat(yusdBalanceData.formatted) : 0;
       const displayBalance = getFormattedDisplayBalance(numericBalance);
@@ -602,7 +621,7 @@ export function SwapInterface() {
       } else if (!isLoadingYUSDBalance && isConnected) {
         return { ...prevTokenState, balance: displayBalance, value: "$0.00" };
       } else if (!isConnected) {
-        return initialYUSD; 
+        return defaultFrom; 
       }
       return prevTokenState;
     };
@@ -615,7 +634,7 @@ export function SwapInterface() {
   // Update BTCRL balance in whichever state (fromToken or toToken) holds BTCRL
   useEffect(() => {
     const applyUpdate = (prevTokenState: Token): Token => {
-      if (prevTokenState.address !== BTCRL_ADDRESS) return prevTokenState;
+      if (prevTokenState.address !== TOKEN_DEFINITIONS.BTCRL?.addressRaw) return prevTokenState;
 
       const numericBalance = btcrlBalanceData ? parseFloat(btcrlBalanceData.formatted) : 0;
       const displayBalance = getFormattedDisplayBalance(numericBalance);
@@ -634,7 +653,7 @@ export function SwapInterface() {
       } else if (!isLoadingBTCRLBalance && isConnected) {
         return { ...prevTokenState, balance: displayBalance, value: "$0.00" };
       } else if (!isConnected) {
-        return initialBTCRL;
+        return defaultTo;
       }
       return prevTokenState;
     };
@@ -706,8 +725,8 @@ export function SwapInterface() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              fromTokenSymbol: fromToken.symbol === 'YUSDC' ? 'YUSDC' : 'BTCRL', // Always use valid TOKEN_DEFINITIONS keys
-              toTokenSymbol: toToken.symbol === 'YUSDC' ? 'YUSDC' : 'BTCRL', // Always use valid TOKEN_DEFINITIONS keys
+              fromTokenSymbol: fromToken.symbol,
+              toTokenSymbol: toToken.symbol,
               amountDecimalsStr: fromAmount,
               chainId: currentChainId,
               debug: true // Use debug mode to avoid contract call errors
@@ -994,9 +1013,9 @@ export function SwapInterface() {
     try {
       // Get the exact balance data directly from the balance hooks
       let exactBalanceData;
-      if (fromToken.address === YUSD_ADDRESS) {
+      if (fromToken.address === TOKEN_DEFINITIONS.YUSDC?.addressRaw) {
         exactBalanceData = yusdBalanceData;
-      } else if (fromToken.address === BTCRL_ADDRESS) {
+      } else if (fromToken.address === TOKEN_DEFINITIONS.BTCRL?.addressRaw) {
         exactBalanceData = btcrlBalanceData;
       } else {
         // For any other tokens in the future, we'd need to add their balance data here
@@ -1041,9 +1060,9 @@ export function SwapInterface() {
     try {
       // Get the exact balance data directly from the balance hooks
       let exactBalanceData;
-      if (token.address === YUSD_ADDRESS) {
+      if (token.address === TOKEN_DEFINITIONS.YUSDC?.addressRaw) {
         exactBalanceData = yusdBalanceData;
-      } else if (token.address === BTCRL_ADDRESS) {
+      } else if (token.address === TOKEN_DEFINITIONS.BTCRL?.addressRaw) {
         exactBalanceData = btcrlBalanceData;
       } else {
         // For any other tokens in the future, we'd need to add their balance data here
@@ -1287,8 +1306,8 @@ export function SwapInterface() {
 
             const bodyForSwapTx = {
                  userAddress: accountAddress,
-                 fromTokenSymbol: fromToken.symbol === 'YUSDC' ? 'YUSDC' : 'BTCRL', // Always use valid TOKEN_DEFINITIONS keys
-                 toTokenSymbol: toToken.symbol === 'YUSDC' ? 'YUSDC' : 'BTCRL', // Always use valid TOKEN_DEFINITIONS keys
+                 fromTokenSymbol: fromToken.symbol,
+                 toTokenSymbol: toToken.symbol,
                  swapType: 'ExactIn', // Assuming ExactIn, adjust if dynamic
                  amountDecimalsStr: fromAmount, // The actual amount user wants to swap
                  limitAmountDecimalsStr: "0", // Placeholder for min received, API might calculate or take this
@@ -1423,8 +1442,8 @@ export function SwapInterface() {
   const displayToToken = toToken;   // This is what's in the 'Buy' slot
 
   // isLoading for balances
-  const isLoadingCurrentFromTokenBalance = fromToken.address === YUSD_ADDRESS ? isLoadingYUSDBalance : isLoadingBTCRLBalance;
-  const isLoadingCurrentToTokenBalance = toToken.address === YUSD_ADDRESS ? isLoadingYUSDBalance : isLoadingBTCRLBalance;
+  const isLoadingCurrentFromTokenBalance = fromToken.address === TOKEN_DEFINITIONS.YUSDC?.addressRaw ? isLoadingYUSDBalance : isLoadingBTCRLBalance;
+  const isLoadingCurrentToTokenBalance = toToken.address === TOKEN_DEFINITIONS.YUSDC?.addressRaw ? isLoadingYUSDBalance : isLoadingBTCRLBalance;
   
   // Action button text logic - RESTORED
   let actionButtonText = "Connect Wallet";
@@ -1541,10 +1560,10 @@ export function SwapInterface() {
     
     // Special case: If we're using the exact balance from the blockchain, force it to 100%
     // This ensures the vertical line UI shows up when using handleUseFullBalance
-    if (fromToken.address === YUSD_ADDRESS && yusdBalanceData && 
+    if (fromToken.address === TOKEN_DEFINITIONS.YUSDC?.addressRaw && yusdBalanceData && 
         fromAmount === yusdBalanceData.formatted) {
       actualNumericPercentage = 100;
-    } else if (fromToken.address === BTCRL_ADDRESS && btcrlBalanceData && 
+    } else if (fromToken.address === TOKEN_DEFINITIONS.BTCRL?.addressRaw && btcrlBalanceData && 
               fromAmount === btcrlBalanceData.formatted) {
       actualNumericPercentage = 100;
     }

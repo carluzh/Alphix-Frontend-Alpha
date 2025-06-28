@@ -58,7 +58,7 @@ import {
 } from "wagmi";
 import { toast } from "sonner";
 import Link from "next/link";
-import { TOKEN_DEFINITIONS, TokenSymbol } from "../../lib/swap-constants";
+import { getAllPools, getEnabledPools, getToken, getPoolSubgraphId, TokenSymbol, TOKEN_DEFINITIONS } from "../../lib/pools-config";
 import { baseSepolia } from "../../lib/wagmiConfig";
 import { ethers } from "ethers";
 import { ERC20_ABI } from "../../lib/abis/erc20";
@@ -77,25 +77,40 @@ const DEFAULT_TICK_SPACING = 60; // Define it locally
 const TICK_BARS_COUNT = 31; // More bars for finer visualization
 const TICKS_PER_BAR = 10 * DEFAULT_TICK_SPACING; // Each bar represents 10× tickspacing
 
-const mockPools: Pool[] = [
-  {
-    id: "yusdc-btcrl",
+// Generate pools from pools.json configuration
+const generatePoolsFromConfig = (): Pool[] => {
+  const enabledPools = getEnabledPools();
+  
+  return enabledPools.map(poolConfig => {
+    const token0 = getToken(poolConfig.currency0.symbol);
+    const token1 = getToken(poolConfig.currency1.symbol);
+    
+    if (!token0 || !token1) {
+      console.warn(`Missing token configuration for pool ${poolConfig.id}`);
+      return null;
+    }
+    
+    return {
+      id: poolConfig.id,
     tokens: [
-      { symbol: "YUSDC", icon: "/YUSD.png" },
-      { symbol: "BTCRL", icon: "/BTCRL.png" }
+        { symbol: token0.symbol, icon: token0.icon },
+        { symbol: token1.symbol, icon: token1.icon }
     ],
-    pair: "YUSDC / BTCRL",
+      pair: `${token0.symbol} / ${token1.symbol}`,
     volume24h: "Loading...",
     volume7d: "Loading...",
     fees24h: "Loading...",
     fees7d: "Loading...",
     liquidity: "Loading...",
     apr: "Loading...",
-    highlighted: true,
+      highlighted: poolConfig.featured,
     volumeChangeDirection: 'loading',
     tvlChangeDirection: 'loading',
-  }
-];
+    } as Pool;
+  }).filter(Boolean) as Pool[];
+};
+
+const dynamicPools = generatePoolsFromConfig();
 
 declare module '@tanstack/react-table' {
   interface TableMeta<TData extends RowData> {
@@ -132,7 +147,7 @@ export default function LiquidityPage() {
   const [activeChart, setActiveChart] = React.useState<keyof typeof chartConfig>("volume");
   const [sorting, setSorting] = React.useState<SortingState>([]);
 
-  const [poolsData, setPoolsData] = useState<Pool[]>(mockPools); // State for dynamic pool data
+  const [poolsData, setPoolsData] = useState<Pool[]>(dynamicPools); // State for dynamic pool data
   const isMobile = useIsMobile();
   const { address: accountAddress, isConnected, chain } = useAccount();
   const [selectedPoolId, setSelectedPoolId] = useState<string>("");
@@ -204,7 +219,7 @@ export default function LiquidityPage() {
   // useEffect to fetch rolling volume and fees for each pool
   useEffect(() => {
     const fetchPoolStats = async (pool: Pool): Promise<Partial<Pool>> => {
-      const apiPoolId = pool.id === 'yusdc-btcrl' ? "0xbcc20db9b797e211e508500469e553111c6fa8d80f7896e6db60167bcf18ce13" : pool.id;
+      const apiPoolId = getPoolSubgraphId(pool.id) || pool.id;
       const statsCacheKey = getPoolStatsCacheKey(apiPoolId);
       let cachedStats = getFromCache<Partial<Pool>>(statsCacheKey);
 
@@ -631,35 +646,47 @@ export default function LiquidityPage() {
         const isAprCalculated = row.original.apr !== undefined && row.original.apr !== "Loading..." && row.original.apr !== "N/A";
         const formattedAPR = isAprCalculated ? parseFloat(row.original.apr.replace('%', '')).toFixed(2) + '%' : undefined;
 
-        const initialWidthClass = 'w-16';
-        const initialHeightClass = 'h-6';
+        // COMMENTED OUT: Hover Add Liquidity button functionality - preserved for future use
+        // const initialWidthClass = 'w-16';
+        // const initialHeightClass = 'h-6';
 
         return (
-          <div 
-            onClick={(e) => handleAddLiquidity(e, row.original.id)}
-            className={`relative flex items-center ${initialWidthClass} ${initialHeightClass} rounded-md ${isAprCalculated ? 'bg-green-500/20 text-green-500' : 'bg-muted/60'} overflow-hidden ml-auto
-                        group-hover:w-32 group-hover:h-8
-                        group-hover:bg-transparent group-hover:text-foreground group-hover:border group-hover:border-border
-                        group-hover:hover:bg-accent group-hover:hover:text-accent-foreground
-                        transition-all duration-300 ease-in-out cursor-pointer`}
-          >
+          <div className="text-right flex items-center justify-end">
             {isAprCalculated ? (
-              <>
-                 <span className="absolute inset-0 flex items-center justify-center opacity-100 group-hover:opacity-0 transition-opacity duration-300 ease-in-out">
-                  {formattedAPR}
-                </span>
-                <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 ease-in-out px-2 whitespace-nowrap">
-                    <PlusIcon className="w-4 h-4 mr-2" />
-                    Add Liquidity
-                </div>
-              </>
+              <div className="flex items-center justify-center w-16 h-6 rounded-md bg-green-500/20 text-green-500">
+                {formattedAPR}
+              </div>
             ) : (
-             <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 ease-in-out px-2 whitespace-nowrap">
-                 <PlusIcon className="w-4 h-4 mr-2" />
-                 Add Liquidity
-             </div>
+              <div className="inline-block h-4 w-16 bg-muted/60 rounded loading-skeleton"></div>
             )}
           </div>
+
+          // COMMENTED OUT: Hover Add Liquidity functionality - preserved for future use
+          // <div 
+          //   onClick={(e) => handleAddLiquidity(e, row.original.id)}
+          //   className={`relative flex items-center ${initialWidthClass} ${initialHeightClass} rounded-md ${isAprCalculated ? 'bg-green-500/20 text-green-500' : 'bg-muted/60'} overflow-hidden ml-auto
+          //               group-hover:w-32 group-hover:h-8
+          //               group-hover:bg-transparent group-hover:text-foreground group-hover:border group-hover:border-border
+          //               group-hover:hover:bg-accent group-hover:hover:text-accent-foreground
+          //               transition-all duration-300 ease-in-out cursor-pointer`}
+          // >
+          //   {isAprCalculated ? (
+          //     <>
+          //        <span className="absolute inset-0 flex items-center justify-center opacity-100 group-hover:opacity-0 transition-opacity duration-300 ease-in-out">
+          //         {formattedAPR}
+          //       </span>
+          //       <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 ease-in-out px-2 whitespace-nowrap">
+          //           <PlusIcon className="w-4 h-4 mr-2" />
+          //           Add Liquidity
+          //       </div>
+          //     </>
+          //   ) : (
+          //    <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 ease-in-out px-2 whitespace-nowrap">
+          //        <PlusIcon className="w-4 h-4 mr-2" />
+          //        Add Liquidity
+          //    </div>
+          //   )}
+          // </div>
         );
       },
     },

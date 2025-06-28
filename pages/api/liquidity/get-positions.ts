@@ -200,8 +200,8 @@ async function fetchAndProcessUserPositionsForApi(ownerAddress: string): Promise
             const v4Pool = new V4Pool(
                 sdkToken0,
                 sdkToken1,
-                DEFAULT_FEE, // Assuming fee is constant from PoolKey, might need to fetch if dynamic
-                DEFAULT_TICK_SPACING, // Assuming tickSpacing is constant
+                            DEFAULT_FEE, // Assuming fee is constant from PoolKey, might need to fetch if dynamic
+            DEFAULT_TICK_SPACING, // Assuming tickSpacing is constant
                 rawPos.hook || DEFAULT_HOOK_ADDRESS, // Use hook from position or default
                 slot0.sqrtPriceX96,
                 JSBI.BigInt(0), // Liquidity (not strictly needed for position.amount0/1 calc from existing liquidity)

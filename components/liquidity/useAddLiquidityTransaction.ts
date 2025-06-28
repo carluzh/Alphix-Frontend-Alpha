@@ -11,7 +11,7 @@ import { toast } from "sonner";
 import { TokenSymbol, TOKEN_DEFINITIONS } from "@/lib/swap-constants";
 import { baseSepolia } from "@/lib/wagmiConfig";
 import { ERC20_ABI } from "@/lib/abis/erc20";
-import { type Hex, formatUnits, parseUnits } from "viem";
+import { type Hex, formatUnits, parseUnits, encodeFunctionData } from "viem";
 
 // Minimal ABI for Permit2 functions (both single and batch)
 const PERMIT2_PERMIT_ABI_MINIMAL = [
@@ -140,12 +140,20 @@ export function useAddLiquidityTransaction({
   // Permit2 related state
   const [permit2SignatureRequest, setPermit2SignatureRequest] = useState<Permit2SignatureRequest | null>(null);
 
-  // Token approval related state
-  const initialTokenCompletionStatus: Record<TokenSymbol, boolean> = {
-    YUSDC: false,
-    BTCRL: false,
-  };
+  // Token approval related state - dynamically initialize based on the tokens being used
+  const initialTokenCompletionStatus: Record<TokenSymbol, boolean> = useMemo(() => {
+    const status: Record<TokenSymbol, boolean> = {} as Record<TokenSymbol, boolean>;
+    status[token0Symbol] = false;
+    status[token1Symbol] = false;
+    return status;
+  }, [token0Symbol, token1Symbol]);
+  
   const [tokenCompletionStatus, setTokenCompletionStatus] = useState<Record<TokenSymbol, boolean>>(initialTokenCompletionStatus);
+
+  // Reset token completion status when tokens change
+  useEffect(() => {
+    setTokenCompletionStatus(initialTokenCompletionStatus);
+  }, [initialTokenCompletionStatus]);
 
   // Wagmi hooks for transactions
   const { data: approveTxHash, error: approveWriteError, isPending: isApproveWritePending, writeContractAsync: approveERC20Async, reset: resetApproveWriteContract } = useWriteContract();
@@ -154,7 +162,9 @@ export function useAddLiquidityTransaction({
   const { data: mintTxHash, error: mintSendError, isPending: isMintSendPending, sendTransactionAsync, reset: resetSendTransaction } = useSendTransaction();
   const { isLoading: isMintConfirming, isSuccess: isMintConfirmed, error: mintReceiptError } = useWaitForTransactionReceipt({ hash: mintTxHash });
 
-  // Note: Removed permit2 transaction hooks since permits are now included directly in V4PositionManager transactions
+  // Add permit2 transaction hooks for separate permit submission
+  const { data: permit2TxHash, error: permit2SendError, isPending: isPermit2SendPending, sendTransactionAsync: sendPermit2TransactionAsync, reset: resetPermit2SendTransaction } = useSendTransaction();
+  const { isLoading: isPermit2Confirming, isSuccess: isPermit2Confirmed, error: permit2ReceiptError } = useWaitForTransactionReceipt({ hash: permit2TxHash });
 
   const { signTypedDataAsync } = useSignTypedData();
 
@@ -233,11 +243,11 @@ export function useAddLiquidityTransaction({
         tokenJustProcessed: isCalledAfterApprovalOrPermit ? tokenJustProcessed : undefined,
       };
 
-      // Add permit data if signature is provided
-      if (permitSignature && permitMessage) {
-        requestBody.permitSignature = permitSignature;
-        requestBody.permitBatchData = permitMessage;
-      }
+      // Note: No longer sending permit data since permits are handled separately
+      console.log(`[DEBUG Frontend] Preparing API call for ${token0Symbol}/${token1Symbol}:`);
+      console.log(`[DEBUG Frontend] isCalledAfterApprovalOrPermit:`, isCalledAfterApprovalOrPermit);
+      console.log(`[DEBUG Frontend] tokenJustProcessed:`, tokenJustProcessed);
+      console.log(`[DEBUG Frontend] Sending simple API request (permits handled separately)`);
 
       const response = await fetch('/api/liquidity/prepare-mint-tx', {
         method: 'POST',
@@ -294,7 +304,7 @@ export function useAddLiquidityTransaction({
         if (!isCalledAfterApprovalOrPermit || (isCalledAfterApprovalOrPermit && tokenJustProcessed)) {
              // If no approval needed, all involved tokens are considered complete.
              // This happens on initial check if no approvals needed, or after the last approval.
-            const tokensToComplete: Record<TokenSymbol, boolean> = { YUSDC: false, BTCRL: false };
+            const tokensToComplete: Record<TokenSymbol, boolean> = {} as Record<TokenSymbol, boolean>;
             if (parseFloat(amount0) > 0) tokensToComplete[token0Symbol] = true;
             if (parseFloat(amount1) > 0) tokensToComplete[token1Symbol] = true;
             setTokenCompletionStatus(prev => ({...prev, ...tokensToComplete}));
@@ -330,7 +340,8 @@ export function useAddLiquidityTransaction({
     tickUpper,
     activeInputSide,
     calculatedData,
-    preparedTxData
+    preparedTxData,
+    initialTokenCompletionStatus
   ]);
 
   // Exposed function for UI to initiate preparation
@@ -389,7 +400,7 @@ export function useAddLiquidityTransaction({
     }
   }, [accountAddress, chainId, preparedTxData, approveERC20Async, resetApproveWriteContract]);
 
-  // Function to handle Permit2 signing (no submission, just get signature for V4PositionManager)
+  // Function to handle Permit2 signing and separate submission to Permit2 contract
   const handleSignAndSubmitPermit2 = useCallback(async () => {
     if (!permit2SignatureRequest || !accountAddress || !chainId) {
       toast.error("Permit2 Error", { description: "Missing data for Permit2 signature." });
@@ -435,41 +446,55 @@ export function useAddLiquidityTransaction({
         domain,
         types,
         primaryType,
-        message: typedMessage, // Use the structured message with BigInts
+        message: typedMessage,
         account: accountAddress,
       });
 
       toast.dismiss("permit2-sign");
       toast.success("Permit signature received!");
 
-      // Now re-prepare the transaction with the permit signature included
-      toast.loading("Preparing final transaction with permit...", { id: "prepare-final" });
+      // Now submit the permit separately to Permit2 contract
+      toast.loading(`Submitting permit for ${approvalTokenSymbol}...`, { id: "permit2-submit" });
+
+      // Prepare permit transaction data
+      const permitCalldata = encodeFunctionData({
+        abi: PERMIT2_PERMIT_ABI_MINIMAL,
+        functionName: 'permit',
+        args: [
+          accountAddress,
+          primaryType === 'PermitBatch' ? {
+            details: typedMessage.details,
+            spender: typedMessage.spender,
+            sigDeadline: typedMessage.sigDeadline
+          } : {
+            details: typedMessage.details,
+            spender: typedMessage.spender,
+            sigDeadline: typedMessage.sigDeadline
+          },
+          signature as Hex
+        ],
+      });
+
+      await sendPermit2TransactionAsync({
+        to: permit2Address,
+        data: permitCalldata,
+      });
+
+      console.log(`[DEBUG Frontend] Permit transaction submitted for ${approvalTokenSymbol}`);
       
-      const nextPrepData = await handlePrepareMintInternal(true, approvalTokenSymbol, signature, message);
-      
-      if (nextPrepData && !nextPrepData.needsApproval) {
-        toast.dismiss("prepare-final");
-        toast.success("Transaction ready to mint!");
-        setTokenCompletionStatus(prev => ({ ...prev, [approvalTokenSymbol]: true }));
-        setStep('mint');
-      } else {
-        toast.dismiss("prepare-final");
-        toast.error("Failed to prepare final transaction");
+    } catch (err: any) {
+      toast.dismiss("permit2-sign");
+      toast.dismiss("permit2-submit");
+      let detailedErrorMessage = "Permit2 operation failed.";
+      if (err instanceof Error) {
+        detailedErrorMessage = err.message;
+        if ((err as any).shortMessage) { detailedErrorMessage = (err as any).shortMessage; }
       }
-      
+      toast.error("Permit2 Error", { description: detailedErrorMessage });
       setIsWorking(false);
-          } catch (err: any) {
-        toast.dismiss("permit2-sign");
-        toast.dismiss("prepare-final");
-        let detailedErrorMessage = "Permit2 operation failed.";
-        if (err instanceof Error) {
-          detailedErrorMessage = err.message;
-          if ((err as any).shortMessage) { detailedErrorMessage = (err as any).shortMessage; }
-        }
-        toast.error("Permit2 Error", { description: detailedErrorMessage });
-        setIsWorking(false);
-      }
-    }, [accountAddress, chainId, permit2SignatureRequest, signTypedDataAsync, handlePrepareMintInternal]);
+      resetPermit2SendTransaction();
+    }
+  }, [accountAddress, chainId, permit2SignatureRequest, signTypedDataAsync, sendPermit2TransactionAsync, resetPermit2SendTransaction]);
 
   // Function to handle minting
   const handleMint = useCallback(async () => {
@@ -515,7 +540,8 @@ export function useAddLiquidityTransaction({
     setTokenCompletionStatus(initialTokenCompletionStatus);
     resetApproveWriteContract();
     resetSendTransaction();
-  }, [resetApproveWriteContract, resetSendTransaction]);
+    resetPermit2SendTransaction();
+  }, [initialTokenCompletionStatus, resetApproveWriteContract, resetSendTransaction, resetPermit2SendTransaction]);
 
   // Update states when approve transaction is completed
   useEffect(() => {
@@ -560,8 +586,49 @@ export function useAddLiquidityTransaction({
     }
   }, [isApproved, approveWriteError, approveReceiptError, preparedTxData, resetApproveWriteContract, handlePrepareMintInternal]);
 
-  // Note: Removed permit2 transaction handling effects since we no longer submit permits separately
-  // The permit signature is now included directly in the V4PositionManager transaction
+  // Update states when permit2 transaction is completed
+  useEffect(() => {
+    if (isPermit2Confirmed) {
+      toast.dismiss("permit2-submit");
+      toast.success("Permit recorded successfully!");
+      const currentPermitTokenSymbol = permit2SignatureRequest?.approvalTokenSymbol;
+      
+      resetPermit2SendTransaction();
+      
+      if (currentPermitTokenSymbol) {
+        // Mark token as completed and prepare final mint transaction
+        const checkNextStep = async () => {
+          setIsWorking(true);
+          setTokenCompletionStatus(prev => ({ ...prev, [currentPermitTokenSymbol]: true }));
+          
+          // Re-prepare transaction without permit data since permit is now on-chain
+          const nextPrepData = await handlePrepareMintInternal(true, currentPermitTokenSymbol);
+          if (nextPrepData) {
+            if (!nextPrepData.needsApproval) {
+              toast.success("Transaction ready to mint!");
+              setStep('mint');
+            }
+          } else {
+            setStep('input');
+            setPreparedTxData(null);
+          }
+          setIsWorking(false);
+        };
+        checkNextStep();
+      } else {
+        setIsWorking(false);
+      }
+    }
+    
+    if (permit2SendError || permit2ReceiptError) {
+      toast.dismiss("permit2-submit");
+      const errorMsg = (permit2SendError as any)?.shortMessage || (permit2ReceiptError as any)?.shortMessage || permit2SendError?.message || permit2ReceiptError?.message || "Permit transaction failed.";
+      toast.error("Permit failed", { description: errorMsg });
+      setIsWorking(false);
+      resetPermit2SendTransaction();
+      setStep('permit2Sign'); // Stay on permit step to retry
+    }
+  }, [isPermit2Confirmed, permit2SendError, permit2ReceiptError, permit2SignatureRequest, resetPermit2SendTransaction, handlePrepareMintInternal]);
 
   // Update states when mint transaction is completed
   useEffect(() => {
@@ -613,6 +680,8 @@ export function useAddLiquidityTransaction({
     // Transaction status
     isApproveWritePending,
     isApproving,
+    isPermit2SendPending,
+    isPermit2Confirming,
     isMintSendPending,
     isMintConfirming,
     

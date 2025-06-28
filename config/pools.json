@@ -1,0 +1,167 @@
+{
+  "meta": {
+    "version": "1.0.0",
+    "description": "Centralized pool configuration for Alphix V4 pools",
+    "chainId": 84532,
+    "chainName": "Base Sepolia"
+  },
+  "contracts": {
+    "poolManager": "0x05E73354cFDd6745C338b50BcFDfA3Aa6fA03408",
+    "quoter": "0x4a6513c898fe1b2d0e78d3b0e0a4a151589b1cba",
+    "positionManager": "0x4b2c77d209d3405f41a037ec6c77f7f5b8e2ca80",
+    "stateView": "0x571291b572ed32ce6751a2cb2486ebee8defb9b4"
+  },
+  "tokens": {
+    "BTCRL": {
+      "symbol": "BTCRL",
+      "name": "Bitcoin Carl",
+      "address": "0x13c26fb69d48ED5a72Ce3302FC795082E2427F4D",
+      "decimals": 8,
+      "displayDecimals": 6,
+      "icon": "/BTCRL.png"
+    },
+    "YUSDC": {
+      "symbol": "YUSDC", 
+      "name": "Yanis USDC",
+      "address": "0x663cF82e49419A3Dc88EEc65c2155b4B2D0fA335",
+      "decimals": 6,
+      "displayDecimals": 2,
+      "icon": "/YUSD.png"
+    },
+    "mUSDT": {
+      "symbol": "mUSDT",
+      "name": "Marina USDT",
+      "address": "0xbaabfA3Ac2Ed3d0154e9E2002f94D8550A79bfa8",
+      "decimals": 6,
+      "displayDecimals": 2,
+      "icon": "/mUSDT.svg"
+    },
+    "aETH": {
+      "symbol": "aETH",
+      "name": "Aurelia Ethereum",
+      "address": "0x28c00749Cb9066d240fE1270b6D7f294b8b34D99",
+      "decimals": 18,
+      "displayDecimals": 4,
+      "icon": "/aETH.svg"
+    },
+    "ETH": {
+      "symbol": "ETH",
+      "name": "Ethereum",
+      "address": "0x0000000000000000000000000000000000000000",
+      "decimals": 18,
+      "displayDecimals": 4,
+      "icon": "/ETH.svg"
+    }
+  },
+  "pools": [
+    {
+      "id": "BTCRL-YUSDC-8388608",
+      "name": "BTCRL/YUSDC",
+      "description": "Bitcoin Carl / Yanis USDC pool",
+      "subgraphId": "0xbcc20db9b797e211e508500469e553111c6fa8d80f7896e6db60167bcf18ce13",
+      "currency0": {
+        "symbol": "BTCRL",
+        "address": "0x13c26fb69d48ED5a72Ce3302FC795082E2427F4D"
+      },
+      "currency1": {
+        "symbol": "YUSDC", 
+        "address": "0x663cF82e49419A3Dc88EEc65c2155b4B2D0fA335"
+      },
+      "fee": 8388608,
+      "tickSpacing": 60,
+      "hooks": "0x94ba380a340E020Dc29D7883f01628caBC975000",
+      "enabled": true,
+      "featured": true
+    },
+    {
+      "id": "YUSDC-mUSDT-8388608",
+      "name": "YUSDC/mUSDT",
+      "description": "Yanis USDC / Marina USDT pool",
+      "subgraphId": "0xc176e54fee5a41917ae5244d8235e0bda1885de86b47f540a09552119d832e6d",
+      "currency0": {
+        "symbol": "YUSDC",
+        "address": "0x663cF82e49419A3Dc88EEc65c2155b4B2D0fA335"
+      },
+      "currency1": {
+        "symbol": "mUSDT", 
+        "address": "0xbaabfA3Ac2Ed3d0154e9E2002f94D8550A79bfa8"
+      },
+      "fee": 8388608,
+      "tickSpacing": 60,
+      "hooks": "0x94ba380a340E020Dc29D7883f01628caBC975000",
+      "enabled": true,
+      "featured": false
+    },
+    {
+      "id": "mUSDT-aETH-8388608",
+      "name": "mUSDT/aETH",
+      "description": "Marina USDT / Aurelia Ethereum pool",
+      "subgraphId": "0x60F36C23D5131AE2EA1CD668AE4013081FD24B9CF94190BB6E08ECE00B8DC27C",
+      "currency0": {
+        "symbol": "mUSDT",
+        "address": "0xbaabfA3Ac2Ed3d0154e9E2002f94D8550A79bfa8"
+      },
+      "currency1": {
+        "symbol": "aETH", 
+        "address": "0x28c00749Cb9066d240fE1270b6D7f294b8b34D99"
+      },
+      "fee": 8388608,
+      "tickSpacing": 60,
+      "hooks": "0x94ba380a340E020Dc29D7883f01628caBC975000",
+      "enabled": true,
+      "featured": false
+    },
+    {
+      "id": "mUSDT-ETH-8388608",
+      "name": "mUSDT/ETH",
+      "description": "Marina USDT / Ethereum pool",
+      "subgraphId": "0xB0679FC770CC387A0DE3099368FD7AD8BD0EFB599525C40F3586AFF55D797EB1",
+      "currency0": {
+        "symbol": "mUSDT",
+        "address": "0xbaabfA3Ac2Ed3d0154e9E2002f94D8550A79bfa8"
+      },
+      "currency1": {
+        "symbol": "ETH", 
+        "address": "0x0000000000000000000000000000000000000000"
+      },
+      "fee": 8388608,
+      "tickSpacing": 60,
+      "hooks": "0x94ba380a340E020Dc29D7883f01628caBC975000",
+      "enabled": true,
+      "featured": false
+    }
+  ],
+  "_comments": {
+    "addingNewPools": "To add a new pool, simply add a new token to the 'tokens' section and a new pool entry here. The system will automatically pick it up!",
+    "configuration": {
+      "currentPools": "BTCRL/YUSDC (featured), YUSDC/mUSDT, mUSDT/aETH, mUSDT/ETH",
+      "allPoolsUseFee": 8388608,
+      "allPoolsUseTickSpacing": 60,
+      "allPoolsUseHooks": "0x94ba380a340E020Dc29D7883f01628caBC975000"
+    },
+    "example": {
+      "newToken": {
+        "WETH": {
+          "symbol": "WETH",
+          "name": "Wrapped Ethereum", 
+          "address": "0xNEW_TOKEN_ADDRESS",
+          "decimals": 18,
+          "displayDecimals": 4,
+          "icon": "/WETH.png"
+        }
+      },
+      "newPool": {
+        "id": "WETH-mUSDT-8388608",
+        "name": "WETH/mUSDT",
+        "description": "Wrapped Ethereum / Marina USDT pool",
+        "currency0": { "symbol": "WETH", "address": "0xNEW_TOKEN_ADDRESS" },
+        "currency1": { "symbol": "mUSDT", "address": "0xbaabfA3Ac2Ed3d0154e9E2002f94D8550A79bfa8" },
+        "fee": 8388608,
+        "tickSpacing": 60,
+        "hooks": "0x94ba380a340E020Dc29D7883f01628caBC975000",
+        "enabled": true,
+        "featured": false
+      }
+    }
+  }
+} 

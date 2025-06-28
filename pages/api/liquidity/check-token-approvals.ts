@@ -3,6 +3,7 @@ import { createPublicClient, http, getAddress, parseAbi } from 'viem';
 import { baseSepolia } from 'viem/chains';
 import { PERMIT2_ADDRESS, TOKEN_DEFINITIONS } from '@/lib/swap-constants';
 import { TokenSymbol } from '@/lib/swap-constants';
+import { TOKEN_DEFINITIONS as POOLS_TOKEN_DEFINITIONS } from '@/lib/pools-config';
 
 // Define constants from other files
 const POSITION_MANAGER_ADDRESS = getAddress("0x4b2c77d209d3405f41a037ec6c77f7f5b8e2ca80");
@@ -57,7 +58,7 @@ export default async function handler(
       });
     }
 
-    if (!TOKEN_DEFINITIONS[token0Symbol] || !TOKEN_DEFINITIONS[token1Symbol]) {
+    if (!POOLS_TOKEN_DEFINITIONS[token0Symbol] || !POOLS_TOKEN_DEFINITIONS[token1Symbol]) {
       return res.status(400).json({ 
         needsToken0Approval: true, 
         needsToken1Approval: true,
@@ -77,7 +78,7 @@ export default async function handler(
 
     // Check Token0 if needed
     if (parseFloat(amount0) > 0) {
-      const token0Address = TOKEN_DEFINITIONS[token0Symbol].addressRaw;
+      const token0Address = POOLS_TOKEN_DEFINITIONS[token0Symbol].addressRaw;
       
       // Step 1: Check ERC20 allowance from User to Permit2
       const eoaToPermit2Erc20Allowance = await publicClient.readContract({
@@ -87,7 +88,7 @@ export default async function handler(
         args: [getAddress(userAddress), PERMIT2_ADDRESS]
       }) as bigint;
 
-      const requiredAmount = parseFloat(amount0) * Math.pow(10, TOKEN_DEFINITIONS[token0Symbol].decimals);
+      const requiredAmount = parseFloat(amount0) * Math.pow(10, POOLS_TOKEN_DEFINITIONS[token0Symbol].decimals);
       const requiredAmountBigInt = BigInt(Math.floor(requiredAmount));
 
       if (eoaToPermit2Erc20Allowance >= requiredAmountBigInt) {
@@ -122,7 +123,7 @@ export default async function handler(
 
     // Check Token1 if needed
     if (parseFloat(amount1) > 0) {
-      const token1Address = TOKEN_DEFINITIONS[token1Symbol].addressRaw;
+      const token1Address = POOLS_TOKEN_DEFINITIONS[token1Symbol].addressRaw;
       
       // Step 1: Check ERC20 allowance from User to Permit2
       const eoaToPermit2Erc20Allowance = await publicClient.readContract({
@@ -132,7 +133,7 @@ export default async function handler(
         args: [getAddress(userAddress), PERMIT2_ADDRESS]
       }) as bigint;
 
-      const requiredAmount = parseFloat(amount1) * Math.pow(10, TOKEN_DEFINITIONS[token1Symbol].decimals);
+      const requiredAmount = parseFloat(amount1) * Math.pow(10, POOLS_TOKEN_DEFINITIONS[token1Symbol].decimals);
       const requiredAmountBigInt = BigInt(Math.floor(requiredAmount));
 
       if (eoaToPermit2Erc20Allowance >= requiredAmountBigInt) {

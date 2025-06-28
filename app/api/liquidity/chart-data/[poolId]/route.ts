@@ -38,14 +38,21 @@ const GET_POOL_DAILY_HISTORY_QUERY = `
   }
 `;
 
+import { getPoolSubgraphId } from '../../../../../lib/pools-config';
+
 // Helper to map friendly pool IDs to actual subgraph IDs
 const getSubgraphPoolId = (friendlyPoolId: string): string => {
+  const subgraphId = getPoolSubgraphId(friendlyPoolId);
+  if (subgraphId) {
+    return subgraphId.toLowerCase(); // Ensure lowercase for subgraph
+  }
+  
+  // Fallback for legacy handling
   if (friendlyPoolId.toLowerCase() === 'yusdc-btcrl') {
     return "0xbcc20db9b797e211e508500469e553111c6fa8d80f7896e6db60167bcf18ce13";
   }
-  // Add other mappings as needed
-  // If no mapping, assume the friendlyPoolId is already the correct subgraph ID (e.g., if it's a hex string)
-  // Ensure it's lowercase if your subgraph expects Bytes! as lowercase hex
+  
+  // If no mapping found, assume it's already a hex ID
   return friendlyPoolId.toLowerCase(); 
 };
 

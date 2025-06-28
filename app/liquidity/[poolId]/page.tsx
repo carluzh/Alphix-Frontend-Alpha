@@ -17,6 +17,7 @@ import type { ProcessedPosition } from "../../../pages/api/liquidity/get-positio
 import { TOKEN_DEFINITIONS, TokenSymbol } from "../../../lib/swap-constants";
 import { formatUnits as viemFormatUnits, type Hex } from "viem";
 import { Bar, BarChart, CartesianGrid, XAxis } from "recharts";
+import { getPoolById, getPoolSubgraphId, getToken } from "@/lib/pools-config";
 import {
   ChartConfig,
   ChartContainer,
@@ -118,6 +119,9 @@ const calculateTotalValueUSD = (position: ProcessedPosition) => {
   const mockPrices: Record<string, number> = {
     YUSDC: 1.0,
     BTCRL: 61000.0,
+    mUSDT: 1.0,
+    aETH: 2400.0,
+    ETH: 2400.0,
     // Add other token prices as needed
   };
   
@@ -191,20 +195,24 @@ const chartConfig = {
   // apr: { label: "APR", color: "#e85102" }, // Removed APR from chart config for now
 } satisfies ChartConfig;
 
-// Mock pool data - in a real app, this would come from an API based on poolId
-// This mockPoolsData is now primarily for fallback display of token symbols/pair name if needed
-// Actual stats like volume, TVL, APR should be fetched or come from cache.
-const mockPoolsData = {
-  "yusdc-btcrl": {
-    id: "yusdc-btcrl", // This is the key, matches poolId from URL
-    // The actual on-chain pool ID used for API calls needs to be managed carefully.
-    // For yusdc-btcrl, we might use the known hardcoded one for API calls.
-    apiId: "0xbcc20db9b797e211e508500469e553111c6fa8d80f7896e6db60167bcf18ce13", // Store the API-specific ID
+// Get pool configuration from pools.json instead of hardcoded data
+const getPoolConfiguration = (poolId: string) => {
+  const poolConfig = getPoolById(poolId);
+  if (!poolConfig) return null;
+
+  const token0 = getToken(poolConfig.currency0.symbol);
+  const token1 = getToken(poolConfig.currency1.symbol);
+  
+  if (!token0 || !token1) return null;
+
+  return {
+    id: poolConfig.id,
+    subgraphId: poolConfig.subgraphId,
     tokens: [
-      { symbol: "YUSDC", icon: "/YUSD.png" },
-      { symbol: "BTCRL", icon: "/BTCRL.png" }
+      { symbol: token0.symbol, icon: token0.icon },
+      { symbol: token1.symbol, icon: token1.icon }
     ],
-    pair: "YUSDC / BTCRL",
+    pair: `${token0.symbol} / ${token1.symbol}`,
     // Static/fallback values - these will be replaced by fetched/cached data
     volume24h: "Loading...",
     volume7d: "Loading...",
@@ -212,8 +220,7 @@ const mockPoolsData = {
     fees7d: "Loading...",
     liquidity: "Loading...",
     apr: "Loading..."
-  }
-  // Add other known pools if necessary, or have a more dynamic way to get basic pool info
+  };
 };
 
 interface PoolDetailData extends Pool { // Extend the main Pool type
@@ -301,9 +308,9 @@ export default function PoolDetailPage() {
       cell: ({ row }) => {
         const position = row.original;
         const getTokenIcon = (symbol?: string) => {
-          if (symbol?.toUpperCase().includes("YUSDC")) return "/YUSD.png";
-          if (symbol?.toUpperCase().includes("BTCRL")) return "/BTCRL.png";
-          return "/default-token.png";
+          if (!symbol) return "/placeholder-logo.svg";
+          const tokenConfig = getToken(symbol);
+          return tokenConfig?.icon || "/placeholder-logo.svg";
         };
         const estimatedCurrentTick = position.isInRange 
           ? Math.floor((position.tickLower + position.tickUpper) / 2)
@@ -465,16 +472,15 @@ export default function PoolDetailPage() {
         setIsLoadingChartData(false);
       });
 
-    const basePoolInfo = mockPoolsData[poolId as keyof typeof mockPoolsData];
+    const basePoolInfo = getPoolConfiguration(poolId);
     if (!basePoolInfo) {
       toast.error("Pool configuration not found for this ID.");
       router.push('/liquidity');
       return;
     }
 
-    // Determine the API ID (could be from basePoolInfo or derived)
-    // For yusdc-btcrl, we use the hardcoded one if basePoolInfo provides it.
-    const apiPoolIdToUse = basePoolInfo.apiId || poolId; 
+    // Use the subgraph ID from the pool configuration for API calls
+    const apiPoolIdToUse = basePoolInfo.subgraphId; 
 
     // 1. Fetch/Cache Pool Stats (Volume, Fees, TVL)
     let poolStats: Partial<Pool> | null = getFromCache(getPoolStatsCacheKey(apiPoolIdToUse));

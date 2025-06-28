@@ -120,6 +120,19 @@ export const getTargetChain = (rpcUrl: string) => ({
 export const V4_POSITION_MANAGER_ADDRESS_RAW = '0x4b2c77d209d3405f41a037ec6c77f7f5b8e2ca80'; // TODO: Replace with actual address
 export const V4_POSITION_MANAGER_ADDRESS: Address = getAddress(V4_POSITION_MANAGER_ADDRESS_RAW);
 
+// --- V4 Quoter Configuration ---
+export const V4_QUOTER_ADDRESS_RAW = '0x4a6513c898fe1b2d0e78d3b0e0a4a151589b1cba'; // TODO: Replace with actual V4Quoter address
+export const V4_QUOTER_ADDRESS: Address = getAddress(V4_QUOTER_ADDRESS_RAW);
+
 // Empty bytes constant for hook data
 export const EMPTY_BYTES = '0x' as const;
 export const V4_POSITION_MANAGER_ABI = position_manager_abi;
+
+// --- V4 Quoter ABI ---
+// Based on Uniswap V4 documentation: https://docs.uniswap.org/contracts/v4/reference/periphery/lens/V4Quoter
+// QuoteExactSingleParams struct: { poolKey: { currency0, currency1, fee, tickSpacing, hooks }, zeroForOne, exactAmount, hookData }
+export const V4_QUOTER_ABI_STRINGS = [
+  "function quoteExactInputSingle(((address,address,uint24,int24,address),bool,uint128,bytes)) external returns (uint256, uint256)",
+  "function quoteExactOutputSingle(((address,address,uint24,int24,address),bool,uint128,bytes)) external returns (uint256, uint256)"
+] as const;
+export const V4QuoterAbi: Abi = parseAbi(V4_QUOTER_ABI_STRINGS);

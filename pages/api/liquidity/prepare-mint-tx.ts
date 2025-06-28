@@ -5,7 +5,8 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 
 import { position_manager_abi } from "../../../lib/abis/PositionManager_abi";
 import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from "../../../lib/abis/state_view_abi"; 
-import { TOKEN_DEFINITIONS, TokenSymbol, EMPTY_BYTES } from "../../../lib/swap-constants"; 
+import { TOKEN_DEFINITIONS, TokenSymbol, EMPTY_BYTES } from "../../../lib/swap-constants";
+import { TOKEN_DEFINITIONS as POOLS_TOKEN_DEFINITIONS } from "../../../lib/pools-config"; 
 import { iallowance_transfer_abi } from "../../../lib/abis/IAllowanceTransfer_abi"; // For Permit2 allowance method
 
 import { publicClient } from "../../../lib/viemClient"; 
@@ -153,7 +154,7 @@ export default async function handler(
         if (!isAddress(userAddress)) {
             return res.status(400).json({ message: "Invalid userAddress." });
         }
-        if (!TOKEN_DEFINITIONS[token0Symbol] || !TOKEN_DEFINITIONS[token1Symbol] || !TOKEN_DEFINITIONS[inputTokenSymbol]) {
+        if (!POOLS_TOKEN_DEFINITIONS[token0Symbol] || !POOLS_TOKEN_DEFINITIONS[token1Symbol] || !POOLS_TOKEN_DEFINITIONS[inputTokenSymbol]) {
             return res.status(400).json({ message: "Invalid token symbol(s) provided." });
         }
         if (isNaN(parseFloat(inputAmount)) || parseFloat(inputAmount) <= 0) {
@@ -163,8 +164,8 @@ export default async function handler(
             return res.status(400).json({ message: "userTickLower and userTickUpper must be numbers." });
         }
 
-        const token0Config = TOKEN_DEFINITIONS[token0Symbol];
-        const token1Config = TOKEN_DEFINITIONS[token1Symbol];
+        const token0Config = POOLS_TOKEN_DEFINITIONS[token0Symbol];
+        const token1Config = POOLS_TOKEN_DEFINITIONS[token1Symbol];
 
         const sdkToken0 = new Token(chainId, getAddress(token0Config.addressRaw), token0Config.decimals, token0Config.symbol);
         const sdkToken1 = new Token(chainId, getAddress(token1Config.addressRaw), token1Config.decimals, token1Config.symbol);
@@ -174,27 +175,36 @@ export default async function handler(
         const parsedInputAmount_BigInt = parseUnits(inputAmount, sdkInputToken.decimals); 
         const parsedInputAmount_JSBI = JSBI.BigInt(parsedInputAmount_BigInt.toString()); 
 
+        // Use configured pool ID from pools.json instead of deriving
+        const { getPoolByTokens } = await import('../../../lib/pools-config');
+        const poolConfig = getPoolByTokens(token0Symbol, token1Symbol);
+        
+        if (!poolConfig) {
+            return res.status(400).json({ message: `No pool configuration found for ${token0Symbol}/${token1Symbol}` });
+        }
+
         const clampedUserTickLower = Math.max(userTickLower, SDK_MIN_TICK);
         const clampedUserTickUpper = Math.min(userTickUpper, SDK_MAX_TICK);
-        const finalTickLower = Math.ceil(clampedUserTickLower / DEFAULT_TICK_SPACING) * DEFAULT_TICK_SPACING;
-        const finalTickUpper = Math.floor(clampedUserTickUpper / DEFAULT_TICK_SPACING) * DEFAULT_TICK_SPACING;
+        const finalTickLower = Math.ceil(clampedUserTickLower / poolConfig.tickSpacing) * poolConfig.tickSpacing;
+        const finalTickUpper = Math.floor(clampedUserTickUpper / poolConfig.tickSpacing) * poolConfig.tickSpacing;
 
         if (finalTickLower >= finalTickUpper) {
             return res.status(400).json({ message: `Error: finalTickLower (${finalTickLower}) must be less than finalTickUpper (${finalTickUpper}) after alignment.` });
         }
-
+        
+        const poolId = poolConfig.subgraphId;
+        
+        // Still need sorted tokens for V4Pool construction
         const [sortedToken0, sortedToken1] = sdkToken0.sortsBefore(sdkToken1) 
             ? [sdkToken0, sdkToken1] 
             : [sdkToken1, sdkToken0];
-        
-        const poolKey: PoolKey = {
-            currency0: sortedToken0.address, 
-            currency1: sortedToken1.address, 
-            fee: DEFAULT_FEE,
-            tickSpacing: DEFAULT_TICK_SPACING,
-            hooks: DEFAULT_HOOK_ADDRESS     
-        };
-        const poolId = V4Pool.getPoolId(sortedToken0, sortedToken1, poolKey.fee, poolKey.tickSpacing, poolKey.hooks);
+
+        // DIAGNOSTIC: Query actual pool parameters to check for mismatches
+        console.log(`[DIAGNOSTIC] Checking pool parameters for ${token0Symbol}/${token1Symbol}:`);
+        console.log(`[DIAGNOSTIC] Expected pool ID: ${poolId}`);
+        console.log(`[DIAGNOSTIC] Expected fee: ${poolConfig.fee}`);
+        console.log(`[DIAGNOSTIC] Expected tick spacing: ${poolConfig.tickSpacing}`);
+        console.log(`[DIAGNOSTIC] Expected hooks: ${poolConfig.hooks}`);
 
         let rawSqrtPriceX96String: string;
         let currentTickFromSlot0: number;
@@ -212,6 +222,41 @@ export default async function handler(
             currentTickFromSlot0 = Number(slot0DataViem[1]);
             lpFeeFromSlot0 = Number(slot0DataViem[3]);
             currentSqrtPriceX96_JSBI = JSBI.BigInt(rawSqrtPriceX96String);
+
+            // DIAGNOSTIC: Compare actual vs expected parameters
+            console.log(`[DIAGNOSTIC] Actual pool state from slot0:`);
+            console.log(`[DIAGNOSTIC] - sqrtPriceX96: ${rawSqrtPriceX96String}`);
+            console.log(`[DIAGNOSTIC] - current tick: ${currentTickFromSlot0}`);
+            console.log(`[DIAGNOSTIC] - actual LP fee: ${lpFeeFromSlot0}`);
+            console.log(`[DIAGNOSTIC] - is initialized: ${BigInt(rawSqrtPriceX96String) > 0n}`);
+
+            // Check for fee mismatch
+            if (lpFeeFromSlot0 !== poolConfig.fee) {
+                console.log(`[DIAGNOSTIC] ⚠️ FEE MISMATCH! Expected: ${poolConfig.fee}, Actual: ${lpFeeFromSlot0}`);
+            }
+
+            // Infer tick spacing from current tick
+            let inferredTickSpacing = "unknown";
+            if (currentTickFromSlot0 % 200 === 0) inferredTickSpacing = "200";
+            else if (currentTickFromSlot0 % 60 === 0) inferredTickSpacing = "60";
+            else if (currentTickFromSlot0 % 10 === 0) inferredTickSpacing = "10";
+            else if (currentTickFromSlot0 % 1 === 0) inferredTickSpacing = "1";
+
+            console.log(`[DIAGNOSTIC] Inferred tick spacing: ${inferredTickSpacing}`);
+            if (inferredTickSpacing !== "unknown" && parseInt(inferredTickSpacing) !== poolConfig.tickSpacing) {
+                console.log(`[DIAGNOSTIC] ⚠️ TICK SPACING MISMATCH! Expected: ${poolConfig.tickSpacing}, Inferred: ${inferredTickSpacing}`);
+            }
+
+            // Check if pool is initialized
+            if (BigInt(rawSqrtPriceX96String) === 0n) {
+                console.log(`[DIAGNOSTIC] ❌ POOL NOT INITIALIZED! sqrtPriceX96 = 0`);
+                return res.status(400).json({ 
+                    message: `Pool ${token0Symbol}/${token1Symbol} (${poolId}) is not initialized. sqrtPriceX96 = 0. This is likely why you're getting PoolNotInitialized errors.` 
+                });
+            } else {
+                console.log(`[DIAGNOSTIC] ✅ Pool is properly initialized`);
+            }
+
         } catch (error) {
             console.error("API Error (prepare-mint-tx) fetching pool slot0 data:", error);
             return res.status(500).json({ message: "Failed to fetch current pool data.", error });
@@ -220,9 +265,9 @@ export default async function handler(
         const v4PoolForCalc = new V4Pool(
             sortedToken0,
             sortedToken1,
-            DEFAULT_FEE, // Use the same fee as in poolKey 
-            DEFAULT_TICK_SPACING,
-            poolKey.hooks, // Use the same hook address as in poolKey
+            poolConfig.fee, // Use fee from pool configuration 
+            poolConfig.tickSpacing, // Use tick spacing from pool configuration
+            poolConfig.hooks as `0x${string}`, // Use hook address from pool configuration
             currentSqrtPriceX96_JSBI, 
             JSBI.BigInt(0), 
             currentTickFromSlot0
@@ -273,9 +318,14 @@ export default async function handler(
         }
 
         const tokensToCheck = [
-            { sdkToken: sortedToken0, requiredAmount: sdkCalculatedAmountSorted0_BigInt, symbol: TOKEN_DEFINITIONS[sortedToken0.symbol as TokenSymbol]?.symbol || sortedToken0.symbol || "Token0" },
-            { sdkToken: sortedToken1, requiredAmount: sdkCalculatedAmountSorted1_BigInt, symbol: TOKEN_DEFINITIONS[sortedToken1.symbol as TokenSymbol]?.symbol || sortedToken1.symbol || "Token1" }
+            { sdkToken: sortedToken0, requiredAmount: sdkCalculatedAmountSorted0_BigInt, symbol: POOLS_TOKEN_DEFINITIONS[sortedToken0.symbol as TokenSymbol]?.symbol || sortedToken0.symbol || "Token0" },
+            { sdkToken: sortedToken1, requiredAmount: sdkCalculatedAmountSorted1_BigInt, symbol: POOLS_TOKEN_DEFINITIONS[sortedToken1.symbol as TokenSymbol]?.symbol || sortedToken1.symbol || "Token1" }
         ];
+
+        // Debug calculated amounts
+        console.log(`[DEBUG] Calculated amounts for ${token0Symbol}/${token1Symbol}:`);
+        console.log(`[DEBUG] ${tokensToCheck[0].symbol}: ${tokensToCheck[0].requiredAmount} (${Number(tokensToCheck[0].requiredAmount) / Math.pow(10, tokensToCheck[0].sdkToken.decimals)} tokens)`);
+        console.log(`[DEBUG] ${tokensToCheck[1].symbol}: ${tokensToCheck[1].requiredAmount} (${Number(tokensToCheck[1].requiredAmount) / Math.pow(10, tokensToCheck[1].sdkToken.decimals)} tokens)`);
 
         // Check ERC20 allowances first - return early if any token needs ERC20 approval
         for (const tokenInfo of tokensToCheck) {
@@ -302,67 +352,72 @@ export default async function handler(
             }
         }
 
-        // If permit signature and data are provided, skip permit checking since they'll be included in the transaction
-        if (!permitSignature || !permitBatchData) {
-            // Check Permit2 allowances for all tokens and collect those that need permits
-            const tokensNeedingPermits: Array<{
-                token: Hex;
-                amount: string;
-                expiration: number;
-                nonce: number;
-                symbol: TokenSymbol;
-            }> = [];
+        // Always check Permit2 allowances to determine if permits are actually needed
+        // This ensures we create simple transactions when possible, even if permit data was provided
+        const tokensNeedingPermits: Array<{
+            token: Hex;
+            amount: string;
+            expiration: number;
+            nonce: number;
+            symbol: TokenSymbol;
+        }> = [];
 
-            const currentTimestamp = Math.floor(Date.now() / 1000);
+        const currentTimestamp = Math.floor(Date.now() / 1000);
 
-            for (const tokenInfo of tokensToCheck) {
-                if (getAddress(tokenInfo.sdkToken.address) === ETHERS_ADDRESS_ZERO || tokenInfo.requiredAmount <= 0n) {
-                    continue;
-                }
+        for (const tokenInfo of tokensToCheck) {
+            if (getAddress(tokenInfo.sdkToken.address) === ETHERS_ADDRESS_ZERO || tokenInfo.requiredAmount <= 0n) {
+                console.log(`[DEBUG] Skipping ${tokenInfo.symbol} - zero address or zero amount`);
+                continue;
+            }
 
-                const permit2AllowanceTuple = await publicClient.readContract({
-                    address: PERMIT2_ADDRESS,
-                    abi: iallowance_transfer_abi, 
-                    functionName: 'allowance',
-                    args: [getAddress(userAddress), getAddress(tokenInfo.sdkToken.address), POSITION_MANAGER_ADDRESS]
-                }) as readonly [amount: bigint, expiration: number, nonce: number];
-                
-                const permit2SpenderAmount = permit2AllowanceTuple[0];
-                const permit2SpenderExpiration = permit2AllowanceTuple[1];
-                const permit2SpenderNonce = permit2AllowanceTuple[2];
+            const permit2AllowanceTuple = await publicClient.readContract({
+                address: PERMIT2_ADDRESS,
+                abi: iallowance_transfer_abi, 
+                functionName: 'allowance',
+                args: [getAddress(userAddress), getAddress(tokenInfo.sdkToken.address), POSITION_MANAGER_ADDRESS]
+            }) as readonly [amount: bigint, expiration: number, nonce: number];
+            
+            const permit2SpenderAmount = permit2AllowanceTuple[0];
+            const permit2SpenderExpiration = permit2AllowanceTuple[1];
+            const permit2SpenderNonce = permit2AllowanceTuple[2];
 
-                let needsPermitSignature = false;
+            console.log(`[DEBUG] ${tokenInfo.symbol} Permit2 state: allowance=${permit2SpenderAmount}, required=${tokenInfo.requiredAmount}, expiration=${permit2SpenderExpiration}`);
 
-                // Check if current allowance is sufficient
-                if (tokenInfo.requiredAmount > MAX_UINT_160) { 
-                    if (permit2SpenderAmount < MAX_UINT_160) {
-                        needsPermitSignature = true;
-                    }
-                } else {
-                    if (permit2SpenderAmount < tokenInfo.requiredAmount) {
-                        needsPermitSignature = true;
-                    }
-                }
+            let needsPermitSignature = false;
 
-                // Check if current permit is expired
-                if (!needsPermitSignature && permit2SpenderExpiration !== 0 && permit2SpenderExpiration <= currentTimestamp && tokenInfo.requiredAmount > 0n) {
+            // Check if current allowance is sufficient
+            if (tokenInfo.requiredAmount > MAX_UINT_160) { 
+                if (permit2SpenderAmount < MAX_UINT_160) {
                     needsPermitSignature = true;
                 }
-                
-                if (needsPermitSignature) {
-                    const permitExpirationTimestamp = currentTimestamp + PERMIT_EXPIRATION_DURATION_SECONDS;
-                    
-                    tokensNeedingPermits.push({
-                        token: getAddress(tokenInfo.sdkToken.address),
-                        amount: MAX_UINT_160.toString(),
-                        expiration: permitExpirationTimestamp,
-                        nonce: permit2SpenderNonce,
-                        symbol: tokenInfo.symbol as TokenSymbol
-                    });
+            } else {
+                if (permit2SpenderAmount < tokenInfo.requiredAmount) {
+                    needsPermitSignature = true;
                 }
             }
 
-            // If any tokens need permits, return PermitBatch signature request
+            // Check if current permit is expired
+            if (!needsPermitSignature && permit2SpenderExpiration !== 0 && permit2SpenderExpiration <= currentTimestamp && tokenInfo.requiredAmount > 0n) {
+                needsPermitSignature = true;
+            }
+            
+            if (needsPermitSignature) {
+                const permitExpirationTimestamp = currentTimestamp + PERMIT_EXPIRATION_DURATION_SECONDS;
+                
+                tokensNeedingPermits.push({
+                    token: getAddress(tokenInfo.sdkToken.address),
+                    amount: MAX_UINT_160.toString(),
+                    expiration: permitExpirationTimestamp,
+                    nonce: permit2SpenderNonce,
+                    symbol: tokenInfo.symbol as TokenSymbol
+                });
+            }
+        }
+
+        // If permit signature and data are provided but no tokens actually need permits, ignore the permit data
+        // This ensures we create simple transactions when tokens already have sufficient allowances
+        if (!permitSignature || !permitBatchData || tokensNeedingPermits.length === 0) {
+            // If any tokens need permits and no permit signature provided, return signature request
             if (tokensNeedingPermits.length > 0) {
                 const sigDeadlineTimestamp = BigInt(currentTimestamp + PERMIT_SIG_DEADLINE_DURATION_SECONDS);
 
@@ -402,7 +457,7 @@ export default async function handler(
         // If all checks passed for both tokens, proceed to prepare the transaction using V4PositionManager
         const latestBlockViem = await publicClient.getBlock({ blockTag: 'latest' });
         if (!latestBlockViem) throw new Error("Failed to get latest block for deadline.");
-        const deadlineBigInt = latestBlockViem.timestamp + 60n;
+        const deadlineBigInt = latestBlockViem.timestamp + 1200n; // 20 minutes from now
 
         // Create AddLiquidityOptions for V4PositionManager
         const addLiquidityOptions: any = {
@@ -411,28 +466,35 @@ export default async function handler(
             recipient: getAddress(userAddress)
         };
 
-        // Add batchPermit if signature and data are provided
-        if (permitSignature && permitBatchData) {
-            addLiquidityOptions.batchPermit = {
-                owner: getAddress(userAddress),
-                permitBatch: {
-                    details: permitBatchData.details.map(detail => ({
-                        token: getAddress(detail.token),
-                        amount: detail.amount,
-                        expiration: detail.expiration,
-                        nonce: detail.nonce
-                    })),
-                    spender: getAddress(permitBatchData.spender),
-                    sigDeadline: permitBatchData.sigDeadline
-                },
-                signature: permitSignature
-            };
-        }
+        // Never include batchPermit - permits are now handled separately
+        console.log(`[DEBUG] prepare-mint-tx for ${token0Symbol}/${token1Symbol}:`);
+        console.log(`[DEBUG] Using pool ID: ${poolId}`);
+        console.log(`[DEBUG] tokensNeedingPermits count:`, tokensNeedingPermits.length);
+        console.log(`[DEBUG] Transaction deadline set to:`, deadlineBigInt.toString(), `(${new Date(Number(deadlineBigInt) * 1000).toISOString()})`);
+        console.log(`[DEBUG] Slippage tolerance: 5%`);
+        console.log(`[DEBUG] Pool current tick:`, currentTickFromSlot0);
+        console.log(`[DEBUG] Position tick range: ${finalTickLower} to ${finalTickUpper}`);
+        console.log(`[DEBUG] Position liquidity:`, calculatedLiquidity_JSBI.toString());
+        console.log(`[DEBUG] Token amounts: ${sortedToken0.symbol}=${sdkCalculatedAmountSorted0_BigInt.toString()}, ${sortedToken1.symbol}=${sdkCalculatedAmountSorted1_BigInt.toString()}`);
+        console.log(`[DEBUG] Creating simple transaction (permits handled separately)`);
+        
+        // Note: Permits are now submitted separately to Permit2 contract before this transaction
+
+        // Debug: Let's see what pool key the SDK is actually deriving
+        console.log(`[DEBUG] SDK will derive pool key from:`);
+        console.log(`[DEBUG] - sortedToken0: ${sortedToken0.address} (${sortedToken0.symbol})`);
+        console.log(`[DEBUG] - sortedToken1: ${sortedToken1.address} (${sortedToken1.symbol})`);
+        console.log(`[DEBUG] - fee: ${poolConfig.fee}`);
+        console.log(`[DEBUG] - tickSpacing: ${poolConfig.tickSpacing}`);
+        console.log(`[DEBUG] - hooks: ${poolConfig.hooks}`);
+        console.log(`[DEBUG] Expected pool ID: ${poolId}`);
 
         // Use V4PositionManager to generate the complete call parameters
         const methodParameters = V4PositionManager.addCallParameters(positionForCalc, addLiquidityOptions);
         
         const encodedModifyLiquiditiesCallDataViem = methodParameters.calldata;
+        console.log(`[DEBUG] Generated calldata length:`, encodedModifyLiquiditiesCallDataViem.length);
+        console.log(`[DEBUG] Transaction ready for ${token0Symbol}/${token1Symbol}`);
 
         return res.status(200).json({
             needsApproval: false,
@@ -443,8 +505,8 @@ export default async function handler(
             },
             deadline: deadlineBigInt.toString(),
             details: {
-                token0: { address: sortedToken0.address, symbol: (TOKEN_DEFINITIONS[sortedToken0.symbol as TokenSymbol]?.symbol || sortedToken0.symbol) as TokenSymbol, amount: sdkCalculatedAmountSorted0_BigInt.toString() },
-                token1: { address: sortedToken1.address, symbol: (TOKEN_DEFINITIONS[sortedToken1.symbol as TokenSymbol]?.symbol || sortedToken1.symbol) as TokenSymbol, amount: sdkCalculatedAmountSorted1_BigInt.toString() },
+                token0: { address: sortedToken0.address, symbol: (POOLS_TOKEN_DEFINITIONS[sortedToken0.symbol as TokenSymbol]?.symbol || sortedToken0.symbol) as TokenSymbol, amount: sdkCalculatedAmountSorted0_BigInt.toString() },
+                token1: { address: sortedToken1.address, symbol: (POOLS_TOKEN_DEFINITIONS[sortedToken1.symbol as TokenSymbol]?.symbol || sortedToken1.symbol) as TokenSymbol, amount: sdkCalculatedAmountSorted1_BigInt.toString() },
                 liquidity: calculatedLiquidity_JSBI.toString(), 
                 finalTickLower,
                 finalTickUpper

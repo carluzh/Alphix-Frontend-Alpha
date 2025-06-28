@@ -7,13 +7,15 @@ import { BigNumber } from 'ethers'; // For V4Planner compatibility if it expects
 
 import { publicClient } from '../../../lib/viemClient';
 import {
-    TOKEN_DEFINITIONS, TokenSymbol,
-    CHAIN_ID as DEFAULT_CHAIN_ID, // Use the chainId from request, but have a default
+    TokenSymbol,
+    getPoolConfigForTokens,
+    createTokenSDK,
+    createPoolKeyFromConfig,
+    CHAIN_ID as DEFAULT_CHAIN_ID
+} from '../../../lib/pools-config';
+import {
     UNIVERSAL_ROUTER_ADDRESS,
     UniversalRouterAbi,
-    V4_POOL_FEE,
-    V4_POOL_TICK_SPACING,
-    V4_POOL_HOOKS,
     TX_DEADLINE_SECONDS
 } from '../../../lib/swap-constants';
 
@@ -26,18 +28,13 @@ async function prepareV4ExactInSwapData(
     inputToken: Token,
     outputToken: Token,
     amountInSmallestUnits: bigint,
-    minAmountOutSmallestUnits: bigint
+    minAmountOutSmallestUnits: bigint,
+    poolConfig: any
 ): Promise<Hex> {
     const token0ForV4 = inputToken.sortsBefore(outputToken) ? inputToken : outputToken;
     const token1ForV4 = inputToken.sortsBefore(outputToken) ? outputToken : inputToken;
     
-    const v4PoolKey: PoolKey = {
-        currency0: getAddress(token0ForV4.address),
-        currency1: getAddress(token1ForV4.address),
-        fee: V4_POOL_FEE,
-        tickSpacing: V4_POOL_TICK_SPACING,
-        hooks: V4_POOL_HOOKS
-    };
+    const v4PoolKey: PoolKey = createPoolKeyFromConfig(poolConfig.pool);
     console.log("V4 Pool Key (Exact In):", v4PoolKey);
     const poolIdExactIn = Pool.getPoolId(token0ForV4, token1ForV4, v4PoolKey.fee, v4PoolKey.tickSpacing, v4PoolKey.hooks);
     console.log("V4 Pool ID (Exact In):", poolIdExactIn);
@@ -71,18 +68,13 @@ async function prepareV4ExactOutSwapData(
     inputToken: Token,
     outputToken: Token,
     maxAmountInSmallestUnits: bigint,
-    amountOutSmallestUnits: bigint
+    amountOutSmallestUnits: bigint,
+    poolConfig: any
 ): Promise<Hex> {
     const token0ForV4 = inputToken.sortsBefore(outputToken) ? inputToken : outputToken;
     const token1ForV4 = inputToken.sortsBefore(outputToken) ? outputToken : inputToken;
     
-    const v4PoolKey: PoolKey = {
-        currency0: getAddress(token0ForV4.address),
-        currency1: getAddress(token1ForV4.address),
-        fee: V4_POOL_FEE,
-        tickSpacing: V4_POOL_TICK_SPACING,
-        hooks: V4_POOL_HOOKS
-    };
+    const v4PoolKey: PoolKey = createPoolKeyFromConfig(poolConfig.pool);
     console.log("V4 Pool Key (Exact Out):", v4PoolKey);
     const poolIdExactOut = Pool.getPoolId(token0ForV4, token1ForV4, v4PoolKey.fee, v4PoolKey.tickSpacing, v4PoolKey.hooks);
     console.log("V4 Pool ID (Exact Out):", poolIdExactOut);
@@ -211,15 +203,19 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
             return res.status(400).json({ message: 'From and To tokens cannot be the same.' });
         }
 
-        const fromTokenConfig = TOKEN_DEFINITIONS[fromTokenSymbol];
-        const toTokenConfig = TOKEN_DEFINITIONS[toTokenSymbol];
+        // Get pool configuration for these tokens
+        const poolConfig = getPoolConfigForTokens(fromTokenSymbol, toTokenSymbol);
 
-        if (!fromTokenConfig || !toTokenConfig) {
-            return res.status(400).json({ message: 'Invalid token symbol(s).' });
+        if (!poolConfig) {
+            return res.status(400).json({ message: `No pool found for token pair: ${fromTokenSymbol} → ${toTokenSymbol}` });
         }
 
-        const INPUT_TOKEN = new Token(chainId, getAddress(fromTokenConfig.addressRaw), fromTokenConfig.decimals, fromTokenConfig.symbol);
-        const OUTPUT_TOKEN = new Token(chainId, getAddress(toTokenConfig.addressRaw), toTokenConfig.decimals, toTokenConfig.symbol);
+        const INPUT_TOKEN = createTokenSDK(fromTokenSymbol, chainId);
+        const OUTPUT_TOKEN = createTokenSDK(toTokenSymbol, chainId);
+
+        if (!INPUT_TOKEN || !OUTPUT_TOKEN) {
+            return res.status(400).json({ message: 'Failed to create token instances.' });
+        }
         
         const parsedPermitAmount = BigInt(permitAmount);
         const parsedPermitSigDeadline = BigInt(permitSigDeadline);
@@ -266,7 +262,8 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
                 INPUT_TOKEN,
                 OUTPUT_TOKEN,
                 amountInSmallestUnits,
-                minAmountOutSmallestUnits
+                minAmountOutSmallestUnits,
+                poolConfig
             );
         } else { // ExactOut
             amountOutSmallestUnits = actualSwapAmount; // Use the actual amount for the swap output
@@ -277,7 +274,8 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
                 INPUT_TOKEN,
                 OUTPUT_TOKEN,
                 maxAmountInSmallestUnits, // Max Input is the limit amount
-                amountOutSmallestUnits // Actual output amount
+                amountOutSmallestUnits, // Actual output amount
+                poolConfig
             );
         }
         routePlanner.addCommand(CommandType.V4_SWAP, [v4ActionsByteString]);

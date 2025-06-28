@@ -6,6 +6,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 
 import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from "../../../lib/abis/state_view_abi";
 import { TOKEN_DEFINITIONS, TokenSymbol } from "../../../lib/swap-constants";
+import { TOKEN_DEFINITIONS as POOLS_TOKEN_DEFINITIONS } from "../../../lib/pools-config";
 import { publicClient } from "../../../lib/viemClient"; 
 import { 
     parseUnits, 
@@ -56,8 +57,8 @@ type ApiResponse = CalculateLiquidityParamsResponse | { message: string; error?:
 // sqrtPriceX96 is for poolToken1/poolToken0 (where poolToken0 and poolToken1 are the sorted tokens in the pool)
 function calculatePriceString(
     sqrtPriceX96_JSBI: JSBI,
-    poolSortedToken0: Token, // Token that sorts first by address (e.g., BTCRL)
-    poolSortedToken1: Token, // Token that sorts second by address (e.g., YUSDC)
+    poolSortedToken0: Token, // Token that sorts first by address 
+    poolSortedToken1: Token, // Token that sorts second by address 
     desiredPriceOfToken: Token, // The token WE WANT THE PRICE OF
     desiredPriceInToken: Token,  // The token WE WANT THE PRICE IN TERMS OF
     callContext: string // Added for logging context e.g., "currentPrice", "priceAtTickLower"
@@ -69,37 +70,33 @@ function calculatePriceString(
     console.log(`  desiredPriceOfToken: ${desiredPriceOfToken.symbol} (Decimals: ${desiredPriceOfToken.decimals}, Address: ${desiredPriceOfToken.address})`);
     console.log(`  desiredPriceInToken: ${desiredPriceInToken.symbol} (Decimals: ${desiredPriceInToken.decimals}, Address: ${desiredPriceInToken.address})`);
 
-    // poolSortedToken0 is BTCRL (decimals 8)
-    // poolSortedToken1 is YUSDC (decimals 6)
-    // sqrtPriceX96_JSBI corresponds to sqrt(YUSDC_raw_units / BTCRL_raw_units) * 2^96
-
+    // Generic calculation: sqrtPriceX96_JSBI corresponds to sqrt(token1_raw_units / token0_raw_units) * 2^96
     const Q96 = JSBI.exponentiate(JSBI.BigInt(2), JSBI.BigInt(96));
 
-    // Numerator for (YUSDC_raw_units / BTCRL_raw_units) ratio is sqrtPriceX96_JSBI^2
-    // Denominator for (YUSDC_raw_units / BTCRL_raw_units) ratio is (2^96)^2
-    const raw_YUSDC_units_part = JSBI.multiply(sqrtPriceX96_JSBI, sqrtPriceX96_JSBI);
-    const raw_BTCRL_units_part = JSBI.multiply(Q96, Q96);
+    // Calculate the price ratio: (token1_raw_units / token0_raw_units)
+    const rawToken1UnitsNumerator = JSBI.multiply(sqrtPriceX96_JSBI, sqrtPriceX96_JSBI);
+    const rawToken0UnitsDenominator = JSBI.multiply(Q96, Q96);
 
-    // Price<poolSortedToken0, poolSortedToken1> means Price of poolSortedToken1 (YUSDC) in terms of poolSortedToken0 (BTCRL)
+    // Price<poolSortedToken0, poolSortedToken1> means Price of poolSortedToken1 in terms of poolSortedToken0
     // Constructor: new Price(baseCurrency, quoteCurrency, denominator_raw_amount_of_base, numerator_raw_amount_of_quote)
-    const price_YUSDC_per_BTCRL = new Price(
-        poolSortedToken0, // Base currency: BTCRL
-        poolSortedToken1, // Quote currency: YUSDC
-        raw_BTCRL_units_part, // Denominator: raw amount of BTCRL (base)
-        raw_YUSDC_units_part  // Numerator: raw amount of YUSDC (quote)
+    const priceToken1PerToken0 = new Price(
+        poolSortedToken0, // Base currency (denominator)
+        poolSortedToken1, // Quote currency (numerator)
+        rawToken0UnitsDenominator, // Denominator: raw amount of token0 (base)
+        rawToken1UnitsNumerator  // Numerator: raw amount of token1 (quote)
     );
-    console.log(`  Intermediate calculated price_YUSDC_per_BTCRL: ${price_YUSDC_per_BTCRL.toSignificant(18)}`);
+    console.log(`  Intermediate calculated price ${poolSortedToken1.symbol} per ${poolSortedToken0.symbol}: ${priceToken1PerToken0.toSignificant(18)}`);
 
     let finalPriceObject: Price<Token, Token>;
 
     if (desiredPriceOfToken.equals(poolSortedToken1) && desiredPriceInToken.equals(poolSortedToken0)) {
-        // We want Price of poolSortedToken1 (YUSDC) in terms of poolSortedToken0 (BTCRL)
-        console.log("  Branch: Desired Price of YUSDC in terms of BTCRL. Using direct intermediate price.");
-        finalPriceObject = price_YUSDC_per_BTCRL;
+        // We want Price of poolSortedToken1 in terms of poolSortedToken0
+        console.log(`  Branch: Desired Price of ${poolSortedToken1.symbol} in terms of ${poolSortedToken0.symbol}. Using direct intermediate price.`);
+        finalPriceObject = priceToken1PerToken0;
     } else if (desiredPriceOfToken.equals(poolSortedToken0) && desiredPriceInToken.equals(poolSortedToken1)) {
-        // We want Price of poolSortedToken0 (BTCRL) in terms of poolSortedToken1 (YUSDC)
-        console.log("  Branch: Desired Price of BTCRL in terms of YUSDC. Inverting intermediate price.");
-        finalPriceObject = price_YUSDC_per_BTCRL.invert();
+        // We want Price of poolSortedToken0 in terms of poolSortedToken1
+        console.log(`  Branch: Desired Price of ${poolSortedToken0.symbol} in terms of ${poolSortedToken1.symbol}. Inverting intermediate price.`);
+        finalPriceObject = priceToken1PerToken0.invert();
     } else {
         console.warn(`  [calculatePriceString - ${callContext}] Desired pair (${desiredPriceOfToken.symbol}/${desiredPriceInToken.symbol}) does not directly match sorted pool pair.`);
         return "ErrorInPriceCalcLogic";
@@ -138,7 +135,7 @@ export default async function handler(
         } = req.body;
 
         // --- Input Validation ---
-        if (!TOKEN_DEFINITIONS[token0Symbol] || !TOKEN_DEFINITIONS[token1Symbol] || !TOKEN_DEFINITIONS[inputTokenSymbol]) {
+        if (!POOLS_TOKEN_DEFINITIONS[token0Symbol] || !POOLS_TOKEN_DEFINITIONS[token1Symbol] || !POOLS_TOKEN_DEFINITIONS[inputTokenSymbol]) {
             return res.status(400).json({ message: "Invalid token symbol(s) provided." });
         }
         if (isNaN(parseFloat(inputAmount)) || parseFloat(inputAmount) <= 0) {
@@ -152,8 +149,16 @@ export default async function handler(
         }
         // TODO: Add more validation for chainId, perhaps ensure it matches a configured supported ID
 
-        const token0Config = TOKEN_DEFINITIONS[token0Symbol];
-        const token1Config = TOKEN_DEFINITIONS[token1Symbol];
+        const token0Config = POOLS_TOKEN_DEFINITIONS[token0Symbol];
+        const token1Config = POOLS_TOKEN_DEFINITIONS[token1Symbol];
+
+        // --- Get Pool Configuration ---
+        const { getPoolByTokens } = await import('../../../lib/pools-config');
+        const poolConfig = getPoolByTokens(token0Symbol, token1Symbol);
+        
+        if (!poolConfig) {
+            return res.status(400).json({ message: `No pool configuration found for ${token0Symbol}/${token1Symbol}` });
+        }
 
         // --- SDK Token Objects (using original symbols first) ---
         // console.log("[API] Creating Token0 with", { symbol: token0Symbol, addressRaw: token0Config.addressRaw });
@@ -164,7 +169,7 @@ export default async function handler(
         const sdkToken1Original = new Token(chainId, getAddress(token1Config.addressRaw), token1Config.decimals, token1Config.symbol);
         // console.log("[API] Successfully created Token1.", sdkToken1Original);
 
-        const inputTokenConfig = TOKEN_DEFINITIONS[inputTokenSymbol];
+        const inputTokenConfig = POOLS_TOKEN_DEFINITIONS[inputTokenSymbol];
         // console.log("[API] Creating InputToken with", { symbol: inputTokenSymbol, addressRaw: inputTokenConfig.addressRaw });
         const sdkInputToken = new Token(chainId, getAddress(inputTokenConfig.addressRaw), inputTokenConfig.decimals, inputTokenConfig.symbol);
         // console.log("[API] Successfully created InputToken.", sdkInputToken);
@@ -174,8 +179,8 @@ export default async function handler(
         // --- Tick Alignment ---
         const clampedUserTickLower = Math.max(userTickLower, SDK_MIN_TICK);
         const clampedUserTickUpper = Math.min(userTickUpper, SDK_MAX_TICK);
-        const finalTickLower = Math.ceil(clampedUserTickLower / DEFAULT_TICK_SPACING) * DEFAULT_TICK_SPACING;
-        const finalTickUpper = Math.floor(clampedUserTickUpper / DEFAULT_TICK_SPACING) * DEFAULT_TICK_SPACING;
+        const finalTickLower = Math.ceil(clampedUserTickLower / poolConfig.tickSpacing) * poolConfig.tickSpacing;
+        const finalTickUpper = Math.floor(clampedUserTickUpper / poolConfig.tickSpacing) * poolConfig.tickSpacing;
 
         if (finalTickLower >= finalTickUpper) {
             return res.status(400).json({ message: `Error: finalTickLower (${finalTickLower}) must be less than finalTickUpper (${finalTickUpper}) after alignment.` });
@@ -187,15 +192,8 @@ export default async function handler(
             ? [sdkToken0Original, sdkToken1Original] 
             : [sdkToken1Original, sdkToken0Original];
         
-        // Pool ID for fetching slot0 (consistent with prepare-mint-tx)
-        const poolKey: PoolKey = {
-            currency0: sortedSdkToken0.address as `0x${string}`,
-            currency1: sortedSdkToken1.address as `0x${string}`,
-            fee: DEFAULT_FEE,
-            tickSpacing: DEFAULT_TICK_SPACING,
-            hooks: DEFAULT_HOOK_ADDRESS
-        };
-        const poolId = V4Pool.getPoolId(sortedSdkToken0, sortedSdkToken1, poolKey.fee, poolKey.tickSpacing, poolKey.hooks);
+        // Use configured pool ID from pools.json (already retrieved above)
+        const poolId = poolConfig.subgraphId;
 
         // Log Pool ID and State View Address before fetching slot0
         console.log("[API DEBUG] Derived Pool ID:", poolId);
@@ -233,9 +231,9 @@ export default async function handler(
         const v4PoolForCalc = new V4Pool(
             sortedSdkToken0,
             sortedSdkToken1,
-            lpFeeFromSlot0, 
-            DEFAULT_TICK_SPACING,
-            ETHERS_ADDRESS_ZERO as `0x${string}`, 
+            poolConfig.fee, // Use fee from pool configuration 
+            poolConfig.tickSpacing, // Use tick spacing from pool configuration
+            poolConfig.hooks as `0x${string}`, // Use hook address from pool configuration
             currentSqrtPriceX96_JSBI, // Use JSBI instance
             JSBI.BigInt(0), 
             currentTickFromSlot0 // Use numeric tick

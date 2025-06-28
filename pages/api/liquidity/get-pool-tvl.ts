@@ -1,7 +1,12 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { getPoolSubgraphId, getPoolById } from '../../../lib/pools-config';
+import { publicClient } from '../../../lib/viemClient';
+import { parseAbi, getAddress, type Hex } from 'viem';
+import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from "../../../lib/abis/state_view_abi";
 
 // Use the subgraph URL from other liquidity API files
 const SUBGRAPH_URL = "https://api.studio.thegraph.com/query/111443/alphix-v-4/version/latest";
+const STATE_VIEW_ADDRESS = getAddress("0x571291b572ed32ce6751a2cb2486ebee8defb9b4");
 
 // Querying 'trackedPool' by ID as per user-provided schema
 const GET_POOL_TVL_QUERY = `
@@ -38,11 +43,42 @@ interface PoolTVL {
 }
 
 async function fetchPoolTVLForApi(poolId: string): Promise<PoolTVL> {
+    // First, check if the pool is initialized on-chain using the configured subgraph ID
+    try {
+        const poolConfig = getPoolById(poolId);
+        if (poolConfig) {
+            // Use the configured subgraph ID directly as the pool ID for contract calls
+            const actualPoolId = poolConfig.subgraphId;
+            
+            // Check if pool is initialized
+            const stateViewAbi = parseAbi(STATE_VIEW_HUMAN_READABLE_ABI);
+            const slot0Data = await publicClient.readContract({
+                address: STATE_VIEW_ADDRESS,
+                abi: stateViewAbi,
+                functionName: 'getSlot0',
+                args: [actualPoolId as Hex]
+            }) as readonly [bigint, number, number, number];
+            
+            const sqrtPriceX96 = slot0Data[0].toString();
+            
+            // If pool is not initialized, return 0 TVL immediately
+            if (sqrtPriceX96 === '0') {
+                console.log(`API: Pool ${poolId} is not initialized (sqrtPriceX96 is 0), returning TVL of 0`);
+                return { tvlUSD: "0.0" };
+            }
+        }
+    } catch (error) {
+        console.warn(`API: Could not check pool initialization status for ${poolId}, proceeding with subgraph query:`, error);
+    }
+
+    // Convert friendly pool ID to subgraph ID
+    const subgraphId = getPoolSubgraphId(poolId) || poolId;
+    
     const variables = {
-        poolId: poolId.toLowerCase(),
+        poolId: subgraphId.toLowerCase(),
     };
 
-    console.log(`API: Fetching TVL for trackedPool: ${poolId}`);
+    console.log(`API: Fetching TVL for trackedPool: ${poolId} (subgraph ID: ${subgraphId})`);
 
     const response = await fetch(SUBGRAPH_URL, {
         method: 'POST',

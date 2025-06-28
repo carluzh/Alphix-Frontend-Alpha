@@ -9,8 +9,10 @@ import { Label } from "@/components/ui/label";
 import Image from "next/image";
 import { useAccount, useBalance } from "wagmi";
 import { toast } from "sonner";
-import { TOKEN_DEFINITIONS, TokenSymbol, V4_POOL_FEE, V4_POOL_TICK_SPACING, V4_POOL_HOOKS } from "@/lib/swap-constants";
+import { V4_POOL_FEE, V4_POOL_TICK_SPACING, V4_POOL_HOOKS } from "@/lib/swap-constants";
+import { TOKEN_DEFINITIONS, TokenSymbol } from "@/lib/pools-config";
 import { baseSepolia } from "@/lib/wagmiConfig";
+import { getPoolById, getToken } from "@/lib/pools-config";
 import { formatUnits as viemFormatUnits, parseUnits as viemParseUnits, getAddress, type Hex } from "viem";
 import { useAddLiquidityTransaction } from "./useAddLiquidityTransaction";
 import {
@@ -37,9 +39,9 @@ import JSBI from "jsbi";
 
 // Utility functions
 const getTokenIcon = (symbol?: string) => {
-  if (symbol?.toUpperCase().includes("YUSD")) return "/YUSD.png";
-  if (symbol?.toUpperCase().includes("BTCRL")) return "/BTCRL.png";
-  return "/default-token.png";
+  if (!symbol) return "/placeholder-logo.svg";
+  const tokenConfig = getToken(symbol);
+  return tokenConfig?.icon || "/placeholder-logo.svg";
 };
 
 const formatTokenDisplayAmount = (amount: string) => {
@@ -146,9 +148,24 @@ export function AddLiquidityForm({
   poolApr,
   activeTab // Accept activeTab from props
 }: AddLiquidityFormProps) {
-  // Basic state management
-  const [token0Symbol, setToken0Symbol] = useState<TokenSymbol>('YUSDC');
-  const [token1Symbol, setToken1Symbol] = useState<TokenSymbol>('BTCRL');
+  // Basic state management - initialize tokens based on selected pool
+  const getInitialTokens = () => {
+    if (selectedPoolId) {
+      const poolConfig = getPoolById(selectedPoolId);
+      if (poolConfig) {
+        return {
+          token0: poolConfig.currency0.symbol as TokenSymbol,
+          token1: poolConfig.currency1.symbol as TokenSymbol
+        };
+      }
+    }
+    // Default fallback
+    return { token0: 'YUSDC' as TokenSymbol, token1: 'BTCRL' as TokenSymbol };
+  };
+
+  const initialTokens = getInitialTokens();
+  const [token0Symbol, setToken0Symbol] = useState<TokenSymbol>(initialTokens.token0);
+  const [token1Symbol, setToken1Symbol] = useState<TokenSymbol>(initialTokens.token1);
   const [amount0, setAmount0] = useState<string>("");
   const [amount1, setAmount1] = useState<string>("");
   const [tickLower, setTickLower] = useState<string>(sdkMinTick.toString());
@@ -264,8 +281,8 @@ export function AddLiquidityForm({
   // Derived pool tokens (for labels/formatting)
   const { poolToken0, poolToken1 } = useMemo(() => {
     if (!token0Symbol || !token1Symbol || !chainId) return { poolToken0: null, poolToken1: null };
-    const currentToken0Def = TOKEN_DEFINITIONS[token0Symbol]; 
-    const currentToken1Def = TOKEN_DEFINITIONS[token1Symbol]; 
+      const currentToken0Def = TOKEN_DEFINITIONS[token0Symbol];
+  const currentToken1Def = TOKEN_DEFINITIONS[token1Symbol]; 
     if (!currentToken0Def || !currentToken1Def) return { poolToken0: null, poolToken1: null };
 
     // Create SDK Token instances using the modal's currently selected token0Symbol and token1Symbol
@@ -307,11 +324,16 @@ export function AddLiquidityForm({
   // Setup tokens based on selectedPoolId
   useEffect(() => {
     if (selectedPoolId) {
-      const parts = selectedPoolId.split('-');
-      if (parts.length === 2) {
-        const t0 = parts[0].toUpperCase() as TokenSymbol;
-        const t1 = parts[1].toUpperCase() as TokenSymbol;
-        if (TOKEN_DEFINITIONS[t0] && TOKEN_DEFINITIONS[t1]) {
+      // Get pool configuration from pools.json
+      const poolConfig = getPoolById(selectedPoolId);
+      if (poolConfig) {
+        const token0Config = getToken(poolConfig.currency0.symbol);
+        const token1Config = getToken(poolConfig.currency1.symbol);
+        
+        if (token0Config && token1Config) {
+          const t0 = token0Config.symbol as TokenSymbol;
+          const t1 = token1Config.symbol as TokenSymbol;
+          
           setToken0Symbol(t0);
           setToken1Symbol(t1);
           setAmount0("");
@@ -434,8 +456,8 @@ export function AddLiquidityForm({
       const token0Def = TOKEN_DEFINITIONS[token0Symbol];
       const token1Def = TOKEN_DEFINITIONS[token1Symbol];
       const displayDecimals = baseTokenForPriceDisplay === token0Symbol 
-        ? (token0Def?.displayDecimals ?? (token0Symbol === 'BTCRL' ? 8 : 4)) 
-        : (token1Def?.displayDecimals ?? (token1Symbol === 'BTCRL' ? 8 : 4));
+        ? (token0Def?.displayDecimals ?? 4) 
+        : (token1Def?.displayDecimals ?? 4);
 
       if (minTickDomain === maxTickDomain) {
         // Simplified: just show one label if domain is a single point
@@ -445,8 +467,9 @@ export function AddLiquidityForm({
           const decimalAdjFactor = baseTokenForPriceDisplay === token0Symbol 
             ? Math.pow(10, token1Def.decimals - token0Def.decimals)
             : Math.pow(10, token0Def.decimals - token1Def.decimals);
-          const rawPrice = Math.pow(1.0001, minTickDomain);
-          priceAtTick = baseTokenForPriceDisplay === token0Symbol ? rawPrice * decimalAdjFactor : (1 / rawPrice) * decimalAdjFactor;
+          priceAtTick = baseTokenForPriceDisplay === token0Symbol 
+            ? Math.pow(1.0001, -minTickDomain) * decimalAdjFactor 
+            : Math.pow(1.0001, minTickDomain) * decimalAdjFactor;
         }
         newLabels.push({ 
           tickValue: minTickDomain, 
@@ -461,16 +484,12 @@ export function AddLiquidityForm({
           let priceAtTick = NaN;
 
           if (token0Def?.decimals !== undefined && token1Def?.decimals !== undefined) {
-            // Price of token1 in terms of token0: P_t1_t0 = (1.0001)^tick * 10^(t1_decimals - t0_decimals)
-            // Price of token0 in terms of token1: P_t0_t1 = (1.0001)^(-tick) * 10^(t0_decimals - t1_decimals)
-            const rawPriceFactor = Math.pow(1.0001, tickVal);
-
             if (baseTokenForPriceDisplay === token0Symbol) { // Display price of T1 in T0
               const decimalAdj = Math.pow(10, token1Def.decimals - token0Def.decimals);
-              priceAtTick = rawPriceFactor * decimalAdj;
+              priceAtTick = Math.pow(1.0001, -tickVal) * decimalAdj;
             } else { // Display price of T0 in T1
               const decimalAdj = Math.pow(10, token0Def.decimals - token1Def.decimals);
-              priceAtTick = (1 / rawPriceFactor) * decimalAdj; 
+              priceAtTick = Math.pow(1.0001, tickVal) * decimalAdj; 
             }
           }
           newLabels.push({ 
@@ -495,8 +514,8 @@ export function AddLiquidityForm({
     let valForMinInput: number | null = null;
     let valForMaxInput: number | null = null;
 
-    const decimalsForToken0Display = TOKEN_DEFINITIONS[token0Symbol]?.displayDecimals ?? (token0Symbol === 'BTCRL' ? 8 : 4);
-    const decimalsForToken1Display = TOKEN_DEFINITIONS[token1Symbol]?.displayDecimals ?? (token1Symbol === 'BTCRL' ? 8 : 4);
+    const decimalsForToken0Display = TOKEN_DEFINITIONS[token0Symbol]?.displayDecimals ?? 4;
+    const decimalsForToken1Display = TOKEN_DEFINITIONS[token1Symbol]?.displayDecimals ?? 4;
 
     const rawApiPriceAtTickLower = calculatedData?.priceAtTickLower ? parseFloat(calculatedData.priceAtTickLower) : null;
     const rawApiPriceAtTickUpper = calculatedData?.priceAtTickUpper ? parseFloat(calculatedData.priceAtTickUpper) : null;
@@ -509,36 +528,6 @@ export function AddLiquidityForm({
         // UI Displays: Price of Token1 in terms of Token0 (e.g., BTCRL per YUSDC)
         if (token0Dec !== undefined && token1Dec !== undefined) {
             const decimalAdjFactor = Math.pow(10, token1Dec - token0Dec);
-
-            // Min Price (T1 in T0) at numTickLower
-            if (rawApiPriceAtTickLower !== null) { // rawApiPriceAtTickLower is Price(T0 per T1)
-                if (rawApiPriceAtTickLower === 0) valForMinInput = Infinity;
-                else valForMinInput = 1 / rawApiPriceAtTickLower;
-            } else if (!isNaN(numTickLower)) {
-                if (numTickLower === sdkMinTick) valForMinInput = 0;
-                else valForMinInput = Math.pow(1.0001, numTickLower) * decimalAdjFactor;
-            } else {
-                valForMinInput = NaN;
-            }
-
-            // Max Price (T1 in T0) at numTickUpper
-            if (rawApiPriceAtTickUpper !== null) { // rawApiPriceAtTickUpper is Price(T0 per T1)
-                if (rawApiPriceAtTickUpper === 0) valForMaxInput = Infinity;
-                else valForMaxInput = 1 / rawApiPriceAtTickUpper;
-            } else if (!isNaN(numTickUpper)) {
-                if (numTickUpper === sdkMaxTick) valForMaxInput = Infinity;
-                else valForMaxInput = Math.pow(1.0001, numTickUpper) * decimalAdjFactor;
-            } else {
-                valForMaxInput = NaN;
-            }
-        } else {
-            valForMinInput = NaN;
-            valForMaxInput = NaN;
-        }
-    } else { // baseTokenForPriceDisplay === token1Symbol
-        // UI Displays: Price of Token0 in terms of Token1 (e.g., YUSDC per BTCRL)
-        if (token0Dec !== undefined && token1Dec !== undefined) {
-            const decimalAdjFactor = Math.pow(10, token0Dec - token1Dec);
 
             // Min Price (T0 in T1) at numTickUpper
             if (rawApiPriceAtTickUpper !== null) { // rawApiPriceAtTickUpper is Price(T0 per T1)
@@ -558,6 +547,36 @@ export function AddLiquidityForm({
             } else if (!isNaN(numTickLower)) { // Lower tick corresponds to the MAX T0/T1 price
                 if (numTickLower === sdkMinTick) valForMaxInput = Infinity;
                 else valForMaxInput = Math.pow(1.0001, -numTickLower) * decimalAdjFactor;
+            } else {
+                valForMaxInput = NaN;
+            }
+        } else {
+            valForMinInput = NaN;
+            valForMaxInput = NaN;
+        }
+    } else { // baseTokenForPriceDisplay === token1Symbol
+        // UI Displays: Price of Token0 in terms of Token1 (e.g., YUSDC per BTCRL)
+        if (token0Dec !== undefined && token1Dec !== undefined) {
+            const decimalAdjFactor = Math.pow(10, token0Dec - token1Dec);
+
+            // Min Price (T1 in T0) at numTickLower
+            if (rawApiPriceAtTickLower !== null) { // rawApiPriceAtTickLower is Price(T0 per T1)
+                if (rawApiPriceAtTickLower === 0) valForMinInput = Infinity;
+                else valForMinInput = 1 / rawApiPriceAtTickLower;
+            } else if (!isNaN(numTickLower)) {
+                if (numTickLower === sdkMinTick) valForMinInput = 0;
+                else valForMinInput = Math.pow(1.0001, numTickLower) * decimalAdjFactor;
+            } else {
+                valForMinInput = NaN;
+            }
+
+            // Max Price (T1 in T0) at numTickUpper
+            if (rawApiPriceAtTickUpper !== null) { // rawApiPriceAtTickUpper is Price(T0 per T1)
+                if (rawApiPriceAtTickUpper === 0) valForMaxInput = Infinity;
+                else valForMaxInput = 1 / rawApiPriceAtTickUpper;
+            } else if (!isNaN(numTickUpper)) {
+                if (numTickUpper === sdkMaxTick) valForMaxInput = Infinity;
+                else valForMaxInput = Math.pow(1.0001, numTickUpper) * decimalAdjFactor;
             } else {
                 valForMaxInput = NaN;
             }
@@ -613,7 +632,7 @@ export function AddLiquidityForm({
     } else if (numericBalance > 0 && numericBalance < 0.001) {
       return "< 0.001";
     } else {
-      const displayDecimals = tokenSymbolForDecimals === 'BTCRL' ? 8 : 2;
+      const displayDecimals = TOKEN_DEFINITIONS[tokenSymbolForDecimals]?.displayDecimals ?? 4;
       return numericBalance.toFixed(displayDecimals);
     }
   };
@@ -1324,8 +1343,8 @@ export function AddLiquidityForm({
       const displayPoolTokenSymbol = poolToken0Symbol || '';
 
       let priceAtTickDisplay = "Price N/A";
-      const token0Def = TOKEN_DEFINITIONS[token0 as TokenSymbol];
-      const token1Def = TOKEN_DEFINITIONS[token1 as TokenSymbol];
+          const token0Def = TOKEN_DEFINITIONS[token0 as TokenSymbol];
+    const token1Def = TOKEN_DEFINITIONS[token1 as TokenSymbol];
 
       if (token0Def && token1Def && typeof currentTick === 'number') {
         const t0Dec = token0Def.decimals;
@@ -2166,12 +2185,12 @@ export function AddLiquidityForm({
                       baseTokenForPriceDisplay === token0Symbol ? (
                         `1 ${token1Symbol} = ${(1 / parseFloat(currentPrice)).toLocaleString(undefined, { 
                           minimumFractionDigits: TOKEN_DEFINITIONS[token0Symbol]?.displayDecimals || 2, 
-                          maximumFractionDigits: TOKEN_DEFINITIONS[token0Symbol]?.displayDecimals || (token0Symbol === 'BTCRL' ? 8 : 4)
+                          maximumFractionDigits: TOKEN_DEFINITIONS[token0Symbol]?.displayDecimals || 4
                         })} ${token0Symbol}`
                       ) : (
                         `1 ${token0Symbol} = ${parseFloat(currentPrice).toLocaleString(undefined, { 
                           minimumFractionDigits: TOKEN_DEFINITIONS[token1Symbol]?.displayDecimals || 2,
-                          maximumFractionDigits: TOKEN_DEFINITIONS[token1Symbol]?.displayDecimals || (token1Symbol === 'BTCRL' ? 8 : 4)
+                          maximumFractionDigits: TOKEN_DEFINITIONS[token1Symbol]?.displayDecimals || 4
                         })} ${token1Symbol}`
                       )
                     ) : isCalculating ? (
