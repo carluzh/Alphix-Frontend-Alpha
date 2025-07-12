@@ -7,18 +7,16 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from "../../../lib/abis/state_view_abi"; // Adjusted path
 import { publicClient } from "../../../lib/viemClient"; // Import publicClient
 import { getAddress, parseAbi, type Address, type Abi } from "viem"; // Import getAddress and parseAbi, and added Abi for type cast
+import { getTokenSymbolByAddress, getAllPools, getStateViewAddress, CHAIN_ID } from "../../../lib/pools-config"; // Import the mapping utility
 
 // Load environment variables - ensure .env is at the root or configure path
 // dotenv.config({ path: '.env.local' }); // Removed: Next.js handles .env.local automatically
 
 // Constants
-const SUBGRAPH_URL = "https://api.studio.thegraph.com/query/111443/alphix-v-4/version/latest";
+const SUBGRAPH_URL = "https://api.studio.thegraph.com/query/111443/alphix-test/version/latest";
 // const RPC_URL = process.env.RPC_URL; // No longer directly used here
-const STATE_VIEW_ADDRESS = getAddress("0x571291b572ed32ce6751a2cb2486ebee8defb9b4"); // Use getAddress for checksum
-const DEFAULT_FEE = 8388608;
-const DEFAULT_TICK_SPACING = 60;
-const DEFAULT_HOOK_ADDRESS = "0x94ba380a340E020Dc29D7883f01628caBC975000";
-const DEFAULT_CHAIN_ID = 84532; // Base Sepolia
+const STATE_VIEW_ADDRESS = getStateViewAddress();
+const DEFAULT_CHAIN_ID = CHAIN_ID;
 
 // --- Interfaces for Subgraph Response ---
 interface SubgraphToken {
@@ -95,6 +93,21 @@ const GET_USER_POSITIONS_QUERY = `
   }
 `;
 
+// Create pool mapping from pools.json for dynamic lookup
+function createPoolTickSpacingMap(): { [poolId: string]: number } {
+    const pools = getAllPools();
+    const mapping: { [poolId: string]: number } = {};
+    
+    pools.forEach(pool => {
+        if (pool.subgraphId) {
+            mapping[pool.subgraphId.toLowerCase()] = pool.tickSpacing;
+        }
+    });
+    
+    console.log("Created pool tick spacing mapping:", mapping);
+    return mapping;
+}
+
 async function fetchAndProcessUserPositionsForApi(ownerAddress: string): Promise<ProcessedPosition[]> {
     // Removed the explicit RPC_URL check here, as publicClient handles its own RPC configuration, including defaults.
     // if (!process.env.RPC_URL && !process.env.NEXT_PUBLIC_RPC_URL) { 
@@ -143,6 +156,9 @@ async function fetchAndProcessUserPositionsForApi(ownerAddress: string): Promise
 
     const processedPositions: ProcessedPosition[] = [];
     const poolStatesCache = new Map<string, { sqrtPriceX96: string; tick: number }>();
+    
+    // Get pool tick spacing mapping from pools.json
+    const poolTickSpacingMap = createPoolTickSpacingMap();
 
     for (const rawPos of rawPositions) {
         try {
@@ -197,22 +213,76 @@ async function fetchAndProcessUserPositionsForApi(ownerAddress: string): Promise
                 }
             }
 
+            // Get the correct tick spacing for this pool
+            let v4PoolTickSpacing = poolTickSpacingMap[poolId.toLowerCase()];
+            
+            // Find the pool configuration to get fee and hooks
+            const pools = getAllPools();
+            const poolConfig = pools.find(p => p.subgraphId?.toLowerCase() === poolId.toLowerCase());
+            
+            if (!poolConfig) {
+                console.warn(`API: No pool configuration found for pool ${poolId}, skipping position ${rawPos.id}`);
+                continue;
+            }
+            
+            if (!v4PoolTickSpacing) {
+                console.warn(`API: No tick spacing found for pool ${poolId}, skipping position ${rawPos.id}`);
+                continue;
+            }
+
             const v4Pool = new V4Pool(
                 sdkToken0,
                 sdkToken1,
-                            DEFAULT_FEE, // Assuming fee is constant from PoolKey, might need to fetch if dynamic
-            DEFAULT_TICK_SPACING, // Assuming tickSpacing is constant
-                rawPos.hook || DEFAULT_HOOK_ADDRESS, // Use hook from position or default
+                poolConfig.fee, // Use fee from pool configuration
+                v4PoolTickSpacing, // Use the correct tick spacing for this pool
+                rawPos.hook || poolConfig.hooks, // Use hook from position or pool config
                 slot0.sqrtPriceX96,
                 JSBI.BigInt(0), // Liquidity (not strictly needed for position.amount0/1 calc from existing liquidity)
                 slot0.tick
             );
 
+            // Validate tick values before creating V4Position
+            const tickLower = Number(rawPos.tickLower);
+            const tickUpper = Number(rawPos.tickUpper);
+            
+            console.log(`API: Processing position ${rawPos.id} with tickLower=${tickLower}, tickUpper=${tickUpper}, liquidity=${rawPos.liquidity}`);
+            
+            // Check for valid tick range
+            if (tickLower >= tickUpper) {
+                console.warn(`API: Skipping position ${rawPos.id} with invalid tick range: tickLower=${tickLower} >= tickUpper=${tickUpper}`);
+                continue;
+            }
+            
+            // Check for extreme tick values (V4 has limits around ±887272)
+            const MAX_TICK = 887270; // Slightly below the actual max to be safe
+            const MIN_TICK = -887270;
+            if (tickLower < MIN_TICK || tickUpper > MAX_TICK) {
+                console.warn(`API: Skipping position ${rawPos.id} with ticks outside valid range: tickLower=${tickLower}, tickUpper=${tickUpper}`);
+                continue;
+            }
+            
+            // Check for zero liquidity positions (closed positions)
+            const liquidityBigInt = JSBI.BigInt(rawPos.liquidity);
+            if (JSBI.equal(liquidityBigInt, JSBI.BigInt(0))) {
+                console.warn(`API: Skipping position ${rawPos.id} with zero liquidity (closed position)`);
+                continue;
+            }
+            
+            // Check tick spacing alignment - this is crucial for V4
+            if (tickLower % v4PoolTickSpacing !== 0) {
+                console.warn(`API: Skipping position ${rawPos.id} with tickLower ${tickLower} not aligned to tick spacing ${v4PoolTickSpacing}`);
+                continue;
+            }
+            if (tickUpper % v4PoolTickSpacing !== 0) {
+                console.warn(`API: Skipping position ${rawPos.id} with tickUpper ${tickUpper} not aligned to tick spacing ${v4PoolTickSpacing}`);
+                continue;
+            }
+
             const v4Position = new V4Position({
                 pool: v4Pool,
-                tickLower: Number(rawPos.tickLower),
-                tickUpper: Number(rawPos.tickUpper),
-                liquidity: JSBI.BigInt(rawPos.liquidity)
+                tickLower: tickLower,
+                tickUpper: tickUpper,
+                liquidity: liquidityBigInt
             });
 
             const rawAmount0 = v4Position.amount0.quotient.toString();
@@ -229,13 +299,13 @@ async function fetchAndProcessUserPositionsForApi(ownerAddress: string): Promise
                 poolId: poolId,
                 token0: {
                     address: sdkToken0.address,
-                    symbol: sdkToken0.symbol || 'N/A',
+                    symbol: getTokenSymbolByAddress(sdkToken0.address) || sdkToken0.symbol || 'N/A',
                     amount: formattedAmount0,
                     rawAmount: rawAmount0,
                 },
                 token1: {
                     address: sdkToken1.address,
-                    symbol: sdkToken1.symbol || 'N/A',
+                    symbol: getTokenSymbolByAddress(sdkToken1.address) || sdkToken1.symbol || 'N/A',
                     amount: formattedAmount1,
                     rawAmount: rawAmount1,
                 },

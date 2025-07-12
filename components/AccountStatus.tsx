@@ -103,8 +103,8 @@ export function AccountStatus() {
 
   // Mock data for leveling system
   const levelData = {
-    currentLevel: 3,
-    currentXP: 750,
+    currentLevel: 0,
+    currentXP: 0,
     nextLevelXP: 1000
   }
 
@@ -174,11 +174,17 @@ export function AccountStatus() {
               </div>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <div className="px-2 py-1.5 flex items-center">
+            <div className="relative px-2 py-1.5 flex items-center cursor-pointer group">
               <LevelProgress {...levelData} className="flex-grow" />
               <span className="ml-2 text-xs font-medium text-muted-foreground whitespace-nowrap">
                 Lvl {levelData.currentLevel}
               </span>
+              {/* Hover overlay */}
+              <div className="absolute inset-0 bg-black/60 rounded-sm opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center">
+                <span className="text-xs font-medium text-muted-foreground whitespace-nowrap">
+                  Coming Soon
+                </span>
+              </div>
             </div>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => disconnect()}>

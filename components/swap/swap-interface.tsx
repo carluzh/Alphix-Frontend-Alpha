@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef, useEffect, useCallback } from "react"
+import { useState, useRef, useEffect, useCallback, useMemo } from "react"
 import {
   ArrowDownIcon,
   ChevronDownIcon,
@@ -64,6 +64,8 @@ import { DynamicFeeChart, generateMockFeeHistory } from "../dynamic-fee-chart";
 import { DynamicFeeChartPreview } from "../dynamic-fee-chart-preview";
 import { PulsatingDot } from "../pulsating-dot";
 import { getFromCache, setToCache, getPoolDynamicFeeCacheKey } from "@/lib/client-cache";
+import { getPoolByTokens } from "@/lib/pools-config";
+import { findBestRoute, SwapRoute, PoolHop } from "@/lib/routing-engine";
 
 // Import the new view components
 import { SwapInputView } from './SwapInputView';
@@ -82,28 +84,52 @@ interface FeeHistoryPoint {
 const TARGET_CHAIN_ID = baseSepolia.id; // Changed from 1301 to baseSepolia.id
 const MaxUint160 = BigInt('0xffffffffffffffffffffffffffffffffffffffff'); // 2**160 - 1
 
+// Helper function to get price mapping for tokens
+const getTokenPriceMapping = (tokenSymbol: string): 'BTC' | 'USDC' | 'ETH' => {
+  // Map our tokens to coingecko price types
+  switch (tokenSymbol) {
+    case 'BTCRL':
+      return 'BTC';
+    case 'YUSDC':
+    case 'mUSDT':
+      return 'USDC'; // Using USDC price for all USD stablecoins
+    case 'aETH':
+    case 'ETH':
+      return 'ETH';
+    default:
+      return 'USDC'; // Default fallback
+  }
+};
+
 // Helper function to create Token instances from pools config
-const createTokenFromConfig = (tokenSymbol: string): Token | null => {
+const createTokenFromConfig = (tokenSymbol: string, prices: { BTC: number; USDC: number; ETH?: number } = { BTC: 77000, USDC: 1, ETH: 3500 }): Token | null => {
   const tokenConfig = getToken(tokenSymbol);
   if (!tokenConfig) return null;
+  
+  const priceType = getTokenPriceMapping(tokenSymbol);
+  const usdPrice = prices[priceType] || 1;
+  
+  // Ensure displayDecimals has a proper fallback
+  const displayDecimals = tokenConfig.displayDecimals ?? (tokenSymbol === 'BTCRL' ? 8 : 4);
   
   return {
     address: tokenConfig.address as Address,
     symbol: tokenConfig.symbol,
     name: tokenConfig.name,
     decimals: tokenConfig.decimals,
+    displayDecimals: displayDecimals,
     balance: "0.000",
     value: "$0.00",
     icon: tokenConfig.icon,
-    usdPrice: tokenSymbol === 'YUSDC' ? 1 : tokenSymbol === 'BTCRL' ? 77000 : 1, // Temporary mock prices
+    usdPrice: usdPrice,
   };
 };
 
 // Get available tokens for swap
-const getAvailableTokens = (): Token[] => {
+const getAvailableTokens = (prices?: { BTC: number; USDC: number; ETH?: number }): Token[] => {
   const allTokens = getAllTokens();
   return Object.keys(allTokens)
-    .map(createTokenFromConfig)
+    .map(symbol => createTokenFromConfig(symbol, prices))
     .filter(Boolean) as Token[];
 };
 
@@ -113,6 +139,7 @@ export interface Token {
   symbol: string;
   name: string;
   decimals: number;
+  displayDecimals: number; // Add displayDecimals for proper formatting
   balance: string; // Fetched balance, formatted string
   value: string;   // USD value based on fetched balance and usdPrice, formatted string "$X.YZ"
   icon: string;
@@ -120,8 +147,8 @@ export interface Token {
 }
 
 // Initialize default tokens (YUSDC and BTCRL as defaults)
-const getInitialTokens = () => {
-  const availableTokens = getAvailableTokens();
+const getInitialTokens = (prices?: { BTC: number; USDC: number; ETH: number }) => {
+  const availableTokens = getAvailableTokens(prices);
   const defaultFrom = availableTokens.find(t => t.symbol === 'YUSDC') || availableTokens[0];
   const defaultTo = availableTokens.find(t => t.symbol === 'BTCRL') || availableTokens[1];
   
@@ -331,14 +358,20 @@ export function SwapInterface() {
   // V4 Quoter states
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [quoteError, setQuoteError] = useState<string | null>(null);
+  const [routeInfo, setRouteInfo] = useState<{
+    path: string[];
+    hops: number;
+    isDirectRoute: boolean;
+    pools: string[];
+  } | null>(null);
 
-  // Initialize tokens dynamically
-  const { defaultFrom, defaultTo, availableTokens } = getInitialTokens();
+  // Initialize tokens dynamically - will update with real prices later
+  const initialTokenData = getInitialTokens();
 
   // Tokens for swap (with token data stored in state)
-  const [fromToken, setFromToken] = useState<Token>(defaultFrom);
-  const [toToken, setToToken] = useState<Token>(defaultTo);
-  const [tokenList] = useState<Token[]>(availableTokens);
+  const [fromToken, setFromToken] = useState<Token>(initialTokenData.defaultFrom);
+  const [toToken, setToToken] = useState<Token>(initialTokenData.defaultTo);
+  const [tokenList, setTokenList] = useState<Token[]>(initialTokenData.availableTokens);
   const [fromAmount, setFromAmount] = useState("");
   const [toAmount, setToAmount] = useState("");
 
@@ -367,8 +400,19 @@ export function SwapInterface() {
   const [dynamicFeeLoading, setDynamicFeeLoading] = useState<boolean>(false);
   const [dynamicFeeError, setDynamicFeeError] = useState<string | null>(null);
   const isFetchingDynamicFeeRef = useRef(false);
-  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null); // This will be removed
-  const intervalTimerRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // State for multi-hop routing and fees
+  const [currentRoute, setCurrentRoute] = useState<SwapRoute | null>(null);
+  const [routeFees, setRouteFees] = useState<Array<{ poolName: string; fee: number }>>([]);
+  const [routeFeesLoading, setRouteFeesLoading] = useState<boolean>(false);
+  const [selectedPoolIndexForChart, setSelectedPoolIndexForChart] = useState<number>(0); // Track which pool's chart to show
+
+  // Handler for selecting which pool's fee chart to display
+  const handleSelectPoolForChart = useCallback((poolIndex: number) => {
+    if (currentRoute && poolIndex >= 0 && poolIndex < currentRoute.pools.length) {
+      setSelectedPoolIndexForChart(poolIndex);
+    }
+  }, [currentRoute]);
 
   // Add necessary hooks for swap execution
   const { signTypedDataAsync } = useSignTypedData();
@@ -401,7 +445,7 @@ export function SwapInterface() {
 
   // Mock data generation removed - using real API data instead
 
-  // Effect to fetch dynamic fee for display
+  // Effect to fetch dynamic fee for display (updated to handle multi-hop)
   const fetchFee = useCallback(async () => {
     if (
       !isConnected ||
@@ -412,34 +456,24 @@ export function SwapInterface() {
       setDynamicFeeBps(null);
       setDynamicFeeLoading(false);
       setDynamicFeeError(null);
+      setCurrentRoute(null);
+      setRouteFees([]);
+      setRouteFeesLoading(false);
       return;
     }
 
     const fromTokenSymbolForCache = Object.keys(TOKEN_DEFINITIONS).find(
-      (key) => TOKEN_DEFINITIONS[key as TokenSymbol].addressRaw === fromToken.address
+      (key) => TOKEN_DEFINITIONS[key as TokenSymbol].address === fromToken.address
     ) as TokenSymbol | undefined;
     const toTokenSymbolForCache = Object.keys(TOKEN_DEFINITIONS).find(
-      (key) => TOKEN_DEFINITIONS[key as TokenSymbol].addressRaw === toToken.address
+      (key) => TOKEN_DEFINITIONS[key as TokenSymbol].address === toToken.address
     ) as TokenSymbol | undefined;
 
     if (!fromTokenSymbolForCache || !toTokenSymbolForCache) {
       console.error("[fetchFee] Could not determine token symbols for cache key.");
       setDynamicFeeError("Token configuration error for fee.");
       setDynamicFeeLoading(false);
-      return;
-    }
-
-    const cacheKey = getPoolDynamicFeeCacheKey(fromTokenSymbolForCache, toTokenSymbolForCache, TARGET_CHAIN_ID);
-    const cachedFee = getFromCache<{ dynamicFee: string }>(cacheKey);
-
-    if (cachedFee) {
-      console.log(`[Cache HIT] Using cached dynamic fee for ${fromTokenSymbolForCache}-${toTokenSymbolForCache}:`, cachedFee.dynamicFee);
-      const fee = Number(cachedFee.dynamicFee);
-      if (!isNaN(fee)) {
-        setDynamicFeeBps(fee);
-      }
-      setDynamicFeeLoading(false);
-      setDynamicFeeError(null);
+      setRouteFeesLoading(false);
       return;
     }
 
@@ -447,50 +481,93 @@ export function SwapInterface() {
 
     isFetchingDynamicFeeRef.current = true;
     setDynamicFeeLoading(true);
+    setRouteFeesLoading(true);
     setDynamicFeeError(null);
-    console.log(`[Cache MISS] Fetching dynamic fee from API for ${fromTokenSymbolForCache}-${toTokenSymbolForCache}`);
 
     try {
-      const response = await fetch('/api/swap/get-dynamic-fee', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          fromTokenSymbol: fromTokenSymbolForCache, // Use determined symbol
-          toTokenSymbol: toTokenSymbolForCache,   // Use determined symbol
-          chainId: TARGET_CHAIN_ID,
-        }),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.message || data.errorDetails || 'Failed to fetch dynamic fee');
+      // First, find the best route for this token pair
+      const routeResult = findBestRoute(fromTokenSymbolForCache, toTokenSymbolForCache);
+      
+      if (!routeResult.bestRoute) {
+        throw new Error(`No route found for token pair ${fromTokenSymbolForCache}/${toTokenSymbolForCache}`);
       }
-      const fee = Number(data.dynamicFee);
-      if (isNaN(fee)) {
-        throw new Error('Dynamic fee received is not a number: ' + data.dynamicFee);
+
+      const route = routeResult.bestRoute;
+      
+      // Only update the route if it has actually changed to prevent unnecessary re-renders
+      if (JSON.stringify(route) !== JSON.stringify(currentRoute)) {
+        setCurrentRoute(route);
+        setSelectedPoolIndexForChart(0); // Reset to first pool only when route actually changes
       }
-      setDynamicFeeBps(fee);
-      setToCache(cacheKey, { dynamicFee: data.dynamicFee }); // Cache the raw string from API
-      console.log(`[Cache SET] Cached dynamic fee for ${fromTokenSymbolForCache}-${toTokenSymbolForCache}:`, data.dynamicFee);
+
+      // Fetch fees for each pool in the route
+      const fees: Array<{ poolName: string; fee: number }> = [];
+      
+      for (const pool of route.pools) {
+        const cacheKey = getPoolDynamicFeeCacheKey(pool.token0 as TokenSymbol, pool.token1 as TokenSymbol, TARGET_CHAIN_ID);
+        let poolFee: number;
+
+        // Check cache first
+        const cachedFee = getFromCache<{ dynamicFee: string }>(cacheKey);
+        
+        if (cachedFee) {
+          poolFee = Number(cachedFee.dynamicFee);
+        } else {
+          
+          const response = await fetch('/api/swap/get-dynamic-fee', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              fromTokenSymbol: pool.token0,
+              toTokenSymbol: pool.token1,
+              chainId: TARGET_CHAIN_ID,
+            }),
+          });
+          
+          const data = await response.json();
+          if (!response.ok) {
+            throw new Error(data.message || data.errorDetails || `Failed to fetch dynamic fee for ${pool.poolName}`);
+          }
+          
+          poolFee = Number(data.dynamicFee);
+          if (isNaN(poolFee)) {
+            throw new Error(`Dynamic fee received is not a number for ${pool.poolName}: ${data.dynamicFee}`);
+          }
+          
+          // Cache the result
+          setToCache(cacheKey, { dynamicFee: data.dynamicFee });
+        }
+
+        fees.push({ poolName: pool.poolName, fee: poolFee });
+      }
+
+      setRouteFees(fees);
+
+      // For backward compatibility, set the first fee as the main dynamic fee
+      if (fees.length > 0) {
+        setDynamicFeeBps(fees[0].fee);
+      }
+
       setDynamicFeeLoading(false);
+      setRouteFeesLoading(false);
+      
     } catch (error: any) {
       console.error("[fetchFee] Error fetching dynamic fee:", error.message);
       setDynamicFeeBps(null);
+      setCurrentRoute(null);
+      setRouteFees([]);
       setDynamicFeeLoading(false);
+      setRouteFeesLoading(false);
       setDynamicFeeError(error.message || "Error fetching fee.");
     } finally {
       isFetchingDynamicFeeRef.current = false;
     }
-  }, [isConnected, currentChainId, fromToken, toToken, TARGET_CHAIN_ID]);
+  }, [isConnected, currentChainId, fromToken?.address, toToken?.address, TARGET_CHAIN_ID]);
 
   useEffect(() => {
     fetchFee(); // Fetch once on mount / relevant dep change
 
-    intervalTimerRef.current = setInterval(fetchFee, 60000); // Fetch every 60 seconds
-
     return () => {
-      if (intervalTimerRef.current) {
-        clearInterval(intervalTimerRef.current);
-      }
       isFetchingDynamicFeeRef.current = false; // Reset ref on cleanup
     };
   }, [fetchFee]);
@@ -570,7 +647,7 @@ export function SwapInterface() {
          reviewNotificationsShown.current = { needs_approval: false, needs_signature: false, approval_complete: false, signature_complete: false };
       }
     }
-  }, [swapState, swapProgressState, fromToken.symbol]); // Dependencies are correct
+  }, [swapState, swapProgressState, fromToken?.symbol]); // Dependencies are correct
 
   // Helper function for formatting balance display
   const getFormattedDisplayBalance = (numericBalance: number | undefined): string => {
@@ -586,82 +663,100 @@ export function SwapInterface() {
     }
   };
 
-  // --- Balance Fetching --- 
-  const { data: yusdBalanceData, isLoading: isLoadingYUSDBalance, error: yusdBalanceError } = useBalance({
+  // --- Dynamic Balance Fetching for current tokens ---
+  const { data: fromTokenBalanceData, isLoading: isLoadingFromTokenBalance, error: fromTokenBalanceError } = useBalance({
     address: accountAddress,
-    token: TOKEN_DEFINITIONS.YUSDC?.addressRaw as `0x${string}`,
+    token: fromToken.address === "0x0000000000000000000000000000000000000000" ? undefined : fromToken.address,
     chainId: TARGET_CHAIN_ID,
+    query: { enabled: !!accountAddress && !!fromToken.address }
   });
 
-  const { data: btcrlBalanceData, isLoading: isLoadingBTCRLBalance, error: btcrlBalanceError } = useBalance({
+  const { data: toTokenBalanceData, isLoading: isLoadingToTokenBalance, error: toTokenBalanceError } = useBalance({
     address: accountAddress,
-    token: TOKEN_DEFINITIONS.BTCRL?.addressRaw as `0x${string}`,
+    token: toToken.address === "0x0000000000000000000000000000000000000000" ? undefined : toToken.address,
     chainId: TARGET_CHAIN_ID,
+    query: { enabled: !!accountAddress && !!toToken.address }
   });
 
-  // Update YUSD balance in whichever state (fromToken or toToken) holds YUSD
+  // Update fromToken balance
   useEffect(() => {
-    const applyUpdate = (prevTokenState: Token): Token => {
-      if (prevTokenState.address !== TOKEN_DEFINITIONS.YUSDC?.addressRaw) return prevTokenState;
+    const numericBalance = fromTokenBalanceData ? parseFloat(fromTokenBalanceData.formatted) : 0;
+    const displayBalance = getFormattedDisplayBalance(numericBalance);
 
-      const numericBalance = yusdBalanceData ? parseFloat(yusdBalanceData.formatted) : 0;
-      const displayBalance = getFormattedDisplayBalance(numericBalance);
-
-      if (yusdBalanceData && isConnected && currentChainId === TARGET_CHAIN_ID) {
+    setFromToken(prevToken => {
+      // Only create a new object if the balance or value has actually changed
+      if (
+        fromTokenBalanceData && isConnected && currentChainId === TARGET_CHAIN_ID &&
+        (prevToken.balance !== displayBalance || prevToken.value !== `~$${(numericBalance * prevToken.usdPrice).toFixed(2)}`)
+      ) {
         return {
-          ...prevTokenState,
+          ...prevToken,
           balance: displayBalance,
-          value: `~$${(numericBalance * prevTokenState.usdPrice).toFixed(2)}`,
+          value: `~$${(numericBalance * prevToken.usdPrice).toFixed(2)}`,
         };
-      } else if (yusdBalanceError && isConnected && currentChainId === TARGET_CHAIN_ID) {
-        console.error("Error fetching YUSD balance:", yusdBalanceError);
-        return { ...prevTokenState, balance: "Error", value: "$0.00" };
-      } else if (isConnected && currentChainId !== TARGET_CHAIN_ID) {
-        return { ...prevTokenState, balance: "~", value: "$0.00" };
-      } else if (!isLoadingYUSDBalance && isConnected) {
-        return { ...prevTokenState, balance: displayBalance, value: "$0.00" };
-      } else if (!isConnected) {
-        return defaultFrom; 
       }
-      return prevTokenState;
-    };
+      
+      // Handle other states if they result in a change
+      if (fromTokenBalanceError && isConnected && currentChainId === TARGET_CHAIN_ID && prevToken.balance !== "Error") {
+        console.error("Error fetching fromToken balance:", fromTokenBalanceError);
+        return { ...prevToken, balance: "Error", value: "$0.00" };
+      }
+      
+      if (isConnected && currentChainId !== TARGET_CHAIN_ID && prevToken.balance !== "~") {
+        return { ...prevToken, balance: "~", value: "$0.00" };
+      }
+      
+      if (!isLoadingFromTokenBalance && isConnected && prevToken.balance !== displayBalance) {
+        return { ...prevToken, balance: displayBalance, value: "$0.00" };
+      }
+      
+      if (!isConnected && prevToken.balance !== "~") {
+        return { ...prevToken, balance: "~", value: "$0.00" }; 
+      }
 
-    setFromToken(applyUpdate);
-    setToToken(applyUpdate);
+      // If no changes, return the existing token object to prevent re-renders
+      return prevToken;
+    });
+  }, [fromTokenBalanceData, fromTokenBalanceError, isLoadingFromTokenBalance, currentChainId, isConnected, getFormattedDisplayBalance]);
 
-  }, [yusdBalanceData, yusdBalanceError, isLoadingYUSDBalance, currentChainId, isConnected]);
-
-  // Update BTCRL balance in whichever state (fromToken or toToken) holds BTCRL
+  // Update toToken balance
   useEffect(() => {
-    const applyUpdate = (prevTokenState: Token): Token => {
-      if (prevTokenState.address !== TOKEN_DEFINITIONS.BTCRL?.addressRaw) return prevTokenState;
+    const numericBalance = toTokenBalanceData ? parseFloat(toTokenBalanceData.formatted) : 0;
+    const displayBalance = getFormattedDisplayBalance(numericBalance);
 
-      const numericBalance = btcrlBalanceData ? parseFloat(btcrlBalanceData.formatted) : 0;
-      const displayBalance = getFormattedDisplayBalance(numericBalance);
-
-      if (btcrlBalanceData && isConnected && currentChainId === TARGET_CHAIN_ID) {
+    setToToken(prevToken => {
+      // Only create a new object if the balance or value has actually changed
+      if (
+        toTokenBalanceData && isConnected && currentChainId === TARGET_CHAIN_ID &&
+        (prevToken.balance !== displayBalance || prevToken.value !== `~$${(numericBalance * prevToken.usdPrice).toFixed(2)}`)
+      ) {
         return {
-          ...prevTokenState,
+          ...prevToken,
           balance: displayBalance,
-          value: `~$${(numericBalance * prevTokenState.usdPrice).toFixed(2)}`,
+          value: `~$${(numericBalance * prevToken.usdPrice).toFixed(2)}`,
         };
-      } else if (btcrlBalanceError && isConnected && currentChainId === TARGET_CHAIN_ID) {
-        console.error("Error fetching BTCRL balance:", btcrlBalanceError);
-        return { ...prevTokenState, balance: "Error", value: "$0.00" };
-      } else if (isConnected && currentChainId !== TARGET_CHAIN_ID) {
-        return { ...prevTokenState, balance: "~", value: "$0.00" };
-      } else if (!isLoadingBTCRLBalance && isConnected) {
-        return { ...prevTokenState, balance: displayBalance, value: "$0.00" };
-      } else if (!isConnected) {
-        return defaultTo;
       }
-      return prevTokenState;
-    };
-
-    setFromToken(applyUpdate);
-    setToToken(applyUpdate);
-    
-  }, [btcrlBalanceData, btcrlBalanceError, isLoadingBTCRLBalance, currentChainId, isConnected]);
+      
+      if (toTokenBalanceError && isConnected && currentChainId === TARGET_CHAIN_ID && prevToken.balance !== "Error") {
+        console.error("Error fetching toToken balance:", toTokenBalanceError);
+        return { ...prevToken, balance: "Error", value: "$0.00" };
+      }
+      
+      if (isConnected && currentChainId !== TARGET_CHAIN_ID && prevToken.balance !== "~") {
+        return { ...prevToken, balance: "~", value: "$0.00" };
+      }
+      
+      if (!isLoadingToTokenBalance && isConnected && prevToken.balance !== displayBalance) {
+        return { ...prevToken, balance: displayBalance, value: "$0.00" };
+      }
+      
+      if (!isConnected && prevToken.balance !== "~") {
+        return { ...prevToken, balance: "~", value: "$0.00" };
+      }
+      
+      return prevToken;
+    });
+  }, [toTokenBalanceData, toTokenBalanceError, isLoadingToTokenBalance, currentChainId, isConnected, getFormattedDisplayBalance]);
 
   // Helper function to format currency
   const formatCurrency = useCallback((valueString: string): string => {
@@ -680,8 +775,8 @@ export function SwapInterface() {
   }, []); // Added useCallback with empty dependency array
 
   // Helper function to format token amount for display (Review, Success, Balances)
-  // Uses hardcoded decimals (8 for BTCRL, 2 for YUSDC) and special < 0.001 display.
-  const formatTokenAmountDisplay = useCallback((amountString: string, tokenSymbol: string): string => {
+  // Uses the token's actual displayDecimals from configuration and special < 0.001 display.
+  const formatTokenAmountDisplay = useCallback((amountString: string, token: Token): string => {
     try {
       const amount = parseFloat(amountString);
 
@@ -690,10 +785,10 @@ export function SwapInterface() {
       // Handle very small positive numbers with special string FIRST
       if (amount > 0 && amount < 0.001) return "< 0.001";
 
-      // Determine decimals for display based on symbol
-      const displayDecimals = tokenSymbol === 'BTCRL' ? 8 : 2; // Hardcoded decimals for YUSDC (assuming others use 2)
+      // Use the token's actual displayDecimals from configuration
+      const displayDecimals = token.displayDecimals;
 
-      // Format with determined decimals
+      // Format with the token's configured decimals
       return amount.toFixed(displayDecimals);
 
     } catch (error) {
@@ -709,6 +804,7 @@ export function SwapInterface() {
     // If invalid input or tokens, clear the output
     if (isNaN(fromValue) || fromValue <= 0 || !fromToken || !toToken) {
       setToAmount("");
+      setRouteInfo(null);
       return;
     }
     
@@ -719,7 +815,6 @@ export function SwapInterface() {
         try {
           // Show subtle loading state
           setQuoteLoading(true);
-          console.log('🔍 V4 Quoter: Fetching quote for', fromAmount, fromToken.symbol, '→', toToken.symbol);
           
           const response = await fetch('/api/swap/get-quote', {
             method: 'POST',
@@ -734,12 +829,20 @@ export function SwapInterface() {
           });
 
           const data = await response.json();
-          console.log('📊 V4 Quoter Response:', data);
           
           if (response.ok && data.success) {
             // Set the quoted amount in the UI
             setToAmount(data.toAmount);
             setQuoteError(null);
+            
+            // Store route information if available
+            if (data.route) {
+              setRouteInfo(data.route);
+              console.log('🛣️ V4 Route:', data.route.path.join(' → '), `(${data.route.hops} hops)`);
+            } else {
+              setRouteInfo(null);
+            }
+            
             console.log('✅ V4 Quoter: Quote successful -', fromAmount, fromToken.symbol, '→', data.toAmount, toToken.symbol);
           } else {
             console.error('❌ V4 Quoter Error:', data.error);
@@ -748,6 +851,7 @@ export function SwapInterface() {
             toast.error(`Quote Error: ${data.error || 'Failed to get quote'}`);
             
             setQuoteError(data.error || 'Failed to get quote');
+            setRouteInfo(null); // Clear route info on error
             
             // Fallback to the calculation using current prices
             const calculatedTo = (fromValue * fromToken.usdPrice) / toToken.usdPrice;
@@ -761,6 +865,7 @@ export function SwapInterface() {
           toast.error(`Quote Error: ${error.message || 'Failed to fetch quote'}`);
           
           setQuoteError('Failed to fetch quote');
+          setRouteInfo(null); // Clear route info on exception
           
           // Fallback to the calculation using current prices
           const calculatedTo = (fromValue * fromToken.usdPrice) / toToken.usdPrice;
@@ -774,12 +879,13 @@ export function SwapInterface() {
         // Fallback to the calculation using current prices
         const calculatedTo = (fromValue * fromToken.usdPrice) / toToken.usdPrice;
         setToAmount(calculatedTo.toFixed(toToken.decimals));
+        setRouteInfo(null); // No route info for calculated prices
         console.log('ℹ️ V4 Quoter: Using calculated price (not connected or wrong network). From: $' + fromToken.usdPrice + ', To: $' + toToken.usdPrice);
       }
     }, 500); // 500ms debounce
     
     return () => clearTimeout(timer);
-  }, [fromAmount, fromToken, toToken, isConnected, currentChainId, TARGET_CHAIN_ID]);
+  }, [fromAmount, fromToken?.symbol, toToken?.symbol, fromToken?.decimals, toToken?.decimals, fromToken?.usdPrice, toToken?.usdPrice, isConnected, currentChainId, TARGET_CHAIN_ID]);
 
   // Update calculatedValues for UI display
   useEffect(() => {
@@ -788,42 +894,71 @@ export function SwapInterface() {
 
     const updatedFeesArray: FeeDetail[] = [];
 
-    // Fee Percentage
-    let feePercentageString: string;
+    // Multi-hop Fee Display
     if (isConnected && currentChainId === TARGET_CHAIN_ID) {
-      if (dynamicFeeLoading) {
-        if (dynamicFeeBps !== null) {
-          // If loading but a previous fee exists, just show the previous fee statically.
-          feePercentageString = `${(dynamicFeeBps / 10000).toFixed(2)}%`;
+      if (routeFeesLoading || dynamicFeeLoading) {
+        if (routeFees.length > 0) {
+          // If loading but we have previous fees, show them statically
+          routeFees.forEach((routeFee, index) => {
+            const feeDisplayName = routeFees.length > 1 ? `Fee ${index + 1} (${routeFee.poolName})` : "Fee";
+            updatedFeesArray.push({ 
+              name: feeDisplayName, 
+              value: `${(routeFee.fee / 10000).toFixed(2)}%`, 
+              type: "percentage" 
+            });
+          });
         } else {
-          // If loading and no previous fee (initial load), set to "N/A".
-          // The animated icon will be displayed by the render logic due to dynamicFeeLoading being true.
-          feePercentageString = "N/A";
+          // If loading and no previous fees (initial load), show placeholder
+          updatedFeesArray.push({ name: "Fee", value: "N/A", type: "percentage" });
         }
       } else if (dynamicFeeError) {
-        feePercentageString = "Fee N/A";
-      } else if (dynamicFeeBps !== null) { // Covers amount > 0 and amount === 0 cases if fee is available
-        feePercentageString = `${(dynamicFeeBps / 10000).toFixed(2)}%`;
+        // Check if it's a "no route" error for multi-hop
+        if (dynamicFeeError.includes("No route found")) {
+          updatedFeesArray.push({ name: "Fee", value: "No Route Available", type: "percentage" });
+        } else {
+          updatedFeesArray.push({ name: "Fee", value: "Fee N/A", type: "percentage" });
+        }
+      } else if (routeFees.length > 0) {
+        // Show individual fees for each hop
+        routeFees.forEach((routeFee, index) => {
+          const feeDisplayName = routeFees.length > 1 ? `Fee ${index + 1} (${routeFee.poolName})` : "Fee";
+          updatedFeesArray.push({ 
+            name: feeDisplayName, 
+            value: `${(routeFee.fee / 10000).toFixed(2)}%`, 
+            type: "percentage" 
+          });
+        });
+      } else if (dynamicFeeBps !== null) {
+        // Fallback to single fee display for backward compatibility
+        updatedFeesArray.push({ 
+          name: "Fee", 
+          value: `${(dynamicFeeBps / 10000).toFixed(2)}%`, 
+          type: "percentage" 
+        });
       } else {
-        // If not loading, no error, but dynamicFeeBps is null (e.g. initial state before any fetch attempt)
-        feePercentageString = "N/A";
+        // If not loading, no error, but no fees available (initial state)
+        updatedFeesArray.push({ name: "Fee", value: "N/A", type: "percentage" });
       }
     } else {
       // Not connected or wrong chain
-      feePercentageString = "N/A";
+      updatedFeesArray.push({ name: "Fee", value: "N/A", type: "percentage" });
     }
-    updatedFeesArray.push({ name: "Fee", value: feePercentageString, type: "percentage" });
 
-    // Fee Value (USD) - only if amount > 0, connected, on chain, and fee is available
-    if (fromValueNum > 0 && isConnected && currentChainId === TARGET_CHAIN_ID && dynamicFeeBps !== null && !dynamicFeeLoading && !dynamicFeeError) {
-      const feeInUsd = (fromValueNum * fromTokenUsdPrice) * (dynamicFeeBps / 10000 / 100);
+    // Fee Value (USD) - calculate total fee for multi-hop routes
+    if (fromValueNum > 0 && isConnected && currentChainId === TARGET_CHAIN_ID && routeFees.length > 0 && !routeFeesLoading && !dynamicFeeError) {
+      // Calculate total fee percentage for multi-hop
+      const totalFeeRate = routeFees.reduce((total, routeFee) => total + (routeFee.fee / 10000), 0);
+      const totalFeeInUsd = (fromValueNum * fromTokenUsdPrice) * (totalFeeRate / 100);
+      
       let feeValueDisplay: string;
-      if (feeInUsd > 0 && feeInUsd < 0.01) {
+      if (totalFeeInUsd > 0 && totalFeeInUsd < 0.01) {
         feeValueDisplay = "< $0.01";
       } else {
-        feeValueDisplay = formatCurrency(feeInUsd.toString());
+        feeValueDisplay = formatCurrency(totalFeeInUsd.toString());
       }
-      updatedFeesArray.push({ name: "Fee Value (USD)", value: feeValueDisplay, type: "usd" });
+      
+      const feeValueName = routeFees.length > 1 ? "Total Fee Value (USD)" : "Fee Value (USD)";
+      updatedFeesArray.push({ name: feeValueName, value: feeValueDisplay, type: "usd" });
     }
     
     const newFromTokenValue = (!isNaN(fromValueNum) && fromValueNum >= 0 && fromToken.usdPrice)
@@ -839,15 +974,15 @@ export function SwapInterface() {
 
     setCalculatedValues(prev => ({
       ...prev,
-      fromTokenAmount: formatTokenAmountDisplay(fromAmount, fromToken.symbol),
+      fromTokenAmount: formatTokenAmountDisplay(fromAmount, fromToken),
       fromTokenValue: formatCurrency(newFromTokenValue.toString()),
-      toTokenAmount: formatTokenAmountDisplay(toAmount, toToken.symbol),
+      toTokenAmount: formatTokenAmountDisplay(toAmount, toToken),
       toTokenValue: formatCurrency(newToTokenValue.toString()),
       fees: updatedFeesArray, 
       slippage: prev.slippage, 
     }));
 
-  }, [fromAmount, toAmount, fromToken, toToken, formatCurrency, isConnected, currentChainId, dynamicFeeLoading, dynamicFeeError, dynamicFeeBps, formatTokenAmountDisplay]); // Added formatTokenAmountDisplay dependency
+  }, [fromAmount, toAmount, fromToken?.symbol, fromToken?.usdPrice, fromToken?.displayDecimals, toToken?.symbol, toToken?.usdPrice, toToken?.displayDecimals, formatCurrency, isConnected, currentChainId, dynamicFeeLoading, dynamicFeeError, dynamicFeeBps, routeFees, routeFeesLoading, formatTokenAmountDisplay]); // Added route fees dependencies
 
   const handleFromAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
@@ -869,6 +1004,23 @@ export function SwapInterface() {
     
     setFromAmount(toAmount); // Old toAmount becomes new fromAmount for input field
     // toAmount will be recalculated by useEffect based on the new fromAmount and swapped tokens
+  };
+
+  // Token selection handlers
+  const handleFromTokenSelect = (token: Token) => {
+    if (token.address !== fromToken.address) {
+      setFromToken(token);
+      setFromAmount("");
+      setToAmount("");
+    }
+  };
+
+  const handleToTokenSelect = (token: Token) => {
+    if (token.address !== toToken.address) {
+      setToToken(token);
+      setFromAmount("");
+      setToAmount("");
+    }
   };
 
   useEffect(() => {
@@ -1011,22 +1163,10 @@ export function SwapInterface() {
 
   const handleUsePercentage = (percentage: number) => {
     try {
-      // Get the exact balance data directly from the balance hooks
-      let exactBalanceData;
-      if (fromToken.address === TOKEN_DEFINITIONS.YUSDC?.addressRaw) {
-        exactBalanceData = yusdBalanceData;
-      } else if (fromToken.address === TOKEN_DEFINITIONS.BTCRL?.addressRaw) {
-        exactBalanceData = btcrlBalanceData;
-      } else {
-        // For any other tokens in the future, we'd need to add their balance data here
-        console.warn(`No direct balance data source found for token ${fromToken.symbol}`);
-        return;
-      }
-
-      // Use the exact formatted value from the blockchain if available
-      if (exactBalanceData && exactBalanceData.formatted) {
+      // Use the dynamic fromToken balance data
+      if (fromTokenBalanceData && fromTokenBalanceData.formatted) {
         // Parse the exact blockchain value
-        const exactBalance = exactBalanceData.formatted;
+        const exactBalance = fromTokenBalanceData.formatted;
         const exactNumericBalance = parseFloat(exactBalance);
         
         if (isNaN(exactNumericBalance) || exactNumericBalance <= 0) {
@@ -1058,24 +1198,15 @@ export function SwapInterface() {
   
   const handleUseFullBalance = (token: Token, isFrom: boolean) => {
     try {
-      // Get the exact balance data directly from the balance hooks
-      let exactBalanceData;
-      if (token.address === TOKEN_DEFINITIONS.YUSDC?.addressRaw) {
-        exactBalanceData = yusdBalanceData;
-      } else if (token.address === TOKEN_DEFINITIONS.BTCRL?.addressRaw) {
-        exactBalanceData = btcrlBalanceData;
-      } else {
-        // For any other tokens in the future, we'd need to add their balance data here
-        console.warn(`No direct balance data source found for token ${token.symbol}`);
-        return;
-      }
-
+      // Use the appropriate dynamic balance data based on which token is being used
+      const balanceData = isFrom ? fromTokenBalanceData : toTokenBalanceData;
+      
       // Use the exact formatted value from the blockchain if available
-      if (exactBalanceData && exactBalanceData.formatted) {
+      if (balanceData && balanceData.formatted) {
         if (isFrom) {
           // Set EXACTLY what the blockchain reports - no parsing/formatting that might round
-          setFromAmount(exactBalanceData.formatted);
-          console.log(`Setting exact balance for ${token.symbol}: ${exactBalanceData.formatted}`);
+          setFromAmount(balanceData.formatted);
+          console.log(`Setting exact balance for ${token.symbol}: ${balanceData.formatted}`);
         } else {
           console.warn("Setting 'toAmount' based on 'toToken' balance is not directly supported");
         }
@@ -1264,31 +1395,66 @@ export function SwapInterface() {
             setSwapProgressState("building_tx");
             toast("Building swap transaction...");
 
-            // >>> FETCH DYNAMIC FEE FIRST <<<
+            // >>> FETCH ROUTE AND DYNAMIC FEES <<<
+            // For multihop support, we need to get the route first, then fetch fees for each pool
+            const routeResult = findBestRoute(fromToken.symbol, toToken.symbol);
+            
+            if (!routeResult.bestRoute) {
+                throw new Error(`No route found for token pair: ${fromToken.symbol} → ${toToken.symbol}`);
+            }
+
+            const route = routeResult.bestRoute;
+            console.log(`[handleConfirmSwap] Using route: ${route.path.join(' → ')} (${route.hops} hops)`);
+
+            // Fetch dynamic fees for each pool in the route
             let fetchedDynamicFee: number | null = null;
             try {
-                const feeResponse = await fetch('/api/swap/get-dynamic-fee', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        fromTokenSymbol: Object.keys(TOKEN_DEFINITIONS).find(key => 
-                            TOKEN_DEFINITIONS[key as TokenSymbol].addressRaw === fromToken.address
-                        ) as TokenSymbol,
-                        toTokenSymbol: Object.keys(TOKEN_DEFINITIONS).find(key => 
-                            TOKEN_DEFINITIONS[key as TokenSymbol].addressRaw === toToken.address
-                        ) as TokenSymbol,
-                        chainId: TARGET_CHAIN_ID,
-                    }),
-                });
-                const feeData = await feeResponse.json();
-                if (!feeResponse.ok) {
-                    throw new Error(feeData.message || feeData.errorDetails || 'Failed to fetch dynamic fee');
+                if (route.isDirectRoute) {
+                    // Single hop - fetch fee for the direct pool
+                    const feeResponse = await fetch('/api/swap/get-dynamic-fee', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            fromTokenSymbol: fromToken.symbol,
+                            toTokenSymbol: toToken.symbol,
+                            chainId: TARGET_CHAIN_ID,
+                        }),
+                    });
+                    const feeData = await feeResponse.json();
+                    if (!feeResponse.ok) {
+                        throw new Error(feeData.message || feeData.errorDetails || 'Failed to fetch dynamic fee');
+                    }
+                    fetchedDynamicFee = Number(feeData.dynamicFee);
+                    if (isNaN(fetchedDynamicFee)) {
+                        throw new Error('Dynamic fee received is not a number: ' + feeData.dynamicFee);
+                    }
+                } else {
+                    // Multihop - fetch fees for each pool in the route
+                    console.log(`[handleConfirmSwap] Fetching fees for ${route.pools.length} pools in multihop route`);
+                    
+                    // For multihop, we'll use the first pool's fee as the primary fee
+                    // In a more sophisticated implementation, this could be weighted average or other logic
+                    const firstPool = route.pools[0];
+                    const feeResponse = await fetch('/api/swap/get-dynamic-fee', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            fromTokenSymbol: firstPool.token0,
+                            toTokenSymbol: firstPool.token1,
+                            chainId: TARGET_CHAIN_ID,
+                        }),
+                    });
+                    const feeData = await feeResponse.json();
+                    if (!feeResponse.ok) {
+                        throw new Error(feeData.message || feeData.errorDetails || 'Failed to fetch dynamic fee for multihop route');
+                    }
+                    fetchedDynamicFee = Number(feeData.dynamicFee);
+                    if (isNaN(fetchedDynamicFee)) {
+                        throw new Error('Dynamic fee received is not a number: ' + feeData.dynamicFee);
+                    }
+                    
+                    console.log(`[handleConfirmSwap] Using fee from first pool (${firstPool.poolName}): ${fetchedDynamicFee}`);
                 }
-                fetchedDynamicFee = Number(feeData.dynamicFee);
-                if (isNaN(fetchedDynamicFee)) {
-                    throw new Error('Dynamic fee received is not a number: ' + feeData.dynamicFee);
-                }
-                console.log("[handleConfirmSwap] Dynamic fee fetched:", fetchedDynamicFee);
 
             } catch (feeError: any) {
                 console.error("[handleConfirmSwap] Error fetching dynamic fee:", feeError);
@@ -1299,7 +1465,7 @@ export function SwapInterface() {
                 setSwapProgressState("error"); // Or back to "ready_to_swap" to allow retry
                 return;
             }
-            // >>> END FETCH DYNAMIC FEE <<<
+            // >>> END FETCH ROUTE AND DYNAMIC FEES <<<
 
             const effectiveTimestamp = BigInt(Math.floor(Date.now() / 1000));
             const effectiveFallbackSigDeadline = effectiveTimestamp + BigInt(30 * 60); // 30 min fallback
@@ -1441,9 +1607,9 @@ export function SwapInterface() {
   const displayFromToken = fromToken; // This is what's in the 'Sell' slot
   const displayToToken = toToken;   // This is what's in the 'Buy' slot
 
-  // isLoading for balances
-  const isLoadingCurrentFromTokenBalance = fromToken.address === TOKEN_DEFINITIONS.YUSDC?.addressRaw ? isLoadingYUSDBalance : isLoadingBTCRLBalance;
-  const isLoadingCurrentToTokenBalance = toToken.address === TOKEN_DEFINITIONS.YUSDC?.addressRaw ? isLoadingYUSDBalance : isLoadingBTCRLBalance;
+  // isLoading for balances - now using dynamic loading states
+  const isLoadingCurrentFromTokenBalance = isLoadingFromTokenBalance;
+  const isLoadingCurrentToTokenBalance = isLoadingToTokenBalance;
   
   // Action button text logic - RESTORED
   let actionButtonText = "Connect Wallet";
@@ -1560,11 +1726,7 @@ export function SwapInterface() {
     
     // Special case: If we're using the exact balance from the blockchain, force it to 100%
     // This ensures the vertical line UI shows up when using handleUseFullBalance
-    if (fromToken.address === TOKEN_DEFINITIONS.YUSDC?.addressRaw && yusdBalanceData && 
-        fromAmount === yusdBalanceData.formatted) {
-      actualNumericPercentage = 100;
-    } else if (fromToken.address === TOKEN_DEFINITIONS.BTCRL?.addressRaw && btcrlBalanceData && 
-              fromAmount === btcrlBalanceData.formatted) {
+    if (fromTokenBalanceData && fromAmount === fromTokenBalanceData.formatted) {
       actualNumericPercentage = 100;
     }
   }
@@ -1606,53 +1768,92 @@ export function SwapInterface() {
 
   const strokeWidth = 2; // Define strokeWidth for the SVG rect elements
 
-  // Effect to fetch historical fee data - with session caching
+  // Memoize poolInfo to prevent unnecessary chart re-renders
+  const poolInfo = useMemo(() => {
+    if (!currentRoute || currentRoute.pools.length === 0) {
+      return undefined;
+    }
+    
+    const poolIndex = Math.min(selectedPoolIndexForChart, currentRoute.pools.length - 1);
+    const selectedPool = currentRoute.pools[poolIndex];
+    
+    return {
+      token0Symbol: selectedPool.token0,
+      token1Symbol: selectedPool.token1,
+      poolName: selectedPool.poolName
+    };
+  }, [currentRoute, selectedPoolIndexForChart]);
+
+  // Create a stable key for fee history to prevent unnecessary reloads
+  const feeHistoryKey = useMemo(() => {
+    if (!isConnected || currentChainId !== TARGET_CHAIN_ID || !currentRoute) {
+      return null;
+    }
+    
+    let poolIdForHistory: string | undefined;
+    if (currentRoute.pools.length > 0) {
+      const poolIndex = Math.min(selectedPoolIndexForChart, currentRoute.pools.length - 1);
+      poolIdForHistory = currentRoute.pools[poolIndex].subgraphId;
+    }
+    
+    return poolIdForHistory ? `${poolIdForHistory}_${selectedPoolIndexForChart}` : null;
+  }, [isConnected, currentChainId, TARGET_CHAIN_ID, currentRoute, selectedPoolIndexForChart]);
+
+  // Effect to fetch historical fee data - with session caching and optimized loading
   useEffect(() => {
     const fetchHistoricalFeeData = async () => {
-      if (!isConnected || currentChainId !== TARGET_CHAIN_ID || !fromToken || !toToken) {
-        setFeeHistoryData([]); // Clear data if not connected or tokens not set
+      if (!feeHistoryKey || !currentRoute) {
+        setFeeHistoryData([]);
         setIsFeeChartPreviewVisible(false);
         return;
       }
 
-      // Create cache key for this session
-      const poolIdForFeeHistory = "0xbcc20db9b797e211e508500469e553111c6fa8d80f7896e6db60167bcf18ce13";
+      // Get the selected pool's subgraph ID
+      const poolIndex = Math.min(selectedPoolIndexForChart, currentRoute.pools.length - 1);
+      const poolIdForFeeHistory = currentRoute.pools[poolIndex].subgraphId;
+      const selectedPool = currentRoute.pools[poolIndex];
+
       const cacheKey = `feeHistory_${poolIdForFeeHistory}_30days`;
       
-      // Check if we already have data in sessionStorage
+      // Check if we already have data in sessionStorage with expiration
       try {
-        const cachedData = sessionStorage.getItem(cacheKey);
-        if (cachedData) {
-          const parsedData = JSON.parse(cachedData);
-          console.log('📊 Using cached fee history data');
-          setFeeHistoryData(parsedData);
-          setIsFeeChartPreviewVisible(true);
-          setIsFeeHistoryLoading(false);
-          setFeeHistoryError(null);
-          return;
+        const cachedItem = sessionStorage.getItem(cacheKey);
+        if (cachedItem) {
+          const cached = JSON.parse(cachedItem);
+          const now = Date.now();
+          
+          // Cache expires after 10 minutes (600,000 ms)
+          if (cached.timestamp && (now - cached.timestamp) < 600000 && cached.data) {
+            console.log('[Fee History] Using cached data (expires in', Math.round((600000 - (now - cached.timestamp)) / 60000), 'min)');
+            setFeeHistoryData(cached.data);
+            setIsFeeChartPreviewVisible(true);
+            setIsFeeHistoryLoading(false);
+            setFeeHistoryError(null);
+            return;
+          } else {
+            console.log('[Fee History] Cache expired, fetching fresh data');
+            sessionStorage.removeItem(cacheKey); // Clean up expired cache
+          }
         }
       } catch (error) {
         console.warn('Failed to load cached fee history data:', error);
+        sessionStorage.removeItem(cacheKey); // Clean up corrupted cache
       }
 
       // Prevent duplicate API calls
       if (isFetchingFeeHistoryRef.current) {
-        console.log('🚫 Skipping duplicate fee history fetch request');
+        console.log('[Fee History] Already fetching, skipping duplicate request');
         return;
       }
 
-      if (!poolIdForFeeHistory) {
-          console.warn("SwapInterface: poolIdForFeeHistory could not be determined. Skipping historical fee fetch.");
-          setFeeHistoryData([]);
-          setIsFeeChartPreviewVisible(false);
-          return;
-      }
-
-      console.log('🔄 Fetching fresh fee history data');
+      console.log(`[Fee History] Fetching data for pool: ${selectedPool.poolName}`);
       isFetchingFeeHistoryRef.current = true;
       setIsFeeHistoryLoading(true);
       setFeeHistoryError(null);
-      setIsFeeChartPreviewVisible(false);
+      // Don't hide the chart container during pool switches
+      if (!feeHistoryData.length) {
+        setIsFeeChartPreviewVisible(false);
+      }
 
       try {
         const response = await fetch(`/api/liquidity/get-historical-dynamic-fees?poolId=${poolIdForFeeHistory}&days=30`);
@@ -1662,16 +1863,24 @@ export function SwapInterface() {
         }
         const data: FeeHistoryPoint[] = await response.json();
         
+        console.log('[Fee History] API response data:', data.slice(0, 5));
+        console.log('[Fee History] Non-zero volume days:', data.filter(d => d.volumeTvlRatio > 0));
+        
         if (data && data.length > 0) {
-            // Cache the data in sessionStorage
+            // Cache the data in sessionStorage with timestamp
             try {
-              sessionStorage.setItem(cacheKey, JSON.stringify(data));
+              const cacheData = {
+                data: data,
+                timestamp: Date.now()
+              };
+              sessionStorage.setItem(cacheKey, JSON.stringify(cacheData));
             } catch (error) {
               console.warn('Failed to cache fee history data:', error);
             }
             
             setFeeHistoryData(data);
             setIsFeeChartPreviewVisible(true);
+            console.log('[Fee History] Data set in state, triggering chart update');
         } else {
             setFeeHistoryData([]);
             setIsFeeChartPreviewVisible(false);
@@ -1688,10 +1897,10 @@ export function SwapInterface() {
       }
     };
 
-    // Only fetch once per session by checking if we're connected and on the right chain
-    // Don't depend on token symbols to prevent constant refetching
-    fetchHistoricalFeeData();
-  }, [isConnected, currentChainId, TARGET_CHAIN_ID]); // Removed token dependencies to prevent constant refetching
+    // Debounce the fetch to prevent rapid consecutive calls
+    const timeoutId = setTimeout(fetchHistoricalFeeData, 100);
+    return () => clearTimeout(timeoutId);
+  }, [feeHistoryKey, currentRoute, selectedPoolIndexForChart]); // Optimized dependencies
 
   // Helper functions for action button text and disabled state
   const getActionButtonText = (): string => {
@@ -1730,17 +1939,19 @@ export function SwapInterface() {
   const [tokenPrices, setTokenPrices] = useState<{
     BTC: number;
     USDC: number;
+    ETH: number;
     timestamp?: number;
   }>({
     BTC: 77000, // Default fallback price
     USDC: 1,    // Default fallback price
+    ETH: 3500,  // Default fallback price
   });
   
   // Effect to fetch token prices periodically
   useEffect(() => {
     if (!isMounted) return;
     
-    // Function to fetch prices
+    // Function to fetch prices using the simplified API
     const fetchPrices = async () => {
       try {
         const response = await fetch('/api/prices/get-token-prices');
@@ -1749,7 +1960,7 @@ export function SwapInterface() {
         }
         
         const data = await response.json();
-        console.log('📈 Token prices fetched:', data);
+        console.log('📈 Token prices fetched via simplified API:', data);
         
         setTokenPrices(data);
       } catch (error) {
@@ -1761,7 +1972,7 @@ export function SwapInterface() {
     // Fetch prices immediately
     fetchPrices();
     
-    // Set up periodic refresh (every 5 minutes)
+    // Set up periodic refresh (every 5 minutes to match cache duration)
     const priceRefreshInterval = setInterval(fetchPrices, 5 * 60 * 1000);
     
     return () => {
@@ -1769,19 +1980,36 @@ export function SwapInterface() {
     };
   }, [isMounted]);
   
-  // Update token price when tokenPrices changes
+  // Update token prices when tokenPrices changes
   useEffect(() => {
     if (!tokenPrices) return;
     
-    setFromToken(prev => ({
-      ...prev,
-      usdPrice: prev.symbol === 'BTCRL' ? tokenPrices.BTC : tokenPrices.USDC
-    }));
+    // Update fromToken price, only if it changes
+    setFromToken(prev => {
+      const priceType = getTokenPriceMapping(prev.symbol);
+      const newPrice = tokenPrices[priceType] || prev.usdPrice;
+      if (prev.usdPrice === newPrice) return prev;
+      return { ...prev, usdPrice: newPrice };
+    });
     
-    setToToken(prev => ({
-      ...prev,
-      usdPrice: prev.symbol === 'BTCRL' ? tokenPrices.BTC : tokenPrices.USDC
-    }));
+    // Update toToken price, only if it changes
+    setToToken(prev => {
+      const priceType = getTokenPriceMapping(prev.symbol);
+      const newPrice = tokenPrices[priceType] || prev.usdPrice;
+      if (prev.usdPrice === newPrice) return prev;
+      return { ...prev, usdPrice: newPrice };
+    });
+    
+    // Update all available tokens in the list with fresh prices
+    setTokenList(prevList => 
+      prevList.map(token => {
+        const priceType = getTokenPriceMapping(token.symbol);
+        return {
+          ...token,
+          usdPrice: tokenPrices[priceType] || token.usdPrice
+        };
+      })
+    );
     
   }, [tokenPrices]);
 
@@ -1803,7 +2031,15 @@ export function SwapInterface() {
                 handleFromAmountChange={handleFromAmountChange}
                 handleSwapTokens={handleSwapTokens}
                 handleUseFullBalance={handleUseFullBalance}
+                availableTokens={tokenList}
+                onFromTokenSelect={handleFromTokenSelect}
+                onToTokenSelect={handleToTokenSelect}
                 handleCyclePercentage={handleCyclePercentage}
+                routeInfo={routeInfo}
+                routeFees={routeFees}
+                routeFeesLoading={routeFeesLoading}
+                selectedPoolIndexForChart={selectedPoolIndexForChart}
+                onSelectPoolForChart={handleSelectPoolForChart}
                 handleMouseEnterArc={handleMouseEnterArc}
                 handleMouseLeaveArc={handleMouseLeaveArc}
                 actualNumericPercentage={actualNumericPercentage}
@@ -1870,7 +2106,7 @@ export function SwapInterface() {
           - User is connected and on the target chain
         */}
         {!dynamicFeeLoading && !dynamicFeeError && dynamicFeeBps !== null && 
-         !isFeeHistoryLoading && !feeHistoryError && feeHistoryData.length > 0 && // Check historical data state
+         !feeHistoryError && (feeHistoryData.length > 0 || isFeeHistoryLoading) && // Keep container visible during loading
          isConnected && currentChainId === TARGET_CHAIN_ID && isFeeChartPreviewVisible && (
           <motion.div
             key="dynamic-fee-preview-auto" // New key for AnimatePresence
@@ -1880,7 +2116,12 @@ export function SwapInterface() {
             exit={{ y: -10, opacity: 0, height: 0 }}       
             transition={{ type: "spring", stiffness: 300, damping: 30, duration: 0.2 }}
           >
-            <DynamicFeeChartPreview data={feeHistoryData} onClick={handlePreviewChartClick} />
+            <DynamicFeeChartPreview 
+              data={feeHistoryData} 
+              onClick={handlePreviewChartClick}
+              poolInfo={poolInfo}
+              isLoading={isFeeHistoryLoading}
+            />
           </motion.div>
         )}
       </AnimatePresence>

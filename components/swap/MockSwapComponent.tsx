@@ -15,6 +15,7 @@ interface MockToken {
   balance: string;
   icon: string;
   usdPrice: number;
+  displayDecimals: number; // Add displayDecimals for consistent formatting
 }
 
 // Mock token data
@@ -24,14 +25,16 @@ const mockTokens = {
     name: "USD Coin",
     balance: "100",
     icon: "/YUSD.png",
-    usdPrice: 1
+    usdPrice: 1,
+    displayDecimals: 2
   } as MockToken,
   BTC: {
     symbol: "BTC",
     name: "Bitcoin",
     balance: "0",
     icon: "/BTCRL.png", 
-    usdPrice: 77000
+    usdPrice: 77000,
+    displayDecimals: 8
   } as MockToken
 };
 
@@ -170,7 +173,7 @@ export function MockSwapComponent({ className, zoom = 1.5 }: MockSwapComponentPr
             </div>
             <div className="flex-1">
               <Input
-                value={parseFloat(toAmount || "0") === 0 ? "0" : parseFloat(toAmount || "0").toFixed(toToken.symbol === 'BTC' ? 8 : 2)}
+                value={parseFloat(toAmount || "0") === 0 ? "0" : parseFloat(toAmount || "0").toFixed(toToken.displayDecimals)}
                 readOnly
                 className="text-right text-xl md:text-xl font-medium h-auto p-0 focus-visible:ring-0 focus-visible:ring-offset-0 border-0 bg-transparent text-muted-foreground cursor-default pointer-events-none"
                 placeholder="0.00"

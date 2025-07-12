@@ -1,7 +1,10 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { batchGetTokenPrices, calculateTotalUSD, calculateSwapVolumeUSD } from '../../../lib/price-service';
+import { getTokenDecimals } from '../../../lib/pools-config';
+import { formatUnits } from 'viem';
 
 // Subgraph URL (same as in get-rolling-volume-fees.ts)
-const SUBGRAPH_URL = "https://api.studio.thegraph.com/query/111443/alphix-v-4/version/latest";
+const SUBGRAPH_URL = "https://api.studio.thegraph.com/query/111443/alphix-test/version/latest";
 
 // GraphQL query to fetch fee updates for a given pool within a time range
 const GET_HISTORICAL_FEE_UPDATES_QUERY = `
@@ -22,7 +25,7 @@ const GET_HISTORICAL_FEE_UPDATES_QUERY = `
   }
 `;
 
-// NEW: GraphQL query to fetch pool day data (volume and TVL)
+// NEW: GraphQL query to fetch pool day data (volume and TVL) with new schema
 const GET_POOL_DAY_DATAS_QUERY = `
   query GetPoolDayDatas($poolId: Bytes!, $startDateTimestamp: Int!, $endDateTimestamp: Int!) {
     poolDayDatas(
@@ -36,8 +39,20 @@ const GET_POOL_DAY_DATAS_QUERY = `
     ) {
       id
       date      
-      volumeUSD 
-      tvlUSD    
+      volumeToken0
+      volumeToken1
+      tvlToken0
+      tvlToken1
+      pool {
+        currency0 {
+          symbol
+          decimals
+        }
+        currency1 {
+          symbol
+          decimals
+        }
+      }
     }
   }
 `;
@@ -53,8 +68,20 @@ interface SubgraphFeeUpdate {
 interface SubgraphPoolDayData {
     id: string;
     date: string; // Timestamp (seconds since epoch for the start of the day)
-    volumeUSD: string;
-    tvlUSD: string;
+    volumeToken0: string;
+    volumeToken1: string;
+    tvlToken0: string;
+    tvlToken1: string;
+    pool: {
+        currency0: {
+            symbol: string;
+            decimals: string;
+        };
+        currency1: {
+            symbol: string;
+            decimals: string;
+        };
+    };
 }
 
 interface SubgraphFeeResponse {
@@ -138,12 +165,17 @@ export default async function handler(
 
     const nowInSeconds = Math.floor(Date.now() / 1000);
     const cutoffTimestampInSeconds = nowInSeconds - (days * 24 * 60 * 60);
+    
+    // For fee updates, look back much further to capture all historical changes
+    // Fee updates are rare, so we need to look back further than just the display period
+    const feeUpdatesCutoffTimestamp = nowInSeconds - (365 * 24 * 60 * 60); // Look back 1 year for fee updates
+    
     const endDateForPoolDayData = Math.floor(new Date().setUTCHours(0,0,0,0) / 1000); // Midnight today UTC
     const startDateForPoolDayData = endDateForPoolDayData - ((days -1) * 24 * 60 * 60); // Go back `days - 1` days
 
     const feeVariables = {
         poolId: poolId.toLowerCase(),
-        cutoffTimestamp: BigInt(cutoffTimestampInSeconds).toString(),
+        cutoffTimestamp: BigInt(feeUpdatesCutoffTimestamp).toString(), // Use longer period for fee updates
     };
 
     const poolDayDataVariables = {
@@ -151,9 +183,6 @@ export default async function handler(
         startDateTimestamp: startDateForPoolDayData,
         endDateTimestamp: endDateForPoolDayData,
     };
-
-    console.log(`API: Fetching historical fee updates for pool: ${poolId} since timestamp ${cutoffTimestampInSeconds}`);
-    console.log(`API: Fetching pool day data for pool: ${poolId} from ${new Date(startDateForPoolDayData * 1000).toISOString()} to ${new Date(endDateForPoolDayData*1000).toISOString()}`);
 
     try {
         // Fetch both fee updates and pool day data in parallel
@@ -194,23 +223,64 @@ export default async function handler(
         const feeUpdates = feeResult.data?.feeUpdates || [];
         const poolDayDatas = poolDayDataResult.data?.poolDayDatas || [];
 
-        if (feeUpdates.length === 0) {
-            console.log(`API: No fee update data found for pool ${poolId} in the past ${days} days.`);
-            // We might still want to return data if poolDayDatas exist, but with default/zero fees
-            // For now, if no fee updates, assume we can't proceed meaningfully for dynamic fee trend.
-            return res.status(200).json([]); 
+        // If no fee updates, use a default fee but still process pool data
+        let sortedFeeUpdates = feeUpdates.sort((a, b) => parseInt(a.timestamp) - parseInt(b.timestamp));
+        let defaultFeeIfNoUpdates = 3000; // Default to 0.3% if no fee updates found
+        
+        if (sortedFeeUpdates.length === 0) {
+            console.log(`API: No fee update data found for pool ${poolId}, using default fee of ${defaultFeeIfNoUpdates} bps`);
+            // Create a synthetic fee update for the default fee
+            sortedFeeUpdates = [{
+                id: 'default',
+                timestamp: '0',
+                newFeeRateBps: defaultFeeIfNoUpdates.toString(),
+                transactionHash: '0x'
+            }];
         }
-
-        const sortedFeeUpdates = feeUpdates.sort((a, b) => parseInt(a.timestamp) - parseInt(b.timestamp));
+        
+        // Get token prices for USD conversion
+        const tokenSymbols = poolDayDatas.length > 0 ? [
+            poolDayDatas[0].pool.currency0.symbol,
+            poolDayDatas[0].pool.currency1.symbol
+        ] : [];
+        
+        const tokenPrices = tokenSymbols.length > 0 ? await batchGetTokenPrices(tokenSymbols) : {};
         
         // Create a map for quick lookup of pool day data by date (YYYY-MM-DD string)
         const dayDataMap = new Map<string, { volumeUSD: number; tvlUSD: number }>();
         poolDayDatas.forEach(pdd => {
             const dateStr = new Date(parseInt(pdd.date) * 1000).toISOString().split('T')[0];
-            dayDataMap.set(dateStr, {
-                volumeUSD: parseFloat(pdd.volumeUSD || "0"),
-                tvlUSD: parseFloat(pdd.tvlUSD || "0"),
-            });
+            
+            // Get prices without fallbacks to see real errors
+            const token0Price = tokenPrices[pdd.pool.currency0.symbol];
+            const token1Price = tokenPrices[pdd.pool.currency1.symbol];
+            
+            if (!token0Price || !token1Price) {
+                console.error(`Missing prices for historical fees ${poolId}:`, {
+                    token0Symbol: pdd.pool.currency0.symbol,
+                    token1Symbol: pdd.pool.currency1.symbol,
+                    token0Price,
+                    token1Price,
+                    availablePrices: Object.keys(tokenPrices)
+                });
+                throw new Error(`Missing price data for historical fees: ${pdd.pool.currency0.symbol}=${token0Price}, ${pdd.pool.currency1.symbol}=${token1Price}`);
+            }
+            
+            const volumeUSD = calculateSwapVolumeUSD(
+                pdd.volumeToken0 || "0",
+                pdd.volumeToken1 || "0",
+                token0Price,
+                token1Price
+            );
+            
+            const tvlUSD = calculateTotalUSD(
+                pdd.tvlToken0 || "0",
+                pdd.tvlToken1 || "0",
+                token0Price,
+                token1Price
+            );
+            
+            dayDataMap.set(dateStr, { volumeUSD, tvlUSD });
         });
 
         const dailyFeeHistoryPoints: FeeHistoryPoint[] = [];
@@ -225,17 +295,21 @@ export default async function handler(
             const loopDayTimestampSeconds = Math.floor(d.getTime() / 1000);
             const loopDateString = d.toISOString().split('T')[0]; // YYYY-MM-DD
 
+            // Find the most recent fee update for this day
             let activeFeeForDay = currentFeeBpsNum;
             for (const update of sortedFeeUpdates) {
                 const updateTimestampSeconds = parseInt(update.timestamp);
                 if (updateTimestampSeconds <= loopDayTimestampSeconds) {
                     activeFeeForDay = parseFloat(update.newFeeRateBps);
+                    currentFeeBpsNum = activeFeeForDay; // Update current fee
                 } else {
                     break;
                 }
             }
-            currentFeeBpsNum = activeFeeForDay;
-            const dynamicFeeValue = activeFeeForDay / 10000;
+            
+            // Convert fee from subgraph format to percentage
+            // Subgraph stores as basis points: 900 = 0.09%, 2000 = 0.20%, etc.
+            const dynamicFeeValue = activeFeeForDay / 1000000; // Convert to decimal percentage
 
             const dayData = dayDataMap.get(loopDateString);
             const volumeUSD = dayData?.volumeUSD || 0;

@@ -1,34 +1,45 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getPoolSubgraphId, getPoolById } from '../../../lib/pools-config';
+import { getPoolSubgraphId, getPoolById, getTokenDecimals } from '../../../lib/pools-config';
 import { publicClient } from '../../../lib/viemClient';
 import { parseAbi, getAddress, type Hex } from 'viem';
 import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from "../../../lib/abis/state_view_abi";
+import { batchGetTokenPrices, calculateTotalUSD } from '../../../lib/price-service';
 
 // Use the subgraph URL from other liquidity API files
-const SUBGRAPH_URL = "https://api.studio.thegraph.com/query/111443/alphix-v-4/version/latest";
+const SUBGRAPH_URL = "https://api.studio.thegraph.com/query/111443/alphix-test/version/latest";
 const STATE_VIEW_ADDRESS = getAddress("0x571291b572ed32ce6751a2cb2486ebee8defb9b4");
 
-// Querying 'trackedPool' by ID as per user-provided schema
+// Querying 'trackedPool' by ID with new schema
 const GET_POOL_TVL_QUERY = `
   query GetTrackedPoolTVL($poolId: Bytes!) {
     trackedPool(id: $poolId) {
       id
-      tvlUSD
-      # currency0 { # Not strictly needed for TVL but part of the example
-      #   symbol
-      # }
-      # currency1 {
-      #   symbol
-      # }
+      totalValueLockedToken0
+      totalValueLockedToken1
+      currency0 {
+        symbol
+        decimals
+      }
+      currency1 {
+        symbol
+        decimals
+      }
     }
   }
 `;
 
 interface SubgraphTrackedPool {
     id: string;
-    tvlUSD: string;
-    // currency0?: { symbol: string }; // Optional, if needed later
-    // currency1?: { symbol: string }; // Optional, if needed later
+    totalValueLockedToken0: string;
+    totalValueLockedToken1: string;
+    currency0: {
+        symbol: string;
+        decimals: string;
+    };
+    currency1: {
+        symbol: string;
+        decimals: string;
+    };
 }
 
 interface SubgraphTVLResponse {
@@ -78,8 +89,6 @@ async function fetchPoolTVLForApi(poolId: string): Promise<PoolTVL> {
         poolId: subgraphId.toLowerCase(),
     };
 
-    console.log(`API: Fetching TVL for trackedPool: ${poolId} (subgraph ID: ${subgraphId})`);
-
     const response = await fetch(SUBGRAPH_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -89,11 +98,6 @@ async function fetchPoolTVLForApi(poolId: string): Promise<PoolTVL> {
         }),
     });
 
-    console.log("API: Request body sent to subgraph for TVL query:", JSON.stringify({
-        query: GET_POOL_TVL_QUERY,
-        variables,
-    }, null, 2));
-
     if (!response.ok) {
         const errorBody = await response.text();
         console.error(`API: Subgraph query for TVL failed with status ${response.status}: ${errorBody}`);
@@ -102,8 +106,6 @@ async function fetchPoolTVLForApi(poolId: string): Promise<PoolTVL> {
     }
 
     const result = (await response.json()) as SubgraphTVLResponse;
-
-    console.log("API: Raw subgraph result object for TVL query:", result);
 
     if (result.errors) {
         console.error("API: Subgraph returned errors for TVL query:", result.errors);
@@ -118,8 +120,38 @@ async function fetchPoolTVLForApi(poolId: string): Promise<PoolTVL> {
 
     const trackedPoolData = result.data.trackedPool;
 
+    // Get token prices without fallbacks to see real errors
+    const tokenSymbols = [trackedPoolData.currency0.symbol, trackedPoolData.currency1.symbol];
+    const tokenPrices = await batchGetTokenPrices(tokenSymbols);
+    
+    const token0Price = tokenPrices[trackedPoolData.currency0.symbol];
+    const token1Price = tokenPrices[trackedPoolData.currency1.symbol];
+    
+    if (!token0Price || !token1Price) {
+        console.error(`Missing prices for pool ${poolId}:`, {
+            token0Symbol: trackedPoolData.currency0.symbol,
+            token1Symbol: trackedPoolData.currency1.symbol,
+            token0Price,
+            token1Price,
+            availablePrices: Object.keys(tokenPrices)
+        });
+        throw new Error(`Missing price data: ${trackedPoolData.currency0.symbol}=${token0Price}, ${trackedPoolData.currency1.symbol}=${token1Price}`);
+    }
+    
+    // Calculate total USD value
+    const totalUSD = calculateTotalUSD(
+        trackedPoolData.totalValueLockedToken0,
+        trackedPoolData.totalValueLockedToken1,
+        token0Price,
+        token1Price
+    );
+
+    if (totalUSD > 0) {
+        console.log(`API: TVL for ${poolId}: $${totalUSD.toFixed(2)}`);
+    }
+
     return {
-        tvlUSD: parseFloat(trackedPoolData.tvlUSD).toFixed(18) // Ensure consistent formatting
+        tvlUSD: totalUSD.toFixed(18) // Ensure consistent formatting
     };
 }
 

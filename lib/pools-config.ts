@@ -47,6 +47,11 @@ export function getToken(symbol: string): TokenConfig | null {
   return poolsConfig.tokens[symbol as keyof typeof poolsConfig.tokens] || null;
 }
 
+export function getTokenDecimals(symbol: string): number | null {
+  const token = getToken(symbol);
+  return token?.decimals || null;
+}
+
 export function getAllPools(): PoolConfig[] {
   return poolsConfig.pools;
 }
@@ -75,15 +80,42 @@ export function getPoolById(poolId: string): PoolConfig | null {
 
 // Create Token SDK instances
 export function createTokenSDK(tokenSymbol: string, chainId: number): Token | null {
-  const tokenConfig = getToken(tokenSymbol);
-  if (!tokenConfig) return null;
+  console.log(`[createTokenSDK] Creating token for symbol: ${tokenSymbol}, chainId: ${chainId}`);
   
-  return new Token(
-    chainId,
-    getAddress(tokenConfig.address),
-    tokenConfig.decimals,
-    tokenConfig.symbol
-  );
+  const tokenConfig = getToken(tokenSymbol);
+  console.log(`[createTokenSDK] Token config found:`, tokenConfig);
+  
+  if (!tokenConfig) {
+    console.log(`[createTokenSDK] No token config found for ${tokenSymbol}`);
+    return null;
+  }
+  
+  console.log(`[createTokenSDK] Raw address from config: ${tokenConfig.address}, type: ${typeof tokenConfig.address}`);
+  
+  try {
+    const checksummedAddress = getAddress(tokenConfig.address);
+    console.log(`[createTokenSDK] Checksummed address: ${checksummedAddress}, type: ${typeof checksummedAddress}`);
+    
+    const token = new Token(
+      chainId,
+      checksummedAddress,
+      tokenConfig.decimals,
+      tokenConfig.symbol
+    );
+    
+    console.log(`[createTokenSDK] Created token:`, {
+      symbol: token.symbol,
+      address: token.address,
+      addressType: typeof token.address,
+      decimals: token.decimals,
+      chainId: token.chainId
+    });
+    
+    return token;
+  } catch (error) {
+    console.error(`[createTokenSDK] Error creating token for ${tokenSymbol}:`, error);
+    return null;
+  }
 }
 
 // Get pool configuration for two tokens
@@ -139,7 +171,7 @@ export function getStateViewAddress(): Address {
 
 // Legacy compatibility - create TOKEN_DEFINITIONS from pools config
 export const TOKEN_DEFINITIONS: Record<string, {
-  addressRaw: string;
+  address: string;
   decimals: number;
   symbol: string;
   displayDecimals: number;
@@ -147,7 +179,7 @@ export const TOKEN_DEFINITIONS: Record<string, {
   Object.entries(poolsConfig.tokens).map(([symbol, token]) => [
     symbol,
     {
-      addressRaw: token.address,
+      address: token.address,
       decimals: token.decimals,
       symbol: token.symbol,
       displayDecimals: token.displayDecimals
@@ -156,6 +188,17 @@ export const TOKEN_DEFINITIONS: Record<string, {
 );
 
 export type TokenSymbol = keyof typeof TOKEN_DEFINITIONS;
+
+// Utility function to map token addresses to correct symbols from pools config
+export function getTokenSymbolByAddress(address: string): TokenSymbol | null {
+  const normalizedAddress = address.toLowerCase();
+  for (const [symbol, tokenConfig] of Object.entries(TOKEN_DEFINITIONS)) {
+    if (tokenConfig.address.toLowerCase() === normalizedAddress) {
+      return symbol as TokenSymbol;
+    }
+  }
+  return null;
+}
 
 // Export chain info
 export const CHAIN_ID = poolsConfig.meta.chainId;

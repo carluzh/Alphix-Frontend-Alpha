@@ -1,8 +1,10 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getPoolSubgraphId } from '../../../lib/pools-config';
+import { getPoolSubgraphId, getTokenDecimals } from '../../../lib/pools-config';
+import { batchGetTokenPrices, calculateSwapVolumeUSD } from '../../../lib/price-service';
+import { formatUnits } from 'viem';
 
 // Use the subgraph URL from get-positions.ts
-const SUBGRAPH_URL = "https://api.studio.thegraph.com/query/111443/alphix-v-4/version/latest";
+const SUBGRAPH_URL = "https://api.studio.thegraph.com/query/111443/alphix-test/version/latest";
 
 // The GraphQL query to fetch swaps for a given pool within a time range
 const GET_SWAPS_IN_TIME_RANGE_QUERY = `
@@ -20,8 +22,19 @@ const GET_SWAPS_IN_TIME_RANGE_QUERY = `
     ) {
       id
       timestamp
-      amountUSD
-      feesUSD
+      amount0
+      amount1
+      pool {
+        currentFeeRateBps
+        currency0 {
+          symbol
+          decimals
+        }
+        currency1 {
+          symbol
+          decimals
+        }
+      }
     }
   }
 `;
@@ -29,8 +42,19 @@ const GET_SWAPS_IN_TIME_RANGE_QUERY = `
 interface SubgraphSwap {
     id: string;
     timestamp: string;
-    amountUSD: string;
-    feesUSD: string;
+    amount0: string;
+    amount1: string;
+    pool: {
+        currentFeeRateBps: string;
+        currency0: {
+            symbol: string;
+            decimals: string;
+        };
+        currency1: {
+            symbol: string;
+            decimals: string;
+        };
+    };
 }
 
 interface SubgraphResponse {
@@ -96,12 +120,67 @@ async function fetchRollingVolumeAndFeesForApi(
         return { volumeUSD: "0.0", feesUSD: "0.0" };
     }
 
+    // Get token symbols for price fetching (all swaps should have the same pool)
+    const tokenSymbols = [
+        swaps[0].pool.currency0.symbol,
+        swaps[0].pool.currency1.symbol
+    ];
+
+    // Get token prices
+    const tokenPrices = await batchGetTokenPrices(tokenSymbols);
+
     let totalVolumeUSD = 0.0;
     let totalFeesUSD = 0.0;
 
     for (const swap of swaps) {
-        totalVolumeUSD += parseFloat(swap.amountUSD);
-        totalFeesUSD += parseFloat(swap.feesUSD);
+        // Get token decimals from pools.json configuration (with fallback to subgraph)
+        const token0Symbol = swap.pool.currency0.symbol;
+        const token1Symbol = swap.pool.currency1.symbol;
+        const token0Decimals = getTokenDecimals(token0Symbol) || parseInt(swap.pool.currency0.decimals);
+        const token1Decimals = getTokenDecimals(token1Symbol) || parseInt(swap.pool.currency1.decimals);
+        
+        // Use absolute values for volume calculation and convert from raw units
+        const amount0Raw = BigInt(Math.abs(parseInt(swap.amount0 || "0")).toString());
+        const amount1Raw = BigInt(Math.abs(parseInt(swap.amount1 || "0")).toString());
+        
+        const amount0Human = parseFloat(formatUnits(amount0Raw, token0Decimals));
+        const amount1Human = parseFloat(formatUnits(amount1Raw, token1Decimals));
+
+        // Get token prices without fallbacks to see real errors
+        const token0Price = tokenPrices[token0Symbol];
+        const token1Price = tokenPrices[token1Symbol];
+        
+        if (!token0Price || !token1Price) {
+            console.error(`Missing prices for ${poolId}:`, {
+                token0Symbol,
+                token1Symbol,
+                token0Price,
+                token1Price,
+                availablePrices: Object.keys(tokenPrices)
+            });
+            throw new Error(`Missing price data: ${token0Symbol}=${token0Price}, ${token1Symbol}=${token1Price}`);
+        }
+
+        // Calculate volume in USD using human-readable amounts (avoid double counting)
+        const volumeUSD = calculateSwapVolumeUSD(
+            amount0Human,
+            amount1Human,
+            token0Price,
+            token1Price
+        );
+
+        // Calculate fees based on volume and fee rate
+        // Note: currentFeeRateBps from subgraph needs additional conversion
+        // 900 from subgraph = 0.09%, so divide by 1000000 (increase decimals by 3)
+        const feeRateRaw = parseFloat(swap.pool.currentFeeRateBps || "0");
+        const feesUSD = (volumeUSD * feeRateRaw) / 1000000; // 900 → 0.0009 (0.09%)
+
+        totalVolumeUSD += volumeUSD;
+        totalFeesUSD += feesUSD;
+    }
+
+    if (totalVolumeUSD > 0) {
+        console.log(`API: Volume/fees for ${poolId} (${days}d): $${totalVolumeUSD.toFixed(2)} volume, $${totalFeesUSD.toFixed(2)} fees from ${swaps.length} swaps`);
     }
 
     // Return the total volume and fees formatted as strings

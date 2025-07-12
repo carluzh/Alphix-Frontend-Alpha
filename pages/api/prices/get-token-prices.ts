@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getTokenPrice, getFallbackPrice } from '../../../lib/price-service';
+import { getAllTokenPrices } from '../../../lib/price-service';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET') {
@@ -8,16 +8,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
-    // Get BTC price
-    const btcPrice = await getTokenPrice('BTC') || getFallbackPrice('BTC');
+    console.log('[TokenPrices API] Fetching all prices in one call...');
     
-    // Get USDC price
-    const usdcPrice = await getTokenPrice('USDC') || getFallbackPrice('USDC');
+    // Get all prices in one API call - much more efficient!
+    const allPrices = await getAllTokenPrices();
+    
+    console.log('[TokenPrices API] Successfully got all prices:', allPrices);
     
     return res.status(200).json({
-      BTC: btcPrice,
-      USDC: usdcPrice,
-      timestamp: Date.now()
+      BTC: allPrices.BTC,
+      USDC: allPrices.USDC,
+      ETH: allPrices.ETH,
+      timestamp: allPrices.lastUpdated
     });
   } catch (error: any) {
     console.error('[TokenPrices API] Error:', error);

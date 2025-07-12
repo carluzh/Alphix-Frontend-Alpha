@@ -218,220 +218,155 @@ export default function LiquidityPage() {
 
   // useEffect to fetch rolling volume and fees for each pool
   useEffect(() => {
-    const fetchPoolStats = async (pool: Pool): Promise<Partial<Pool>> => {
-      const apiPoolId = getPoolSubgraphId(pool.id) || pool.id;
-      const statsCacheKey = getPoolStatsCacheKey(apiPoolId);
-      let cachedStats = getFromCache<Partial<Pool>>(statsCacheKey);
-
-      // If we have cached stats, we might still need to fetch/recalculate APR if it's not there or uses a separate fee cache
-      // For simplicity, if basic stats are cached, we'll try to use them and then fetch fee separately if needed for APR.
-
-      if (cachedStats && cachedStats.apr && cachedStats.volume24hUSD !== undefined && cachedStats.tvlUSD !== undefined) {
-        console.log(`[Cache HIT] Using fully cached stats (incl. APR) for pool: ${pool.pair}, API ID: ${apiPoolId}`);
-        return cachedStats; 
-      }
+    const fetchAllPoolStatsBatch = async () => {
+      console.log("[LiquidityPage] Starting batch fetch for all pools...");
       
-      console.log(`[Cache MISS or APR missing] Fetching/Recomputing stats for pool: ${pool.pair}, using API ID: ${apiPoolId}`);
-
-      let volume24hUSD: number | undefined = cachedStats?.volume24hUSD;
-      let fees24hUSD: number | undefined = cachedStats?.fees24hUSD; // Assuming fees are part of this cache if available
-      let volume7dUSD: number | undefined = cachedStats?.volume7dUSD;
-      let fees7dUSD: number | undefined = cachedStats?.fees7dUSD;
-      let tvlUSD: number | undefined = cachedStats?.tvlUSD;
-      let calculatedApr = cachedStats?.apr || "Loading...";
-      let volume48hUSD: number | undefined = cachedStats?.volume48hUSD; // Added for 48h volume
-      let volumeChangeDirection: 'up' | 'down' | 'neutral' | 'loading' = cachedStats?.volumeChangeDirection || 'loading'; // Added for volume change
-      let tvlYesterdayUSD: number = cachedStats?.tvlYesterdayUSD ?? 0; // Added for TVL from yesterday, initialized to 0
-      let tvlChangeDirection: 'up' | 'down' | 'neutral' | 'loading' = cachedStats?.tvlChangeDirection || 'loading'; // Added for TVL change
-
       try {
-        // Fetch data only if we don't have all the required data cached or if a direction is still loading
-        if (volume24hUSD === undefined || tvlUSD === undefined || fees24hUSD === undefined || volume48hUSD === undefined || tvlYesterdayUSD === undefined || volumeChangeDirection === 'loading' || tvlChangeDirection === 'loading') { // Added checks for loading states
-          console.log(`Fetching core stats (vol/tvl/fees), 48h volume, and chart data for ${apiPoolId}`);
-          const [res24h, res7d, resTvl, res48h, resChartData] = await Promise.all([
-            fetch(`/api/liquidity/get-rolling-volume-fees?poolId=${apiPoolId}&days=1`),
-            fetch(`/api/liquidity/get-rolling-volume-fees?poolId=${apiPoolId}&days=7`),
-            fetch(`/api/liquidity/get-pool-tvl?poolId=${apiPoolId}`),
-            fetch(`/api/liquidity/get-rolling-volume-fees?poolId=${apiPoolId}&days=2`), // Fetch 48h volume
-            fetch(`/api/liquidity/chart-data/${apiPoolId}?numDays=2`), // Fetch last 2 days of chart data for TVL comparison
-          ]);
+        // Check if we have cached data for all pools first
+        const poolsWithCache = poolsData.map(pool => {
+          const apiPoolId = getPoolSubgraphId(pool.id) || pool.id;
+          const statsCacheKey = getPoolStatsCacheKey(apiPoolId);
+          const cachedStats = getFromCache<Partial<Pool>>(statsCacheKey);
+          
+          return {
+            pool,
+            apiPoolId,
+            cachedStats,
+            needsFetch: !cachedStats || !cachedStats.apr || cachedStats.volume24hUSD === undefined || cachedStats.tvlUSD === undefined
+          };
+        });
 
-          if (!res24h.ok || !res7d.ok || !resTvl.ok || !res48h.ok || !resChartData.ok) { // Added resChartData.ok
-            console.error(`Failed to fetch some core stats, 48h volume, or chart data for ${apiPoolId}.`);
-            // On fetch failure, set change directions to neutral
-            volumeChangeDirection = 'neutral';
-            tvlChangeDirection = 'neutral';
-            // Don't return here, allow partial updates if some data was cached
-          } else {
-            const data24h = await res24h.json();
-            const data7d = await res7d.json();
-            const dataTvl = await resTvl.json();
-            const data48h = await res48h.json(); // Process 48h data
-            const chartData = await resChartData.json(); // Process chart data
-
-            console.log(`[LiquidityPage] Raw TVL data for ${apiPoolId}:`, dataTvl);
-            console.log(`[LiquidityPage] Raw chart data for ${apiPoolId}:`, chartData);
-
-            volume24hUSD = parseFloat(data24h.volumeUSD);
-            fees24hUSD = parseFloat(data24h.feesUSD);
-            volume7dUSD = parseFloat(data7d.volumeUSD);
-            fees7dUSD = parseFloat(data7d.feesUSD);
-            tvlUSD = parseFloat(dataTvl.tvlUSD);
-            volume48hUSD = parseFloat(data48h.volumeUSD); // Store 48h volume
-
-            // Calculate volume change direction if both 24h and 48h volumes are available and valid
-            if (volume24hUSD !== undefined && volume48hUSD !== undefined && !isNaN(volume24hUSD) && !isNaN(volume48hUSD)) { // Added isNaN checks
-                const volumePrevious24h = volume48hUSD - volume24hUSD; // Volume from 24h to 48h ago
-                if (volume24hUSD > volumePrevious24h) {
-                    volumeChangeDirection = 'up';
-                } else if (volume24hUSD < volumePrevious24h) {
-                    volumeChangeDirection = 'down';
-                } else {
-                    volumeChangeDirection = 'neutral';
-                }
-            } else {
-                 volumeChangeDirection = 'neutral'; // Cannot determine change
-            }
-
-            // Calculate TVL change direction if current TVL and yesterday's TVL are available and valid
-            if (tvlUSD !== undefined && chartData && chartData.length >= 2 && !isNaN(tvlUSD)) { // Added isNaN check for tvlUSD
-                // Find yesterday's data more robustly
-                const yesterday = new Date();
-                yesterday.setDate(yesterday.getDate() - 1);
-                const yesterdayDateString = yesterday.toISOString().split('T')[0];
-
-                const yesterdayData = chartData.find((d: { date: string, tvlUSD: number }) => d.date === yesterdayDateString && typeof d.tvlUSD === 'number');
-
-                if (yesterdayData && typeof yesterdayData.tvlUSD === 'number') {
-                    // Now that we found yesterdayData with valid tvlUSD, assign it
-                    tvlYesterdayUSD = yesterdayData.tvlUSD;
-                    // Perform comparison using the guaranteed number type
-                    if (tvlUSD > tvlYesterdayUSD) {
-                        tvlChangeDirection = 'up';
-                    } else if (tvlUSD < tvlYesterdayUSD) {
-                        tvlChangeDirection = 'down';
-                    } else {
-                        tvlChangeDirection = 'neutral';
-                    }
-                } else {
-                    // If yesterday's data isn't found, or its tvlUSD is invalid
-                    tvlChangeDirection = 'neutral'; // Assume neutral if no reliable historical data for comparison
-                }
-            } else if (tvlUSD !== undefined && !isNaN(tvlUSD)) { // If we have current TVL but not enough historical data (less than 2 days)
-                tvlChangeDirection = 'neutral'; // Assume neutral if not enough data
-            } else {
-                // If current TVL is not available or is invalid
-                tvlChangeDirection = 'neutral'; // Cannot determine change without current TVL
-            }
-          }
-        }
-
-        // Fetch dynamic fee for APR calculation
-        const [token0SymbolStr, token1SymbolStr] = pool.pair.split(' / ');
-        const fromTokenSymbolForFee = TOKEN_DEFINITIONS[token0SymbolStr?.trim() as TokenSymbol]?.symbol;
-        const toTokenSymbolForFee = TOKEN_DEFINITIONS[token1SymbolStr?.trim() as TokenSymbol]?.symbol;
-
-        let dynamicFeeBps: number | null = null;
-        if (fromTokenSymbolForFee && toTokenSymbolForFee && baseSepolia.id) {
-          const feeCacheKey = getPoolDynamicFeeCacheKey(fromTokenSymbolForFee, toTokenSymbolForFee, baseSepolia.id);
-          const cachedFee = getFromCache<{ dynamicFee: string }>(feeCacheKey);
-
-          if (cachedFee) {
-            console.log(`[Cache HIT] Using cached dynamic fee for APR calc (${pool.pair}):`, cachedFee.dynamicFee);
-            dynamicFeeBps = Number(cachedFee.dynamicFee);
-          } else {
-            console.log(`[Cache MISS] Fetching dynamic fee from API for APR calc (${pool.pair})`);
-            const feeResponse = await fetch('/api/swap/get-dynamic-fee', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                fromTokenSymbol: fromTokenSymbolForFee,
-                toTokenSymbol: toTokenSymbolForFee,
-                chainId: baseSepolia.id,
-              }),
-            });
-            if (feeResponse.ok) {
-              const feeData = await feeResponse.json();
-              dynamicFeeBps = Number(feeData.dynamicFee);
-              if (!isNaN(dynamicFeeBps)) {
-                 setToCache(feeCacheKey, { dynamicFee: feeData.dynamicFee });
-                 console.log(`[Cache SET] Cached dynamic fee for APR calc (${pool.pair}):`, feeData.dynamicFee);
-              } else {
-                dynamicFeeBps = null; // Invalid fee from API
-              }
-            } else {
-              console.error(`Failed to fetch dynamic fee for APR calc (${pool.pair}):`, await feeResponse.text());
-            }
-          }
-        }
-
-        // Calculate APR if all parts are available
-        if (volume24hUSD !== undefined && dynamicFeeBps !== null && tvlUSD !== undefined && tvlUSD > 0) {
-          const feeRate = dynamicFeeBps / 10000 / 100;
-          const dailyFees = volume24hUSD * feeRate;
-          const yearlyFees = dailyFees * 365;
-          const apr = (yearlyFees / tvlUSD) * 100;
-          calculatedApr = apr.toFixed(2) + '%';
-          console.log(`Calculated APR for ${pool.pair}: ${calculatedApr} (Vol24h: ${volume24hUSD}, FeeBPS: ${dynamicFeeBps}, TVL: ${tvlUSD})`);
-        } else {
-          console.warn(`Could not calculate APR for ${pool.pair} due to missing data. Vol: ${volume24hUSD}, Fee: ${dynamicFeeBps}, TVL: ${tvlUSD}`);
-          calculatedApr = "N/A"; // Set to N/A if calculation not possible
-        }
+        const poolsNeedingFetch = poolsWithCache.filter(p => p.needsFetch);
         
-        const completeFetchedStats: Partial<Pool> = {
-          volume24hUSD,
-          fees24hUSD,
-          volume7dUSD,
-          fees7dUSD,
-          tvlUSD,
-          apr: calculatedApr,
-          volume48hUSD, // Include 48h volume in cached stats
-          volumeChangeDirection, // Include volume change direction
-          tvlYesterdayUSD, // Include yesterday's TVL in cached stats
-          tvlChangeDirection, // Include TVL change direction
-        };
-        // Cache the combined stats including the newly calculated APR and volume change
-        setToCache(statsCacheKey, completeFetchedStats);
-        console.log(`[Cache SET] Cached combined stats for pool: ${pool.pair}, API ID: ${apiPoolId}`);
-        return completeFetchedStats;
+        if (poolsNeedingFetch.length === 0) {
+          console.log("[LiquidityPage] All pools have cached data, using cache");
+          const updatedPools = poolsWithCache.map(p => ({ ...p.pool, ...p.cachedStats }));
+          setPoolsData(updatedPools);
+          return;
+        }
 
-      } catch (error: any) { // Catch any errors during the fetch or processing
-        console.error(`Error fetching or processing stats for ${pool.pair}:`, error);
-        // Keep existing cached data if available, otherwise set to undefined/neutral
-        const errorStats: Partial<Pool> = {
-            volume24hUSD: cachedStats?.volume24hUSD,
-            fees24hUSD: cachedStats?.fees24hUSD,
-            volume7dUSD: cachedStats?.volume7dUSD,
-            fees7dUSD: cachedStats?.fees7dUSD,
-            tvlUSD: cachedStats?.tvlUSD,
-            apr: cachedStats?.apr || "N/A", // Keep cached APR or set to N/A
-            volume48hUSD: cachedStats?.volume48hUSD,
-            volumeChangeDirection: cachedStats?.volumeChangeDirection || 'neutral',
-            tvlYesterdayUSD: cachedStats?.tvlYesterdayUSD,
-            tvlChangeDirection: cachedStats?.tvlChangeDirection || 'neutral'
-        };
-         return errorStats; // Return the partial stats with neutral/cached values on error
+        console.log(`[LiquidityPage] Need to fetch ${poolsNeedingFetch.length}/${poolsData.length} pools`);
+
+        // Use the batch API for better performance
+        const response = await fetch('/api/liquidity/get-pools-batch');
+        
+        if (!response.ok) {
+          throw new Error(`Batch API failed: ${response.status}`);
+        }
+
+        const batchData = await response.json();
+        
+        if (!batchData.success) {
+          throw new Error(`Batch API error: ${batchData.message}`);
+        }
+
+        console.log(`[LiquidityPage] Batch API returned data for ${batchData.pools.length} pools`);
+
+        // Process batch data and update pools
+        const updatedPools = poolsData.map(pool => {
+          const apiPoolId = getPoolSubgraphId(pool.id) || pool.id;
+          const batchPoolData = batchData.pools.find((p: any) => p.poolId.toLowerCase() === apiPoolId.toLowerCase());
+          
+          if (batchPoolData) {
+            // Calculate APR using actual dynamic fees from subgraph
+            let calculatedApr = "Loading...";
+            
+            if (typeof batchPoolData.fees24hUSD === 'number' && batchPoolData.tvlUSD > 0) {
+              // Use actual fees calculated from dynamic subgraph data
+              const yearlyFees = batchPoolData.fees24hUSD * 365;
+              const apr = (yearlyFees / batchPoolData.tvlUSD) * 100;
+              calculatedApr = apr.toFixed(2) + '%';
+            } else {
+              calculatedApr = "N/A";
+            }
+
+            const updatedStats = {
+              volume24hUSD: batchPoolData.volume24hUSD,
+              fees24hUSD: batchPoolData.fees24hUSD, // Now available in enhanced batch API
+              volume7dUSD: batchPoolData.volume7dUSD, // Now available in enhanced batch API
+              fees7dUSD: batchPoolData.fees7dUSD, // Now available in enhanced batch API
+              tvlUSD: batchPoolData.tvlUSD,
+              volume48hUSD: batchPoolData.volume48hUSD,
+              volumeChangeDirection: batchPoolData.volumeChangeDirection,
+              tvlYesterdayUSD: 0, // Not available in simplified batch
+              tvlChangeDirection: 'neutral' as const, // Not available in simplified batch
+              apr: calculatedApr,
+            };
+
+            // Cache the results
+            const statsCacheKey = getPoolStatsCacheKey(apiPoolId);
+            setToCache(statsCacheKey, updatedStats);
+            console.log(`[Cache SET] Cached batch stats for pool: ${pool.pair}`);
+
+            return { ...pool, ...updatedStats };
+          } else {
+            // Use cached data if available, otherwise return pool with loading states
+            const statsCacheKey = getPoolStatsCacheKey(apiPoolId);
+            const cachedStats = getFromCache<Partial<Pool>>(statsCacheKey);
+            
+            if (cachedStats) {
+              return { ...pool, ...cachedStats };
+            } else {
+              return {
+                ...pool,
+                volume24hUSD: undefined,
+                fees24hUSD: undefined,
+                volume7dUSD: undefined,
+                fees7dUSD: undefined,
+                tvlUSD: undefined,
+                volume48hUSD: undefined,
+                volumeChangeDirection: 'loading' as const,
+                tvlYesterdayUSD: 0,
+                tvlChangeDirection: 'loading' as const,
+                apr: "Loading...",
+              };
+            }
+          }
+        });
+
+        console.log("[LiquidityPage] Updated pools with batch data:", updatedPools);
+        setPoolsData(updatedPools);
+
+      } catch (error) {
+        console.error("[LiquidityPage] Error in batch fetch:", error);
+        
+        // Fallback to cached data for all pools
+        const fallbackPools = poolsData.map(pool => {
+          const apiPoolId = getPoolSubgraphId(pool.id) || pool.id;
+          const statsCacheKey = getPoolStatsCacheKey(apiPoolId);
+          const cachedStats = getFromCache<Partial<Pool>>(statsCacheKey);
+          
+          if (cachedStats) {
+            return { ...pool, ...cachedStats };
+          } else {
+            return {
+              ...pool,
+              volume24hUSD: undefined,
+              fees24hUSD: undefined,
+              volume7dUSD: undefined,
+              fees7dUSD: undefined,
+              tvlUSD: undefined,
+              volume48hUSD: undefined,
+              volumeChangeDirection: 'neutral' as const,
+              tvlYesterdayUSD: 0,
+              tvlChangeDirection: 'neutral' as const,
+              apr: "N/A",
+            };
+          }
+        });
+        
+        setPoolsData(fallbackPools);
       }
     };
 
-    const updateAllPoolStats = async () => {
-      console.log("Starting to fetch/update stats for all pools...");
-      const updatedPoolsPromises = poolsData.map(pool => 
-        fetchPoolStats(pool).then(stats => ({ ...pool, ...stats }))
-      );
-      const updatedPools = await Promise.all(updatedPoolsPromises);
-      console.log("Fetched stats, updating poolsData state:", updatedPools);
-      setPoolsData(updatedPools);
-    };
-
-    if (poolsData.length > 0) { // Only run if there are pools to update
-        updateAllPoolStats(); // Initial fetch
+    if (poolsData.length > 0) {
+      fetchAllPoolStatsBatch(); // Initial fetch
     }
 
     // Set up interval for periodic updates
     const intervalId = setInterval(() => {
-      console.log("[LiquidityPage] Interval: Refreshing pool stats...");
-      updateAllPoolStats();
+      console.log("[LiquidityPage] Interval: Refreshing pool stats with batch API...");
+      fetchAllPoolStatsBatch();
     }, 60000); // Refresh every 60 seconds
 
     // Cleanup interval on component unmount

@@ -87,7 +87,7 @@
         "address": "0xbaabfA3Ac2Ed3d0154e9E2002f94D8550A79bfa8"
       },
       "fee": 8388608,
-      "tickSpacing": 60,
+      "tickSpacing": 1,
       "hooks": "0x94ba380a340E020Dc29D7883f01628caBC975000",
       "enabled": true,
       "featured": false
@@ -106,7 +106,7 @@
         "address": "0x28c00749Cb9066d240fE1270b6D7f294b8b34D99"
       },
       "fee": 8388608,
-      "tickSpacing": 60,
+      "tickSpacing": 40,
       "hooks": "0x94ba380a340E020Dc29D7883f01628caBC975000",
       "enabled": true,
       "featured": false
@@ -125,7 +125,7 @@
         "address": "0x0000000000000000000000000000000000000000"
       },
       "fee": 8388608,
-      "tickSpacing": 60,
+      "tickSpacing": 50,
       "hooks": "0x94ba380a340E020Dc29D7883f01628caBC975000",
       "enabled": true,
       "featured": false
@@ -136,7 +136,12 @@
     "configuration": {
       "currentPools": "BTCRL/YUSDC (featured), YUSDC/mUSDT, mUSDT/aETH, mUSDT/ETH",
       "allPoolsUseFee": 8388608,
-      "allPoolsUseTickSpacing": 60,
+      "tickSpacings": {
+        "BTCRL/YUSDC": 60,
+        "YUSDC/mUSDT": 1,
+        "mUSDT/aETH": 40,
+        "mUSDT/ETH": 50
+      },
       "allPoolsUseHooks": "0x94ba380a340E020Dc29D7883f01628caBC975000"
     },
     "example": {

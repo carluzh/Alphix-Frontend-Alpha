@@ -3,7 +3,9 @@ import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadCont
 import { toast } from 'sonner';
 import { V4PositionPlanner } from '@uniswap/v4-sdk';
 import { Token } from '@uniswap/sdk-core';
-import { TOKEN_DEFINITIONS, TokenSymbol, V4_POSITION_MANAGER_ADDRESS, EMPTY_BYTES, V4_POSITION_MANAGER_ABI } from '@/lib/swap-constants';import { baseSepolia } from '@/lib/wagmiConfig';
+import { V4_POSITION_MANAGER_ADDRESS, EMPTY_BYTES, V4_POSITION_MANAGER_ABI } from '@/lib/swap-constants';
+import { getToken, TokenSymbol } from '@/lib/pools-config';
+import { baseSepolia } from '@/lib/wagmiConfig';
 import { getAddress, type Hex, BaseError } from 'viem';
 import JSBI from 'jsbi';
 
@@ -71,18 +73,18 @@ export function useBurnLiquidity({ onLiquidityBurned }: UseBurnLiquidityProps) {
     const toastId = toast.loading("Preparing burn transaction...");
 
     try {
-      const token0Def = TOKEN_DEFINITIONS[positionData.token0Symbol];
-      const token1Def = TOKEN_DEFINITIONS[positionData.token1Symbol];
+      const token0Def = getToken(positionData.token0Symbol);
+      const token1Def = getToken(positionData.token1Symbol);
 
       if (!token0Def || !token1Def) {
         throw new Error("Token definitions not found for one or both tokens in the position.");
       }
-      if (!token0Def.addressRaw || !token1Def.addressRaw) {
+      if (!token0Def.address || !token1Def.address) {
         throw new Error("Token addresses are missing in definitions.");
       }
 
-      const sdkToken0 = new Token(chainId, getAddress(token0Def.addressRaw), token0Def.decimals, token0Def.symbol);
-      const sdkToken1 = new Token(chainId, getAddress(token1Def.addressRaw), token1Def.decimals, token1Def.symbol);
+      const sdkToken0 = new Token(chainId, getAddress(token0Def.address), token0Def.decimals, token0Def.symbol);
+      const sdkToken1 = new Token(chainId, getAddress(token1Def.address), token1Def.decimals, token1Def.symbol);
 
       const planner = new V4PositionPlanner();
       

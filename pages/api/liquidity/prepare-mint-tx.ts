@@ -5,8 +5,8 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 
 import { position_manager_abi } from "../../../lib/abis/PositionManager_abi";
 import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from "../../../lib/abis/state_view_abi"; 
-import { TOKEN_DEFINITIONS, TokenSymbol, EMPTY_BYTES } from "../../../lib/swap-constants";
-import { TOKEN_DEFINITIONS as POOLS_TOKEN_DEFINITIONS } from "../../../lib/pools-config"; 
+import { EMPTY_BYTES } from "../../../lib/swap-constants";
+import { TOKEN_DEFINITIONS, TokenSymbol, getToken, getPositionManagerAddress, getStateViewAddress } from "../../../lib/pools-config";
 import { iallowance_transfer_abi } from "../../../lib/abis/IAllowanceTransfer_abi"; // For Permit2 allowance method
 
 import { publicClient } from "../../../lib/viemClient"; 
@@ -30,13 +30,10 @@ import {
     PERMIT_SIG_DEADLINE_DURATION_SECONDS, 
 } from "../../../lib/swap-constants";
 
-const POSITION_MANAGER_ADDRESS = getAddress("0x4b2c77d209d3405f41a037ec6c77f7f5b8e2ca80");
+const POSITION_MANAGER_ADDRESS = getPositionManagerAddress();
 const PERMIT2_ADDRESS = getAddress("0x000000000022D473030F116dDEE9F6B43aC78BA3"); // Permit2 contract address
-const STATE_VIEW_ADDRESS = getAddress("0x571291b572ed32ce6751a2cb2486ebee8defb9b4");
-const DEFAULT_HOOK_ADDRESS = getAddress("0x94ba380a340E020Dc29D7883f01628caBC975000"); 
+const STATE_VIEW_ADDRESS = getStateViewAddress();
 const ETHERS_ADDRESS_ZERO = "0x0000000000000000000000000000000000000000";
-const DEFAULT_FEE = 8388608;
-const DEFAULT_TICK_SPACING = 60;
 const SDK_MIN_TICK = -887272;
 const SDK_MAX_TICK = 887272;
 
@@ -154,7 +151,12 @@ export default async function handler(
         if (!isAddress(userAddress)) {
             return res.status(400).json({ message: "Invalid userAddress." });
         }
-        if (!POOLS_TOKEN_DEFINITIONS[token0Symbol] || !POOLS_TOKEN_DEFINITIONS[token1Symbol] || !POOLS_TOKEN_DEFINITIONS[inputTokenSymbol]) {
+        
+        const token0Config = getToken(token0Symbol);
+        const token1Config = getToken(token1Symbol);
+        const inputTokenConfig = getToken(inputTokenSymbol);
+
+        if (!token0Config || !token1Config || !inputTokenConfig) {
             return res.status(400).json({ message: "Invalid token symbol(s) provided." });
         }
         if (isNaN(parseFloat(inputAmount)) || parseFloat(inputAmount) <= 0) {
@@ -164,11 +166,8 @@ export default async function handler(
             return res.status(400).json({ message: "userTickLower and userTickUpper must be numbers." });
         }
 
-        const token0Config = POOLS_TOKEN_DEFINITIONS[token0Symbol];
-        const token1Config = POOLS_TOKEN_DEFINITIONS[token1Symbol];
-
-        const sdkToken0 = new Token(chainId, getAddress(token0Config.addressRaw), token0Config.decimals, token0Config.symbol);
-        const sdkToken1 = new Token(chainId, getAddress(token1Config.addressRaw), token1Config.decimals, token1Config.symbol);
+        const sdkToken0 = new Token(chainId, getAddress(token0Config.address), token0Config.decimals, token0Config.symbol);
+        const sdkToken1 = new Token(chainId, getAddress(token1Config.address), token1Config.decimals, token1Config.symbol);
         
         const inputTokenIsSdkToken0 = inputTokenSymbol === token0Symbol;
         const sdkInputToken = inputTokenIsSdkToken0 ? sdkToken0 : sdkToken1;
@@ -318,8 +317,8 @@ export default async function handler(
         }
 
         const tokensToCheck = [
-            { sdkToken: sortedToken0, requiredAmount: sdkCalculatedAmountSorted0_BigInt, symbol: POOLS_TOKEN_DEFINITIONS[sortedToken0.symbol as TokenSymbol]?.symbol || sortedToken0.symbol || "Token0" },
-            { sdkToken: sortedToken1, requiredAmount: sdkCalculatedAmountSorted1_BigInt, symbol: POOLS_TOKEN_DEFINITIONS[sortedToken1.symbol as TokenSymbol]?.symbol || sortedToken1.symbol || "Token1" }
+            { sdkToken: sortedToken0, requiredAmount: sdkCalculatedAmountSorted0_BigInt, symbol: getToken(sortedToken0.symbol as TokenSymbol)?.symbol || sortedToken0.symbol || "Token0" },
+            { sdkToken: sortedToken1, requiredAmount: sdkCalculatedAmountSorted1_BigInt, symbol: getToken(sortedToken1.symbol as TokenSymbol)?.symbol || sortedToken1.symbol || "Token1" }
         ];
 
         // Debug calculated amounts
@@ -327,9 +326,15 @@ export default async function handler(
         console.log(`[DEBUG] ${tokensToCheck[0].symbol}: ${tokensToCheck[0].requiredAmount} (${Number(tokensToCheck[0].requiredAmount) / Math.pow(10, tokensToCheck[0].sdkToken.decimals)} tokens)`);
         console.log(`[DEBUG] ${tokensToCheck[1].symbol}: ${tokensToCheck[1].requiredAmount} (${Number(tokensToCheck[1].requiredAmount) / Math.pow(10, tokensToCheck[1].sdkToken.decimals)} tokens)`);
 
+        // Check if we're dealing with native ETH
+        const hasNativeETH = sortedToken0.address === ETHERS_ADDRESS_ZERO || sortedToken1.address === ETHERS_ADDRESS_ZERO;
+        console.log(`[DEBUG] Pool has native ETH: ${hasNativeETH}`);
+
         // Check ERC20 allowances first - return early if any token needs ERC20 approval
+        // Skip this check for native ETH (address 0x0)
         for (const tokenInfo of tokensToCheck) {
             if (getAddress(tokenInfo.sdkToken.address) === ETHERS_ADDRESS_ZERO || tokenInfo.requiredAmount <= 0n) {
+                console.log(`[DEBUG] Skipping approval check for ${tokenInfo.symbol} - native ETH or zero amount`);
                 continue;
             }
 
@@ -354,6 +359,7 @@ export default async function handler(
 
         // Always check Permit2 allowances to determine if permits are actually needed
         // This ensures we create simple transactions when possible, even if permit data was provided
+        // Skip permit checks for native ETH
         const tokensNeedingPermits: Array<{
             token: Hex;
             amount: string;
@@ -366,7 +372,7 @@ export default async function handler(
 
         for (const tokenInfo of tokensToCheck) {
             if (getAddress(tokenInfo.sdkToken.address) === ETHERS_ADDRESS_ZERO || tokenInfo.requiredAmount <= 0n) {
-                console.log(`[DEBUG] Skipping ${tokenInfo.symbol} - zero address or zero amount`);
+                console.log(`[DEBUG] Skipping permit check for ${tokenInfo.symbol} - native ETH or zero amount`);
                 continue;
             }
 
@@ -494,6 +500,19 @@ export default async function handler(
         
         const encodedModifyLiquiditiesCallDataViem = methodParameters.calldata;
         console.log(`[DEBUG] Generated calldata length:`, encodedModifyLiquiditiesCallDataViem.length);
+
+        // Calculate transaction value for native ETH
+        let transactionValue = "0";
+        if (hasNativeETH) {
+            // If sortedToken0 is ETH, use its amount; otherwise use sortedToken1's amount
+            const ethAmount = sortedToken0.address === ETHERS_ADDRESS_ZERO 
+                ? sdkCalculatedAmountSorted0_BigInt 
+                : sdkCalculatedAmountSorted1_BigInt;
+            
+            transactionValue = ethAmount.toString();
+            console.log(`[DEBUG] Setting transaction value for native ETH: ${transactionValue} wei`);
+        }
+        
         console.log(`[DEBUG] Transaction ready for ${token0Symbol}/${token1Symbol}`);
 
         return res.status(200).json({
@@ -501,12 +520,12 @@ export default async function handler(
             transaction: {
                 to: POSITION_MANAGER_ADDRESS,
                 data: encodedModifyLiquiditiesCallDataViem, 
-                value: "0"
+                value: transactionValue
             },
             deadline: deadlineBigInt.toString(),
             details: {
-                token0: { address: sortedToken0.address, symbol: (POOLS_TOKEN_DEFINITIONS[sortedToken0.symbol as TokenSymbol]?.symbol || sortedToken0.symbol) as TokenSymbol, amount: sdkCalculatedAmountSorted0_BigInt.toString() },
-                token1: { address: sortedToken1.address, symbol: (POOLS_TOKEN_DEFINITIONS[sortedToken1.symbol as TokenSymbol]?.symbol || sortedToken1.symbol) as TokenSymbol, amount: sdkCalculatedAmountSorted1_BigInt.toString() },
+                token0: { address: sortedToken0.address, symbol: (getToken(sortedToken0.symbol as TokenSymbol)?.symbol || sortedToken0.symbol) as TokenSymbol, amount: sdkCalculatedAmountSorted0_BigInt.toString() },
+                token1: { address: sortedToken1.address, symbol: (getToken(sortedToken1.symbol as TokenSymbol)?.symbol || sortedToken1.symbol) as TokenSymbol, amount: sdkCalculatedAmountSorted1_BigInt.toString() },
                 liquidity: calculatedLiquidity_JSBI.toString(), 
                 finalTickLower,
                 finalTickUpper

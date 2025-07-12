@@ -16,13 +16,16 @@ interface SwapSuccessViewProps {
   displayFromToken: Token;
   displayToToken: Token;
   calculatedValues: {
-    fromTokenValue: string; // Only fromTokenValue and toTokenValue seem directly used from calculatedValues here
+    fromTokenAmount: string;
+    fromTokenValue: string;
+    toTokenAmount: string;
     toTokenValue: string;
-    // fromTokenAmount and toTokenAmount will come from swapTxInfo for display
+    fees: Array<{ name: string; value: string; type: string }>;
+    slippage: string;
   };
   swapTxInfo: SwapTxInfo | null;
-  handleChangeButton: () => void; // For the "Swap again" button
-  formatTokenAmountDisplay: (amount: string, symbol: string) => string; // For displaying amounts from swapTxInfo
+  handleChangeButton: () => void;
+  formatTokenAmountDisplay: (amount: string, token: Token) => string; // Updated to use Token objects
 }
 
 export function SwapSuccessView({ 
@@ -40,10 +43,10 @@ export function SwapSuccessView({
           <Image src={displayFromToken.icon} alt={displayFromToken.symbol} width={40} height={40} className="rounded-full"/>
           <div className="text-left flex flex-col">
             <div className="font-medium flex items-baseline">
-              {(swapTxInfo?.fromAmount ? formatTokenAmountDisplay(swapTxInfo.fromAmount, displayFromToken.symbol) : "0") === "< 0.001" ? (
-                  <span className="text-sm text-muted-foreground">{swapTxInfo?.fromAmount ? formatTokenAmountDisplay(swapTxInfo.fromAmount, displayFromToken.symbol) : "0"}</span>
+              {(swapTxInfo?.fromAmount ? formatTokenAmountDisplay(swapTxInfo.fromAmount, displayFromToken) : "0") === "< 0.001" ? (
+                  <span className="text-sm text-muted-foreground">{swapTxInfo?.fromAmount ? formatTokenAmountDisplay(swapTxInfo.fromAmount, displayFromToken) : "0"}</span>
               ) : (
-                  <span>{swapTxInfo?.fromAmount ? formatTokenAmountDisplay(swapTxInfo.fromAmount, displayFromToken.symbol) : "0"}</span>
+                  <span>{swapTxInfo?.fromAmount ? formatTokenAmountDisplay(swapTxInfo.fromAmount, displayFromToken) : "0"}</span>
               )}
               <span className="ml-1 text-sm text-muted-foreground">{swapTxInfo?.fromSymbol || displayFromToken.symbol}</span>
             </div>
@@ -54,10 +57,10 @@ export function SwapSuccessView({
         <Button variant="ghost" className="flex items-center gap-3 p-0 h-auto hover:bg-transparent" onClick={handleChangeButton}>
           <div className="text-right flex flex-col">
             <div className="font-medium flex items-baseline">
-              {(swapTxInfo?.toAmount ? formatTokenAmountDisplay(swapTxInfo.toAmount, displayToToken.symbol) : "0") === "< 0.001" ? (
-                <span className="text-sm text-muted-foreground">{swapTxInfo?.toAmount ? formatTokenAmountDisplay(swapTxInfo.toAmount, displayToToken.symbol) : "0"}</span>
+              {(swapTxInfo?.toAmount ? formatTokenAmountDisplay(swapTxInfo.toAmount, displayToToken) : "0") === "< 0.001" ? (
+                <span className="text-sm text-muted-foreground">{swapTxInfo?.toAmount ? formatTokenAmountDisplay(swapTxInfo.toAmount, displayToToken) : "0"}</span>
               ) : (
-                <span>{swapTxInfo?.toAmount ? formatTokenAmountDisplay(swapTxInfo.toAmount, displayToToken.symbol) : "0"}</span>
+                <span>{swapTxInfo?.toAmount ? formatTokenAmountDisplay(swapTxInfo.toAmount, displayToToken) : "0"}</span>
               )}
               <span className="ml-1 text-sm text-muted-foreground">{swapTxInfo?.toSymbol || displayToToken.symbol}</span>
             </div>

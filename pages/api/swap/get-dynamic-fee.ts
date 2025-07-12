@@ -1,8 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getAddress, type Address } from 'viem';
 import { publicClient } from '../../../lib/viemClient';
-import { V4_POOL_HOOKS_RAW, V4_POOL_TICK_SPACING } from '../../../lib/swap-constants'; // Removed V4_POOL_FEE as it's not directly used here for PoolKey arg
-import { getToken, createTokenSDK } from '../../../lib/pools-config';
+import { getToken, createTokenSDK, getPoolByTokens } from '../../../lib/pools-config';
 import { Token } from '@uniswap/sdk-core';
 
 // ABI for the getDynamicFee function expecting a PoolKey struct
@@ -50,6 +49,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             return res.status(400).json({ message: 'Invalid token symbol(s).' });
         }
 
+        // Find the pool configuration for this token pair
+        const poolConfig = getPoolByTokens(fromTokenSymbol, toTokenSymbol);
+        if (!poolConfig) {
+            return res.status(400).json({ message: `No pool found for token pair ${fromTokenSymbol}/${toTokenSymbol}` });
+        }
+
         const tokenA = createTokenSDK(fromTokenSymbol, Number(chainId));
         const tokenB = createTokenSDK(toTokenSymbol, Number(chainId));
         
@@ -60,26 +65,30 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const token0ForPoolKey = tokenA.sortsBefore(tokenB) ? tokenA : tokenB;
         const token1ForPoolKey = tokenA.sortsBefore(tokenB) ? tokenB : tokenA;
 
-        // Construct the PoolKey struct argument
+        // Construct the PoolKey struct argument using actual pool configuration
         const poolKeyArgument = {
             currency0: getAddress(token0ForPoolKey.address),
             currency1: getAddress(token1ForPoolKey.address),
-            fee: DYNAMIC_FEE_FLAG, // Use the DYNAMIC_FEE_FLAG
-            tickSpacing: V4_POOL_TICK_SPACING, // Ensure this is int24 compatible (e.g., 60)
-            hooks: getAddress(V4_POOL_HOOKS_RAW),
+            fee: DYNAMIC_FEE_FLAG, // Use the DYNAMIC_FEE_FLAG to indicate we want dynamic fee
+            tickSpacing: poolConfig.tickSpacing, // Use actual pool tick spacing
+            hooks: getAddress(poolConfig.hooks), // Use actual pool hooks address
         };
         
-        console.log(`Fetching dynamic fee from hook: ${V4_POOL_HOOKS_RAW} with PoolKey:`, poolKeyArgument);
+        console.log(`Fetching dynamic fee for pool ${poolConfig.id} with PoolKey:`, poolKeyArgument);
 
         const dynamicFee = await publicClient.readContract({
-            address: getAddress(V4_POOL_HOOKS_RAW),
+            address: getAddress(poolConfig.hooks), // Use the pool's hook address
             abi: hookAbi,
             functionName: 'getDynamicFee',
             args: [poolKeyArgument], // Pass the PoolKey struct as an array with one element
         });
 
-        console.log("Dynamic fee fetched from hook:", dynamicFee);
-        res.status(200).json({ dynamicFee: dynamicFee.toString() });
+        console.log(`Dynamic fee fetched for pool ${poolConfig.id}:`, dynamicFee);
+        res.status(200).json({ 
+            dynamicFee: dynamicFee.toString(),
+            poolId: poolConfig.id,
+            poolName: poolConfig.name 
+        });
 
     } catch (error: any) {
         console.error("Error in /api/swap/get-dynamic-fee:", error);

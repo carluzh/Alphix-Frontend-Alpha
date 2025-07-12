@@ -131,8 +131,12 @@ export const V4_POSITION_MANAGER_ABI = position_manager_abi;
 // --- V4 Quoter ABI ---
 // Based on Uniswap V4 documentation: https://docs.uniswap.org/contracts/v4/reference/periphery/lens/V4Quoter
 // QuoteExactSingleParams struct: { poolKey: { currency0, currency1, fee, tickSpacing, hooks }, zeroForOne, exactAmount, hookData }
+// QuoteExactParams struct: { currencyIn, path: PathKey[], amountIn }
+// PathKey struct: { intermediateCurrency, fee, tickSpacing, hooks, hookData }
 export const V4_QUOTER_ABI_STRINGS = [
   "function quoteExactInputSingle(((address,address,uint24,int24,address),bool,uint128,bytes)) external returns (uint256, uint256)",
-  "function quoteExactOutputSingle(((address,address,uint24,int24,address),bool,uint128,bytes)) external returns (uint256, uint256)"
+  "function quoteExactOutputSingle(((address,address,uint24,int24,address),bool,uint128,bytes)) external returns (uint256, uint256)",
+  "function quoteExactInput((address,(address,uint24,int24,address,bytes)[],uint128)) external returns (uint256, uint256)",
+  "function quoteExactOutput((address,(address,uint24,int24,address,bytes)[],uint128)) external returns (uint256, uint256)"
 ] as const;
 export const V4QuoterAbi: Abi = parseAbi(V4_QUOTER_ABI_STRINGS);

@@ -1,4 +1,7 @@
 import type { NextRequest } from 'next/server';
+import { batchGetTokenPrices, calculateTotalUSD, calculateSwapVolumeUSD } from '../../../../../lib/price-service';
+import { getTokenDecimals } from '../../../../../lib/pools-config';
+import { formatUnits } from 'viem';
 
 // Define the structure of the chart data points
 interface ChartDataPoint {
@@ -18,9 +21,9 @@ const cache = new Map<string, { data: PoolChartData; timestamp: number }>();
 // const CACHE_DURATION_MS = 24 * 60 * 60 * 1000; // Old: 24 hours from last fetch
 
 // Subgraph URL - ensure this is correct
-const SUBGRAPH_URL = "https://api.studio.thegraph.com/query/111443/alphix-v-4/version/latest";
+const SUBGRAPH_URL = "https://api.studio.thegraph.com/query/111443/alphix-test/version/latest";
 
-// Corrected GraphQL query based on schema and Query 1 response
+// Updated GraphQL query for new schema
 const GET_POOL_DAILY_HISTORY_QUERY = `
   query GetPoolDailyHistory($poolId: Bytes!) {
     poolDayDatas(
@@ -31,9 +34,20 @@ const GET_POOL_DAILY_HISTORY_QUERY = `
     ) {
       id
       date      
-      volumeUSD 
-      feesUSD   
-      tvlUSD    
+      volumeToken0
+      volumeToken1
+      tvlToken0
+      tvlToken1
+      pool {
+        currency0 {
+          symbol
+          decimals
+        }
+        currency1 {
+          symbol
+          decimals
+        }
+      }
     }
   }
 `;
@@ -115,11 +129,52 @@ export async function GET(
       return Response.json(emptyData);
     }
 
+    // Extract token symbols for price fetching
+    const tokenSymbols = rawDailyData.length > 0 ? [
+      rawDailyData[0].pool.currency0.symbol,
+      rawDailyData[0].pool.currency1.symbol
+    ] : [];
+
+    // Get token prices with fallbacks
+    const tokenPrices = tokenSymbols.length > 0 ? await batchGetTokenPrices(tokenSymbols) : {};
+
     const processedChartData: ChartDataPoint[] = rawDailyData.map((dailyEntry: any) => {
+      const token0Symbol = dailyEntry.pool.currency0.symbol;
+      const token1Symbol = dailyEntry.pool.currency1.symbol;
+      
+      // Get prices without fallbacks to see real errors
+      const token0Price = tokenPrices[token0Symbol];
+      const token1Price = tokenPrices[token1Symbol];
+      
+      if (!token0Price || !token1Price) {
+        console.error(`Missing prices for chart data ${friendlyPoolId}:`, {
+          token0Symbol,
+          token1Symbol,
+          token0Price,
+          token1Price,
+          availablePrices: Object.keys(tokenPrices)
+        });
+        throw new Error(`Missing price data for chart: ${token0Symbol}=${token0Price}, ${token1Symbol}=${token1Price}`);
+      }
+      
+      const volumeUSD = calculateSwapVolumeUSD(
+        dailyEntry.volumeToken0 || "0",
+        dailyEntry.volumeToken1 || "0",
+        token0Price,
+        token1Price
+      );
+
+      const tvlUSD = calculateTotalUSD(
+        dailyEntry.tvlToken0 || "0",
+        dailyEntry.tvlToken1 || "0",
+        token0Price,
+        token1Price
+      );
+
       return {
         date: new Date(parseInt(dailyEntry.date) * 1000).toISOString().split('T')[0],
-        volumeUSD: parseFloat(dailyEntry.volumeUSD || "0"),
-        tvlUSD: parseFloat(dailyEntry.tvlUSD || "0"), // Added tvlUSD back
+        volumeUSD,
+        tvlUSD,
       };
     }).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()); 
 
