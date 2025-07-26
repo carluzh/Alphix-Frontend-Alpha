@@ -16,17 +16,35 @@ export const UNIVERSAL_ROUTER_ADDRESS: Address = getAddress(UNIVERSAL_ROUTER_ADD
 
 // --- TOKEN DEFINITIONS ---
 export const TOKEN_DEFINITIONS = {
-    'BTCRL': {
-        addressRaw: '0x13c26fb69d48ED5a72Ce3302FC795082E2427F4D',
+    'aUSDC': {
+        addressRaw: '0x663cf82e49419a3dc88eec65c2155b4b2d0fa335',
+        decimals: 6,
+        symbol: 'aUSDC',
+        displayDecimals: 2
+    },
+    'aUSDT': {
+        addressRaw: '0xbaabfa3ac2ed3d0154e9e2002f94d8550a79bfa8',
+        decimals: 6,
+        symbol: 'aUSDT',
+        displayDecimals: 2
+    },
+    'aETH': {
+        addressRaw: '0x28c00749cb9066d240fe1270b6d7f294b8b34d99',
+        decimals: 18,
+        symbol: 'aETH',
+        displayDecimals: 4
+    },
+    'aBTC': {
+        addressRaw: '0x13c26fb69d48ed5a72ce3302fc795082e2427f4d',
         decimals: 8,
-        symbol: 'BTCRL',
+        symbol: 'aBTC',
         displayDecimals: 6
     },
-    'YUSDC': {
-        addressRaw: '0x663cF82e49419A3Dc88EEc65c2155b4B2D0fA335',
-        decimals: 6,
-        symbol: 'YUSDC',
-        displayDecimals: 2
+    'ETH': {
+        addressRaw: '0x0000000000000000000000000000000000000000',
+        decimals: 18,
+        symbol: 'ETH',
+        displayDecimals: 4
     }
 } as const;
 
@@ -42,9 +60,9 @@ export interface TokenDefinition {
 }
 
 // --- V4 Pool Configuration ---
-export const V4_POOL_FEE = 8388608; // Updated to match fee from Initialize event log for PoolId 0xBCC2...
+export const V4_POOL_FEE = 2000; // Updated to match new fee from pools.json
 export const V4_POOL_TICK_SPACING = 60;
-export const V4_POOL_HOOKS_RAW = '0x94ba380a340E020Dc29D7883f01628caBC975000';
+export const V4_POOL_HOOKS_RAW = '0xd450f7f8e4C11EE8620a349f73e7aC3905Dfd000';
 export const V4_POOL_HOOKS: Address = getAddress(V4_POOL_HOOKS_RAW);
 
 // --- Timing Constants (in seconds) ---

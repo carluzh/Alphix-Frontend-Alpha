@@ -160,7 +160,7 @@ export function AddLiquidityForm({
       }
     }
     // Default fallback
-    return { token0: 'YUSDC' as TokenSymbol, token1: 'BTCRL' as TokenSymbol };
+    return { token0: 'aUSDC' as TokenSymbol, token1: 'aUSDT' as TokenSymbol };
   };
 
   const initialTokens = getInitialTokens();
@@ -200,7 +200,7 @@ export function AddLiquidityForm({
   const [enhancedAprDisplay, setEnhancedAprDisplay] = useState<string>(poolApr || "Yield N/A");
   const [capitalEfficiencyFactor, setCapitalEfficiencyFactor] = useState<number>(1);
   const [initialDefaultApplied, setInitialDefaultApplied] = useState(false);
-  const [baseTokenForPriceDisplay, setBaseTokenForPriceDisplay] = useState<TokenSymbol>('YUSDC');
+  const [baseTokenForPriceDisplay, setBaseTokenForPriceDisplay] = useState<TokenSymbol>('aUSDC');
   
   // UI flow management
   const [depositStep, setDepositStep] = useState<'range' | 'amount'>('range');

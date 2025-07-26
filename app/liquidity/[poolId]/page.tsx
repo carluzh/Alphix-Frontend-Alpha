@@ -117,9 +117,9 @@ const calculateTotalValueUSD = (position: ProcessedPosition) => {
   
   // For this demo, let's use mock prices
   const mockPrices: Record<string, number> = {
-    YUSDC: 1.0,
-    BTCRL: 61000.0,
-    mUSDT: 1.0,
+    aUSDC: 1.0,
+    aUSDT: 1.0,
+    aBTC: 61000.0,
     aETH: 2400.0,
     ETH: 2400.0,
     // Add other token prices as needed

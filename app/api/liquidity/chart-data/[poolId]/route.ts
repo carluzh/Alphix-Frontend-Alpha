@@ -62,8 +62,8 @@ const getSubgraphPoolId = (friendlyPoolId: string): string => {
   }
   
   // Fallback for legacy handling
-  if (friendlyPoolId.toLowerCase() === 'yusdc-btcrl') {
-    return "0xbcc20db9b797e211e508500469e553111c6fa8d80f7896e6db60167bcf18ce13";
+  if (friendlyPoolId.toLowerCase() === 'ausdc-ausdt') {
+    return "0xfaa0e80397dda369eb68f6f67c9cd4d4884841f1417078e20844addc11170127";
   }
   
   // If no mapping found, assume it's already a hex ID

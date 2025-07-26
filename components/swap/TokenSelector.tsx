@@ -74,10 +74,10 @@ const getTokenPriceMapping = (tokenSymbol: string): 'BTC' | 'USDC' | 'ETH' => {
   
   // Map based on token names and symbols from pools.json
   switch (tokenSymbol) {
-    case 'BTCRL':
+    case 'aBTC':
       return 'BTC';
-    case 'YUSDC':
-    case 'mUSDT':
+    case 'aUSDC':
+    case 'aUSDT':
       return 'USDC'; // Stablecoins
     case 'aETH':
     case 'ETH':

@@ -88,10 +88,10 @@ const MaxUint160 = BigInt('0xffffffffffffffffffffffffffffffffffffffff'); // 2**1
 const getTokenPriceMapping = (tokenSymbol: string): 'BTC' | 'USDC' | 'ETH' => {
   // Map our tokens to coingecko price types
   switch (tokenSymbol) {
-    case 'BTCRL':
+    case 'aBTC':
       return 'BTC';
-    case 'YUSDC':
-    case 'mUSDT':
+    case 'aUSDC':
+    case 'aUSDT':
       return 'USDC'; // Using USDC price for all USD stablecoins
     case 'aETH':
     case 'ETH':
@@ -110,7 +110,7 @@ const createTokenFromConfig = (tokenSymbol: string, prices: { BTC: number; USDC:
   const usdPrice = prices[priceType] || 1;
   
   // Ensure displayDecimals has a proper fallback
-  const displayDecimals = tokenConfig.displayDecimals ?? (tokenSymbol === 'BTCRL' ? 8 : 4);
+      const displayDecimals = tokenConfig.displayDecimals ?? (tokenSymbol === 'aBTC' ? 8 : 4);
   
   return {
     address: tokenConfig.address as Address,
@@ -146,11 +146,11 @@ export interface Token {
   usdPrice: number; // Fixed USD price
 }
 
-// Initialize default tokens (YUSDC and BTCRL as defaults)
+    // Initialize default tokens (aUSDC and aUSDT as defaults)
 const getInitialTokens = (prices?: { BTC: number; USDC: number; ETH: number }) => {
   const availableTokens = getAvailableTokens(prices);
-  const defaultFrom = availableTokens.find(t => t.symbol === 'YUSDC') || availableTokens[0];
-  const defaultTo = availableTokens.find(t => t.symbol === 'BTCRL') || availableTokens[1];
+  const defaultFrom = availableTokens.find(t => t.symbol === 'aUSDC') || availableTokens[0];
+  const defaultTo = availableTokens.find(t => t.symbol === 'aUSDT') || availableTokens[1];
   
   return { defaultFrom, defaultTo, availableTokens };
 };
@@ -999,8 +999,8 @@ export function SwapInterface() {
     const tempLogicalToken = fromToken; // This is just swapping our state for YUSD/BTCRL
     const tempDisplayAmount = fromAmount;
 
-    setFromToken(toToken); // e.g. YUSD becomes BTCRL
-    setToToken(tempLogicalToken); // e.g. BTCRL becomes YUSD
+    setFromToken(toToken); // e.g. aUSDC becomes aUSDT
+    setToToken(tempLogicalToken); // e.g. aUSDT becomes aUSDC
     
     setFromAmount(toAmount); // Old toAmount becomes new fromAmount for input field
     // toAmount will be recalculated by useEffect based on the new fromAmount and swapped tokens
@@ -1603,7 +1603,7 @@ export function SwapInterface() {
   };
 
   // --- RENDER LOGIC --- 
-  // Determine which token is YUSD and which is BTCRL for display purposes, regardless of from/to state
+        // Determine which token is aUSDC and which is aUSDT for display purposes, regardless of from/to state
   const displayFromToken = fromToken; // This is what's in the 'Sell' slot
   const displayToToken = toToken;   // This is what's in the 'Buy' slot
 

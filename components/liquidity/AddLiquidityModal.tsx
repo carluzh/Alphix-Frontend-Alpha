@@ -114,7 +114,7 @@ export function AddLiquidityModal({
       }
     }
     // Default fallback
-    return { token0: 'YUSDC' as TokenSymbol, token1: 'BTCRL' as TokenSymbol };
+    return { token0: 'aUSDC' as TokenSymbol, token1: 'aUSDT' as TokenSymbol };
   };
 
   const initialTokens = getInitialTokens();
@@ -220,8 +220,8 @@ export function AddLiquidityModal({
       const token0Def = TOKEN_DEFINITIONS[token0Symbol];
       const token1Def = TOKEN_DEFINITIONS[token1Symbol];
       const displayDecimals = baseTokenForPriceDisplay === token0Symbol 
-        ? (token0Def?.displayDecimals ?? (token0Symbol === 'BTCRL' ? 8 : 4)) 
-        : (token1Def?.displayDecimals ?? (token1Symbol === 'BTCRL' ? 8 : 4));
+        ? (token0Def?.displayDecimals ?? (token0Symbol === 'aBTC' ? 8 : 4)) 
+        : (token1Def?.displayDecimals ?? (token1Symbol === 'aBTC' ? 8 : 4));
 
       if (minTickDomain === maxTickDomain) {
         // Simplified: just show one label if domain is a single point
@@ -841,8 +841,8 @@ export function AddLiquidityModal({
   }, [amount0, amount1, token0Symbol, token1Symbol, calculatedData, token0BalanceData, token1BalanceData]);
 
   const resetForm = () => {
-    setToken0Symbol('YUSDC');
-    setToken1Symbol('BTCRL');
+    setToken0Symbol('aUSDC');
+    setToken1Symbol('aUSDT');
     setAmount0("");
     setAmount1("");
     setTickLower(sdkMinTick.toString());
@@ -1251,8 +1251,8 @@ export function AddLiquidityModal({
     let valForMinInput: number | null = null;
     let valForMaxInput: number | null = null;
 
-    const decimalsForToken0Display = TOKEN_DEFINITIONS[token0Symbol]?.displayDecimals ?? (token0Symbol === 'BTCRL' ? 8 : 4);
-    const decimalsForToken1Display = TOKEN_DEFINITIONS[token1Symbol]?.displayDecimals ?? (token1Symbol === 'BTCRL' ? 8 : 4);
+          const decimalsForToken0Display = TOKEN_DEFINITIONS[token0Symbol]?.displayDecimals ?? (token0Symbol === 'aBTC' ? 8 : 4);
+      const decimalsForToken1Display = TOKEN_DEFINITIONS[token1Symbol]?.displayDecimals ?? (token1Symbol === 'aBTC' ? 8 : 4);
 
     const rawApiPriceAtTickLower = calculatedData?.priceAtTickLower ? parseFloat(calculatedData.priceAtTickLower) : null;
     const rawApiPriceAtTickUpper = calculatedData?.priceAtTickUpper ? parseFloat(calculatedData.priceAtTickUpper) : null;

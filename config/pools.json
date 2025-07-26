@@ -11,38 +11,43 @@
     "positionManager": "0x4b2c77d209d3405f41a037ec6c77f7f5b8e2ca80",
     "stateView": "0x571291b572ed32ce6751a2cb2486ebee8defb9b4"
   },
+  "hooks": {
+    "alphixHookId": "0xd450f7f8e4C11EE8620a349f73e7aC3905Dfd000"
+  },
   "tokens": {
-    "BTCRL": {
-      "symbol": "BTCRL",
-      "name": "Bitcoin Carl",
-      "address": "0x13c26fb69d48ED5a72Ce3302FC795082E2427F4D",
-      "decimals": 8,
-      "displayDecimals": 6,
-      "icon": "/BTCRL.png"
-    },
-    "YUSDC": {
-      "symbol": "YUSDC", 
-      "name": "Yanis USDC",
-      "address": "0x663cF82e49419A3Dc88EEc65c2155b4B2D0fA335",
+    "aUSDC": {
+      "symbol": "aUSDC",
+      "name": "Alphix USDC",
+      "address": "0x24429b8f2C8ebA374Dd75C0a72BCf4dF4C545BeD",
       "decimals": 6,
       "displayDecimals": 2,
-      "icon": "/YUSD.png"
+      "icon": "/aUSDC.svg",
+      "usdPrice": "1.0"
     },
-    "mUSDT": {
-      "symbol": "mUSDT",
-      "name": "Marina USDT",
-      "address": "0xbaabfA3Ac2Ed3d0154e9E2002f94D8550A79bfa8",
+    "aUSDT": {
+      "symbol": "aUSDT",
+      "name": "Alphix USDT",
+      "address": "0x9F785fEb65DBd0170bd6Ca1A045EEda44ae9b4dC",
       "decimals": 6,
       "displayDecimals": 2,
-      "icon": "/mUSDT.svg"
+      "icon": "/aUSDT.svg",
+      "usdPrice": "1.0"
     },
     "aETH": {
       "symbol": "aETH",
-      "name": "Aurelia Ethereum",
-      "address": "0x28c00749Cb9066d240fE1270b6D7f294b8b34D99",
+      "name": "Alphix Ethereum",
+      "address": "0xE7711aa6557A69592520Bbe7D704D64438f160e7",
       "decimals": 18,
       "displayDecimals": 4,
       "icon": "/aETH.svg"
+    },
+    "aBTC": {
+      "symbol": "aBTC",
+      "name": "Alphix Bitcoin",
+      "address": "0x9d5F910c91E69ADDDB06919825305eFEa5c9c604",
+      "decimals": 8,
+      "displayDecimals": 6,
+      "icon": "/aBTC.svg"
     },
     "ETH": {
       "symbol": "ETH",
@@ -55,118 +60,109 @@
   },
   "pools": [
     {
-      "id": "BTCRL-YUSDC-8388608",
-      "name": "BTCRL/YUSDC",
-      "description": "Bitcoin Carl / Yanis USDC pool",
-      "subgraphId": "0xbcc20db9b797e211e508500469e553111c6fa8d80f7896e6db60167bcf18ce13",
+      "id": "aeth-musdt-dynamic",
+      "name": "aETH/aUSDT",
+      "description": "Alphix Ethereum / Alphix USDT pool",
+      "subgraphId": "0x4e1b037b56e13bea1dfe20e8f592b95732cc52b5b10777b9f9bea856c145e7c7",
       "currency0": {
-        "symbol": "BTCRL",
-        "address": "0x13c26fb69d48ED5a72Ce3302FC795082E2427F4D"
+        "symbol": "aUSDT",
+        "address": "0x9F785fEb65DBd0170bd6Ca1A045EEda44ae9b4dC"
       },
       "currency1": {
-        "symbol": "YUSDC", 
-        "address": "0x663cF82e49419A3Dc88EEc65c2155b4B2D0fA335"
+        "symbol": "aETH", 
+        "address": "0xE7711aa6557A69592520Bbe7D704D64438f160e7"
       },
       "fee": 8388608,
-      "tickSpacing": 60,
-      "hooks": "0x94ba380a340E020Dc29D7883f01628caBC975000",
+      "tickSpacing": 100,
+      "hooks": "0xd450f7f8e4C11EE8620a349f73e7aC3905Dfd000",
       "enabled": true,
       "featured": true
     },
     {
-      "id": "YUSDC-mUSDT-8388608",
-      "name": "YUSDC/mUSDT",
-      "description": "Yanis USDC / Marina USDT pool",
-      "subgraphId": "0xc176e54fee5a41917ae5244d8235e0bda1885de86b47f540a09552119d832e6d",
+      "id": "btcrl-yusdc-dynamic",
+      "name": "aBTC/aUSDC",
+      "description": "Alphix Bitcoin / Alphix USDC pool",
+      "subgraphId": "0x8392f09ccc3c387d027d189f13a1f1f2e9d73f34011191a3d58157b9b2bf8bdd",
       "currency0": {
-        "symbol": "YUSDC",
-        "address": "0x663cF82e49419A3Dc88EEc65c2155b4B2D0fA335"
+        "symbol": "aUSDC",
+        "address": "0x24429b8f2C8ebA374Dd75C0a72BCf4dF4C545BeD"
       },
       "currency1": {
-        "symbol": "mUSDT", 
-        "address": "0xbaabfA3Ac2Ed3d0154e9E2002f94D8550A79bfa8"
+        "symbol": "aBTC", 
+        "address": "0x9d5F910c91E69ADDDB06919825305eFEa5c9c604"
+      },
+      "fee": 8388608,
+      "tickSpacing": 80,
+      "hooks": "0xd450f7f8e4C11EE8620a349f73e7aC3905Dfd000",
+      "enabled": true,
+      "featured": false
+    },
+    {
+      "id": "yusdc-musdt-dynamic",
+      "name": "aUSDC/aUSDT", 
+      "description": "Alphix USDC / Alphix USDT pool",
+      "subgraphId": "0xfaa0e80397dda369eb68f6f67c9cd4d4884841f1417078e20844addc11170127",
+      "currency0": {
+        "symbol": "aUSDC",
+        "address": "0x24429b8f2C8ebA374Dd75C0a72BCf4dF4C545BeD"
+      },
+      "currency1": {
+        "symbol": "aUSDT", 
+        "address": "0x9F785fEb65DBd0170bd6Ca1A045EEda44ae9b4dC"
       },
       "fee": 8388608,
       "tickSpacing": 1,
-      "hooks": "0x94ba380a340E020Dc29D7883f01628caBC975000",
+      "hooks": "0xd450f7f8e4C11EE8620a349f73e7aC3905Dfd000",
       "enabled": true,
       "featured": false
     },
     {
-      "id": "mUSDT-aETH-8388608",
-      "name": "mUSDT/aETH",
-      "description": "Marina USDT / Aurelia Ethereum pool",
-      "subgraphId": "0x60F36C23D5131AE2EA1CD668AE4013081FD24B9CF94190BB6E08ECE00B8DC27C",
+      "id": "eth-musdt-dynamic",
+      "name": "ETH/aUSDT",
+      "description": "Ethereum / Alphix USDT pool",
+      "subgraphId": "0xe6a2c6909de49149dced232f472247979fdc098cd2de74b0923e3cefb5602c15",
       "currency0": {
-        "symbol": "mUSDT",
-        "address": "0xbaabfA3Ac2Ed3d0154e9E2002f94D8550A79bfa8"
-      },
-      "currency1": {
-        "symbol": "aETH", 
-        "address": "0x28c00749Cb9066d240fE1270b6D7f294b8b34D99"
-      },
-      "fee": 8388608,
-      "tickSpacing": 40,
-      "hooks": "0x94ba380a340E020Dc29D7883f01628caBC975000",
-      "enabled": true,
-      "featured": false
-    },
-    {
-      "id": "mUSDT-ETH-8388608",
-      "name": "mUSDT/ETH",
-      "description": "Marina USDT / Ethereum pool",
-      "subgraphId": "0xB0679FC770CC387A0DE3099368FD7AD8BD0EFB599525C40F3586AFF55D797EB1",
-      "currency0": {
-        "symbol": "mUSDT",
-        "address": "0xbaabfA3Ac2Ed3d0154e9E2002f94D8550A79bfa8"
-      },
-      "currency1": {
         "symbol": "ETH", 
         "address": "0x0000000000000000000000000000000000000000"
       },
+      "currency1": {
+        "symbol": "aUSDT", 
+        "address": "0x9F785fEb65DBd0170bd6Ca1A045EEda44ae9b4dC"
+      },
       "fee": 8388608,
-      "tickSpacing": 50,
-      "hooks": "0x94ba380a340E020Dc29D7883f01628caBC975000",
+      "tickSpacing": 45,
+      "hooks": "0xd450f7f8e4C11EE8620a349f73e7aC3905Dfd000",
+      "enabled": true,
+      "featured": false
+    },
+    {
+      "id": "btc-eth-dynamic",
+      "name": "aBTC/aETH",
+      "description": "Alphix Bitcoin / Alphix Ethereum pool",
+      "subgraphId": "0xe9b5f2692da366148c42074373f37d00f368edcae46bcf7e39dd1aab5207d7c2",
+      "currency0": {
+        "symbol": "aBTC",
+        "address": "0x9d5F910c91E69ADDDB06919825305eFEa5c9c604"
+      },
+      "currency1": {
+        "symbol": "aETH", 
+        "address": "0xE7711aa6557A69592520Bbe7D704D64438f160e7"
+      },
+      "fee": 8388608,
+      "tickSpacing": 60,
+      "hooks": "0xd450f7f8e4C11EE8620a349f73e7aC3905Dfd000",
       "enabled": true,
       "featured": false
     }
   ],
+  "fees": {
+    "initialFee": 8388608,
+    "initialTargetRatio": "1000000000000000000",
+    "currentRatio": "700000000000000000"
+  },
   "_comments": {
-    "addingNewPools": "To add a new pool, simply add a new token to the 'tokens' section and a new pool entry here. The system will automatically pick it up!",
-    "configuration": {
-      "currentPools": "BTCRL/YUSDC (featured), YUSDC/mUSDT, mUSDT/aETH, mUSDT/ETH",
-      "allPoolsUseFee": 8388608,
-      "tickSpacings": {
-        "BTCRL/YUSDC": 60,
-        "YUSDC/mUSDT": 1,
-        "mUSDT/aETH": 40,
-        "mUSDT/ETH": 50
-      },
-      "allPoolsUseHooks": "0x94ba380a340E020Dc29D7883f01628caBC975000"
-    },
-    "example": {
-      "newToken": {
-        "WETH": {
-          "symbol": "WETH",
-          "name": "Wrapped Ethereum", 
-          "address": "0xNEW_TOKEN_ADDRESS",
-          "decimals": 18,
-          "displayDecimals": 4,
-          "icon": "/WETH.png"
-        }
-      },
-      "newPool": {
-        "id": "WETH-mUSDT-8388608",
-        "name": "WETH/mUSDT",
-        "description": "Wrapped Ethereum / Marina USDT pool",
-        "currency0": { "symbol": "WETH", "address": "0xNEW_TOKEN_ADDRESS" },
-        "currency1": { "symbol": "mUSDT", "address": "0xbaabfA3Ac2Ed3d0154e9E2002f94D8550A79bfa8" },
-        "fee": 8388608,
-        "tickSpacing": 60,
-        "hooks": "0x94ba380a340E020Dc29D7883f01628caBC975000",
-        "enabled": true,
-        "featured": false
-      }
-    }
+    "note": "TEMPORARY: Using existing subgraph pool IDs until new deployment is fully propagated",
+    "newPoolsWillBe": "Once new subgraph is live, update subgraphIds to the new pool IDs",
+    "deploymentStatus": "Waiting for new deployment with pool IDs: 0xfaa0e80397dda369eb68f6f67c9cd4d4884841f1417078e20844addc11170127, etc."
   }
 } 
