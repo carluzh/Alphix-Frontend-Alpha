@@ -23,27 +23,26 @@ export function AccountStatus() {
   const { disconnect } = useDisconnect()
   const { isMobile } = useSidebar() 
 
-  const [isMounted, setIsMounted] = useState(false);
   const [displayedName, setDisplayedName] = useState("");
   const [isEditingName, setIsEditingName] = useState(false);
   const [inputName, setInputName] = useState("");
 
+  // Set display name when address is available
   useEffect(() => {
-    setIsMounted(true);
-  }, []);
-
-  useEffect(() => {
-    if (isConnected && address) {
+    if (address) {
       const storedName = localStorage.getItem(`walletName_${address}`);
-      const initialName = storedName || connector?.name || "Connected Wallet";
-      setDisplayedName(initialName);
-      setInputName(initialName);
-    } else {
-      const initialName = connector?.name || "Connected Wallet";
-      setDisplayedName(initialName);
-      setInputName(initialName); 
+      const newDisplayName = storedName || `${address.slice(0, 6)}...${address.slice(-4)}`;
+      setDisplayedName(newDisplayName);
+      setInputName(newDisplayName);
     }
-  }, [isConnected, address, connector?.name]);
+  }, [address]);
+
+  // Cache the display name whenever it changes
+  useEffect(() => {
+    if (displayedName) {
+      localStorage.setItem('cachedDisplayName', displayedName);
+    }
+  }, [displayedName]);
 
   const handleNameInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setInputName(e.target.value);
@@ -75,22 +74,11 @@ export function AccountStatus() {
     setIsEditingName(false);
   }
 
-  if (!isMounted) {
-    return (
-       <SidebarMenu>
-         <SidebarMenuItem className="list-none"> 
-           <div className="flex h-10 w-full items-center justify-center rounded-md border-2 border-white px-3 text-sm font-medium"> 
-           </div>
-         </SidebarMenuItem>
-       </SidebarMenu>
-    )
-  }
-
   if (!isConnected) {
     return (
       <SidebarMenu>
         <SidebarMenuItem className="list-none"> 
-          <div className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md border-2 border-white px-3 text-sm font-medium transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground">
+          <div className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30" style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}>
             <appkit-button className="absolute inset-0 z-10 block h-full w-full cursor-pointer p-0 opacity-0" />
             <span className="relative z-0 pointer-events-none">Connect Wallet</span>
           </div>
@@ -108,6 +96,9 @@ export function AccountStatus() {
     nextLevelXP: 1000
   }
 
+  // Use wagmi state for render decision
+  const shouldShowAccount = isConnected || address;
+  
   return (
     <SidebarMenu>
       <SidebarMenuItem>
@@ -115,23 +106,34 @@ export function AccountStatus() {
           <DropdownMenuTrigger asChild>
             <SidebarMenuButton
               size="lg"
-              className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+              className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground focus-visible:ring-0"
+              style={{ opacity: shouldShowAccount ? 1 : 0, pointerEvents: shouldShowAccount ? 'auto' : 'none' }}
             >
               <Avatar className="h-8 w-8 rounded-lg">
                 <AvatarFallback className="rounded-lg">{displayedName.charAt(0).toUpperCase() || "C"}</AvatarFallback>
               </Avatar>
               <div className="grid flex-1 text-left text-sm leading-tight">
-                <span className="truncate font-medium">{displayedName}</span>
-                <span className="truncate text-xs text-muted-foreground">{shortAddress}</span>
+                {displayedName ? (
+                  <>
+                    <span className="truncate font-medium">{displayedName}</span>
+                    <span className="truncate text-xs text-muted-foreground">Beta Tester</span>
+                  </>
+                ) : (
+                  <>
+                    <div className="h-4 w-20 bg-muted animate-pulse rounded" />
+                    <div className="h-3 w-16 bg-muted animate-pulse rounded mt-1" />
+                  </>
+                )}
               </div>
               <MoreVerticalIcon className="ml-auto size-4" />
             </SidebarMenuButton>
           </DropdownMenuTrigger>
           <DropdownMenuContent
-            className="w-[--radix-dropdown-menu-trigger-width] min-w-56 rounded-lg"
+            className="w-[--radix-dropdown-menu-trigger-width] min-w-56 rounded-lg border-sidebar-accent"
             side={isMobile ? "bottom" : "right"}
             align="end"
-            sideOffset={4}
+            sideOffset={16}
+            style={{ backgroundColor: '#09090b' }}
           >
             <DropdownMenuLabel className="p-0 font-normal">
               <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
@@ -169,7 +171,7 @@ export function AccountStatus() {
                       )}
                     </div>
                   )}
-                  <span className="truncate text-xs text-muted-foreground">{shortAddress}</span>
+                  <span className="truncate text-xs text-muted-foreground">Beta Tester</span>
                 </div>
               </div>
             </DropdownMenuLabel>

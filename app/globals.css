@@ -31,20 +31,22 @@
     --chart-3: 0 0% 60%;
     --chart-4: 0 0% 80%;
     --chart-5: 0 0% 95%;
-    /* Sidebar light theme adjustments */
-    --sidebar-background: 0 0% 100%; /* white (was 0 0% 95.9%) */
-    --sidebar-foreground: 0 0% 3.9%; /* very dark grey (was 0 0% 98%) */
-    --sidebar-primary: 0 0% 3.9%; /* very dark grey (was 0 0% 98%) - for active/primary button text */
-    --sidebar-primary-foreground: 0 0% 98%; /* light grey (was 0 0% 10%) - for active/primary button background */
-    --sidebar-accent: 0 0% 90%; /* light grey (was 0 0% 20%) - for hover background */
-    --sidebar-accent-foreground: 0 0% 3.9%; /* very dark grey (was 0 0% 98%) - for hover text */
-    --sidebar-border: 0 0% 85%; /* slightly darker grey for border (was 0 0% 20%) */
-    --sidebar-ring: 0 0% 10%; /* dark grey for focus rings (was 0 0% 83.9%) */
+    /* Sidebar light theme - Updated with brand colors */
+    --sidebar-background: 0 0% 100%; /* #ffffff - Background (light) */
+    --sidebar-foreground: 0 0% 0%; /* #000000 - Text on light background */
+    --sidebar-primary: 16 100% 48%; /* #f45502 - Brand Color */
+    --sidebar-primary-foreground: 0 0% 100%; /* #ffffff - Text on brand color */
+    --sidebar-accent: 0 0% 96%; /* #f5f5f5 - Highlight 2 (light) */
+    --sidebar-accent-foreground: 0 0% 0%; /* #000000 - Text on accent */
+    --sidebar-border: 0 0% 89%; /* #e4e4e4 - Outline (light) */
+    --sidebar-ring: 16 100% 48%; /* #f45502 - Brand Color for focus rings */
+    --sidebar-logo: 0 0% 0%; /* #000000 - Logo color (light) */
+    --sidebar-connect-button-bg: #1f1f1f; /* Connect button background */
   }
 
   .dark {
     /* Using original dark lightness values, saturation set to 0% */
-    --background: 0 0% 3.9%; /* very dark grey */
+    --background: #0f0f0f; /* #0f0f0f - dark gray for main background */
     --foreground: 0 0% 98%; /* light grey (almost white) */
     --card: 0 0% 3.9%; /* very dark grey */
     --card-foreground: 0 0% 98%; /* light grey (almost white) */
@@ -63,21 +65,25 @@
     --border: 0 0% 15.9%; /* dark grey */
     --input: 0 0% 15.9%; /* dark grey */
     --ring: 0 0% 83.9%; /* light grey */
+    --border-icons-overlap: #121212;
     /* Greyscale charts */
     --chart-1: 0 0% 60%;
     --chart-2: 0 0% 48%;
     --chart-3: 0 0% 40%; 
     --chart-4: 0 0% 30%;
     --chart-5: 0 0% 20%; 
-    /* Sidebar grey */
-    --sidebar-background: 0 0% 3.9%;
-    --sidebar-foreground: 0 0% 98%;
-    --sidebar-primary: 0 0% 98%;
-    --sidebar-primary-foreground: 0 0% 10%;
-    --sidebar-accent: 0 0% 15.9%;
-    --sidebar-accent-foreground: 0 0% 98%;
-    --sidebar-border: 0 0% 15.9%;
-    --sidebar-ring: 0 0% 83.9%;
+    /* Sidebar dark theme - Updated with brand colors */
+    --sidebar-background: #171717;
+    --sidebar-background-popover: #0f0f0f;
+    --sidebar-foreground: #ffffff;
+    --sidebar-primary: #f45502;
+    --sidebar-primary-foreground: #ffffff;
+    --sidebar-accent: #313131;
+    --sidebar-accent-foreground: #ffffff; /* #ffffff - Text on accent */
+    --sidebar-border: #323232; /* #28272a - Outline (dark) */
+    --sidebar-ring: #f45502; /* #f45502 - Brand Color for focus rings */
+    --sidebar-logo: #ffffff; /* #ffffff - Logo color (dark) */
+    --sidebar-connect-button-bg: #1f1f1f; /* Connect button background */
   }
 }
 

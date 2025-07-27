@@ -19,7 +19,7 @@ export function AppLayout({ children }: AppLayoutProps) {
 
   return (
     <SidebarProvider>
-      <AppSidebar variant="inset" />
+              <AppSidebar variant="floating" />
       <MobileHeader />
       <SidebarInset
         className={isMobile ? MOBILE_HEADER_PADDING_CLASS : ""}

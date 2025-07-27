@@ -2032,7 +2032,7 @@ export function AddLiquidityModal({
                     {isPoolStateLoading ? (
                         <div className="absolute inset-0 flex items-center justify-center bg-muted/50 z-20">
                             <Image 
-                              src="/logo_icon_white.svg" 
+                              src="/LogoIconWhite.svg" 
                               alt="Loading..." 
                               width={32}
                               height={32}

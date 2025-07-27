@@ -60,7 +60,7 @@
   },
   "pools": [
     {
-      "id": "aeth-musdt-dynamic",
+      "id": "aeth-musdt",
       "name": "aETH/aUSDT",
       "description": "Alphix Ethereum / Alphix USDT pool",
       "subgraphId": "0x4e1b037b56e13bea1dfe20e8f592b95732cc52b5b10777b9f9bea856c145e7c7",
@@ -79,7 +79,7 @@
       "featured": true
     },
     {
-      "id": "btcrl-yusdc-dynamic",
+      "id": "btcrl-yusdc",
       "name": "aBTC/aUSDC",
       "description": "Alphix Bitcoin / Alphix USDC pool",
       "subgraphId": "0x8392f09ccc3c387d027d189f13a1f1f2e9d73f34011191a3d58157b9b2bf8bdd",
@@ -98,7 +98,7 @@
       "featured": false
     },
     {
-      "id": "yusdc-musdt-dynamic",
+      "id": "yusdc-musdt",
       "name": "aUSDC/aUSDT", 
       "description": "Alphix USDC / Alphix USDT pool",
       "subgraphId": "0xfaa0e80397dda369eb68f6f67c9cd4d4884841f1417078e20844addc11170127",
@@ -117,7 +117,7 @@
       "featured": false
     },
     {
-      "id": "eth-musdt-dynamic",
+      "id": "eth-musdt",
       "name": "ETH/aUSDT",
       "description": "Ethereum / Alphix USDT pool",
       "subgraphId": "0xe6a2c6909de49149dced232f472247979fdc098cd2de74b0923e3cefb5602c15",
@@ -136,7 +136,7 @@
       "featured": false
     },
     {
-      "id": "btc-eth-dynamic",
+      "id": "btc-eth",
       "name": "aBTC/aETH",
       "description": "Alphix Bitcoin / Alphix Ethereum pool",
       "subgraphId": "0xe9b5f2692da366148c42074373f37d00f368edcae46bcf7e39dd1aab5207d7c2",

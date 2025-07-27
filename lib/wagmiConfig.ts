@@ -1,6 +1,5 @@
 // Adapted from example/frontend/config/index.tsx
-import { http } from 'wagmi'
-// import { cookieStorage, createStorage } from 'wagmi/storage' // Removed storage for now
+import { http, createStorage, cookieStorage } from 'wagmi'
 import { WagmiAdapter } from '@reown/appkit-adapter-wagmi'
 import { mainnet, arbitrum, sepolia, polygon } from 'wagmi/chains' // Import chains from wagmi
 import { defineChain } from 'viem'
@@ -39,8 +38,8 @@ export const wagmiAdapter = new WagmiAdapter({
   networks, // Use wagmi chains
   projectId: projectId || '',
   // ssr and storage might be handled internally or need different config
-  // storage: createStorage({ storage: cookieStorage }), 
-  // ssr: true,
+  storage: createStorage({ storage: cookieStorage }), 
+  ssr: true,
 })
 
 // Export the wagmi config property from the adapter instance

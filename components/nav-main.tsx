@@ -147,7 +147,7 @@ export function NavMain({
   }
 
   return (
-    <SidebarMenu className="mt-2 flex flex-col gap-1">
+    <SidebarMenu className="flex flex-col gap-1 px-3">
       {items.map((item) => {
         const isActive = item.url === pathname;
 
@@ -156,7 +156,7 @@ export function NavMain({
             {item.disabled ? (
               <SidebarMenuButton
                 onClick={() => handleLockedClick(item.title)}
-                className="opacity-75 hover:bg-transparent w-full flex items-center"
+                className="opacity-75 w-full flex items-center"
                 tooltip={item.title}
               >
                 {item.icon && <item.icon />}

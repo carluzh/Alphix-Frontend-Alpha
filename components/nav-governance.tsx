@@ -49,16 +49,16 @@ export function NavGovernance({
   return (
     <SidebarGroup className={className}>
       <div 
-        className="flex h-8 shrink-0 items-center rounded-md px-2 text-xs font-medium text-sidebar-foreground/70 outline-none ring-sidebar-ring transition-[margin,opacity] duration-200 ease-linear focus-visible:ring-2 [&>svg]:size-4 [&>svg]:shrink-0 group-data-[collapsible=icon]:-mt-8 group-data-[collapsible=icon]:opacity-0"
+        className="flex h-8 shrink-0 items-center rounded-md px-4 text-xs font-normal text-sidebar-foreground/70 outline-none ring-sidebar-ring transition-[margin,opacity] duration-200 ease-linear focus-visible:ring-2 [&>svg]:size-4 [&>svg]:shrink-0 group-data-[collapsible=icon]:-mt-8 group-data-[collapsible=icon]:opacity-0"
       >
         Governance
       </div>
-      <SidebarMenu className="mt-1 flex flex-col gap-1">
+      <SidebarMenu className="mt-1 flex flex-col gap-1 px-3">
         {items.map((item) => (
           <SidebarMenuItem key={item.title} className="list-none">
             <SidebarMenuButton
               onClick={() => item.disabled && handleLockedClick(item.title)}
-              className="opacity-75 hover:bg-transparent w-full flex items-center"
+              className="opacity-75 w-full flex items-center"
               tooltip={item.title}
             >
               {item.icon && <item.icon />}

@@ -3,6 +3,7 @@ export interface Pool {
   tokens: {
     symbol: string;
     icon: string;
+    address?: string; // Add optional address property
   }[];
   pair: string;
   volume24h: string;

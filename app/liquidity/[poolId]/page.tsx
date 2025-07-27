@@ -76,6 +76,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { EllipsisVerticalIcon, CopyIcon } from "lucide-react";
+import { shortenAddress } from "@/lib/utils";
 
 // Define the structure of the chart data points from the API
 interface ChartDataPoint {
@@ -226,8 +229,8 @@ const getPoolConfiguration = (poolId: string) => {
     id: poolConfig.id,
     subgraphId: poolConfig.subgraphId,
     tokens: [
-      { symbol: token0.symbol, icon: token0.icon },
-      { symbol: token1.symbol, icon: token1.icon }
+      { symbol: token0.symbol, icon: token0.icon, address: token0.address },
+      { symbol: token1.symbol, icon: token1.icon, address: token1.address }
     ],
     pair: `${token0.symbol} / ${token1.symbol}`,
     // Static/fallback values - these will be replaced by fetched/cached data
@@ -259,12 +262,14 @@ export default function PoolDetailPage() {
 
   // State for the pool's detailed data (including fetched stats)
   const [currentPoolData, setCurrentPoolData] = useState<PoolDetailData | null>(null);
+  // State for popover visibility
+  const [isPopoverOpen, setIsPopoverOpen] = useState(false);
   // State for API-fetched chart data
   const [apiChartData, setApiChartData] = useState<ChartDataPoint[]>([]);
   const [isLoadingChartData, setIsLoadingChartData] = useState(false);
 
   // State for managing active tab (Deposit/Withdraw/Swap) - Lifted from AddLiquidityForm
-  const [activeTab, setActiveTab] = useState<'deposit' | 'withdraw' | 'swap'>('deposit');
+  // const [activeTab, setActiveTab] = useState<'deposit' | 'withdraw' | 'swap'>('deposit');
 
   // State for burn confirmation dialog
   const [showBurnConfirmDialog, setShowBurnConfirmDialog] = useState(false);
@@ -339,13 +344,14 @@ export default function PoolDetailPage() {
         return (
           <div className="flex flex-col gap-1">
             <div className="flex items-center gap-2">
-              <div className="relative w-14 h-7">
-                <div className="absolute top-0 left-0 w-7 h-7 rounded-full overflow-hidden bg-background border border-border/50">
-                  <Image src={getTokenIcon(position.token0.symbol)} alt={position.token0.symbol || 'Token 0'} width={28} height={28} className="w-full h-full object-cover" />
+              <div className="relative w-20 h-10">
+                <div className="absolute top-0 left-0 w-10 h-10 rounded-full overflow-hidden bg-background border border-border/50">
+                  <Image src={getTokenIcon(position.token0.symbol)} alt={position.token0.symbol || 'Token 0'} width={40} height={40} className="w-full h-full object-cover" />
                 </div>
-                <div className="absolute top-0 left-4 w-7 h-7 rounded-full overflow-hidden bg-background border border-border/50">
-                  <Image src={getTokenIcon(position.token1.symbol)} alt={position.token1.symbol || 'Token 1'} width={28} height={28} className="w-full h-full object-cover" />
+                <div className="absolute top-0 left-6 w-10 h-10 rounded-full overflow-hidden bg-background border border-border/50">
+                  <Image src={getTokenIcon(position.token1.symbol)} alt={position.token1.symbol || 'Token 1'} width={40} height={40} className="w-full h-full object-cover" />
                 </div>
+                <div className="absolute top-0 left-6 w-10 h-10 rounded-full overflow-hidden bg-[var(--background)] border-l-2 border-l-[var(--border-icons-overlap)] border-t-0 border-r-0 border-b-0"></div>
               </div>
               <span className="font-medium text-sm">
                 {position.token0.symbol || 'N/A'} / {position.token1.symbol || 'N/A'}
@@ -1040,7 +1046,13 @@ export default function PoolDetailPage() {
   if (!poolId || !currentPoolData) return (
     <AppLayout>
       <div className="flex flex-1 justify-center items-center p-6">
-        <RefreshCwIcon className="mr-2 h-6 w-6 animate-spin" /> Loading pool data...
+        <Image 
+          src="/LogoIconWhite.svg" 
+          alt="Loading..." 
+          width={48}
+          height={48}
+          className="animate-pulse opacity-75"
+        />
       </div>
     </AppLayout>
   );
@@ -1060,29 +1072,89 @@ export default function PoolDetailPage() {
             </Button>
             
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="relative w-14 h-7">
-                  <div className="absolute top-0 left-0 w-7 h-7 rounded-full overflow-hidden bg-background border border-border/50">
+              <div className="flex items-center group">
+                <div className="relative w-20 h-10">
+                  <div className="absolute top-0 left-0 w-10 h-10 rounded-full overflow-hidden bg-background z-10">
                     <Image 
                       src={currentPoolData.tokens[0].icon} 
                       alt={currentPoolData.tokens[0].symbol} 
-                      width={28} 
-                      height={28} 
+                      width={40} 
+                      height={40} 
                       className="w-full h-full object-cover" 
                     />
                   </div>
-                  <div className="absolute top-0 left-4 w-7 h-7 rounded-full overflow-hidden bg-background border border-border/50">
+                  <div className="absolute top-0 left-6 w-10 h-10 rounded-full overflow-hidden bg-background z-30">
                     <Image 
                       src={currentPoolData.tokens[1].icon} 
                       alt={currentPoolData.tokens[1].symbol} 
-                      width={28} 
-                      height={28} 
+                      width={40} 
+                      height={40} 
                       className="w-full h-full object-cover" 
                     />
                   </div>
+                  {/* New background circle for cut-out effect */}
+                  <div className="absolute top-[-2px] left-[22px] w-11 h-11 rounded-full bg-[#121212] z-20"></div>
                 </div>
                 <div>
-                  <h1 className="text-2xl font-bold">{currentPoolData.pair}</h1>
+                  <div className="flex items-center">
+                    <h1 className="text-xl font-bold">{currentPoolData.pair}</h1>
+                    <Popover open={isPopoverOpen} onOpenChange={setIsPopoverOpen}>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className={`ml-2 h-6 w-6 transition-opacity ${isPopoverOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                        >
+                          <EllipsisVerticalIcon className="h-4 w-4" />
+                          <span className="sr-only">Token Details</span>
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-48 p-2" align="start" side="right" style={{ transform: 'translateY(-8px)' }}>
+                        <div className="grid gap-1">
+                          <div className="flex justify-between items-center">
+                            <span className="text-sm">{currentPoolData.tokens[0].symbol}</span>
+                            <div className="flex items-center gap-1">
+                              <span className="text-xs text-muted-foreground font-mono break-all">{currentPoolData.tokens[0].address ? shortenAddress(currentPoolData.tokens[0].address) : 'N/A'}</span>
+                              {currentPoolData.tokens[0].address && (
+                                <Button 
+                                  variant="ghost" 
+                                  size="icon" 
+                                  className="h-4 w-4 text-muted-foreground hover:bg-muted/30"
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(currentPoolData.tokens[0].address!);
+                                    toast.success("Address copied to clipboard!");
+                                  }}
+                                >
+                                  <CopyIcon style={{ width: '10px', height: '10px' }} />
+                                  <span className="sr-only">Copy address</span>
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <span className="text-sm">{currentPoolData.tokens[1].symbol}</span>
+                            <div className="flex items-center gap-1">
+                              <span className="text-xs text-muted-foreground font-mono break-all">{currentPoolData.tokens[1].address ? shortenAddress(currentPoolData.tokens[1].address) : 'N/A'}</span>
+                              {currentPoolData.tokens[1].address && (
+                                <Button 
+                                  variant="ghost" 
+                                  size="icon" 
+                                  className="h-4 w-4 text-muted-foreground hover:bg-muted/30"
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(currentPoolData.tokens[1].address!);
+                                    toast.success("Address copied to clipboard!");
+                                  }}
+                                >
+                                  <CopyIcon style={{ width: '10px', height: '10px' }} />
+                                  <span className="sr-only">Copy address</span>
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                  </div>
                   <p className="text-sm text-muted-foreground">
                     {currentPoolData.dynamicFeeBps !== undefined 
                       ? `Fee: ${(currentPoolData.dynamicFeeBps / 10000).toFixed(2)}%` // Assumes 4000 means 0.40% (rate * 1,000,000)
@@ -1100,25 +1172,25 @@ export default function PoolDetailPage() {
               {/* Pool stats */}
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
                 <Card>
-                  <CardHeader className="pb-2">
+                  <CardHeader className="py-4">
                     <CardDescription>APR</CardDescription>
                     <CardTitle>{currentPoolData.apr}</CardTitle>
                   </CardHeader>
                 </Card>
                 <Card>
-                  <CardHeader className="pb-2">
+                  <CardHeader className="py-4">
                     <CardDescription>Total Liquidity</CardDescription>
                     <CardTitle>{currentPoolData.liquidity}</CardTitle>
                   </CardHeader>
                 </Card>
                 <Card>
-                  <CardHeader className="pb-2">
+                  <CardHeader className="py-4">
                     <CardDescription>Volume (24h)</CardDescription>
                     <CardTitle>{currentPoolData.volume24h}</CardTitle>
                   </CardHeader>
                 </Card>
                 <Card>
-                  <CardHeader className="pb-2">
+                  <CardHeader className="py-4">
                     <CardDescription>Fees (24h)</CardDescription>
                     <CardTitle>{currentPoolData.fees24h}</CardTitle>
                   </CardHeader>
@@ -1229,8 +1301,8 @@ export default function PoolDetailPage() {
 
             {/* Right Column: Add Liquidity Form (takes up 1/4 on larger screens) */}
             <div className="w-[450px] h-[700px]" ref={addLiquidityFormRef}>
-              {/* Tabs for Swap/Deposit/Withdraw - MOVED HERE */}
-              <div className="flex border-b border-border mb-4 px-6 pt-6">
+              {/* Tabs for Swap/Deposit/Withdraw - REMOVED */}
+              {/* <div className="flex border-b border-border mb-4 px-6 pt-6">
                 <button
                   className={`py-2 px-4 text-sm font-medium ${activeTab === 'deposit' 
                     ? 'text-foreground border-b-2 border-primary' 
@@ -1261,9 +1333,9 @@ export default function PoolDetailPage() {
                 >
                   Swap
                 </button>
-              </div>
+              </div> */}
 
-              {poolId && currentPoolData && activeTab === 'deposit' && ( // Only render form if activeTab is 'deposit'
+              {poolId && currentPoolData && ( // Always render form (removed activeTab condition)
                 <Card className="w-full shadow-none border-none"> {/* Adjusted Card styling */}
                   <CardContent className="pt-0"> {/* Adjusted padding */}
                     <AddLiquidityForm
@@ -1275,18 +1347,18 @@ export default function PoolDetailPage() {
                       sdkMinTick={SDK_MIN_TICK}
                       sdkMaxTick={SDK_MAX_TICK}
                       defaultTickSpacing={DEFAULT_TICK_SPACING}
-                      activeTab={activeTab} // Pass activeTab state down
+                      activeTab={'deposit'} // Always pass 'deposit'
                     />
                   </CardContent>
                 </Card>
               )}
               
-              {/* Placeholder content for Withdraw and Swap */}              
-              {activeTab !== 'deposit' && (
+              {/* Placeholder content for Withdraw and Swap - REMOVED */}              
+              {/* {activeTab !== 'deposit' && (
                 <div className="flex items-center justify-center h-full bg-muted/20 rounded-lg mx-6 mb-6">
                    <span className="text-muted-foreground capitalize">{activeTab} functionality coming soon</span>
                 </div>
-              )}
+              )} */}
             </div>
           </div>
           

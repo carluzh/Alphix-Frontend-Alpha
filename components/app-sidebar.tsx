@@ -106,27 +106,35 @@ const data = {
   ],
 }
 
-export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
+export function AppSidebar({ variant = "floating", ...props }: React.ComponentProps<typeof Sidebar>) {
   const isMobile = useIsMobile()
   const { resolvedTheme } = useTheme()
 
   return (
-    <Sidebar collapsible="offcanvas" {...props}>
-      <SidebarHeader>
+    <Sidebar variant={variant} collapsible="offcanvas" {...props}>
+      <SidebarHeader className="!pt-2.5">
         <SidebarMenu>
           <SidebarMenuItem className="list-none">
             <SidebarMenuButton 
               asChild 
-              className="data-[slot=sidebar-menu-button]:!p-1.5 hover:bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0"
+              className="data-[slot=sidebar-menu-button]:!p-2 !pt-2.5 hover:bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 data-[state=open]:bg-transparent active:bg-transparent"
             >
               <a 
                 href="/" 
                 className={cn(isMobile && "pt-4")}
               >
-                <div className="flex items-center">
-                  <ReactSVG 
-                    src={resolvedTheme === "dark" ? "/Logo Type (white).svg" : "/Logo Type (black).svg"}
-                    className="h-6 w-28 text-slate-900 dark:text-white"
+                <div className="flex items-center w-full">
+                  <img 
+                    src="/Logo Type (white).svg"
+                    alt="Alphix Logo"
+                    className="h-6 w-28 text-sidebar-logo dark:block hidden"
+                    loading="eager"
+                  />
+                  <img 
+                    src="/Logo Type (black).svg"
+                    alt="Alphix Logo"
+                    className="h-6 w-28 text-sidebar-logo block dark:hidden"
+                    loading="eager"
                   />
                 </div>
               </a>
