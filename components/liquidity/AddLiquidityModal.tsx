@@ -1214,211 +1214,66 @@ export function AddLiquidityModal({
 
   // Effect to update price input strings when underlying ticks or base display token changes
   useEffect(() => {
-    const numTickLower = parseInt(tickLower);
-    const numTickUpper = parseInt(tickUpper);
+    const lowerTick = parseInt(tickLower);
+    const upperTick = parseInt(tickUpper);
 
-    let valForMinInput: number | null = null;
-    let valForMaxInput: number | null = null;
-
-    const decimalsForToken0Display = TOKEN_DEFINITIONS[token0Symbol]?.displayDecimals ?? (token0Symbol === 'BTCRL' ? 8 : 4);
-    const decimalsForToken1Display = TOKEN_DEFINITIONS[token1Symbol]?.displayDecimals ?? (token1Symbol === 'BTCRL' ? 8 : 4);
-
-    const rawApiPriceAtTickLower = calculatedData?.priceAtTickLower ? parseFloat(calculatedData.priceAtTickLower) : null;
-    const rawApiPriceAtTickUpper = calculatedData?.priceAtTickUpper ? parseFloat(calculatedData.priceAtTickUpper) : null;
-
-    // Define token decimals early for use in both branches
-    const token0Dec = TOKEN_DEFINITIONS[token0Symbol]?.decimals;
-    const token1Dec = TOKEN_DEFINITIONS[token1Symbol]?.decimals;
-
-    if (baseTokenForPriceDisplay === token0Symbol) {
-        // UI Displays: Price of Token1 in terms of Token0 (e.g., BTCRL per YUSDC)
-        if (token0Dec !== undefined && token1Dec !== undefined) {
-            const decimalAdjFactor = Math.pow(10, token1Dec - token0Dec);
-
-            // Min Price (T1 in T0) at numTickLower
-            if (rawApiPriceAtTickLower !== null) { // rawApiPriceAtTickLower is Price(T0 per T1)
-                if (rawApiPriceAtTickLower === 0) valForMinInput = Infinity;
-                else valForMinInput = 1 / rawApiPriceAtTickLower;
-        } else if (!isNaN(numTickLower)) {
-            if (numTickLower === sdkMinTick) valForMinInput = 0;
-                else valForMinInput = Math.pow(1.0001, numTickLower) * decimalAdjFactor;
-            } else {
-                valForMinInput = NaN;
-        }
-
-            // Max Price (T1 in T0) at numTickUpper
-            if (rawApiPriceAtTickUpper !== null) { // rawApiPriceAtTickUpper is Price(T0 per T1)
-                if (rawApiPriceAtTickUpper === 0) valForMaxInput = Infinity;
-                else valForMaxInput = 1 / rawApiPriceAtTickUpper;
-        } else if (!isNaN(numTickUpper)) {
-            if (numTickUpper === sdkMaxTick) valForMaxInput = Infinity;
-                else valForMaxInput = Math.pow(1.0001, numTickUpper) * decimalAdjFactor;
-            } else {
-                valForMaxInput = NaN;
-            }
-        } else {
-            valForMinInput = NaN;
-            valForMaxInput = NaN;
-        }
-    } else { // baseTokenForPriceDisplay === token1Symbol
-        // UI Displays: Price of Token0 in terms of Token1 (e.g., YUSDC per BTCRL)
-        if (token0Dec !== undefined && token1Dec !== undefined) {
-            const decimalAdjFactor = Math.pow(10, token0Dec - token1Dec);
-
-            // Min Price (T0 in T1) at numTickUpper
-            if (rawApiPriceAtTickUpper !== null) { // rawApiPriceAtTickUpper is Price(T0 per T1)
-                if (rawApiPriceAtTickUpper === 0) valForMinInput = Infinity;
-                else valForMinInput = 1 / (1 / rawApiPriceAtTickUpper); // Price(T0/T1) = 1 / Price(T1/T0) ; P(T1/T0) at TickUpper is rawApiPriceAtTickUpper
-            } else if (!isNaN(numTickUpper)) { // Upper tick corresponds to the MIN T0/T1 price
-                // P_raw(T1/T0) at numTickUpper = 1.0001^numTickUpper
-                // P_raw(T0/T1) at numTickUpper = 1 / (1.0001^numTickUpper) = 1.0001^(-numTickUpper)
-                // Price (T0 in T1) = P_raw(T0/T1) * decimalAdjFactor
-                if (numTickUpper === sdkMaxTick) valForMinInput = 0; // At T1/T0 price of Inf, T0/T1 price is 0
-                else valForMinInput = Math.pow(1.0001, -numTickUpper) * decimalAdjFactor;
-            } else {
-                valForMinInput = NaN;
-            }
-
-            // Max Price (T0 in T1) at numTickLower
-            if (rawApiPriceAtTickLower !== null) { // rawApiPriceAtTickLower is Price(T0 per T1)
-                 if (rawApiPriceAtTickLower === 0) valForMaxInput = Infinity;
-                 else valForMaxInput = 1 / (1 / rawApiPriceAtTickLower); // Price(T0/T1) = 1 / Price(T1/T0) ; P(T1/T0) at TickLower is rawApiPriceAtTickLower
-            } else if (!isNaN(numTickLower)) { // Lower tick corresponds to the MAX T0/T1 price
-                // P_raw(T1/T0) at numTickLower = 1.0001^numTickLower
-                // P_raw(T0/T1) at numTickLower = 1 / (1.0001^numTickLower) = 1.0001^(-numTickLower)
-                // Price (T0 in T1) = P_raw(T0/T1) * decimalAdjFactor
-                if (numTickLower === sdkMinTick) valForMaxInput = Infinity; // At T1/T0 price of 0, T0/T1 price is Inf
-                else valForMaxInput = Math.pow(1.0001, -numTickLower) * decimalAdjFactor;
-            } else {
-                valForMaxInput = NaN;
-            }
-        } else {
-            valForMinInput = NaN;
-            valForMaxInput = NaN;
-        }
+    // Validate prerequisites – if something is missing, clear the displayed strings.
+    if (
+      !token0Symbol ||
+      !token1Symbol ||
+      !poolToken0 ||
+      !poolToken1 ||
+      isNaN(lowerTick) ||
+      isNaN(upperTick)
+    ) {
+      setMinPriceInputString("");
+      setMaxPriceInputString("");
+      return;
     }
 
-    // Ensure min < max after all calculations, only if both are finite numbers
-    // This check is only logically necessary when displaying Token1/Token0 price.
-    // When displaying Token0/Token1 price, the min/max are naturally derived from upper/lower ticks respectively.
-    if (baseTokenForPriceDisplay === token0Symbol && valForMinInput !== null && valForMaxInput !== null && isFinite(valForMinInput) && isFinite(valForMaxInput) && valForMinInput > valForMaxInput) {
-        [valForMinInput, valForMaxInput] = [valForMaxInput, valForMinInput];
-    }
+    // Decide which token is the base (denominator) in the UI
+    const baseSym: TokenSymbol = baseTokenForPriceDisplay === token1Symbol ? token1Symbol : token0Symbol;
+    const quoteSym: TokenSymbol = baseSym === token0Symbol ? token1Symbol : token0Symbol;
 
-    let finalMinPriceString = "";
-    let finalMaxPriceString = "";
-    const displayDecimals = baseTokenForPriceDisplay === token0Symbol ? decimalsForToken0Display : decimalsForToken1Display;
+    // Helper to compute price(quote / base) at a particular tick
+    const priceAtTick = (tick: number): number => {
+      const decBase = TOKEN_DEFINITIONS[baseSym]?.decimals ?? 18;
+      const decQuote = TOKEN_DEFINITIONS[quoteSym]?.decimals ?? 18;
+      // In Uniswap, tick is price(poolToken1 / poolToken0)
+      const baseIsPool0 = baseSym === poolToken0.symbol;
+      const sign = baseIsPool0 ? 1 : -1; // invert if base == poolToken1
+      const decimalAdj = Math.pow(10, decQuote - decBase);
+      return Math.pow(1.0001, sign * tick) * decimalAdj;
+    };
 
-    // Formatting for Min Price String
-    if (valForMinInput !== null) {
-        if (valForMinInput >= 0 && valForMinInput < 1e-11) { // Ensure positive or zero, then check if very small
-            finalMinPriceString = "0";
-        } else if (!isFinite(valForMinInput) || valForMinInput > 1e30) { // Check if Infinity or very large
-            finalMinPriceString = "∞";
-        } else { // Otherwise, format as a number
-            finalMinPriceString = valForMinInput.toFixed(displayDecimals);
-        }
-    }
+    const priceLow = priceAtTick(lowerTick);
+    const priceHigh = priceAtTick(upperTick);
 
-    // Formatting for Max Price String
-    if (valForMaxInput !== null) {
-        if (valForMaxInput >= 0 && valForMaxInput < 1e-11) { // Ensure positive or zero, then check if very small
-            finalMaxPriceString = "0";
-        } else if (!isFinite(valForMaxInput) || valForMaxInput > 1e30) { // Check if Infinity or very large
-            finalMaxPriceString = "∞";
-        } else { // Otherwise, format as a number
-            finalMaxPriceString = valForMaxInput.toFixed(displayDecimals);
-        }
-    }
+    const minPrice = Math.min(priceLow, priceHigh);
+    const maxPrice = Math.max(priceLow, priceHigh);
 
-    // --- BEGIN USER REQUESTED LOG ---
-    // Corrected variable names for logging
-    const logTickUpper = numTickUpper; // Use numTickUpper
-    const logCurrentPoolTick = currentPoolTick !== null ? Number(currentPoolTick) : null; // Use currentPoolTick
+    const displayDecimals = TOKEN_DEFINITIONS[baseSym]?.displayDecimals ?? (baseSym === 'aBTC' ? 8 : 4);
 
-    const token0Decimals_forLog = TOKEN_DEFINITIONS[token0Symbol]?.decimals ?? 18;
-    const token1Decimals_forLog = TOKEN_DEFINITIONS[token1Symbol]?.decimals ?? 18;
-    const decimalAdjustmentFactor_forLog = Math.pow(10, token1Decimals_forLog - token0Decimals_forLog);
+    const fmt = (v: number): string => {
+      if (!isFinite(v) || v > 1e30) return '∞';
+      if (v >= 0 && v < 1e-11) return '0';
+      return v.toLocaleString(undefined, {
+        maximumFractionDigits: displayDecimals,
+        minimumFractionDigits: Math.min(2, displayDecimals),
+      });
+    };
 
-    const pTickAtCurrent_forLog = logCurrentPoolTick !== null ? Math.pow(1.0001, logCurrentPoolTick) : null;
-    const pTickAtUpper_forLog = !isNaN(logTickUpper) ? Math.pow(1.0001, logTickUpper) : null;
-
-    const actualPriceT1perT0AtCurrentPoolTick_forLog = pTickAtCurrent_forLog !== null ? pTickAtCurrent_forLog * decimalAdjustmentFactor_forLog : null;
-    const actualPriceT1perT0AtUpperTick_forLog = pTickAtUpper_forLog !== null ? pTickAtUpper_forLog * decimalAdjustmentFactor_forLog : null;
-
-    const displayDecimalsForT0_forLog = TOKEN_DEFINITIONS[token0Symbol]?.displayDecimals ?? 2;
-
-    setMinPriceInputString(finalMinPriceString);
-    setMaxPriceInputString(finalMaxPriceString);
-
-  }, [tickLower, tickUpper, baseTokenForPriceDisplay, token0Symbol, token1Symbol, sdkMinTick, sdkMaxTick, calculatedData, currentPoolTick]); // Added currentPoolTick to dependencies
-  // Effect to auto-apply active percentage preset when currentPrice changes OR when activePreset changes
-  useEffect(() => {
-    // Ensure currentPrice is valid and we have a preset that requires calculation
-    //MODIFIED: Now bases off currentPoolTick if available, falling back to currentPrice only if tick is null.
-    if (activePreset && ["±3%", "±8%", "±15%"].includes(activePreset)) {
-        let percentage = 0;
-        if (activePreset === "±3%") percentage = 0.03;
-        else if (activePreset === "±8%") percentage = 0.08;
-        else if (activePreset === "±15%") percentage = 0.15;
-
-        let newTickLower: number;
-        let newTickUpper: number;
-
-        if (currentPoolTick !== null) {
-            // Calculate based on currentPoolTick
-            const priceRatioUpper = 1 + percentage;
-            const priceRatioLower = 1 - percentage;
-
-            const tickDeltaUpper = Math.round(Math.log(priceRatioUpper) / Math.log(1.0001));
-            const tickDeltaLower = Math.round(Math.log(priceRatioLower) / Math.log(1.0001)); // Will be negative
-
-            newTickLower = currentPoolTick + tickDeltaLower;
-            newTickUpper = currentPoolTick + tickDeltaUpper;
-        } else if (currentPrice) {
-            // Fallback to currentPrice if currentPoolTick is not yet available
-            const numericCurrentPrice = parseFloat(currentPrice);
-            if (isNaN(numericCurrentPrice)) {
-                toast.error("Preset Error", { description: "Cannot apply preset: current price is invalid and pool tick unavailable." });
-                return;
-            }
-            const priceLowerTarget = numericCurrentPrice * (1 - percentage);
-            const priceUpperTarget = numericCurrentPrice * (1 + percentage);
-
-            newTickLower = Math.log(priceLowerTarget) / Math.log(1.0001);
-            newTickUpper = Math.log(priceUpperTarget) / Math.log(1.0001);
-        } else {
-            // Cannot apply preset yet, waiting for pool data
-            // toast.info("Preset Info", { description: "Waiting for pool data to apply preset." }); // Optional: can be noisy
-            return;
-        }
-
-        // Align and clamp
-        newTickLower = Math.ceil(newTickLower / defaultTickSpacing) * defaultTickSpacing;
-        newTickUpper = Math.floor(newTickUpper / defaultTickSpacing) * defaultTickSpacing;
-
-        newTickLower = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTickLower));
-        newTickUpper = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTickUpper));
-
-        if (newTickUpper - newTickLower >= defaultTickSpacing) {
-            if (newTickLower.toString() !== tickLower || newTickUpper.toString() !== tickUpper) {
-                if (preparedTxData) resetTransactionState();
-                setTickLower(newTickLower.toString());
-                setTickUpper(newTickUpper.toString());
-                setInitialDefaultApplied(true); 
-            }
-        } else {
-             toast.info("Preset Range Too Narrow", { description: "Selected preset results in an invalid range after tick alignment. Try a wider preset or manual range."});
-        }
-    } else if (activePreset === "Full Range") {
-        if (tickLower !== sdkMinTick.toString() || tickUpper !== sdkMaxTick.toString()) {
-            if (preparedTxData) resetTransactionState();
-            setTickLower(sdkMinTick.toString());
-            setTickUpper(sdkMaxTick.toString());
-            setInitialDefaultApplied(true); 
-        }
-    }
-  }, [currentPrice, currentPoolTick, activePreset, defaultTickSpacing, sdkMinTick, sdkMaxTick, token0Symbol, token1Symbol, tickLower, tickUpper, preparedTxData, resetTransactionState]);
+    setMinPriceInputString(fmt(minPrice));
+    setMaxPriceInputString(fmt(maxPrice));
+  }, [
+    tickLower,
+    tickUpper,
+    baseTokenForPriceDisplay,
+    token0Symbol,
+    token1Symbol,
+    poolToken0,
+    poolToken1,
+  ]);
 
   // --- BEGIN Fetch Liquidity Depth Data ---
   useEffect(() => {
@@ -1936,6 +1791,87 @@ export function AddLiquidityModal({
     return null;
   };
   // --- END Custom Recharts Tooltip (Updated for Cumulative) ---
+
+  // --- BEGIN Fetch Liquidity Depth Data ---
+  // ... existing code ...
+  // Effect to auto-apply active percentage preset when currentPrice changes OR when activePreset changes
+  useEffect(() => {
+    // Ensure currentPrice is valid and we have a preset that requires calculation
+    // Now bases off currentPoolTick if available, falling back to currentPrice only if tick is null.
+    if (activePreset && ["±3%", "±8%", "±15%"].includes(activePreset)) {
+      let percentage = 0;
+      if (activePreset === "±3%") percentage = 0.03;
+      else if (activePreset === "±8%") percentage = 0.08;
+      else if (activePreset === "±15%") percentage = 0.15;
+
+      let newTickLower: number;
+      let newTickUpper: number;
+
+      if (currentPoolTick !== null) {
+        const priceRatioUpper = 1 + percentage;
+        const priceRatioLower = 1 - percentage;
+
+        const tickDeltaUpper = Math.round(Math.log(priceRatioUpper) / Math.log(1.0001));
+        const tickDeltaLower = Math.round(Math.log(priceRatioLower) / Math.log(1.0001));
+
+        newTickLower = currentPoolTick + tickDeltaLower;
+        newTickUpper = currentPoolTick + tickDeltaUpper;
+      } else if (currentPrice) {
+        const numericCurrentPrice = parseFloat(currentPrice);
+        if (isNaN(numericCurrentPrice)) {
+          toast.error("Preset Error", { description: "Cannot apply preset: current price is invalid and pool tick unavailable." });
+          return;
+        }
+        const priceLowerTarget = numericCurrentPrice * (1 - percentage);
+        const priceUpperTarget = numericCurrentPrice * (1 + percentage);
+
+        newTickLower = Math.log(priceLowerTarget) / Math.log(1.0001);
+        newTickUpper = Math.log(priceUpperTarget) / Math.log(1.0001);
+      } else {
+        // Waiting for pool data
+        return;
+      }
+
+      // Align to tick spacing and clamp within bounds
+      newTickLower = Math.ceil(newTickLower / defaultTickSpacing) * defaultTickSpacing;
+      newTickUpper = Math.floor(newTickUpper / defaultTickSpacing) * defaultTickSpacing;
+
+      newTickLower = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTickLower));
+      newTickUpper = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTickUpper));
+
+      if (newTickUpper - newTickLower >= defaultTickSpacing) {
+        if (newTickLower.toString() !== tickLower || newTickUpper.toString() !== tickUpper) {
+          if (preparedTxData) resetTransactionState();
+          setTickLower(newTickLower.toString());
+          setTickUpper(newTickUpper.toString());
+          setInitialDefaultApplied(true);
+        }
+      } else {
+        toast.info("Preset Range Too Narrow", { description: "Selected preset results in an invalid range after tick alignment. Try a wider preset or manual range." });
+      }
+    } else if (activePreset === "Full Range") {
+      if (tickLower !== sdkMinTick.toString() || tickUpper !== sdkMaxTick.toString()) {
+        if (preparedTxData) resetTransactionState();
+        setTickLower(sdkMinTick.toString());
+        setTickUpper(sdkMaxTick.toString());
+        setInitialDefaultApplied(true);
+      }
+    }
+  }, [
+    currentPrice,
+    currentPoolTick,
+    activePreset,
+    defaultTickSpacing,
+    sdkMinTick,
+    sdkMaxTick,
+    token0Symbol,
+    token1Symbol,
+    tickLower,
+    tickUpper,
+    preparedTxData,
+    resetTransactionState,
+  ]);
+  // ... existing code ...
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => { 
