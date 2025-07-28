@@ -34,7 +34,7 @@ import { getFromCache, setToCache, getUserPositionsCacheKey, getPoolStatsCacheKe
 import { Pool } from "../../types";
 import { AddLiquidityModal } from "@liquidity/AddLiquidityModal";
 import { useRouter } from "next/navigation";
-import { ChevronUpIcon, ChevronDownIcon, ChevronsUpDownIcon } from "lucide-react";
+import { ChevronUpIcon, ChevronDownIcon, ChevronsUpDownIcon, PlusIcon } from "lucide-react";
 
 const SDK_MIN_TICK = -887272;
 const SDK_MAX_TICK = 887272;
@@ -358,7 +358,7 @@ export default function LiquidityPage() {
                   />
                 </div>
                 {/* Background circle for cut-out effect in table */}
-                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-[#141414] z-20"></div>
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-[#111111] z-20"></div>
               </div>
             </div>
             <div className="flex flex-col">
@@ -604,6 +604,16 @@ export default function LiquidityPage() {
                   <p className="text-sm text-muted-foreground">
                     Explore and manage your liquidity positions.
                   </p>
+                </div>
+                <div className="flex items-center">
+                  <div 
+                    onClick={() => setAddLiquidityOpen(true)}
+                    className="relative flex h-10 cursor-pointer items-center justify-center gap-2 rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30" 
+                    style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+                  >
+                    <PlusIcon className="h-4 w-4 relative z-0" />
+                    <span className="relative z-0 pointer-events-none">Add Liquidity</span>
+                  </div>
                 </div>
               </div>
             )}

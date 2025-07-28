@@ -1830,8 +1830,8 @@ export function AddLiquidityForm({
       </div>
     ) : !isPoolStateLoading && currentPriceLine === null ? (
       <div className="absolute inset-0 flex items-center justify-center bg-muted/50 z-20">
-        <span className="text-muted-foreground text-sm px-4 text-center">
-          {"Pool data unavailable for chart."}
+        <span className="text-muted-foreground text-sm px-4 text-center" style={{ fontFamily: 'Consolas, monospace' }}>
+          {!isConnected ? "Connect Wallet" : "Pool data unavailable for chart."}
         </span>
       </div>
     ) : (

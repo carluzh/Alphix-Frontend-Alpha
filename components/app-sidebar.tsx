@@ -36,6 +36,7 @@ import {
 } from "@/components/ui/sidebar"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { cn } from "@/lib/utils"
+import { Badge } from "@/components/ui/badge"
 
 const data = {
   user: {
@@ -123,7 +124,7 @@ export function AppSidebar({ variant = "floating", ...props }: React.ComponentPr
                 href="/" 
                 className={cn(isMobile && "pt-4")}
               >
-                <div className="flex items-center w-full">
+                <div className="flex items-center w-full justify-between">
                   <img 
                     src="/Logo Type (white).svg"
                     alt="Alphix Logo"
@@ -136,6 +137,15 @@ export function AppSidebar({ variant = "floating", ...props }: React.ComponentPr
                     className="h-6 w-28 text-sidebar-logo block dark:hidden"
                     loading="eager"
                   />
+                  <div onClick={(e) => e.stopPropagation()}>
+                    <Badge
+                      variant="outline"
+                      className="bg-[#3d271b] text-sidebar-primary border-sidebar-primary rounded-md font-normal hover:bg-[#4a2f1f] transition-colors cursor-default"
+                      style={{ fontFamily: 'Consolas, monospace' }}
+                    >
+                      Beta
+                    </Badge>
+                  </div>
                 </div>
               </a>
             </SidebarMenuButton>

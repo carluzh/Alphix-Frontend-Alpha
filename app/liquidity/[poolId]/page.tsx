@@ -1093,7 +1093,7 @@ export default function PoolDetailPage() {
                     />
                   </div>
                   {/* New background circle for cut-out effect */}
-                  <div className="absolute top-[-2px] left-[22px] w-11 h-11 rounded-full bg-[#121212] z-20"></div>
+                  <div className="absolute top-[-2px] left-[22px] w-11 h-11 rounded-full bg-[#0f0f0f] z-20"></div>
                 </div>
                 <div>
                   <div className="flex items-center">
