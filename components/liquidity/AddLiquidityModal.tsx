@@ -409,9 +409,19 @@ export function AddLiquidityModal({
 
   const [initialDefaultApplied, setInitialDefaultApplied] = useState(false);
 
+  // Choose a sensible default base token for price display.
+  // Prefer a stable-coin (e.g. tokens containing "USD"/"USDC"/"USDT") when present,
+  // otherwise fall back to the first token (token0Symbol).
   useEffect(() => {
-    setBaseTokenForPriceDisplay(token0Symbol); 
-  }, [token0Symbol]);
+    const isStable = (sym: string | undefined) =>
+      !!sym && /(USD|USDC|USDT)/i.test(sym);
+
+    if (isStable(token1Symbol) && !isStable(token0Symbol)) {
+      setBaseTokenForPriceDisplay(token1Symbol);
+    } else {
+      setBaseTokenForPriceDisplay(token0Symbol);
+    }
+  }, [token0Symbol, token1Symbol]);
 
   useEffect(() => {
     if (isOpen && selectedPoolId) {
@@ -1236,9 +1246,8 @@ export function AddLiquidityModal({
             const decimalAdjFactor = Math.pow(10, token1Dec - token0Dec);
 
             // Min Price (T1 in T0) at numTickLower
-            if (rawApiPriceAtTickLower !== null) { // rawApiPriceAtTickLower is Price(T0 per T1)
-                if (rawApiPriceAtTickLower === 0) valForMinInput = Infinity;
-                else valForMinInput = 1 / rawApiPriceAtTickLower;
+            if (rawApiPriceAtTickLower !== null) { // rawApiPriceAtTickLower is Price(T1 in T0)
+                valForMinInput = rawApiPriceAtTickLower;
         } else if (!isNaN(numTickLower)) {
             if (numTickLower === sdkMinTick) valForMinInput = 0;
                 else valForMinInput = Math.pow(1.0001, numTickLower) * decimalAdjFactor;
@@ -1247,9 +1256,8 @@ export function AddLiquidityModal({
         }
 
             // Max Price (T1 in T0) at numTickUpper
-            if (rawApiPriceAtTickUpper !== null) { // rawApiPriceAtTickUpper is Price(T0 per T1)
-                if (rawApiPriceAtTickUpper === 0) valForMaxInput = Infinity;
-                else valForMaxInput = 1 / rawApiPriceAtTickUpper;
+            if (rawApiPriceAtTickUpper !== null) { // rawApiPriceAtTickUpper is Price(T1 in T0)
+                valForMaxInput = rawApiPriceAtTickUpper;
         } else if (!isNaN(numTickUpper)) {
             if (numTickUpper === sdkMaxTick) valForMaxInput = Infinity;
                 else valForMaxInput = Math.pow(1.0001, numTickUpper) * decimalAdjFactor;
@@ -1266,9 +1274,8 @@ export function AddLiquidityModal({
             const decimalAdjFactor = Math.pow(10, token0Dec - token1Dec);
 
             // Min Price (T0 in T1) at numTickUpper
-            if (rawApiPriceAtTickUpper !== null) { // rawApiPriceAtTickUpper is Price(T0 per T1)
-                if (rawApiPriceAtTickUpper === 0) valForMinInput = Infinity;
-                else valForMinInput = 1 / (1 / rawApiPriceAtTickUpper); // Price(T0/T1) = 1 / Price(T1/T0) ; P(T1/T0) at TickUpper is rawApiPriceAtTickUpper
+            if (rawApiPriceAtTickUpper !== null) { // rawApiPriceAtTickUpper is Price(T1 in T0)
+                valForMinInput = rawApiPriceAtTickUpper === 0 ? Infinity : 1 / rawApiPriceAtTickUpper;
             } else if (!isNaN(numTickUpper)) { // Upper tick corresponds to the MIN T0/T1 price
                 // P_raw(T1/T0) at numTickUpper = 1.0001^numTickUpper
                 // P_raw(T0/T1) at numTickUpper = 1 / (1.0001^numTickUpper) = 1.0001^(-numTickUpper)
@@ -1280,9 +1287,8 @@ export function AddLiquidityModal({
             }
 
             // Max Price (T0 in T1) at numTickLower
-            if (rawApiPriceAtTickLower !== null) { // rawApiPriceAtTickLower is Price(T0 per T1)
-                 if (rawApiPriceAtTickLower === 0) valForMaxInput = Infinity;
-                 else valForMaxInput = 1 / (1 / rawApiPriceAtTickLower); // Price(T0/T1) = 1 / Price(T1/T0) ; P(T1/T0) at TickLower is rawApiPriceAtTickLower
+            if (rawApiPriceAtTickLower !== null) { // rawApiPriceAtTickLower is Price(T1 in T0)
+                 valForMaxInput = rawApiPriceAtTickLower === 0 ? Infinity : 1 / rawApiPriceAtTickLower;
             } else if (!isNaN(numTickLower)) { // Lower tick corresponds to the MAX T0/T1 price
                 // P_raw(T1/T0) at numTickLower = 1.0001^numTickLower
                 // P_raw(T0/T1) at numTickLower = 1 / (1.0001^numTickLower) = 1.0001^(-numTickLower)
@@ -2171,12 +2177,12 @@ export function AddLiquidityModal({
                           <div className="h-4 w-40 bg-muted/40 rounded animate-pulse"></div>
                         ) : currentPrice && !isCalculating ? (
                           baseTokenForPriceDisplay === token0Symbol ? (
-                            `1 ${token1Symbol} = ${(1 / parseFloat(currentPrice)).toLocaleString(undefined, { 
+                            `1 ${token1Symbol} = ${parseFloat(currentPrice).toLocaleString(undefined, { 
                               minimumFractionDigits: TOKEN_DEFINITIONS[token0Symbol]?.displayDecimals || 2, 
                               maximumFractionDigits: TOKEN_DEFINITIONS[token0Symbol]?.displayDecimals || (token0Symbol === 'BTCRL' || token0Symbol === 'YUSDC' ? 4 : 5)
                             })} ${token0Symbol}`
                           ) : (
-                            `1 ${token0Symbol} = ${parseFloat(currentPrice).toLocaleString(undefined, { 
+                            `1 ${token0Symbol} = ${(1 / parseFloat(currentPrice)).toLocaleString(undefined, { 
                               minimumFractionDigits: TOKEN_DEFINITIONS[token1Symbol]?.displayDecimals || (token1Symbol === 'BTCRL' || token1Symbol === 'YUSDC' ? 6 : 4),
                               maximumFractionDigits: TOKEN_DEFINITIONS[token1Symbol]?.displayDecimals || (token1Symbol === 'BTCRL' || token1Symbol === 'YUSDC' ? 8 : 5)
                             })} ${token1Symbol}`
