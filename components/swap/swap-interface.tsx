@@ -351,6 +351,9 @@ export function SwapInterface() {
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null); // This will be removed
   const intervalTimerRef = useRef<NodeJS.Timeout | null>(null);
 
+  // --- Slippage State ---
+  const [slippagePct, setSlippagePct] = useState<string>("5"); // default 5%
+
   // Add necessary hooks for swap execution
   const { signTypedDataAsync } = useSignTypedData();
   const { data: swapTxHash, writeContractAsync: sendSwapTx, isPending: isSwapTxPending, error: swapTxError } = useWriteContract();
@@ -377,7 +380,7 @@ export function SwapInterface() {
     fees: [
       { name: "Fee", value: "N/A", type: "percentage" }, // Initial value updated
     ],
-    slippage: "0.5%",
+    slippage: "5%",
   });
 
   // Mock data generation removed - using real API data instead
@@ -825,10 +828,10 @@ export function SwapInterface() {
       toTokenAmount: formatTokenAmountDisplay(toAmount, toToken.symbol),
       toTokenValue: formatCurrency(newToTokenValue.toString()),
       fees: updatedFeesArray, 
-      slippage: prev.slippage, 
+      slippage: `${slippagePct}%`,
     }));
 
-  }, [fromAmount, toAmount, fromToken, toToken, formatCurrency, isConnected, currentChainId, dynamicFeeLoading, dynamicFeeError, dynamicFeeBps, formatTokenAmountDisplay]); // Added formatTokenAmountDisplay dependency
+  }, [fromAmount, toAmount, fromToken, toToken, formatCurrency, isConnected, currentChainId, dynamicFeeLoading, dynamicFeeError, dynamicFeeBps, formatTokenAmountDisplay, slippagePct]); // Added formatTokenAmountDisplay dependency
 
   const handleFromAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
@@ -1301,6 +1304,7 @@ export function SwapInterface() {
                  permitSigDeadline: permitDetailsToUse.sigDeadline ? permitDetailsToUse.sigDeadline.toString() : effectiveFallbackSigDeadline.toString(),
                  chainId: currentChainId,
                  dynamicSwapFee: fetchedDynamicFee, // <<< PASS THE FETCHED FEE
+                 slippagePercent: parseFloat(slippagePct),
             };
 
             // --- Call Build TX API ---
@@ -1808,6 +1812,8 @@ export function SwapInterface() {
                 currentChainId={currentChainId}
                 TARGET_CHAIN_ID={TARGET_CHAIN_ID}
                 strokeWidth={2}
+                slippage={slippagePct}
+                handleSlippageChange={(e) => setSlippagePct(e.target.value)}
               />
             )}
 

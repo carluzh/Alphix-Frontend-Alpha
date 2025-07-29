@@ -36,6 +36,7 @@ interface SwapInputViewProps {
   isLoadingCurrentToTokenBalance: boolean;
   calculatedValues: {
     fees: FeeDetail[];
+    slippage: string;
   };
   dynamicFeeLoading: boolean;
   quoteLoading: boolean;
@@ -47,6 +48,8 @@ interface SwapInputViewProps {
   currentChainId: number | undefined;
   TARGET_CHAIN_ID: number;
   strokeWidth?: number;
+  slippage: string; // percentage value without % sign e.g., "5"
+  handleSlippageChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
 }
 
 export function SwapInputView({
@@ -81,6 +84,8 @@ export function SwapInputView({
   currentChainId,
   TARGET_CHAIN_ID,
   strokeWidth = 2,
+  slippage,
+  handleSlippageChange,
 }: SwapInputViewProps) {
   return (
     <motion.div key="input" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, y: -20 }} transition={{ duration: 0.2 }}>
@@ -254,6 +259,23 @@ export function SwapInputView({
               )}
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Slippage Input */}
+      {isConnected && (
+        <div className="flex items-center justify-between mt-3">
+          <span className="text-xs text-muted-foreground">Slippage (%)</span>
+          <Input
+            type="number"
+            min="0"
+            max="100"
+            step="0.1"
+            value={slippage}
+            onChange={handleSlippageChange}
+            className="w-20 h-7 text-xs text-right"
+            disabled={isAttemptingSwitch}
+          />
         </div>
       )}
 

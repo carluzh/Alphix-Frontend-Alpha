@@ -129,6 +129,9 @@ interface BuildSwapTxRequest extends NextApiRequest {
         permitSigDeadline: string;  // Timestamp (seconds, string for bigint)
         
         chainId: number;
+
+        /** OPTIONAL: User-specified slippage percentage (e.g. 5 for 5%). If omitted, the API will apply the default */
+        slippagePercent?: number;
     };
 }
 
@@ -199,7 +202,8 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
             permitNonce,
             permitExpiration,
             permitSigDeadline,
-            chainId
+            chainId,
+            slippagePercent: incomingSlippagePercent,
         } = req.body;
 
         // Validate required fields (basic check)
@@ -223,6 +227,12 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
         
         const parsedPermitAmount = BigInt(permitAmount);
         const parsedPermitSigDeadline = BigInt(permitSigDeadline);
+
+        // --- Determine slippage percentage (default 5%) ---
+        const DEFAULT_SLIPPAGE_PERCENT = 5;
+        const effectiveSlippagePercent = (typeof incomingSlippagePercent === 'number' && !isNaN(incomingSlippagePercent) && incomingSlippagePercent > 0)
+            ? incomingSlippagePercent
+            : DEFAULT_SLIPPAGE_PERCENT;
 
         let amountInSmallestUnits: bigint;
         let amountOutSmallestUnits: bigint; // Used for ExactOut amount, or for minAmountOut in ExactIn
@@ -302,7 +312,8 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
             inputs: routePlanner.inputs as Hex[],
             deadline: txDeadline.toString(),
             to: UNIVERSAL_ROUTER_ADDRESS,
-            value: '0' // Assuming no ETH is sent with the swap
+            value: '0', // Assuming no ETH is sent with the swap
+            slippagePercent: effectiveSlippagePercent, // <-- expose applied slippage so the UI can surface & allow edits
         });
 
     } catch (error: any) {
