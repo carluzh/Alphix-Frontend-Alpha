@@ -1294,7 +1294,17 @@ export function SwapInterface() {
                  toTokenSymbol: toToken.symbol === 'YUSDC' ? 'YUSDC' : 'BTCRL', // Always use valid TOKEN_DEFINITIONS keys
                  swapType: 'ExactIn', // Assuming ExactIn, adjust if dynamic
                  amountDecimalsStr: fromAmount, // The actual amount user wants to swap
-                 limitAmountDecimalsStr: "0", // Placeholder for min received, API might calculate or take this
+                 limitAmountDecimalsStr: (() => {
+                      const quoteOut = parseFloat(toAmount || "0");
+                      if (quoteOut === 0 || isNaN(quoteOut)) return "0";
+                      const slippageFloat = parseFloat(slippagePct);
+                      const tolerance = isNaN(slippageFloat) ? 5 : slippageFloat; // fallback default
+                      const minOut = quoteOut * (1 - tolerance / 100);
+                      const decimals = toToken.decimals;
+                      // Ensure proper decimal precision
+                      const fixed = decimals === 0 ? Math.floor(minOut).toString() : minOut.toFixed(decimals);
+                      return fixed;
+                 })(),
                  
                  permitSignature: signatureToUse || "0x", 
                  permitTokenAddress: fromToken.address, // Token that was permitted (fromToken)
