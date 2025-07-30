@@ -338,7 +338,16 @@ export function OutlineArcIcon({ actualPercentage, steppedPercentage, hoverPerce
   );
 }
 
-export function SwapInterface() {
+// NEW: Define props for SwapInterface
+export interface SwapInterfaceProps {
+  currentRoute: SwapRoute | null;
+  setCurrentRoute: React.Dispatch<React.SetStateAction<SwapRoute | null>>;
+  selectedPoolIndexForChart: number;
+  setSelectedPoolIndexForChart: React.Dispatch<React.SetStateAction<number>>;
+  handleSelectPoolForChart: (poolIndex: number) => void;
+}
+
+export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndexForChart, setSelectedPoolIndexForChart, handleSelectPoolForChart }: SwapInterfaceProps) {
   // Mobile check for responsive behaviors
   const isMobile = useIsMobile();
   const [isMounted, setIsMounted] = useState(false);
@@ -382,9 +391,14 @@ export function SwapInterface() {
   const [feeHistoryData, setFeeHistoryData] = useState<FeeHistoryPoint[]>([]);
   const [isFeeHistoryLoading, setIsFeeHistoryLoading] = useState(false);
   const [feeHistoryError, setFeeHistoryError] = useState<string | null>(null);
-  const [isFeeChartPreviewVisible, setIsFeeChartPreviewVisible] = useState(false); // Renamed for clarity
   const [isFeeChartModalOpen, setIsFeeChartModalOpen] = useState(false); // New state for modal
   const isFetchingFeeHistoryRef = useRef(false); // Prevent duplicate API calls
+  const [isPreviewChartStable, setIsPreviewChartStable] = useState(false); // New state for chart stability
+  
+  // Memoize the callback to prevent unnecessary re-renders
+  const handleContentStableChange = useCallback((stable: boolean) => {
+    setIsPreviewChartStable(stable);
+  }, []);
 
   const [currentPermitDetailsForSign, setCurrentPermitDetailsForSign] = useState<any | null>(null);
   const [obtainedSignature, setObtainedSignature] = useState<Hex | null>(null);
@@ -401,18 +415,18 @@ export function SwapInterface() {
   const [dynamicFeeError, setDynamicFeeError] = useState<string | null>(null);
   const isFetchingDynamicFeeRef = useRef(false);
   
-  // State for multi-hop routing and fees
-  const [currentRoute, setCurrentRoute] = useState<SwapRoute | null>(null);
+  // REMOVED: State for multi-hop routing and fees (now passed as props)
+  // const [currentRoute, setCurrentRoute] = useState<SwapRoute | null>(null);
   const [routeFees, setRouteFees] = useState<Array<{ poolName: string; fee: number }>>([]);
   const [routeFeesLoading, setRouteFeesLoading] = useState<boolean>(false);
-  const [selectedPoolIndexForChart, setSelectedPoolIndexForChart] = useState<number>(0); // Track which pool's chart to show
+  // REMOVED: const [selectedPoolIndexForChart, setSelectedPoolIndexForChart] = useState<number>(0); // Track which pool's chart to show
 
-  // Handler for selecting which pool's fee chart to display
-  const handleSelectPoolForChart = useCallback((poolIndex: number) => {
-    if (currentRoute && poolIndex >= 0 && poolIndex < currentRoute.pools.length) {
-      setSelectedPoolIndexForChart(poolIndex);
-    }
-  }, [currentRoute]);
+  // REMOVED: Handler for selecting which pool's fee chart to display (now passed as prop)
+  // const handleSelectPoolForChart = useCallback((poolIndex: number) => {
+  //   if (currentRoute && poolIndex >= 0 && poolIndex < currentRoute.pools.length) {
+  //     setSelectedPoolIndexForChart(poolIndex);
+  //   }
+  // }, [currentRoute]);
 
   // Add necessary hooks for swap execution
   const { signTypedDataAsync } = useSignTypedData();
@@ -432,6 +446,7 @@ export function SwapInterface() {
     toTokenValue: string;
     fees: FeeDetail[]; // UPDATED to use FeeDetail[]
     slippage: string;
+    minimumReceived: string;
   }>({
     fromTokenAmount: "0",
     fromTokenValue: "$0.00",
@@ -441,7 +456,10 @@ export function SwapInterface() {
       { name: "Fee", value: "N/A", type: "percentage" }, // Initial value updated
     ],
     slippage: "0.5%",
+    minimumReceived: "0",
   });
+
+  const [slippage, setSlippage] = useState(0.5); // New state for slippage percentage
 
   // Mock data generation removed - using real API data instead
 
@@ -456,7 +474,7 @@ export function SwapInterface() {
       setDynamicFeeBps(null);
       setDynamicFeeLoading(false);
       setDynamicFeeError(null);
-      setCurrentRoute(null);
+      setCurrentRoute(null); // Use prop setter
       setRouteFees([]);
       setRouteFeesLoading(false);
       return;
@@ -496,8 +514,8 @@ export function SwapInterface() {
       
       // Only update the route if it has actually changed to prevent unnecessary re-renders
       if (JSON.stringify(route) !== JSON.stringify(currentRoute)) {
-        setCurrentRoute(route);
-        setSelectedPoolIndexForChart(0); // Reset to first pool only when route actually changes
+        setCurrentRoute(route); // Use prop setter
+        setSelectedPoolIndexForChart(0); // Use prop setter
       }
 
       // Fetch fees for each pool in the route
@@ -554,7 +572,7 @@ export function SwapInterface() {
     } catch (error: any) {
       console.error("[fetchFee] Error fetching dynamic fee:", error.message);
       setDynamicFeeBps(null);
-      setCurrentRoute(null);
+      setCurrentRoute(null); // Use prop setter
       setRouteFees([]);
       setDynamicFeeLoading(false);
       setRouteFeesLoading(false);
@@ -562,7 +580,7 @@ export function SwapInterface() {
     } finally {
       isFetchingDynamicFeeRef.current = false;
     }
-  }, [isConnected, currentChainId, fromToken?.address, toToken?.address, TARGET_CHAIN_ID]);
+  }, [isConnected, currentChainId, fromToken?.address, toToken?.address, TARGET_CHAIN_ID, currentRoute, setCurrentRoute, setSelectedPoolIndexForChart]); // Added currentRoute, setCurrentRoute, setSelectedPoolIndexForChart
 
   useEffect(() => {
     fetchFee(); // Fetch once on mount / relevant dep change
@@ -614,27 +632,21 @@ export function SwapInterface() {
 
   // Effect for Review State Notifications
   useEffect(() => {
-    console.log(`[Effect Notifications] Running. swapState: ${swapState}, swapProgressState: ${swapProgressState}, shown:`, JSON.stringify(reviewNotificationsShown.current));
     if (swapState === "review") {
-      console.log("[Effect Notifications] In review state.");
       // Handle Warning Toasts
       if (swapProgressState === "needs_approval" && !reviewNotificationsShown.current.needs_approval) {
-        console.log("%%% TOASTING: Approval Required %%%");
         toast("Approval Required", { description: `Permit2 needs approval to spend your ${fromToken.symbol}.`, duration: 4000 }); // Removed InfoToastIcon
         reviewNotificationsShown.current.needs_approval = true;
       } else if (swapProgressState === "needs_signature" && !reviewNotificationsShown.current.needs_signature) {
-        console.log("%%% TOASTING: Signature Required %%%");
         toast("Signature Required", { description: `Permit2 allowance needs to be granted or renewed via signature.`, duration: 4000 }); // Removed InfoToastIcon
         reviewNotificationsShown.current.needs_signature = true;
       // Handle Positive Toasts
       } else if (swapProgressState === "approval_complete" && !reviewNotificationsShown.current.approval_complete) {
-        console.log("%%% TOASTING: Token Approved %%%");
         toast("Token Approved", {
           duration: 2500
         });
         reviewNotificationsShown.current.approval_complete = true;
       } else if (swapProgressState === "signature_complete" && !reviewNotificationsShown.current.signature_complete) {
-        console.log("%%% TOASTING: Permit Active %%%");
         toast("Permission Active", {
           duration: 2500
         });
@@ -643,7 +655,6 @@ export function SwapInterface() {
     } else {
       // Only reset if NOT in review state and if flags are currently true
       if (reviewNotificationsShown.current.needs_approval || reviewNotificationsShown.current.needs_signature || reviewNotificationsShown.current.approval_complete || reviewNotificationsShown.current.signature_complete) {
-         console.log("[Effect Notifications] Not in review state, resetting shown flags.");
          reviewNotificationsShown.current = { needs_approval: false, needs_signature: false, approval_complete: false, signature_complete: false };
       }
     }
@@ -689,11 +700,7 @@ export function SwapInterface() {
         fromTokenBalanceData && isConnected && currentChainId === TARGET_CHAIN_ID &&
         (prevToken.balance !== displayBalance || prevToken.value !== `~$${(numericBalance * prevToken.usdPrice).toFixed(2)}`)
       ) {
-        return {
-          ...prevToken,
-          balance: displayBalance,
-          value: `~$${(numericBalance * prevToken.usdPrice).toFixed(2)}`,
-        };
+        return { ...prevToken, balance: displayBalance, value: `~$${(numericBalance * prevToken.usdPrice).toFixed(2)}` };
       }
       
       // Handle other states if they result in a change
@@ -730,11 +737,7 @@ export function SwapInterface() {
         toTokenBalanceData && isConnected && currentChainId === TARGET_CHAIN_ID &&
         (prevToken.balance !== displayBalance || prevToken.value !== `~$${(numericBalance * prevToken.usdPrice).toFixed(2)}`)
       ) {
-        return {
-          ...prevToken,
-          balance: displayBalance,
-          value: `~$${(numericBalance * prevToken.usdPrice).toFixed(2)}`,
-        };
+        return { ...prevToken, balance: displayBalance, value: `~$${(numericBalance * prevToken.usdPrice).toFixed(2)}` };
       }
       
       if (toTokenBalanceError && isConnected && currentChainId === TARGET_CHAIN_ID && prevToken.balance !== "Error") {
@@ -797,7 +800,8 @@ export function SwapInterface() {
     }
   }, []); // Dependency on useCallback - no external dependencies needed here typically
 
-  // Replace the useEffect that calculates toAmount with V4 Quoter
+  // OLD QUOTE EFFECT - COMMENTED OUT TO BE REPLACED
+  /*
   useEffect(() => {
     const fromValue = parseFloat(fromAmount);
     
@@ -838,12 +842,9 @@ export function SwapInterface() {
             // Store route information if available
             if (data.route) {
               setRouteInfo(data.route);
-              console.log('🛣️ V4 Route:', data.route.path.join(' → '), `(${data.route.hops} hops)`);
             } else {
               setRouteInfo(null);
             }
-            
-            console.log('✅ V4 Quoter: Quote successful -', fromAmount, fromToken.symbol, '→', data.toAmount, toToken.symbol);
           } else {
             console.error('❌ V4 Quoter Error:', data.error);
             
@@ -856,7 +857,6 @@ export function SwapInterface() {
             // Fallback to the calculation using current prices
             const calculatedTo = (fromValue * fromToken.usdPrice) / toToken.usdPrice;
             setToAmount(calculatedTo.toFixed(toToken.decimals));
-            console.log('⚠️ V4 Quoter: Falling back to calculated price. From: $' + fromToken.usdPrice + ', To: $' + toToken.usdPrice);
           }
         } catch (error: any) {
           console.error('❌ V4 Quoter Exception:', error);
@@ -870,7 +870,6 @@ export function SwapInterface() {
           // Fallback to the calculation using current prices
           const calculatedTo = (fromValue * fromToken.usdPrice) / toToken.usdPrice;
           setToAmount(calculatedTo.toFixed(toToken.decimals));
-          console.log('⚠️ V4 Quoter: Falling back to calculated price. From: $' + fromToken.usdPrice + ', To: $' + toToken.usdPrice);
         } finally {
           // Clear loading state
           setQuoteLoading(false);
@@ -880,12 +879,92 @@ export function SwapInterface() {
         const calculatedTo = (fromValue * fromToken.usdPrice) / toToken.usdPrice;
         setToAmount(calculatedTo.toFixed(toToken.decimals));
         setRouteInfo(null); // No route info for calculated prices
-        console.log('ℹ️ V4 Quoter: Using calculated price (not connected or wrong network). From: $' + fromToken.usdPrice + ', To: $' + toToken.usdPrice);
       }
     }, 500); // 500ms debounce
     
     return () => clearTimeout(timer);
   }, [fromAmount, fromToken?.symbol, toToken?.symbol, fromToken?.decimals, toToken?.decimals, fromToken?.usdPrice, toToken?.usdPrice, isConnected, currentChainId, TARGET_CHAIN_ID]);
+  */
+
+  // NEW: Function to fetch quote
+  const fetchQuote = useCallback(async (amountStr: string) => {
+    if (!fromToken || !toToken || !isConnected || currentChainId !== TARGET_CHAIN_ID) {
+      setToAmount("");
+      setRouteInfo(null);
+      setQuoteLoading(false);
+      setQuoteError(null);
+      return;
+    }
+
+    const fromValue = parseFloat(amountStr);
+    if (isNaN(fromValue) || fromValue <= 0) {
+      setToAmount("0"); // Display 0 if input is invalid or zero
+      setRouteInfo(null);
+      setQuoteLoading(false);
+      setQuoteError(null);
+      return;
+    }
+
+    setQuoteLoading(true);
+    setQuoteError(null);
+
+    try {
+      const response = await fetch('/api/swap/get-quote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fromTokenSymbol: fromToken.symbol,
+          toTokenSymbol: toToken.symbol,
+          amountDecimalsStr: amountStr,
+          chainId: currentChainId,
+          debug: true
+        }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        setToAmount(data.toAmount);
+        setRouteInfo(data.route || null);
+        setQuoteError(null);
+      } else {
+        console.error('❌ V4 Quoter Error:', data.error);
+        toast.error(`Quote Error: ${data.error || 'Failed to get quote'}`);
+        setQuoteError(data.error || 'Failed to get quote');
+        setRouteInfo(null);
+        // Fallback to client-side calculation if API fails
+        const calculatedTo = (fromValue * fromToken.usdPrice) / toToken.usdPrice;
+        setToAmount(calculatedTo.toFixed(toToken.decimals));
+      }
+    } catch (error: any) {
+      console.error('❌ V4 Quoter Exception:', error);
+      toast.error(`Quote Error: ${error.message || 'Failed to fetch quote'}`);
+      setQuoteError('Failed to fetch quote');
+      setRouteInfo(null);
+      // Fallback to client-side calculation on exception
+      const calculatedTo = (fromValue * fromToken.usdPrice) / toToken.usdPrice;
+      setToAmount(calculatedTo.toFixed(toToken.decimals));
+    } finally {
+      setQuoteLoading(false);
+    }
+  }, [fromToken?.symbol, toToken?.symbol, currentChainId, isConnected, fromToken?.usdPrice, toToken?.usdPrice, fromToken?.decimals, toToken?.decimals, TARGET_CHAIN_ID]);
+
+  // NEW: Effect to trigger quote fetching
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      if (fromAmount === "" || parseFloat(fromAmount) === 0) {
+        setToAmount("0"); // Display "0" instead of empty string for better UX
+        setQuoteLoading(false);
+        setQuoteError(null);
+      } else {
+        fetchQuote(fromAmount); // Fetch quote for the user's entered amount
+      }
+    }, 300); // Debounce for 300ms
+
+    return () => {
+      clearTimeout(handler);
+    };
+  }, [fromAmount, fromToken, toToken, isConnected, currentChainId, fetchQuote]);
 
   // Update calculatedValues for UI display
   useEffect(() => {
@@ -969,9 +1048,13 @@ export function SwapInterface() {
                             ? (toValueNum * toToken.usdPrice)
                             : 0;
     
-    // const currentToAmount = parseFloat(toAmount) || 0; // This line can be removed or kept if used elsewhere, not directly for fees now
-    // const minimumReceivedDisplay = showFeeDetails ? formatTokenAmount(currentToAmount.toString(), toToken.decimals) : "0.00"; // This line can be removed
-
+    // Calculate minimum received based on input USD value (original method)
+    const fromUsdValue = (parseFloat(fromAmount || "0")) * (fromToken.usdPrice || 0);
+    const toTokenPrice = toToken.usdPrice || 1; // Avoid division by zero
+    const equivalentToAmount = fromUsdValue / toTokenPrice;
+    const minReceivedAmount = equivalentToAmount > 0 ? equivalentToAmount * (1 - slippage / 100) : 0;
+    const formattedMinimumReceived = formatTokenAmountDisplay(minReceivedAmount.toString(), toToken);
+    
     setCalculatedValues(prev => ({
       ...prev,
       fromTokenAmount: formatTokenAmountDisplay(fromAmount, fromToken),
@@ -979,10 +1062,11 @@ export function SwapInterface() {
       toTokenAmount: formatTokenAmountDisplay(toAmount, toToken),
       toTokenValue: formatCurrency(newToTokenValue.toString()),
       fees: updatedFeesArray, 
-      slippage: prev.slippage, 
+      slippage: `${slippage}%`, // Pass slippage as string for display
+      minimumReceived: formattedMinimumReceived,
     }));
 
-  }, [fromAmount, toAmount, fromToken?.symbol, fromToken?.usdPrice, fromToken?.displayDecimals, toToken?.symbol, toToken?.usdPrice, toToken?.displayDecimals, formatCurrency, isConnected, currentChainId, dynamicFeeLoading, dynamicFeeError, dynamicFeeBps, routeFees, routeFeesLoading, formatTokenAmountDisplay]); // Added route fees dependencies
+  }, [fromAmount, toAmount, fromToken?.symbol, fromToken?.usdPrice, fromToken?.displayDecimals, toToken?.symbol, toToken?.usdPrice, toToken?.displayDecimals, formatCurrency, isConnected, currentChainId, dynamicFeeLoading, dynamicFeeError, dynamicFeeBps, routeFees, routeFeesLoading, formatTokenAmountDisplay, slippage]);
 
   const handleFromAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
@@ -1059,35 +1143,57 @@ export function SwapInterface() {
     // 1. Pre-checks (connected, network, amount > 0, sufficient balance)
     const insufficientBalance = isNaN(fromBalanceNum) || fromBalanceNum < fromAmountNum;
     if (!isConnected || currentChainId !== TARGET_CHAIN_ID || fromAmountNum <= 0) { // REMOVED insufficientBalance check here
-      console.log("[handleSwap] Pre-checks failed.", { isConnected, currentChainId, fromAmountNum, fromBalanceNum, insufficientBalance });
       // Removed the "Insufficient Balance" toast here as per user request
       return;
     }
 
-    console.log("[handleSwap] Initiating swap review & checks.");
     setSwapState("review"); // Move to review UI
     reviewNotificationsShown.current = { needs_approval: false, needs_signature: false, approval_complete: false, signature_complete: false }; // Reset notifications
     setCompletedSteps([]); // Reset steps for this new review attempt
     setIsSwapping(true); // Disable confirm button during checks
     setSwapProgressState("checking_allowance"); // Show checks are in progress
 
+    // Check if this is a native ETH swap
+    if (fromToken.symbol === 'ETH') {
+      console.log("DEBUG: Taking ETH swap path for token:", fromToken.symbol);
+      toast("Native ETH detected - no approval needed", {
+        duration: 2500,
+        icon: <SuccessToastIcon />
+      });
+      setCompletedSteps(["approval_complete", "signature_complete"]); // Mark both steps complete for ETH
+      setSwapProgressState("ready_to_swap");
+      setIsSwapping(false); // Ready for user action (Confirm)
+      return;
+    }
+
     // --- Helper to fetch permit data (can be extracted if used elsewhere) ---
     const fetchPermitData = async (): Promise<any> => {
-      console.log("[fetchPermitData] Fetching fresh permit data...");
       try {
+        const requestBody = {
+          userAddress: accountAddress,
+          fromTokenAddress: fromToken.address,
+          fromTokenSymbol: fromToken.symbol,
+          toTokenSymbol: toToken.symbol,
+          chainId: currentChainId,
+          checkExisting: true,
+        };
+        
+        console.log("DEBUG: fetchPermitData request body:", requestBody);
+        console.log("DEBUG: Individual values:", {
+          accountAddress,
+          fromTokenAddress: fromToken.address,
+          fromTokenSymbol: fromToken.symbol,
+          toTokenSymbol: toToken.symbol,
+          currentChainId
+        });
+        
         const response = await fetch('/api/swap/prepare-permit', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            userAddress: accountAddress,
-            tokenAddress: fromToken.address,
-            chainId: currentChainId,
-            checkExisting: true,
-          }),
+          body: JSON.stringify(requestBody),
         });
         const data = await response.json();
         if (!response.ok) throw new Error(data.message || 'Failed to fetch permit data');
-        console.log("[fetchPermitData] Fetched data:", data);
         return data;
       } catch (fetchError: any) {
         console.error("[fetchPermitData] Error:", fetchError);
@@ -1100,7 +1206,6 @@ export function SwapInterface() {
       const parsedAmount = parseUnits(fromAmount, fromToken.decimals);
 
       // 2. Check ERC20 Allowance
-      console.log("[handleSwap] Checking ERC20 allowance...");
       const allowance = await publicClient.readContract({
         address: fromToken.address,
         abi: Erc20AbiDefinition,
@@ -1110,7 +1215,6 @@ export function SwapInterface() {
 
       // 3. Handle ERC20 Result
       if (allowance < parsedAmount) {
-        console.log("[handleSwap] ERC20 insufficient. Setting state: needs_approval");
         setSwapProgressState("needs_approval");
         setIsSwapping(false); // Checks done, ready for user action (Approve)
         // Notification effect will show toast
@@ -1118,8 +1222,7 @@ export function SwapInterface() {
       }
 
       // 4. ERC20 OK -> Check Permit2 Immediately
-      console.log("[handleSwap] ERC20 sufficient. Marking complete & checking Permit2...");
-      toast("Token Approved", {
+      toast("Token Approved - Checking permissions...", {
         duration: 2500,
       });
       setCompletedSteps(["approval_complete"]); // Mark step 1 complete
@@ -1129,16 +1232,14 @@ export function SwapInterface() {
       setCurrentPermitDetailsForSign(permitData); // Store fetched permit data
       setObtainedSignature(null); // Clear any previous signature
 
-      const needsSignature = !permitData.hasValidPermit || BigInt(permitData.currentPermitInfo.amount) < MaxUint160;
+      const needsSignature = permitData.needsPermit === true;
 
       // 5. Handle Permit2 Result
       if (needsSignature) {
-        console.log("[handleSwap] Permit2 check complete. Setting state: needs_signature");
         setSwapProgressState("needs_signature");
         // Notification effect will show toast
       } else {
-        console.log("[handleSwap] Permit2 check complete. Setting state: ready_to_swap");
-        toast("Permission Granted", {
+        toast("Existing permission found - Ready to swap!", {
           duration: 2500,
           icon: <SuccessToastIcon />
         });
@@ -1154,10 +1255,8 @@ export function SwapInterface() {
       setSwapProgressState("error"); // Set a general error state for checks
       toast("Error preparing swap", {
         description: error.message || "Could not verify token allowances.",
-        icon: <WarningToastIcon />,
-        duration: 4000,
+        icon: <WarningToastIcon />
       });
-      // Keep user on review screen, they can click "Change" to go back
     }
   };
 
@@ -1182,11 +1281,9 @@ export function SwapInterface() {
         if (percentage === 100) {
           // For 100%, use the exact blockchain value directly
           setFromAmount(exactBalance);
-          console.log(`Setting 100% exact balance for ${fromToken.symbol}: ${exactBalance}`);
         } else {
           // For other percentages, calculate and format to the token's decimals
           setFromAmount(exactAmount.toFixed(fromToken.decimals));
-          console.log(`Setting ${percentage}% of exact balance for ${fromToken.symbol}: ${exactAmount.toFixed(fromToken.decimals)}`);
         }
       } else {
         console.warn(`No valid balance data for ${fromToken.symbol}`);
@@ -1206,7 +1303,6 @@ export function SwapInterface() {
         if (isFrom) {
           // Set EXACTLY what the blockchain reports - no parsing/formatting that might round
           setFromAmount(balanceData.formatted);
-          console.log(`Setting exact balance for ${token.symbol}: ${balanceData.formatted}`);
         } else {
           console.warn("Setting 'toAmount' based on 'toToken' balance is not directly supported");
         }
@@ -1218,27 +1314,41 @@ export function SwapInterface() {
     }
   };
 
+  // This function is no longer needed as the preview is always visible.
+  // Its previous logic (toggling isFeeChartPreviewVisible) has been removed.
+  const handleFeePercentageClick = () => {};
+
+  // This function opens the MODAL
+  const handlePreviewChartClick = useCallback(() => {
+    if (isMobile) {
+      toast("Not available on mobile (Alpha)", { 
+        duration: 4000
+      });
+    } else {
+      setIsFeeChartModalOpen(true);
+    }
+  }, [isMobile]);
+
   const handleConfirmSwap = async () => {
     // 1. Guard & Initial Setup
     if (isSwapping) {
-      console.log("[handleConfirmSwap] Already swapping, preventing re-entrancy.");
       return;
     }
     setIsSwapping(true); // Disable button immediately
     const stateBeforeAction = swapProgressState; // Store state before this action attempt
-    console.log(`[handleConfirmSwap] Starting action from state: ${stateBeforeAction}`);
 
     // --- Helper Function Placeholder for fetching permit data ---
     // In a real scenario, this would likely call the '/api/swap/prepare-permit' endpoint
     const fetchPermitData = async (): Promise<any> => {
-        console.log("[fetchPermitData] Fetching fresh permit data...");
         try {
             const response = await fetch('/api/swap/prepare-permit', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     userAddress: accountAddress,
-                    tokenAddress: fromToken.address,
+                    fromTokenAddress: fromToken.address,
+                    fromTokenSymbol: fromToken.symbol,
+                    toTokenSymbol: toToken.symbol,
                     chainId: currentChainId,
                     checkExisting: true, // Always check validity when fetching
                 }),
@@ -1247,7 +1357,6 @@ export function SwapInterface() {
             if (!response.ok) {
                 throw new Error(data.message || 'Failed to fetch permit data');
             }
-            console.log("[fetchPermitData] Fetched data:", data);
             return data;
         } catch (fetchError) {
             console.error("[fetchPermitData] Error:", fetchError);
@@ -1262,7 +1371,6 @@ export function SwapInterface() {
 
         // ACTION: Need to Approve
         if (stateBeforeAction === "needs_approval") {
-            console.log("[handleConfirmSwap] Action: Approving ERC20");
             setSwapProgressState("approving");
             toast("Approving tokens for Permit2...");
 
@@ -1292,10 +1400,8 @@ export function SwapInterface() {
             const needsSigAfterApproval = !freshPermitData.hasValidPermit || BigInt(freshPermitData.currentPermitInfo.amount) < MaxUint160;
 
             if (needsSigAfterApproval) {
-                console.log("[handleConfirmSwap] Approval done, signature needed.");
                 setSwapProgressState("needs_signature");
             } else {
-                console.log("[handleConfirmSwap] Approval done, signature NOT needed.");
                 setSwapProgressState("ready_to_swap");
                 setCompletedSteps(prev => prev.includes("signature_complete") ? prev : [...prev, "signature_complete"]);
             }
@@ -1305,7 +1411,6 @@ export function SwapInterface() {
 
         // ACTION: Need to Sign
         else if (stateBeforeAction === "needs_signature") {
-            console.log("[handleConfirmSwap] Action: Signing Permit2");
 
             // --- CRITICAL: Use the stored permit data for signing ---
             if (!currentPermitDetailsForSign) {
@@ -1320,10 +1425,9 @@ export function SwapInterface() {
             }
             const permitDataForSigning = currentPermitDetailsForSign;
 
-            const reallyNeedsSig = !permitDataForSigning.hasValidPermit || BigInt(permitDataForSigning.currentPermitInfo.amount) < MaxUint160;
+            const reallyNeedsSig = permitDataForSigning.needsPermit === true;
 
             if (!reallyNeedsSig) {
-                 console.log("[handleConfirmSwap] Fresh check (using stored data) shows signature no longer needed. Moving to ready_to_swap.");
                  setCompletedSteps(prev => prev.includes("signature_complete") ? prev : [...prev, "signature_complete"]);
                  setSwapProgressState("ready_to_swap");
                  setIsSwapping(false); 
@@ -1333,20 +1437,29 @@ export function SwapInterface() {
             setSwapProgressState("signing_permit");
             toast("Please sign the permit message...");
 
+            console.log("DEBUG: permitDataForSigning structure:", permitDataForSigning);
+            
+            // Check if permitData exists (only present when needsPermit is true)
+            if (!permitDataForSigning.permitData) {
+                throw new Error("Permit data is missing when signature is required");
+            }
+            
+            // Use the permitData structure from the new API response
+            const permitMessage = permitDataForSigning.permitData.message;
             const messageToSign = {
                 details: {
-                    token: getAddress(fromToken.address), // Should match permitDataForSigning.details.token if it existed
+                    token: getAddress(fromToken.address),
                     amount: MaxUint160, 
-                    expiration: permitDataForSigning.permitExpiration, // Use stored expiration
-                    nonce: permitDataForSigning.nonce, // Use stored nonce
+                    expiration: permitMessage.details.expiration,
+                    nonce: permitMessage.details.nonce,
                 },
-                spender: getAddress(permitDataForSigning.spender), // Use stored spender
-                sigDeadline: BigInt(permitDataForSigning.sigDeadline), // Use stored sigDeadline
+                spender: getAddress(permitDataForSigning.permitData.message.spender),
+                sigDeadline: BigInt(permitMessage.sigDeadline), // Convert string back to BigInt
             };
 
             const signatureFromSigning = await signTypedDataAsync({
-                domain: permitDataForSigning.domain, // Use stored domain
-                types: permitDataForSigning.types, // Use stored types
+                domain: permitDataForSigning.permitData.domain,
+                types: permitDataForSigning.permitData.types,
                 primaryType: 'PermitSingle',
                 message: messageToSign,
             });
@@ -1363,11 +1476,175 @@ export function SwapInterface() {
 
         // ACTION: Ready to Swap
         else if (stateBeforeAction === "ready_to_swap") {
-            console.log("[handleConfirmSwap] Action: Building and Executing Swap");
+
+            // For native ETH swaps, skip permit checks and use dummy permit data
+            if (fromToken.symbol === 'ETH') {
+                console.log("DEBUG: Taking ETH swap path for token:", fromToken.symbol);
+                // --- Sanity Check for balance (can remain) ---
+                const currentBalanceBigInt = parseUnits(fromToken.balance || "0", fromToken.decimals);
+                const parsedAmountForSwap = parseUnits(fromAmount, fromToken.decimals);
+                if (currentBalanceBigInt < parsedAmountForSwap) {
+                     throw new Error(`Insufficient balance. Required: ${fromAmount}, Available: ${fromToken.balance}`);
+                }
+                // --- End Sanity Check ---
+
+                setSwapProgressState("building_tx");
+                toast("Building swap transaction...");
+
+                // >>> FETCH ROUTE AND DYNAMIC FEES <<<
+                // For multihop support, we need to get the route first, then fetch fees for each pool
+                const routeResult = findBestRoute(fromToken.symbol, toToken.symbol);
+                
+                if (!routeResult.bestRoute) {
+                    throw new Error(`No route found for token pair: ${fromToken.symbol} -> ${toToken.symbol}`);
+                }
+
+                const route = routeResult.bestRoute;
+
+                // Fetch dynamic fees for each pool in the route
+                let fetchedDynamicFee: number | null = null;
+                try {
+                    if (route.isDirectRoute) {
+                        // Single hop - fetch fee for the direct pool
+                        const feeResponse = await fetch('/api/swap/get-dynamic-fee', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                fromTokenSymbol: fromToken.symbol,
+                                toTokenSymbol: toToken.symbol,
+                                chainId: TARGET_CHAIN_ID,
+                            }),
+                        });
+                        const feeData = await feeResponse.json();
+                        if (!feeResponse.ok) {
+                            throw new Error(feeData.message || feeData.errorDetails || 'Failed to fetch dynamic fee');
+                        }
+                        fetchedDynamicFee = Number(feeData.dynamicFee);
+                        if (isNaN(fetchedDynamicFee)) {
+                            throw new Error('Dynamic fee received is not a number: ' + feeData.dynamicFee);
+                        }
+                    } else {
+                        // Multihop - fetch fees for each pool in the route
+                        
+                        // For multihop, we'll use the first pool's fee as the primary fee
+                        // In a more sophisticated implementation, this could be weighted average or other logic
+                        const firstPool = route.pools[0];
+                        const feeResponse = await fetch('/api/swap/get-dynamic-fee', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                fromTokenSymbol: firstPool.token0,
+                                toTokenSymbol: firstPool.token1,
+                                chainId: TARGET_CHAIN_ID,
+                            }),
+                        });
+                        const feeData = await feeResponse.json();
+                        if (!feeResponse.ok) {
+                            throw new Error(feeData.message || feeData.errorDetails || 'Failed to fetch dynamic fee for multihop route');
+                        }
+                        fetchedDynamicFee = Number(feeData.dynamicFee);
+                        if (isNaN(fetchedDynamicFee)) {
+                            throw new Error('Dynamic fee received is not a number: ' + feeData.dynamicFee);
+                        }
+                    }
+
+                } catch (feeError: any) {
+                    console.error("[handleConfirmSwap] Error fetching dynamic fee:", feeError);
+                    toast.error("Could not fetch swap fee. Please try again.", {
+                      icon: <WarningToastIcon />
+                    });
+                    setIsSwapping(false);
+                    setSwapProgressState("error");
+                    return;
+                }
+                // >>> END FETCH ROUTE AND DYNAMIC FEES <<<
+
+                const effectiveTimestamp = BigInt(Math.floor(Date.now() / 1000));
+                const effectiveFallbackSigDeadline = effectiveTimestamp + BigInt(30 * 60); // 30 min fallback
+
+                // Calculate minimum received amount using USD-based calculation (same as UI display)
+                const fromUsdValue = (parseFloat(fromAmount || "0")) * (fromToken.usdPrice || 0);
+                const toTokenPrice = toToken.usdPrice || 1;
+                const equivalentToAmount = fromUsdValue / toTokenPrice;
+                const minimumReceivedAmount = equivalentToAmount > 0 ? equivalentToAmount * (1 - slippage / 100) : 0;
+                const minimumReceivedStr = minimumReceivedAmount.toString();
+
+                // Use dummy permit data for native ETH
+                const bodyForSwapTx = {
+                     userAddress: accountAddress,
+                     fromTokenSymbol: fromToken.symbol,
+                     toTokenSymbol: toToken.symbol,
+                     swapType: 'ExactIn',
+                     amountDecimalsStr: fromAmount,
+                     limitAmountDecimalsStr: minimumReceivedStr, // Pass the slippage-adjusted minimum amount
+                     
+                     permitSignature: "0x", // No permit signature needed for ETH
+                     permitTokenAddress: fromToken.address,
+                     permitAmount: "0", // No permit amount for ETH
+                     permitNonce: 0,
+                     permitExpiration: 0,
+                     permitSigDeadline: effectiveFallbackSigDeadline.toString(),
+                     chainId: currentChainId,
+                     dynamicSwapFee: fetchedDynamicFee,
+                };
+
+                // --- Call Build TX API ---
+                const buildTxApiResponse = await fetch('/api/swap/build-tx', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(bodyForSwapTx),
+                });
+                const buildTxApiData = await buildTxApiResponse.json();
+
+                if (!buildTxApiResponse.ok) {
+                     const errorInfo = buildTxApiData.message || 'Failed to build transaction';
+                     const cause = buildTxApiData.errorDetails || buildTxApiData.error;
+                     throw new Error(errorInfo, { cause: cause });
+                }
+
+                window.swapBuildData = buildTxApiData; 
+                setSwapProgressState("executing_swap");
+                toast("Sending swap transaction...");
+
+                const txHash = await sendSwapTx({
+                    address: getAddress(buildTxApiData.to),
+                    abi: UniversalRouterAbi,
+                    functionName: 'execute',
+                    args: [buildTxApiData.commands as Hex, buildTxApiData.inputs as Hex[], BigInt(buildTxApiData.deadline)],
+                    value: BigInt(buildTxApiData.value),
+                });
+                if (!txHash) throw new Error("Failed to send swap transaction (no hash received)");
+
+                console.log("ETH Swap - Transaction Hash received:", txHash);
+                setSwapTxInfo({ 
+                    hash: txHash as string,
+                    fromAmount: fromAmount,
+                    fromSymbol: fromToken.symbol,
+                    toAmount: toAmount,
+                    toSymbol: toToken.symbol,
+                    explorerUrl: `https://sepolia.basescan.org/tx/${txHash}`
+                });
+                console.log("ETH Swap - setSwapTxInfo called with hash:", txHash);
+
+                toast("Transaction Submitted", { description: "Waiting for confirmation..." });
+                setSwapProgressState("waiting_confirmation");
+                console.log("ETH Swap - Waiting for confirmation of hash:", txHash);
+                const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash as Hex });
+
+                if (!receipt || receipt.status !== 'success') throw new Error("Swap transaction failed on-chain");
+
+                console.log("ETH Swap - Transaction confirmed! Hash:", txHash, "Receipt:", receipt);
+                setSwapProgressState("complete");
+                setIsSwapping(false);
+                
+                // Only show success view after transaction is confirmed
+                console.log("ETH Swap - Setting success state for hash:", txHash);
+                setSwapState("success");
+                return;
+            }
 
             // Check if we have the necessary permit details and signature if one was required
-            const needsSignatureCheck = !currentPermitDetailsForSign?.hasValidPermit || 
-                                    BigInt(currentPermitDetailsForSign?.currentPermitInfo?.amount || '0') < MaxUint160;
+            const needsSignatureCheck = currentPermitDetailsForSign?.needsPermit === true;
             
             if (!currentPermitDetailsForSign || (needsSignatureCheck && !obtainedSignature)) {
                  console.error("[handleConfirmSwap] Error: Permit details missing, or signature was required but not obtained.");
@@ -1383,6 +1660,7 @@ export function SwapInterface() {
             // Use the stored permit details and signature for building TX
             const permitDetailsToUse = currentPermitDetailsForSign; 
             const signatureToUse = obtainedSignature; // This can be null/"0x" if no signature was needed/obtained
+
 
             // --- Sanity Check for balance (can remain) ---
             const currentBalanceBigInt = parseUnits(fromToken.balance || "0", fromToken.decimals);
@@ -1400,11 +1678,10 @@ export function SwapInterface() {
             const routeResult = findBestRoute(fromToken.symbol, toToken.symbol);
             
             if (!routeResult.bestRoute) {
-                throw new Error(`No route found for token pair: ${fromToken.symbol} → ${toToken.symbol}`);
+                throw new Error(`No route found for token pair: ${fromToken.symbol} -> ${toToken.symbol}`);
             }
 
             const route = routeResult.bestRoute;
-            console.log(`[handleConfirmSwap] Using route: ${route.path.join(' → ')} (${route.hops} hops)`);
 
             // Fetch dynamic fees for each pool in the route
             let fetchedDynamicFee: number | null = null;
@@ -1430,7 +1707,6 @@ export function SwapInterface() {
                     }
                 } else {
                     // Multihop - fetch fees for each pool in the route
-                    console.log(`[handleConfirmSwap] Fetching fees for ${route.pools.length} pools in multihop route`);
                     
                     // For multihop, we'll use the first pool's fee as the primary fee
                     // In a more sophisticated implementation, this could be weighted average or other logic
@@ -1453,7 +1729,7 @@ export function SwapInterface() {
                         throw new Error('Dynamic fee received is not a number: ' + feeData.dynamicFee);
                     }
                     
-                    console.log(`[handleConfirmSwap] Using fee from first pool (${firstPool.poolName}): ${fetchedDynamicFee}`);
+
                 }
 
             } catch (feeError: any) {
@@ -1470,20 +1746,43 @@ export function SwapInterface() {
             const effectiveTimestamp = BigInt(Math.floor(Date.now() / 1000));
             const effectiveFallbackSigDeadline = effectiveTimestamp + BigInt(30 * 60); // 30 min fallback
 
+            // Calculate minimum received amount using USD-based calculation (same as UI display)
+            const fromUsdValue = (parseFloat(fromAmount || "0")) * (fromToken.usdPrice || 0);
+            const toTokenPrice = toToken.usdPrice || 1;
+            const equivalentToAmount = fromUsdValue / toTokenPrice;
+            const minimumReceivedAmount = equivalentToAmount > 0 ? equivalentToAmount * (1 - slippage / 100) : 0;
+            const minimumReceivedStr = minimumReceivedAmount.toString();
+
+            // Extract permit information based on the new API structure
+            let permitNonce, permitExpiration, permitSigDeadline;
+            if (permitDetailsToUse.needsPermit === false && permitDetailsToUse.existingPermit) {
+                // Use existing permit data
+                permitNonce = permitDetailsToUse.existingPermit.nonce;
+                permitExpiration = permitDetailsToUse.existingPermit.expiration;
+                permitSigDeadline = effectiveFallbackSigDeadline.toString(); // Use fallback for existing permits
+            } else if (permitDetailsToUse.needsPermit === true && permitDetailsToUse.permitData) {
+                // Use new permit data
+                permitNonce = permitDetailsToUse.permitData.message.details.nonce;
+                permitExpiration = permitDetailsToUse.permitData.message.details.expiration;
+                permitSigDeadline = permitDetailsToUse.permitData.message.sigDeadline.toString();
+            } else {
+                throw new Error("Invalid permit data structure");
+            }
+
             const bodyForSwapTx = {
                  userAddress: accountAddress,
                  fromTokenSymbol: fromToken.symbol,
                  toTokenSymbol: toToken.symbol,
                  swapType: 'ExactIn', // Assuming ExactIn, adjust if dynamic
                  amountDecimalsStr: fromAmount, // The actual amount user wants to swap
-                 limitAmountDecimalsStr: "0", // Placeholder for min received, API might calculate or take this
+                 limitAmountDecimalsStr: minimumReceivedStr, // Pass the slippage-adjusted minimum amount
                  
                  permitSignature: signatureToUse || "0x", 
                  permitTokenAddress: fromToken.address, // Token that was permitted (fromToken)
                  permitAmount: MaxUint160.toString(),   // The amount specified in the signed permit (always MaxUint160)
-                 permitNonce: permitDetailsToUse.nonce, 
-                 permitExpiration: permitDetailsToUse.permitExpiration, 
-                 permitSigDeadline: permitDetailsToUse.sigDeadline ? permitDetailsToUse.sigDeadline.toString() : effectiveFallbackSigDeadline.toString(),
+                 permitNonce: permitNonce, 
+                 permitExpiration: permitExpiration, 
+                 permitSigDeadline: permitSigDeadline,
                  chainId: currentChainId,
                  dynamicSwapFee: fetchedDynamicFee, // <<< PASS THE FETCHED FEE
             };
@@ -1516,25 +1815,32 @@ export function SwapInterface() {
             });
             if (!txHash) throw new Error("Failed to send swap transaction (no hash received)");
 
+            console.log("ETH Swap - Transaction Hash received:", txHash);
             setSwapTxInfo({ 
-                 hash: txHash as string, fromAmount, fromSymbol: fromToken.symbol, toAmount, toSymbol: toToken.symbol,
-                 explorerUrl: `${baseSepolia.blockExplorers.default.url}/tx/${txHash}`,
+                hash: txHash as string,
+                fromAmount: fromAmount,
+                fromSymbol: fromToken.symbol,
+                toAmount: toAmount,
+                toSymbol: toToken.symbol,
+                explorerUrl: `https://sepolia.basescan.org/tx/${txHash}`
             });
-            setSwapProgressState("waiting_confirmation");
-            toast("Swap submitted", { description: "Waiting for confirmation..." });
+            console.log("ETH Swap - setSwapTxInfo called with hash:", txHash);
 
+            toast("Transaction Submitted", { description: "Waiting for confirmation..." });
+            setSwapProgressState("waiting_confirmation");
+            console.log("ETH Swap - Waiting for confirmation of hash:", txHash);
             const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash as Hex });
+
             if (!receipt || receipt.status !== 'success') throw new Error("Swap transaction failed on-chain");
 
-            setIsSwapping(false); 
+            console.log("ETH Swap - Transaction confirmed! Hash:", txHash, "Receipt:", receipt);
+            setSwapProgressState("complete");
+            setIsSwapping(false);
+            
+            // Only show success view after transaction is confirmed
+            console.log("ETH Swap - Setting success state for hash:", txHash);
             setSwapState("success");
-            setCompletedSteps(prev => [...prev, "complete"]);
-
-
-            toast("Swap Successful", {
-                 icon: <SuccessToastIcon />, duration: 5000,
-            });
-            window.swapBuildData = undefined;
+            return;
         }
 
         // ACTION: Unexpected State (Safety net)
@@ -1547,6 +1853,29 @@ export function SwapInterface() {
         // 3. Centralized Error Handling
         console.error("[handleConfirmSwap] Error during action:", err);
         setIsSwapping(false); // Always re-enable button on error
+
+        // Check for specific slippage error first
+        let isSlippageError = false;
+        if (err instanceof Error) {
+            const errorMessage = err.message;
+            // Check for V4TooLittleReceived error (0x8b063d73)
+            if (errorMessage.includes("0x8b063d73") || 
+                errorMessage.toLowerCase().includes("v4toolittlereceived") ||
+                errorMessage.toLowerCase().includes("too little received")) {
+                isSlippageError = true;
+            }
+        }
+
+        if (isSlippageError) {
+            toast.error("Slippage Too Large", {
+                description: "The swap would receive less than your minimum. Try increasing slippage tolerance or reducing trade size.",
+                icon: <WarningToastIcon />,
+                duration: 5000,
+            });
+            setSwapProgressState("error");
+            window.swapBuildData = undefined;
+            return;
+        }
 
         // Basic error parsing (adapt your existing logic if more sophisticated)
         let displayError = "An unknown error occurred";
@@ -1571,7 +1900,6 @@ export function SwapInterface() {
                  icon: <WarningToastIcon />, duration: 4000,
             });
             // Reset state to before the rejected action, allowing a clean retry of that specific step
-            console.log(`[handleConfirmSwap] User rejection detected. Resetting state to: ${stateBeforeAction}`);
             setSwapProgressState(stateBeforeAction);
         } else {
             toast("Swap Failed", {
@@ -1586,21 +1914,9 @@ export function SwapInterface() {
     }
   };
 
-  // This function now toggles the PREVIEW
-  const handleFeePercentageClick = () => {
-    setIsFeeChartPreviewVisible(!isFeeChartPreviewVisible);
-  };
-
-  // This function opens the MODAL
-  const handlePreviewChartClick = () => {
-    if (isMobile) {
-      toast("Not available on mobile (Alpha)", { 
-        duration: 4000
-      });
-    } else {
-      setIsFeeChartModalOpen(true);
-    }
-  };
+  // This function now opens the MODAL
+  // No changes needed here, as it's correctly linked to setIsFeeChartModalOpen
+  // The logic for handling isMobile is already in place.
 
   // --- RENDER LOGIC --- 
         // Determine which token is aUSDC and which is aUSDT for display purposes, regardless of from/to state
@@ -1766,6 +2082,10 @@ export function SwapInterface() {
     setHoveredArcPercentage(null);
   };
 
+  const handleSlippageChange = (newSlippage: number) => {
+    setSlippage(newSlippage);
+  };
+
   const strokeWidth = 2; // Define strokeWidth for the SVG rect elements
 
   // Memoize poolInfo to prevent unnecessary chart re-renders
@@ -1804,8 +2124,7 @@ export function SwapInterface() {
     const fetchHistoricalFeeData = async () => {
       if (!feeHistoryKey || !currentRoute) {
         setFeeHistoryData([]);
-        setIsFeeChartPreviewVisible(false);
-        return;
+        return; // Preview is always mounted, just no data
       }
 
       // Get the selected pool's subgraph ID
@@ -1824,14 +2143,13 @@ export function SwapInterface() {
           
           // Cache expires after 10 minutes (600,000 ms)
           if (cached.timestamp && (now - cached.timestamp) < 600000 && cached.data) {
-            console.log('[Fee History] Using cached data (expires in', Math.round((600000 - (now - cached.timestamp)) / 60000), 'min)');
+
             setFeeHistoryData(cached.data);
-            setIsFeeChartPreviewVisible(true);
             setIsFeeHistoryLoading(false);
             setFeeHistoryError(null);
             return;
           } else {
-            console.log('[Fee History] Cache expired, fetching fresh data');
+
             sessionStorage.removeItem(cacheKey); // Clean up expired cache
           }
         }
@@ -1841,19 +2159,10 @@ export function SwapInterface() {
       }
 
       // Prevent duplicate API calls
-      if (isFetchingFeeHistoryRef.current) {
-        console.log('[Fee History] Already fetching, skipping duplicate request');
-        return;
-      }
-
-      console.log(`[Fee History] Fetching data for pool: ${selectedPool.poolName}`);
       isFetchingFeeHistoryRef.current = true;
       setIsFeeHistoryLoading(true);
       setFeeHistoryError(null);
-      // Don't hide the chart container during pool switches
-      if (!feeHistoryData.length) {
-        setIsFeeChartPreviewVisible(false);
-      }
+      // No explicit hide/show here, AnimatePresence handles visibility via 'animate' prop
 
       try {
         const response = await fetch(`/api/liquidity/get-historical-dynamic-fees?poolId=${poolIdForFeeHistory}&days=30`);
@@ -1862,9 +2171,6 @@ export function SwapInterface() {
           throw new Error(errorData.message || `Failed to fetch historical fee data: ${response.statusText}`);
         }
         const data: FeeHistoryPoint[] = await response.json();
-        
-        console.log('[Fee History] API response data:', data.slice(0, 5));
-        console.log('[Fee History] Non-zero volume days:', data.filter(d => d.volumeTvlRatio > 0));
         
         if (data && data.length > 0) {
             // Cache the data in sessionStorage with timestamp
@@ -1879,18 +2185,15 @@ export function SwapInterface() {
             }
             
             setFeeHistoryData(data);
-            setIsFeeChartPreviewVisible(true);
-            console.log('[Fee History] Data set in state, triggering chart update');
+
         } else {
             setFeeHistoryData([]);
-            setIsFeeChartPreviewVisible(false);
         }
 
       } catch (error: any) {
         console.error("Failed to fetch historical fee data:", error);
         setFeeHistoryError(error.message || "Could not load fee history.");
         setFeeHistoryData([]);
-        setIsFeeChartPreviewVisible(false);
       } finally {
         setIsFeeHistoryLoading(false);
         isFetchingFeeHistoryRef.current = false;
@@ -1960,7 +2263,7 @@ export function SwapInterface() {
         }
         
         const data = await response.json();
-        console.log('📈 Token prices fetched via simplified API:', data);
+
         
         setTokenPrices(data);
       } catch (error) {
@@ -2013,14 +2316,86 @@ export function SwapInterface() {
     
   }, [tokenPrices]);
 
+  const cardRef = useRef<HTMLDivElement>(null); // Ref for the Card component
+  const previewChartRef = useRef<HTMLDivElement>(null); // Ref for the DynamicFeeChartPreview component
+  const [combinedRect, setCombinedRect] = useState({
+    top: 0, left: 0, width: 0, height: 0
+  });
+
+  // Define updateCombinedRect using useCallback to make it stable and accessible
+  const updateCombinedRect = useCallback(() => {
+    // Ensure refs are available
+    if (!cardRef.current) {
+      // Can't do anything without the main card
+      return;
+    }
+
+    const cardRect = cardRef.current.getBoundingClientRect();
+    let newCombinedRect = {
+      top: cardRect.top,
+      left: cardRect.left,
+      width: cardRect.width,
+      height: cardRect.height, // Default to card height
+    };
+
+    // If the chart preview is visible AND its content is stable (and ref is available),
+    // calculate the height to include it.
+    if (isPreviewChartStable && previewChartRef.current) { // Removed isFeeChartPreviewVisible
+      const previewRect = previewChartRef.current.getBoundingClientRect();
+      newCombinedRect.height = previewRect.bottom - cardRect.top; // No +3 here
+
+    } else {
+
+    }
+    
+    setCombinedRect(newCombinedRect);
+  }, [
+    cardRef, previewChartRef, setCombinedRect, // Refs and setter
+    isPreviewChartStable, // Only depends on chart content stability now
+  ]);
+
+  useEffect(() => {
+    // Call updateCombinedRect when dependencies change
+    updateCombinedRect(); 
+
+    // Add listeners for dynamic changes
+    window.addEventListener('resize', updateCombinedRect);
+    window.addEventListener('scroll', updateCombinedRect);
+
+    return () => {
+      window.removeEventListener('resize', updateCombinedRect);
+      window.removeEventListener('scroll', updateCombinedRect);
+    };
+  }, [
+    isMounted, // Ensures window is available
+    updateCombinedRect, // The memoized callback itself
+  ]);
+  
+  // NEW: Add navigation handlers for chart preview
+  const handleNextPool = useCallback(() => {
+    if (currentRoute && selectedPoolIndexForChart < currentRoute.pools.length - 1) {
+      setSelectedPoolIndexForChart(prevIndex => prevIndex + 1);
+    }
+  }, [currentRoute, selectedPoolIndexForChart]);
+
+  const handlePreviousPool = useCallback(() => {
+    if (currentRoute && selectedPoolIndexForChart > 0) {
+      setSelectedPoolIndexForChart(prevIndex => prevIndex - 1);
+    }
+  }, [currentRoute, selectedPoolIndexForChart]);
+
+  // NEW: Determine if chart preview should be shown at all (always mounted, animates based on this)
+  const showChartPreviewRegardlessOfData = isMounted && isConnected && currentChainId === TARGET_CHAIN_ID && currentRoute !== null;
+
+
   return (
-    <div className="flex flex-col gap-4"> {/* Removed items-center */}
+    <div className="flex flex-col"> {/* Removed gap property */}
       {/* Main Swap Interface Card */}
-      <Card className="w-full max-w-md card-gradient z-10 mx-auto"> {/* Added mx-auto */}
+      <Card className="w-full max-w-md card-gradient z-10 mx-auto rounded-lg bg-[var(--swap-background)] border-[var(--swap-border)]" ref={cardRef}> {/* Applied styling here */} 
         {/* <CardHeader className="pt-6 pb-2">
             <CardTitle className="text-center">Swap Tokens</CardTitle>
         </CardHeader> */}
-        <CardContent className="p-6 pt-6">
+        <CardContent className="p-6 pt-6"> {/* Removed border and background styling */}
           <AnimatePresence mode="wait">
             {swapState === "input" && (
               <SwapInputView
@@ -2063,6 +2438,9 @@ export function SwapInterface() {
                 currentChainId={currentChainId}
                 TARGET_CHAIN_ID={TARGET_CHAIN_ID}
                 strokeWidth={2}
+                swapContainerRect={combinedRect} // Pass the new combined rect
+                slippage={slippage}
+                onSlippageChange={handleSlippageChange}
               />
             )}
 
@@ -2105,25 +2483,28 @@ export function SwapInterface() {
           - Historical Fee history data is available AND not loading AND no error
           - User is connected and on the target chain
         */}
-        {!dynamicFeeLoading && !dynamicFeeError && dynamicFeeBps !== null && 
-         !feeHistoryError && (feeHistoryData.length > 0 || isFeeHistoryLoading) && // Keep container visible during loading
-         isConnected && currentChainId === TARGET_CHAIN_ID && isFeeChartPreviewVisible && (
-          <motion.div
-            key="dynamic-fee-preview-auto" // New key for AnimatePresence
-            className="w-full max-w-md mx-auto" // Preview matches main card width
-            initial={{ y: -10, opacity: 0, height: 0 }}    
-            animate={{ y: 0, opacity: 1, height: 'auto' }}       
-            exit={{ y: -10, opacity: 0, height: 0 }}       
-            transition={{ type: "spring", stiffness: 300, damping: 30, duration: 0.2 }}
-          >
-            <DynamicFeeChartPreview 
-              data={feeHistoryData} 
-              onClick={handlePreviewChartClick}
-              poolInfo={poolInfo}
-              isLoading={isFeeHistoryLoading}
-            />
-          </motion.div>
-        )}
+        {/* The motion.div is now always mounted, and its animation controls its visibility/size. */}
+        <motion.div
+          key="dynamic-fee-preview-auto" // New key for AnimatePresence
+          className="w-full max-w-md mx-auto" // Preview matches main card width
+          initial={{ y: -10, opacity: 0.5, height: '80px', marginTop: '24px' }} // Skeleton state: larger margin
+          animate={showChartPreviewRegardlessOfData ? { y: 0, opacity: 1, height: 'auto', marginTop: '16px' } : { y: -10, opacity: 0, height: '0px', marginTop: '0px' }}       
+          transition={{ type: "spring", stiffness: 300, damping: 30, duration: 0.2 }}
+          ref={previewChartRef} // Add ref to preview chart
+          onAnimationComplete={() => {
+            // Ensure a re-measurement after the animation to catch final dimensions
+            updateCombinedRect(); 
+
+          }}
+        >
+          <DynamicFeeChartPreview 
+            data={feeHistoryData} 
+            onClick={handlePreviewChartClick}
+            poolInfo={poolInfo}
+            isLoading={isFeeHistoryLoading}
+            onContentStableChange={handleContentStableChange} // Use memoized callback
+          />
+        </motion.div>
       </AnimatePresence>
 
       {/* Full Chart Modal - Controlled by isFeeChartModalOpen - Moved outside the mapping */}
@@ -2135,7 +2516,7 @@ export function SwapInterface() {
           {/* Default Dialog close button will be used */}
         </DialogContent>
       </Dialog>
-    </div> // Ensure this closing div is correct
+    </div> /* Ensure this closing div is correct */
   );
 }
 

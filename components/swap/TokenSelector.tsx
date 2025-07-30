@@ -33,6 +33,7 @@ interface TokenSelectorProps {
   disabled?: boolean;
   excludeToken?: TokenSelectorToken; // Token to exclude from dropdown (e.g., the other token in swap)
   className?: string;
+  swapContainerRect: { top: number; left: number; width: number; height: number; }; // New prop
 }
 
 // Helper function to format token address (6 + ... + 5)
@@ -106,11 +107,11 @@ export function TokenSelector({
   onTokenSelect,
   disabled = false,
   excludeToken,
-  className
+  className,
+  swapContainerRect // New prop
 }: TokenSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const [modalPosition, setModalPosition] = useState({ top: 0, left: 0, width: 0 });
   const [tokenPrices, setTokenPrices] = useState<{ BTC: number; USDC: number; ETH: number }>({
     BTC: 77000,
     USDC: 1,
@@ -137,31 +138,7 @@ export function TokenSelector({
       });
   }, [availableTokens, excludeToken, searchTerm]);
 
-  // Position modal to overlay the SwapInputView
-  useEffect(() => {
-    if (isOpen) {
-      const updatePosition = () => {
-        const swapContainer = document.querySelector('[data-swap-container="true"]');
-        if (swapContainer) {
-          const rect = swapContainer.getBoundingClientRect();
-          setModalPosition({
-            top: rect.top,
-            left: rect.left,
-            width: rect.width
-          });
-        }
-      };
-
-      updatePosition();
-      window.addEventListener('resize', updatePosition);
-      window.addEventListener('scroll', updatePosition);
-      
-      return () => {
-        window.removeEventListener('resize', updatePosition);
-        window.removeEventListener('scroll', updatePosition);
-      };
-    }
-  }, [isOpen]);
+  // Position modal to overlay the SwapInputView - Now uses prop directly
 
   // Fetch token prices when modal opens
   useEffect(() => {
@@ -176,7 +153,7 @@ export function TokenSelector({
             ETH: prices.ETH || 3500 // fallback
           });
         } catch (error) {
-          console.error('Error fetching token prices in TokenSelector:', error);
+          // Error fetching token prices
         }
       };
 
@@ -211,11 +188,9 @@ export function TokenSelector({
     });
     setTokenBalances(loadingBalances);
 
-    // Fetch balances for all tokens
+    // Fetch balances for all tokens in parallel
     const fetchBalances = async () => {
-      const newBalances: Record<string, TokenBalanceData> = {};
-
-      for (const token of filteredTokens) {
+      const balancePromises = filteredTokens.map(async (token) => {
         try {
           let balance = '0';
           
@@ -244,20 +219,32 @@ export function TokenSelector({
           const numericBalance = parseFloat(balance);
           const usdValue = numericBalance * usdPrice;
 
-          newBalances[token.address] = {
-            balance: getFormattedDisplayBalance(numericBalance, token.symbol),
-            usdValue,
-            isLoading: false
+          return {
+            address: token.address,
+            data: {
+              balance: getFormattedDisplayBalance(numericBalance, token.symbol),
+              usdValue,
+              isLoading: false
+            }
           };
         } catch (error) {
-          console.error(`Error fetching balance for ${token.symbol}:`, error);
-          newBalances[token.address] = {
-            balance: "Error",
-            usdValue: 0,
-            isLoading: false
+          return {
+            address: token.address,
+            data: {
+              balance: "Error",
+              usdValue: 0,
+              isLoading: false
+            }
           };
         }
-      }
+      });
+
+      const results = await Promise.all(balancePromises);
+      const newBalances: Record<string, TokenBalanceData> = {};
+      
+      results.forEach(result => {
+        newBalances[result.address] = result.data;
+      });
 
       setTokenBalances(newBalances);
     };
@@ -294,7 +281,7 @@ export function TokenSelector({
             "bg-muted/50": isOpen
           }
         )}
-        onClick={handleToggle}
+        onClick={() => setIsOpen(!isOpen)} // Directly toggle isOpen
         disabled={disabled}
       >
         <Image 
@@ -321,8 +308,8 @@ export function TokenSelector({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="fixed inset-0 z-50 bg-black/50"
-            onClick={handleClose}
+            className="fixed inset-0 z-50"
+            onClick={() => setIsOpen(false)} // Directly close isOpen
           >
             {/* Modal positioned to overlay SwapInputView */}
             <motion.div
@@ -330,26 +317,25 @@ export function TokenSelector({
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.98 }}
               transition={{ duration: 0.2 }}
-              className="absolute bg-background rounded-lg shadow-2xl border border-border overflow-hidden"
+              className="fixed rounded-lg shadow-2xl border border-border overflow-hidden bg-popover" // Changed to fixed and bg-popover
               onClick={(e) => e.stopPropagation()}
               style={{
-                top: modalPosition.top,
-                left: modalPosition.left,
-                width: modalPosition.width,
-                maxHeight: '70vh',
-                minHeight: '350px'
+                top: swapContainerRect.top,
+                left: swapContainerRect.left,
+                width: swapContainerRect.width,
+                height: swapContainerRect.height,
               }}
             >
               {/* Header */}
               <div className="flex items-center justify-between p-4 border-b border-border">
                 <h2 className="text-sm font-medium">
-                  {excludeToken ? 'Swap From Token' : 'Swap To Token'}
+                  {excludeToken ? 'Swap From Token' : 'Swap To Token'} {/* Reverted header text logic */}
                 </h2>
                 <Button
                   variant="ghost"
                   size="icon"
                   className="h-6 w-6 rounded-full"
-                  onClick={handleClose}
+                  onClick={() => setIsOpen(false)} // Directly close isOpen
                 >
                   <XIcon className="h-3 w-3" />
                 </Button>
@@ -370,7 +356,7 @@ export function TokenSelector({
               </div>
 
               {/* Token List - Simple Layout */}
-              <div className="overflow-y-auto" style={{ maxHeight: 'calc(70vh - 130px)' }}>
+              <div className="overflow-y-auto" style={{ maxHeight: `calc(100% - 105px)` }}> {/* Dynamic max height: 100% of parent height - (header 33px + search 72px) */}
                 {filteredTokens.length === 0 ? (
                   <div className="p-6 text-center text-muted-foreground text-sm">
                     No tokens found matching "{searchTerm}"

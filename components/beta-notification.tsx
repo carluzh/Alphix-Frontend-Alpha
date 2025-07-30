@@ -37,7 +37,7 @@ export function BetaNotification() {
   }
 
   return (
-    <div className="fixed bottom-4 right-4 z-50 max-w-sm w-full">
+    <div className="fixed bottom-4 right-4 z-50 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
       <GridPatternCard className="relative p-0">
         <Button
           variant="ghost"

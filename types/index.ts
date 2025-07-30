@@ -24,4 +24,5 @@ export interface Pool {
   volumeChangeDirection?: 'up' | 'down' | 'neutral' | 'loading';
   tvlYesterdayUSD?: number;
   tvlChangeDirection?: 'up' | 'down' | 'neutral' | 'loading';
+  type?: string;
 } 

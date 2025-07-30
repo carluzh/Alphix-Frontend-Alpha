@@ -124,6 +124,9 @@ export function AddLiquidityModal({
   poolApr // Destructure new prop
 }: AddLiquidityModalProps) {
   const { address: accountAddress, chainId, isConnected } = useAccount(); // Added isConnected
+
+
+
   // Initialize tokens based on selected pool
   const getInitialTokens = () => {
     if (selectedPoolId) {
@@ -235,67 +238,7 @@ export function AddLiquidityModal({
   const [customXAxisTicks, setCustomXAxisTicks] = useState<CustomAxisLabel[]>([]);
   // --- END Custom X-Axis Tick State ---
 
-  // --- BEGIN useEffect to calculate custom X-axis ticks ---
-  useEffect(() => {
-    if (xDomain && xDomain[0] !== undefined && xDomain[1] !== undefined && token0Symbol && token1Symbol) {
-      const [minTickDomain, maxTickDomain] = xDomain;
-      const desiredTickCount = 3; 
-      const newLabels: CustomAxisLabel[] = [];
 
-      const token0Def = TOKEN_DEFINITIONS[token0Symbol];
-      const token1Def = TOKEN_DEFINITIONS[token1Symbol];
-      const displayDecimals = baseTokenForPriceDisplay === token0Symbol 
-        ? (token0Def?.displayDecimals ?? (token0Symbol === 'aBTC' ? 8 : 4)) 
-        : (token1Def?.displayDecimals ?? (token1Symbol === 'aBTC' ? 8 : 4));
-
-      if (minTickDomain === maxTickDomain) {
-        // Simplified: just show one label if domain is a single point
-        // Price calculation for a single tick
-        let priceAtTick = NaN;
-        if (token0Def?.decimals !== undefined && token1Def?.decimals !== undefined) {
-          const decimalAdjFactor = baseTokenForPriceDisplay === token0Symbol 
-            ? Math.pow(10, token1Def.decimals - token0Def.decimals)
-            : Math.pow(10, token0Def.decimals - token1Def.decimals);
-          priceAtTick = baseTokenForPriceDisplay === token0Symbol 
-            ? Math.pow(1.0001, -minTickDomain) * decimalAdjFactor 
-            : Math.pow(1.0001, minTickDomain) * decimalAdjFactor;
-        }
-        newLabels.push({ 
-          tickValue: minTickDomain, 
-          displayLabel: isNaN(priceAtTick) ? minTickDomain.toString() : priceAtTick.toLocaleString(undefined, { maximumFractionDigits: displayDecimals, minimumFractionDigits: 2 })
-        });
-      } else if (isFinite(minTickDomain) && isFinite(maxTickDomain)) {
-        const range = maxTickDomain - minTickDomain;
-        const step = range / (desiredTickCount > 1 ? desiredTickCount - 1 : 1);
-        
-        for (let i = 0; i < desiredTickCount; i++) {
-          const tickVal = Math.round(minTickDomain + (i * step));
-          let priceAtTick = NaN;
-
-          if (token0Def?.decimals !== undefined && token1Def?.decimals !== undefined) {
-            if (baseTokenForPriceDisplay === token0Symbol) { // Display price of T1 in T0
-              const decimalAdj = Math.pow(10, token1Def.decimals - token0Def.decimals);
-              priceAtTick = Math.pow(1.0001, -tickVal) * decimalAdj;
-            } else { // Display price of T0 in T1
-              const decimalAdj = Math.pow(10, token0Def.decimals - token1Def.decimals);
-              priceAtTick = Math.pow(1.0001, tickVal) * decimalAdj; 
-            }
-          }
-          newLabels.push({ 
-            tickValue: tickVal, 
-            displayLabel: isNaN(priceAtTick) ? tickVal.toString() : priceAtTick.toLocaleString(undefined, { maximumFractionDigits: displayDecimals, minimumFractionDigits: Math.min(2, displayDecimals) }) 
-          });
-        }
-        // REMOVED: The code that was reversing the labels when displaying price of Token0 in terms of Token1
-      } 
-      setCustomXAxisTicks(newLabels);
-    } else {
-      // Handle non-finite domains if necessary, for now, clear ticks
-      setCustomXAxisTicks([]); // This should be an empty array of CustomAxisLabel
-      return;
-    }
-  }, [xDomain, baseTokenForPriceDisplay, token0Symbol, token1Symbol]);
-  // --- END useEffect to calculate custom X-axis ticks ---
 
   // --- BEGIN Panning State ---
   const [isPanning, setIsPanning] = useState(false);
@@ -404,6 +347,96 @@ export function AddLiquidityModal({
   }, [token0Symbol, token1Symbol, chainId]);
   // --- END Derived Pool Tokens ---
 
+  // --- BEGIN useEffect to calculate custom X-axis ticks ---
+  useEffect(() => {
+    if (xDomain && xDomain[0] !== undefined && xDomain[1] !== undefined && token0Symbol && token1Symbol && poolToken0 && poolToken1) {
+      const [minTickDomain, maxTickDomain] = xDomain;
+      const desiredTickCount = 3; 
+      const newLabels: CustomAxisLabel[] = [];
+
+      const token0Def = TOKEN_DEFINITIONS[token0Symbol];
+      const token1Def = TOKEN_DEFINITIONS[token1Symbol];
+      const displayDecimals = baseTokenForPriceDisplay === token0Symbol 
+        ? (token0Def?.displayDecimals ?? (token0Symbol === 'aBTC' ? 8 : 4)) 
+        : (token1Def?.displayDecimals ?? (token1Symbol === 'aBTC' ? 8 : 4));
+
+      if (!token0Def || !token1Def) {
+        setCustomXAxisTicks([]);
+        return;
+      }
+
+      // Use the same corrected logic as tooltip and min/max prices
+      const isUserOrderMatchingCanonical = poolToken0.address.toLowerCase() === token0Def.address.toLowerCase();
+      const canonicalToken0Decimals = poolToken0.decimals;
+      const canonicalToken1Decimals = poolToken1.decimals;
+
+      // Helper function to calculate price from tick using corrected logic
+      const calculatePriceFromTick = (tick: number): number => {
+        if (baseTokenForPriceDisplay === token0Symbol) {
+          // User wants to see price of token1 in terms of token0
+          let finalDecimalAdjFactor: number;
+          let priceCalculationFunc: (tick: number) => number;
+          
+          if (isUserOrderMatchingCanonical) {
+            // token0=canonicalToken0, token1=canonicalToken1
+            finalDecimalAdjFactor = Math.pow(10, canonicalToken1Decimals - canonicalToken0Decimals);
+            priceCalculationFunc = (tick) => Math.pow(1.0001, -tick);
+          } else {
+            // token0=canonicalToken1, token1=canonicalToken0
+            finalDecimalAdjFactor = Math.pow(10, canonicalToken0Decimals - canonicalToken1Decimals);
+            priceCalculationFunc = (tick) => 1 / Math.pow(1.0001, -tick);
+          }
+          
+          return priceCalculationFunc(tick) * finalDecimalAdjFactor;
+        } else {
+          // User wants to see price of token0 in terms of token1
+          let finalDecimalAdjFactor: number;
+          let priceCalculationFunc: (tick: number) => number;
+          
+          if (isUserOrderMatchingCanonical) {
+            // token0=canonicalToken0, token1=canonicalToken1
+            finalDecimalAdjFactor = Math.pow(10, canonicalToken0Decimals - canonicalToken1Decimals);
+            priceCalculationFunc = (tick) => 1 / Math.pow(1.0001, -tick);
+          } else {
+            // token0=canonicalToken1, token1=canonicalToken0
+            finalDecimalAdjFactor = Math.pow(10, canonicalToken1Decimals - canonicalToken0Decimals);
+            priceCalculationFunc = (tick) => Math.pow(1.0001, -tick);
+          }
+          
+          return priceCalculationFunc(tick) * finalDecimalAdjFactor;
+        }
+      };
+
+      if (minTickDomain === maxTickDomain) {
+        // Simplified: just show one label if domain is a single point
+        const priceAtTick = calculatePriceFromTick(minTickDomain);
+        newLabels.push({ 
+          tickValue: minTickDomain, 
+          displayLabel: isNaN(priceAtTick) ? minTickDomain.toString() : priceAtTick.toLocaleString(undefined, { maximumFractionDigits: displayDecimals, minimumFractionDigits: 2 })
+        });
+      } else if (isFinite(minTickDomain) && isFinite(maxTickDomain)) {
+        const range = maxTickDomain - minTickDomain;
+        const step = range / (desiredTickCount > 1 ? desiredTickCount - 1 : 1);
+        
+        for (let i = 0; i < desiredTickCount; i++) {
+          const tickVal = Math.round(minTickDomain + (i * step));
+          const priceAtTick = calculatePriceFromTick(tickVal);
+          
+          newLabels.push({ 
+            tickValue: tickVal, 
+            displayLabel: isNaN(priceAtTick) ? tickVal.toString() : priceAtTick.toLocaleString(undefined, { maximumFractionDigits: displayDecimals, minimumFractionDigits: Math.min(2, displayDecimals) }) 
+          });
+        }
+      } 
+      setCustomXAxisTicks(newLabels);
+    } else {
+      // Handle non-finite domains if necessary, for now, clear ticks
+      setCustomXAxisTicks([]);
+      return;
+    }
+  }, [xDomain, baseTokenForPriceDisplay, token0Symbol, token1Symbol, poolToken0, poolToken1]);
+  // --- END useEffect to calculate custom X-axis ticks ---
+
   // --- BEGIN State for Pool's Current SqrtPriceX96 ---
   // TODO: This state needs to be populated reliably, ideally from the same source as currentPoolTick (e.g., get-pool-state API call)
   const [currentPoolSqrtPriceX96, setCurrentPoolSqrtPriceX96] = useState<string | null>(null); // Store as string, convert to JSBI when used
@@ -476,9 +509,38 @@ export function AddLiquidityModal({
 
   const [initialDefaultApplied, setInitialDefaultApplied] = useState(false);
 
+  // Helper function to determine the better base token for price display
+  const determineBaseTokenForPriceDisplay = useCallback((token0: TokenSymbol, token1: TokenSymbol): TokenSymbol => {
+    if (!token0 || !token1) return token0;
+
+    // Priority order for quote tokens (these should be the base for price display)
+    const quotePriority: Record<string, number> = {
+      'aUSDC': 10,
+      'aUSDT': 9,
+      'USDC': 8,
+      'USDT': 7,
+      'aETH': 6,
+      'ETH': 5,
+      'YUSD': 4,
+      'mUSDT': 3,
+    };
+
+    const token0Priority = quotePriority[token0] || 0;
+    const token1Priority = quotePriority[token1] || 0;
+
+    // Return the token with higher priority (better quote currency)
+    // If priorities are equal, default to token0
+    return token1Priority > token0Priority ? token1 : token0;
+  }, []);
+
   useEffect(() => {
+    if (token0Symbol && token1Symbol) {
+      const bestBaseToken = determineBaseTokenForPriceDisplay(token0Symbol, token1Symbol);
+      setBaseTokenForPriceDisplay(bestBaseToken);
+    } else if (token0Symbol) {
     setBaseTokenForPriceDisplay(token0Symbol); 
-  }, [token0Symbol]);
+    }
+  }, [token0Symbol, token1Symbol, determineBaseTokenForPriceDisplay]);
 
   useEffect(() => {
     if (isOpen && selectedPoolId) {
@@ -506,7 +568,7 @@ export function AddLiquidityModal({
           setPriceAtTickUpper(null);
           setInitialDefaultApplied(false);
           setActivePreset("±15%"); // Reset preset on pool change
-          setBaseTokenForPriceDisplay(t0); // Reset base token for price display
+          // Base token for price display will be set by the useEffect
           // Reset chart specific states too
           setXDomain([-120000, 120000]);
           setCurrentPriceLine(null);
@@ -529,7 +591,7 @@ export function AddLiquidityModal({
     setPriceAtTickUpper(null);
     setCurrentPrice(null);
     setActivePreset("±15%"); // Reset preset on token/chain change
-    setBaseTokenForPriceDisplay(token0Symbol); // Reset base token for price display
+    // Base token for price display will be set by the useEffect
     // Reset chart specific states too
     setXDomain([-120000, 120000]);
     setCurrentPriceLine(null);
@@ -936,6 +998,7 @@ export function AddLiquidityModal({
   }, [poolApr, activePreset, tickLower, tickUpper, sdkMinTick, sdkMaxTick, currentPoolTick]);
 
   // Effect to update price input strings when underlying ticks or base display token changes
+  // REFACTORED: Now properly handles token order - ensures consistent calculations regardless of user selection order
   useEffect(() => {
     const numTickLower = parseInt(tickLower);
     const numTickUpper = parseInt(tickUpper);
@@ -949,44 +1012,83 @@ export function AddLiquidityModal({
     const rawApiPriceAtTickLower = calculatedData?.priceAtTickLower ? parseFloat(calculatedData.priceAtTickLower) : null;
     const rawApiPriceAtTickUpper = calculatedData?.priceAtTickUpper ? parseFloat(calculatedData.priceAtTickUpper) : null;
 
-    // Define token decimals early for use in both branches
-    const token0Dec = TOKEN_DEFINITIONS[token0Symbol]?.decimals;
-    const token1Dec = TOKEN_DEFINITIONS[token1Symbol]?.decimals;
+    // Get token definitions and check canonical order
+    const token0Def = TOKEN_DEFINITIONS[token0Symbol];
+    const token1Def = TOKEN_DEFINITIONS[token1Symbol];
 
-    // Simple price calculation - if user selected token0, show prices in token0 terms
+    if (!token0Def || !token1Def || !poolToken0 || !poolToken1) {
+      setMinPriceInputString("");
+      setMaxPriceInputString("");
+      return;
+    }
+
+    // Check if user's token order matches canonical pool order
+    const isUserOrderMatchingCanonical = poolToken0.address.toLowerCase() === token0Def.address.toLowerCase();
+    
+    // Calculate prices based on canonical pool order, then display appropriately
+    // Always work with canonical pool tokens for consistent tick interpretation
+    const canonicalToken0Decimals = poolToken0.decimals;
+    const canonicalToken1Decimals = poolToken1.decimals;
+    
+    // Token order and decimals are now properly handled using canonical pool order
+    
     if (baseTokenForPriceDisplay === token0Symbol) {
-        // Show prices denominated in token0
-        const decimalAdjFactor = Math.pow(10, token1Dec - token0Dec);
+        // User wants to see price of token1 in terms of token0
+        let finalDecimalAdjFactor: number;
+        let priceCalculationFunc: (tick: number) => number;
+        
+        if (isUserOrderMatchingCanonical) {
+            // token0=canonicalToken0, token1=canonicalToken1
+            // Want price of canonicalToken1 in canonicalToken0 terms
+            finalDecimalAdjFactor = Math.pow(10, canonicalToken1Decimals - canonicalToken0Decimals);
+            priceCalculationFunc = (tick) => Math.pow(1.0001, -tick);
+            console.log(`[Decimal Factor] Matching case: 10^(${canonicalToken1Decimals}-${canonicalToken0Decimals}) = ${finalDecimalAdjFactor}`);
+        } else {
+            // token0=canonicalToken1, token1=canonicalToken0
+            // Want price of canonicalToken0 in canonicalToken1 terms = 1 / (price of canonicalToken1 in canonicalToken0)
+            finalDecimalAdjFactor = Math.pow(10, canonicalToken0Decimals - canonicalToken1Decimals);
+            priceCalculationFunc = (tick) => 1 / Math.pow(1.0001, -tick);
+            console.log(`[Decimal Factor] Non-matching case: 10^(${canonicalToken0Decimals}-${canonicalToken1Decimals}) = ${finalDecimalAdjFactor}`);
+        }
         
         if (rawApiPriceAtTickLower !== null) {
-            valForMaxInput = rawApiPriceAtTickLower * decimalAdjFactor;
+            valForMaxInput = rawApiPriceAtTickLower * finalDecimalAdjFactor;
         } else if (!isNaN(numTickLower)) {
-            const rawPrice = Math.pow(1.0001, -numTickLower);
-            valForMaxInput = rawPrice * decimalAdjFactor;
+            valForMaxInput = priceCalculationFunc(numTickLower) * finalDecimalAdjFactor;
         }
         
         if (rawApiPriceAtTickUpper !== null) {
-            valForMinInput = rawApiPriceAtTickUpper * decimalAdjFactor;
+            valForMinInput = rawApiPriceAtTickUpper * finalDecimalAdjFactor;
         } else if (!isNaN(numTickUpper)) {
-            const rawPrice = Math.pow(1.0001, -numTickUpper);
-            valForMinInput = rawPrice * decimalAdjFactor;
+            valForMinInput = priceCalculationFunc(numTickUpper) * finalDecimalAdjFactor;
         }
     } else {
-        // Show prices denominated in token1  
-        const decimalAdjFactor = Math.pow(10, token0Dec - token1Dec);
+        // User wants to see price of token0 in terms of token1
+        let finalDecimalAdjFactor: number;
+        let priceCalculationFunc: (tick: number) => number;
+        
+        if (isUserOrderMatchingCanonical) {
+            // token0=canonicalToken0, token1=canonicalToken1
+            // Want price of canonicalToken0 in canonicalToken1 terms = 1 / (price of canonicalToken1 in canonicalToken0)
+            finalDecimalAdjFactor = Math.pow(10, canonicalToken0Decimals - canonicalToken1Decimals);
+            priceCalculationFunc = (tick) => 1 / Math.pow(1.0001, -tick);
+        } else {
+            // token0=canonicalToken1, token1=canonicalToken0
+            // Want price of canonicalToken1 in canonicalToken0 terms
+            finalDecimalAdjFactor = Math.pow(10, canonicalToken1Decimals - canonicalToken0Decimals);
+            priceCalculationFunc = (tick) => Math.pow(1.0001, -tick);
+        }
         
         if (rawApiPriceAtTickLower !== null) {
-            valForMinInput = (1 / rawApiPriceAtTickLower) * decimalAdjFactor;
+            valForMinInput = (1 / rawApiPriceAtTickLower) * finalDecimalAdjFactor;
         } else if (!isNaN(numTickLower)) {
-            const rawPrice = Math.pow(1.0001, numTickLower);
-            valForMinInput = rawPrice * decimalAdjFactor;
+            valForMinInput = priceCalculationFunc(numTickLower) * finalDecimalAdjFactor;
         }
         
         if (rawApiPriceAtTickUpper !== null) {
-            valForMaxInput = (1 / rawApiPriceAtTickUpper) * decimalAdjFactor;
+            valForMaxInput = (1 / rawApiPriceAtTickUpper) * finalDecimalAdjFactor;
         } else if (!isNaN(numTickUpper)) {
-            const rawPrice = Math.pow(1.0001, numTickUpper);
-            valForMaxInput = rawPrice * decimalAdjFactor;
+            valForMaxInput = priceCalculationFunc(numTickUpper) * finalDecimalAdjFactor;
         }
     }
 
@@ -1033,10 +1135,13 @@ export function AddLiquidityModal({
 
     const displayDecimalsForT0_forLog = TOKEN_DEFINITIONS[token0Symbol]?.displayDecimals ?? 2;
 
+    // Debug log to verify calculated prices
+    console.log(`[Price Display] Min: ${finalMinPriceString}, Max: ${finalMaxPriceString} (denominated in ${baseTokenForPriceDisplay})`);
+
     setMinPriceInputString(finalMinPriceString);
     setMaxPriceInputString(finalMaxPriceString);
 
-  }, [tickLower, tickUpper, baseTokenForPriceDisplay, token0Symbol, token1Symbol, sdkMinTick, sdkMaxTick, calculatedData, currentPoolTick]); // Added currentPoolTick to dependencies
+  }, [tickLower, tickUpper, baseTokenForPriceDisplay, token0Symbol, token1Symbol, sdkMinTick, sdkMaxTick, calculatedData, currentPoolTick, poolToken0, poolToken1]); // Added currentPoolTick, poolToken0, poolToken1 to dependencies
   // Effect to auto-apply active percentage preset when currentPrice changes OR when activePreset changes
   useEffect(() => {
     // Ensure currentPrice is valid and we have a preset that requires calculation
@@ -1411,130 +1516,155 @@ export function AddLiquidityModal({
   // --- END Create Simplified Plot Data (Tick vs. Cumulative Unified Value) ---
 
 
+  // Helper function to convert display price to canonical tick
+  // This ensures consistent calculations regardless of user's token selection order
+  const convertDisplayPriceToCanonicalTick = useCallback((displayPrice: number): number => {
+    if (!poolToken0 || !poolToken1) return NaN;
+    
+    const token0Def = TOKEN_DEFINITIONS[token0Symbol];
+    const token1Def = TOKEN_DEFINITIONS[token1Symbol];
+    if (!token0Def || !token1Def) return NaN;
+
+    const isUserOrderMatchingCanonical = poolToken0.address.toLowerCase() === token0Def.address.toLowerCase();
+    
+    // Convert display price back to canonical tick
+    let rawPrice: number;
+    
+    if (baseTokenForPriceDisplay === token0Symbol) {
+      // Display price is token1 in terms of token0
+      let decimalAdjFactor = Math.pow(10, token1Def.decimals - token0Def.decimals);
+      
+      if (isUserOrderMatchingCanonical) {
+        // Want: tick where Math.pow(1.0001, -tick) * decimalAdjFactor = displayPrice
+        rawPrice = displayPrice / decimalAdjFactor;
+        return -Math.log(rawPrice) / Math.log(1.0001);
+      } else {
+        // Want: tick where (1 / Math.pow(1.0001, tick)) * decimalAdjFactor = displayPrice  
+        rawPrice = displayPrice / decimalAdjFactor;
+        return Math.log(1 / rawPrice) / Math.log(1.0001);
+      }
+    } else {
+      // Display price is token0 in terms of token1
+      let decimalAdjFactor = Math.pow(10, token0Def.decimals - token1Def.decimals);
+      
+      if (isUserOrderMatchingCanonical) {
+        // Want: tick where Math.pow(1.0001, tick) * decimalAdjFactor = displayPrice
+        rawPrice = displayPrice / decimalAdjFactor;
+        return Math.log(rawPrice) / Math.log(1.0001);
+      } else {
+        // Want: tick where (1 / Math.pow(1.0001, -tick)) * decimalAdjFactor = displayPrice
+        rawPrice = displayPrice / decimalAdjFactor;
+        return -Math.log(1 / rawPrice) / Math.log(1.0001);
+      }
+    }
+  }, [token0Symbol, token1Symbol, baseTokenForPriceDisplay, poolToken0, poolToken1]);
+
   // Debounced function to update tickLower from minPriceInputString
   const debouncedUpdateTickLower = useCallback(
     debounce((priceStr: string) => {
-      const numericPrice = parseFloat(priceStr);
+      if (!poolToken0 || !poolToken1) return;
 
-      if (baseTokenForPriceDisplay === token0Symbol) {
         if (priceStr.trim() === "0") {
-          const newTick = sdkMinTick;
-          if (newTick < parseInt(tickUpper)) {
-            setTickLower(newTick.toString());
+        // Handle zero price case
+        const newTick = baseTokenForPriceDisplay === token0Symbol ? sdkMinTick : sdkMaxTick;
+        const targetTickFn = baseTokenForPriceDisplay === token0Symbol ? setTickLower : setTickUpper;
+        const comparisonTick = baseTokenForPriceDisplay === token0Symbol ? parseInt(tickUpper) : parseInt(tickLower);
+        const isValidRange = baseTokenForPriceDisplay === token0Symbol ? newTick < comparisonTick : newTick > comparisonTick;
+
+        if (isValidRange) {
+          targetTickFn(newTick.toString());
             setInitialDefaultApplied(true);
           } else {
-            toast.error("Invalid Range", { description: "Min price results in a range where min tick >= max tick." });
+          toast.error("Invalid Range", { description: "Min price results in an invalid range." });
           }
           return;
         }
-        if (isNaN(numericPrice) || numericPrice < 0) return;
 
-        const priceToConvert = numericPrice;
-        if (priceToConvert <= 0) {
-          toast.info("Price results in invalid tick", { description: "The entered price must be positive for tick calculation." });
-          return;
-        }
-        let newTick = Math.log(priceToConvert) / Math.log(1.0001);
+      const numericPrice = parseFloat(priceStr);
+      if (isNaN(numericPrice) || numericPrice <= 0) return;
+
+      let newTick = convertDisplayPriceToCanonicalTick(numericPrice);
+      if (isNaN(newTick)) return;
+
+      // Apply tick spacing alignment
+      if (baseTokenForPriceDisplay === token0Symbol) {
+        // This affects the max price display, which corresponds to tickUpper
+        newTick = Math.floor(newTick / defaultTickSpacing) * defaultTickSpacing;
+        newTick = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTick));
+          if (newTick > parseInt(tickLower)) {
+            setTickUpper(newTick.toString());
+            setInitialDefaultApplied(true);
+          } else {
+          toast.error("Invalid Range", { description: "Min price must result in a valid range." });
+          }
+      } else {
+        // This affects the min price display, which corresponds to tickLower
         newTick = Math.ceil(newTick / defaultTickSpacing) * defaultTickSpacing;
         newTick = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTick));
         if (newTick < parseInt(tickUpper)) {
           setTickLower(newTick.toString());
           setInitialDefaultApplied(true);
         } else {
-          toast.error("Invalid Range", { description: "Min price must be less than max price." });
-        }
-      } else { // baseTokenForPriceDisplay === token1Symbol (Min Price input sets actual tickUpper)
-        if (priceStr.trim() === "0") { // Min price of T0 in T1 is 0 => P_t1_t0_upper is effectively infinity
-          const newTick = sdkMaxTick;
-          if (newTick > parseInt(tickLower)) {
-            setTickUpper(newTick.toString());
-            setInitialDefaultApplied(true);
-          } else {
-            toast.error("Invalid Range", { description: "Min price results in a range where max tick <= min tick." });
-          }
-          return;
-        }
-        if (isNaN(numericPrice) || numericPrice < 0) return; // Price of T0 in T1 must be >= 0
-        if (numericPrice === 0) { /* handled above */ return; }
-
-        const priceToConvert = 1 / numericPrice; // Convert to P_t1_t0_upper
-        if (priceToConvert <= 0) { // Should not happen if numericPrice > 0
-          toast.info("Price results in invalid tick", { description: "Converted price is non-positive." });
-          return;
-        }
-        let newTick = Math.log(priceToConvert) / Math.log(1.0001);
-        newTick = Math.floor(newTick / defaultTickSpacing) * defaultTickSpacing; // Floor for an upper tick
-        newTick = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTick));
-        if (newTick > parseInt(tickLower)) {
-          setTickUpper(newTick.toString());
-          setInitialDefaultApplied(true);
-        } else {
-          toast.error("Invalid Range", { description: "Min price (when quoted in other token) must result in a max tick greater than min tick." });
+          toast.error("Invalid Range", { description: "Min price must result in a valid range." });
         }
       }
     }, 750), 
-    [baseTokenForPriceDisplay, token0Symbol, token1Symbol, defaultTickSpacing, sdkMinTick, sdkMaxTick, tickLower, tickUpper, setTickLower, setTickUpper, setInitialDefaultApplied]
+    [baseTokenForPriceDisplay, token0Symbol, token1Symbol, defaultTickSpacing, sdkMinTick, sdkMaxTick, tickLower, tickUpper, setTickLower, setTickUpper, setInitialDefaultApplied, poolToken0, poolToken1, convertDisplayPriceToCanonicalTick]
   );
 
   // Debounced function to update tickUpper from maxPriceInputString
   const debouncedUpdateTickUpper = useCallback(
     debounce((priceStr: string) => {
-      const numericPrice = parseFloat(priceStr);
+      if (!poolToken0 || !poolToken1) return;
+
       const isInfinityInput = priceStr.trim().toLowerCase() === "∞" || priceStr.trim().toLowerCase() === "infinity";
 
-      if (baseTokenForPriceDisplay === token0Symbol) {
         if (isInfinityInput) {
-          const newTick = sdkMaxTick;
-          if (newTick > parseInt(tickLower)) {
-            setTickUpper(newTick.toString());
+        // Handle infinity price case
+        const newTick = baseTokenForPriceDisplay === token0Symbol ? sdkMaxTick : sdkMinTick;
+        const targetTickFn = baseTokenForPriceDisplay === token0Symbol ? setTickUpper : setTickLower;
+        const comparisonTick = baseTokenForPriceDisplay === token0Symbol ? parseInt(tickLower) : parseInt(tickUpper);
+        const isValidRange = baseTokenForPriceDisplay === token0Symbol ? newTick > comparisonTick : newTick < comparisonTick;
+
+        if (isValidRange) {
+          targetTickFn(newTick.toString());
             setInitialDefaultApplied(true);
           } else {
-            toast.error("Invalid Range", { description: "Max price results in a range where max tick <= min tick." });
+          toast.error("Invalid Range", { description: "Max price results in an invalid range." });
           }
           return;
         }
-        if (isNaN(numericPrice) || numericPrice <= 0) return; // Max price (P_t1_t0) must be > 0
 
-        const priceToConvert = numericPrice;
-        let newTick = Math.log(priceToConvert) / Math.log(1.0001);
+      const numericPrice = parseFloat(priceStr);
+      if (isNaN(numericPrice) || numericPrice <= 0) return;
+
+      let newTick = convertDisplayPriceToCanonicalTick(numericPrice);
+      if (isNaN(newTick)) return;
+
+      // Apply tick spacing alignment
+      if (baseTokenForPriceDisplay === token0Symbol) {
+        // This affects the min price display, which corresponds to tickLower
+        newTick = Math.ceil(newTick / defaultTickSpacing) * defaultTickSpacing;
+        newTick = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTick));
+          if (newTick < parseInt(tickUpper)) {
+            setTickLower(newTick.toString());
+            setInitialDefaultApplied(true);
+          } else {
+          toast.error("Invalid Range", { description: "Max price must result in a valid range." });
+          }
+      } else {
+        // This affects the max price display, which corresponds to tickUpper
         newTick = Math.floor(newTick / defaultTickSpacing) * defaultTickSpacing;
         newTick = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTick));
         if (newTick > parseInt(tickLower)) {
           setTickUpper(newTick.toString());
           setInitialDefaultApplied(true);
         } else {
-          toast.error("Invalid Range", { description: "Max price must be greater than min price." });
-        }
-      } else { // baseTokenForPriceDisplay === token1Symbol (Max Price input sets actual tickLower)
-         if (isInfinityInput) { // Max price of T0 in T1 is Infinity => P_t1_t0_lower is effectively 0
-          const newTick = sdkMinTick;
-          if (newTick < parseInt(tickUpper)) {
-            setTickLower(newTick.toString());
-            setInitialDefaultApplied(true);
-          } else {
-            toast.error("Invalid Range", { description: "Max price results in a range where min tick >= max tick." });
-          }
-          return;
-        }
-        if (isNaN(numericPrice) || numericPrice <= 0) return; // Price of T0 in T1 (max) must be > 0
-        
-        const priceToConvert = 1 / numericPrice; // Convert to P_t1_t0_lower
-        if (priceToConvert <= 0) { // Should not happen if numericPrice > 0
-          toast.info("Price results in invalid tick", { description: "Converted price is non-positive." });
-          return;
-        }
-        let newTick = Math.log(priceToConvert) / Math.log(1.0001);
-        newTick = Math.ceil(newTick / defaultTickSpacing) * defaultTickSpacing; // Ceil for a lower tick
-        newTick = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTick));
-        if (newTick < parseInt(tickUpper)) {
-          setTickLower(newTick.toString());
-          setInitialDefaultApplied(true);
-        } else {
-          toast.error("Invalid Range", { description: "Max price (when quoted in other token) must result in a min tick less than max tick." });
+          toast.error("Invalid Range", { description: "Max price must result in a valid range." });
         }
       }
     }, 750),
-    [baseTokenForPriceDisplay, token0Symbol, token1Symbol, defaultTickSpacing, sdkMinTick, sdkMaxTick, tickLower, tickUpper, setTickLower, setTickUpper, setInitialDefaultApplied]
+    [baseTokenForPriceDisplay, token0Symbol, token1Symbol, defaultTickSpacing, sdkMinTick, sdkMaxTick, tickLower, tickUpper, setTickLower, setTickUpper, setInitialDefaultApplied, poolToken0, poolToken1, convertDisplayPriceToCanonicalTick]
   );
 
   // --- BEGIN Custom Recharts Tooltip (Updated for Cumulative) ---
@@ -1550,70 +1680,58 @@ export function AddLiquidityModal({
       const token0Def = TOKEN_DEFINITIONS[token0 as TokenSymbol];
       const token1Def = TOKEN_DEFINITIONS[token1 as TokenSymbol];
 
-      if (token0Def && token1Def && typeof currentTick === 'number') {
-        const t0Dec = token0Def.decimals;
-        const t1Dec = token1Def.decimals;
+      if (token0Def && token1Def && typeof currentTick === 'number' && poolToken0 && poolToken1) {
         let price = NaN;
         let quoteTokenSymbol = "";
         let priceOfTokenSymbol = "";
 
-        // Determine if the pool's canonical token0 (poolToken0Symbol) matches the modal's token0Symbol (token0)
-        // This is to correctly interpret the tick direction for price calculation.
-        // The tick value from the chart (currentTick) is always for price of pool's token1 in terms of pool's token0.
-        const isPoolToken0MatchingModalToken0 = TOKEN_DEFINITIONS[poolToken0Symbol as TokenSymbol]?.address.toLowerCase() === token0Def.address.toLowerCase();
+        // Use the same logic as the main price calculation
+        const isUserOrderMatchingCanonical = poolToken0.address.toLowerCase() === token0Def.address.toLowerCase();
+        const canonicalToken0Decimals = poolToken0.decimals;
+        const canonicalToken1Decimals = poolToken1.decimals;
 
-        let actualTickForCalc = currentTick;
-        // If the modal's token0 is NOT the pool's token0, then the relationship is flipped.
-        // However, the 'tick' from the chart data *should* already be the canonical tick.
-        // The price formula Math.pow(1.0001, tick) gives price of T1 in T0 (where T0, T1 are sorted pool tokens)
-
-        if (baseTokenForPrice === token0) { // User wants to see Price of Token1 (modal's token1) in terms of Token0 (modal's token0)
+        if (baseTokenForPrice === token0) {
+          // User wants to see price of token1 in terms of token0
           quoteTokenSymbol = token0;
           priceOfTokenSymbol = token1;
-          const decimalAdjFactor = Math.pow(10, t1Dec - t0Dec);
-          if (isPoolToken0MatchingModalToken0) {
-            // ModalT0 is PoolT0, ModalT1 is PoolT1. Tick directly gives P(PoolT1/PoolT0)
-            const rawPrice = Math.pow(1.0001, actualTickForCalc);
-            price = rawPrice * decimalAdjFactor;
-            // Handle extreme decimal differences
-            if (price > 1e15 || (price < 1e-15 && price > 0)) {
-              price = rawPrice;
-            }
+          
+          let finalDecimalAdjFactor: number;
+          let priceCalculationFunc: (tick: number) => number;
+          
+          if (isUserOrderMatchingCanonical) {
+            // token0=canonicalToken0, token1=canonicalToken1
+            // Want price of canonicalToken1 in canonicalToken0 terms
+            finalDecimalAdjFactor = Math.pow(10, canonicalToken1Decimals - canonicalToken0Decimals);
+            priceCalculationFunc = (tick) => Math.pow(1.0001, -tick);
           } else {
-            // ModalT0 is PoolT1, ModalT1 is PoolT0. Tick gives P(PoolT0/PoolT1) effectively.
-            // We want P(ModalT1/ModalT0) = P(PoolT0/PoolT1)
-            const rawPrice = Math.pow(1.0001, actualTickForCalc);
-            const alternativeDecimalAdjFactor = Math.pow(10, t0Dec - t1Dec);
-            price = rawPrice * alternativeDecimalAdjFactor; // This is P_poolT0_per_poolT1
-            // Handle extreme decimal differences
-            if (price > 1e15 || (price < 1e-15 && price > 0)) {
-              price = rawPrice;
-            }
+            // token0=canonicalToken1, token1=canonicalToken0
+            // Want price of canonicalToken0 in canonicalToken1 terms = 1 / (price of canonicalToken1 in canonicalToken0)
+            finalDecimalAdjFactor = Math.pow(10, canonicalToken0Decimals - canonicalToken1Decimals);
+            priceCalculationFunc = (tick) => 1 / Math.pow(1.0001, -tick);
           }
-        } else { // User wants to see Price of Token0 (modal's token0) in terms of Token1 (modal's token1)
+          
+          price = priceCalculationFunc(currentTick) * finalDecimalAdjFactor;
+        } else {
+          // User wants to see price of token0 in terms of token1
           quoteTokenSymbol = token1;
           priceOfTokenSymbol = token0;
-          const decimalAdjFactor = Math.pow(10, t0Dec - t1Dec);
-          if (isPoolToken0MatchingModalToken0) {
-            // ModalT0 is PoolT0, ModalT1 is PoolT1. Tick gives P(PoolT1/PoolT0).
-            // We want P(ModalT0/ModalT1) = 1 / P(PoolT1/PoolT0)
-            const rawPrice = (1 / Math.pow(1.0001, actualTickForCalc));
-            price = rawPrice * decimalAdjFactor;
-            // Handle extreme decimal differences
-            if (price > 1e15 || (price < 1e-15 && price > 0)) {
-              price = rawPrice;
-            }
+          
+          let finalDecimalAdjFactor: number;
+          let priceCalculationFunc: (tick: number) => number;
+          
+          if (isUserOrderMatchingCanonical) {
+            // token0=canonicalToken0, token1=canonicalToken1
+            // Want price of canonicalToken0 in canonicalToken1 terms = 1 / (price of canonicalToken1 in canonicalToken0)
+            finalDecimalAdjFactor = Math.pow(10, canonicalToken0Decimals - canonicalToken1Decimals);
+            priceCalculationFunc = (tick) => 1 / Math.pow(1.0001, -tick);
           } else {
-            // ModalT0 is PoolT1, ModalT1 is PoolT0. Tick gives P(PoolT0/PoolT1) effectively.
-            // We want P(ModalT0/ModalT1) = P(PoolT1/PoolT0)
-            const rawPrice = Math.pow(1.0001, actualTickForCalc);
-            const alternativeDecimalAdjFactor = Math.pow(10, t1Dec - t0Dec);
-            price = rawPrice * alternativeDecimalAdjFactor; // This is P_poolT1_per_poolT0
-            // Handle extreme decimal differences
-            if (price > 1e15 || (price < 1e-15 && price > 0)) {
-              price = rawPrice;
-            }
+            // token0=canonicalToken1, token1=canonicalToken0
+            // Want price of canonicalToken1 in canonicalToken0 terms
+            finalDecimalAdjFactor = Math.pow(10, canonicalToken1Decimals - canonicalToken0Decimals);
+            priceCalculationFunc = (tick) => Math.pow(1.0001, -tick);
           }
+          
+          price = priceCalculationFunc(currentTick) * finalDecimalAdjFactor;
         }
 
         if (!isNaN(price)) {
@@ -1763,7 +1881,7 @@ export function AddLiquidityModal({
     resetTransactionState();
     setInitialDefaultApplied(false);
     setActivePreset("±15%");
-    setBaseTokenForPriceDisplay('' as TokenSymbol);
+    // Base token for price display will be reset when tokens are cleared
   };
 
   const handleSetFullRange = () => {
@@ -2178,7 +2296,20 @@ export function AddLiquidityModal({
                   <CardContent className="px-4 pt-4 pb-4">
                     {/* Header */}
                     <div className="flex items-center justify-between mb-4">
-                      <h2 className="text-lg font-medium">Select Token</h2>
+                      <h2 className="text-sm font-medium">Select Token</h2>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-xs rounded-md"
+                          onClick={() => {
+                            resetForm();
+                            setTokenChooserOpen(null);
+                            setTokenSearchTerm('');
+                          }}
+                        >
+                          Clear
+                        </Button>
                       <Button
                         variant="ghost"
                         size="icon"
@@ -2190,6 +2321,7 @@ export function AddLiquidityModal({
                       >
                         <XIcon className="h-3 w-3" />
                       </Button>
+                      </div>
                     </div>
 
                     {/* Search Input */}

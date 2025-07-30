@@ -76,7 +76,8 @@
       "tickSpacing": 100,
       "hooks": "0xd450f7f8e4C11EE8620a349f73e7aC3905Dfd000",
       "enabled": true,
-      "featured": true
+      "featured": true,
+      "type": "Volatile"
     },
     {
       "id": "btcrl-yusdc",
@@ -95,7 +96,8 @@
       "tickSpacing": 80,
       "hooks": "0xd450f7f8e4C11EE8620a349f73e7aC3905Dfd000",
       "enabled": true,
-      "featured": false
+      "featured": false,
+      "type": "Volatile"
     },
     {
       "id": "yusdc-musdt",
@@ -114,7 +116,8 @@
       "tickSpacing": 1,
       "hooks": "0xd450f7f8e4C11EE8620a349f73e7aC3905Dfd000",
       "enabled": true,
-      "featured": false
+      "featured": false,
+      "type": "Stable"
     },
     {
       "id": "eth-musdt",
@@ -133,7 +136,8 @@
       "tickSpacing": 45,
       "hooks": "0xd450f7f8e4C11EE8620a349f73e7aC3905Dfd000",
       "enabled": true,
-      "featured": false
+      "featured": false,
+      "type": "Volatile"
     },
     {
       "id": "btc-eth",
@@ -152,7 +156,8 @@
       "tickSpacing": 60,
       "hooks": "0xd450f7f8e4C11EE8620a349f73e7aC3905Dfd000",
       "enabled": true,
-      "featured": false
+      "featured": false,
+      "type": "Volatile"
     }
   ],
   "fees": {

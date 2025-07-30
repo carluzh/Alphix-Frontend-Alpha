@@ -5,9 +5,16 @@ import { PlusCircleIcon, /* LockIcon, */ type LucideIcon, CoinsIcon, Trash2Icon 
 import { CustomLockIcon } from "./CustomLockIcon"
 import { usePathname } from "next/navigation";
 import { toast } from "sonner"
-import { useAccount, useWriteContract, useWaitForTransactionReceipt } from "wagmi"
-import { baseSepolia } from "@/lib/wagmiConfig"
+import { useAccount, useSignTypedData, useWriteContract, useWaitForTransactionReceipt, useReadContract } from "wagmi"
+import { config, baseSepolia } from "../lib/wagmiConfig";
+import { getAddress, parseUnits, type Address, type Hex } from "viem"
+import { publicClient } from "../lib/viemClient";
+import { FAUCET_CONTRACT_ADDRESS, FAUCET_FUNCTION_SIGNATURE, faucetContractAbi } from "../pages/api/misc/faucet"; // Import constants
+import { useRouter } from "next/navigation"; // Import useRouter
+import { WarningToastIcon, SuccessToastIcon } from "./swap/swap-interface"; // Adjusted import for toasts
 import { parseAbi } from "viem"
+import { Badge } from "./ui/badge"; // Added import for Badge
+import { cn } from "@/lib/utils"; // Added import for cn
 
 import {
   SidebarMenu,
@@ -44,6 +51,83 @@ export function NavMain({
   const { writeContract, data:hash, isPending: isTxPending, error: writeTxError, reset: resetWriteContract } = useWriteContract()
   const targetChainId = baseSepolia.id
 
+  // State for faucet cooldown and caching
+  const [faucetCooldown, setFaucetCooldown] = useState<string | null>(null);
+  const [cachedLastCalled, setCachedLastCalled] = useState<number | null>(null);
+
+  // Read the lastCalled timestamp from the contract
+  const { data: contractLastCalled, isLoading: isLoadingLastCalled, refetch: refetchLastCalled } = useReadContract({
+    address: FAUCET_CONTRACT_ADDRESS,
+    abi: faucetContractAbi,
+    functionName: 'lastCalled',
+    args: [userAddress!],
+    chainId: targetChainId,
+    query: {
+      enabled: isConnected && currentChainId === targetChainId && !!userAddress,
+      // Removed refetchInterval and refetchOnWindowFocus for elegance
+    },
+  });
+
+  // Helper function to format time left
+  const formatTimeLeft = (seconds: number | null): string => {
+    if (seconds === null || seconds <= 0) return "Claim"; // Changed from "Ready" to "Claim"
+
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+
+    let parts = [];
+    if (hours > 0) parts.push(`${hours}h`);
+    // Always show minutes, with leading zero if single digit
+    parts.push(`${minutes.toString().padStart(2, '0')}m`);
+    
+    return parts.join(" "); // No "left" suffix
+  };
+
+  // Effect to load cached lastCalled timestamp on sidebar mount
+  useEffect(() => {
+    if (!userAddress) return;
+    const cached = localStorage.getItem(`faucetLastClaimTimestamp_${userAddress}`);
+    if (cached) {
+      setCachedLastCalled(parseInt(cached, 10));
+    }
+  }, [userAddress]);
+
+  // Effect to calculate and update cooldown time
+  useEffect(() => {
+    // Prioritize contract data if available and not loading, otherwise use cached
+    const effectiveLastCalled = contractLastCalled !== undefined && !isLoadingLastCalled 
+                                ? Number(contractLastCalled) // Convert BigInt to Number for Date object
+                                : cachedLastCalled;
+
+    if (effectiveLastCalled === null || !isConnected || currentChainId !== targetChainId) {
+      setFaucetCooldown(null); // Not connected, wrong network, or no data
+      return;
+    }
+
+    const calculateCooldown = () => {
+      const oneDayInSeconds = 24 * 60 * 60;
+      const nextClaimTimestamp = effectiveLastCalled + oneDayInSeconds;
+      const currentTime = Math.floor(Date.now() / 1000);
+      const timeLeft = nextClaimTimestamp - currentTime;
+
+      if (timeLeft <= 0) {
+        setFaucetCooldown("Ready");
+        return;
+      }
+      setFaucetCooldown(formatTimeLeft(timeLeft));
+    };
+
+    calculateCooldown(); // Initial calculation
+
+    // Update every minute (or more frequently for the last minute if needed)
+    const interval = setInterval(() => {
+      calculateCooldown();
+    }, 1000 * 60); // Every minute
+
+    return () => clearInterval(interval);
+
+  }, [contractLastCalled, cachedLastCalled, isConnected, currentChainId, targetChainId, isLoadingLastCalled]);
+
   const { 
     isLoading: isConfirming, 
     isSuccess: isConfirmed, 
@@ -59,6 +143,13 @@ export function NavMain({
     if (isConfirmed) {
       toast.success("Faucet Success: Tokens sent");
       resetWriteContract();
+      // On successful claim, update local cache and refetch from contract
+      const now = Math.floor(Date.now() / 1000);
+      if (userAddress) {
+        localStorage.setItem(`faucetLastClaimTimestamp_${userAddress}`, now.toString());
+        setCachedLastCalled(now); // Update state to trigger recalculation
+      }
+      refetchLastCalled(); // Immediately refetch from contract for accuracy
     }
     const anError = writeTxError || receiptError;
     if (anError) {
@@ -124,7 +215,8 @@ export function NavMain({
       })
       const faucetTxData = await apiRes.json()
       if (!apiRes.ok) {
-        toast.error(`API Error: ${faucetTxData.message || 'Unknown error'}`, {
+        const toastMessage = faucetTxData.errorDetails || `API Error: ${faucetTxData.message || 'Unknown error'}`;
+        toast.error(toastMessage, {
           icon: <WarningToastIcon />,
         });
         return
@@ -179,6 +271,21 @@ export function NavMain({
                 <span className="flex-1 truncate">
                   {isTxPending || isConfirming ? "Processing..." : item.title}
                 </span>
+                {faucetCooldown && item.isFaucet && (
+                  <Badge
+                    variant="outline" /* Keep outline variant for base structural styles and border handling */
+                    className={cn(
+                      "ml-2 inline-flex items-center px-2 py-1 text-xs font-mono leading-none font-normal rounded-md", // Manual padding, restored structural classes, font, and shape
+                      faucetCooldown === "Claim" ?
+                        "bg-[#3d271b] text-sidebar-primary border-sidebar-primary hover:bg-[#4a2f1f] transition-colors cursor-default"
+                        :
+                        "bg-sidebar-accent text-white border-transparent"
+                    )}
+                    style={faucetCooldown === "Claim" ? { fontFamily: 'Consolas, monospace' } : undefined}
+                  >
+                    {faucetCooldown}
+                  </Badge>
+                )}
               </SidebarMenuButton>
             ) : item.title === "Swap" ? (
               <SidebarMenuButton

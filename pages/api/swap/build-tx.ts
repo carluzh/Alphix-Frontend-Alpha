@@ -92,7 +92,10 @@ async function prepareV4ExactInSwapData(
     console.log("V4 Pool ID (Exact In):", poolIdExactIn);
 
     const v4Planner = new V4Planner();
-    v4Planner.addSettle(inputToken, true, BigNumber.from(amountInSmallestUnits.toString())); 
+    
+    // For native ETH, we still need to add a settle action but with the ETH currency
+    // The UniversalRouter will handle the ETH->WETH conversion automatically
+    v4Planner.addSettle(inputToken, true, BigNumber.from(amountInSmallestUnits.toString()));
     
     const placeholderSqrtPriceX96 = (1n << 96n); 
     const placeholderLiquidity = '1000000000000000000';
@@ -113,37 +116,25 @@ async function prepareV4ExactInSwapData(
         const zeroForOne = determineSwapDirection(inputToken, outputToken);
         sqrtPriceLimitX96 = calculatePriceLimitX96(limitPrice, inputToken, outputToken, zeroForOne);
         
-        // For limit orders, we want to allow partial fills and let sqrtPriceLimitX96 control the execution
-        // Set amountOutMinimum to a very small value to avoid slippage reverts
-        // The price limit will stop the swap when appropriate, allowing partial fills
-        adjustedMinAmountOut = 1n; // Minimal amount to avoid division by zero, but allow partial fills
-        
-        console.log(`🔧 [PRICE LIMIT DEBUG] Input limitPrice: "${limitPrice}"`);
-        console.log(`🔧 [PRICE LIMIT DEBUG] Swap direction zeroForOne: ${zeroForOne}`);
-        console.log(`🔧 [PRICE LIMIT DEBUG] Input token: ${inputToken.symbol} (${inputToken.address})`);
-        console.log(`🔧 [PRICE LIMIT DEBUG] Output token: ${outputToken.symbol} (${outputToken.address})`);
-        console.log(`🔧 [PRICE LIMIT DEBUG] Amount in: ${amountInSmallestUnits.toString()}`);
-        console.log(`🔧 [PRICE LIMIT DEBUG] Original minAmountOut: ${minAmountOutSmallestUnits.toString()}`);
-        console.log(`🔧 [PRICE LIMIT DEBUG] Adjusted to minimal minAmountOut for partial fills: ${adjustedMinAmountOut.toString()}`);
-        console.log(`🔧 [PRICE LIMIT DEBUG] Calculated sqrtPriceLimitX96: ${sqrtPriceLimitX96.toString()}`);
-        console.log(`V4 Price Limit: ${limitPrice} -> sqrtPriceLimitX96: ${sqrtPriceLimitX96.toString()}`);
-    } else {
-        console.log(`🔧 [PRICE LIMIT DEBUG] No price limit provided or invalid value: "${limitPrice}"`);
+        // For limit orders, both the price limit and the minimum amount out (for slippage) will be respected.
+        // The swap will not execute if the price is worse than the limit, OR if the final output
+        // is less than the minimum amount (considering slippage tolerance).
+        console.log(`[prepareV4ExactInSwapData] Applied price limit: ${limitPrice}, calculated sqrtPriceLimitX96: ${sqrtPriceLimitX96.toString()}`);
     }
 
-    // Updated V4 action parameters to include sqrtPriceLimitX96
-    const swapAction = {
-        currencyIn: getAddress(inputToken.address),
-        path: encodedV4Path, 
-        amountIn: 0, 
-        amountOutMinimum: adjustedMinAmountOut.toString(),
-        sqrtPriceLimitX96: sqrtPriceLimitX96.toString()
-    };
-    
-    console.log(`🔧 [SWAP ACTION DEBUG] Final swap action object:`, JSON.stringify(swapAction, null, 2));
-    
-    v4Planner.addAction(Actions.SWAP_EXACT_IN, [swapAction]);
-    v4Planner.addTake(outputToken, "0x0000000000000000000000000000000000000001" as Address);
+    v4Planner.addAction(Actions.SWAP_EXACT_IN_SINGLE, [
+        {
+            poolKey: v4PoolKey,
+            zeroForOne: determineSwapDirection(inputToken, outputToken),
+            amountIn: BigNumber.from(amountInSmallestUnits.toString()),
+            amountOutMinimum: BigNumber.from(adjustedMinAmountOut.toString()),
+            sqrtPriceLimitX96: BigNumber.from(sqrtPriceLimitX96.toString()),
+            hookData: "0x"
+        }
+    ]);
+
+    v4Planner.addAction(Actions.TAKE_ALL, [outputToken.address, BigNumber.from("0")]); // Take all of the output token
+
     return v4Planner.finalize() as Hex;
 }
 
@@ -176,37 +167,30 @@ async function prepareV4ExactOutSwapData(
     const encodedV4Path = encodeRouteToPath(route, true); // true for exactOutput
 
     const v4Planner = new V4Planner();
-    v4Planner.addSettle(inputToken, true, BigNumber.from(maxAmountInSmallestUnits.toString())); 
+    // Always add settle action for both native ETH and ERC-20 tokens
+    v4Planner.addSettle(inputToken, true, BigNumber.from(maxAmountInSmallestUnits.toString()));
     
     // Calculate price limit if provided
     let sqrtPriceLimitX96 = 0n; // 0 means no limit
     if (limitPrice && limitPrice !== "" && parseFloat(limitPrice) > 0) {
         const zeroForOne = determineSwapDirection(inputToken, outputToken);
         sqrtPriceLimitX96 = calculatePriceLimitX96(limitPrice, inputToken, outputToken, zeroForOne);
-        console.log(`🔧 [EXACT OUT PRICE LIMIT DEBUG] Input limitPrice: "${limitPrice}"`);
-        console.log(`🔧 [EXACT OUT PRICE LIMIT DEBUG] Swap direction zeroForOne: ${zeroForOne}`);
-        console.log(`🔧 [EXACT OUT PRICE LIMIT DEBUG] Input token: ${inputToken.symbol} (${inputToken.address})`);
-        console.log(`🔧 [EXACT OUT PRICE LIMIT DEBUG] Output token: ${outputToken.symbol} (${outputToken.address})`);
-        console.log(`🔧 [EXACT OUT PRICE LIMIT DEBUG] Calculated sqrtPriceLimitX96: ${sqrtPriceLimitX96.toString()}`);
-        console.log(`V4 Price Limit (Exact Out): ${limitPrice} -> sqrtPriceLimitX96: ${sqrtPriceLimitX96.toString()}`);
-    } else {
-        console.log(`🔧 [EXACT OUT PRICE LIMIT DEBUG] No price limit provided or invalid value: "${limitPrice}"`);
+        console.log(`[prepareV4ExactOutSwapData] Applied price limit: ${limitPrice}, calculated sqrtPriceLimitX96: ${sqrtPriceLimitX96.toString()}`);
     }
-    
-    const swapAction = {
-        currencyOut: getAddress(outputToken.address),
-        path: encodedV4Path,
-        amountOut: amountOutSmallestUnits.toString(),
-        amountInMaximum: maxAmountInSmallestUnits.toString(),
-        sqrtPriceLimitX96: sqrtPriceLimitX96.toString()
-    };
-    
-    console.log(`🔧 [EXACT OUT SWAP ACTION DEBUG] Final swap action object:`, JSON.stringify(swapAction, null, 2));
-    
-    v4Planner.addAction(Actions.SWAP_EXACT_OUT, [swapAction]);
-    v4Planner.addTake(outputToken, "0x0000000000000000000000000000000000000001" as Address); // Send to msg.sender of UR
-    v4Planner.addTake(inputToken, "0x0000000000000000000000000000000000000001" as Address); // Refund remaining input to msg.sender
-    
+
+    v4Planner.addAction(Actions.SWAP_EXACT_OUT_SINGLE, [
+        {
+            poolKey: v4PoolKey,
+            zeroForOne: determineSwapDirection(inputToken, outputToken),
+            amountOut: BigNumber.from(amountOutSmallestUnits.toString()),
+            amountInMaximum: BigNumber.from(maxAmountInSmallestUnits.toString()),
+            sqrtPriceLimitX96: BigNumber.from(sqrtPriceLimitX96.toString()),
+            hookData: "0x"
+        }
+    ]);
+
+    v4Planner.addAction(Actions.TAKE_ALL, [outputToken.address, BigNumber.from("0")]);
+
     return v4Planner.finalize() as Hex;
 }
 
@@ -229,58 +213,65 @@ async function prepareV4MultiHopExactInSwapData(
 
     // Create V4Planner for multi-hop
     const v4Planner = new V4Planner();
+    // Always add settle action for both native ETH and ERC-20 tokens
     v4Planner.addSettle(inputToken, true, BigNumber.from(amountInSmallestUnits.toString()));
-
+    
     // Build the encoded path for multi-hop
     const pools: Pool[] = [];
     for (let i = 0; i < route.pools.length; i++) {
-        const poolHop = route.pools[i];
-        const token0 = createTokenSDK(poolHop.token0 as TokenSymbol, chainId);
-        const token1 = createTokenSDK(poolHop.token1 as TokenSymbol, chainId);
+        const poolInfo = route.pools[i];
+        const token0 = createTokenSDK(poolInfo.token0 as TokenSymbol, chainId);
+        const token1 = createTokenSDK(poolInfo.token1 as TokenSymbol, chainId);
         
         if (!token0 || !token1) {
-            throw new Error(`Failed to create token instances for pool ${poolHop.poolName}`);
+            throw new Error(`Failed to create token instances for pool: ${poolInfo.poolName}`);
         }
-
-        // Create sorted tokens for the pool
+        
         const sortedToken0 = token0.sortsBefore(token1) ? token0 : token1;
         const sortedToken1 = token0.sortsBefore(token1) ? token1 : token0;
-
-        // Create dummy pool for path encoding
+        
+        // Create pool instance
         const placeholderSqrtPriceX96 = (1n << 96n);
         const placeholderLiquidity = '1000000000000000000';
         const placeholderTick = 0;
-
-        const dummyPool = new Pool(
-            sortedToken0, sortedToken1, poolHop.fee, poolHop.tickSpacing, poolHop.hooks as Hex,
+        
+        const pool = new Pool(
+            sortedToken0, sortedToken1, poolInfo.fee, poolInfo.tickSpacing, poolInfo.hooks,
             placeholderSqrtPriceX96.toString(), placeholderLiquidity, placeholderTick
         );
-        pools.push(dummyPool);
+        pools.push(pool);
     }
 
-    // Create multi-hop route
-    const multiHopRoute = new V4Route(pools, inputToken, outputToken);
-    const encodedV4Path = encodeRouteToPath(multiHopRoute, false); // false for exactIn
+    // Create the multi-hop route
+    const v4Route = new V4Route(pools, inputToken, outputToken);
+    const encodedPath = encodeRouteToPath(v4Route, false); // false for exactIn
 
-    // Calculate price limit if provided (only applies to the final hop in multi-hop)
-    let sqrtPriceLimitX96 = 0n; // 0 means no limit
+    // Calculate price limit if provided (use the first pool for now)
+    let sqrtPriceLimitX96 = 0n;
     if (limitPrice && limitPrice !== "" && parseFloat(limitPrice) > 0) {
-        // For multi-hop, the price limit applies to the overall trade
-        // Note: This is a simplified implementation - in production you might want more sophisticated logic
-        const zeroForOne = determineSwapDirection(inputToken, outputToken);
-        sqrtPriceLimitX96 = calculatePriceLimitX96(limitPrice, inputToken, outputToken, zeroForOne);
-        console.log(`V4 Multi-Hop Price Limit: ${limitPrice} -> sqrtPriceLimitX96: ${sqrtPriceLimitX96.toString()}`);
+        const firstPoolInputToken = createTokenSDK(route.pools[0].token0 as TokenSymbol, chainId);
+        const firstPoolOutputToken = createTokenSDK(route.pools[0].token1 as TokenSymbol, chainId);
+        
+        if (firstPoolInputToken && firstPoolOutputToken) {
+            const zeroForOne = determineSwapDirection(firstPoolInputToken, firstPoolOutputToken);
+            sqrtPriceLimitX96 = calculatePriceLimitX96(limitPrice, firstPoolInputToken, firstPoolOutputToken, zeroForOne);
+            console.log(`[prepareV4MultiHopExactInSwapData] Applied price limit: ${limitPrice}, calculated sqrtPriceLimitX96: ${sqrtPriceLimitX96.toString()}`);
+        }
     }
 
-    v4Planner.addAction(Actions.SWAP_EXACT_IN, [{
-        currencyIn: getAddress(inputToken.address),
-        path: encodedV4Path,
-        amountIn: 0,
-        amountOutMinimum: minAmountOutSmallestUnits.toString(),
-        sqrtPriceLimitX96: sqrtPriceLimitX96.toString()
-    }]);
-    v4Planner.addTake(outputToken, "0x0000000000000000000000000000000000000001" as Address);
-    
+    // Add the multi-hop swap action
+    v4Planner.addAction(Actions.SWAP_EXACT_IN, [
+        {
+            currencyIn: inputToken.address,
+            path: encodedPath,
+            amountIn: BigNumber.from(amountInSmallestUnits.toString()),
+            amountOutMinimum: BigNumber.from(minAmountOutSmallestUnits.toString()),
+            sqrtPriceLimitX96: BigNumber.from(sqrtPriceLimitX96.toString())
+        }
+    ]);
+
+    v4Planner.addAction(Actions.TAKE_ALL, [outputToken.address, BigNumber.from("0")]);
+
     return v4Planner.finalize() as Hex;
 }
 
@@ -303,57 +294,65 @@ async function prepareV4MultiHopExactOutSwapData(
 
     // Create V4Planner for multi-hop
     const v4Planner = new V4Planner();
+    // Always add settle action for both native ETH and ERC-20 tokens
     v4Planner.addSettle(inputToken, true, BigNumber.from(maxAmountInSmallestUnits.toString()));
-
+    
     // Build the encoded path for multi-hop
     const pools: Pool[] = [];
     for (let i = 0; i < route.pools.length; i++) {
-        const poolHop = route.pools[i];
-        const token0 = createTokenSDK(poolHop.token0 as TokenSymbol, chainId);
-        const token1 = createTokenSDK(poolHop.token1 as TokenSymbol, chainId);
+        const poolInfo = route.pools[i];
+        const token0 = createTokenSDK(poolInfo.token0 as TokenSymbol, chainId);
+        const token1 = createTokenSDK(poolInfo.token1 as TokenSymbol, chainId);
         
         if (!token0 || !token1) {
-            throw new Error(`Failed to create token instances for pool ${poolHop.poolName}`);
+            throw new Error(`Failed to create token instances for pool: ${poolInfo.poolName}`);
         }
-
-        // Create sorted tokens for the pool
+        
         const sortedToken0 = token0.sortsBefore(token1) ? token0 : token1;
         const sortedToken1 = token0.sortsBefore(token1) ? token1 : token0;
-
-        // Create dummy pool for path encoding
+        
+        // Create pool instance
         const placeholderSqrtPriceX96 = (1n << 96n);
-        const placeholderLiquidity = '100000000000000000000';
+        const placeholderLiquidity = '1000000000000000000';
         const placeholderTick = 0;
-
-        const dummyPool = new Pool(
-            sortedToken0, sortedToken1, poolHop.fee, poolHop.tickSpacing, poolHop.hooks as Hex,
+        
+        const pool = new Pool(
+            sortedToken0, sortedToken1, poolInfo.fee, poolInfo.tickSpacing, poolInfo.hooks,
             placeholderSqrtPriceX96.toString(), placeholderLiquidity, placeholderTick
         );
-        pools.push(dummyPool);
+        pools.push(pool);
     }
 
-    // Create multi-hop route
-    const multiHopRoute = new V4Route(pools, inputToken, outputToken);
-    const encodedV4Path = encodeRouteToPath(multiHopRoute, true); // true for exactOutput
+    // Create the multi-hop route
+    const v4Route = new V4Route(pools, inputToken, outputToken);
+    const encodedPath = encodeRouteToPath(v4Route, true); // true for exactOut
 
-    // Calculate price limit if provided
-    let sqrtPriceLimitX96 = 0n; // 0 means no limit
+    // Calculate price limit if provided (use the first pool for now)
+    let sqrtPriceLimitX96 = 0n;
     if (limitPrice && limitPrice !== "" && parseFloat(limitPrice) > 0) {
-        const zeroForOne = determineSwapDirection(inputToken, outputToken);
-        sqrtPriceLimitX96 = calculatePriceLimitX96(limitPrice, inputToken, outputToken, zeroForOne);
-        console.log(`V4 Multi-Hop Price Limit (Exact Out): ${limitPrice} -> sqrtPriceLimitX96: ${sqrtPriceLimitX96.toString()}`);
+        const firstPoolInputToken = createTokenSDK(route.pools[0].token0 as TokenSymbol, chainId);
+        const firstPoolOutputToken = createTokenSDK(route.pools[0].token1 as TokenSymbol, chainId);
+        
+        if (firstPoolInputToken && firstPoolOutputToken) {
+            const zeroForOne = determineSwapDirection(firstPoolInputToken, firstPoolOutputToken);
+            sqrtPriceLimitX96 = calculatePriceLimitX96(limitPrice, firstPoolInputToken, firstPoolOutputToken, zeroForOne);
+            console.log(`[prepareV4MultiHopExactOutSwapData] Applied price limit: ${limitPrice}, calculated sqrtPriceLimitX96: ${sqrtPriceLimitX96.toString()}`);
+        }
     }
 
-    v4Planner.addAction(Actions.SWAP_EXACT_OUT, [{
-        currencyOut: getAddress(outputToken.address),
-        path: encodedV4Path,
-        amountOut: amountOutSmallestUnits.toString(),
-        amountInMaximum: maxAmountInSmallestUnits.toString(),
-        sqrtPriceLimitX96: sqrtPriceLimitX96.toString()
-    }]);
-    v4Planner.addTake(outputToken, "0x0000000000000000000000000000000000000001" as Address);
-    v4Planner.addTake(inputToken, "0x0000000000000000000000000000000000000001" as Address);
-    
+    // Add the multi-hop swap action
+    v4Planner.addAction(Actions.SWAP_EXACT_OUT, [
+        {
+            currencyOut: outputToken.address,
+            path: encodedPath,
+            amountOut: BigNumber.from(amountOutSmallestUnits.toString()),
+            amountInMaximum: BigNumber.from(maxAmountInSmallestUnits.toString()),
+            sqrtPriceLimitX96: BigNumber.from(sqrtPriceLimitX96.toString())
+        }
+    ]);
+
+    v4Planner.addAction(Actions.TAKE_ALL, [outputToken.address, BigNumber.from("0")]);
+
     return v4Planner.finalize() as Hex;
 }
 
@@ -497,8 +496,8 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
 
         const routePlanner = new RoutePlanner();
 
-        // 1. Add PERMIT2_PERMIT command *only if* a valid signature is provided
-        if (permitSignature !== "0x") {
+        // 1. Add PERMIT2_PERMIT command *only if* a valid signature is provided and it's not a native ETH swap
+        if (fromTokenSymbol !== 'ETH' && permitSignature !== "0x") {
             // When submitting the permit command with a real signature,
             // the amount MUST match what was signed.
             routePlanner.addCommand(CommandType.PERMIT2_PERMIT, [
@@ -515,14 +514,15 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
                 ],
                 permitSignature // The actual signature
             ]);
-        } // Otherwise, if signature is "0x", we skip adding the permit command and rely on the existing allowance.
+        }
 
         // 2. Prepare V4 Swap Data and add V4_SWAP command
         // Use the actual swap amount (parsedPermitAmount or amountDecimalsStr) for swap logic
         const actualSwapAmount = parseUnits(amountDecimalsStr, INPUT_TOKEN.decimals); 
         const actualLimitAmount = parseUnits(limitAmountDecimalsStr, OUTPUT_TOKEN.decimals); // Assuming ExactIn for limit parsing
 
-        // Optional: Add a check here if needed, comparing actualSwapAmount to parsedPermitAmount if that was intended
+        // Determine the value to send with the transaction
+        const valueToSend = fromTokenSymbol === 'ETH' ? actualSwapAmount : 0n;
 
         if (swapType === 'ExactIn') {
             amountInSmallestUnits = actualSwapAmount; // Use the actual amount for the swap
@@ -586,7 +586,7 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
             abi: UniversalRouterAbi, // Ensure UniversalRouterAbi is correctly typed as Abi
             functionName: 'execute',
             args: [routePlanner.commands as Hex, routePlanner.inputs as Hex[], txDeadline],
-            value: 0n, // Assuming no ETH value sent with swap
+            value: valueToSend,
         });
         // console.log("Transaction simulation successful:", simulateResult);
 
@@ -596,7 +596,7 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
             inputs: routePlanner.inputs as Hex[],
             deadline: txDeadline.toString(),
             to: UNIVERSAL_ROUTER_ADDRESS,
-            value: '0', // Assuming no ETH is sent with the swap
+            value: valueToSend.toString(),
             route: {
                 path: route.path,
                 hops: route.hops,

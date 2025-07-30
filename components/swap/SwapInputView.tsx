@@ -5,6 +5,7 @@ import { motion } from 'framer-motion';
 import Image from 'next/image';
 import {
   ArrowDownIcon,
+  ChevronRightIcon,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -14,6 +15,7 @@ import { cn } from "@/lib/utils";
 import { Token, FeeDetail, OutlineArcIcon } from './swap-interface';
 import { TokenSelector, TokenSelectorToken } from './TokenSelector';
 import { getToken } from '@/lib/pools-config';
+import { findBestRoute } from '@/lib/routing-engine';
 
 interface SwapInputViewProps {
   displayFromToken: Token;
@@ -41,6 +43,7 @@ interface SwapInputViewProps {
   isLoadingCurrentToTokenBalance: boolean;
   calculatedValues: {
     fees: FeeDetail[];
+    minimumReceived: string;
   };
   dynamicFeeLoading: boolean;
   quoteLoading: boolean;
@@ -62,6 +65,9 @@ interface SwapInputViewProps {
   routeFeesLoading?: boolean;
   selectedPoolIndexForChart?: number;
   onSelectPoolForChart?: (poolIndex: number) => void;
+  swapContainerRect: { top: number; left: number; width: number; height: number; }; // New prop
+  slippage: number; // Add slippage prop
+  onSlippageChange: (newSlippage: number) => void; // Add slippage change handler
 }
 
 export function SwapInputView({
@@ -104,7 +110,71 @@ export function SwapInputView({
   routeFeesLoading,
   selectedPoolIndexForChart = 0,
   onSelectPoolForChart,
+  swapContainerRect,
+  slippage,
+  onSlippageChange,
 }: SwapInputViewProps) {
+  const [isSlippageEditing, setIsSlippageEditing] = React.useState(false);
+  const [customSlippage, setCustomSlippage] = React.useState("");
+  const [isCustomSlippage, setIsCustomSlippage] = React.useState(false);
+  const slippageRef = React.useRef<HTMLDivElement>(null);
+
+  const presetSlippages = [0.5, 2, 5];
+  
+  const handleSlippageSelect = (value: number) => {
+    onSlippageChange(value);
+    setIsSlippageEditing(false);
+    setIsCustomSlippage(false);
+  };
+
+  const handleCustomSlippageInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    // Allow only numbers and decimal point
+    if (value === "" || /^\d*\.?\d*$/.test(value)) {
+      const numValue = parseFloat(value);
+      if (value === "" || (numValue >= 0 && numValue <= 99)) {
+        setCustomSlippage(value);
+      }
+    }
+  };
+
+  const handleCustomSlippageSubmit = () => {
+    if (customSlippage && !isNaN(parseFloat(customSlippage))) {
+      const rounded = Math.round(parseFloat(customSlippage) * 100) / 100; // Round to 2 decimals
+      onSlippageChange(rounded);
+      setIsSlippageEditing(false);
+      setIsCustomSlippage(false);
+      setCustomSlippage("");
+    }
+  };
+
+  const handleCustomSlippageKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      handleCustomSlippageSubmit();
+    } else if (e.key === 'Escape') {
+      setIsSlippageEditing(false);
+      setIsCustomSlippage(false);
+      setCustomSlippage("");
+    }
+  };
+
+  // Handle clicks outside the slippage editor to close it
+  React.useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (slippageRef.current && !slippageRef.current.contains(event.target as Node)) {
+        setIsSlippageEditing(false);
+        setIsCustomSlippage(false);
+        setCustomSlippage("");
+      }
+    };
+
+    if (isSlippageEditing) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => {
+        document.removeEventListener('mousedown', handleClickOutside);
+      };
+    }
+  }, [isSlippageEditing]);
   return (
     <motion.div 
       key="input" 
@@ -148,6 +218,7 @@ export function SwapInputView({
               onTokenSelect={onFromTokenSelect}
               excludeToken={displayToToken as TokenSelectorToken}
               disabled={!isConnected || isAttemptingSwitch}
+              swapContainerRect={swapContainerRect} // Pass the new prop
             />
             <div className="flex-1">
               <Input
@@ -190,6 +261,7 @@ export function SwapInputView({
               onTokenSelect={onToTokenSelect}
               excludeToken={displayFromToken as TokenSelectorToken}
               disabled={!isConnected || isAttemptingSwitch}
+              swapContainerRect={swapContainerRect} // Pass the new prop
             />
             <div className="flex-1">
               {quoteError ? (
@@ -203,11 +275,7 @@ export function SwapInputView({
               ) : (
                 <>
                   <Input
-                    value={
-                      parseFloat(toAmount || "0") === 0
-                        ? "0"
-                        : parseFloat(toAmount || "0").toFixed(displayToToken.displayDecimals)
-                    }
+                    value={parseFloat(toAmount || "0").toFixed(displayToToken.displayDecimals)}
                     readOnly
                     disabled={!isConnected || isAttemptingSwitch}
                     className={cn(
@@ -229,64 +297,141 @@ export function SwapInputView({
         </div>
       </div>
 
-      {/* Route Information - Shows if we have route info and connected */}
-      {routeInfo && isConnected && currentChainId === TARGET_CHAIN_ID && !quoteError && (
-        <div className="mt-3 mb-1">
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <span>Route:</span>
-            <div className="flex items-center gap-1.5">
-              {routeInfo.path.map((tokenSymbol, index) => {
-                const tokenConfig = getToken(tokenSymbol);
-                const tokenIcon = tokenConfig?.icon || "/placeholder-logo.svg";
-                
-                // Get the fee for this token (if it's not the last token in the path)
-                const showFee = index < routeInfo.path.length - 1;
-                const fee = showFee && routeFees && routeFees[index] 
-                  ? `${(routeFees[index].fee / 10000).toFixed(2)}%` 
-                  : null;
-                
-                const isSelectedForChart = selectedPoolIndexForChart === index;
-                
-                return (
-                  <React.Fragment key={`${tokenSymbol}-${index}`}>
-                    <div className="flex items-center gap-1">
-                      <Image 
-                        src={tokenIcon} 
-                        alt={tokenSymbol} 
-                        width={16} 
-                        height={16} 
-                        className="rounded-full"
-                      />
-                      {fee && (
-                        <button 
-                          onClick={() => onSelectPoolForChart?.(index)}
-                          className={`text-xs font-medium transition-colors hover:text-foreground cursor-pointer ${
-                            isSelectedForChart 
-                              ? 'text-foreground/80 underline decoration-dotted decoration-1 underline-offset-2' 
-                              : 'text-foreground/80'
-                          }`}
-                        >
-                          {fee}
-                        </button>
-                      )}
-                    </div>
-                    {index < routeInfo.path.length - 1 && (
-                      <div className="h-1 w-1 rounded-full bg-muted-foreground/60"></div>
-                    )}
-                  </React.Fragment>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Route, Fee, and Slippage Information */}
+      <div className="mt-3 mb-1 space-y-1.5">
+        {isConnected && currentChainId === TARGET_CHAIN_ID && (
+          <>
+            {(() => {
+              const path = routeInfo?.path || [displayFromToken.symbol, displayToToken.symbol];
+              const isMultiHop = path.length > 2;
 
+              if (!isMultiHop) return null;
+
+              return (
+                <>
+                  {/* Route: Only for multi-hop */}
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span>Route:</span>
+                    <div className="flex items-center gap-1.5">
+                      {path.map((tokenSymbol, index) => {
+                        const tokenConfig = getToken(tokenSymbol);
+                        const tokenIcon = tokenConfig?.icon || "/placeholder-logo.svg";
+                        const showFee = index < path.length - 1;
+                        const fee = showFee && routeFees && routeFees[index] 
+                          ? `${(routeFees[index].fee / 10000).toFixed(2)}%` 
+                          : null;
+                        const isSelectedForChart = selectedPoolIndexForChart === index;
+
+                        return (
+                          <React.Fragment key={`${tokenSymbol}-${index}`}>
+                            <div className="flex items-center gap-1">
+                              <Image src={tokenIcon} alt={tokenSymbol} width={16} height={16} className="rounded-full"/>
+                              {fee && (
+                                <button 
+                                  onClick={() => onSelectPoolForChart?.(index)}
+                                  className={`text-xs font-medium transition-colors hover:text-foreground cursor-pointer ${
+                                    isSelectedForChart 
+                                      ? 'text-foreground/80 underline decoration-dotted decoration-1 underline-offset-2' 
+                                      : 'text-foreground/80'
+                                  }`}
+                                >
+                                  {fee}
+                                </button>
+                              )}
+                            </div>
+                            {index < path.length - 1 && <div className="h-1 w-1 rounded-full bg-muted-foreground/60"></div>}
+                          </React.Fragment>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  {/* Divider: Only shows if Route is visible and there's an amount */}
+                  {parseFloat(fromAmount || "0") > 0 && (
+                    <div className="py-0.5">
+                      <div className="border-t border-dashed border-muted-foreground/20" />
+                    </div>
+                  )}
+                </>
+              );
+            })()}
+
+            {/* Fee and Slippage: Shown for any swap with an amount */}
+            {parseFloat(fromAmount || "0") > 0 && (
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span>Fee:</span>
+                  <div className="flex items-center gap-1.5">
+                    {(() => {
+                      if (routeFeesLoading) {
+                        return <span className="text-muted-foreground animate-pulse">Loading...</span>;
+                      }
+                      if (!routeFees || routeFees.length === 0) {
+                        return <span className="text-muted-foreground">N/A</span>;
+                      }
+                      const totalFeeBps = routeFees.reduce((total, routeFee) => total + routeFee.fee, 0);
+                      const inputAmountUSD = parseFloat(fromAmount || "0") * (displayFromToken.usdPrice || 0);
+                      const feeInUSD = inputAmountUSD * (totalFeeBps / 1000000);
+                      return <span className="text-foreground/80 font-medium">{formatCurrency(feeInUSD.toString())}</span>;
+                    })()}
+                  </div>
+                </div>
+                {/* Minimum Received and Slippage */}
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <div className="flex items-center gap-1">
+                        <span>Minimum Received:</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                        <div className="flex items-center gap-1.5" ref={slippageRef}>
+                          {!isSlippageEditing ? (
+                            <span 
+                              className="text-foreground/80 font-medium cursor-pointer hover:underline transition-all duration-200"
+                              onClick={() => {
+                                setIsSlippageEditing(true);
+                                setCustomSlippage(slippage.toString()); // Pre-fill with current slippage
+                              }}
+                            >
+                              {slippage}%
+                            </span>
+                          ) : (
+                            <div className="flex items-center gap-1 outline outline-1 outline-muted rounded">
+                              <input
+                                type="text"
+                                value={customSlippage}
+                                onChange={handleCustomSlippageInput}
+                                onKeyDown={handleCustomSlippageKeyDown}
+                                onBlur={handleCustomSlippageSubmit}
+                                placeholder="0.00"
+                                className="w-12 px-1 py-0.5 text-xs text-center bg-background border-none focus:outline-none focus:ring-0 focus-visible:ring-offset-0"
+                                autoFocus
+                              />
+                              <span className="text-xs">%</span>
+                            </div>
+                          )}
+                        </div>
+                        <ChevronRightIcon className="h-3 w-3 text-muted-foreground" />
+                        <span className="text-foreground/80 font-medium">
+                            {calculatedValues.minimumReceived} {displayToToken.symbol}
+                        </span>
+                    </div>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
 
 
       <div className="mt-4 h-10">
         {!isMounted ? null : isConnected ? (
           <Button
-            className="w-full btn-primary"
+            className={cn(
+              "w-full", // Always applies full width
+              // Conditional styles for disabled state (matches sidebar's Connect Wallet)
+              actionButtonDisabled ?
+                "relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 !opacity-100 cursor-default text-white/75"
+                : // Styles for enabled state (original "btn-primary" look)
+                "text-sidebar-primary border border-sidebar-primary bg-[#3d271b] hover:bg-[#3d271b]/90"
+            )}
             onClick={handleSwap}
             disabled={actionButtonDisabled ||
                         (
@@ -297,11 +442,15 @@ export function SwapInputView({
                           )
                         )
                       }
+            style={actionButtonDisabled ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
           >
             {actionButtonText}
           </Button>
         ) : (
-          <div className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md bg-accent text-accent-foreground px-3 text-sm font-medium transition-colors hover:bg-accent/90 shadow-md">
+          <div
+            className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30"
+            style={{ backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+          >
             <appkit-button className="absolute inset-0 z-10 block h-full w-full cursor-pointer p-0 opacity-0" />
             <span className="relative z-0 pointer-events-none">{actionButtonText}</span>
           </div>

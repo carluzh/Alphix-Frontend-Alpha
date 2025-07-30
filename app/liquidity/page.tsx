@@ -52,27 +52,33 @@ const generatePoolsFromConfig = (): Pool[] => {
       return null;
     }
     
+    // Debugging: Log the poolConfig to see if 'type' is present
+    console.log(`[generatePoolsFromConfig] Processing pool: ${poolConfig.id}, Type: ${poolConfig.type}`);
+
     return {
       id: poolConfig.id,
-    tokens: [
+      tokens: [
         { symbol: token0.symbol, icon: token0.icon },
         { symbol: token1.symbol, icon: token1.icon }
-    ],
+      ],
       pair: `${token0.symbol} / ${token1.symbol}`,
-    volume24h: "Loading...",
-    volume7d: "Loading...",
-    fees24h: "Loading...",
-    fees7d: "Loading...",
-    liquidity: "Loading...",
-    apr: "Loading...",
+      volume24h: "Loading...",
+      volume7d: "Loading...",
+      fees24h: "Loading...",
+      fees7d: "Loading...",
+      liquidity: "Loading...",
+      apr: "Loading...",
       highlighted: poolConfig.featured,
-    volumeChangeDirection: 'loading',
-    tvlChangeDirection: 'loading',
+      volumeChangeDirection: 'loading',
+      tvlChangeDirection: 'loading',
+      type: poolConfig.type, // Include the type from poolConfig
     } as Pool;
   }).filter(Boolean) as Pool[];
 };
 
 const dynamicPools = generatePoolsFromConfig();
+// Debugging: Log the final Pool object created for each pool
+console.log("[generatePoolsFromConfig] Final generated pools:", dynamicPools);
 
 declare module '@tanstack/react-table' {
   interface ColumnMeta<TData extends RowData, TValue> {
@@ -362,12 +368,25 @@ export default function LiquidityPage() {
               </div>
             </div>
             <div className="flex flex-col">
-              <span className="font-medium">{pool.pair}</span>
-              {pool.positionsCount !== undefined && pool.positionsCount > 0 ? (
-                <div className="text-xs text-muted-foreground">
-                  {pool.positionsCount} {pool.positionsCount === 1 ? 'position' : 'positions'}
-                </div>
-              ) : null}
+              <span className="font-medium mb-1">{pool.pair}</span>
+              <div className="flex items-center gap-3">
+                {pool.type && (
+                  <span
+                    className="px-1.5 py-0.5 text-xs font-normal rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-muted-foreground"
+                    style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+                  >
+                    {pool.type}
+                  </span>
+                )}
+                {pool.positionsCount !== undefined && pool.positionsCount > 0 && (
+                  <>
+                    {/* <div className="h-3 w-0.5 bg-border/50 mx-1" /> */}
+                    <div className="text-xs text-muted-foreground">
+                      {pool.positionsCount} {pool.positionsCount === 1 ? 'position' : 'positions'}
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
           </div>
         );
@@ -453,6 +472,7 @@ export default function LiquidityPage() {
         const b = rowB.original.tvlUSD || 0;
         return a - b;
       },
+      sortDescFirst: true,
       cell: ({ row }) => (
          <div className="flex items-center justify-start gap-1">
           {typeof row.original.tvlUSD === 'number' ? (
@@ -512,18 +532,34 @@ export default function LiquidityPage() {
         const b = rowB.original.apr ? parseFloat(rowB.original.apr.replace('%', '')) : 0;
         return a - b;
       },
+      sortDescFirst: true,
       cell: ({ row }) => {
         const isAprCalculated = row.original.apr !== undefined && row.original.apr !== "Loading..." && row.original.apr !== "N/A";
         const formattedAPR = isAprCalculated ? formatAPR(parseFloat(row.original.apr.replace('%', ''))) : undefined;
+        
         return (
-          <div className="flex items-center justify-end">
+          <div className="relative flex items-center justify-end w-full h-full">
+            {/* APR Badge / Loading Skeleton */}
             {isAprCalculated ? (
-              <div className="flex items-center justify-center h-6 rounded-md bg-green-500/20 text-green-500 overflow-hidden" style={{ width: '72px' }}>
+              <div className="flex items-center justify-center h-6 rounded-md bg-green-500/20 text-green-500 overflow-hidden transition-opacity duration-200 group-hover:opacity-0" style={{ width: '72px' }}>
                 {formattedAPR}
               </div>
             ) : (
               <div className="inline-block h-4 w-16 bg-muted/60 rounded animate-pulse"></div>
             )}
+            
+            {/* Add Liquidity Button (on row hover) */}
+            <a
+              onClick={(e) => {
+                e.stopPropagation();
+                handlePoolClick(row.original.id);
+              }}
+              className="absolute right-0 top-1/2 -translate-y-1/2 flex h-10 cursor-pointer items-center justify-end gap-2 rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto hover:brightness-110 hover:border-white/30"
+              style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+            >
+              <PlusIcon className="h-4 w-4 relative z-0" />
+              <span className="relative z-0 whitespace-nowrap">Add Liquidity</span>
+            </a>
           </div>
         );
       },
@@ -555,7 +591,7 @@ export default function LiquidityPage() {
     // Adjust Yield column size based on screen size
     return filteredColumns.map((col) => {
       if ('accessorKey' in col && col.accessorKey === 'apr') {
-        return { ...col, size: windowWidth >= 1800 ? 40 : 80 };
+        return { ...col, size: windowWidth >= 1800 ? 40 : 80 }; // Reverted width to original
       }
       if ('accessorKey' in col && col.accessorKey === 'pair') {
         return { ...col, size: windowWidth >= 2200 ? 400 : 300 };
@@ -605,16 +641,7 @@ export default function LiquidityPage() {
                     Explore and manage your liquidity positions.
                   </p>
                 </div>
-                <div className="flex items-center">
-                  <div 
-                    onClick={() => setAddLiquidityOpen(true)}
-                    className="relative flex h-10 cursor-pointer items-center justify-center gap-2 rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30" 
-                    style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
-                  >
-                    <PlusIcon className="h-4 w-4 relative z-0" />
-                    <span className="relative z-0 pointer-events-none">Add Liquidity</span>
-                  </div>
-                </div>
+                
               </div>
             )}
             

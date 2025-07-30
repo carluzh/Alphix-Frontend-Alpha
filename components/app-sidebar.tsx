@@ -37,6 +37,7 @@ import {
 import { useIsMobile } from "@/hooks/use-mobile"
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
+import { useRouter } from "next/navigation"; // Import useRouter
 
 const data = {
   user: {
@@ -56,14 +57,14 @@ const data = {
       icon: LayersIcon,
     },
     {
-      title: "Faucet",
-      icon: CoinsIcon,
-      isFaucet: true,
-    },
-    {
       title: "Portfolio",
       icon: ChartPieIcon,
       disabled: true,
+    },
+    {
+      title: "Faucet",
+      icon: CoinsIcon,
+      isFaucet: true,
     },
   ],
   navGovernance: [
@@ -82,12 +83,6 @@ const data = {
     {
       title: "Gauges",
       icon: GaugeIcon,
-      url: "#",
-      disabled: true,
-    },
-    {
-      title: "Leaderboard",
-      icon: AwardIcon,
       url: "#",
       disabled: true,
     },
@@ -110,6 +105,7 @@ const data = {
 export function AppSidebar({ variant = "floating", ...props }: React.ComponentProps<typeof Sidebar>) {
   const isMobile = useIsMobile()
   const { resolvedTheme } = useTheme()
+  const router = useRouter(); // Initialize useRouter
 
   return (
     <Sidebar variant={variant} collapsible="offcanvas" {...props}>
@@ -117,14 +113,14 @@ export function AppSidebar({ variant = "floating", ...props }: React.ComponentPr
         <SidebarMenu>
           <SidebarMenuItem className="list-none">
             <SidebarMenuButton 
-              asChild 
+              // onClick={() => router.push('/')} // Remove onClick from button
               className="data-[slot=sidebar-menu-button]:!p-2 !pt-2.5 hover:bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 data-[state=open]:bg-transparent active:bg-transparent"
             >
-              <a 
-                href="/" 
-                className={cn(isMobile && "pt-4")}
-              >
-                <div className="flex items-center w-full justify-between">
+              <div className="flex items-center w-full justify-between">
+                <a 
+                  href="/" // Restore href
+                  className={cn(isMobile && "pt-4")}
+                >
                   <img 
                     src="/Logo Type (white).svg"
                     alt="Alphix Logo"
@@ -137,17 +133,17 @@ export function AppSidebar({ variant = "floating", ...props }: React.ComponentPr
                     className="h-6 w-28 text-sidebar-logo block dark:hidden"
                     loading="eager"
                   />
-                  <div onClick={(e) => e.stopPropagation()}>
-                    <Badge
-                      variant="outline"
-                      className="bg-[#3d271b] text-sidebar-primary border-sidebar-primary rounded-md font-normal hover:bg-[#4a2f1f] transition-colors cursor-default"
-                      style={{ fontFamily: 'Consolas, monospace' }}
-                    >
-                      Beta
-                    </Badge>
-                  </div>
+                </a>
+                <div onClick={(e) => e.stopPropagation()}>
+                  <Badge
+                    variant="outline"
+                    className="bg-[#3d271b] text-sidebar-primary border-sidebar-primary rounded-md font-normal hover:bg-[#4a2f1f] transition-colors cursor-default"
+                    style={{ fontFamily: 'Consolas, monospace' }}
+                  >
+                    Beta
+                  </Badge>
                 </div>
-              </a>
+              </div>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>

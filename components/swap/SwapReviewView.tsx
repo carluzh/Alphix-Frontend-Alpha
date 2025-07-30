@@ -177,19 +177,24 @@ export function SwapReviewView({
       <div className="grid grid-cols-2 gap-3">
         <Button
           variant="outline"
-          className="border-slate-300 bg-slate-100 hover:bg-slate-200 dark:border-zinc-700 dark:bg-zinc-800 dark:hover:bg-zinc-700 disabled:opacity-50"
+          className="relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 text-white/75 disabled:opacity-50"
           onClick={handleChangeButton}
           disabled={isSwapping}
+          style={{ backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
         >
           Change
         </Button>
         <Button
-          className="bg-slate-900 text-slate-50 hover:bg-slate-900/80 
-                     dark:bg-white dark:text-black dark:hover:bg-white/90 
-                     disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100
-                     dark:disabled:bg-neutral-700 dark:disabled:text-neutral-500 dark:disabled:opacity-100"
+          className={isSwapping || swapProgressState === "init" || swapProgressState === "checking_allowance" 
+            ? "relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 !opacity-100 cursor-default text-white/75"
+            : "text-sidebar-primary border border-sidebar-primary bg-[#3d271b] hover:bg-[#3d271b]/90"
+          }
           onClick={handleConfirmSwap}
           disabled={isSwapping || swapProgressState === "init" || swapProgressState === "checking_allowance"}
+          style={(isSwapping || swapProgressState === "init" || swapProgressState === "checking_allowance") 
+            ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } 
+            : undefined
+          }
         >
           {isSwapping ? (
             <span className="flex items-center gap-2">

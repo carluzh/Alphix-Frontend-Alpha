@@ -29,6 +29,7 @@ export interface PoolConfig {
   hooks: string;
   enabled: boolean;
   featured: boolean;
+  type?: string; // Add the new type property
 }
 
 export interface ContractsConfig {
@@ -90,10 +91,15 @@ export function createTokenSDK(tokenSymbol: string, chainId: number): Token | nu
     return null;
   }
   
-  console.log(`[createTokenSDK] Raw address from config: ${tokenConfig.address}, type: ${typeof tokenConfig.address}`);
+  // REVERTED: Removed logic to override address for native ETH
+  // const tokenAddressForSDK = tokenSymbol === 'ETH' ? NATIVE_TOKEN_ADDRESS : tokenConfig.address;
+
+  // REVERTED: Removed debug logs related to `tokenAddressForSDK`
+  // console.log(`[createTokenSDK] Raw address from config: ${tokenConfig.address}, type: ${typeof tokenConfig.address}`);
+  // console.log(`[createTokenSDK] Address used for SDK: ${tokenAddressForSDK}, type: ${typeof tokenAddressForSDK}`);
   
   try {
-    const checksummedAddress = getAddress(tokenConfig.address);
+    const checksummedAddress = getAddress(tokenConfig.address); // REVERTED to original `tokenConfig.address`
     console.log(`[createTokenSDK] Checksummed address: ${checksummedAddress}, type: ${typeof checksummedAddress}`);
     
     const token = new Token(
@@ -202,4 +208,5 @@ export function getTokenSymbolByAddress(address: string): TokenSymbol | null {
 
 // Export chain info
 export const CHAIN_ID = poolsConfig.meta.chainId;
-export const CHAIN_NAME = poolsConfig.meta.chainName; 
+export const CHAIN_NAME = poolsConfig.meta.chainName;
+export const NATIVE_TOKEN_ADDRESS = '0x0000000000000000000000000000000000000000'; 

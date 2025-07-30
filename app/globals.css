@@ -42,6 +42,9 @@
     --sidebar-ring: 16 100% 48%; /* #f45502 - Brand Color for focus rings */
     --sidebar-logo: 0 0% 0%; /* #000000 - Logo color (light) */
     --sidebar-connect-button-bg: #1f1f1f; /* Connect button background */
+    /* Swap interface light theme */
+    --swap-background: #ffffff; /* Same as sidebar background */
+    --swap-border: #e4e4e4; /* Same as sidebar border */
   }
 
   .dark {
@@ -84,6 +87,9 @@
     --sidebar-ring: #f45502; /* #f45502 - Brand Color for focus rings */
     --sidebar-logo: #ffffff; /* #ffffff - Logo color (dark) */
     --sidebar-connect-button-bg: #1f1f1f; /* Connect button background */
+    /* Swap interface dark theme */
+    --swap-background: #131313; /* Same as sidebar background */
+    --swap-border: #323232; /* Same as sidebar border */
   }
 }
 

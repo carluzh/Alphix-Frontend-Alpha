@@ -1,7 +1,10 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getToken, getPoolByTokens } from '../../../lib/pools-config';
+import { getToken, getPoolByTokens, getStateViewAddress } from '../../../lib/pools-config';
+import { publicClient } from '../../../lib/viemClient';
+import { parseAbi, type Hex } from 'viem';
 
-const DEFAULT_DYNAMIC_FEE = 3000; // 0.30% - reasonable default for quotes
+const DEFAULT_DYNAMIC_FEE = 3000; // 0.30% - fallback default
+const STATE_VIEW_ADDRESS = getStateViewAddress();
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
     if (req.method !== 'POST') {
@@ -29,16 +32,35 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             return res.status(400).json({ message: `No pool found for token pair ${fromTokenSymbol}/${toTokenSymbol}` });
         }
 
-        console.log(`Using default dynamic fee ${DEFAULT_DYNAMIC_FEE} for pool ${poolConfig.id} (${poolConfig.name}). Actual dynamic fee will be applied during swap execution.`);
+        // Read the actual dynamic fee from the pool using getSlot0
+        let actualDynamicFee = DEFAULT_DYNAMIC_FEE;
+        try {
+            const stateViewAbi = parseAbi([
+                'function getSlot0(bytes32 poolId) external view returns (uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 lpFee)'
+            ]);
 
-        // Return default fee for quote purposes
-        // The actual dynamic fee will be determined by the hook during swap execution
+            const slot0Data = await publicClient.readContract({
+                address: STATE_VIEW_ADDRESS,
+                abi: stateViewAbi,
+                functionName: 'getSlot0',
+                args: [poolConfig.subgraphId as Hex]
+            }) as readonly [bigint, number, number, number];
+
+            const [, , , lpFee] = slot0Data;
+            actualDynamicFee = Number(lpFee);
+            
+            console.log(`Read actual dynamic fee ${actualDynamicFee} bps (${(actualDynamicFee / 10000).toFixed(4)}%) for pool ${poolConfig.id} (${poolConfig.name})`);
+        } catch (error) {
+            console.error(`Error reading pool fee for ${poolConfig.id}:`, error);
+            console.log(`Falling back to default fee ${DEFAULT_DYNAMIC_FEE} bps for pool ${poolConfig.id}`);
+        }
+
         res.status(200).json({ 
-            dynamicFee: DEFAULT_DYNAMIC_FEE.toString(),
+            dynamicFee: actualDynamicFee.toString(),
             poolId: poolConfig.id,
             poolName: poolConfig.name,
-            isEstimate: true,
-            note: 'This is an estimate for quote purposes. Actual dynamic fee will be applied during swap execution.'
+            isEstimate: false,
+            note: 'This is the actual dynamic fee read from the pool contract.'
         });
 
     } catch (error: any) {

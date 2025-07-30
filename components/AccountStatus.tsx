@@ -12,7 +12,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { LogOutIcon, MoreVerticalIcon, Edit3Icon, CheckIcon, XIcon } from "lucide-react"
+import { LogOutIcon, MoreVerticalIcon, Edit3Icon, CheckIcon, XIcon, HomeIcon, SettingsIcon } from "lucide-react"
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from "@/components/ui/sidebar"
 import { LevelProgress } from "@/components/LevelProgress"
 import { Input } from "@/components/ui/input"
@@ -57,7 +57,7 @@ export function AccountStatus() {
       if (localStorage.getItem(`walletName_${address}`)) {
           localStorage.removeItem(`walletName_${address}`);
       }
-      const fallbackName = connector?.name || "Connected Wallet";
+      const fallbackName = shortAddress; // Changed fallback to wallet address
       setDisplayedName(fallbackName);
       setInputName(fallbackName);
       setIsEditingName(false);
@@ -136,11 +136,11 @@ export function AccountStatus() {
             style={{ backgroundColor: '#09090b' }}
           >
             <DropdownMenuLabel className="p-0 font-normal">
-              <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
+              <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm group">
                 <Avatar className="h-8 w-8 rounded-lg">
                   <AvatarFallback className="rounded-lg">{displayedName.charAt(0).toUpperCase() || "C"}</AvatarFallback>
                 </Avatar>
-                <div className="grid flex-1 text-left text-sm leading-tight">
+                <div className="flex flex-1 flex-col text-left text-sm leading-tight min-w-0">
                   {isEditingName ? (
                     <div className="flex items-center gap-1">
                       <Input 
@@ -157,16 +157,16 @@ export function AccountStatus() {
                       />
                     </div>
                   ) : (
-                    <div className="flex items-center gap-1 group">
-                      <span className="truncate font-medium">{displayedName}</span>
+                    <div className="relative">
+                      <div className="truncate font-medium pr-6">{displayedName}</div>
                       {address && (
                         <Button 
                           variant="ghost" 
                           size="icon" 
                           onClick={handleEditClick} 
-                          className="h-5 w-5 ml-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                          className="absolute right-0 top-1/2 h-5 w-5 -translate-y-1/2 opacity-0 transition-opacity group-hover:opacity-100"
                         >
-                          <Edit3Icon className="h-3.5 w-3.5" />
+                          <Edit3Icon className="h-4 w-4 text-muted-foreground" />
                         </Button>
                       )}
                     </div>
@@ -175,8 +175,7 @@ export function AccountStatus() {
                 </div>
               </div>
             </DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <div className="relative px-2 py-1.5 flex items-center cursor-pointer group">
+            <div className="relative px-2 pt-0.5 pb-1.5 flex items-center cursor-pointer group">
               <LevelProgress {...levelData} className="flex-grow" />
               <span className="ml-2 text-xs font-medium text-muted-foreground whitespace-nowrap">
                 Lvl {levelData.currentLevel}
@@ -189,9 +188,9 @@ export function AccountStatus() {
               </div>
             </div>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => disconnect()}>
-              <LogOutIcon className="mr-2 h-4 w-4" /> 
-              Log out
+            <DropdownMenuItem onClick={() => disconnect()} className="cursor-pointer">
+              <LogOutIcon className="mr-2 h-4 w-4 text-muted-foreground" /> 
+              Disconnect
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
