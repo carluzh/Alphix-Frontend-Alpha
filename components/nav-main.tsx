@@ -111,7 +111,7 @@ export function NavMain({
       const timeLeft = nextClaimTimestamp - currentTime;
 
       if (timeLeft <= 0) {
-        setFaucetCooldown("Ready");
+        setFaucetCooldown(formatTimeLeft(timeLeft)); // Use formatTimeLeft to get "Claim"
         return;
       }
       setFaucetCooldown(formatTimeLeft(timeLeft));
@@ -279,7 +279,7 @@ export function NavMain({
                       faucetCooldown === "Claim" ?
                         "bg-[#3d271b] text-sidebar-primary border-sidebar-primary hover:bg-[#4a2f1f] transition-colors cursor-default"
                         :
-                        "bg-sidebar-accent text-white border-transparent"
+                        "bg-sidebar-accent text-white border-transparent opacity-70"
                     )}
                     style={faucetCooldown === "Claim" ? { fontFamily: 'Consolas, monospace' } : undefined}
                   >

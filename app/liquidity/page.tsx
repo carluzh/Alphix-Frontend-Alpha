@@ -29,7 +29,7 @@ import {
     useAccount, 
 } from "wagmi";
 import { toast } from "sonner";
-import { getEnabledPools, getToken, getPoolSubgraphId } from "../../lib/pools-config";
+import { getEnabledPools, getToken, getPoolSubgraphId, getPoolById } from "../../lib/pools-config";
 import { getFromCache, setToCache, getUserPositionsCacheKey, getPoolStatsCacheKey } from "../../lib/client-cache";
 import { Pool } from "../../types";
 import { AddLiquidityModal } from "@liquidity/AddLiquidityModal";
@@ -685,9 +685,7 @@ export default function LiquidityPage() {
                       table.getRowModel().rows.map((row) => (
                         <TableRow
                           key={row.id}
-                          className={`group cursor-pointer transition-colors ${
-                            row.original.highlighted ? 'bg-accent/10 hover:bg-accent/30' : 'hover:bg-muted/30'
-                          }`}
+                          className="group cursor-pointer transition-colors hover:bg-muted/30"
                         >
                           {row.getVisibleCells().map((cell, index) => (
                             <TableCell 
@@ -742,7 +740,7 @@ export default function LiquidityPage() {
         }}
         sdkMinTick={SDK_MIN_TICK}
         sdkMaxTick={SDK_MAX_TICK}
-        defaultTickSpacing={DEFAULT_TICK_SPACING}
+                          defaultTickSpacing={getPoolById(selectedPoolId)?.tickSpacing || DEFAULT_TICK_SPACING}
       />
     </AppLayout>
   );

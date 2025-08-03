@@ -21,7 +21,7 @@
       "address": "0x24429b8f2C8ebA374Dd75C0a72BCf4dF4C545BeD",
       "decimals": 6,
       "displayDecimals": 2,
-      "icon": "/aUSDC.svg",
+      "icon": "/tokens/aUSDC.png",
       "usdPrice": "1.0"
     },
     "aUSDT": {
@@ -30,7 +30,7 @@
       "address": "0x9F785fEb65DBd0170bd6Ca1A045EEda44ae9b4dC",
       "decimals": 6,
       "displayDecimals": 2,
-      "icon": "/aUSDT.svg",
+      "icon": "/tokens/aUSDT.png",
       "usdPrice": "1.0"
     },
     "aETH": {
@@ -39,7 +39,7 @@
       "address": "0xE7711aa6557A69592520Bbe7D704D64438f160e7",
       "decimals": 18,
       "displayDecimals": 4,
-      "icon": "/aETH.svg"
+      "icon": "/tokens/aETH.png"
     },
     "aBTC": {
       "symbol": "aBTC",
@@ -47,7 +47,7 @@
       "address": "0x9d5F910c91E69ADDDB06919825305eFEa5c9c604",
       "decimals": 8,
       "displayDecimals": 6,
-      "icon": "/aBTC.svg"
+      "icon": "/tokens/aBTC.png"
     },
     "ETH": {
       "symbol": "ETH",
@@ -55,7 +55,7 @@
       "address": "0x0000000000000000000000000000000000000000",
       "decimals": 18,
       "displayDecimals": 4,
-      "icon": "/ETH.svg"
+      "icon": "/tokens/ETH.png"
     }
   },
   "pools": [

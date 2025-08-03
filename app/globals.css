@@ -152,3 +152,8 @@ appkit-button:hover {
 
 /* Removed marker CSS rule */
 
+.recharts-surface:focus {
+  outline: none;
+  border: none; /* In case it's a border, though usually it's outline */
+}
+

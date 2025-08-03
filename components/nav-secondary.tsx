@@ -84,8 +84,8 @@ export function NavSecondary({
                       side="top" 
                       align="center"
                       sideOffset={4}
-                      className="w-56 rounded-lg border-sidebar-accent"
-                      style={{ backgroundColor: '#09090b' }}
+                      className="w-56 rounded-lg border-sidebar-border"
+                      style={{ backgroundColor: '#0f0f0f' }}
                     >
                       <DropdownMenuItem onClick={() => {
                         const currentTheme = document.documentElement.classList.contains('dark') ? 'dark' : 'light';

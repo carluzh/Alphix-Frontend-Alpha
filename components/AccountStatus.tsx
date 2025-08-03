@@ -129,11 +129,11 @@ export function AccountStatus() {
             </SidebarMenuButton>
           </DropdownMenuTrigger>
           <DropdownMenuContent
-            className="w-[--radix-dropdown-menu-trigger-width] min-w-56 rounded-lg border-sidebar-accent"
+            className="w-[--radix-dropdown-menu-trigger-width] min-w-56 rounded-lg border-sidebar-border"
             side={isMobile ? "bottom" : "right"}
             align="end"
             sideOffset={16}
-            style={{ backgroundColor: '#09090b' }}
+            style={{ backgroundColor: '#0f0f0f' }}
           >
             <DropdownMenuLabel className="p-0 font-normal">
               <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm group">

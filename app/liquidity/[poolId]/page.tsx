@@ -4,7 +4,7 @@ import { AppLayout } from "@/components/app-layout";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { ArrowRightLeftIcon, PlusIcon, MinusIcon, ArrowLeftIcon, RefreshCwIcon, ChevronLeftIcon, Trash2Icon } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
+// Card components removed - using consistent styling with table
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -293,6 +293,9 @@ export default function PoolDetailPage() {
   const [isDecreaseCalculating, setIsDecreaseCalculating] = useState(false);
   const [isFullBurn, setIsFullBurn] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+
+  // State for height alignment between modal and chart
+  const [modalHeight, setModalHeight] = useState<number | null>(null);
 
   // Memoized callback functions to prevent infinite re-renders
   const onLiquidityBurnedCallback = useCallback(() => {
@@ -1170,61 +1173,60 @@ export default function PoolDetailPage() {
             {/* Left Column: Stats and Graph (takes up 3/4 on larger screens) */}
             <div className="lg:w-3/4 space-y-6">
               {/* Pool stats */}
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-                <Card>
-                  <CardHeader className="py-4">
-                    <CardDescription>APR</CardDescription>
-                    <CardTitle>{currentPoolData.apr}</CardTitle>
-                  </CardHeader>
-                </Card>
-                <Card>
-                  <CardHeader className="py-4">
-                    <CardDescription>Total Liquidity</CardDescription>
-                    <CardTitle>{currentPoolData.liquidity}</CardTitle>
-                  </CardHeader>
-                </Card>
-                <Card>
-                  <CardHeader className="py-4">
-                    <CardDescription>Volume (24h)</CardDescription>
-                    <CardTitle>{currentPoolData.volume24h}</CardTitle>
-                  </CardHeader>
-                </Card>
-                <Card>
-                  <CardHeader className="py-4">
-                    <CardDescription>Fees (24h)</CardDescription>
-                    <CardTitle>{currentPoolData.fees24h}</CardTitle>
-                  </CardHeader>
-                </Card>
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+                <div className="rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors">
+                  <div className="text-sm text-muted-foreground mb-1">APR</div>
+                  <div className="text-lg font-medium">{currentPoolData.apr}</div>
+                </div>
+                <div className="rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors">
+                  <div className="text-sm text-muted-foreground mb-1">Total Liquidity</div>
+                  <div className="text-lg font-medium">{currentPoolData.liquidity}</div>
+                </div>
+                <div className="rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors">
+                  <div className="text-sm text-muted-foreground mb-1">Volume (24h)</div>
+                  <div className="text-lg font-medium">{currentPoolData.volume24h}</div>
+                </div>
+                <div className="rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors">
+                  <div className="text-sm text-muted-foreground mb-1">Fees (24h)</div>
+                  <div className="text-lg font-medium">{currentPoolData.fees24h}</div>
+                </div>
               </div>
               
               {/* Pool Overview Section (formerly Tab) */}
-              <div className="space-y-4 mb-8">
-                <Card>
-                  <CardHeader className="pb-2">
+              <div className="space-y-4">
+                <div className="rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors">
+                  <div className="mb-4">
                     <div className="flex justify-between items-center">
-                      <CardTitle>Pool Activity</CardTitle>
-                      <div className="flex space-x-3">
-                        <Button 
-                          variant={activeChart === 'volume' ? 'secondary' : 'ghost'} 
-                          size="sm" 
+                      <h3 className="text-lg font-medium">Pool Activity</h3>
+                      <div className="flex space-x-2">
+                        <button 
+                          className={`px-3 py-1.5 text-sm font-medium rounded-md border border-sidebar-border transition-all duration-200 ${
+                            activeChart === 'volume' 
+                              ? 'bg-muted hover:bg-muted/80' 
+                              : 'bg-transparent hover:bg-muted/30'
+                          }`}
                           onClick={() => setActiveChart('volume')}
                         >
                           Volume
-                        </Button>
-                        <Button 
-                          variant={activeChart === 'tvl' ? 'secondary' : 'ghost'} 
-                          size="sm" 
+                        </button>
+                        <button 
+                          className={`px-3 py-1.5 text-sm font-medium rounded-md border border-sidebar-border transition-all duration-200 ${
+                            activeChart === 'tvl' 
+                              ? 'bg-muted hover:bg-muted/80' 
+                              : 'bg-transparent hover:bg-muted/30'
+                          }`}
                           onClick={() => setActiveChart('tvl')}
                         >
                           TVL
-                        </Button>
+                        </button>
                       </div>
                     </div>
-                  </CardHeader>
-                  <CardContent>
+                  </div>
+                  <div>
                     <ChartContainer
                       config={chartConfig}
-                      className="aspect-auto h-[350px] w-full"
+                      className="aspect-auto w-full"
+                      style={{ height: modalHeight ? `${modalHeight}px` : '380px' }}
                     >
                       {isLoadingChartData ? (
                         <div className="flex justify-center items-center h-full">
@@ -1294,13 +1296,13 @@ export default function PoolDetailPage() {
                         </div>
                       )}
                     </ChartContainer>
-                  </CardContent>
-                </Card>
+                  </div>
+                </div>
               </div>
             </div>
 
             {/* Right Column: Add Liquidity Form (takes up 1/4 on larger screens) */}
-            <div className="w-[450px] h-[700px]" ref={addLiquidityFormRef}>
+            <div className="w-[450px]" ref={addLiquidityFormRef}>
               {/* Tabs for Swap/Deposit/Withdraw - REMOVED */}
               {/* <div className="flex border-b border-border mb-4 px-6 pt-6">
                 <button
@@ -1336,21 +1338,20 @@ export default function PoolDetailPage() {
               </div> */}
 
               {poolId && currentPoolData && ( // Always render form (removed activeTab condition)
-                <Card className="w-full shadow-none border-none"> {/* Adjusted Card styling */}
-                  <CardContent className="pt-0"> {/* Adjusted padding */}
-                    <AddLiquidityForm
-                      selectedPoolId={poolId}
-                      poolApr={currentPoolData?.apr}
-                      onLiquidityAdded={() => {
-                        fetchPageData();
-                      }}
-                      sdkMinTick={SDK_MIN_TICK}
-                      sdkMaxTick={SDK_MAX_TICK}
-                      defaultTickSpacing={DEFAULT_TICK_SPACING}
-                      activeTab={'deposit'} // Always pass 'deposit'
-                    />
-                  </CardContent>
-                </Card>
+                <div className="w-full rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors">
+                  <AddLiquidityForm
+                    selectedPoolId={poolId}
+                    poolApr={currentPoolData?.apr}
+                    onLiquidityAdded={() => {
+                      fetchPageData();
+                    }}
+                    sdkMinTick={SDK_MIN_TICK}
+                    sdkMaxTick={SDK_MAX_TICK}
+                    defaultTickSpacing={getPoolById(poolId)?.tickSpacing || DEFAULT_TICK_SPACING}
+                    activeTab={'deposit'} // Always pass 'deposit'
+                    onHeightChange={setModalHeight}
+                  />
+                </div>
               )}
               
               {/* Placeholder content for Withdraw and Swap - REMOVED */}              

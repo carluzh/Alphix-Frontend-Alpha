@@ -25,7 +25,8 @@ export const metadata: Metadata = {
   },
   description: 'Alphix: Unifying Liquidity on Base. Enhancing DeFi capital efficiency with our dynamic fee hook. Built on Uniswap V4 for security and optimal performance. Explore Unified Pools today!',
   icons: {
-    icon: '/Tab.png', 
+    icon: '/favicon.png', 
+    apple: '/favicon.png',
   },
 }
 

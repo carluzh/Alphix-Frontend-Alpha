@@ -361,7 +361,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   const [isWrongNetworkToastActive, setIsWrongNetworkToastActive] = useState(false);
   const wrongNetworkToastIdRef = useRef<string | number | undefined>(undefined);
   const swapTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const reviewNotificationsShown = useRef({ needs_approval: false, needs_signature: false, approval_complete: false, signature_complete: false });
+
   const [isSellInputFocused, setIsSellInputFocused] = useState(false);
   
   // V4 Quoter states
@@ -393,12 +393,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   const [feeHistoryError, setFeeHistoryError] = useState<string | null>(null);
   const [isFeeChartModalOpen, setIsFeeChartModalOpen] = useState(false); // New state for modal
   const isFetchingFeeHistoryRef = useRef(false); // Prevent duplicate API calls
-  const [isPreviewChartStable, setIsPreviewChartStable] = useState(false); // New state for chart stability
-  
-  // Memoize the callback to prevent unnecessary re-renders
-  const handleContentStableChange = useCallback((stable: boolean) => {
-    setIsPreviewChartStable(stable);
-  }, []);
+  // Chart stability tracking no longer needed with simple rect approach
 
   const [currentPermitDetailsForSign, setCurrentPermitDetailsForSign] = useState<any | null>(null);
   const [obtainedSignature, setObtainedSignature] = useState<Hex | null>(null);
@@ -630,35 +625,15 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     };
   }, [isMounted, isConnected, currentChainId, isAttemptingSwitch]);
 
-  // Effect for Review State Notifications
+  // Effect for Success Notification
   useEffect(() => {
-    if (swapState === "review") {
-      // Handle Warning Toasts
-      if (swapProgressState === "needs_approval" && !reviewNotificationsShown.current.needs_approval) {
-        toast("Approval Required", { description: `Permit2 needs approval to spend your ${fromToken.symbol}.`, duration: 4000 }); // Removed InfoToastIcon
-        reviewNotificationsShown.current.needs_approval = true;
-      } else if (swapProgressState === "needs_signature" && !reviewNotificationsShown.current.needs_signature) {
-        toast("Signature Required", { description: `Permit2 allowance needs to be granted or renewed via signature.`, duration: 4000 }); // Removed InfoToastIcon
-        reviewNotificationsShown.current.needs_signature = true;
-      // Handle Positive Toasts
-      } else if (swapProgressState === "approval_complete" && !reviewNotificationsShown.current.approval_complete) {
-        toast("Token Approved", {
-          duration: 2500
-        });
-        reviewNotificationsShown.current.approval_complete = true;
-      } else if (swapProgressState === "signature_complete" && !reviewNotificationsShown.current.signature_complete) {
-        toast("Permission Active", {
-          duration: 2500
-        });
-        reviewNotificationsShown.current.signature_complete = true;
-      }
-    } else {
-      // Only reset if NOT in review state and if flags are currently true
-      if (reviewNotificationsShown.current.needs_approval || reviewNotificationsShown.current.needs_signature || reviewNotificationsShown.current.approval_complete || reviewNotificationsShown.current.signature_complete) {
-         reviewNotificationsShown.current = { needs_approval: false, needs_signature: false, approval_complete: false, signature_complete: false };
-      }
+    if (swapState === "success") {
+      toast("Swap Successful", {
+        icon: <SuccessToastIcon />,
+        duration: 4000
+      });
     }
-  }, [swapState, swapProgressState, fromToken?.symbol]); // Dependencies are correct
+  }, [swapState]);
 
   // Helper function for formatting balance display
   const getFormattedDisplayBalance = (numericBalance: number | undefined): string => {
@@ -1048,11 +1023,9 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                             ? (toValueNum * toToken.usdPrice)
                             : 0;
     
-    // Calculate minimum received based on input USD value (original method)
-    const fromUsdValue = (parseFloat(fromAmount || "0")) * (fromToken.usdPrice || 0);
-    const toTokenPrice = toToken.usdPrice || 1; // Avoid division by zero
-    const equivalentToAmount = fromUsdValue / toTokenPrice;
-    const minReceivedAmount = equivalentToAmount > 0 ? equivalentToAmount * (1 - slippage / 100) : 0;
+    // Calculate minimum received based on quote (new method)
+    const quotedAmount = parseFloat(toAmount || "0");
+    const minReceivedAmount = quotedAmount > 0 ? quotedAmount * (1 - slippage / 100) : 0;
     const formattedMinimumReceived = formatTokenAmountDisplay(minReceivedAmount.toString(), toToken);
     
     setCalculatedValues(prev => ({
@@ -1143,12 +1116,10 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     // 1. Pre-checks (connected, network, amount > 0, sufficient balance)
     const insufficientBalance = isNaN(fromBalanceNum) || fromBalanceNum < fromAmountNum;
     if (!isConnected || currentChainId !== TARGET_CHAIN_ID || fromAmountNum <= 0) { // REMOVED insufficientBalance check here
-      // Removed the "Insufficient Balance" toast here as per user request
       return;
     }
 
     setSwapState("review"); // Move to review UI
-    reviewNotificationsShown.current = { needs_approval: false, needs_signature: false, approval_complete: false, signature_complete: false }; // Reset notifications
     setCompletedSteps([]); // Reset steps for this new review attempt
     setIsSwapping(true); // Disable confirm button during checks
     setSwapProgressState("checking_allowance"); // Show checks are in progress
@@ -1156,10 +1127,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     // Check if this is a native ETH swap
     if (fromToken.symbol === 'ETH') {
       console.log("DEBUG: Taking ETH swap path for token:", fromToken.symbol);
-      toast("Native ETH detected - no approval needed", {
-        duration: 2500,
-        icon: <SuccessToastIcon />
-      });
       setCompletedSteps(["approval_complete", "signature_complete"]); // Mark both steps complete for ETH
       setSwapProgressState("ready_to_swap");
       setIsSwapping(false); // Ready for user action (Confirm)
@@ -1217,14 +1184,10 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       if (allowance < parsedAmount) {
         setSwapProgressState("needs_approval");
         setIsSwapping(false); // Checks done, ready for user action (Approve)
-        // Notification effect will show toast
         return; // Stop here, wait for user to click "Approve"
       }
 
       // 4. ERC20 OK -> Check Permit2 Immediately
-      toast("Token Approved - Checking permissions...", {
-        duration: 2500,
-      });
       setCompletedSteps(["approval_complete"]); // Mark step 1 complete
       setSwapProgressState("checking_allowance"); // Indicate checking permit
 
@@ -1239,10 +1202,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
         setSwapProgressState("needs_signature");
         // Notification effect will show toast
       } else {
-        toast("Existing permission found - Ready to swap!", {
-          duration: 2500,
-          icon: <SuccessToastIcon />
-        });
         setCompletedSteps(["approval_complete", "signature_complete"]); // Mark step 2 complete
         setSwapProgressState("ready_to_swap");
       }
@@ -1372,8 +1331,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
         // ACTION: Need to Approve
         if (stateBeforeAction === "needs_approval") {
             setSwapProgressState("approving");
-            toast("Approving tokens for Permit2...");
-
             const approveTxHash = await sendApprovalTx({
                 address: fromToken.address,
                 abi: Erc20AbiDefinition,
@@ -1382,14 +1339,10 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
             });
             if (!approveTxHash) throw new Error("Failed to send approval transaction");
 
-            toast("Approval Submitted", { description: "Waiting for confirmation..." });
             setSwapProgressState("waiting_approval");
             const approvalReceipt = await publicClient.waitForTransactionReceipt({ hash: approveTxHash as Hex });
             if (!approvalReceipt || approvalReceipt.status !== 'success') throw new Error("Approval transaction failed on-chain");
 
-            toast("Approval Confirmed", { 
-              duration: 2500
-            });
             setCompletedSteps(prev => [...prev, "approval_complete"]);
 
             // --- CRITICAL: Re-fetch Permit Data AFTER approval ---
@@ -1435,7 +1388,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
             }
 
             setSwapProgressState("signing_permit");
-            toast("Please sign the permit message...");
 
             console.log("DEBUG: permitDataForSigning structure:", permitDataForSigning);
             
@@ -1467,7 +1419,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
             if (!signatureFromSigning) throw new Error("Signature process did not return a valid signature.");
             setObtainedSignature(signatureFromSigning); // Store the obtained signature
 
-            toast.success("Permit signature received!");
+
             setCompletedSteps(prev => [...prev, "signature_complete"]);
             setSwapProgressState("ready_to_swap"); 
             setIsSwapping(false); 
@@ -1489,7 +1441,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 // --- End Sanity Check ---
 
                 setSwapProgressState("building_tx");
-                toast("Building swap transaction...");
 
                 // >>> FETCH ROUTE AND DYNAMIC FEES <<<
                 // For multihop support, we need to get the route first, then fetch fees for each pool
@@ -1562,11 +1513,9 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 const effectiveTimestamp = BigInt(Math.floor(Date.now() / 1000));
                 const effectiveFallbackSigDeadline = effectiveTimestamp + BigInt(30 * 60); // 30 min fallback
 
-                // Calculate minimum received amount using USD-based calculation (same as UI display)
-                const fromUsdValue = (parseFloat(fromAmount || "0")) * (fromToken.usdPrice || 0);
-                const toTokenPrice = toToken.usdPrice || 1;
-                const equivalentToAmount = fromUsdValue / toTokenPrice;
-                const minimumReceivedAmount = equivalentToAmount > 0 ? equivalentToAmount * (1 - slippage / 100) : 0;
+                // Calculate minimum received amount using quote-based calculation (same as UI display)
+                const quotedAmount = parseFloat(toAmount || "0");
+                const minimumReceivedAmount = quotedAmount > 0 ? quotedAmount * (1 - slippage / 100) : 0;
                 const minimumReceivedStr = minimumReceivedAmount.toString();
 
                 // Use dummy permit data for native ETH
@@ -1604,7 +1553,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
 
                 window.swapBuildData = buildTxApiData; 
                 setSwapProgressState("executing_swap");
-                toast("Sending swap transaction...");
 
                 const txHash = await sendSwapTx({
                     address: getAddress(buildTxApiData.to),
@@ -1626,7 +1574,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 });
                 console.log("ETH Swap - setSwapTxInfo called with hash:", txHash);
 
-                toast("Transaction Submitted", { description: "Waiting for confirmation..." });
                 setSwapProgressState("waiting_confirmation");
                 console.log("ETH Swap - Waiting for confirmation of hash:", txHash);
                 const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash as Hex });
@@ -1671,7 +1618,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
             // --- End Sanity Check ---
 
             setSwapProgressState("building_tx");
-            toast("Building swap transaction...");
 
             // >>> FETCH ROUTE AND DYNAMIC FEES <<<
             // For multihop support, we need to get the route first, then fetch fees for each pool
@@ -1746,11 +1692,9 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
             const effectiveTimestamp = BigInt(Math.floor(Date.now() / 1000));
             const effectiveFallbackSigDeadline = effectiveTimestamp + BigInt(30 * 60); // 30 min fallback
 
-            // Calculate minimum received amount using USD-based calculation (same as UI display)
-            const fromUsdValue = (parseFloat(fromAmount || "0")) * (fromToken.usdPrice || 0);
-            const toTokenPrice = toToken.usdPrice || 1;
-            const equivalentToAmount = fromUsdValue / toTokenPrice;
-            const minimumReceivedAmount = equivalentToAmount > 0 ? equivalentToAmount * (1 - slippage / 100) : 0;
+            // Calculate minimum received amount using quote-based calculation (same as UI display)
+            const quotedAmount = parseFloat(toAmount || "0");
+            const minimumReceivedAmount = quotedAmount > 0 ? quotedAmount * (1 - slippage / 100) : 0;
             const minimumReceivedStr = minimumReceivedAmount.toString();
 
             // Extract permit information based on the new API structure
@@ -1804,8 +1748,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
 
             window.swapBuildData = buildTxApiData; 
             setSwapProgressState("executing_swap");
-            toast("Sending swap transaction...");
-
             const txHash = await sendSwapTx({
                 address: getAddress(buildTxApiData.to),
                 abi: UniversalRouterAbi,
@@ -1826,7 +1768,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
             });
             console.log("ETH Swap - setSwapTxInfo called with hash:", txHash);
 
-            toast("Transaction Submitted", { description: "Waiting for confirmation..." });
             setSwapProgressState("waiting_confirmation");
             console.log("ETH Swap - Waiting for confirmation of hash:", txHash);
             const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash as Hex });
@@ -2316,59 +2257,62 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     
   }, [tokenPrices]);
 
-  const cardRef = useRef<HTMLDivElement>(null); // Ref for the Card component
-  const previewChartRef = useRef<HTMLDivElement>(null); // Ref for the DynamicFeeChartPreview component
+  const containerRef = useRef<HTMLDivElement>(null); // Ref for the entire swap container (card + chart)
   const [combinedRect, setCombinedRect] = useState({
     top: 0, left: 0, width: 0, height: 0
   });
 
-  // Define updateCombinedRect using useCallback to make it stable and accessible
-  const updateCombinedRect = useCallback(() => {
-    // Ensure refs are available
-    if (!cardRef.current) {
-      // Can't do anything without the main card
-      return;
+  // Ultra-simple rect calculation using the entire container
+  const getContainerRect = useCallback(() => {
+    if (!containerRef.current) {
+      return { top: 0, left: 0, width: 0, height: 0 };
     }
 
-    const cardRect = cardRef.current.getBoundingClientRect();
-    let newCombinedRect = {
-      top: cardRect.top,
-      left: cardRect.left,
-      width: cardRect.width,
-      height: cardRect.height, // Default to card height
-    };
-
-    // If the chart preview is visible AND its content is stable (and ref is available),
-    // calculate the height to include it.
-    if (isPreviewChartStable && previewChartRef.current) { // Removed isFeeChartPreviewVisible
-      const previewRect = previewChartRef.current.getBoundingClientRect();
-      newCombinedRect.height = previewRect.bottom - cardRect.top; // No +3 here
-
-    } else {
-
-    }
+    const rect = containerRef.current.getBoundingClientRect();
     
-    setCombinedRect(newCombinedRect);
-  }, [
-    cardRef, previewChartRef, setCombinedRect, // Refs and setter
-    isPreviewChartStable, // Only depends on chart content stability now
-  ]);
+    return {
+      top: rect.top,
+      left: rect.left, 
+      width: rect.width,
+      height: rect.height
+    };
+  }, []);
 
   useEffect(() => {
-    // Call updateCombinedRect when dependencies change
-    updateCombinedRect(); 
+    // Update rect calculation with a small delay to ensure DOM has updated
+    const updateRect = () => {
+      // Immediate update
+      setCombinedRect(getContainerRect());
+      
+      // Delayed update to catch any async DOM changes
+      setTimeout(() => {
+        setCombinedRect(getContainerRect());
+      }, 10);
+    };
+
+    updateRect(); 
 
     // Add listeners for dynamic changes
-    window.addEventListener('resize', updateCombinedRect);
-    window.addEventListener('scroll', updateCombinedRect);
+    window.addEventListener('resize', updateRect);
+    window.addEventListener('scroll', updateRect);
 
     return () => {
-      window.removeEventListener('resize', updateCombinedRect);
-      window.removeEventListener('scroll', updateCombinedRect);
+      window.removeEventListener('resize', updateRect);
+      window.removeEventListener('scroll', updateRect);
     };
   }, [
     isMounted, // Ensures window is available
-    updateCombinedRect, // The memoized callback itself
+    getContainerRect,
+    // Add dependencies that affect SwapInputView height
+    fromAmount, // When amount changes, fee info appears/disappears
+    toAmount, // When quote changes, it might affect height
+    routeInfo, // When route changes, route info appears/disappears
+    routeFees, // When route fees load, fee info changes
+    routeFeesLoading, // When fees are loading, content changes
+    isConnected, // Connection state affects what's shown
+    currentChainId, // Chain affects what's shown
+    quoteLoading, // When quote is loading, content might change
+    calculatedValues, // When calculated values change, minimum received changes
   ]);
   
   // NEW: Add navigation handlers for chart preview
@@ -2389,9 +2333,9 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
 
 
   return (
-    <div className="flex flex-col"> {/* Removed gap property */}
+    <div className="flex flex-col" ref={containerRef}> {/* Container ref wraps everything */}
       {/* Main Swap Interface Card */}
-      <Card className="w-full max-w-md card-gradient z-10 mx-auto rounded-lg bg-[var(--swap-background)] border-[var(--swap-border)]" ref={cardRef}> {/* Applied styling here */} 
+      <Card className="w-full max-w-md card-gradient z-10 mx-auto rounded-lg bg-[var(--swap-background)] border-[var(--swap-border)]"> {/* Applied styling here */} 
         {/* <CardHeader className="pt-6 pb-2">
             <CardTitle className="text-center">Swap Tokens</CardTitle>
         </CardHeader> */}
@@ -2490,10 +2434,10 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
           initial={{ y: -10, opacity: 0.5, height: '80px', marginTop: '24px' }} // Skeleton state: larger margin
           animate={showChartPreviewRegardlessOfData ? { y: 0, opacity: 1, height: 'auto', marginTop: '16px' } : { y: -10, opacity: 0, height: '0px', marginTop: '0px' }}       
           transition={{ type: "spring", stiffness: 300, damping: 30, duration: 0.2 }}
-          ref={previewChartRef} // Add ref to preview chart
+
           onAnimationComplete={() => {
             // Ensure a re-measurement after the animation to catch final dimensions
-            updateCombinedRect(); 
+            setCombinedRect(getContainerRect()); 
 
           }}
         >
@@ -2502,7 +2446,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
             onClick={handlePreviewChartClick}
             poolInfo={poolInfo}
             isLoading={isFeeHistoryLoading}
-            onContentStableChange={handleContentStableChange} // Use memoized callback
           />
         </motion.div>
       </AnimatePresence>

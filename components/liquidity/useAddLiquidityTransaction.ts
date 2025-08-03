@@ -226,7 +226,6 @@ export function useAddLiquidityTransaction({
     
     if (!isCalledAfterApprovalOrPermit) {
       setStep('input');
-      toast.loading("Preparing transaction...", { id: "prepare-mint" });
       setTokenCompletionStatus(initialTokenCompletionStatus); // Reset completion status on fresh preparation
     }
     
@@ -257,7 +256,6 @@ export function useAddLiquidityTransaction({
         body: JSON.stringify(requestBody),
       });
       
-      if (!isCalledAfterApprovalOrPermit) toast.dismiss("prepare-mint");
       rawResponseData = await response.json();
 
       if (!response.ok) {
@@ -272,20 +270,10 @@ export function useAddLiquidityTransaction({
 
       if (data.needsApproval) {
         if (data.approvalType === 'ERC20_TO_PERMIT2') {
-          if (!isCalledAfterApprovalOrPermit || preparedTxData?.approvalTokenSymbol !== data.approvalTokenSymbol || preparedTxData?.approvalType !== data.approvalType) {
-            toast.info(`ERC20 Approval for Permit2 needed for ${data.approvalTokenSymbol}`, {
-              description: `You need to approve Permit2 to use your ${data.approvalTokenSymbol}.`
-            });
-          }
           setStep('approve'); 
         } else if (data.approvalType === 'PERMIT2_SIGNATURE_FOR_PM') {
-          if (!isCalledAfterApprovalOrPermit || preparedTxData?.approvalTokenSymbol !== data.approvalTokenSymbol || preparedTxData?.approvalType !== data.approvalType) {
-            toast.info(`Permit2 Signature needed for ${data.approvalTokenSymbol}`, {
-              description: `Please sign the message to allow the Position Manager to use your ${data.approvalTokenSymbol} via Permit2.`
-            });
-          }
           if (!data.permit2Address) {
-            toast.error("Internal Error", { description: "Permit2 address is missing for signature request." });
+            toast.error("Internal Error: Permit2 address is missing");
             setStep('input');
             return null;
           }
@@ -299,7 +287,7 @@ export function useAddLiquidityTransaction({
           });
           setStep('permit2Sign');
         } else {
-          if (!isCalledAfterApprovalOrPermit) toast.error("Unknown Approval Needed", { description: "An unspecified approval is required." });
+          if (!isCalledAfterApprovalOrPermit) toast.error("Unknown Approval Needed");
           setStep('input');
         }
       } else {
@@ -311,21 +299,16 @@ export function useAddLiquidityTransaction({
             if (parseFloat(amount1) > 0) tokensToComplete[token1Symbol] = true;
             setTokenCompletionStatus(prev => ({...prev, ...tokensToComplete}));
         }
-        toast.success("Transaction ready to mint!");
         setStep('mint');
       }
       return data; // Return the fetched data
     } catch (error: any) {
-      if (!isCalledAfterApprovalOrPermit) toast.dismiss("prepare-mint");
       if (error && typeof error.message === 'string' && 
           (error.message.includes("Position Manager does not have sufficient allowance from Permit2") || 
            error.message.includes("Permit2 allowance for the Position Manager to spend"))) {
-           toast.error("Permit2 Authorization Incomplete", { 
-               description: error.message + " This step often requires signing a message or a separate one-time transaction to authorize the Position Manager via Permit2.",
-               duration: 12000
-           });
+           toast.error("Permit2 Authorization Incomplete");
       } else {
-           if (!isCalledAfterApprovalOrPermit) toast.error("Error Preparing Transaction", { description: error.message || "Unknown error during preparation." });
+           if (!isCalledAfterApprovalOrPermit) toast.error(error.message || "Error Preparing Transaction");
       }
       return null; // Return null on error
     } finally {
@@ -349,8 +332,9 @@ export function useAddLiquidityTransaction({
   // Exposed function for UI to initiate preparation
   const handlePrepareMint = useCallback(async () => {
     setIsWorking(true);
-    await handlePrepareMintInternal(false);
+    const preparedData = await handlePrepareMintInternal(false);
     setIsWorking(false);
+    return preparedData;
   }, [handlePrepareMintInternal]);
 
   // Function to handle ERC20 approvals
@@ -363,19 +347,18 @@ export function useAddLiquidityTransaction({
       return;
     }
     if (!preparedTxData.approvalTokenAddress) {
-      toast.error("Approval Error", { description: "Approval token address is missing." });
+      toast.error("Approval Error: Approval token address is missing.");
       setIsWorking(false);
       return;
     }
 
     setIsWorking(true);
-    toast.loading(`Approving ${preparedTxData.approvalTokenSymbol}...`, { id: "approve-tx" });
     
     try {
       const approvalAmountBigInt = BigInt(preparedTxData.approvalAmount ?? "0");
 
       if (chainId !== baseSepolia.id) {
-        toast.error("Network Mismatch", { description: `Please switch to ${baseSepolia.name} to approve this transaction.` });
+        toast.error(`Network Mismatch: Please switch to ${baseSepolia.name}`);
         setIsWorking(false);
         return;
       }
@@ -389,14 +372,13 @@ export function useAddLiquidityTransaction({
         chain: baseSepolia,
       });
     } catch (err: any) {
-      toast.dismiss("approve-tx");
       
       let detailedErrorMessage = "Unknown error during approval.";
       if (err instanceof Error) {
         detailedErrorMessage = err.message;
         if ((err as any).shortMessage) { detailedErrorMessage = (err as any).shortMessage; }
       }
-      toast.error("Failed to send approval transaction.", { description: detailedErrorMessage });
+      toast.error(`Failed to send approval transaction: ${detailedErrorMessage}`);
       setIsWorking(false);
       resetApproveWriteContract();
     }
@@ -405,12 +387,11 @@ export function useAddLiquidityTransaction({
   // Function to handle Permit2 signing and separate submission to Permit2 contract
   const handleSignAndSubmitPermit2 = useCallback(async () => {
     if (!permit2SignatureRequest || !accountAddress || !chainId) {
-      toast.error("Permit2 Error", { description: "Missing data for Permit2 signature." });
+      toast.error("Permit2 Error: Missing data for Permit2 signature.");
       return;
     }
 
     setIsWorking(true);
-    toast.loading(`Requesting signature for ${permit2SignatureRequest.approvalTokenSymbol}...`, { id: "permit2-sign" });
 
     try {
       const { domain, types, primaryType, message, permit2Address, approvalTokenSymbol } = permit2SignatureRequest;
@@ -452,12 +433,7 @@ export function useAddLiquidityTransaction({
         account: accountAddress,
       });
 
-      toast.dismiss("permit2-sign");
-      toast.success("Permit signature received!");
-
       // Now submit the permit separately to Permit2 contract
-      toast.loading(`Submitting permit for ${approvalTokenSymbol}...`, { id: "permit2-submit" });
-
       // Prepare permit transaction data
       const permitCalldata = encodeFunctionData({
         abi: PERMIT2_PERMIT_ABI_MINIMAL,
@@ -485,14 +461,12 @@ export function useAddLiquidityTransaction({
       console.log(`[DEBUG Frontend] Permit transaction submitted for ${approvalTokenSymbol}`);
       
     } catch (err: any) {
-      toast.dismiss("permit2-sign");
-      toast.dismiss("permit2-submit");
       let detailedErrorMessage = "Permit2 operation failed.";
       if (err instanceof Error) {
         detailedErrorMessage = err.message;
         if ((err as any).shortMessage) { detailedErrorMessage = (err as any).shortMessage; }
       }
-      toast.error("Permit2 Error", { description: detailedErrorMessage });
+      toast.error(`Permit2 Error: ${detailedErrorMessage}`);
       setIsWorking(false);
       resetPermit2SendTransaction();
     }
@@ -502,14 +476,13 @@ export function useAddLiquidityTransaction({
   const handleMint = useCallback(async () => {
     if (!preparedTxData || preparedTxData.needsApproval || !sendTransactionAsync) return;
     if (!preparedTxData.transaction || typeof preparedTxData.transaction.data !== 'string') {
-      toast.error("Minting Error", { description: "Transaction data is missing or invalid. Please try preparing again." });
+      toast.error("Minting Error: Transaction data is missing or invalid. Please try preparing again.");
       setStep('input'); 
       setIsWorking(false);
       return;
     }
     
     setIsWorking(true);
-    toast.loading("Sending mint transaction...", { id: "mint-tx" });
     
     try {
       const { to, data, value: txValueString } = preparedTxData.transaction;
@@ -527,7 +500,7 @@ export function useAddLiquidityTransaction({
         detailedErrorMessage = err.message;
         if ((err as any).shortMessage) { detailedErrorMessage = (err as any).shortMessage; }
       }
-      toast.error("Failed to send mint transaction.", { id: "mint-tx", description: detailedErrorMessage });
+      toast.error(`Failed to send mint transaction: ${detailedErrorMessage}`);
       setIsWorking(false);
       resetSendTransaction();
     }
@@ -548,8 +521,6 @@ export function useAddLiquidityTransaction({
   // Update states when approve transaction is completed
   useEffect(() => {
     if (isApproved) {
-      toast.dismiss("approve-tx");
-      toast.success("Approval successful!");
       const currentApprovedTokenSymbol = preparedTxData?.approvalTokenSymbol;
       
       resetApproveWriteContract(); 
@@ -578,9 +549,8 @@ export function useAddLiquidityTransaction({
     }
     
     if (approveWriteError || approveReceiptError) {
-      toast.dismiss("approve-tx");
       const errorMsg = (approveWriteError as any)?.shortMessage || (approveReceiptError as any)?.shortMessage || approveWriteError?.message || approveReceiptError?.message || "Approval transaction failed.";
-      toast.error("Approval failed", { description: errorMsg });
+      toast.error(`Approval failed: ${errorMsg}`);
       setIsWorking(false);
       resetApproveWriteContract();
       setPreparedTxData(null);
@@ -591,8 +561,6 @@ export function useAddLiquidityTransaction({
   // Update states when permit2 transaction is completed
   useEffect(() => {
     if (isPermit2Confirmed) {
-      toast.dismiss("permit2-submit");
-      toast.success("Permit recorded successfully!");
       const currentPermitTokenSymbol = permit2SignatureRequest?.approvalTokenSymbol;
       
       resetPermit2SendTransaction();
@@ -607,7 +575,6 @@ export function useAddLiquidityTransaction({
           const nextPrepData = await handlePrepareMintInternal(true, currentPermitTokenSymbol);
           if (nextPrepData) {
             if (!nextPrepData.needsApproval) {
-              toast.success("Transaction ready to mint!");
               setStep('mint');
             }
           } else {
@@ -623,9 +590,8 @@ export function useAddLiquidityTransaction({
     }
     
     if (permit2SendError || permit2ReceiptError) {
-      toast.dismiss("permit2-submit");
       const errorMsg = (permit2SendError as any)?.shortMessage || (permit2ReceiptError as any)?.shortMessage || permit2SendError?.message || permit2ReceiptError?.message || "Permit transaction failed.";
-      toast.error("Permit failed", { description: errorMsg });
+      toast.error(`Permit failed: ${errorMsg}`);
       setIsWorking(false);
       resetPermit2SendTransaction();
       setStep('permit2Sign'); // Stay on permit step to retry
@@ -635,7 +601,7 @@ export function useAddLiquidityTransaction({
   // Update states when mint transaction is completed
   useEffect(() => {
     if (isMintConfirmed) {
-      toast.success("Liquidity minted successfully!", { id: "mint-tx" });
+      toast.success("Liquidity minted successfully!");
       onLiquidityAdded();
       resetTransactionState();
       onOpenChange(false);
@@ -644,7 +610,7 @@ export function useAddLiquidityTransaction({
     
     if (mintSendError || mintReceiptError) {
       const errorMsg = (mintSendError as any)?.shortMessage || (mintReceiptError as any)?.shortMessage || mintSendError?.message || mintReceiptError?.message || "Minting transaction failed.";
-      toast.error("Minting failed", { id: "mint-tx", description: errorMsg });
+      toast.error(`Minting failed: ${errorMsg}`);
       
       setIsWorking(false);
       resetSendTransaction();
@@ -686,6 +652,7 @@ export function useAddLiquidityTransaction({
     isPermit2Confirming,
     isMintSendPending,
     isMintConfirming,
+    isMintSuccess: isMintConfirmed,
     
     // Transaction functions
     handlePrepareMint,

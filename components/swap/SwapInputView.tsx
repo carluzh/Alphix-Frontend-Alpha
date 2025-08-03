@@ -363,7 +363,7 @@ export function SwapInputView({
                   <div className="flex items-center gap-1.5">
                     {(() => {
                       if (routeFeesLoading) {
-                        return <span className="text-muted-foreground animate-pulse">Loading...</span>;
+                        return <div className="h-3 w-12 bg-muted/60 rounded animate-pulse"></div>;
                       }
                       if (!routeFees || routeFees.length === 0) {
                         return <span className="text-muted-foreground">N/A</span>;

@@ -19,21 +19,29 @@ import { ChevronLeftIcon } from "lucide-react";
 
 export function LoginForm({
   className,
-  error,
+  hasError,
   isLoading,
   onSubmit,
+  onPasswordChange,
   ...props
 }: Omit<React.ComponentProps<"div">, "onSubmit"> & { 
-  error?: string; 
+  hasError?: boolean; 
   isLoading?: boolean; 
   onSubmit?: (event: React.FormEvent<HTMLFormElement>) => void;
+  onPasswordChange?: (value: string) => void;
 }) {
   const [password, setPassword] = useState('');
+  
+  const handlePasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setPassword(value);
+    onPasswordChange?.(value);
+  };
 
   return (
     <div className={cn("flex flex-col gap-6", className)} {...props}>
       <div className="rounded-lg border border-sidebar-border bg-sidebar p-6">
-        <form onSubmit={onSubmit}>
+        <form onSubmit={onSubmit} noValidate>
           <div className="grid gap-6">
             <div className="grid gap-3">
               <Label htmlFor="email">Email <span className="text-muted-foreground text-xs">(Optional)</span></Label>
@@ -53,24 +61,27 @@ export function LoginForm({
                 type="password" 
                 required 
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="bg-muted/30 border-none"
+                onChange={handlePasswordChange}
+                className={cn(
+                  "bg-muted/30",
+                  hasError ? "border-red-500 border" : "border-none"
+                )}
               />
             </div>
-            {error && (
-              <p className="text-sm text-destructive">{error}</p>
-            )}
+
             <Button 
               type="submit" 
               className={
                 !password.trim() 
                   ? "w-full relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 text-white/75 hover:bg-[var(--sidebar-connect-button-bg)]"
-                  : "w-full text-sidebar-primary border border-sidebar-primary bg-[#3d271b] hover:bg-[#3d271b]/90"
+                  : isLoading
+                    ? "w-full text-sidebar-primary border border-sidebar-primary bg-[#3d271b]/50 hover:bg-[#3d271b]/60 opacity-75 cursor-not-allowed"
+                    : "w-full text-sidebar-primary border border-sidebar-primary bg-[#3d271b] hover:bg-[#3d271b]/90"
               }
               disabled={isLoading}
               style={!password.trim() ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
             >
-              {isLoading ? 'Logging in...' : 'Login'}
+              Login
             </Button>
           </div>
         </form>
@@ -93,7 +104,7 @@ export function LoginForm({
 }
 
 export default function LoginPage() {
-  const [error, setError] = useState('');
+  const [hasError, setHasError] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
   const isMobile = useIsMobile();
@@ -101,9 +112,16 @@ export default function LoginPage() {
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setIsLoading(true);
-    setError('');
+    setHasError(false);
 
     const password = (event.currentTarget.elements.namedItem('password') as HTMLInputElement).value;
+    
+    // Custom validation
+    if (!password.trim()) {
+      setHasError(true);
+      setIsLoading(false);
+      return;
+    }
 
     try {
       const res = await fetch('/api/login', {
@@ -115,15 +133,21 @@ export default function LoginPage() {
       if (res.ok) {
         router.push('/swap');
       } else {
-        const data = await res.json();
-        setError(data.message || 'Login failed. Please try again.');
+        setHasError(true);
       }
     } catch (err) {
       console.error("Login page error:", err);
-      setError('An unexpected error occurred. Please try again.');
+      setHasError(true);
     }
 
     setIsLoading(false);
+  };
+
+  const handlePasswordChange = (value: string) => {
+    // Clear error when user starts typing
+    if (hasError) {
+      setHasError(false);
+    }
   };
 
   return (
@@ -146,7 +170,8 @@ export default function LoginPage() {
             <img
               src="/Logo Type (white).svg"
               alt="Alphix"
-              className="h-6"
+              className="h-6 cursor-pointer"
+              onClick={() => router.push('/')}
             />
             <Badge
               variant="outline"
@@ -158,7 +183,7 @@ export default function LoginPage() {
           </div>
 
           {/* Login Form */}
-          <LoginForm onSubmit={handleSubmit} error={error} isLoading={isLoading} />
+          <LoginForm onSubmit={handleSubmit} hasError={hasError} isLoading={isLoading} onPasswordChange={handlePasswordChange} />
         </div>
       </div>
     </div>
