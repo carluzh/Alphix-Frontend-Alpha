@@ -1097,25 +1097,29 @@ export function AddLiquidityModal({
     const displayDecimals = baseTokenForPriceDisplay === token0Symbol ? decimalsForToken0Display : decimalsForToken1Display;
 
     // Formatting for Min Price String
-    if (valForMinInput !== null) {
-        if (valForMinInput >= 0 && valForMinInput < 1e-11) { // Ensure positive or zero, then check if very small
+    if (valForMinInput !== null && !isNaN(valForMinInput)) {
+        if (valForMinInput >= 0 && valForMinInput < 1e-11) {
             finalMinPriceString = "0";
-        } else if (!isFinite(valForMinInput) || valForMinInput > 1e30) { // Check if Infinity or very large
+        } else if (!isFinite(valForMinInput) || valForMinInput > 1e30) {
             finalMinPriceString = "∞";
-        } else { // Otherwise, format as a number
+        } else {
             finalMinPriceString = valForMinInput.toFixed(displayDecimals);
         }
+    } else {
+        finalMinPriceString = ""; // Show empty for null/NaN values
     }
 
     // Formatting for Max Price String
-    if (valForMaxInput !== null) {
-        if (valForMaxInput >= 0 && valForMaxInput < 1e-11) { // Ensure positive or zero, then check if very small
+    if (valForMaxInput !== null && !isNaN(valForMaxInput)) {
+        if (valForMaxInput >= 0 && valForMaxInput < 1e-11) {
             finalMaxPriceString = "0";
-        } else if (!isFinite(valForMaxInput) || valForMaxInput > 1e30) { // Check if Infinity or very large
+        } else if (!isFinite(valForMaxInput) || valForMaxInput > 1e30) {
             finalMaxPriceString = "∞";
-        } else { // Otherwise, format as a number
+        } else {
             finalMaxPriceString = valForMaxInput.toFixed(displayDecimals);
         }
+    } else {
+        finalMaxPriceString = ""; // Show empty for null/NaN values
     }
 
     // --- BEGIN USER REQUESTED LOG ---
@@ -1617,7 +1621,7 @@ export function AddLiquidityModal({
     debounce((priceStr: string) => {
       if (!poolToken0 || !poolToken1) return;
 
-      const isInfinityInput = priceStr.trim().toLowerCase() === "∞" || priceStr.trim().toLowerCase() === "infinity";
+      const isInfinityInput = priceStr.trim().toLowerCase() === "∞" || priceStr.trim().toLowerCase() === "infinity" || priceStr.trim().toLowerCase() === "infinite";
 
         if (isInfinityInput) {
         // Handle infinity price case

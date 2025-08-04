@@ -388,7 +388,8 @@ export function AddLiquidityForm({
             const domainTickLower = centerTick - largestDelta;
             const domainTickUpper = centerTick + largestDelta;
 
-            setXDomain([domainTickLower, domainTickUpper]);
+            const [constrainedMinTick, constrainedMaxTick] = applyDomainConstraints(domainTickLower, domainTickUpper);
+            setXDomain([constrainedMinTick, constrainedMaxTick]);
 
           } else {
             setCurrentPriceLine(null);
@@ -616,22 +617,304 @@ export function AddLiquidityForm({
     ? "Loading..." 
     : (token1BalanceData ? getFormattedDisplayBalance(parseFloat(token1BalanceData.formatted), token1Symbol) : "~");
 
-  // Handle setting full range
-  const handleSetFullRange = () => {
+  // Handle selecting a preset from dropdown
+  const handleSelectPreset = (preset: string) => {
     if (preparedTxData) resetTransactionState();
-    setTickLower(sdkMinTick.toString());
-    setTickUpper(sdkMaxTick.toString());
-    setInitialDefaultApplied(true);
-    setActivePreset("Full Range");
     
-    // Explicitly trigger recalculation of price inputs to update display
-    setPriceAtTickLower(null);
-    setPriceAtTickUpper(null);
+    setActivePreset(preset);
+    setShowPresetSelector(false); // Close the selector
     
-    // Don't change the chart view when selecting full range
-    // Keep the current view as is - users can manually zoom if needed
+    // Apply the selected preset
+    if (preset === "Full Range") {
+      setTickLower(sdkMinTick.toString());
+      setTickUpper(sdkMaxTick.toString());
+      setInitialDefaultApplied(true);
+      setPriceAtTickLower(null);
+      setPriceAtTickUpper(null);
+      // Reset viewbox for full range
+      resetChartViewbox(sdkMinTick, sdkMaxTick);
+    } else {
+      // The percentage presets will be applied by the useEffect that watches activePreset
+      setInitialDefaultApplied(true);
+    }
   };
+
+  // State for showing inline preset selector
+  const [showPresetSelector, setShowPresetSelector] = useState(false);
   
+  // State for editing price range
+  const [editingMinPrice, setEditingMinPrice] = useState<string>("");
+  const [editingMaxPrice, setEditingMaxPrice] = useState<string>("");
+  const [editingSide, setEditingSide] = useState<'min' | 'max' | null>(null);
+
+  // Click outside handler to close preset selector
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (showPresetSelector) {
+        const target = event.target as Element;
+        if (!target.closest('.preset-selector')) {
+          setShowPresetSelector(false);
+        }
+      }
+      if (editingSide) {
+        const target = event.target as Element;
+        if (!target.closest('.price-range-editor')) {
+          handleCancelPriceRangeEdit();
+        }
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showPresetSelector, editingSide]);
+
+
+
+  // Handle price input change with immediate updates
+  const handlePriceInputChange = (side: 'min' | 'max', value: string) => {
+    if (side === 'min') {
+      setEditingMinPrice(value);
+    } else {
+      setEditingMaxPrice(value);
+    }
+
+    // Process the input immediately for better UX
+    const newTick = convertPriceToValidTick(value, side === 'max');
+    if (newTick !== null) {
+      if (side === 'min') {
+        if (baseTokenForPriceDisplay === token0Symbol) {
+          // Min price sets tickLower for token0 denomination
+          if (newTick < parseInt(tickUpper)) {
+            setTickLower(newTick.toString());
+            setInitialDefaultApplied(true);
+            setActivePreset(null); // Clear preset when manually editing
+          }
+        } else {
+          // Min price sets tickUpper for token1 denomination
+          if (newTick > parseInt(tickLower)) {
+            setTickUpper(newTick.toString());
+            setInitialDefaultApplied(true);
+            setActivePreset(null); // Clear preset when manually editing
+          }
+        }
+      } else {
+        if (baseTokenForPriceDisplay === token0Symbol) {
+          // Max price sets tickUpper for token0 denomination
+          if (newTick > parseInt(tickLower)) {
+            setTickUpper(newTick.toString());
+            setInitialDefaultApplied(true);
+            setActivePreset(null); // Clear preset when manually editing
+          }
+        } else {
+          // Max price sets tickLower for token1 denomination
+          if (newTick < parseInt(tickUpper)) {
+            setTickLower(newTick.toString());
+            setInitialDefaultApplied(true);
+            setActivePreset(null); // Clear preset when manually editing
+          }
+        }
+      }
+    }
+  };
+
+  // Helper function to convert price to nearest valid tick
+  const convertPriceToValidTick = useCallback((priceStr: string, isMaxPrice: boolean): number | null => {
+    const numericPrice = parseFloat(priceStr);
+    const isInfinityInput = priceStr.trim().toLowerCase() === "∞" || priceStr.trim().toLowerCase() === "infinity" || priceStr.trim().toLowerCase() === "infinite";
+
+    // Handle empty or invalid input
+    if (!priceStr.trim() || (isNaN(numericPrice) && !isInfinityInput)) {
+      return null;
+    }
+
+    // Handle infinity input
+    if (isInfinityInput) {
+      return isMaxPrice ? sdkMaxTick : sdkMinTick;
+    }
+
+    // Handle valid numeric input
+    if (isNaN(numericPrice) || numericPrice <= 0) {
+      return null;
+    }
+
+    let newTick: number;
+    
+    if (baseTokenForPriceDisplay === token0Symbol) {
+      // Price is denominated in token0
+      if (isMaxPrice) {
+        // Max price input for token0 denomination
+        newTick = Math.log(numericPrice) / Math.log(1.0001);
+      } else {
+        // Min price input for token0 denomination
+        newTick = Math.log(numericPrice) / Math.log(1.0001);
+      }
+    } else {
+      // Price is denominated in token1
+      if (isMaxPrice) {
+        // Max price input for token1 denomination (sets tickLower)
+        newTick = Math.log(1 / numericPrice) / Math.log(1.0001);
+      } else {
+        // Min price input for token1 denomination (sets tickUpper)
+        newTick = Math.log(1 / numericPrice) / Math.log(1.0001);
+      }
+    }
+
+    // Round to nearest valid tick spacing
+    if (isMaxPrice) {
+      newTick = Math.floor(newTick / defaultTickSpacing) * defaultTickSpacing;
+    } else {
+      newTick = Math.ceil(newTick / defaultTickSpacing) * defaultTickSpacing;
+    }
+
+    // Clamp to valid range
+    newTick = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTick));
+
+    return newTick;
+  }, [baseTokenForPriceDisplay, token0Symbol, defaultTickSpacing, sdkMinTick, sdkMaxTick]);
+
+  // Handle applying edited prices
+  const handleApplyPriceRange = () => {
+    setEditingSide(null);
+    
+    let hasChanges = false;
+    
+    // Process min price input
+    if (editingMinPrice !== minPriceInputString) {
+      const newTick = convertPriceToValidTick(editingMinPrice, false);
+      if (newTick !== null) {
+        if (baseTokenForPriceDisplay === token0Symbol) {
+          // Min price sets tickLower for token0 denomination
+          if (newTick < parseInt(tickUpper)) {
+            setTickLower(newTick.toString());
+            setInitialDefaultApplied(true);
+            hasChanges = true;
+          } else {
+            toast.error("Invalid Range: Min price must be less than max price.");
+          }
+        } else {
+          // Min price sets tickUpper for token1 denomination
+          if (newTick > parseInt(tickLower)) {
+            setTickUpper(newTick.toString());
+            setInitialDefaultApplied(true);
+            hasChanges = true;
+          } else {
+            toast.error("Invalid Range: Min price must result in a max tick greater than min tick.");
+          }
+        }
+      }
+    }
+    
+    // Process max price input
+    if (editingMaxPrice !== maxPriceInputString) {
+      const newTick = convertPriceToValidTick(editingMaxPrice, true);
+      if (newTick !== null) {
+        if (baseTokenForPriceDisplay === token0Symbol) {
+          // Max price sets tickUpper for token0 denomination
+          if (newTick > parseInt(tickLower)) {
+            setTickUpper(newTick.toString());
+            setInitialDefaultApplied(true);
+            hasChanges = true;
+          } else {
+            toast.error("Invalid Range: Max price must be greater than min price.");
+          }
+        } else {
+          // Max price sets tickLower for token1 denomination
+          if (newTick < parseInt(tickUpper)) {
+            setTickLower(newTick.toString());
+            setInitialDefaultApplied(true);
+            hasChanges = true;
+          } else {
+            toast.error("Invalid Range: Max price must result in a min tick less than max tick.");
+          }
+        }
+      }
+    }
+    
+    // Reset editing state
+    setEditingMinPrice("");
+    setEditingMaxPrice("");
+  };
+
+  // Handle canceling price range edit
+  const handleCancelPriceRangeEdit = () => {
+    setEditingSide(null);
+    setEditingMinPrice("");
+    setEditingMaxPrice("");
+  };
+
+  // Handle direct click to edit price
+  const handleClickToEditPrice = (side: 'min' | 'max') => {
+    setShowPresetSelector(false);
+    setEditingSide(side);
+    if (side === 'min') {
+      setEditingMinPrice(minPriceInputString);
+    } else {
+      setEditingMaxPrice(maxPriceInputString);
+    }
+  };
+
+  // Helper function to apply domain constraints
+  const applyDomainConstraints = useCallback((minTick: number, maxTick: number): [number, number] => {
+    // Apply minimum domain size constraint: ensure at least 10 tick spacings visible
+    const minDomainSize = defaultTickSpacing * 10;
+    let constrainedMinTick = minTick;
+    let constrainedMaxTick = maxTick;
+    
+    const domainSize = constrainedMaxTick - constrainedMinTick;
+    if (domainSize < minDomainSize) {
+      const centerTick = (constrainedMinTick + constrainedMaxTick) / 2;
+      constrainedMinTick = centerTick - minDomainSize / 2;
+      constrainedMaxTick = centerTick + minDomainSize / 2;
+    }
+    
+    // Apply maximum view range constraint: 500% above and 95% below current price
+    if (currentPoolTick !== null) {
+      const maxUpperDelta = Math.round(Math.log(6) / Math.log(1.0001)); // 500% above = 6x price
+      const maxLowerDelta = Math.round(Math.log(0.05) / Math.log(1.0001)); // 95% below = 0.05x price
+      
+      const maxUpperTick = currentPoolTick + maxUpperDelta;
+      const maxLowerTick = currentPoolTick + maxLowerDelta;
+      
+      // Clamp the domain to the maximum view range
+      constrainedMinTick = Math.max(constrainedMinTick, maxLowerTick);
+      constrainedMaxTick = Math.min(constrainedMaxTick, maxUpperTick);
+    }
+    
+    // Ensure the domain is properly aligned to tick spacing
+    constrainedMinTick = Math.floor(constrainedMinTick / defaultTickSpacing) * defaultTickSpacing;
+    constrainedMaxTick = Math.ceil(constrainedMaxTick / defaultTickSpacing) * defaultTickSpacing;
+    
+    // Ensure minimum domain size is maintained after constraints
+    const finalDomainSize = constrainedMaxTick - constrainedMinTick;
+    if (finalDomainSize < minDomainSize) {
+      const centerTick = (constrainedMinTick + constrainedMaxTick) / 2;
+      constrainedMinTick = centerTick - minDomainSize / 2;
+      constrainedMaxTick = centerTick + minDomainSize / 2;
+      
+      // Re-align to tick spacing
+      constrainedMinTick = Math.floor(constrainedMinTick / defaultTickSpacing) * defaultTickSpacing;
+      constrainedMaxTick = Math.ceil(constrainedMaxTick / defaultTickSpacing) * defaultTickSpacing;
+    }
+    
+    return [constrainedMinTick, constrainedMaxTick];
+  }, [defaultTickSpacing, currentPoolTick]);
+
+  // Reset chart viewbox to center the chosen range with 5% margins
+  const resetChartViewbox = useCallback((newTickLower: number, newTickUpper: number) => {
+    if (newTickLower === newTickUpper) return; // Don't reset for invalid ranges
+    
+    const rangeWidth = newTickUpper - newTickLower;
+    const marginTicks = Math.round(rangeWidth * 0.05); // 5% margin
+    
+    const newMinTick = newTickLower - marginTicks;
+    const newMaxTick = newTickUpper + marginTicks;
+    
+    const [constrainedMinTick, constrainedMaxTick] = applyDomainConstraints(newMinTick, newMaxTick);
+    setXDomain([constrainedMinTick, constrainedMaxTick]);
+  }, [applyDomainConstraints]);
+
   // Handle use full balance
   const handleUseFullBalance = (balanceString: string, tokenSymbolForDecimals: TokenSymbol, isToken0: boolean) => { 
     try {
@@ -737,6 +1020,8 @@ export function AddLiquidityForm({
                 setTickLower(newTickLower.toString());
                 setTickUpper(newTickUpper.toString());
                 setInitialDefaultApplied(true); 
+                // Reset viewbox for percentage presets
+                resetChartViewbox(newTickLower, newTickUpper);
             }
         } else {
              toast.info("Preset Range Too Narrow");
@@ -747,6 +1032,8 @@ export function AddLiquidityForm({
             setTickLower(sdkMinTick.toString());
             setTickUpper(sdkMaxTick.toString());
             setInitialDefaultApplied(true); 
+            // Reset viewbox for full range
+            resetChartViewbox(sdkMinTick, sdkMaxTick);
         }
     }
   }, [currentPrice, currentPoolTick, activePreset, defaultTickSpacing, sdkMinTick, sdkMaxTick, tickLower, tickUpper, preparedTxData, resetTransactionState]);
@@ -874,7 +1161,8 @@ export function AddLiquidityForm({
         newMax = newMin + safetyGap;
       }
 
-      setXDomain([newMin, newMax]);
+      const [constrainedMinTick, constrainedMaxTick] = applyDomainConstraints(newMin, newMax);
+      setXDomain([constrainedMinTick, constrainedMaxTick]);
     }
   };
 
@@ -997,6 +1285,8 @@ export function AddLiquidityForm({
           if (newTick < parseInt(tickUpper)) {
             setTickLower(newTick.toString());
             setInitialDefaultApplied(true);
+            // Reset viewbox for manual range change
+            resetChartViewbox(newTick, parseInt(tickUpper));
           } else {
             toast.error("Invalid Range: Min price results in a range where min tick >= max tick.");
           }
@@ -1015,6 +1305,8 @@ export function AddLiquidityForm({
         if (newTick < parseInt(tickUpper)) {
           setTickLower(newTick.toString());
           setInitialDefaultApplied(true);
+          // Reset viewbox for manual range change
+          resetChartViewbox(newTick, parseInt(tickUpper));
         } else {
           toast.error("Invalid Range: Min price must be less than max price.");
         }
@@ -1024,6 +1316,8 @@ export function AddLiquidityForm({
           if (newTick > parseInt(tickLower)) {
             setTickUpper(newTick.toString());
             setInitialDefaultApplied(true);
+            // Reset viewbox for manual range change
+            resetChartViewbox(parseInt(tickLower), newTick);
           } else {
             toast.error("Invalid Range: Min price results in a range where max tick <= min tick.");
           }
@@ -1043,19 +1337,21 @@ export function AddLiquidityForm({
         if (newTick > parseInt(tickLower)) {
           setTickUpper(newTick.toString());
           setInitialDefaultApplied(true);
+          // Reset viewbox for manual range change
+          resetChartViewbox(parseInt(tickLower), newTick);
         } else {
           toast.error("Invalid Range: Min price must result in a max tick greater than min tick.");
         }
       }
     }, 750), 
-    [baseTokenForPriceDisplay, token0Symbol, defaultTickSpacing, sdkMinTick, sdkMaxTick, tickLower, tickUpper]
+    [baseTokenForPriceDisplay, token0Symbol, defaultTickSpacing, sdkMinTick, sdkMaxTick, tickLower, tickUpper, resetChartViewbox]
   );
 
   // Debounced function to update tickUpper from maxPriceInputString
   const debouncedUpdateTickUpper = useCallback(
     debounce((priceStr: string) => {
       const numericPrice = parseFloat(priceStr);
-      const isInfinityInput = priceStr.trim().toLowerCase() === "∞" || priceStr.trim().toLowerCase() === "infinity";
+      const isInfinityInput = priceStr.trim().toLowerCase() === "∞" || priceStr.trim().toLowerCase() === "infinity" || priceStr.trim().toLowerCase() === "infinite";
 
       if (baseTokenForPriceDisplay === token0Symbol) {
         if (isInfinityInput) {
@@ -1086,6 +1382,8 @@ export function AddLiquidityForm({
           if (newTick < parseInt(tickUpper)) {
             setTickLower(newTick.toString());
             setInitialDefaultApplied(true);
+            // Reset viewbox for manual range change
+            resetChartViewbox(newTick, parseInt(tickUpper));
           } else {
             toast.error("Invalid Range: Max price results in a range where min tick >= max tick.");
           }
@@ -1104,12 +1402,14 @@ export function AddLiquidityForm({
         if (newTick < parseInt(tickUpper)) {
           setTickLower(newTick.toString());
           setInitialDefaultApplied(true);
+          // Reset viewbox for manual range change
+          resetChartViewbox(newTick, parseInt(tickUpper));
         } else {
           toast.error("Invalid Range: Max price must result in a min tick less than max tick.");
         }
       }
     }, 750),
-    [baseTokenForPriceDisplay, token0Symbol, defaultTickSpacing, sdkMinTick, sdkMaxTick, tickLower, tickUpper]
+    [baseTokenForPriceDisplay, token0Symbol, defaultTickSpacing, sdkMinTick, sdkMaxTick, tickLower, tickUpper, resetChartViewbox]
   );
 
   // Calculate amount based on input and check approvals
@@ -1552,6 +1852,8 @@ export function AddLiquidityForm({
     return `${formattedLower} - ${formattedUpper}`;
   }, [currentPoolTick, currentPrice, tickLower, tickUpper, sdkMinTick, sdkMaxTick, token0Symbol, token1Symbol]);
 
+
+
   return (
     <div className="space-y-4">
       {/* Tabs for Swap/Deposit/Withdraw - MOVED TO PARENT COMPONENT */}
@@ -1707,21 +2009,109 @@ export function AddLiquidityForm({
               <div className="flex items-center justify-between mb-2">
                 <Label className="text-sm font-medium">Price Range</Label>
                 <div className="flex items-center gap-2">
-                  <Button 
-                    variant="ghost" 
-                    className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent" 
-                  >
-                    {activePreset}
-                  </Button>
-                  {getPriceRangeDisplay() && (
+                  {showPresetSelector ? (
+                    // Inline preset selector
+                    <div className="flex items-center gap-1 preset-selector">
+                      {["Full Range", "±15%", "±8%", "±3%"].map((preset) => (
+                        <div
+                          key={preset}
+                          className={cn(
+                            "px-2 py-1 text-xs rounded transition-colors cursor-pointer",
+                            activePreset === preset 
+                              ? "text-white font-medium" 
+                              : "text-muted-foreground hover:text-foreground/80"
+                          )}
+                          onClick={() => handleSelectPreset(preset)}
+                        >
+                          {preset}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    // Single preset button that opens selector
+                    <div 
+                      className="h-auto p-0 text-xs text-muted-foreground hover:text-foreground/80 transition-colors cursor-pointer rounded px-1" 
+                      onClick={() => setShowPresetSelector(true)}
+                    >
+                      {activePreset || "Custom"}
+                    </div>
+                  )}
+                  {!showPresetSelector && getPriceRangeDisplay() && (
                     <>
                       <div className="w-px h-4 bg-border" />
-                      <Button 
-                        variant="ghost" 
-                        className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent" 
-                      >
-                        {getPriceRangeDisplay()}
-                      </Button>
+                      {editingSide ? (
+                        // Single input field for editing with other text visible
+                        <div className="flex items-center gap-1 text-xs price-range-editor">
+                          {editingSide === 'min' ? (
+                            <input
+                              value={editingMinPrice}
+                              onChange={(e) => handlePriceInputChange('min', e.target.value)}
+                              onBlur={handleApplyPriceRange}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleApplyPriceRange();
+                                if (e.key === 'Escape') handleCancelPriceRangeEdit();
+                              }}
+                              className={cn(
+                                "w-16 h-auto p-0 text-xs text-center bg-transparent border-0 appearance-none focus:outline-none focus:ring-0 focus-visible:ring-offset-0 focus-visible:ring-0 font-sans transition-colors",
+                                convertPriceToValidTick(editingMinPrice, false) !== null 
+                                  ? "text-white" 
+                                  : "text-muted-foreground"
+                              )}
+                              autoFocus
+                            />
+                          ) : (
+                            <div
+                              className="text-muted-foreground hover:text-white cursor-pointer px-1 py-1 transition-colors font-sans"
+                              onClick={() => handleClickToEditPrice('min')}
+                            >
+                              {minPriceInputString || "0.00"}
+                            </div>
+                          )}
+                          <span className="text-muted-foreground font-sans">-</span>
+                          {editingSide === 'max' ? (
+                            <input
+                              value={editingMaxPrice}
+                              onChange={(e) => handlePriceInputChange('max', e.target.value)}
+                              onBlur={handleApplyPriceRange}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleApplyPriceRange();
+                                if (e.key === 'Escape') handleCancelPriceRangeEdit();
+                              }}
+                              className={cn(
+                                "w-16 h-auto p-0 text-xs text-center bg-transparent border-0 appearance-none focus:outline-none focus:ring-0 focus-visible:ring-offset-0 focus-visible:ring-0 font-sans transition-colors",
+                                convertPriceToValidTick(editingMaxPrice, true) !== null 
+                                  ? "text-white" 
+                                  : "text-muted-foreground"
+                              )}
+                              autoFocus
+                            />
+                          ) : (
+                            <div
+                              className="text-muted-foreground hover:text-white cursor-pointer px-1 py-1 transition-colors font-sans"
+                              onClick={() => handleClickToEditPrice('max')}
+                            >
+                              {maxPriceInputString || "∞"}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        // Clickable price range display with hover effects
+                        <div className="flex items-center gap-0 text-xs">
+                          <div 
+                            className="text-muted-foreground hover:text-white cursor-pointer px-1 py-1 transition-colors"
+                            onClick={() => handleClickToEditPrice('min')}
+                          >
+                            {minPriceInputString || "0.00"}
+                          </div>
+                          <span className="text-muted-foreground">-</span>
+                          <div 
+                            className="text-muted-foreground hover:text-white cursor-pointer px-1 py-1 transition-colors"
+                            onClick={() => handleClickToEditPrice('max')}
+                          >
+                            {maxPriceInputString || "∞"}
+                          </div>
+                        </div>
+                      )}
                     </>
                   )}
                 </div>

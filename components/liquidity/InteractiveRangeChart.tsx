@@ -673,6 +673,19 @@ export function InteractiveRangeChart({
       newTickUpper = Math.round(newTickUpper / defaultTickSpacing) * defaultTickSpacing;
     }
 
+    // Ensure ticks are within valid range
+    newTickLower = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTickLower));
+    newTickUpper = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTickUpper));
+
+    // Ensure minimum spacing
+    if (newTickUpper - newTickLower < defaultTickSpacing) {
+      if (isDragging === 'left') {
+        newTickLower = newTickUpper - defaultTickSpacing;
+      } else if (isDragging === 'right') {
+        newTickUpper = newTickLower + defaultTickSpacing;
+      }
+    }
+
     onRangeChange(newTickLower.toString(), newTickUpper.toString());
     
     // Store the final position for viewport adjustment on mouse up
@@ -692,15 +705,47 @@ export function InteractiveRangeChart({
       // Calculate new domain with margins around the final position
       const finalRange = finalTickUpper - finalTickLower;
       const marginFactor = 0.05; // 5% margin on each side
-      const sideMargin = finalRange * marginFactor; // Always use 5% of selection range
+      let sideMargin = finalRange * marginFactor; // Always use 5% of selection range
+      
+      // Apply minimum domain size constraint: ensure at least 10 tick spacings visible
+      const minDomainSize = defaultTickSpacing * 10;
+      const currentDomainSize = currentMaxTick - currentMinTick;
+      if (currentDomainSize < minDomainSize) {
+        sideMargin = Math.max(sideMargin, (minDomainSize - finalRange) / 2);
+      }
       
       // Calculate ideal domain that fits the selection with margins
       let idealMinTick = finalTickLower - sideMargin;
       let idealMaxTick = finalTickUpper + sideMargin;
       
+      // Apply maximum view range constraint: 500% above and 95% below current price
+      if (currentPoolTick !== null) {
+        const maxUpperDelta = Math.round(Math.log(6) / Math.log(1.0001)); // 500% above = 6x price
+        const maxLowerDelta = Math.round(Math.log(0.05) / Math.log(1.0001)); // 95% below = 0.05x price
+        
+        const maxUpperTick = currentPoolTick + maxUpperDelta;
+        const maxLowerTick = currentPoolTick + maxLowerDelta;
+        
+        // Clamp the ideal domain to the maximum view range
+        idealMinTick = Math.max(idealMinTick, maxLowerTick);
+        idealMaxTick = Math.min(idealMaxTick, maxUpperTick);
+      }
+      
       // Ensure the ideal domain is properly aligned to tick spacing
       idealMinTick = Math.floor(idealMinTick / defaultTickSpacing) * defaultTickSpacing;
       idealMaxTick = Math.ceil(idealMaxTick / defaultTickSpacing) * defaultTickSpacing;
+      
+      // Ensure minimum domain size is maintained after constraints
+      const constrainedDomainSize = idealMaxTick - idealMinTick;
+      if (constrainedDomainSize < minDomainSize) {
+        const centerTick = (idealMinTick + idealMaxTick) / 2;
+        idealMinTick = centerTick - minDomainSize / 2;
+        idealMaxTick = centerTick + minDomainSize / 2;
+        
+        // Re-align to tick spacing
+        idealMinTick = Math.floor(idealMinTick / defaultTickSpacing) * defaultTickSpacing;
+        idealMaxTick = Math.ceil(idealMaxTick / defaultTickSpacing) * defaultTickSpacing;
+      }
       
       // Determine if we need to expand or can shrink the viewport
       const needsExpansion = finalTickLower < currentMinTick || finalTickUpper > currentMaxTick;
@@ -728,6 +773,9 @@ export function InteractiveRangeChart({
           }
         }
         
+        // Apply domain constraints before calling onXDomainChange
+        const minDomainSize = defaultTickSpacing * 10;
+        
         console.log("[InteractiveRangeChart] Adjusting viewport for final position:", {
           finalTickLower,
           finalTickUpper,
@@ -735,10 +783,52 @@ export function InteractiveRangeChart({
           idealDomain: [idealMinTick, idealMaxTick],
           newDomain: [newMinTick, newMaxTick],
           needsExpansion,
-          canShrink
+          canShrink,
+          minDomainSize,
+          constrainedDomainSize: idealMaxTick - idealMinTick
         });
         
-        onXDomainChange([newMinTick, newMaxTick]);
+        let constrainedMinTick = newMinTick;
+        let constrainedMaxTick = newMaxTick;
+        
+        // Apply minimum domain size constraint
+        const domainSize = constrainedMaxTick - constrainedMinTick;
+        if (domainSize < minDomainSize) {
+          const centerTick = (constrainedMinTick + constrainedMaxTick) / 2;
+          constrainedMinTick = centerTick - minDomainSize / 2;
+          constrainedMaxTick = centerTick + minDomainSize / 2;
+        }
+        
+        // Apply maximum view range constraint: 500% above and 95% below current price
+        if (currentPoolTick !== null) {
+          const constraintMaxUpperDelta = Math.round(Math.log(6) / Math.log(1.0001)); // 500% above = 6x price
+          const constraintMaxLowerDelta = Math.round(Math.log(0.05) / Math.log(1.0001)); // 95% below = 0.05x price
+          
+          const constraintMaxUpperTick = currentPoolTick + constraintMaxUpperDelta;
+          const constraintMaxLowerTick = currentPoolTick + constraintMaxLowerDelta;
+          
+          // Clamp the domain to the maximum view range
+          constrainedMinTick = Math.max(constrainedMinTick, constraintMaxLowerTick);
+          constrainedMaxTick = Math.min(constrainedMaxTick, constraintMaxUpperTick);
+        }
+        
+        // Ensure the domain is properly aligned to tick spacing
+        constrainedMinTick = Math.floor(constrainedMinTick / defaultTickSpacing) * defaultTickSpacing;
+        constrainedMaxTick = Math.ceil(constrainedMaxTick / defaultTickSpacing) * defaultTickSpacing;
+        
+        // Ensure minimum domain size is maintained after constraints
+        const finalDomainSize = constrainedMaxTick - constrainedMinTick;
+        if (finalDomainSize < minDomainSize) {
+          const centerTick = (constrainedMinTick + constrainedMaxTick) / 2;
+          constrainedMinTick = centerTick - minDomainSize / 2;
+          constrainedMaxTick = centerTick + minDomainSize / 2;
+          
+          // Re-align to tick spacing
+          constrainedMinTick = Math.floor(constrainedMinTick / defaultTickSpacing) * defaultTickSpacing;
+          constrainedMaxTick = Math.ceil(constrainedMaxTick / defaultTickSpacing) * defaultTickSpacing;
+        }
+        
+        onXDomainChange([constrainedMinTick, constrainedMaxTick]);
       }
     }
     
