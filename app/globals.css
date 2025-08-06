@@ -201,3 +201,51 @@ appkit-button:hover {
   }
 }
 
+/* Slider styles */
+.slider {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 16px;
+  width: 16px;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  border: 2px solid transparent;
+  box-shadow: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.slider:hover::-webkit-slider-thumb {
+  opacity: 1;
+  background: #1f1f1f;
+  border: 2px solid #323232;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.slider::-moz-range-thumb {
+  height: 16px;
+  width: 16px;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  border: 2px solid transparent;
+  box-shadow: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.slider:hover::-moz-range-thumb {
+  opacity: 1;
+  background: #1f1f1f;
+  border: 2px solid #323232;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+

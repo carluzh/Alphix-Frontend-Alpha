@@ -81,6 +81,10 @@ export interface AddLiquidityFormProps {
   defaultTickSpacing: number;
   poolApr?: string;
   activeTab: 'deposit' | 'withdraw' | 'swap'; // Added activeTab prop
+  // Props for copying position parameters
+  initialTickLower?: number;
+  initialTickUpper?: number;
+  initialToken0Amount?: string;
 }
 
 export function AddLiquidityForm({ 
@@ -91,6 +95,9 @@ export function AddLiquidityForm({
   defaultTickSpacing,
   poolApr,
   activeTab, // Accept activeTab from props
+  initialTickLower,
+  initialTickUpper,
+  initialToken0Amount,
 }: AddLiquidityFormProps) {
   // Basic state management - initialize tokens based on selected pool
   const getInitialTokens = () => {
@@ -313,6 +320,20 @@ export function AddLiquidityForm({
       }
     }
   }, [selectedPoolId, sdkMinTick, sdkMaxTick]);
+
+  // Apply initial parameters from position copying
+  useEffect(() => {
+    if (initialTickLower !== undefined && initialTickUpper !== undefined) {
+      setTickLower(initialTickLower.toString());
+      setTickUpper(initialTickUpper.toString());
+      setActivePreset(null); // Clear preset when copying parameters
+      setInitialDefaultApplied(true);
+    }
+    if (initialToken0Amount !== undefined) {
+      setAmount0(initialToken0Amount);
+      setActiveInputSide('amount0');
+    }
+  }, [initialTickLower, initialTickUpper, initialToken0Amount]);
 
   // Reset state when tokens change
   useEffect(() => {
@@ -1829,14 +1850,15 @@ export function AddLiquidityForm({
                             (priceAtLowerTick >= 100 && priceAtLowerTick <= 10000 && priceAtUpperTick >= 100 && priceAtUpperTick <= 10000);
     const finalDisplayDecimals = isUSDDenominated ? 2 : displayDecimals;
     
-    console.log("[AddLiquidityForm] Price range formatting:", {
-      optimalDenomination,
-      displayDecimals,
-      finalDisplayDecimals,
-      priceAtLowerTick,
-      priceAtUpperTick,
-      isUSDDenominated
-    });
+    // Temporarily disable console logs during development to reduce spam
+    // console.log("[AddLiquidityForm] Price range formatting:", {
+    //   optimalDenomination,
+    //   displayDecimals,
+    //   finalDisplayDecimals,
+    //   priceAtLowerTick,
+    //   priceAtUpperTick,
+    //   isUSDDenominated
+    // });
     
     // Format prices with proper decimals
     const formattedLower = priceAtLowerTick.toLocaleString(undefined, { 

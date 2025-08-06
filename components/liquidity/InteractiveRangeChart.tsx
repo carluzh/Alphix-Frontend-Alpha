@@ -923,10 +923,12 @@ export function InteractiveRangeChart({
               type="step"
               dataKey="liquidityToken0"
               fill="#404040"
-              fillOpacity={0.8}
-              strokeWidth={0}
+              fillOpacity={0.4}
+              stroke="#404040"
+              strokeWidth={1}
               yAxisId="bucketAxis"
               name="Liquidity Depth"
+              dot={false}
               activeDot={false}
             />
             

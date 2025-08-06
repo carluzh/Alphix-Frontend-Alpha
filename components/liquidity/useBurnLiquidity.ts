@@ -70,7 +70,7 @@ export function useBurnLiquidity({ onLiquidityBurned }: UseBurnLiquidityProps) {
     }
 
     setIsBurning(true);
-    const toastId = toast.loading("Preparing burn transaction...");
+    // Removed building transaction toast - visual feedback is in the button
 
     try {
       const token0Def = getToken(positionData.token0Symbol);
@@ -123,12 +123,9 @@ export function useBurnLiquidity({ onLiquidityBurned }: UseBurnLiquidityProps) {
         chainId: chainId,
       });
 
-      // Dismiss the preparation toast since transaction is now being submitted
-      toast.dismiss(toastId);
-
     } catch (error: any) {
       console.error("Error preparing burn transaction:", error);
-      toast.error("Burn Preparation Failed", { id: toastId, description: error.message || "Could not prepare the transaction." });
+      toast.error("Burn Preparation Failed", { description: error.message || "Could not prepare the transaction." });
       setIsBurning(false);
     }
   }, [accountAddress, chainId, writeContract, resetWriteContract, getTokenIdFromPosition]);

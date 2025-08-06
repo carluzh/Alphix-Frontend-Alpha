@@ -4,21 +4,22 @@ import { AppLayout } from "@/components/app-layout";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { ArrowRightLeftIcon, PlusIcon, MinusIcon, ArrowLeftIcon, RefreshCwIcon, ChevronLeftIcon, Trash2Icon } from "lucide-react";
 import { Button } from "@/components/ui/button";
-// Card components removed - using consistent styling with table
+import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import Image from "next/image";
 import { useRouter, useParams } from "next/navigation";
-import { useAccount } from "wagmi";
+import { useAccount, useBalance } from "wagmi";
 import { toast } from "sonner";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import type { ProcessedPosition } from "../../../pages/api/liquidity/get-positions";
 import { TOKEN_DEFINITIONS, TokenSymbol } from "@/lib/pools-config";
 import { formatUnits as viemFormatUnits, type Hex } from "viem";
-import { Bar, BarChart, Line, LineChart, CartesianGrid, XAxis, YAxis } from "recharts";
-import { getPoolById, getPoolSubgraphId, getToken } from "@/lib/pools-config";
+import { Bar, BarChart, Line, LineChart, CartesianGrid, XAxis, YAxis, ResponsiveContainer, ComposedChart, Area, ReferenceLine, ReferenceArea } from "recharts";
+import { TickRangePreview } from "@/components/TickRangePreview";
+import { getPoolById, getPoolSubgraphId, getToken, getAllTokens } from "@/lib/pools-config";
 import {
   ChartConfig,
   ChartContainer,
@@ -45,28 +46,12 @@ import { baseSepolia } from "../../../lib/wagmiConfig";
 import { getFromCache, setToCache, getUserPositionsCacheKey, getPoolStatsCacheKey, getPoolDynamicFeeCacheKey } from "../../../lib/client-cache";
 import type { Pool } from "../../../types";
 import { AddLiquidityForm } from "../../../components/liquidity/AddLiquidityForm";
+import React from "react";
 import { useBurnLiquidity, type BurnPositionData } from "@/components/liquidity/useBurnLiquidity";
 import { useIncreaseLiquidity, type IncreasePositionData } from "@/components/liquidity/useIncreaseLiquidity";
 import { useDecreaseLiquidity, type DecreasePositionData } from "@/components/liquidity/useDecreaseLiquidity";
 
-// Import TanStack Table components
-import {
-  ColumnDef,
-  flexRender,
-  getCoreRowModel,
-  getSortedRowModel,
-  SortingState,
-  useReactTable,
-  RowData
-} from "@tanstack/react-table";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+
 import {
   AlertDialog,
   AlertDialogAction,
@@ -78,12 +63,15 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { EllipsisVerticalIcon, CopyIcon, ChevronDownIcon } from "lucide-react";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
+import { EllipsisVerticalIcon, CopyIcon, ChevronDownIcon, MoreHorizontal, ChevronsLeftRight, ChevronsRight, ChevronsLeft } from "lucide-react";
 import { shortenAddress } from "@/lib/utils";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
@@ -111,6 +99,18 @@ const formatTokenDisplayAmount = (amount: string) => {
   if (num === 0) return "0.00";
   if (num < 0.0001) return "< 0.0001";
   return num.toFixed(4);
+};
+
+// Get token icon for display
+const getTokenIcon = (symbol?: string) => {
+  if (!symbol) return "/placeholder-logo.svg";
+  
+  const tokenConfig = getToken(symbol as TokenSymbol);
+  if (tokenConfig?.icon) {
+    return tokenConfig.icon;
+  }
+  
+  return "/placeholder-logo.svg";
 };
 
 // Format USD value
@@ -145,76 +145,7 @@ const calculateTotalValueUSD = (position: ProcessedPosition) => {
   return token0Value + token1Value;
 };
 
-// TickRangeVisualization Component
-const TickRangeVisualization = ({ 
-  tickLower, 
-  tickUpper, 
-  currentTick,
-  tickSpacing
-}: { 
-  tickLower: number; 
-  tickUpper: number; 
-  currentTick: number;
-  tickSpacing: number;
-}) => {
-  // Adaptive TICKS_PER_BAR based on tick spacing and position range
-  const positionRange = tickUpper - tickLower;
-  let TICKS_PER_BAR: number;
-  
-  if (tickSpacing === 1) {
-    // For very fine tick spacing, use a larger multiplier to make visualization meaningful
-    TICKS_PER_BAR = Math.max(50, positionRange / 10);
-  } else {
-    // For larger tick spacing, use the original logic
-    TICKS_PER_BAR = 10 * tickSpacing;
-  }
 
-  // Calculate center of the visualization
-  const centerBarIndex = Math.floor(TICK_BARS_COUNT / 2);
-  
-  // For positions, center around the middle of the position range rather than current tick
-  const positionCenter = Math.floor((tickLower + tickUpper) / 2);
-  const centerBarStartTick = Math.floor(positionCenter / TICKS_PER_BAR) * TICKS_PER_BAR;
-  
-  // Generate bars centered around the position
-  const bars = Array.from({ length: TICK_BARS_COUNT }, (_, i) => {
-    const offset = i - centerBarIndex;
-    const barStartTick = centerBarStartTick + (offset * TICKS_PER_BAR);
-    const barEndTick = barStartTick + TICKS_PER_BAR;
-    
-    // Check various conditions
-    const containsCurrentTick = currentTick >= barStartTick && currentTick < barEndTick;
-    const containsPosition = 
-      (barStartTick <= tickUpper && barEndTick > tickLower) || 
-      (tickLower <= barStartTick && tickUpper >= barEndTick) ||
-      (tickLower <= barStartTick && tickUpper >= barStartTick) ||
-      (tickLower <= barEndTick && tickUpper >= barEndTick);
-    
-    return { containsCurrentTick, containsPosition };
-  });
-
-  return (
-    <div className="w-full flex justify-center my-1">
-      <div className="flex space-x-[1px]">
-        {bars.map((bar, i) => {
-          let bgColor = "bg-muted/30";
-          if (bar.containsCurrentTick) {
-            bgColor = "bg-white";
-          } else if (bar.containsPosition) {
-            bgColor = "bg-orange-500/80";
-          }
-          
-          return (
-            <div 
-              key={i}
-              className={`h-4 w-[2px] rounded-full ${bgColor}`}
-            />
-          );
-        })}
-      </div>
-    </div>
-  );
-};
 
 const chartConfig = {
   views: { label: "Daily Values" },
@@ -261,6 +192,73 @@ interface PoolDetailData extends Pool { // Extend the main Pool type
   tickSpacing?: number; // Add tickSpacing property
 }
 
+// Helper function to convert tick to price using the same logic as AddLiquidityForm.tsx
+const convertTickToPrice = (tick: number, currentPoolTick: number | null, currentPrice: string | null, baseTokenForPriceDisplay: string, token0Symbol: string, token1Symbol: string): string => {
+  if (!currentPrice || currentPoolTick === null) {
+    return "N/A";
+  }
+
+  const currentPriceNum = parseFloat(currentPrice);
+  if (isNaN(currentPriceNum) || currentPriceNum <= 0) {
+    return "N/A";
+  }
+
+  let priceAtTick: number;
+
+  if (baseTokenForPriceDisplay === token0Symbol) {
+    // Show prices denominated in token0 - need to invert
+    const priceDelta = Math.pow(1.0001, tick - currentPoolTick);
+    priceAtTick = 1 / (currentPriceNum * priceDelta);
+  } else {
+    // Show prices denominated in token1 - direct calculation
+    const priceDelta = Math.pow(1.0001, tick - currentPoolTick);
+    priceAtTick = currentPriceNum * priceDelta;
+  }
+
+  // Format the price
+  if (!isFinite(priceAtTick) || isNaN(priceAtTick)) {
+    return "N/A";
+  }
+
+  if (priceAtTick >= 0 && priceAtTick < 1e-11) {
+    return "0";
+  } else if (!isFinite(priceAtTick) || priceAtTick > 1e30) {
+    return "∞";
+  } else {
+    const displayDecimals = baseTokenForPriceDisplay === token0Symbol ? 
+      (TOKEN_DEFINITIONS[token0Symbol as TokenSymbol]?.displayDecimals ?? 4) : 
+      (TOKEN_DEFINITIONS[token1Symbol as TokenSymbol]?.displayDecimals ?? 4);
+    return priceAtTick.toFixed(displayDecimals);
+  }
+};
+
+// Memoized AddLiquidityForm to prevent unnecessary re-renders
+const AddLiquidityFormMemo = React.memo(AddLiquidityForm);
+
+// Helper function to determine base token for price display (same logic as AddLiquidityForm.tsx)
+const determineBaseTokenForPriceDisplay = (token0: string, token1: string): string => {
+  if (!token0 || !token1) return token0;
+
+  // Priority order for quote tokens (these should be the base for price display)
+  const quotePriority: Record<string, number> = {
+    'aUSDC': 10,
+    'aUSDT': 9,
+    'USDC': 8,
+    'USDT': 7,
+    'aETH': 6,
+    'ETH': 5,
+    'YUSD': 4,
+    'mUSDT': 3,
+  };
+
+  const token0Priority = quotePriority[token0] || 0;
+  const token1Priority = quotePriority[token1] || 0;
+
+  // Return the token with higher priority (better quote currency)
+  // If priorities are equal, default to token0
+  return token1Priority > token0Priority ? token1 : token0;
+};
+
 export default function PoolDetailPage() {
   const router = useRouter();
   const params = useParams<{ poolId: string }>();
@@ -268,8 +266,59 @@ export default function PoolDetailPage() {
   const [userPositions, setUserPositions] = useState<ProcessedPosition[]>([]);
   const [isLoadingPositions, setIsLoadingPositions] = useState(false);
   const [activeChart, setActiveChart] = useState<keyof Pick<typeof chartConfig, 'volume' | 'tvl' | 'volumeTvlRatio' | 'emaRatio' | 'dynamicFee'>>("volumeTvlRatio");
+  
+  // State for copying position parameters
+  const [copiedPositionParams, setCopiedPositionParams] = useState<{
+    tickLower: number;
+    tickUpper: number;
+    token0Amount: string;
+  } | null>(null);
+  
   const { address: accountAddress, isConnected, chainId } = useAccount();
-  const [sorting, setSorting] = useState<SortingState>([]); // Added for table sorting
+  
+  // Balance hooks for tokens
+  const { data: token0BalanceData, isLoading: isLoadingToken0Balance } = useBalance({
+    address: accountAddress,
+    token: TOKEN_DEFINITIONS['aUSDC']?.address === "0x0000000000000000000000000000000000000000" 
+      ? undefined 
+      : TOKEN_DEFINITIONS['aUSDC']?.address as `0x${string}` | undefined,
+    chainId,
+    query: { enabled: !!accountAddress && !!chainId && !!TOKEN_DEFINITIONS['aUSDC'] },
+  });
+
+  const { data: token1BalanceData, isLoading: isLoadingToken1Balance } = useBalance({
+    address: accountAddress,
+    token: TOKEN_DEFINITIONS['aUSDT']?.address === "0x0000000000000000000000000000000000000000" 
+      ? undefined 
+      : TOKEN_DEFINITIONS['aUSDT']?.address as `0x${string}` | undefined,
+    chainId,
+    query: { enabled: !!accountAddress && !!chainId && !!TOKEN_DEFINITIONS['aUSDT'] },
+  });
+
+  // Helper function to get formatted display balance
+  const getFormattedDisplayBalance = (numericBalance: number | undefined, tokenSymbolForDecimals: TokenSymbol): string => {
+    if (numericBalance === undefined || isNaN(numericBalance)) {
+      numericBalance = 0;
+    }
+    if (numericBalance === 0) {
+      return "0.000";
+    } else if (numericBalance > 0 && numericBalance < 0.001) {
+      return "< 0.001";
+    } else {
+      const displayDecimals = TOKEN_DEFINITIONS[tokenSymbolForDecimals]?.displayDecimals ?? 4;
+      return numericBalance.toFixed(displayDecimals);
+    }
+  };
+
+  // Display balance calculations
+  const displayToken0Balance = isLoadingToken0Balance 
+    ? "Loading..." 
+    : (token0BalanceData ? getFormattedDisplayBalance(parseFloat(token0BalanceData.formatted), 'aUSDC' as TokenSymbol) : "~");
+  
+  const displayToken1Balance = isLoadingToken1Balance 
+    ? "Loading..." 
+    : (token1BalanceData ? getFormattedDisplayBalance(parseFloat(token1BalanceData.formatted), 'aUSDT' as TokenSymbol) : "~");
+
   const addLiquidityFormRef = useRef<HTMLDivElement>(null); // Ref for scrolling to form
   const leftColumnRef = useRef<HTMLDivElement>(null); // Ref for the entire left column
 
@@ -280,6 +329,9 @@ export default function PoolDetailPage() {
   // State for API-fetched chart data
   const [apiChartData, setApiChartData] = useState<ChartDataPoint[]>([]);
   const [isLoadingChartData, setIsLoadingChartData] = useState(false);
+  // State for pool state data (currentPoolTick and currentPrice)
+  const [currentPoolTick, setCurrentPoolTick] = useState<number | null>(null);
+  const [currentPrice, setCurrentPrice] = useState<string | null>(null);
 
   // State for managing active tab (Deposit/Withdraw/Swap) - Lifted from AddLiquidityForm
   // const [activeTab, setActiveTab] = useState<'deposit' | 'withdraw' | 'swap'>('deposit');
@@ -293,6 +345,10 @@ export default function PoolDetailPage() {
   const [showDecreaseModal, setShowDecreaseModal] = useState(false);
   const [positionToModify, setPositionToModify] = useState<ProcessedPosition | null>(null);
 
+  // Token symbols for the current pool (defined after positionToModify)
+  const token0Symbol = positionToModify?.token0.symbol as TokenSymbol || 'aUSDC';
+  const token1Symbol = positionToModify?.token1.symbol as TokenSymbol || 'aUSDT';
+
   // State for increase modal inputs
   const [increaseAmount0, setIncreaseAmount0] = useState<string>("");
   const [increaseAmount1, setIncreaseAmount1] = useState<string>("");
@@ -305,8 +361,91 @@ export default function PoolDetailPage() {
   const [decreaseActiveInputSide, setDecreaseActiveInputSide] = useState<'amount0' | 'amount1' | null>(null);
   const [isDecreaseCalculating, setIsDecreaseCalculating] = useState(false);
   const [isFullBurn, setIsFullBurn] = useState(false);
+
+  // State for withdraw modal inputs
+  const [withdrawAmount0, setWithdrawAmount0] = useState<string>("");
+  const [withdrawAmount1, setWithdrawAmount1] = useState<string>("");
+  const [withdrawActiveInputSide, setWithdrawActiveInputSide] = useState<'amount0' | 'amount1' | null>(null);
+  const [isFullWithdraw, setIsFullWithdraw] = useState(false);
+  const [withdrawPercentage, setWithdrawPercentage] = useState<number>(0);
+  const [sliderValue, setSliderValue] = useState<number>(0);
+  const [isSliderDragging, setIsSliderDragging] = useState<boolean>(false);
+  const sliderValueRef = useRef<number>(0);
+  const animationFrameRef = useRef<number | null>(null);
+  const [increasePercentage, setIncreasePercentage] = useState<number>(0);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const isMobile = useIsMobile();
+
+  // Update withdraw amounts when percentage changes (but not during slider dragging)
+  useEffect(() => {
+    if (!isSliderDragging && positionToBurn && withdrawPercentage > 0) {
+      const amount0 = parseFloat(positionToBurn.token0.amount);
+      const amount1 = parseFloat(positionToBurn.token1.amount);
+      const percentage = withdrawPercentage / 100;
+      
+      setWithdrawAmount0((amount0 * percentage).toFixed(4));
+      setWithdrawAmount1((amount1 * percentage).toFixed(4));
+      setIsFullWithdraw(withdrawPercentage >= 99);
+      setSliderValue(withdrawPercentage);
+      sliderValueRef.current = withdrawPercentage;
+    }
+  }, [withdrawPercentage, positionToBurn, isSliderDragging]);
+
+  // Initialize slider value when modal opens
+  useEffect(() => {
+    if (showBurnConfirmDialog && positionToBurn) {
+      setSliderValue(withdrawPercentage);
+      sliderValueRef.current = withdrawPercentage;
+    }
+  }, [showBurnConfirmDialog, positionToBurn, withdrawPercentage]);
+
+  // Update withdraw percentage when amounts change manually (but not during slider dragging)
+  useEffect(() => {
+    if (!isSliderDragging && positionToBurn && (withdrawAmount0 || withdrawAmount1)) {
+      const amount0 = parseFloat(positionToBurn.token0.amount);
+      const amount1 = parseFloat(positionToBurn.token1.amount);
+      const currentAmount0 = parseFloat(withdrawAmount0 || "0");
+      const currentAmount1 = parseFloat(withdrawAmount1 || "0");
+      
+      if (amount0 > 0 && amount1 > 0) {
+        const percentage0 = (currentAmount0 / amount0) * 100;
+        const percentage1 = (currentAmount1 / amount1) * 100;
+        const avgPercentage = Math.round((percentage0 + percentage1) / 2);
+        setWithdrawPercentage(avgPercentage);
+        setSliderValue(avgPercentage);
+        sliderValueRef.current = avgPercentage;
+      }
+    }
+  }, [withdrawAmount0, withdrawAmount1, positionToBurn, isSliderDragging]);
+
+  // Update increase amounts when percentage changes
+  useEffect(() => {
+    if (positionToModify && increasePercentage > 0) {
+      const balance0 = parseFloat(token0BalanceData?.formatted || "0");
+      const balance1 = parseFloat(token1BalanceData?.formatted || "0");
+      const percentage = increasePercentage / 100;
+      
+      setIncreaseAmount0((balance0 * percentage).toFixed(4));
+      setIncreaseAmount1((balance1 * percentage).toFixed(4));
+    }
+  }, [increasePercentage, positionToModify, token0BalanceData, token1BalanceData]);
+
+  // Update increase percentage when amounts change manually
+  useEffect(() => {
+    if (positionToModify && (increaseAmount0 || increaseAmount1)) {
+      const balance0 = parseFloat(token0BalanceData?.formatted || "0");
+      const balance1 = parseFloat(token1BalanceData?.formatted || "0");
+      const currentAmount0 = parseFloat(increaseAmount0 || "0");
+      const currentAmount1 = parseFloat(increaseAmount1 || "0");
+      
+      if (balance0 > 0 && balance1 > 0) {
+        const percentage0 = (currentAmount0 / balance0) * 100;
+        const percentage1 = (currentAmount1 / balance1) * 100;
+        const avgPercentage = Math.round((percentage0 + percentage1) / 2);
+        setIncreasePercentage(avgPercentage);
+      }
+    }
+  }, [increaseAmount0, increaseAmount1, positionToModify, token0BalanceData, token1BalanceData]);
   const [windowWidth, setWindowWidth] = useState<number>(1200);
   const [toggleMetric, setToggleMetric] = useState<'liquidity' | 'volume' | 'fees'>('liquidity');
 
@@ -463,6 +602,8 @@ export default function PoolDetailPage() {
   const onLiquidityBurnedCallback = useCallback(() => {
     toast.success("Position burn successful! Refreshing your positions...");
     setRefreshTrigger(prev => prev + 1); // Trigger refresh
+    setShowBurnConfirmDialog(false); // Close modal after successful transaction
+    setPositionToBurn(null);
   }, []);
 
   const onLiquidityIncreasedCallback = useCallback(() => {
@@ -473,6 +614,8 @@ export default function PoolDetailPage() {
   const onLiquidityDecreasedCallback = useCallback(() => {
     toast.success("Position modified successfully! Refreshing your positions...");
     setRefreshTrigger(prev => prev + 1); // Trigger refresh
+    setShowBurnConfirmDialog(false); // Close modal after successful transaction
+    setPositionToBurn(null);
   }, []);
 
   // Initialize the liquidity modification hooks
@@ -488,140 +631,7 @@ export default function PoolDetailPage() {
     onLiquidityDecreased: onLiquidityDecreasedCallback,
   });
 
-  // Define columns for the User Positions table (can be defined early)
-  const positionColumns: ColumnDef<ProcessedPosition>[] = useMemo(() => [
-    {
-      id: "pair",
-      header: "Pair / Range",
-      cell: ({ row }) => {
-        const position = row.original;
-        const getTokenIcon = (symbol?: string) => {
-          if (!symbol) return "/placeholder-logo.svg";
-          const tokenConfig = getToken(symbol);
-          return tokenConfig?.icon || "/placeholder-logo.svg";
-        };
-        const estimatedCurrentTick = position.isInRange 
-          ? Math.floor((position.tickLower + position.tickUpper) / 2)
-          : (position.tickLower > 0 
-              ? position.tickLower - (10 * (currentPoolData?.tickSpacing || DEFAULT_TICK_SPACING))
-              : position.tickUpper + (10 * (currentPoolData?.tickSpacing || DEFAULT_TICK_SPACING)));
 
-        return (
-          <div className="flex flex-col gap-1">
-            <div className="flex items-center gap-2">
-              <div className="relative w-20 h-10">
-                <div className="absolute top-0 left-0 w-10 h-10 rounded-full overflow-hidden bg-background border border-border/50">
-                  <Image src={getTokenIcon(position.token0.symbol)} alt={position.token0.symbol || 'Token 0'} width={40} height={40} className="w-full h-full object-cover" />
-                </div>
-                <div className="absolute top-0 left-6 w-10 h-10 rounded-full overflow-hidden bg-background border border-border/50">
-                  <Image src={getTokenIcon(position.token1.symbol)} alt={position.token1.symbol || 'Token 1'} width={40} height={40} className="w-full h-full object-cover" />
-                </div>
-                <div className="absolute top-0 left-6 w-10 h-10 rounded-full overflow-hidden bg-[var(--background)] border-l-2 border-l-[var(--border-icons-overlap)] border-t-0 border-r-0 border-b-0"></div>
-              </div>
-              <span className="font-medium text-sm">
-                {position.token0.symbol || 'N/A'} / {position.token1.symbol || 'N/A'}
-              </span>
-            </div>
-            <TickRangeVisualization
-              tickLower={position.tickLower}
-              tickUpper={position.tickUpper}
-              currentTick={estimatedCurrentTick}
-              tickSpacing={currentPoolData?.tickSpacing || DEFAULT_TICK_SPACING}
-            />
-          </div>
-        );
-      },
-    },
-    {
-      accessorFn: (row) => row.token0.amount,
-      id: "token0Amount",
-      header: "Token 0 Amount",
-      cell: ({ row }) => <div>{formatTokenDisplayAmount(row.original.token0.amount)} {row.original.token0.symbol}</div>,
-    },
-    {
-      accessorFn: (row) => row.token1.amount,
-      id: "token1Amount",
-      header: "Token 1 Amount",
-      cell: ({ row }) => <div>{formatTokenDisplayAmount(row.original.token1.amount)} {row.original.token1.symbol}</div>,
-    },
-    {
-      id: "totalValueUSD",
-      header: "Total Value (USD)",
-      cell: ({ row }) => {
-        const totalValueUSD = calculateTotalValueUSD(row.original);
-        return <div>{formatUSD(totalValueUSD)}</div>;
-      },
-    },
-    {
-      id: "status",
-      header: "Status",
-      cell: ({ row }) => {
-        const position = row.original;
-        return (
-          <Badge variant={position.isInRange ? "default" : "secondary"} 
-                 className={position.isInRange ? "bg-green-500/20 text-green-700 border-green-500/30" : "bg-orange-500/20 text-orange-700 border-orange-500/30"}>
-            {position.isInRange ? "In Range" : "Out of Range"}
-          </Badge>
-        );
-      },
-    },
-    {
-      id: "actions",
-      header: "Actions",
-      cell: ({ row }) => {
-        const position = row.original;
-        return (
-          <div className="flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-green-600 hover:text-green-700 hover:bg-green-500/10 p-1.5 h-auto"
-              onClick={() => handleIncreasePosition(position)}
-              disabled={isBurningLiquidity || isIncreasingLiquidity || isDecreasingLiquidity}
-            >
-              <PlusIcon className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-orange-600 hover:text-orange-700 hover:bg-orange-500/10 p-1.5 h-auto"
-              onClick={() => handleDecreasePosition(position)}
-              disabled={isBurningLiquidity || isIncreasingLiquidity || isDecreasingLiquidity}
-            >
-              <MinusIcon className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-red-500 hover:text-red-600 hover:bg-red-500/10 p-1.5 h-auto"
-              onClick={() => handleBurnPosition(position)}
-              disabled={isBurningLiquidity && positionToBurn?.positionId === position.positionId}
-            >
-              {isBurningLiquidity && positionToBurn?.positionId === position.positionId 
-                ? <RefreshCwIcon className="h-4 w-4 animate-spin" /> 
-                : <Trash2Icon className="h-4 w-4" />}
-            </Button>
-          </div>
-        );
-      },
-    },
-  ], [isBurningLiquidity, isIncreasingLiquidity, isDecreasingLiquidity, positionToBurn?.positionId, currentPoolData?.tickSpacing]);
-
-  // Memoize table data and config to prevent unnecessary re-renders
-  const memoizedPositions = useMemo(() => userPositions, [userPositions]);
-  const memoizedColumns = useMemo(() => positionColumns, [positionColumns]);
-
-  // Initialize the table instance (Hook call)
-  const positionsTable = useReactTable({
-    data: memoizedPositions,
-    columns: memoizedColumns,
-    getCoreRowModel: getCoreRowModel(),
-    onSortingChange: setSorting,
-    getSortedRowModel: getSortedRowModel(),
-    state: {
-      sorting,
-    },
-  });
 
   // Fetch user positions for this pool and pool stats
   const fetchPageData = useCallback(async () => {
@@ -666,6 +676,29 @@ export default function PoolDetailPage() {
 
     // Use the subgraph ID from the pool configuration for API calls
     const apiPoolIdToUse = basePoolInfo.subgraphId; 
+
+    // Fetch pool state data (currentPoolTick and currentPrice)
+    try {
+      const poolStateResponse = await fetch('/api/liquidity/get-pool-state', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token0Symbol: basePoolInfo.tokens[0].symbol,
+          token1Symbol: basePoolInfo.tokens[1].symbol,
+          chainId: baseSepolia.id,
+        }),
+      });
+      
+      if (poolStateResponse.ok) {
+        const poolState = await poolStateResponse.json();
+        if (poolState.currentPrice && typeof poolState.currentPoolTick === 'number') {
+          setCurrentPrice(poolState.currentPrice);
+          setCurrentPoolTick(poolState.currentPoolTick);
+        }
+      }
+    } catch (error) {
+      console.error("Failed to fetch pool state:", error);
+    }
 
     // 1. Fetch/Cache Pool Stats (Volume, Fees, TVL)
     let poolStats: Partial<Pool> | null = getFromCache(getPoolStatsCacheKey(apiPoolIdToUse));
@@ -830,18 +863,29 @@ export default function PoolDetailPage() {
     fetchPageData();
   }, [fetchPageData]); // Re-fetch if fetchPageData changes
 
+
+
   // Calculate total liquidity value
   const totalLiquidity = userPositions.reduce((sum, pos) => {
     return sum + calculateTotalValueUSD(pos);
   }, 0);
 
-  // Handle burn position
+  // Handle withdraw position
   const handleBurnPosition = (position: ProcessedPosition) => {
     if (!position.positionId || !position.token0.symbol || !position.token1.symbol) {
-      toast.error("Cannot burn position: Missing critical position data (ID or token symbols).");
+      toast.error("Cannot withdraw position: Missing critical position data (ID or token symbols).");
       return;
     }
     setPositionToBurn(position);
+    // Reset withdraw state
+    setWithdrawAmount0("");
+    setWithdrawAmount1("");
+    setWithdrawActiveInputSide(null);
+    setIsFullWithdraw(false);
+    setWithdrawPercentage(0);
+    setSliderValue(0);
+    sliderValueRef.current = 0;
+    setIsSliderDragging(false);
     setShowBurnConfirmDialog(true);
   };
 
@@ -877,8 +921,7 @@ export default function PoolDetailPage() {
       };
       burnLiquidity(burnData);
     }
-    setShowBurnConfirmDialog(false);
-    setPositionToBurn(null);
+    // Modal will close automatically when transaction completes via onLiquidityBurnedCallback
   };
 
   // Handle increase position
@@ -908,6 +951,31 @@ export default function PoolDetailPage() {
     setDecreaseActiveInputSide(null);
     setIsFullBurn(false);
     setShowDecreaseModal(true);
+  };
+
+  // Handle copying position parameters to AddLiquidityForm
+  const handleCopyParameters = (position: ProcessedPosition) => {
+    if (!position.tickLower || !position.tickUpper || !position.token0.symbol) {
+      toast.error("Cannot copy parameters: Missing critical position data.");
+      return;
+    }
+    
+    // Set the copied parameters which will be passed to AddLiquidityForm
+    setCopiedPositionParams({
+      tickLower: position.tickLower,
+      tickUpper: position.tickUpper,
+      token0Amount: position.token0.amount || "0", // Use token0 amount, let API calculate token1
+    });
+    
+    // Scroll to the AddLiquidityForm
+    if (addLiquidityFormRef.current) {
+      addLiquidityFormRef.current.scrollIntoView({ 
+        behavior: 'smooth',
+        block: 'start' 
+      });
+    }
+    
+    toast.success("Position parameters copied to form");
   };
 
   // Helper function for debounced calculations (simplified version)
@@ -1107,6 +1175,120 @@ export default function PoolDetailPage() {
     [positionToModify, chainId, decreaseAmount0, decreaseAmount1]
   );
 
+  // Calculate corresponding amount for withdraw
+  const calculateWithdrawAmount = useCallback(
+    debounce(async (inputAmount: string, inputSide: 'amount0' | 'amount1') => {
+      if (!positionToBurn || !inputAmount || parseFloat(inputAmount) <= 0) {
+        if (inputSide === 'amount0') setWithdrawAmount1("");
+        else setWithdrawAmount0("");
+        return;
+      }
+
+      try {
+        // For out-of-range positions, allow single-token withdrawal
+        if (!positionToBurn.isInRange) {
+          console.log("Position is out of range, using single-token withdrawal approach");
+          
+          const maxAmount0 = parseFloat(positionToBurn.token0.amount);
+          const maxAmount1 = parseFloat(positionToBurn.token1.amount);
+          const inputAmountNum = parseFloat(inputAmount);
+          
+          // For out-of-range positions, allow withdrawing just the token the user inputs
+          if (inputSide === 'amount0') {
+            setWithdrawAmount1("0");
+            // Check if this is effectively a full withdraw (withdrawing most/all of token0)
+            const isNearFullWithdraw = inputAmountNum >= maxAmount0 * 0.99;
+            if (isNearFullWithdraw) {
+              // If withdrawing almost all of token0, also withdraw all of token1
+              setWithdrawAmount1(formatTokenDisplayAmount(maxAmount1.toString()));
+            }
+            setIsFullWithdraw(isNearFullWithdraw);
+          } else {
+            setWithdrawAmount0("0");
+            // Check if this is effectively a full withdraw (withdrawing most/all of token1)
+            const isNearFullWithdraw = inputAmountNum >= maxAmount1 * 0.99;
+            if (isNearFullWithdraw) {
+              // If withdrawing almost all of token1, also withdraw all of token0
+              setWithdrawAmount0(formatTokenDisplayAmount(maxAmount0.toString()));
+            }
+            setIsFullWithdraw(isNearFullWithdraw);
+          }
+          
+          return;
+        }
+
+        // For in-range positions, use the API for proper calculations
+        // Map position token addresses to correct token symbols from our configuration
+        const getTokenSymbolByAddress = (address: string): TokenSymbol | null => {
+          const normalizedAddress = address.toLowerCase();
+          for (const [symbol, tokenConfig] of Object.entries(TOKEN_DEFINITIONS)) {
+            if (tokenConfig.address.toLowerCase() === normalizedAddress) {
+              return symbol as TokenSymbol;
+            }
+          }
+          return null;
+        };
+        
+        const token0Symbol = getTokenSymbolByAddress(positionToBurn.token0.address);
+        const token1Symbol = getTokenSymbolByAddress(positionToBurn.token1.address);
+        
+        if (!token0Symbol || !token1Symbol) {
+          throw new Error(`Token definitions not found for position tokens: ${positionToBurn.token0.address}, ${positionToBurn.token1.address}`);
+        }
+        
+        const calcResponse = await fetch('/api/liquidity/calculate-liquidity-parameters', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            token0Symbol: token0Symbol,
+            token1Symbol: token1Symbol,
+            inputAmount: inputAmount,
+            inputTokenSymbol: inputSide === 'amount0' ? token0Symbol : token1Symbol,
+            userTickLower: positionToBurn.tickLower,
+            userTickUpper: positionToBurn.tickUpper,
+            chainId: chainId,
+          }),
+        });
+
+        if (!calcResponse.ok) {
+          const errorData = await calcResponse.json();
+          throw new Error(errorData.message || "Failed to calculate parameters.");
+        }
+
+        const result = await calcResponse.json();
+
+        if (inputSide === 'amount0') {
+          // We input amount0, so set the calculated amount1
+          const amount1InWei = result.amount1;
+          const token1Decimals = TOKEN_DEFINITIONS[positionToBurn.token1.symbol as TokenSymbol]?.decimals || 18;
+          const formattedAmount1 = viemFormatUnits(BigInt(amount1InWei), token1Decimals);
+          setWithdrawAmount1(formatTokenDisplayAmount(formattedAmount1));
+        } else {
+          // We input amount1, so set the calculated amount0
+          const amount0InWei = result.amount0;
+          const token0Decimals = TOKEN_DEFINITIONS[positionToBurn.token0.symbol as TokenSymbol]?.decimals || 18;
+          const formattedAmount0 = viemFormatUnits(BigInt(amount0InWei), token0Decimals);
+          setWithdrawAmount0(formatTokenDisplayAmount(formattedAmount0));
+        }
+
+        // Check if this is effectively a full withdraw
+        const maxAmount0 = parseFloat(positionToBurn.token0.amount);
+        const maxAmount1 = parseFloat(positionToBurn.token1.amount);
+        const inputAmount0 = inputSide === 'amount0' ? parseFloat(inputAmount) : parseFloat(withdrawAmount0);
+        const inputAmount1 = inputSide === 'amount1' ? parseFloat(inputAmount) : parseFloat(withdrawAmount1);
+        
+        const isNearFullWithdraw = (inputAmount0 >= maxAmount0 * 0.99) || (inputAmount1 >= maxAmount1 * 0.99);
+        setIsFullWithdraw(isNearFullWithdraw);
+      } catch (error: any) {
+        console.error("Error calculating withdraw amount:", error);
+        toast.error("Calculation Error", { description: error.message || "Could not calculate corresponding amount." });
+        if (inputSide === 'amount0') setWithdrawAmount1("");
+        else setWithdrawAmount0("");
+      }
+    }, 500),
+    [positionToBurn, chainId, withdrawAmount0, withdrawAmount1]
+  );
+
   // Handle max button clicks for decrease
   const handleMaxDecrease = (tokenSide: 'amount0' | 'amount1') => {
     if (!positionToModify) return;
@@ -1120,6 +1302,41 @@ export default function PoolDetailPage() {
     }
     setDecreaseActiveInputSide(tokenSide);
     setIsFullBurn(true);
+  };
+
+  // Handle max button clicks for withdraw
+  const handleMaxWithdraw = (tokenSide: 'amount0' | 'amount1') => {
+    if (!positionToBurn) return;
+    
+    if (tokenSide === 'amount0') {
+      setWithdrawAmount0(positionToBurn.token0.amount);
+      setWithdrawAmount1(positionToBurn.token1.amount);
+    } else {
+      setWithdrawAmount1(positionToBurn.token1.amount);
+      setWithdrawAmount0(positionToBurn.token0.amount);
+    }
+    setWithdrawActiveInputSide(tokenSide);
+    setIsFullWithdraw(true);
+  };
+
+  // Handle use full balance
+  const handleUseFullBalance = (balanceString: string, tokenSymbolForDecimals: TokenSymbol, isToken0: boolean) => { 
+    try {
+      const numericBalance = parseFloat(balanceString);
+      if (isNaN(numericBalance) || numericBalance <= 0) return;
+
+      const formattedBalance = numericBalance.toFixed(TOKEN_DEFINITIONS[tokenSymbolForDecimals]?.decimals || 18);
+
+      if (isToken0) {
+        setIncreaseAmount0(formattedBalance);
+        setIncreaseActiveInputSide('amount0');
+      } else { 
+        setIncreaseAmount1(formattedBalance);
+        setIncreaseActiveInputSide('amount1');
+      }
+    } catch (error) {
+      // Handle error
+    }
   };
 
   // Handle increase transaction
@@ -1205,6 +1422,59 @@ export default function PoolDetailPage() {
 
     decreaseLiquidity(decreaseData, 0); // 0 percentage means use specific amounts from decreaseData
     setShowDecreaseModal(false);
+  };
+
+  // Handle withdraw transaction
+  const handleConfirmWithdraw = () => {
+    if (!positionToBurn || (!withdrawAmount0 && !withdrawAmount1)) {
+      toast.error("Please enter at least one amount to withdraw");
+      return;
+    }
+    
+    // For out-of-range positions, ensure at least one amount is greater than 0
+    if (!positionToBurn.isInRange) {
+      const amount0Num = parseFloat(withdrawAmount0 || "0");
+      const amount1Num = parseFloat(withdrawAmount1 || "0");
+      if (amount0Num <= 0 && amount1Num <= 0) {
+        toast.error("Please enter a valid amount to withdraw");
+        return;
+      }
+    }
+
+    // Map position token addresses to correct token symbols from our configuration
+    const getTokenSymbolByAddress = (address: string): TokenSymbol | null => {
+      const normalizedAddress = address.toLowerCase();
+      for (const [symbol, tokenConfig] of Object.entries(TOKEN_DEFINITIONS)) {
+        if (tokenConfig.address.toLowerCase() === normalizedAddress) {
+          return symbol as TokenSymbol;
+        }
+      }
+      return null;
+    };
+    
+    const token0Symbol = getTokenSymbolByAddress(positionToBurn.token0.address);
+    const token1Symbol = getTokenSymbolByAddress(positionToBurn.token1.address);
+    
+    if (!token0Symbol || !token1Symbol) {
+      toast.error("Token definitions not found for position tokens. Addresses: " + 
+        `${positionToBurn.token0.address}, ${positionToBurn.token1.address}`);
+      return;
+    }
+
+    const withdrawData: DecreasePositionData = {
+      tokenId: positionToBurn.positionId,
+      token0Symbol: token0Symbol,
+      token1Symbol: token1Symbol,
+      decreaseAmount0: withdrawAmount0 || "0",
+      decreaseAmount1: withdrawAmount1 || "0",
+      isFullBurn: isFullWithdraw,
+      poolId: positionToBurn.poolId,
+      tickLower: positionToBurn.tickLower,
+      tickUpper: positionToBurn.tickUpper,
+    };
+
+    decreaseLiquidity(withdrawData, 0); // 0 percentage means use specific amounts from withdrawData
+    // Modal will close automatically when transaction completes via onLiquidityDecreasedCallback
   };
 
   // Early return for loading state AFTER all hooks have been called
@@ -1332,8 +1602,8 @@ export default function PoolDetailPage() {
           
           {/* Main content area with two columns */}
           <div className="flex flex-col lg:flex-row gap-6">
-            {/* Left Column: Stats and Graph (takes up 3/4 on larger screens) */}
-            <div ref={leftColumnRef} className="lg:w-3/4 flex flex-col space-y-3 lg:space-y-6">
+            {/* Left Column: Stats and Graph (grows to fill remaining space) */}
+            <div ref={leftColumnRef} className="flex-1 flex flex-col space-y-3 lg:space-y-6">
               {/* Pool stats - Mobile: columns, Desktop: grid */}
               <div className="flex flex-col md:grid md:grid-cols-2 xl:grid-cols-2 min-[1500px]:grid-cols-4 gap-6 flex-shrink-0 lg:max-w-none">
                 {/* APR and Total Liquidity in columns on mobile */}
@@ -1760,8 +2030,8 @@ export default function PoolDetailPage() {
               </div>
             </div>
 
-            {/* Right Column: Add Liquidity Form (takes up 1/4 on larger screens) */}
-            <div className="w-[450px]" ref={addLiquidityFormRef}>
+            {/* Right Column: Add Liquidity Form (fixed width) */}
+            <div className="w-[450px] flex-shrink-0" ref={addLiquidityFormRef}>
               {/* Tabs for Swap/Deposit/Withdraw - REMOVED */}
               {/* <div className="flex border-b border-border mb-4 px-6 pt-6">
                 <button
@@ -1798,16 +2068,21 @@ export default function PoolDetailPage() {
 
               {poolId && currentPoolData && ( // Always render form (removed activeTab condition)
                 <div ref={addLiquidityFormRef} className="w-full rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors">
-                  <AddLiquidityForm
+                  <AddLiquidityFormMemo
                     selectedPoolId={poolId}
                     poolApr={currentPoolData?.apr}
                     onLiquidityAdded={() => {
                       fetchPageData();
+                      // Clear copied parameters after liquidity is added
+                      setCopiedPositionParams(null);
                     }}
                     sdkMinTick={SDK_MIN_TICK}
                     sdkMaxTick={SDK_MAX_TICK}
                     defaultTickSpacing={getPoolById(poolId)?.tickSpacing || DEFAULT_TICK_SPACING}
                     activeTab={'deposit'} // Always pass 'deposit'
+                    initialTickLower={copiedPositionParams?.tickLower}
+                    initialTickUpper={copiedPositionParams?.tickUpper}
+                    initialToken0Amount={copiedPositionParams?.token0Amount}
                   />
                 </div>
               )}
@@ -1822,74 +2097,294 @@ export default function PoolDetailPage() {
           </div>
           
           {/* Your Positions Section (Full width below the columns) */}
-          <div className="space-y-4 mt-8"> {/* Added mt-8 for spacing */}
+          <div className="space-y-4 mt-3 lg:mt-6"> {/* Added margin-top to match spacing between Pool Activity and stats containers */}
+            {/* Static title - always visible */}
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-medium">Your Positions</h3>
+            </div>
+            
             {isLoadingPositions ? (
-              <div className="flex justify-center items-center h-48">
-                <RefreshCwIcon className="mr-2 h-6 w-6 animate-spin" /> 
-                <span>Loading your positions...</span>
+              /* Simple pulsing skeleton container */
+              <div className="rounded-lg bg-muted/30 p-4 h-20 animate-pulse">
               </div>
             ) : userPositions.length > 0 ? (
               <div>
-                <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-lg font-medium">Your Liquidity Positions</h3>
-                </div>
-                <div className="text-sm mb-4">
-                  Total Value: <span className="font-medium">{formatUSD(totalLiquidity)}</span>
-                </div>
-                {/* Replace PositionCard grid with Table */}
-                <div className="rounded-md border">
-                  <Table>
-                    <TableHeader>
-                      {positionsTable.getHeaderGroups().map((headerGroup) => (
-                        <TableRow key={headerGroup.id}>
-                          {headerGroup.headers.map((header) => (
-                            <TableHead key={header.id}>
-                              {header.isPlaceholder
-                                ? null
-                                : flexRender(
-                                    header.column.columnDef.header,
-                                    header.getContext()
-                                  )}
-                            </TableHead>
-                          ))}
-                        </TableRow>
-                      ))}
-                    </TableHeader>
-                    <TableBody>
-                      {positionsTable.getRowModel().rows?.length ? (
-                        positionsTable.getRowModel().rows.map((row) => (
-                          <TableRow key={row.id}>
-                            {row.getVisibleCells().map((cell) => (
-                              <TableCell key={cell.id}>
-                                {flexRender(
-                                  cell.column.columnDef.cell,
-                                  cell.getContext()
-                                )}
-                              </TableCell>
-                            ))}
-                          </TableRow>
-                        ))
-                      ) : (
-                        <TableRow>
-                          <TableCell
-                            colSpan={positionColumns.length}
-                            className="h-24 text-center"
+                {/* Replace Table with individual position segments */}
+                <div className="grid gap-4">
+                  {userPositions.map((position) => {
+                    const getTokenIcon = (positionToken: { symbol?: string; address?: string }) => {
+                      if (!positionToken?.symbol && !positionToken?.address) return "/placeholder-logo.svg";
+                      
+                      // First try to match with currentPoolData.tokens (same as title icons)
+                      if (currentPoolData?.tokens) {
+                        // Try to match by symbol
+                        if (positionToken.symbol) {
+                          const matchedToken = currentPoolData.tokens.find(token => 
+                            token.symbol?.toLowerCase() === positionToken.symbol?.toLowerCase()
+                          );
+                          if (matchedToken?.icon) {
+                            return matchedToken.icon;
+                          }
+                        }
+                        
+                        // Try to match by address
+                        if (positionToken.address) {
+                          const matchedToken = currentPoolData.tokens.find(token => 
+                            token.address?.toLowerCase() === positionToken.address?.toLowerCase()
+                          );
+                          if (matchedToken?.icon) {
+                            return matchedToken.icon;
+                          }
+                        }
+                      }
+                      
+                      // Fallback to the original getToken method
+                      if (positionToken.symbol) {
+                        const tokenConfig = getToken(positionToken.symbol);
+                        if (tokenConfig?.icon) {
+                          return tokenConfig.icon;
+                        }
+                      }
+                      
+                      return "/placeholder-logo.svg";
+                    };
+
+                    const estimatedCurrentTick = position.isInRange 
+                      ? Math.floor((position.tickLower + position.tickUpper) / 2)
+                      : (position.tickLower > 0 
+                          ? position.tickLower - (10 * (currentPoolData?.tickSpacing || DEFAULT_TICK_SPACING))
+                          : position.tickUpper + (10 * (currentPoolData?.tickSpacing || DEFAULT_TICK_SPACING)));
+
+                                            return (
+                          <div 
+                            key={position.positionId}
+                            className="rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors group"
                           >
-                            No positions found for this pool.
-                          </TableCell>
-                        </TableRow>
-                      )}
-                    </TableBody>
-                  </Table>
+                            {/* Single Line Layout */}
+                            <div className="flex items-center justify-between">
+                              {/* Token Icons + Pool Info */}
+                              <div className="flex items-center gap-3 min-w-0">
+                                {/* Token Icons - Made bigger */}
+                                <div className="relative w-16 h-8 flex-shrink-0">
+                                  <div className="absolute top-0 left-0 w-8 h-8 rounded-full overflow-hidden bg-background z-10">
+                                    <Image 
+                                      src={getTokenIcon(position.token0)} 
+                                      alt={position.token0.symbol || 'Token 0'} 
+                                      width={32} 
+                                      height={32} 
+                                      className="w-full h-full object-cover"
+                                      onError={() => {
+                                        console.warn(`Failed to load icon for ${position.token0.symbol}`);
+                                      }}
+                                    />
+                </div>
+                                  <div className="absolute top-0 left-6 w-8 h-8 rounded-full overflow-hidden bg-background z-30">
+                                    <Image 
+                                      src={getTokenIcon(position.token1)} 
+                                      alt={position.token1.symbol || 'Token 1'} 
+                                      width={32} 
+                                      height={32} 
+                                      className="w-full h-full object-cover"
+                                      onError={() => {
+                                        console.warn(`Failed to load icon for ${position.token1.symbol}`);
+                                      }}
+                                    />
+                                  </div>
+                                  {/* Background circle for cut-out effect */}
+                                  <div className="absolute top-[-1px] left-[22px] w-9 h-9 rounded-full bg-[#0f0f0f] z-20"></div>
+                                </div>
+                                
+                                {/* Token Pair Name + Price Range */}
+                                <div className="min-w-0">
+                                  <div className="font-medium text-sm">
+                                    {position.token0.symbol || 'N/A'} / {position.token1.symbol || 'N/A'}
+                                  </div>
+                                  <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                                    {(() => {
+                                      // Determine status icon based on position range
+                                      const StatusIcon = () => {
+                                        const getIcon = () => {
+                                          if (position.isInRange) {
+                                            return <ChevronsLeftRight className="h-3 w-3 text-green-500" />;
+                                          } else {
+                                            // Determine if position is out of range to the left or right
+                                            const currentTick = estimatedCurrentTick;
+                                            const isOutOfRangeLeft = currentTick < position.tickLower;
+                                            const isOutOfRangeRight = currentTick > position.tickUpper;
+                                            
+                                            // Check if denomination is flipped to determine chevron direction
+                                            const baseToken = determineBaseTokenForPriceDisplay(
+                                              position.token0.symbol || '', 
+                                              position.token1.symbol || ''
+                                            );
+                                            const isDenominationFlipped = baseToken === position.token0.symbol;
+                                            
+                                            if (isOutOfRangeLeft) {
+                                              // If current price is below position range
+                                              // With normal denomination: price needs to go up (right arrow)
+                                              // With flipped denomination: price needs to go down (left arrow)
+                                              return isDenominationFlipped 
+                                                ? <ChevronsRight className="h-3 w-3 text-red-500" />
+                                                : <ChevronsLeft className="h-3 w-3 text-red-500" />;
+                                            } else if (isOutOfRangeRight) {
+                                              // If current price is above position range
+                                              // With normal denomination: price needs to go down (left arrow)
+                                              // With flipped denomination: price needs to go up (right arrow)
+                                              return isDenominationFlipped 
+                                                ? <ChevronsLeft className="h-3 w-3 text-red-500" />
+                                                : <ChevronsRight className="h-3 w-3 text-red-500" />;
+                                            } else {
+                                              // Fallback
+                                              return <ChevronsLeftRight className="h-3 w-3 text-green-500" />;
+                                            }
+                                          }
+                                        };
+
+                                        return (
+                                          <HoverCard>
+                                            <HoverCardTrigger asChild>
+                                              <div className="cursor-pointer">
+                                                {getIcon()}
+                                              </div>
+                                            </HoverCardTrigger>
+                                            <HoverCardContent className="w-64 h-24">
+                                              <TickRangePreview
+                                                tickLower={position.tickLower}
+                                                tickUpper={position.tickUpper}
+                                                currentTick={estimatedCurrentTick}
+                                                tickSpacing={currentPoolData?.tickSpacing || DEFAULT_TICK_SPACING}
+                                                poolId={params.poolId}
+                                                token0Symbol={position.token0.symbol}
+                                                token1Symbol={position.token1.symbol}
+                                                currentPrice={currentPrice}
+                                              />
+                                            </HoverCardContent>
+                                          </HoverCard>
+                                        );
+                                      };
+
+                                      const baseTokenForPriceDisplay = determineBaseTokenForPriceDisplay(
+                                        position.token0.symbol || '', 
+                                        position.token1.symbol || ''
+                                      );
+                                      const lowerPrice = convertTickToPrice(
+                                        position.tickLower,
+                                        currentPoolTick,
+                                        currentPrice,
+                                        baseTokenForPriceDisplay,
+                                        position.token0.symbol || '',
+                                        position.token1.symbol || ''
+                                      );
+                                      const upperPrice = convertTickToPrice(
+                                        position.tickUpper,
+                                        currentPoolTick,
+                                        currentPrice,
+                                        baseTokenForPriceDisplay,
+                                        position.token0.symbol || '',
+                                        position.token1.symbol || ''
+                                      );
+                                      
+                                      return (
+                                        <>
+                                          <StatusIcon />
+                                          <span>{lowerPrice} - {upperPrice}</span>
+                                        </>
+                                      );
+                                    })()}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Principal - Token amounts side by side */}
+                              <div className="flex flex-col min-w-0 ml-8">
+                                <div className="text-xs text-muted-foreground mb-1">Principal</div>
+                                <div className="flex items-center gap-1">
+                                  <div className="text-xs font-medium">
+                                    {(() => {
+                                      const amount = parseFloat(position.token0.amount);
+                                      if (amount < 0.0001) return "> 0.0001";
+                                      if (amount < 1) return amount.toFixed(4);
+                                      return amount.toFixed(2);
+                                    })()} {position.token0.symbol}
+                                  </div>
+                                  <div className="w-px h-4 bg-border mx-1"></div>
+                                  <div className="text-xs font-medium">
+                                    {(() => {
+                                      const amount = parseFloat(position.token1.amount);
+                                      if (amount < 0.0001) return "> 0.0001";
+                                      if (amount < 1) return amount.toFixed(4);
+                                      return amount.toFixed(2);
+                                    })()} {position.token1.symbol}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Position Value - USD value + APR */}
+                              <div className="flex flex-col min-w-0 ml-8">
+                                <div className="text-xs text-muted-foreground mb-1">Position Value</div>
+                                <div className="flex items-center gap-2">
+                                  <div className="text-xs font-medium">
+                                    ~${calculateTotalValueUSD(position).toFixed(2)}
+                                  </div>
+                                  <div className="flex items-center justify-center h-6 rounded-md bg-green-500/20 text-green-500 px-2 text-xs font-medium">
+                                    {currentPoolData?.apr || "N/A"}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Actions */}
+                              <div className="flex items-center gap-2">
+                                <a
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleBurnPosition(position);
+                                  }}
+                                  className="flex h-10 cursor-pointer items-center justify-center gap-2 rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30"
+                                  style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: '200%', backgroundPosition: 'center' }}
+                                >
+                                  {isBurningLiquidity && positionToBurn?.positionId === position.positionId 
+                                    ? <RefreshCwIcon className="h-4 w-4 animate-spin relative z-0" /> 
+                                    : null}
+                                  <span className="relative z-0 whitespace-nowrap">Withdraw</span>
+                                </a>
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button variant="ghost" className="h-8 w-8 p-0">
+                                      <span className="sr-only">Open menu</span>
+                                      <MoreHorizontal className="h-4 w-4" />
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end">
+                                    <DropdownMenuItem
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleIncreasePosition(position);
+                                      }}
+                                    >
+                                      Add Liquidity
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleCopyParameters(position);
+                                      }}
+                                    >
+                                      Copy Parameters
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                  })}
                 </div>
               </div>
             ) : (
-              <div className="border rounded-md p-8 text-center">
-                <div className="text-muted-foreground mb-2">
-                  {isConnected ? 
-                    "You don't have any positions in this pool yet." : 
-                    "Please connect your wallet to view your positions."
-                  }
+              /* Dashed outline container with centered text */
+              <div className="border border-dashed rounded-lg bg-muted/10 p-8 flex items-center justify-center">
+                <div className="text-sm font-medium text-white/75">
+                  {isConnected ? "No Positions" : "Connect Wallet"}
                 </div>
               </div>
             )}
@@ -1897,105 +2392,466 @@ export default function PoolDetailPage() {
         </div>
       </div>
 
-      {/* Burn Confirmation Dialog */}
-      <AlertDialog open={showBurnConfirmDialog} onOpenChange={setShowBurnConfirmDialog}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Confirm Burn Liquidity Position</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to permanently burn this liquidity position? This action will remove your
-              liquidity and transfer the underlying tokens (and any accrued fees) to your wallet.
-              This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
+      {/* Withdraw Position Dialog */}
+      <Dialog open={showBurnConfirmDialog} onOpenChange={(open) => {
+        // Only allow closing if not currently processing transaction
+        if (!isBurningLiquidity && !isDecreasingLiquidity) {
+          setShowBurnConfirmDialog(open);
+        }
+      }}>
+        <DialogContent className="max-w-lg bg-card border border-border shadow-lg [&>button]:hidden">
           {positionToBurn && (
-            <div className="text-sm my-4 p-3 border rounded-md bg-muted/30">
-              <p><strong>Position ID:</strong> {positionToBurn.positionId}</p>
-              <p><strong>Pair:</strong> {positionToBurn.token0.symbol} / {positionToBurn.token1.symbol}</p>
-              <p><strong>Amount {positionToBurn.token0.symbol}:</strong> {formatTokenDisplayAmount(positionToBurn.token0.amount)}</p>
-              <p><strong>Amount {positionToBurn.token1.symbol}:</strong> {formatTokenDisplayAmount(positionToBurn.token1.amount)}</p>
+            <div className="space-y-4">
+              {/* Current Position - moved out of striped container */}
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium">Current Position</span>
+                {!positionToBurn.isInRange && (
+                  <span className="text-xs text-orange-600 bg-orange-50 px-2 py-1 rounded">
+                    Out of Range
+                  </span>
+                )}
+              </div>
+              <div className="p-3 border border-dashed rounded-md bg-muted/10 space-y-2">
+                <div className="flex justify-between items-center">
+                  <div className="flex items-center gap-2">
+                    <Image 
+                      src={getTokenIcon(positionToBurn.token0.symbol)} 
+                      alt={positionToBurn.token0.symbol} 
+                      width={20} 
+                      height={20} 
+                      className="rounded-full"
+                    />
+                    <span className="text-sm font-medium">{positionToBurn.token0.symbol}</span>
+                  </div>
+                  <span className="text-sm font-medium">
+                    {formatTokenDisplayAmount(positionToBurn.token0.amount)}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <div className="flex items-center gap-2">
+                    <Image 
+                      src={getTokenIcon(positionToBurn.token1.symbol)} 
+                      alt={positionToBurn.token1.symbol} 
+                      width={20} 
+                      height={20} 
+                      className="rounded-full"
+                    />
+                    <span className="text-sm font-medium">{positionToBurn.token1.symbol}</span>
+                  </div>
+                  <span className="text-sm font-medium">
+                    {formatTokenDisplayAmount(positionToBurn.token1.amount)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Percentage Slider */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex-1">
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={sliderValue}
+                      onChange={(e) => {
+                        const newValue = parseInt(e.target.value);
+                        sliderValueRef.current = newValue;
+                        
+                        if (!isSliderDragging) {
+                          // If not dragging, update immediately
+                          setSliderValue(newValue);
+                          setWithdrawPercentage(newValue);
+                        } else {
+                          // If dragging, just update the visual slider and defer calculation
+                          if (animationFrameRef.current) {
+                            cancelAnimationFrame(animationFrameRef.current);
+                          }
+                          animationFrameRef.current = requestAnimationFrame(() => {
+                            setSliderValue(newValue);
+                          });
+                        }
+                      }}
+                      onMouseDown={() => {
+                        setIsSliderDragging(true);
+                      }}
+                      onTouchStart={() => {
+                        setIsSliderDragging(true);
+                      }}
+                      onMouseUp={() => {
+                        const finalValue = sliderValueRef.current;
+                        setIsSliderDragging(false);
+                        setSliderValue(finalValue);
+                        setWithdrawPercentage(finalValue);
+                        // Calculate amounts based on percentage
+                        const maxAmount0 = parseFloat(positionToBurn.token0.amount);
+                        const maxAmount1 = parseFloat(positionToBurn.token1.amount);
+                        const amount0 = (maxAmount0 * finalValue) / 100;
+                        const amount1 = (maxAmount1 * finalValue) / 100;
+                        setWithdrawAmount0(amount0.toFixed(6));
+                        setWithdrawAmount1(amount1.toFixed(6));
+                        setIsFullWithdraw(finalValue >= 99);
+                      }}
+                      onTouchEnd={() => {
+                        const finalValue = sliderValueRef.current;
+                        setIsSliderDragging(false);
+                        setSliderValue(finalValue);
+                        setWithdrawPercentage(finalValue);
+                        // Calculate amounts based on percentage
+                        const maxAmount0 = parseFloat(positionToBurn.token0.amount);
+                        const maxAmount1 = parseFloat(positionToBurn.token1.amount);
+                        const amount0 = (maxAmount0 * finalValue) / 100;
+                        const amount1 = (maxAmount1 * finalValue) / 100;
+                        setWithdrawAmount0(amount0.toFixed(6));
+                        setWithdrawAmount1(amount1.toFixed(6));
+                        setIsFullWithdraw(finalValue >= 99);
+                      }}
+                      className="w-full h-2 rounded-lg appearance-none cursor-pointer slider"
+                      style={{
+                        background: sliderValue > 0 
+                          ? `linear-gradient(to right, #f97316 0%, #f97316 ${sliderValue}%, rgb(41 41 41 / 0.3) ${sliderValue}%, rgb(41 41 41 / 0.3) 100%)`
+                          : 'rgb(41 41 41 / 0.3)'
+                      }}
+                    />
+                  </div>
+                  <span className="text-sm text-muted-foreground min-w-[3rem] text-right">
+                    {sliderValue}%
+                  </span>
+                </div>
+              </div>
+
+              {/* Withdraw Amounts */}
+              <div className="space-y-3">
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <Label htmlFor="withdraw-amount0" className="text-sm font-medium">
+                      Withdraw
+                    </Label>
+                    <Button 
+                      variant="ghost" 
+                      className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent" 
+                      onClick={() => handleMaxWithdraw('amount0')}
+                      disabled={isBurningLiquidity}
+                    >  
+                      {formatTokenDisplayAmount(positionToBurn.token0.amount)}
+                    </Button>
+                  </div>
+                  <div className="rounded-lg bg-muted/30 p-4">
+                    <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
+                        <Image 
+                          src={getTokenIcon(positionToBurn.token0.symbol)} 
+                          alt={positionToBurn.token0.symbol} 
+                          width={20} 
+                          height={20} 
+                          className="rounded-full"
+                        />
+                        <span className="text-sm font-medium">{positionToBurn.token0.symbol}</span>
+                      </div>
+                      <div className="flex-1">
+                        <Input
+                          id="withdraw-amount0"
+                          placeholder="0.0"
+                          value={withdrawAmount0}
+                          onChange={(e) => {
+                            const newValue = e.target.value;
+                            const maxAmount = parseFloat(positionToBurn.token0.amount);
+                            if (parseFloat(newValue) > maxAmount) {
+                              setWithdrawAmount0(maxAmount.toString());
+                              return;
+                            }
+                            setWithdrawAmount0(newValue);
+                            setWithdrawActiveInputSide('amount0');
+                            if (newValue && parseFloat(newValue) > 0) {
+                              calculateWithdrawAmount(newValue, 'amount0');
+                            } else {
+                              setWithdrawAmount1("");
+                              setIsFullWithdraw(false);
+                            }
+                          }}
+                          disabled={isBurningLiquidity}
+                          className="border-0 bg-transparent text-right text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Plus Icon */}
+                <div className="flex justify-center items-center my-2">
+                  <div className="flex items-center justify-center h-8 w-8 rounded-full bg-muted/20">
+                    <PlusIcon className="h-4 w-4 text-muted-foreground" />
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <Label htmlFor="withdraw-amount1" className="text-sm font-medium">
+                      Withdraw
+                    </Label>
+                    <Button 
+                      variant="ghost" 
+                      className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent" 
+                      onClick={() => handleMaxWithdraw('amount1')}
+                      disabled={isBurningLiquidity}
+                    >  
+                      {formatTokenDisplayAmount(positionToBurn.token1.amount)}
+                    </Button>
+                  </div>
+                  <div className="rounded-lg bg-muted/30 p-4">
+                    <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
+                        <Image 
+                          src={getTokenIcon(positionToBurn.token1.symbol)} 
+                          alt={positionToBurn.token1.symbol} 
+                          width={20} 
+                          height={20} 
+                          className="rounded-full"
+                        />
+                        <span className="text-sm font-medium">{positionToBurn.token1.symbol}</span>
+                      </div>
+                      <div className="flex-1">
+                        <Input
+                          id="withdraw-amount1"
+                          placeholder="0.0"
+                          value={withdrawAmount1}
+                          onChange={(e) => {
+                            const newValue = e.target.value;
+                            const maxAmount = parseFloat(positionToBurn.token1.amount);
+                            if (parseFloat(newValue) > maxAmount) {
+                              setWithdrawAmount1(maxAmount.toString());
+                              return;
+                            }
+                            setWithdrawAmount1(newValue);
+                            setWithdrawActiveInputSide('amount1');
+                            if (newValue && parseFloat(newValue) > 0) {
+                              calculateWithdrawAmount(newValue, 'amount1');
+                            } else {
+                              setWithdrawAmount0("");
+                              setIsFullWithdraw(false);
+                            }
+                          }}
+                          disabled={isBurningLiquidity}
+                          className="border-0 bg-transparent text-right text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
             </div>
           )}
-          <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => setPositionToBurn(null)} disabled={isBurningLiquidity}>Cancel</AlertDialogCancel>
-            <AlertDialogAction 
-              onClick={confirmBurnPosition} 
-              disabled={isBurningLiquidity}
-              className="bg-red-600 hover:bg-red-700 text-white"
+          <DialogFooter className="grid grid-cols-2 gap-3 mt-6">
+            <Button 
+              variant="outline"
+              className="relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 text-white/75 disabled:opacity-50"
+              onClick={() => setShowBurnConfirmDialog(false)}
+              disabled={isBurningLiquidity || isDecreasingLiquidity}
+              style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
             >
-              {isBurningLiquidity ? <RefreshCwIcon className="mr-2 h-4 w-4 animate-spin" /> : null}
-              Confirm Burn
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+              Cancel
+            </Button>
+            <Button 
+              className="text-sidebar-primary border border-sidebar-primary bg-[#3d271b] hover:bg-[#3d271b]/90"
+              onClick={handleConfirmWithdraw}
+              disabled={
+                isBurningLiquidity || isDecreasingLiquidity ||
+                (positionToBurn?.isInRange ? 
+                  // For in-range positions, require both amounts
+                  (!withdrawAmount0 || !withdrawAmount1 || parseFloat(withdrawAmount0) <= 0 || parseFloat(withdrawAmount1) <= 0) :
+                  // For out-of-range positions, require at least one amount
+                  ((!withdrawAmount0 || parseFloat(withdrawAmount0) <= 0) && (!withdrawAmount1 || parseFloat(withdrawAmount1) <= 0))
+                )
+              }
+            >
+              <span className={(isBurningLiquidity || isDecreasingLiquidity) ? "animate-pulse" : ""}>
+                {isFullWithdraw ? "Withdraw All" : "Withdraw"}
+              </span>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Increase Position Modal */}
       <Dialog open={showIncreaseModal} onOpenChange={setShowIncreaseModal}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Increase Liquidity Position</DialogTitle>
-            <DialogDescription>
-              Add more liquidity to your existing position.
-            </DialogDescription>
-          </DialogHeader>
+        <DialogContent className="max-w-lg bg-card border border-border shadow-lg [&>button]:hidden">
           {positionToModify && (
             <div className="space-y-4">
-              <div className="text-sm p-3 border rounded-md bg-muted/30">
-                <p><strong>Current Position:</strong></p>
-                <p>{positionToModify.token0.symbol}: {formatTokenDisplayAmount(positionToModify.token0.amount)}</p>
-                <p>{positionToModify.token1.symbol}: {formatTokenDisplayAmount(positionToModify.token1.amount)}</p>
+              {/* Current Position - moved out of striped container */}
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium">Current Position</span>
                 {!positionToModify.isInRange && (
-                  <p className="text-orange-600 text-xs mt-2">
-                    ⚠️ Out of range: You can add only one token at a time
-                  </p>
+                  <span className="text-xs text-orange-600 bg-orange-50 px-2 py-1 rounded">
+                    Out of Range
+                  </span>
                 )}
               </div>
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <div className="flex items-center gap-2">
+                    <Image 
+                      src={getTokenIcon(positionToModify.token0.symbol)} 
+                      alt={positionToModify.token0.symbol} 
+                      width={20} 
+                      height={20} 
+                      className="rounded-full"
+                    />
+                    <span className="text-sm font-medium">{positionToModify.token0.symbol}</span>
+                  </div>
+                  <span className="text-sm font-medium">
+                    {formatTokenDisplayAmount(positionToModify.token0.amount)}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <div className="flex items-center gap-2">
+                    <Image 
+                      src={getTokenIcon(positionToModify.token1.symbol)} 
+                      alt={positionToModify.token1.symbol} 
+                      width={20} 
+                      height={20} 
+                      className="rounded-full"
+                    />
+                    <span className="text-sm font-medium">{positionToModify.token1.symbol}</span>
+                  </div>
+                  <span className="text-sm font-medium">
+                    {formatTokenDisplayAmount(positionToModify.token1.amount)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Percentage Slider */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">Add Percentage</span>
+                  <span className="text-sm text-muted-foreground">
+                    {increasePercentage}%
+                  </span>
+                </div>
+                <div className="relative">
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={increasePercentage}
+                    onChange={(e) => setIncreasePercentage(parseInt(e.target.value))}
+                    className="w-full h-2 bg-muted/30 rounded-lg appearance-none cursor-pointer slider"
+                    style={{
+                      background: increasePercentage > 0 
+                        ? `linear-gradient(to right, #f97316 0%, #f97316 ${increasePercentage}%, #374151 ${increasePercentage}%, #374151 100%)`
+                        : 'linear-gradient(to right, #374151 0%, #374151 100%)'
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* Additional Amounts */}
               <div className="space-y-3">
                 <div>
-                  <Label htmlFor="increase-amount0">Additional {positionToModify.token0.symbol}</Label>
-                  <Input
-                    id="increase-amount0"
-                    type="number"
-                    placeholder="0.0"
-                    className="mt-1"
-                    value={increaseAmount0}
-                    onChange={(e) => {
-                      const newValue = e.target.value;
-                      setIncreaseAmount0(newValue);
-                      setIncreaseActiveInputSide('amount0');
-                      if (newValue && parseFloat(newValue) > 0) {
-                        calculateIncreaseAmount(newValue, 'amount0');
-                      } else {
-                        setIncreaseAmount1("");
-                      }
-                    }}
-                    disabled={isIncreaseCalculating && increaseActiveInputSide === 'amount1'}
-                  />
+                  <div className="flex items-center justify-between mb-2">
+                    <Label htmlFor="increase-amount0" className="text-sm font-medium">
+                      Add
+                    </Label>
+                    <Button 
+                      variant="ghost" 
+                      className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent" 
+                      onClick={() => handleUseFullBalance(token0BalanceData?.formatted || "0", 'aUSDC' as TokenSymbol, true)}
+                      disabled={isIncreasingLiquidity || isIncreaseCalculating}
+                    >  
+                      {positionToModify.token0.symbol}: {displayToken0Balance}
+                    </Button>
+                  </div>
+                  <div className="rounded-lg bg-muted/30 p-4">
+                    <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
+                        <Image 
+                          src={getTokenIcon(positionToModify.token0.symbol)} 
+                          alt={positionToModify.token0.symbol} 
+                          width={20} 
+                          height={20} 
+                          className="rounded-full"
+                        />
+                        <span className="text-sm font-medium">{positionToModify.token0.symbol}</span>
+                      </div>
+                      <div className="flex-1">
+                        <Input
+                          id="increase-amount0"
+                          placeholder="0.0"
+                          value={increaseAmount0}
+                          onChange={(e) => {
+                            const newValue = e.target.value;
+                            setIncreaseAmount0(newValue);
+                            setIncreaseActiveInputSide('amount0');
+                            if (newValue && parseFloat(newValue) > 0) {
+                              calculateIncreaseAmount(newValue, 'amount0');
+                            } else {
+                              setIncreaseAmount1("");
+                            }
+                          }}
+                          disabled={isIncreaseCalculating && increaseActiveInputSide === 'amount1'}
+                          className="border-0 bg-transparent text-right text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
+                        />
+                      </div>
+                    </div>
+                  </div>
                   {isIncreaseCalculating && increaseActiveInputSide === 'amount0' && (
                     <div className="text-xs text-muted-foreground mt-1">Calculating...</div>
                   )}
                 </div>
+
+                {/* Plus Icon */}
+                <div className="flex justify-center items-center my-2">
+                  <div className="flex items-center justify-center h-8 w-8 rounded-full bg-muted/20">
+                    <PlusIcon className="h-4 w-4 text-muted-foreground" />
+                  </div>
+                </div>
+
                 <div>
-                  <Label htmlFor="increase-amount1">Additional {positionToModify.token1.symbol}</Label>
-                  <Input
-                    id="increase-amount1"
-                    type="number"
-                    placeholder="0.0"
-                    className="mt-1"
-                    value={increaseAmount1}
-                    onChange={(e) => {
-                      const newValue = e.target.value;
-                      setIncreaseAmount1(newValue);
-                      setIncreaseActiveInputSide('amount1');
-                      if (newValue && parseFloat(newValue) > 0) {
-                        calculateIncreaseAmount(newValue, 'amount1');
-                      } else {
-                        setIncreaseAmount0("");
-                      }
-                    }}
-                    disabled={isIncreaseCalculating && increaseActiveInputSide === 'amount0'}
-                  />
+                  <div className="flex items-center justify-between mb-2">
+                    <Label htmlFor="increase-amount1" className="text-sm font-medium">
+                      Add
+                    </Label>
+                    <Button 
+                      variant="ghost" 
+                      className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent" 
+                      onClick={() => handleUseFullBalance(token1BalanceData?.formatted || "0", 'aUSDT' as TokenSymbol, false)}
+                      disabled={isIncreasingLiquidity || isIncreaseCalculating}
+                    >  
+                      {positionToModify.token1.symbol}: {displayToken1Balance}
+                    </Button>
+                  </div>
+                  <div className="rounded-lg bg-muted/30 p-4">
+                    <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
+                        <Image 
+                          src={getTokenIcon(positionToModify.token1.symbol)} 
+                          alt={positionToModify.token1.symbol} 
+                          width={20} 
+                          height={20} 
+                          className="rounded-full"
+                        />
+                        <span className="text-sm font-medium">{positionToModify.token1.symbol}</span>
+                      </div>
+                      <div className="flex-1">
+                        <Input
+                          id="increase-amount1"
+                          placeholder="0.0"
+                          value={increaseAmount1}
+                          onChange={(e) => {
+                            const newValue = e.target.value;
+                            setIncreaseAmount1(newValue);
+                            setIncreaseActiveInputSide('amount1');
+                            if (newValue && parseFloat(newValue) > 0) {
+                              calculateIncreaseAmount(newValue, 'amount1');
+                            } else {
+                              setIncreaseAmount0("");
+                            }
+                          }}
+                          disabled={isIncreaseCalculating && increaseActiveInputSide === 'amount0'}
+                          className="border-0 bg-transparent text-right text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
+                        />
+                      </div>
+                    </div>
+                  </div>
                   {isIncreaseCalculating && increaseActiveInputSide === 'amount1' && (
                     <div className="text-xs text-muted-foreground mt-1">Calculating...</div>
                   )}
@@ -2003,15 +2859,21 @@ export default function PoolDetailPage() {
               </div>
             </div>
           )}
-          <DialogFooter>
+          <DialogFooter className="grid grid-cols-2 gap-3 mt-6">
             <Button 
-              variant="outline" 
+              variant="outline"
+              className="relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 text-white/75 disabled:opacity-50"
               onClick={() => setShowIncreaseModal(false)}
               disabled={isIncreasingLiquidity}
+              style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
             >
               Cancel
             </Button>
             <Button 
+              className={isIncreasingLiquidity || isIncreaseCalculating
+                ? "relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 !opacity-100 cursor-default text-white/75"
+                : "text-sidebar-primary border border-sidebar-primary bg-[#3d271b] hover:bg-[#3d271b]/90"
+              }
               onClick={handleConfirmIncrease}
               disabled={
                 isIncreasingLiquidity ||
@@ -2023,11 +2885,17 @@ export default function PoolDetailPage() {
                   ((!increaseAmount0 || parseFloat(increaseAmount0) <= 0) && (!increaseAmount1 || parseFloat(increaseAmount1) <= 0))
                 )
               }
+              style={(isIncreasingLiquidity || isIncreaseCalculating) 
+                ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } 
+                : undefined
+              }
             >
               {isIncreasingLiquidity ? (
                 <>
                   <RefreshCwIcon className="mr-2 h-4 w-4 animate-spin" />
-                  Adding...
+                  <span className="animate-pulse">
+                    Adding...
+                  </span>
                 </>
               ) : (
                 "Add Liquidity"

@@ -73,7 +73,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased }: UseDecreaseLiquid
 
     setIsDecreasing(true);
     const actionName = positionData.isFullBurn ? "burn" : "decrease";
-    const toastId = toast.loading(`Preparing ${actionName} transaction...`);
+    // Removed building transaction toast - visual feedback is in the button
 
     try {
       const isPercentage = decreasePercentage > 0 && decreasePercentage <= 100;
@@ -225,13 +225,9 @@ export function useDecreaseLiquidity({ onLiquidityDecreased }: UseDecreaseLiquid
         chainId: chainId,
       });
 
-      // Dismiss the preparation toast since transaction is now being submitted
-      toast.dismiss(toastId);
-
     } catch (error: any) {
       console.error(`Error preparing ${actionName} transaction:`, error);
       toast.error(`${actionName.charAt(0).toUpperCase() + actionName.slice(1)} Preparation Failed`, { 
-        id: toastId, 
         description: error.message || "Could not prepare the transaction." 
       });
       setIsDecreasing(false);
