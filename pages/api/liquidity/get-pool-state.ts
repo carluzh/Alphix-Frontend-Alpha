@@ -176,6 +176,12 @@ export default async function handler(
             return res.status(500).json({ message: "Internal error calculating price."});
         }
 
+        console.log("[get-pool-state] API Response:", {
+            currentPoolTick: slot0.tick,
+            currentPrice: priceOfReqToken1InReqToken0,
+            sqrtPriceX96: slot0.sqrtPriceX96_JSBI.toString(),
+        });
+
         res.status(200).json({
             currentPoolTick: slot0.tick,
             currentPrice: priceOfReqToken1InReqToken0,

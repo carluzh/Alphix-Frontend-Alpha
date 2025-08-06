@@ -119,7 +119,7 @@ export function AppSidebar({ variant = "floating", ...props }: React.ComponentPr
               <div className="flex items-center w-full justify-between">
                 <a 
                   href="/" // Restore href
-                  className={cn(isMobile && "pt-4")}
+                  className="flex items-center"
                 >
                   <img 
                     src="/Logo Type (white).svg"

@@ -157,3 +157,47 @@ appkit-button:hover {
   border: none; /* In case it's a border, though usually it's outline */
 }
 
+/* Ensure chart tooltips have solid backgrounds */
+.recharts-tooltip-wrapper .recharts-default-tooltip {
+  background-color: hsl(var(--card)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+  color: hsl(var(--card-foreground)) !important;
+}
+
+/* Ensure toast notifications have solid backgrounds */
+[data-sonner-toaster] [data-sonner-toast] {
+  background-color: hsl(var(--card)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+  color: hsl(var(--card-foreground)) !important;
+}
+
+/* Hide Fees column below 1500px */
+@media (max-width: 1499px) {
+  .hide-fees-col {
+    display: none !important;
+  }
+}
+
+/* More specific selector to override Tailwind */
+@media (max-width: 1499px) {
+  div.hide-fees-col {
+    display: none !important;
+    visibility: hidden !important;
+  }
+}
+
+/* Even more aggressive approach */
+@media screen and (max-width: 1499px) {
+  .hide-fees-col,
+  div.hide-fees-col,
+  .grid .hide-fees-col {
+    display: none !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
+    width: 0 !important;
+    height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+}
+

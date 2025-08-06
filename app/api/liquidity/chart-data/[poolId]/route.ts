@@ -8,7 +8,9 @@ interface ChartDataPoint {
   date: string; // YYYY-MM-DD
   volumeUSD: number;
   tvlUSD: number; // Added back as it exists on PoolDayData via schema
-  // feesUSD?: number; // We have fees, but the chart config doesn't use it yet
+  volumeTvlRatio: number;
+  emaRatio: number;
+  dynamicFee: number; // Fee percentage (e.g., 0.31 for 0.31%)
 }
 
 interface PoolChartData {
@@ -62,8 +64,11 @@ const getSubgraphPoolId = (friendlyPoolId: string): string => {
   }
   
   // Fallback for legacy handling
-  if (friendlyPoolId.toLowerCase() === 'ausdc-ausdt') {
-    return "0xfaa0e80397dda369eb68f6f67c9cd4d4884841f1417078e20844addc11170127";
+  if (friendlyPoolId.toLowerCase() === 'aeth-ausdt') {
+    return "0x4e1b037b56e13bea1dfe20e8f592b95732cc52b5b10777b9f9bea856c145e7c7";
+  }
+  if (friendlyPoolId.toLowerCase() === 'abtc-ausdc') {
+    return "0x8392f09ccc3c387d027d189f13a1f1f2e9d73f34011191a3d58157b9b2bf8bdd";
   }
   
   // If no mapping found, assume it's already a hex ID
@@ -138,45 +143,81 @@ export async function GET(
     // Get token prices with fallbacks
     const tokenPrices = tokenSymbols.length > 0 ? await batchGetTokenPrices(tokenSymbols) : {};
 
-    const processedChartData: ChartDataPoint[] = rawDailyData.map((dailyEntry: any) => {
-      const token0Symbol = dailyEntry.pool.currency0.symbol;
-      const token1Symbol = dailyEntry.pool.currency1.symbol;
-      
-      // Get prices without fallbacks to see real errors
-      const token0Price = tokenPrices[token0Symbol];
-      const token1Price = tokenPrices[token1Symbol];
-      
-      if (!token0Price || !token1Price) {
-        console.error(`Missing prices for chart data ${friendlyPoolId}:`, {
-          token0Symbol,
-          token1Symbol,
-          token0Price,
-          token1Price,
-          availablePrices: Object.keys(tokenPrices)
-        });
-        throw new Error(`Missing price data for chart: ${token0Symbol}=${token0Price}, ${token1Symbol}=${token1Price}`);
-      }
-      
-      const volumeUSD = calculateSwapVolumeUSD(
-        dailyEntry.volumeToken0 || "0",
-        dailyEntry.volumeToken1 || "0",
-        token0Price,
-        token1Price
-      );
+     // First pass: Calculate basic data without dependencies
+     const processedChartData: ChartDataPoint[] = rawDailyData.map((dailyEntry: any) => {
+       const token0Symbol = dailyEntry.pool.currency0.symbol;
+       const token1Symbol = dailyEntry.pool.currency1.symbol;
+       
+       // Get prices without fallbacks to see real errors
+       const token0Price = tokenPrices[token0Symbol];
+       const token1Price = tokenPrices[token1Symbol];
+       
+       if (!token0Price || !token1Price) {
+         console.error(`Missing prices for chart data ${friendlyPoolId}:`, {
+           token0Symbol,
+           token1Symbol,
+           token0Price,
+           token1Price,
+           availablePrices: Object.keys(tokenPrices)
+         });
+         throw new Error(`Missing price data for chart: ${token0Symbol}=${token0Price}, ${token1Symbol}=${token1Price}`);
+       }
+       
+       const volumeUSD = calculateSwapVolumeUSD(
+         dailyEntry.volumeToken0 || "0",
+         dailyEntry.volumeToken1 || "0",
+         token0Price,
+         token1Price
+       );
 
-      const tvlUSD = calculateTotalUSD(
-        dailyEntry.tvlToken0 || "0",
-        dailyEntry.tvlToken1 || "0",
-        token0Price,
-        token1Price
-      );
+       const tvlUSD = calculateTotalUSD(
+         dailyEntry.tvlToken0 || "0",
+         dailyEntry.tvlToken1 || "0",
+         token0Price,
+         token1Price
+       );
 
-      return {
-        date: new Date(parseInt(dailyEntry.date) * 1000).toISOString().split('T')[0],
-        volumeUSD,
-        tvlUSD,
-      };
-    }).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()); 
+       // Calculate Volume/TVL Ratio
+       const volumeTvlRatio = tvlUSD > 0 ? volumeUSD / tvlUSD : 0;
+       
+       return {
+         date: new Date(parseInt(dailyEntry.date) * 1000).toISOString().split('T')[0],
+         volumeUSD,
+         tvlUSD,
+         volumeTvlRatio,
+         emaRatio: volumeTvlRatio, // Initial value, will be calculated in second pass
+         dynamicFee: 0.3, // Initial value, will be calculated in second pass
+       };
+     }).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+     // Second pass: Calculate EMA and dynamic fees
+     for (let i = 1; i < processedChartData.length; i++) {
+       const current = processedChartData[i];
+       const prev = processedChartData[i - 1];
+       
+       // Calculate EMA
+       const k = 2 / (10 + 1); // EMA period of 10
+       current.emaRatio = current.volumeTvlRatio * k + prev.emaRatio * (1 - k);
+       
+       // Calculate Dynamic Fee
+       const deadband = 0.02;
+       let feeAdjustmentDirection = 0;
+       
+       if (current.volumeTvlRatio > current.emaRatio + deadband) {
+         feeAdjustmentDirection = 1; // Increase fee
+       } else if (current.volumeTvlRatio < current.emaRatio - deadband) {
+         feeAdjustmentDirection = -1; // Decrease fee
+       }
+       
+       const feeStepPercent = 0.01;
+       const proposedStepPercent = feeStepPercent * feeAdjustmentDirection;
+       
+       if (feeAdjustmentDirection !== 0) {
+         current.dynamicFee = Math.max(0.05, Math.min(1.0, prev.dynamicFee + proposedStepPercent));
+       } else {
+         current.dynamicFee = prev.dynamicFee;
+       }
+     } 
 
     const result: PoolChartData = {
       poolId: friendlyPoolId, // Return data associated with the friendly ID

@@ -23,6 +23,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+// import { useWeb3Modal } from '@web3modal/wagmi/react';
 
 // Chart data interfaces
 interface CustomAxisLabel {
@@ -80,7 +81,6 @@ export interface AddLiquidityFormProps {
   defaultTickSpacing: number;
   poolApr?: string;
   activeTab: 'deposit' | 'withdraw' | 'swap'; // Added activeTab prop
-  onHeightChange?: (height: number | null) => void; // Added onHeightChange prop
 }
 
 export function AddLiquidityForm({ 
@@ -91,7 +91,6 @@ export function AddLiquidityForm({
   defaultTickSpacing,
   poolApr,
   activeTab, // Accept activeTab from props
-  onHeightChange // Accept onHeightChange from props
 }: AddLiquidityFormProps) {
   // Basic state management - initialize tokens based on selected pool
   const getInitialTokens = () => {
@@ -670,8 +669,6 @@ export function AddLiquidityForm({
     };
   }, [showPresetSelector, editingSide]);
 
-
-
   // Handle price input change with immediate updates
   const handlePriceInputChange = (side: 'min' | 'max', value: string) => {
     if (side === 'min') {
@@ -739,46 +736,57 @@ export function AddLiquidityForm({
       return null;
     }
 
+    // Need current price and pool tick as reference points to match display calculation
+    if (!currentPrice || currentPoolTick === null) {
+      return null;
+    }
+
+    const currentPriceNum = parseFloat(currentPrice);
+    if (isNaN(currentPriceNum) || currentPriceNum <= 0) {
+      return null;
+    }
+
     let newTick: number;
     
     if (baseTokenForPriceDisplay === token0Symbol) {
-      // Price is denominated in token0
-      if (isMaxPrice) {
-        // Max price input for token0 denomination
-        newTick = Math.log(numericPrice) / Math.log(1.0001);
-      } else {
-        // Min price input for token0 denomination
-        newTick = Math.log(numericPrice) / Math.log(1.0001);
-      }
+      // Price is denominated in token0 - we need to invert to match display logic
+      // Display calculation: 1 / (currentPrice * Math.pow(1.0001, tick - currentPoolTick))
+      // So: price = 1 / (currentPrice * Math.pow(1.0001, tick - currentPoolTick))
+      // Solving for tick: Math.pow(1.0001, tick - currentPoolTick) = 1 / (price * currentPrice)
+      // tick - currentPoolTick = log(1 / (price * currentPrice)) / log(1.0001)
+      // tick = currentPoolTick + log(1 / (price * currentPrice)) / log(1.0001)
+      newTick = currentPoolTick + Math.log(1 / (numericPrice * currentPriceNum)) / Math.log(1.0001);
     } else {
-      // Price is denominated in token1
-      if (isMaxPrice) {
-        // Max price input for token1 denomination (sets tickLower)
-        newTick = Math.log(1 / numericPrice) / Math.log(1.0001);
-      } else {
-        // Min price input for token1 denomination (sets tickUpper)
-        newTick = Math.log(1 / numericPrice) / Math.log(1.0001);
-      }
+      // Price is denominated in token1 - direct calculation to match display logic
+      // Display calculation: currentPrice * Math.pow(1.0001, tick - currentPoolTick)
+      // So: price = currentPrice * Math.pow(1.0001, tick - currentPoolTick)
+      // Solving for tick: Math.pow(1.0001, tick - currentPoolTick) = price / currentPrice
+      // tick - currentPoolTick = log(price / currentPrice) / log(1.0001)
+      // tick = currentPoolTick + log(price / currentPrice) / log(1.0001)
+      newTick = currentPoolTick + Math.log(numericPrice / currentPriceNum) / Math.log(1.0001);
+    }
+
+    // Check for invalid results
+    if (!isFinite(newTick) || isNaN(newTick)) {
+      return null;
     }
 
     // Round to nearest valid tick spacing
-    if (isMaxPrice) {
-      newTick = Math.floor(newTick / defaultTickSpacing) * defaultTickSpacing;
-    } else {
-      newTick = Math.ceil(newTick / defaultTickSpacing) * defaultTickSpacing;
-    }
+    newTick = Math.round(newTick / defaultTickSpacing) * defaultTickSpacing;
 
     // Clamp to valid range
     newTick = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTick));
 
-    return newTick;
-  }, [baseTokenForPriceDisplay, token0Symbol, defaultTickSpacing, sdkMinTick, sdkMaxTick]);
+    return Math.round(newTick); // Ensure integer result
+  }, [baseTokenForPriceDisplay, token0Symbol, defaultTickSpacing, sdkMinTick, sdkMaxTick, currentPrice, currentPoolTick]);
 
   // Handle applying edited prices
   const handleApplyPriceRange = () => {
     setEditingSide(null);
     
     let hasChanges = false;
+    let newTickLower = parseInt(tickLower);
+    let newTickUpper = parseInt(tickUpper);
     
     // Process min price input
     if (editingMinPrice !== minPriceInputString) {
@@ -786,23 +794,12 @@ export function AddLiquidityForm({
       if (newTick !== null) {
         if (baseTokenForPriceDisplay === token0Symbol) {
           // Min price sets tickLower for token0 denomination
-          if (newTick < parseInt(tickUpper)) {
-            setTickLower(newTick.toString());
-            setInitialDefaultApplied(true);
-            hasChanges = true;
-          } else {
-            toast.error("Invalid Range: Min price must be less than max price.");
-          }
+          newTickLower = newTick;
         } else {
-          // Min price sets tickUpper for token1 denomination
-          if (newTick > parseInt(tickLower)) {
-            setTickUpper(newTick.toString());
-            setInitialDefaultApplied(true);
-            hasChanges = true;
-          } else {
-            toast.error("Invalid Range: Min price must result in a max tick greater than min tick.");
-          }
+          // Min price sets tickUpper for token1 denomination (inverted)
+          newTickUpper = newTick;
         }
+        hasChanges = true;
       }
     }
     
@@ -812,22 +809,28 @@ export function AddLiquidityForm({
       if (newTick !== null) {
         if (baseTokenForPriceDisplay === token0Symbol) {
           // Max price sets tickUpper for token0 denomination
-          if (newTick > parseInt(tickLower)) {
-            setTickUpper(newTick.toString());
-            setInitialDefaultApplied(true);
-            hasChanges = true;
-          } else {
-            toast.error("Invalid Range: Max price must be greater than min price.");
-          }
+          newTickUpper = newTick;
         } else {
-          // Max price sets tickLower for token1 denomination
-          if (newTick < parseInt(tickUpper)) {
-            setTickLower(newTick.toString());
-            setInitialDefaultApplied(true);
-            hasChanges = true;
-          } else {
-            toast.error("Invalid Range: Max price must result in a min tick less than max tick.");
-          }
+          // Max price sets tickLower for token1 denomination (inverted)
+          newTickLower = newTick;
+        }
+        hasChanges = true;
+      }
+    }
+    
+    // Validate that tickLower < tickUpper (this is always true regardless of price denomination)
+    if (hasChanges) {
+      if (newTickLower >= newTickUpper) {
+        toast.error("Invalid Range: Price range results in invalid tick positions. Please adjust your values.");
+      } else {
+        // Apply the changes
+        if (newTickLower !== parseInt(tickLower)) {
+          setTickLower(newTickLower.toString());
+          setInitialDefaultApplied(true);
+        }
+        if (newTickUpper !== parseInt(tickUpper)) {
+          setTickUpper(newTickUpper.toString());
+          setInitialDefaultApplied(true);
         }
       }
     }
@@ -1852,7 +1855,7 @@ export function AddLiquidityForm({
     return `${formattedLower} - ${formattedUpper}`;
   }, [currentPoolTick, currentPrice, tickLower, tickUpper, sdkMinTick, sdkMaxTick, token0Symbol, token1Symbol]);
 
-
+  // const { open } = useWeb3Modal();
 
   return (
     <div className="space-y-4">
@@ -2009,108 +2012,119 @@ export function AddLiquidityForm({
               <div className="flex items-center justify-between mb-2">
                 <Label className="text-sm font-medium">Price Range</Label>
                 <div className="flex items-center gap-2">
-                  {showPresetSelector ? (
-                    // Inline preset selector
-                    <div className="flex items-center gap-1 preset-selector">
-                      {["Full Range", "±15%", "±8%", "±3%"].map((preset) => (
-                        <div
-                          key={preset}
-                          className={cn(
-                            "px-2 py-1 text-xs rounded transition-colors cursor-pointer",
-                            activePreset === preset 
-                              ? "text-white font-medium" 
-                              : "text-muted-foreground hover:text-foreground/80"
-                          )}
-                          onClick={() => handleSelectPreset(preset)}
-                        >
-                          {preset}
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    // Single preset button that opens selector
-                    <div 
-                      className="h-auto p-0 text-xs text-muted-foreground hover:text-foreground/80 transition-colors cursor-pointer rounded px-1" 
-                      onClick={() => setShowPresetSelector(true)}
-                    >
-                      {activePreset || "Custom"}
-                    </div>
-                  )}
-                  {!showPresetSelector && getPriceRangeDisplay() && (
+                  {!currentPrice || !minPriceInputString || !maxPriceInputString ? (
+                    // Loading skeletons
                     <>
+                      <div className="h-4 w-12 bg-muted/50 rounded animate-pulse" />
                       <div className="w-px h-4 bg-border" />
-                      {editingSide ? (
-                        // Single input field for editing with other text visible
-                        <div className="flex items-center gap-1 text-xs price-range-editor">
-                          {editingSide === 'min' ? (
-                            <input
-                              value={editingMinPrice}
-                              onChange={(e) => handlePriceInputChange('min', e.target.value)}
-                              onBlur={handleApplyPriceRange}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') handleApplyPriceRange();
-                                if (e.key === 'Escape') handleCancelPriceRangeEdit();
-                              }}
-                              className={cn(
-                                "w-16 h-auto p-0 text-xs text-center bg-transparent border-0 appearance-none focus:outline-none focus:ring-0 focus-visible:ring-offset-0 focus-visible:ring-0 font-sans transition-colors",
-                                convertPriceToValidTick(editingMinPrice, false) !== null 
-                                  ? "text-white" 
-                                  : "text-muted-foreground"
-                              )}
-                              autoFocus
-                            />
-                          ) : (
+                      <div className="h-4 w-20 bg-muted/50 rounded animate-pulse" />
+                    </>
+                  ) : (
+                    <>
+                      {showPresetSelector ? (
+                        // Inline preset selector
+                        <div className="flex items-center gap-1 preset-selector">
+                          {["Full Range", "±15%", "±8%", "±3%"].map((preset) => (
                             <div
-                              className="text-muted-foreground hover:text-white cursor-pointer px-1 py-1 transition-colors font-sans"
-                              onClick={() => handleClickToEditPrice('min')}
-                            >
-                              {minPriceInputString || "0.00"}
-                            </div>
-                          )}
-                          <span className="text-muted-foreground font-sans">-</span>
-                          {editingSide === 'max' ? (
-                            <input
-                              value={editingMaxPrice}
-                              onChange={(e) => handlePriceInputChange('max', e.target.value)}
-                              onBlur={handleApplyPriceRange}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') handleApplyPriceRange();
-                                if (e.key === 'Escape') handleCancelPriceRangeEdit();
-                              }}
+                              key={preset}
                               className={cn(
-                                "w-16 h-auto p-0 text-xs text-center bg-transparent border-0 appearance-none focus:outline-none focus:ring-0 focus-visible:ring-offset-0 focus-visible:ring-0 font-sans transition-colors",
-                                convertPriceToValidTick(editingMaxPrice, true) !== null 
-                                  ? "text-white" 
-                                  : "text-muted-foreground"
+                                "px-2 py-1 text-xs rounded transition-colors cursor-pointer",
+                                activePreset === preset 
+                                  ? "text-white font-medium" 
+                                  : "text-muted-foreground hover:text-foreground/80"
                               )}
-                              autoFocus
-                            />
-                          ) : (
-                            <div
-                              className="text-muted-foreground hover:text-white cursor-pointer px-1 py-1 transition-colors font-sans"
-                              onClick={() => handleClickToEditPrice('max')}
+                              onClick={() => handleSelectPreset(preset)}
                             >
-                              {maxPriceInputString || "∞"}
+                              {preset}
                             </div>
-                          )}
+                          ))}
                         </div>
                       ) : (
-                        // Clickable price range display with hover effects
-                        <div className="flex items-center gap-0 text-xs">
-                          <div 
-                            className="text-muted-foreground hover:text-white cursor-pointer px-1 py-1 transition-colors"
-                            onClick={() => handleClickToEditPrice('min')}
-                          >
-                            {minPriceInputString || "0.00"}
-                          </div>
-                          <span className="text-muted-foreground">-</span>
-                          <div 
-                            className="text-muted-foreground hover:text-white cursor-pointer px-1 py-1 transition-colors"
-                            onClick={() => handleClickToEditPrice('max')}
-                          >
-                            {maxPriceInputString || "∞"}
-                          </div>
+                        // Single preset button that opens selector
+                        <div 
+                          className="h-auto p-0 text-xs text-muted-foreground hover:text-foreground/80 transition-colors cursor-pointer rounded px-1" 
+                          onClick={() => setShowPresetSelector(true)}
+                        >
+                          {activePreset || "Custom"}
                         </div>
+                      )}
+                      {!showPresetSelector && getPriceRangeDisplay() && (
+                        <>
+                          <div className="w-px h-4 bg-border" />
+                          {editingSide ? (
+                            // Single input field for editing with other text visible
+                            <div className="flex items-center gap-1 text-xs price-range-editor">
+                              {editingSide === 'min' ? (
+                                <input
+                                  value={editingMinPrice}
+                                  onChange={(e) => handlePriceInputChange('min', e.target.value)}
+                                  onBlur={handleApplyPriceRange}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') handleApplyPriceRange();
+                                    if (e.key === 'Escape') handleCancelPriceRangeEdit();
+                                  }}
+                                  className={cn(
+                                    "w-16 h-auto p-0 text-xs text-center bg-transparent border-0 appearance-none focus:outline-none focus:ring-0 focus-visible:ring-offset-0 focus-visible:ring-0 font-sans transition-colors",
+                                    convertPriceToValidTick(editingMinPrice, false) !== null 
+                                      ? "text-white" 
+                                      : "text-muted-foreground"
+                                  )}
+                                  autoFocus
+                                />
+                              ) : (
+                                <div
+                                  className="text-muted-foreground hover:text-white cursor-pointer px-1 py-1 transition-colors font-sans"
+                                  onClick={() => handleClickToEditPrice('min')}
+                                >
+                                  {minPriceInputString || "0.00"}
+                                </div>
+                              )}
+                              <span className="text-muted-foreground font-sans">-</span>
+                              {editingSide === 'max' ? (
+                                <input
+                                  value={editingMaxPrice}
+                                  onChange={(e) => handlePriceInputChange('max', e.target.value)}
+                                  onBlur={handleApplyPriceRange}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') handleApplyPriceRange();
+                                    if (e.key === 'Escape') handleCancelPriceRangeEdit();
+                                  }}
+                                  className={cn(
+                                    "w-16 h-auto p-0 text-xs text-center bg-transparent border-0 appearance-none focus:outline-none focus:ring-0 focus-visible:ring-offset-0 focus-visible:ring-0 font-sans transition-colors",
+                                    convertPriceToValidTick(editingMaxPrice, true) !== null 
+                                      ? "text-white" 
+                                      : "text-muted-foreground"
+                                  )}
+                                  autoFocus
+                                />
+                              ) : (
+                                <div
+                                  className="text-muted-foreground hover:text-white cursor-pointer px-1 py-1 transition-colors font-sans"
+                                  onClick={() => handleClickToEditPrice('max')}
+                                >
+                                  {maxPriceInputString || "∞"}
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            // Clickable price range display with hover effects
+                            <div className="flex items-center gap-0 text-xs">
+                              <div 
+                                className="text-muted-foreground hover:text-white cursor-pointer px-1 py-1 transition-colors"
+                                onClick={() => handleClickToEditPrice('min')}
+                              >
+                                {minPriceInputString || "0.00"}
+                              </div>
+                              <span className="text-muted-foreground">-</span>
+                              <div 
+                                className="text-muted-foreground hover:text-white cursor-pointer px-1 py-1 transition-colors"
+                                onClick={() => handleClickToEditPrice('max')}
+                              >
+                                {maxPriceInputString || "∞"}
+                              </div>
+                            </div>
+                          )}
+                        </>
                       )}
                     </>
                   )}
@@ -2122,8 +2136,18 @@ export function AddLiquidityForm({
                 <div 
                   className="p-3 border border-dashed rounded-md bg-muted/10 mb-4 hover:bg-muted/20 transition-colors"
                 >
-                  {isPoolStateLoading || !poolToken0 || !poolToken1 ? (
-                    <div className="w-full h-[80px] bg-muted/40 rounded animate-pulse"></div>
+                  {isPoolStateLoading || !isConnected ? (
+                    <div className="w-full h-[80px] relative overflow-hidden flex flex-col items-center justify-center bg-muted/50 rounded-md"
+                      // style={{ backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+                    >
+                      <Image 
+                        src="/LogoIconWhite.svg" 
+                        alt="Alphix Logo" 
+                        width={32}
+                        height={32}
+                        className="animate-pulse opacity-75"
+                      />
+                    </div>
                   ) : (
                     <>
                       <InteractiveRangeChart
@@ -2198,6 +2222,7 @@ export function AddLiquidityForm({
                 <div className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30"
                   style={{ backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
                 >
+                  <appkit-button className="absolute inset-0 z-10 block h-full w-full cursor-pointer p-0 opacity-0" />
                   <span className="relative z-0 pointer-events-none">Connect Wallet</span>
                 </div>
               ) : (
@@ -2233,12 +2258,12 @@ export function AddLiquidityForm({
                     (step === 'approve' && (isApproveWritePending || isApproving)) ||
                     (step === 'permit2Sign' && isWorking) ||
                     (step === 'mint' && (isMintSendPending || isMintConfirming)) ||
-                    (step === 'input' && isWorking)
+                    (step === 'input' && isWorking) ||
+                    isPoolStateLoading
                       ? "animate-pulse"
                       : ""
                   )}>
-                    {isPoolStateLoading ? 'Loading Pool...' 
-                      : step === 'approve' ? `Approve ${preparedTxData?.approvalTokenSymbol || 'Tokens'}`
+                    {step === 'approve' ? `Approve ${preparedTxData?.approvalTokenSymbol || 'Tokens'}`
                       : step === 'permit2Sign' ? 'Sign'
                       : step === 'mint' ? 'Deposit'
                       : 'Deposit'

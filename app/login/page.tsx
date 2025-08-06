@@ -81,7 +81,15 @@ export function LoginForm({
               disabled={isLoading}
               style={!password.trim() ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
             >
-              Login
+              {isLoading ? (
+                <span className="animate-pulse relative overflow-hidden"
+                  style={{ backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+                >
+                  Login
+                </span>
+              ) : (
+                "Login"
+              )}
             </Button>
           </div>
         </form>

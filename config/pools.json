@@ -60,7 +60,7 @@
   },
   "pools": [
     {
-      "id": "aeth-musdt",
+      "id": "aeth-ausdt",
       "name": "aETH/aUSDT",
       "description": "Alphix Ethereum / Alphix USDT pool",
       "subgraphId": "0x4e1b037b56e13bea1dfe20e8f592b95732cc52b5b10777b9f9bea856c145e7c7",
@@ -80,7 +80,7 @@
       "type": "Volatile"
     },
     {
-      "id": "btcrl-yusdc",
+      "id": "abtc-ausdc",
       "name": "aBTC/aUSDC",
       "description": "Alphix Bitcoin / Alphix USDC pool",
       "subgraphId": "0x8392f09ccc3c387d027d189f13a1f1f2e9d73f34011191a3d58157b9b2bf8bdd",

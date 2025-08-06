@@ -13,10 +13,11 @@ import Image from "next/image";
 import { useRouter, useParams } from "next/navigation";
 import { useAccount } from "wagmi";
 import { toast } from "sonner";
+import { useIsMobile } from "@/hooks/use-is-mobile";
 import type { ProcessedPosition } from "../../../pages/api/liquidity/get-positions";
 import { TOKEN_DEFINITIONS, TokenSymbol } from "@/lib/pools-config";
 import { formatUnits as viemFormatUnits, type Hex } from "viem";
-import { Bar, BarChart, CartesianGrid, XAxis } from "recharts";
+import { Bar, BarChart, Line, LineChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { getPoolById, getPoolSubgraphId, getToken } from "@/lib/pools-config";
 import {
   ChartConfig,
@@ -77,15 +78,23 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { EllipsisVerticalIcon, CopyIcon } from "lucide-react";
+import { EllipsisVerticalIcon, CopyIcon, ChevronDownIcon } from "lucide-react";
 import { shortenAddress } from "@/lib/utils";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 // Define the structure of the chart data points from the API
 interface ChartDataPoint {
   date: string; // YYYY-MM-DD
   volumeUSD: number;
   tvlUSD: number;
-  // apr?: number; // Optional, if your API provides it
+  volumeTvlRatio: number;
+  emaRatio: number;
+  dynamicFee: number; // Fee percentage (e.g., 0.31 for 0.31%)
 }
 
 // Reusing components from the main liquidity page
@@ -106,7 +115,7 @@ const formatTokenDisplayAmount = (amount: string) => {
 
 // Format USD value
 const formatUSD = (value: number) => {
-  if (value < 0.01) return "< $0.01";
+  if (value < 0.01) return "$0";
   if (value < 1000) return `$${value.toFixed(2)}`;
   return `$${(value).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 };
@@ -207,12 +216,15 @@ const TickRangeVisualization = ({
   );
 };
 
-// Sample chart data for the pool - THIS WILL BE REPLACED BY API DATA
 const chartConfig = {
   views: { label: "Daily Values" },
-  volume: { label: "Volume", color: "hsl(var(--chart-1))" },
-  tvl: { label: "TVL", color: "hsl(var(--chart-2))" },
-  // apr: { label: "APR", color: "#e85102" }, // Removed APR from chart config for now
+  volume: { label: "Volume", color: "#404040" },
+  tvl: { label: "TVL", color: "#404040" },
+  volumeUSD: { label: "Volume", color: "#404040" },
+  tvlUSD: { label: "TVL", color: "#404040" },
+  volumeTvlRatio: { label: "Vol/TVL Ratio", color: "hsl(var(--chart-3))" },
+  emaRatio: { label: "EMA (Vol/TVL)", color: "hsl(var(--chart-2))" },
+  dynamicFee: { label: "Dynamic Fee (%)", color: "#e85102" },
 } satisfies ChartConfig;
 
 // Get pool configuration from pools.json instead of hardcoded data
@@ -255,10 +267,11 @@ export default function PoolDetailPage() {
   const poolId = params?.poolId;
   const [userPositions, setUserPositions] = useState<ProcessedPosition[]>([]);
   const [isLoadingPositions, setIsLoadingPositions] = useState(false);
-  const [activeChart, setActiveChart] = useState<keyof Pick<typeof chartConfig, 'volume' | 'tvl'>>("volume");
+  const [activeChart, setActiveChart] = useState<keyof Pick<typeof chartConfig, 'volume' | 'tvl' | 'volumeTvlRatio' | 'emaRatio' | 'dynamicFee'>>("volumeTvlRatio");
   const { address: accountAddress, isConnected, chainId } = useAccount();
   const [sorting, setSorting] = useState<SortingState>([]); // Added for table sorting
   const addLiquidityFormRef = useRef<HTMLDivElement>(null); // Ref for scrolling to form
+  const leftColumnRef = useRef<HTMLDivElement>(null); // Ref for the entire left column
 
   // State for the pool's detailed data (including fetched stats)
   const [currentPoolData, setCurrentPoolData] = useState<PoolDetailData | null>(null);
@@ -293,9 +306,158 @@ export default function PoolDetailPage() {
   const [isDecreaseCalculating, setIsDecreaseCalculating] = useState(false);
   const [isFullBurn, setIsFullBurn] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const isMobile = useIsMobile();
+  const [windowWidth, setWindowWidth] = useState<number>(1200);
+  const [toggleMetric, setToggleMetric] = useState<'liquidity' | 'volume' | 'fees'>('liquidity');
 
   // State for height alignment between modal and chart
-  const [modalHeight, setModalHeight] = useState<number | null>(null);
+  const [formContainerRect, setFormContainerRect] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
+
+  // Track window width for responsive chart
+  useEffect(() => {
+    const handleResize = () => {
+      setWindowWidth(window.innerWidth);
+    };
+
+    // Set initial width
+    if (typeof window !== 'undefined') {
+      setWindowWidth(window.innerWidth);
+      window.addEventListener('resize', handleResize);
+      return () => {
+        window.removeEventListener('resize', handleResize);
+      };
+    }
+  }, []);
+
+  // Function to cycle through toggle metrics
+  const cycleToggleMetric = useCallback(() => {
+    setToggleMetric(prev => {
+      switch (prev) {
+        case 'liquidity':
+          return 'volume';
+        case 'volume':
+          return 'fees';
+        case 'fees':
+          return 'liquidity';
+        default:
+          return 'liquidity';
+      }
+    });
+  }, []);
+
+  // Fill missing dates and limit data based on screen size
+  const processChartDataForScreenSize = useCallback((data: ChartDataPoint[]) => {
+    if (!data || data.length === 0) return [];
+    
+    const sortedData = [...data].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    
+    // Determine how many days back based on screen size
+    let daysBack = 28; // Default for largest screens
+    if (windowWidth < 1500) {
+      daysBack = 14; // Mobile and tablet - same as when Volume and Fees containers are hidden
+    } else if (windowWidth < 1700) {
+      daysBack = 21; // Large screens get 21
+    }
+    
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - daysBack);
+    
+    // Filter data to only include recent dates
+    const recentData = sortedData.filter(item => new Date(item.date) >= cutoffDate);
+    
+    if (recentData.length === 0) return sortedData; // Fallback to all data
+    
+    // Fill missing dates in the recent data
+    const filledData: ChartDataPoint[] = [];
+    const startDate = new Date(recentData[0].date);
+    const endDate = new Date(recentData[recentData.length - 1].date);
+    
+    let currentDate = new Date(startDate);
+    let lastTvl = 0;
+    
+    while (currentDate <= endDate) {
+      const dateStr = currentDate.toISOString().split('T')[0];
+      const existingData = recentData.find(item => item.date === dateStr);
+      
+      if (existingData) {
+        filledData.push(existingData);
+        lastTvl = existingData.tvlUSD;
+      } else {
+        // Fill missing date: Volume = 0, TVL = previous day's value
+        // For dynamic fee, use the previous day's value or calculate based on TVL
+        let dynamicFeeValue = 0;
+        if (lastTvl > 0) {
+          // Use the last known dynamic fee or calculate a reasonable default
+          const lastDataPoint = filledData[filledData.length - 1];
+          if (lastDataPoint && lastDataPoint.dynamicFee > 0) {
+            dynamicFeeValue = lastDataPoint.dynamicFee;
+          }
+        }
+        
+        filledData.push({
+          date: dateStr,
+          volumeUSD: 0,
+          tvlUSD: lastTvl,
+          volumeTvlRatio: 0,
+          emaRatio: 0,
+          dynamicFee: dynamicFeeValue
+        });
+      }
+      
+      currentDate.setDate(currentDate.getDate() + 1);
+    }
+    
+    return filledData;
+  }, [windowWidth]);
+
+  // Height measurement effect
+  useEffect(() => {
+    if (!leftColumnRef.current) {
+      return;
+    }
+
+    const measureAndReportContainerRect = () => {
+      if (leftColumnRef.current) {
+        const rect = leftColumnRef.current.getBoundingClientRect();
+        setFormContainerRect({
+          top: rect.top,
+          left: rect.left,
+          width: rect.width,
+          height: rect.height,
+        });
+      }
+    };
+
+    // Initial measurement with a small delay to ensure DOM is ready
+    setTimeout(measureAndReportContainerRect, 100);
+
+    // Setup ResizeObserver for dynamic changes
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(() => {
+        measureAndReportContainerRect();
+      });
+
+      resizeObserver.observe(leftColumnRef.current);
+
+      return () => {
+        if (resizeObserver) {
+          resizeObserver.disconnect();
+        }
+      };
+    } else {
+      // Fallback for browsers without ResizeObserver
+      const handleResize = () => {
+        measureAndReportContainerRect();
+      };
+
+      window.addEventListener('resize', handleResize);
+      
+      return () => {
+        window.removeEventListener('resize', handleResize);
+      };
+    }
+  }, [currentPoolData, apiChartData]); // Run when data is loaded
 
   // Memoized callback functions to prevent infinite re-renders
   const onLiquidityBurnedCallback = useCallback(() => {
@@ -1171,125 +1333,422 @@ export default function PoolDetailPage() {
           {/* Main content area with two columns */}
           <div className="flex flex-col lg:flex-row gap-6">
             {/* Left Column: Stats and Graph (takes up 3/4 on larger screens) */}
-            <div className="lg:w-3/4 space-y-6">
-              {/* Pool stats */}
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
-                <div className="rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors">
+            <div ref={leftColumnRef} className="lg:w-3/4 flex flex-col space-y-3 lg:space-y-6">
+              {/* Pool stats - Mobile: columns, Desktop: grid */}
+              <div className="flex flex-col md:grid md:grid-cols-2 xl:grid-cols-2 min-[1500px]:grid-cols-4 gap-6 flex-shrink-0 lg:max-w-none">
+                {/* APR and Total Liquidity in columns on mobile */}
+                <div className="flex flex-row gap-3 md:hidden w-full overflow-hidden">
+                  <div className="rounded-lg bg-muted/30 p-2 hover:outline hover:outline-1 hover:outline-muted transition-colors flex-1 min-w-0 max-w-[50%]">
+                    <div className="text-xs text-muted-foreground mb-1">APR</div>
+                    <div className="text-sm font-medium truncate">{currentPoolData.apr}</div>
+                  </div>
+                  <div className="rounded-lg bg-muted/30 p-2 hover:outline hover:outline-1 hover:outline-muted transition-colors flex-1 min-w-0 max-w-[50%]">
+                    <div className="text-xs text-muted-foreground mb-1 overflow-hidden">
+                      <div className="flex items-center gap-1">
+                        <span className="truncate text-xs flex-1 min-w-0">
+                          {toggleMetric === 'liquidity' && 'TVL'}
+                          {toggleMetric === 'volume' && 'Volume (24h)'}
+                          {toggleMetric === 'fees' && 'Fees (24h)'}
+                        </span>
+                        <button
+                          onClick={cycleToggleMetric}
+                          className="p-1 hover:bg-muted/50 rounded transition-colors flex-shrink-0"
+                        >
+                          <ArrowRightLeftIcon className="h-3 w-3" />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="text-sm font-medium truncate">
+                      {toggleMetric === 'liquidity' && currentPoolData.liquidity}
+                      {toggleMetric === 'volume' && currentPoolData.volume24h}
+                      {toggleMetric === 'fees' && currentPoolData.fees24h}
+                    </div>
+                  </div>
+                </div>
+                
+                {/* Desktop APR */}
+                <div className="rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors hidden md:block">
                   <div className="text-sm text-muted-foreground mb-1">APR</div>
                   <div className="text-lg font-medium">{currentPoolData.apr}</div>
                 </div>
-                <div className="rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors">
-                  <div className="text-sm text-muted-foreground mb-1">Total Liquidity</div>
-                  <div className="text-lg font-medium">{currentPoolData.liquidity}</div>
+                
+                {/* Desktop Total Liquidity */}
+                <div className="rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors hidden md:block">
+                  <div className="text-sm text-muted-foreground mb-1">
+                    {windowWidth < 1500 ? (
+                      <div className="flex items-center justify-between">
+                        <span>
+                          {toggleMetric === 'liquidity' && 'Total Liquidity'}
+                          {toggleMetric === 'volume' && 'Volume (24h)'}
+                          {toggleMetric === 'fees' && 'Fees (24h)'}
+                        </span>
+                        <button
+                          onClick={cycleToggleMetric}
+                          className="ml-2 p-1 hover:bg-muted/50 rounded transition-colors"
+                        >
+                          <ArrowRightLeftIcon className="h-3 w-3" />
+                        </button>
+                      </div>
+                    ) : (
+                      'Total Liquidity'
+                    )}
+                  </div>
+                  <div className="text-lg font-medium">
+                    {windowWidth < 1500 ? (
+                      <>
+                        {toggleMetric === 'liquidity' && currentPoolData.liquidity}
+                        {toggleMetric === 'volume' && currentPoolData.volume24h}
+                        {toggleMetric === 'fees' && currentPoolData.fees24h}
+                      </>
+                    ) : (
+                      currentPoolData.liquidity
+                    )}
+                  </div>
                 </div>
-                <div className="rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors">
+                
+                <div className="rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors hidden min-[1500px]:block">
                   <div className="text-sm text-muted-foreground mb-1">Volume (24h)</div>
                   <div className="text-lg font-medium">{currentPoolData.volume24h}</div>
                 </div>
-                <div className="rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors">
+                <div className="rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors hidden min-[1500px]:block">
                   <div className="text-sm text-muted-foreground mb-1">Fees (24h)</div>
                   <div className="text-lg font-medium">{currentPoolData.fees24h}</div>
                 </div>
               </div>
               
               {/* Pool Overview Section (formerly Tab) */}
-              <div className="space-y-4">
-                <div className="rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors">
-                  <div className="mb-4">
+              <div className="flex-1 min-h-0 lg:max-w-none">
+                <div className="rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors flex flex-col h-full min-h-[300px] sm:min-h-[350px]">
+                  <div className="mb-4 flex-shrink-0">
                     <div className="flex justify-between items-center">
                       <h3 className="text-lg font-medium">Pool Activity</h3>
-                      <div className="flex space-x-2">
-                        <button 
-                          className={`px-3 py-1.5 text-sm font-medium rounded-md border border-sidebar-border transition-all duration-200 ${
-                            activeChart === 'volume' 
-                              ? 'bg-muted hover:bg-muted/80' 
-                              : 'bg-transparent hover:bg-muted/30'
-                          }`}
-                          onClick={() => setActiveChart('volume')}
-                        >
-                          Volume
-                        </button>
-                        <button 
-                          className={`px-3 py-1.5 text-sm font-medium rounded-md border border-sidebar-border transition-all duration-200 ${
-                            activeChart === 'tvl' 
-                              ? 'bg-muted hover:bg-muted/80' 
-                              : 'bg-transparent hover:bg-muted/30'
-                          }`}
-                          onClick={() => setActiveChart('tvl')}
-                        >
-                          TVL
-                        </button>
-                      </div>
+                      {windowWidth < 1500 ? (
+                        // Dropdown for smaller screens
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="outline"
+                              className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium border border-sidebar-border"
+                            >
+                              {activeChart === 'volumeTvlRatio' && 'Dynamic Fee'}
+                              {activeChart === 'volume' && 'Volume'}
+                              {activeChart === 'tvl' && 'TVL'}
+                              <ChevronDownIcon className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent 
+                            align="end" 
+                            className="w-40 rounded-lg border-sidebar-border"
+                            style={{ backgroundColor: '#0f0f0f' }}
+                          >
+                            <DropdownMenuItem
+                              onClick={() => setActiveChart('volumeTvlRatio')}
+                              className={`cursor-pointer ${activeChart === 'volumeTvlRatio' ? 'bg-muted' : ''}`}
+                            >
+                              Dynamic Fee
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => setActiveChart('volume')}
+                              className={`cursor-pointer ${activeChart === 'volume' ? 'bg-muted' : ''}`}
+                            >
+                              Volume
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => setActiveChart('tvl')}
+                              className={`cursor-pointer ${activeChart === 'tvl' ? 'bg-muted' : ''}`}
+                            >
+                              TVL
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      ) : (
+                        // Buttons for larger screens
+                        <div className="flex items-center space-x-2">
+                          <button 
+                            className={`px-3 py-1.5 text-sm font-medium rounded-md border border-sidebar-border transition-all duration-200 ${
+                              activeChart === 'volumeTvlRatio' 
+                                ? 'bg-muted hover:bg-muted/80' 
+                                : 'bg-transparent hover:bg-muted/30'
+                            }`}
+                            onClick={() => setActiveChart('volumeTvlRatio')}
+                          >
+                            Dynamic Fee
+                          </button>
+                          <div className="w-px h-4 bg-border"></div>
+                          <button 
+                            className={`px-3 py-1.5 text-sm font-medium rounded-md border border-sidebar-border transition-all duration-200 ${
+                              activeChart === 'volume' 
+                                ? 'bg-muted hover:bg-muted/80' 
+                                : 'bg-transparent hover:bg-muted/30'
+                            }`}
+                            onClick={() => setActiveChart('volume')}
+                          >
+                            Volume
+                          </button>
+                          <button 
+                            className={`px-3 py-1.5 text-sm font-medium rounded-md border border-sidebar-border transition-all duration-200 ${
+                              activeChart === 'tvl' 
+                                ? 'bg-muted hover:bg-muted/80' 
+                                : 'bg-transparent hover:bg-muted/30'
+                            }`}
+                            onClick={() => setActiveChart('tvl')}
+                          >
+                            TVL
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
-                  <div>
+                  <div className="flex-1 min-h-0">
                     <ChartContainer
                       config={chartConfig}
-                      className="aspect-auto w-full"
-                      style={{ height: modalHeight ? `${modalHeight}px` : '380px' }}
+                      className="aspect-auto w-full h-full relative"
                     >
                       {isLoadingChartData ? (
-                        <div className="flex justify-center items-center h-full">
-                          <RefreshCwIcon className="mr-2 h-6 w-6 animate-spin" /> Loading chart...
+                        <div className="absolute inset-0 flex items-center justify-center bg-muted/50 z-20 rounded-lg">
+                          <Image 
+                            src="/LogoIconWhite.svg" 
+                            alt="Loading..." 
+                            width={32}
+                            height={32}
+                            className="animate-pulse opacity-75"
+                          />
                         </div>
                       ) : apiChartData.length > 0 ? (
-                      <BarChart
-                        accessibilityLayer
-                        data={apiChartData} // Use API fetched data
-                        margin={{
-                          left: 25,
-                          right: 25,
-                          top: 20, 
-                          bottom: 30
-                        }}
-                      >
-                        <CartesianGrid vertical={false} />
-                        <XAxis
-                          dataKey="date"
-                          tickLine={false}
-                          axisLine={false}
-                          tickMargin={8}
-                          minTickGap={32}
-                          tickFormatter={(value) => {
-                            const date = new Date(value);
-                            return date.toLocaleDateString("en-US", {
-                              month: "short",
-                              day: "numeric",
-                            });
-                          }}
-                        />
-                        <ChartTooltip
-                          cursor={false} // Added cursor={false} for better UX on BarChart
-                          content={
-                            <ChartTooltipContent
-                              className="w-[150px]"
-                              nameKey="views" // This might need adjustment if 'views' is not a direct key in your data
-                              labelFormatter={(value) => {
-                                return new Date(value).toLocaleDateString("en-US", {
-                                  month: "short",
-                                  day: "numeric",
-                                  year: "numeric",
-                                });
+                        activeChart === 'volumeTvlRatio' ? (
+                          // LineChart for dynamic fee view (like dynamic-fee-chart.tsx)
+                          <LineChart
+                            data={processChartDataForScreenSize(apiChartData)}
+                            margin={{
+                              top: 5,
+                              right: 20,
+                              left: 5,
+                              bottom: 5,
+                            }}
+                          >
+                            <CartesianGrid vertical={false} strokeDasharray="3 3" />
+                            <XAxis
+                              dataKey="date"
+                              tickLine={false}
+                              axisLine={false}
+                              tickMargin={10}
+                              tickFormatter={(value) => {
+                                const date = new Date(value);
+                                return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
                               }}
-                              // Formatter to display the correct data based on activeChart
-                              formatter={(value, name, entry) => {
-                                const dataKey = activeChart === 'volume' ? 'volumeUSD' : 'tvlUSD';
-                                const label = chartConfig[activeChart]?.label || activeChart;
-                                if (entry.payload && typeof entry.payload[dataKey] === 'number') {
-                                  return [
-                                    activeChart === 'volume' || activeChart === 'tvl' 
-                                      ? formatUSD(entry.payload[dataKey]) 
-                                      : entry.payload[dataKey].toLocaleString(), 
-                                    label
-                                  ];
-                                }
-                                return [value, name];
+                              tick={{ fontSize: '0.75rem' }}
+                            />
+                            <YAxis
+                              yAxisId="left"
+                              tickLine={false}
+                              axisLine={false}
+                              tickMargin={8}
+                              tickFormatter={(value) => value.toFixed(2)}
+                              domain={['auto', 'auto']}
+                              stroke="hsl(var(--muted-foreground))"
+                              tick={{ fontSize: '0.75rem' }}
+                            />
+                            <YAxis
+                              yAxisId="right"
+                              orientation="right"
+                              tickLine={false}
+                              axisLine={false}
+                              tickMargin={8}
+                              tickFormatter={(value) => `${value.toFixed(2)}%`}
+                              domain={['auto', 'auto']}
+                              stroke="hsl(var(--muted-foreground))"
+                              tick={{ fontSize: '0.75rem' }}
+                            />
+                            <ChartTooltip
+                              cursor={true}
+                              content={({ active, payload, label }) => {
+                                if (!active || !payload || !payload.length) return null;
+                                
+                                // Get the data point from the first payload item
+                                const dataPoint = payload[0]?.payload;
+                                if (!dataPoint) return null;
+
+                                return (
+                                  <div className="grid min-w-[8rem] items-start gap-1.5 rounded-lg border border-sidebar-border bg-[#0f0f0f] px-2.5 py-1.5 text-xs shadow-xl">
+                                    <div className="font-medium">
+                                      {new Date(dataPoint.date).toLocaleDateString("en-US", {
+                                        month: "long",
+                                        day: "numeric"
+                                      })}
+                                    </div>
+                                    <div className="grid gap-1.5">
+                                      {/* Vol/TVL Ratio with line indicator */}
+                                      <div className="flex w-full flex-wrap items-stretch gap-2">
+                                        <div
+                                          className="shrink-0 rounded-[2px] w-1 h-4"
+                                          style={{
+                                            backgroundColor: 'hsl(var(--chart-3))',
+                                          }}
+                                        />
+                                        <div className="flex flex-1 justify-between leading-none items-center">
+                                          <span className="text-muted-foreground">Vol/TVL</span>
+                                          <span className="font-mono font-medium tabular-nums text-foreground">
+                                            {typeof dataPoint.volumeTvlRatio === 'number' ? dataPoint.volumeTvlRatio.toFixed(3) : 'N/A'}
+                                          </span>
+                                        </div>
+                                      </div>
+
+                                      {/* EMA with line indicator */}
+                                      <div className="flex w-full flex-wrap items-stretch gap-2">
+                                        <div
+                                          className="shrink-0 rounded-[2px] w-1 h-4"
+                                          style={{
+                                            backgroundColor: 'hsl(var(--chart-2))',
+                                          }}
+                                        />
+                                        <div className="flex flex-1 justify-between leading-none items-center">
+                                          <span className="text-muted-foreground">EMA</span>
+                                          <span className="font-mono font-medium tabular-nums text-foreground">
+                                            {typeof dataPoint.emaRatio === 'number' ? dataPoint.emaRatio.toFixed(3) : 'N/A'}
+                                          </span>
+                                        </div>
+                                      </div>
+
+                                      {/* Dashed separator */}
+                                      <div className="border-t border-dashed border-border my-1"></div>
+
+                                      {/* Dynamic Fee with rounded line indicator */}
+                                      <div className="flex w-full flex-wrap items-stretch gap-2">
+                                        <div
+                                          className="shrink-0 rounded-[2px] w-1 h-4"
+                                          style={{
+                                            backgroundColor: '#e85102',
+                                          }}
+                                        />
+                                        <div className="flex flex-1 justify-between leading-none items-center">
+                                          <span className="text-muted-foreground">Fee</span>
+                                          <span className="font-mono font-medium tabular-nums text-foreground">
+                                            {typeof dataPoint.dynamicFee === 'number' ? `${dataPoint.dynamicFee.toFixed(2)}%` : 'N/A'}
+                                          </span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
                               }}
                             />
-                          }
-                        />
-                        <Bar dataKey={activeChart === 'volume' ? 'volumeUSD' : 'tvlUSD'} fill={chartConfig[activeChart]?.color || `var(--color-${activeChart})`} />
-                      </BarChart>
+                            <Line
+                              yAxisId="left"
+                              type="monotone"
+                              dataKey="volumeTvlRatio"
+                              strokeWidth={2}
+                              dot={false}
+                              stroke={chartConfig.volumeTvlRatio.color}
+                              name={chartConfig.volumeTvlRatio.label}
+                              isAnimationActive={false}
+                            />
+                            <Line
+                              yAxisId="left"
+                              type="monotone"
+                              dataKey="emaRatio"
+                              strokeWidth={2}
+                              dot={false}
+                              stroke={chartConfig.emaRatio.color}
+                              name={chartConfig.emaRatio.label}
+                              strokeDasharray="5 5"
+                              isAnimationActive={false}
+                            />
+                            <Line
+                              yAxisId="right"
+                              type="stepAfter"
+                              dataKey="dynamicFee"
+                              strokeWidth={2}
+                              dot={false}
+                              stroke={chartConfig.dynamicFee.color}
+                              name={chartConfig.dynamicFee.label}
+                              isAnimationActive={false}
+                            />
+                          </LineChart>
+                        ) : (
+                          // BarChart for volume and TVL views
+                          <BarChart
+                            accessibilityLayer
+                            data={processChartDataForScreenSize(apiChartData)}
+                            margin={{
+                              left: 25,
+                              right: 25,
+                              top: 20, 
+                              bottom: 0
+                            }}
+                          >
+                            <CartesianGrid vertical={false} />
+                            <XAxis
+                              dataKey="date"
+                              tickLine={false}
+                              axisLine={false}
+                              tickMargin={8}
+                              minTickGap={32}
+                              tickFormatter={(value) => {
+                                const date = new Date(value);
+                                return date.toLocaleDateString("en-US", {
+                                  month: "short",
+                                  day: "numeric",
+                                });
+                              }}
+                            />
+                            <YAxis
+                              tickLine={false}
+                              axisLine={false}
+                              tickMargin={8}
+                              tickFormatter={(value) => formatUSD(value)}
+                            />
+                            <ChartTooltip
+                              cursor={false}
+                              content={
+                                <ChartTooltipContent 
+                                  indicator="line"
+                                  className="!bg-[#0f0f0f] !text-card-foreground border border-sidebar-border shadow-lg rounded-lg"
+                                  formatter={(value, name, item, index, payload) => {
+                                    const itemConfig = chartConfig[name as keyof typeof chartConfig];
+                                    const indicatorColor = item?.color || (itemConfig && 'color' in itemConfig ? itemConfig.color : '#404040');
+                                    
+                                    return (
+                                      <div className="flex gap-2">
+                                        <div
+                                          className="shrink-0 rounded-[2px] border-[--color-border] bg-[--color-bg] w-1"
+                                          style={{
+                                            "--color-bg": indicatorColor,
+                                            "--color-border": indicatorColor,
+                                          } as React.CSSProperties}
+                                        />
+                                        <div className="grid gap-1 flex-1">
+                                          {index === 0 && (
+                                            <div className="font-medium">
+                                              {new Date(item.payload?.date).toLocaleDateString("en-US", {
+                                                month: "long",
+                                                day: "numeric"
+                                              })}
+                                            </div>
+                                          )}
+                                          <div className="flex justify-between leading-none items-center gap-4">
+                                            <span className="text-muted-foreground">
+                                              {itemConfig?.label || name}
+                                            </span>
+                                            <span className="font-mono font-medium tabular-nums text-foreground">
+                                              ${typeof value === 'number' ? Math.round(value).toLocaleString('de-DE') : value}
+                                            </span>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    );
+                                  }}
+                                  labelFormatter={(value) => {
+                                    return new Date(value).toLocaleDateString("en-US", {
+                                      month: "short",
+                                      day: "numeric"
+                                    });
+                                  }}
+                                />
+                              }
+                            />
+                            <Bar dataKey={activeChart === 'volume' ? 'volumeUSD' : 'tvlUSD'} fill={chartConfig[activeChart]?.color || `var(--color-${activeChart})`} />
+                          </BarChart>
+                        )
                       ) : (
                         <div className="flex justify-center items-center h-full text-muted-foreground">
                           No chart data available for this pool.
@@ -1338,7 +1797,7 @@ export default function PoolDetailPage() {
               </div> */}
 
               {poolId && currentPoolData && ( // Always render form (removed activeTab condition)
-                <div className="w-full rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors">
+                <div ref={addLiquidityFormRef} className="w-full rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors">
                   <AddLiquidityForm
                     selectedPoolId={poolId}
                     poolApr={currentPoolData?.apr}
@@ -1349,7 +1808,6 @@ export default function PoolDetailPage() {
                     sdkMaxTick={SDK_MAX_TICK}
                     defaultTickSpacing={getPoolById(poolId)?.tickSpacing || DEFAULT_TICK_SPACING}
                     activeTab={'deposit'} // Always pass 'deposit'
-                    onHeightChange={setModalHeight}
                   />
                 </div>
               )}

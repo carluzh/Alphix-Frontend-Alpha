@@ -163,6 +163,15 @@ export function InteractiveRangeChart({
     const currentPriceNum = parseFloat(currentPrice);
     const inversePrice = 1 / currentPriceNum;
     
+    console.log("[InteractiveRangeChart] shouldFlipDenomination calculation:", {
+      currentPrice,
+      currentPriceNum,
+      inversePrice,
+      token0Symbol,
+      token1Symbol,
+      shouldFlip: inversePrice > currentPriceNum
+    });
+    
     // If the inverse price is larger, we should flip the denomination
     return inversePrice > currentPriceNum;
   }, [currentPrice, token0Symbol, token1Symbol]);
@@ -542,8 +551,9 @@ export function InteractiveRangeChart({
         // For USD-denominated tokens, always use 2 decimals
         const finalDisplayDecimals = (optimalDenomination === 'aUSDT' || optimalDenomination === 'aUSDC') ? 2 : displayDecimals;
         
-        // Calculate prices for left border, center (current), and right border
-        const tickPositions = [minTickDomain, currentPoolTick, maxTickDomain];
+        // Calculate prices for left border, center (middle of visible range), and right border
+        const middleTickDomain = (minTickDomain + maxTickDomain) / 2;
+        const tickPositions = [minTickDomain, middleTickDomain, maxTickDomain];
         const pricePoints: { tick: number; price: number }[] = [];
         
         for (const tickVal of tickPositions) {
@@ -557,6 +567,15 @@ export function InteractiveRangeChart({
             // Show the direct price (higher denomination)
             priceAtTick = currentPriceNum * priceDelta;
           }
+
+          console.log("[InteractiveRangeChart] Price calculation for tick:", {
+            tickVal,
+            currentPoolTick,
+            priceDelta,
+            shouldFlipDenomination,
+            currentPriceNum,
+            priceAtTick
+          });
 
           if (!isNaN(priceAtTick)) {
             pricePoints.push({ tick: tickVal, price: priceAtTick });
@@ -626,7 +645,9 @@ export function InteractiveRangeChart({
   const getTickPosition = (tick: number) => {
     const [minTick, maxTick] = xDomain;
     const tickRange = maxTick - minTick;
-    return ((tick - minTick) / tickRange) * 100;
+    const position = ((tick - minTick) / tickRange) * 100;
+    // Ensure position stays within container bounds (0% to 100%)
+    return Math.max(0, Math.min(100, position));
   };
 
   const leftPos = getTickPosition(parseInt(tickLower));
@@ -656,24 +677,41 @@ export function InteractiveRangeChart({
     let newTickUpper = dragStart.tickUpper;
 
     if (isDragging === 'left') {
-      // Allow unlimited dragging for left handle, but keep minimum spacing
+      // Constrain left handle to visible domain and maintain minimum spacing
       newTickLower = Math.min(dragStart.tickUpper - defaultTickSpacing, dragStart.tickLower + deltaTicks);
       newTickLower = Math.round(newTickLower / defaultTickSpacing) * defaultTickSpacing;
+      // Constrain to visible domain
+      newTickLower = Math.max(minTick, Math.min(maxTick, newTickLower));
     } else if (isDragging === 'right') {
-      // Allow unlimited dragging for right handle, but keep minimum spacing
+      // Constrain right handle to visible domain and maintain minimum spacing
       newTickUpper = Math.max(dragStart.tickLower + defaultTickSpacing, dragStart.tickUpper + deltaTicks);
       newTickUpper = Math.round(newTickUpper / defaultTickSpacing) * defaultTickSpacing;
+      // Constrain to visible domain
+      newTickUpper = Math.max(minTick, Math.min(maxTick, newTickUpper));
     } else if (isDragging === 'center') {
-      // Allow unlimited dragging for center, maintaining range width
+      // Constrain center dragging to keep entire range within visible domain
       const rangeWidth = dragStart.tickUpper - dragStart.tickLower;
       const newCenter = ((dragStart.tickLower + dragStart.tickUpper) / 2) + deltaTicks;
       newTickLower = newCenter - rangeWidth / 2;
       newTickUpper = newCenter + rangeWidth / 2;
+      
+      // Constrain the entire range to stay within visible domain
+      if (newTickLower < minTick) {
+        const adjustment = minTick - newTickLower;
+        newTickLower = minTick;
+        newTickUpper = newTickUpper + adjustment;
+      }
+      if (newTickUpper > maxTick) {
+        const adjustment = newTickUpper - maxTick;
+        newTickUpper = maxTick;
+        newTickLower = newTickLower - adjustment;
+      }
+      
       newTickLower = Math.round(newTickLower / defaultTickSpacing) * defaultTickSpacing;
       newTickUpper = Math.round(newTickUpper / defaultTickSpacing) * defaultTickSpacing;
     }
 
-    // Ensure ticks are within valid range
+    // Final constraint to valid range (broader constraint for edge cases)
     newTickLower = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTickLower));
     newTickUpper = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTickUpper));
 
