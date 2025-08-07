@@ -58,8 +58,8 @@ const data = {
     },
     {
       title: "Portfolio",
+      url: "/portfolio",
       icon: ChartPieIcon,
-      disabled: true,
     },
     {
       title: "Faucet",
