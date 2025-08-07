@@ -4,10 +4,9 @@ import { LineChart, Line, ResponsiveContainer, XAxis, YAxis } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { ArrowRightIcon } from "lucide-react";
 import Image from "next/image";
-import { getToken } from "@/lib/pools-config";
+import { getToken, getPoolByTokens } from "@/lib/pools-config";
 import React, { useState, useEffect, useMemo, useRef } from "react";
-// REMOVED: import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react"; // Import Chevron icons
-// REMOVED: import { SwapRoute } from "@/lib/routing-engine"; // Import SwapRoute
+import { useRouter } from "next/navigation";
 
 interface FeeHistoryPoint {
   timeLabel: string;
@@ -26,13 +25,11 @@ interface DynamicFeeChartPreviewProps {
   };
   isLoading?: boolean; // Show loading state during pool switches
   onContentStableChange?: (stable: boolean) => void; // New callback prop
-  // REMOVED: currentRoute: SwapRoute | null; // NEW: Pass the entire current route
-  // REMOVED: selectedPoolIndexForChart: number; // NEW: Index of the currently selected pool in the route
-  // REMOVED: onNextPool: () => void; // NEW: Callback for next pool button
-  // REMOVED: onPreviousPool: () => void; // NEW: Callback for previous pool button
 }
 
 function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = false, onContentStableChange }: DynamicFeeChartPreviewProps) {
+  const router = useRouter();
+  
   // State to track if the content is stable and rendered
   const [isContentStable, setIsContentStable] = useState(false);
   
@@ -115,6 +112,21 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
     }
   }, [isLoading]);
 
+  // Handle click to navigate to pool page
+  const handleClick = () => {
+    if (!poolInfo) return;
+    
+    // Get pool configuration using token symbols
+    const poolConfig = getPoolByTokens(poolInfo.token0Symbol, poolInfo.token1Symbol);
+    
+    if (poolConfig) {
+      // Navigate to the pool page using the pool ID
+      router.push(`/liquidity/${poolConfig.id}`);
+    } else {
+      console.warn(`No pool configuration found for ${poolInfo.token0Symbol}/${poolInfo.token1Symbol}`);
+    }
+  };
+
   // Memoized chart data calculation - only recalculate when data actually changes
   const chartData = useMemo(() => {
     // Return null if no data
@@ -186,7 +198,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
     return (
       <Card 
         className="w-full max-w-md shadow-md rounded-lg cursor-pointer hover:shadow-lg transition-shadow bg-muted/30 group"
-        onClick={onClick}
+        onClick={handleClick}
       >
         {/* CardHeader is entirely absent in no-data state */}
         <CardContent className="px-2 pb-2 pt-0 h-[120px]">
@@ -202,14 +214,10 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
     const effectiveMinValue = 20;
     const effectiveMaxValue = 200;
 
-    // REMOVED: Determine if navigation arrows should be shown
-    // const showPreviousArrow = currentRoute && selectedPoolIndexForChart > 0;
-    // const showNextArrow = currentRoute && selectedPoolIndexForChart < currentRoute.pools.length - 1;
-
     return (
       <Card 
-        className="w-full max-w-md shadow-md rounded-lg cursor-pointer hover:shadow-lg transition-shadow bg-muted/30 group" // Removed relative
-        onClick={onClick}
+        className="w-full max-w-md shadow-md rounded-lg cursor-pointer hover:shadow-lg transition-shadow bg-muted/30 group"
+        onClick={handleClick}
       >
         <CardHeader className="flex flex-row items-start justify-between pb-2 pt-3 px-4">
           <div className="space-y-0.5">
@@ -297,22 +305,6 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
             )}
           </div>
         </CardContent>
-
-        {/* REMOVED: Navigation Arrows - positioned absolutely outside the header/content flow */}
-        {/*
-        {showPreviousArrow && (
-          <ChevronLeftIcon
-            className="absolute -left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground hover:text-white transition-colors duration-150 z-20"
-            onClick={(e) => { e.stopPropagation(); onPreviousPool(); }}
-          />
-        )}
-        {showNextArrow && (
-          <ChevronRightIcon
-            className="absolute -right-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground hover:text-white transition-colors duration-150 z-20"
-            onClick={(e) => { e.stopPropagation(); onNextPool(); }}
-          />
-        )}
-        */}
       </Card>
     );
   }

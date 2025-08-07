@@ -302,18 +302,14 @@ export default async function handler(
         }
         
         const isFullRange = (finalTickLower === SDK_MIN_TICK && finalTickUpper === SDK_MAX_TICK);
-        if (!isFullRange && (sdkCalculatedAmountSorted0_BigInt <= 0n || sdkCalculatedAmountSorted1_BigInt <= 0n)) {
-            if (sdkCalculatedAmountSorted0_BigInt > 0n || sdkCalculatedAmountSorted1_BigInt > 0n) { 
-                return res.status(400).json({
-                    message: "The calculated amounts for your selected price range would result in providing liquidity for only one token. Please adjust your input or range, or use 'Full Range' for one-sided concentration."
-                });
-            }
-            if (sdkCalculatedAmountSorted0_BigInt <= 0n && sdkCalculatedAmountSorted1_BigInt <= 0n && JSBI.GT(calculatedLiquidity_JSBI, JSBI.BigInt(0))) {
-                 return res.status(400).json({ message: "Calculation resulted in zero amounts for both tokens but positive liquidity. This is an unlikely scenario, please check inputs." });
-            }
-             if (sdkCalculatedAmountSorted0_BigInt <= 0n && sdkCalculatedAmountSorted1_BigInt <= 0n && JSBI.LE(calculatedLiquidity_JSBI, JSBI.BigInt(0))) { 
-                 return res.status(400).json({ message: "Calculation resulted in zero amounts and zero liquidity. Please provide a valid input amount and range." });
-            }
+        
+        // Allow single-sided positions outside the current price range - this is a valid use case
+        // Only check for completely invalid scenarios (both amounts zero with positive liquidity)
+        if (sdkCalculatedAmountSorted0_BigInt <= 0n && sdkCalculatedAmountSorted1_BigInt <= 0n && JSBI.GT(calculatedLiquidity_JSBI, JSBI.BigInt(0))) {
+            return res.status(400).json({ message: "Calculation resulted in zero amounts for both tokens but positive liquidity. This is an unlikely scenario, please check inputs." });
+        }
+        if (sdkCalculatedAmountSorted0_BigInt <= 0n && sdkCalculatedAmountSorted1_BigInt <= 0n && JSBI.LE(calculatedLiquidity_JSBI, JSBI.BigInt(0))) { 
+            return res.status(400).json({ message: "Calculation resulted in zero amounts and zero liquidity. Please provide a valid input amount and range." });
         }
 
         const tokensToCheck = [

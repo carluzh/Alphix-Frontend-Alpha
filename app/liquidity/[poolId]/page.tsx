@@ -97,8 +97,17 @@ const formatTokenDisplayAmount = (amount: string) => {
   const num = parseFloat(amount);
   if (isNaN(num)) return amount;
   if (num === 0) return "0.00";
-  if (num < 0.0001) return "< 0.0001";
-  return num.toFixed(4);
+  if (num < 0.0001) return "< 0.0001"; // Keep this for now, it handles values strictly less than 0.0001 that are not 0
+
+  // Determine if the number should be treated as ">= 1" for display purposes
+  // This handles cases like 0.999999 becoming 1.00
+  const roundedNumTwoDecimals = Math.round(num * 100) / 100;
+
+  if (roundedNumTwoDecimals >= 1) {
+    return num.toFixed(2); // If effectively >= 1, show 2 decimal places
+  } else {
+    return num.toFixed(4); // Otherwise (between 0.0001 and <1), show 4 decimal places
+  }
 };
 
 // Get token icon for display
@@ -117,7 +126,7 @@ const getTokenIcon = (symbol?: string) => {
 const formatUSD = (value: number) => {
   if (value < 0.01) return "$0";
   if (value < 1000) return `$${value.toFixed(2)}`;
-  return `$${(value).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+  return `$${(value).toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
 };
 
 // Mock function to calculate USD value (in a real app, you'd use actual price feeds)
@@ -368,84 +377,12 @@ export default function PoolDetailPage() {
   const [withdrawActiveInputSide, setWithdrawActiveInputSide] = useState<'amount0' | 'amount1' | null>(null);
   const [isFullWithdraw, setIsFullWithdraw] = useState(false);
   const [withdrawPercentage, setWithdrawPercentage] = useState<number>(0);
-  const [sliderValue, setSliderValue] = useState<number>(0);
-  const [isSliderDragging, setIsSliderDragging] = useState<boolean>(false);
-  const sliderValueRef = useRef<number>(0);
-  const animationFrameRef = useRef<number | null>(null);
   const [increasePercentage, setIncreasePercentage] = useState<number>(0);
+
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const isMobile = useIsMobile();
 
-  // Update withdraw amounts when percentage changes (but not during slider dragging)
-  useEffect(() => {
-    if (!isSliderDragging && positionToBurn && withdrawPercentage > 0) {
-      const amount0 = parseFloat(positionToBurn.token0.amount);
-      const amount1 = parseFloat(positionToBurn.token1.amount);
-      const percentage = withdrawPercentage / 100;
-      
-      setWithdrawAmount0((amount0 * percentage).toFixed(4));
-      setWithdrawAmount1((amount1 * percentage).toFixed(4));
-      setIsFullWithdraw(withdrawPercentage >= 99);
-      setSliderValue(withdrawPercentage);
-      sliderValueRef.current = withdrawPercentage;
-    }
-  }, [withdrawPercentage, positionToBurn, isSliderDragging]);
 
-  // Initialize slider value when modal opens
-  useEffect(() => {
-    if (showBurnConfirmDialog && positionToBurn) {
-      setSliderValue(withdrawPercentage);
-      sliderValueRef.current = withdrawPercentage;
-    }
-  }, [showBurnConfirmDialog, positionToBurn, withdrawPercentage]);
-
-  // Update withdraw percentage when amounts change manually (but not during slider dragging)
-  useEffect(() => {
-    if (!isSliderDragging && positionToBurn && (withdrawAmount0 || withdrawAmount1)) {
-      const amount0 = parseFloat(positionToBurn.token0.amount);
-      const amount1 = parseFloat(positionToBurn.token1.amount);
-      const currentAmount0 = parseFloat(withdrawAmount0 || "0");
-      const currentAmount1 = parseFloat(withdrawAmount1 || "0");
-      
-      if (amount0 > 0 && amount1 > 0) {
-        const percentage0 = (currentAmount0 / amount0) * 100;
-        const percentage1 = (currentAmount1 / amount1) * 100;
-        const avgPercentage = Math.round((percentage0 + percentage1) / 2);
-        setWithdrawPercentage(avgPercentage);
-        setSliderValue(avgPercentage);
-        sliderValueRef.current = avgPercentage;
-      }
-    }
-  }, [withdrawAmount0, withdrawAmount1, positionToBurn, isSliderDragging]);
-
-  // Update increase amounts when percentage changes
-  useEffect(() => {
-    if (positionToModify && increasePercentage > 0) {
-      const balance0 = parseFloat(token0BalanceData?.formatted || "0");
-      const balance1 = parseFloat(token1BalanceData?.formatted || "0");
-      const percentage = increasePercentage / 100;
-      
-      setIncreaseAmount0((balance0 * percentage).toFixed(4));
-      setIncreaseAmount1((balance1 * percentage).toFixed(4));
-    }
-  }, [increasePercentage, positionToModify, token0BalanceData, token1BalanceData]);
-
-  // Update increase percentage when amounts change manually
-  useEffect(() => {
-    if (positionToModify && (increaseAmount0 || increaseAmount1)) {
-      const balance0 = parseFloat(token0BalanceData?.formatted || "0");
-      const balance1 = parseFloat(token1BalanceData?.formatted || "0");
-      const currentAmount0 = parseFloat(increaseAmount0 || "0");
-      const currentAmount1 = parseFloat(increaseAmount1 || "0");
-      
-      if (balance0 > 0 && balance1 > 0) {
-        const percentage0 = (currentAmount0 / balance0) * 100;
-        const percentage1 = (currentAmount1 / balance1) * 100;
-        const avgPercentage = Math.round((percentage0 + percentage1) / 2);
-        setIncreasePercentage(avgPercentage);
-      }
-    }
-  }, [increaseAmount0, increaseAmount1, positionToModify, token0BalanceData, token1BalanceData]);
   const [windowWidth, setWindowWidth] = useState<number>(1200);
   const [toggleMetric, setToggleMetric] = useState<'liquidity' | 'volume' | 'fees'>('liquidity');
 
@@ -722,7 +659,7 @@ export default function PoolDetailPage() {
           const dataTvl = await resTvl.json();
           poolStats = {
             volume24hUSD: parseFloat(data24h.volumeUSD),
-            fees24hUSD: parseFloat(data24h.feesUSD),
+            fees24hUSD: parseFloat(data7d.feesUSD),
             volume7dUSD: parseFloat(data7d.volumeUSD),
             fees7dUSD: parseFloat(data7d.feesUSD),
             tvlUSD: parseFloat(dataTvl.tvlUSD),
@@ -832,32 +769,124 @@ export default function PoolDetailPage() {
             setToCache(userPositionsCacheKey, allUserPositions);
             console.log("[Cache SET] Cached all user positions on detail page.");
           } else {
-            console.error("Error fetching positions on detail page:", (data as any).message);
+            console.error("Invalid positions data format:", data);
             allUserPositions = [];
           }
         } catch (error) {
-          console.error("Failed to fetch user positions on detail page:", error);
+          console.error("Failed to fetch user positions:", error);
           allUserPositions = [];
         }
       }
 
-      // Filter positions for the current pool
-      if (allUserPositions && basePoolInfo) {
-        const poolSubgraphId = getPoolSubgraphId(poolId); // Get the subgraph ID for the current pool
+      // Filter positions for this specific pool
+      if (allUserPositions && allUserPositions.length > 0) {
+        const [poolToken0Raw, poolToken1Raw] = basePoolInfo.pair.split(' / ');
+        const poolToken0 = poolToken0Raw?.trim().toUpperCase();
+        const poolToken1 = poolToken1Raw?.trim().toUpperCase();
+        
         const filteredPositions = allUserPositions.filter(pos => {
-          // Compare the pool ID from the position with the subgraph ID of the current page's pool
-          return pos.poolId.toLowerCase() === poolSubgraphId?.toLowerCase();
+          const posToken0 = pos.token0.symbol?.trim().toUpperCase();
+          const posToken1 = pos.token1.symbol?.trim().toUpperCase();
+          return (posToken0 === poolToken0 && posToken1 === poolToken1) ||
+                 (posToken0 === poolToken1 && posToken1 === poolToken0);
         });
+        
         setUserPositions(filteredPositions);
-        console.log(`Filtered ${filteredPositions.length} positions for pool ID ${poolSubgraphId} from ${allUserPositions.length} total cached/fetched positions.`);
+        console.log(`[Pool Detail] Filtered ${filteredPositions.length} positions for pool ${basePoolInfo.pair} from ${allUserPositions.length} total positions.`);
       } else {
         setUserPositions([]);
+        console.log(`[Pool Detail] No positions found for pool ${basePoolInfo.pair}.`);
       }
       setIsLoadingPositions(false);
     } else {
       setUserPositions([]);
+      setIsLoadingPositions(false);
     }
-  }, [poolId, isConnected, accountAddress, refreshTrigger]); // Add useCallback dependencies
+  }, [poolId, isConnected, accountAddress, router]);
+
+  // Targeted refresh function for when liquidity is added - only updates positions and pool stats, not chart data
+  const refreshAfterLiquidityAdded = useCallback(async () => {
+    if (!poolId) return;
+
+    const basePoolInfo = getPoolConfiguration(poolId);
+    if (!basePoolInfo) return;
+
+    const apiPoolIdToUse = basePoolInfo.subgraphId;
+
+    // Only refresh pool stats and user positions, not chart data
+    try {
+      // Refresh pool stats
+      const [res24h, res7d, resTvl] = await Promise.all([
+        fetch(`/api/liquidity/get-rolling-volume-fees?poolId=${apiPoolIdToUse}&days=1`),
+        fetch(`/api/liquidity/get-rolling-volume-fees?poolId=${apiPoolIdToUse}&days=7`),
+        fetch(`/api/liquidity/get-pool-tvl?poolId=${apiPoolIdToUse}`)
+      ]);
+
+      if (res24h.ok && res7d.ok && resTvl.ok) {
+        const data24h = await res24h.json();
+        const data7d = await res7d.json();
+        const dataTvl = await resTvl.json();
+        const poolStats = {
+          volume24hUSD: parseFloat(data24h.volumeUSD),
+          fees24hUSD: parseFloat(data7d.feesUSD),
+          volume7dUSD: parseFloat(data7d.volumeUSD),
+          fees7dUSD: parseFloat(data7d.feesUSD),
+          tvlUSD: parseFloat(dataTvl.tvlUSD),
+        };
+        setToCache(getPoolStatsCacheKey(apiPoolIdToUse), poolStats);
+
+        // Update current pool data with new stats
+        setCurrentPoolData(prev => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            ...poolStats,
+            volume24h: formatUSD(poolStats.volume24hUSD),
+            volume7d: formatUSD(poolStats.volume7dUSD),
+            fees24h: formatUSD(poolStats.fees24hUSD),
+            fees7d: formatUSD(poolStats.fees7dUSD),
+            liquidity: formatUSD(poolStats.tvlUSD),
+          };
+        });
+      }
+    } catch (error) {
+      console.error("Failed to refresh pool stats after liquidity added:", error);
+    }
+
+    // Refresh user positions
+    if (isConnected && accountAddress) {
+      setIsLoadingPositions(true);
+      try {
+        const res = await fetch(`/api/liquidity/get-positions?ownerAddress=${accountAddress}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data)) {
+            // Update cache
+            const userPositionsCacheKey = getUserPositionsCacheKey(accountAddress);
+            setToCache(userPositionsCacheKey, data);
+
+            // Filter positions for this specific pool
+            const [poolToken0Raw, poolToken1Raw] = basePoolInfo.pair.split(' / ');
+            const poolToken0 = poolToken0Raw?.trim().toUpperCase();
+            const poolToken1 = poolToken1Raw?.trim().toUpperCase();
+            
+            const filteredPositions = data.filter((pos: ProcessedPosition) => {
+              const posToken0 = pos.token0.symbol?.trim().toUpperCase();
+              const posToken1 = pos.token1.symbol?.trim().toUpperCase();
+              return (posToken0 === poolToken0 && posToken1 === poolToken1) ||
+                     (posToken0 === poolToken1 && posToken1 === poolToken0);
+            });
+            
+            setUserPositions(filteredPositions);
+          }
+        }
+      } catch (error) {
+        console.error("Failed to refresh user positions after liquidity added:", error);
+      } finally {
+        setIsLoadingPositions(false);
+      }
+    }
+  }, [poolId, isConnected, accountAddress]);
 
   useEffect(() => {
     fetchPageData();
@@ -883,9 +912,6 @@ export default function PoolDetailPage() {
     setWithdrawActiveInputSide(null);
     setIsFullWithdraw(false);
     setWithdrawPercentage(0);
-    setSliderValue(0);
-    sliderValueRef.current = 0;
-    setIsSliderDragging(false);
     setShowBurnConfirmDialog(true);
   };
 
@@ -935,6 +961,7 @@ export default function PoolDetailPage() {
     setIncreaseAmount0("");
     setIncreaseAmount1("");
     setIncreaseActiveInputSide(null);
+    setIncreasePercentage(0);
     setShowIncreaseModal(true);
   };
 
@@ -1317,6 +1344,8 @@ export default function PoolDetailPage() {
     }
     setWithdrawActiveInputSide(tokenSide);
     setIsFullWithdraw(true);
+    // Update slider to 100% when using max
+    setWithdrawPercentage(100);
   };
 
   // Handle use full balance
@@ -1334,8 +1363,111 @@ export default function PoolDetailPage() {
         setIncreaseAmount1(formattedBalance);
         setIncreaseActiveInputSide('amount1');
       }
+      // Update slider to 100% when using full balance
+      setIncreasePercentage(100);
     } catch (error) {
       // Handle error
+    }
+  };
+
+  // Helper function to snap to sticky stops
+  const snapToStickyStops = (value: number): number => {
+    const stickyStops = [25, 50, 75, 100];
+    const snapZone = 3; // 3% snap zone around each stop
+    
+    for (const stop of stickyStops) {
+      if (Math.abs(value - stop) <= snapZone) {
+        return stop;
+      }
+    }
+    return value;
+  };
+
+  // Clean slider handlers
+  const handleWithdrawPercentageChange = (newPercentage: number) => {
+    const snappedPercentage = snapToStickyStops(newPercentage);
+    setWithdrawPercentage(snappedPercentage);
+    
+    if (positionToBurn) {
+      const amount0 = parseFloat(positionToBurn.token0.amount);
+      const percentage = snappedPercentage / 100; // This is the percentage of the max amount
+      
+      const calculatedAmount0 = (amount0 * percentage).toFixed(6); // Calculate token0 amount
+      setWithdrawAmount0(calculatedAmount0); // Update token0 amount directly
+      setWithdrawActiveInputSide('amount0'); // Set active input side to token0
+      setIsFullWithdraw(snappedPercentage >= 99); // Update full withdraw status
+      
+      // Now, call calculateWithdrawAmount to get the corresponding token1 amount via API
+      // This will also update withdrawAmount1
+      if (parseFloat(calculatedAmount0) > 0) {
+        calculateWithdrawAmount(calculatedAmount0, 'amount0');
+      } else {
+        setWithdrawAmount1(''); // Clear token1 amount if token0 is zero
+      }
+    }
+  };
+
+  const handleWithdrawAmountChange = (newAmount: string, tokenSide: 'amount0' | 'amount1') => {
+    if (tokenSide === 'amount0') {
+      setWithdrawAmount0(newAmount);
+    } else {
+      setWithdrawAmount1(newAmount);
+    }
+    
+    if (positionToBurn && newAmount) {
+      const maxAmount = tokenSide === 'amount0' 
+        ? parseFloat(positionToBurn.token0.amount)
+        : parseFloat(positionToBurn.token1.amount);
+      
+      const currentAmount = parseFloat(newAmount);
+      if (maxAmount > 0 && !isNaN(currentAmount)) {
+        const percentage = Math.min(100, Math.max(0, (currentAmount / maxAmount) * 100));
+        setWithdrawPercentage(Math.round(percentage));
+        setIsFullWithdraw(percentage >= 99);
+      }
+    }
+  };
+
+  const handleIncreasePercentageChange = (newPercentage: number) => {
+    const snappedPercentage = snapToStickyStops(newPercentage);
+    setIncreasePercentage(snappedPercentage);
+    
+    const balance0 = parseFloat(token0BalanceData?.formatted || "0");
+    const percentage = snappedPercentage / 100;
+    
+    const calculatedAmount0 = (balance0 * percentage).toFixed(6);
+    
+    setIncreaseAmount0(calculatedAmount0); // Update token0 amount directly
+    setIncreaseActiveInputSide('amount0'); // Set active input side to token0
+    
+    // Now, call calculateIncreaseAmount to get the corresponding token1 amount via API
+    // This will also update increaseAmount1
+    if (parseFloat(calculatedAmount0) > 0) {
+      calculateIncreaseAmount(calculatedAmount0, 'amount0');
+    } else {
+      setIncreaseAmount1(''); // Clear token1 amount if token0 is zero
+    }
+  };
+
+  const handleIncreaseAmountChange = (newAmount: string, tokenSide: 'amount0' | 'amount1') => {
+    if (tokenSide === 'amount0') {
+      setIncreaseAmount0(newAmount);
+      setIncreaseActiveInputSide('amount0');
+    } else {
+      setIncreaseAmount1(newAmount);
+      setIncreaseActiveInputSide('amount1');
+    }
+    
+    if (newAmount) {
+      const maxAmount = tokenSide === 'amount0' 
+        ? parseFloat(token0BalanceData?.formatted || "0")
+        : parseFloat(token1BalanceData?.formatted || "0");
+      
+      const currentAmount = parseFloat(newAmount);
+      if (maxAmount > 0 && !isNaN(currentAmount)) {
+        const percentage = Math.min(100, Math.max(0, (currentAmount / maxAmount) * 100));
+        setIncreasePercentage(Math.round(percentage));
+      }
     }
   };
 
@@ -1495,19 +1627,29 @@ export default function PoolDetailPage() {
   return (
     <AppLayout>
       <div className="flex flex-1 flex-col">
-        <div className="flex flex-1 flex-col p-6 px-10">
+        <div className="flex flex-1 flex-col p-3 sm:p-6 sm:px-10">
           {/* Back button and header */}
           <div className="mb-6">
+            {/* Desktop back button */}
             <Button 
               variant="ghost" 
               onClick={() => router.push('/liquidity')}
-              className="mb-4 pl-2"
+              className="mb-4 pl-2 hidden sm:flex"
             >
               <ChevronLeftIcon className="mr-2 h-4 w-4" /> Back to Pools
             </Button>
             
             <div className="flex items-center justify-between">
               <div className="flex items-center group">
+                {/* Mobile back button - positioned to the left of logo icons */}
+                <Button 
+                  variant="ghost" 
+                  onClick={() => router.push('/liquidity')}
+                  className="mr-3 sm:hidden p-2 h-8 w-8"
+                >
+                  <ChevronLeftIcon className="h-4 w-4" />
+                </Button>
+                
                 <div className="relative w-20 h-10">
                   <div className="absolute top-0 left-0 w-10 h-10 rounded-full overflow-hidden bg-background z-10">
                     <Image 
@@ -1601,31 +1743,28 @@ export default function PoolDetailPage() {
           </div>
           
           {/* Main content area with two columns */}
-          <div className="flex flex-col lg:flex-row gap-6">
+          <div className="flex flex-col lg:flex-row gap-3 lg:gap-6 min-w-0">
             {/* Left Column: Stats and Graph (grows to fill remaining space) */}
-            <div ref={leftColumnRef} className="flex-1 flex flex-col space-y-3 lg:space-y-6">
+            <div ref={leftColumnRef} className="flex-1 flex flex-col space-y-3 lg:space-y-6 min-w-0">
               {/* Pool stats - Mobile: columns, Desktop: grid */}
-              <div className="flex flex-col md:grid md:grid-cols-2 xl:grid-cols-2 min-[1500px]:grid-cols-4 gap-6 flex-shrink-0 lg:max-w-none">
+              <div className="flex flex-col sm:grid sm:grid-cols-2 xl:grid-cols-2 min-[1500px]:grid-cols-4 gap-3 sm:gap-6 flex-shrink-0 lg:max-w-none">
                 {/* APR and Total Liquidity in columns on mobile */}
-                <div className="flex flex-row gap-3 md:hidden w-full overflow-hidden">
-                  <div className="rounded-lg bg-muted/30 p-2 hover:outline hover:outline-1 hover:outline-muted transition-colors flex-1 min-w-0 max-w-[50%]">
+                <div className="flex gap-3 sm:hidden w-full">
+                  <div className="rounded-lg bg-muted/30 p-3 hover:outline hover:outline-1 hover:outline-muted transition-colors flex-1 min-w-0">
                     <div className="text-xs text-muted-foreground mb-1">APR</div>
                     <div className="text-sm font-medium truncate">{currentPoolData.apr}</div>
                   </div>
-                  <div className="rounded-lg bg-muted/30 p-2 hover:outline hover:outline-1 hover:outline-muted transition-colors flex-1 min-w-0 max-w-[50%]">
-                    <div className="text-xs text-muted-foreground mb-1 overflow-hidden">
+                  <div className="rounded-lg bg-muted/30 p-3 hover:outline hover:outline-1 hover:outline-muted transition-colors flex-1 min-w-0 cursor-pointer" onClick={cycleToggleMetric}>
+                    <div className="text-xs text-muted-foreground mb-1">
                       <div className="flex items-center gap-1">
-                        <span className="truncate text-xs flex-1 min-w-0">
+                        <span className="truncate flex-1 min-w-0 text-xs">
                           {toggleMetric === 'liquidity' && 'TVL'}
                           {toggleMetric === 'volume' && 'Volume (24h)'}
                           {toggleMetric === 'fees' && 'Fees (24h)'}
                         </span>
-                        <button
-                          onClick={cycleToggleMetric}
-                          className="p-1 hover:bg-muted/50 rounded transition-colors flex-shrink-0"
-                        >
+                        <div className="p-0.5 hover:bg-muted/50 rounded transition-colors flex-shrink-0">
                           <ArrowRightLeftIcon className="h-3 w-3" />
-                        </button>
+                        </div>
                       </div>
                     </div>
                     <div className="text-sm font-medium truncate">
@@ -1785,239 +1924,489 @@ export default function PoolDetailPage() {
                           />
                         </div>
                       ) : apiChartData.length > 0 ? (
-                        activeChart === 'volumeTvlRatio' ? (
-                          // LineChart for dynamic fee view (like dynamic-fee-chart.tsx)
-                          <LineChart
-                            data={processChartDataForScreenSize(apiChartData)}
-                            margin={{
-                              top: 5,
-                              right: 20,
-                              left: 5,
-                              bottom: 5,
-                            }}
-                          >
-                            <CartesianGrid vertical={false} strokeDasharray="3 3" />
-                            <XAxis
-                              dataKey="date"
-                              tickLine={false}
-                              axisLine={false}
-                              tickMargin={10}
-                              tickFormatter={(value) => {
-                                const date = new Date(value);
-                                return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-                              }}
-                              tick={{ fontSize: '0.75rem' }}
-                            />
-                            <YAxis
-                              yAxisId="left"
-                              tickLine={false}
-                              axisLine={false}
-                              tickMargin={8}
-                              tickFormatter={(value) => value.toFixed(2)}
-                              domain={['auto', 'auto']}
-                              stroke="hsl(var(--muted-foreground))"
-                              tick={{ fontSize: '0.75rem' }}
-                            />
-                            <YAxis
-                              yAxisId="right"
-                              orientation="right"
-                              tickLine={false}
-                              axisLine={false}
-                              tickMargin={8}
-                              tickFormatter={(value) => `${value.toFixed(2)}%`}
-                              domain={['auto', 'auto']}
-                              stroke="hsl(var(--muted-foreground))"
-                              tick={{ fontSize: '0.75rem' }}
-                            />
-                            <ChartTooltip
-                              cursor={true}
-                              content={({ active, payload, label }) => {
-                                if (!active || !payload || !payload.length) return null;
-                                
-                                // Get the data point from the first payload item
-                                const dataPoint = payload[0]?.payload;
-                                if (!dataPoint) return null;
+                        // Mobile-only chart (no Y-axis)
+                        isMobile ? (
+                          activeChart === 'volumeTvlRatio' ? (
+                            // Mobile LineChart for dynamic fee view (invisible Y-axes with calculated domains)
+                            (() => {
+                              // Calculate the actual min/max values from the data
+                              const ratios = apiChartData.flatMap(d => [d.volumeTvlRatio, d.emaRatio]).filter(v => typeof v === 'number');
+                              const fees = apiChartData.map(d => d.dynamicFee).filter(v => typeof v === 'number');
+                              
+                              const ratioMin = Math.min(...ratios);
+                              const ratioMax = Math.max(...ratios);
+                              const feeMin = Math.min(...fees);
+                              const feeMax = Math.max(...fees);
+                              
+                              // Calculate domains with -10% to +10% padding
+                              const ratioRange = ratioMax - ratioMin;
+                              const feeRange = feeMax - feeMin;
+                              
+                              const ratioDomain = [
+                                ratioMin - (ratioRange * 0.1),
+                                ratioMax + (ratioRange * 0.1)
+                              ];
+                              
+                              const feeDomain = [
+                                feeMin - (feeRange * 0.1),
+                                feeMax + (feeRange * 0.1)
+                              ];
+                              
+                              return (
+                                <LineChart
+                                  data={processChartDataForScreenSize(apiChartData)}
+                                  margin={{
+                                    top: 5,
+                                    right: 5,
+                                    left: 5,
+                                    bottom: 5,
+                                  }}
+                                >
+                                  <CartesianGrid vertical={false} strokeDasharray="3 3" />
+                                  <XAxis
+                                    dataKey="date"
+                                    tickLine={false}
+                                    axisLine={false}
+                                    tickMargin={10}
+                                    tickFormatter={(value) => {
+                                      const date = new Date(value);
+                                      return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+                                    }}
+                                    tick={{ fontSize: '0.75rem' }}
+                                  />
+                                  <YAxis
+                                    yAxisId="left"
+                                    domain={ratioDomain}
+                                    hide
+                                  />
+                                  <YAxis
+                                    yAxisId="right"
+                                    orientation="right"
+                                    domain={feeDomain}
+                                    hide
+                                  />
+                                  <ChartTooltip
+                                    cursor={true}
+                                    content={({ active, payload, label }) => {
+                                      if (!active || !payload || !payload.length) return null;
+                                      
+                                      // Get the data point from the first payload item
+                                      const dataPoint = payload[0]?.payload;
+                                      if (!dataPoint) return null;
 
-                                return (
-                                  <div className="grid min-w-[8rem] items-start gap-1.5 rounded-lg border border-sidebar-border bg-[#0f0f0f] px-2.5 py-1.5 text-xs shadow-xl">
-                                    <div className="font-medium">
-                                      {new Date(dataPoint.date).toLocaleDateString("en-US", {
-                                        month: "long",
-                                        day: "numeric"
-                                      })}
-                                    </div>
-                                    <div className="grid gap-1.5">
-                                      {/* Vol/TVL Ratio with line indicator */}
-                                      <div className="flex w-full flex-wrap items-stretch gap-2">
-                                        <div
-                                          className="shrink-0 rounded-[2px] w-1 h-4"
-                                          style={{
-                                            backgroundColor: 'hsl(var(--chart-3))',
-                                          }}
-                                        />
-                                        <div className="flex flex-1 justify-between leading-none items-center">
-                                          <span className="text-muted-foreground">Vol/TVL</span>
-                                          <span className="font-mono font-medium tabular-nums text-foreground">
-                                            {typeof dataPoint.volumeTvlRatio === 'number' ? dataPoint.volumeTvlRatio.toFixed(3) : 'N/A'}
-                                          </span>
-                                        </div>
-                                      </div>
-
-                                      {/* EMA with line indicator */}
-                                      <div className="flex w-full flex-wrap items-stretch gap-2">
-                                        <div
-                                          className="shrink-0 rounded-[2px] w-1 h-4"
-                                          style={{
-                                            backgroundColor: 'hsl(var(--chart-2))',
-                                          }}
-                                        />
-                                        <div className="flex flex-1 justify-between leading-none items-center">
-                                          <span className="text-muted-foreground">EMA</span>
-                                          <span className="font-mono font-medium tabular-nums text-foreground">
-                                            {typeof dataPoint.emaRatio === 'number' ? dataPoint.emaRatio.toFixed(3) : 'N/A'}
-                                          </span>
-                                        </div>
-                                      </div>
-
-                                      {/* Dashed separator */}
-                                      <div className="border-t border-dashed border-border my-1"></div>
-
-                                      {/* Dynamic Fee with rounded line indicator */}
-                                      <div className="flex w-full flex-wrap items-stretch gap-2">
-                                        <div
-                                          className="shrink-0 rounded-[2px] w-1 h-4"
-                                          style={{
-                                            backgroundColor: '#e85102',
-                                          }}
-                                        />
-                                        <div className="flex flex-1 justify-between leading-none items-center">
-                                          <span className="text-muted-foreground">Fee</span>
-                                          <span className="font-mono font-medium tabular-nums text-foreground">
-                                            {typeof dataPoint.dynamicFee === 'number' ? `${dataPoint.dynamicFee.toFixed(2)}%` : 'N/A'}
-                                          </span>
-                                        </div>
-                                      </div>
-                                    </div>
-                                  </div>
-                                );
-                              }}
-                            />
-                            <Line
-                              yAxisId="left"
-                              type="monotone"
-                              dataKey="volumeTvlRatio"
-                              strokeWidth={2}
-                              dot={false}
-                              stroke={chartConfig.volumeTvlRatio.color}
-                              name={chartConfig.volumeTvlRatio.label}
-                              isAnimationActive={false}
-                            />
-                            <Line
-                              yAxisId="left"
-                              type="monotone"
-                              dataKey="emaRatio"
-                              strokeWidth={2}
-                              dot={false}
-                              stroke={chartConfig.emaRatio.color}
-                              name={chartConfig.emaRatio.label}
-                              strokeDasharray="5 5"
-                              isAnimationActive={false}
-                            />
-                            <Line
-                              yAxisId="right"
-                              type="stepAfter"
-                              dataKey="dynamicFee"
-                              strokeWidth={2}
-                              dot={false}
-                              stroke={chartConfig.dynamicFee.color}
-                              name={chartConfig.dynamicFee.label}
-                              isAnimationActive={false}
-                            />
-                          </LineChart>
-                        ) : (
-                          // BarChart for volume and TVL views
-                          <BarChart
-                            accessibilityLayer
-                            data={processChartDataForScreenSize(apiChartData)}
-                            margin={{
-                              left: 25,
-                              right: 25,
-                              top: 20, 
-                              bottom: 0
-                            }}
-                          >
-                            <CartesianGrid vertical={false} />
-                            <XAxis
-                              dataKey="date"
-                              tickLine={false}
-                              axisLine={false}
-                              tickMargin={8}
-                              minTickGap={32}
-                              tickFormatter={(value) => {
-                                const date = new Date(value);
-                                return date.toLocaleDateString("en-US", {
-                                  month: "short",
-                                  day: "numeric",
-                                });
-                              }}
-                            />
-                            <YAxis
-                              tickLine={false}
-                              axisLine={false}
-                              tickMargin={8}
-                              tickFormatter={(value) => formatUSD(value)}
-                            />
-                            <ChartTooltip
-                              cursor={false}
-                              content={
-                                <ChartTooltipContent 
-                                  indicator="line"
-                                  className="!bg-[#0f0f0f] !text-card-foreground border border-sidebar-border shadow-lg rounded-lg"
-                                  formatter={(value, name, item, index, payload) => {
-                                    const itemConfig = chartConfig[name as keyof typeof chartConfig];
-                                    const indicatorColor = item?.color || (itemConfig && 'color' in itemConfig ? itemConfig.color : '#404040');
-                                    
-                                    return (
-                                      <div className="flex gap-2">
-                                        <div
-                                          className="shrink-0 rounded-[2px] border-[--color-border] bg-[--color-bg] w-1"
-                                          style={{
-                                            "--color-bg": indicatorColor,
-                                            "--color-border": indicatorColor,
-                                          } as React.CSSProperties}
-                                        />
-                                        <div className="grid gap-1 flex-1">
-                                          {index === 0 && (
-                                            <div className="font-medium">
-                                              {new Date(item.payload?.date).toLocaleDateString("en-US", {
-                                                month: "long",
-                                                day: "numeric"
-                                              })}
+                                      return (
+                                        <div className="grid min-w-[8rem] items-start gap-1.5 rounded-lg border border-sidebar-border bg-[#0f0f0f] px-2.5 py-1.5 text-xs shadow-xl">
+                                          <div className="font-medium">
+                                            {new Date(dataPoint.date).toLocaleDateString("en-US", {
+                                              month: "long",
+                                              day: "numeric"
+                                            })}
+                                          </div>
+                                          <div className="grid gap-1.5">
+                                            {/* Vol/TVL Ratio with line indicator */}
+                                            <div className="flex w-full flex-wrap items-stretch gap-2">
+                                              <div
+                                                className="shrink-0 rounded-[2px] w-1 h-4"
+                                                style={{
+                                                  backgroundColor: 'hsl(var(--chart-3))',
+                                                }}
+                                              />
+                                              <div className="flex flex-1 justify-between leading-none items-center">
+                                                <span className="text-muted-foreground">Vol/TVL</span>
+                                                <span className="font-mono font-medium tabular-nums text-foreground">
+                                                  {typeof dataPoint.volumeTvlRatio === 'number' ? dataPoint.volumeTvlRatio.toFixed(3) : 'N/A'}
+                                                </span>
+                                              </div>
                                             </div>
-                                          )}
-                                          <div className="flex justify-between leading-none items-center gap-4">
-                                            <span className="text-muted-foreground">
-                                              {itemConfig?.label || name}
-                                            </span>
+
+                                            {/* EMA with line indicator */}
+                                            <div className="flex w-full flex-wrap items-stretch gap-2">
+                                              <div
+                                                className="shrink-0 rounded-[2px] w-1 h-4"
+                                                style={{
+                                                  backgroundColor: 'hsl(var(--chart-2))',
+                                                }}
+                                              />
+                                              <div className="flex flex-1 justify-between leading-none items-center">
+                                                <span className="text-muted-foreground">EMA</span>
+                                                <span className="font-mono font-medium tabular-nums text-foreground">
+                                                  {typeof dataPoint.emaRatio === 'number' ? dataPoint.emaRatio.toFixed(3) : 'N/A'}
+                                                </span>
+                                              </div>
+                                            </div>
+
+                                            {/* Dashed separator */}
+                                            <div className="border-t border-dashed border-border my-1"></div>
+
+                                            {/* Dynamic Fee with rounded line indicator */}
+                                            <div className="flex w-full flex-wrap items-stretch gap-2">
+                                              <div
+                                                className="shrink-0 rounded-[2px] w-1 h-4"
+                                                style={{
+                                                  backgroundColor: '#e85102',
+                                                }}
+                                              />
+                                              <div className="flex flex-1 justify-between leading-none items-center">
+                                                <span className="text-muted-foreground">Fee</span>
+                                                <span className="font-mono font-medium tabular-nums text-foreground">
+                                                  {typeof dataPoint.dynamicFee === 'number' ? `${dataPoint.dynamicFee.toFixed(2)}%` : 'N/A'}
+                                                </span>
+                                              </div>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      );
+                                    }}
+                                  />
+                                  <Line
+                                    yAxisId="left"
+                                    type="monotone"
+                                    dataKey="volumeTvlRatio"
+                                    strokeWidth={2}
+                                    dot={false}
+                                    stroke={chartConfig.volumeTvlRatio.color}
+                                    name={chartConfig.volumeTvlRatio.label}
+                                    isAnimationActive={false}
+                                  />
+                                  <Line
+                                    yAxisId="left"
+                                    type="monotone"
+                                    dataKey="emaRatio"
+                                    strokeWidth={2}
+                                    dot={false}
+                                    stroke={chartConfig.emaRatio.color}
+                                    name={chartConfig.emaRatio.label}
+                                    strokeDasharray="5 5"
+                                    isAnimationActive={false}
+                                  />
+                                  <Line
+                                    yAxisId="right"
+                                    type="stepAfter"
+                                    dataKey="dynamicFee"
+                                    strokeWidth={2}
+                                    dot={false}
+                                    stroke={chartConfig.dynamicFee.color}
+                                    name={chartConfig.dynamicFee.label}
+                                    isAnimationActive={false}
+                                  />
+                                </LineChart>
+                              );
+                            })()
+                          ) : (
+                            // Mobile BarChart for volume and TVL views (no Y-axis)
+                            <BarChart
+                              accessibilityLayer
+                              data={processChartDataForScreenSize(apiChartData)}
+                              margin={{
+                                left: 5,
+                                right: 5,
+                                top: 20, 
+                                bottom: 0
+                              }}
+                            >
+                              <CartesianGrid vertical={false} />
+                              <XAxis
+                                dataKey="date"
+                                tickLine={false}
+                                axisLine={false}
+                                tickMargin={8}
+                                minTickGap={32}
+                                tickFormatter={(value) => {
+                                  const date = new Date(value);
+                                  return date.toLocaleDateString("en-US", {
+                                    month: "short",
+                                    day: "numeric",
+                                  });
+                                }}
+                              />
+                              <ChartTooltip
+                                cursor={false}
+                                content={
+                                  <ChartTooltipContent 
+                                    indicator="line"
+                                    className="!bg-[#0f0f0f] !text-card-foreground border border-sidebar-border shadow-lg rounded-lg"
+                                    formatter={(value, name, item, index, payload) => {
+                                      const itemConfig = chartConfig[name as keyof typeof chartConfig];
+                                      const indicatorColor = item?.color || (itemConfig && 'color' in itemConfig ? itemConfig.color : '#404040');
+                                      
+                                      return (
+                                        <div className="flex gap-2">
+                                          <div
+                                            className="shrink-0 rounded-[2px] border-[--color-border] bg-[--color-bg] w-1"
+                                            style={{
+                                              "--color-bg": indicatorColor,
+                                              "--color-border": indicatorColor,
+                                            } as React.CSSProperties}
+                                          />
+                                          <div className="grid gap-1 flex-1">
+                                            {index === 0 && (
+                                              <div className="font-medium">
+                                                {new Date(item.payload?.date).toLocaleDateString("en-US", {
+                                                  month: "long",
+                                                  day: "numeric"
+                                                })}
+                                              </div>
+                                            )}
+                                            <div className="flex justify-between leading-none items-center gap-4">
+                                              <span className="text-muted-foreground">
+                                                {itemConfig?.label || name}
+                                              </span>
+                                              <span className="font-mono font-medium tabular-nums text-foreground">
+                                                ${typeof value === 'number' ? Math.round(value).toLocaleString('en-US') : value}
+                                              </span>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      );
+                                    }}
+                                    labelFormatter={(value) => {
+                                      return new Date(value).toLocaleDateString("en-US", {
+                                        month: "short",
+                                        day: "numeric"
+                                      });
+                                    }}
+                                  />
+                                }
+                              />
+                              <Bar dataKey={activeChart === 'volume' ? 'volumeUSD' : 'tvlUSD'} fill={chartConfig[activeChart]?.color || `var(--color-${activeChart})`} />
+                            </BarChart>
+                          )
+                        ) : (
+                          // Desktop chart (original implementation)
+                          activeChart === 'volumeTvlRatio' ? (
+                            // LineChart for dynamic fee view (like dynamic-fee-chart.tsx)
+                            <LineChart
+                              data={processChartDataForScreenSize(apiChartData)}
+                              margin={{
+                                top: 5,
+                                right: 20,
+                                left: 5,
+                                bottom: 5,
+                              }}
+                            >
+                              <CartesianGrid vertical={false} strokeDasharray="3 3" />
+                              <XAxis
+                                dataKey="date"
+                                tickLine={false}
+                                axisLine={false}
+                                tickMargin={10}
+                                tickFormatter={(value) => {
+                                  const date = new Date(value);
+                                  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+                                }}
+                                tick={{ fontSize: '0.75rem' }}
+                              />
+                              <YAxis
+                                yAxisId="left"
+                                tickLine={false}
+                                axisLine={false}
+                                tickMargin={8}
+                                tickFormatter={(value) => value.toFixed(2)}
+                                domain={['auto', 'auto']}
+                                stroke="hsl(var(--muted-foreground))"
+                                tick={{ fontSize: '0.75rem' }}
+                              />
+                              <YAxis
+                                yAxisId="right"
+                                orientation="right"
+                                tickLine={false}
+                                axisLine={false}
+                                tickMargin={8}
+                                tickFormatter={(value) => `${value.toFixed(2)}%`}
+                                domain={['auto', 'auto']}
+                                stroke="hsl(var(--muted-foreground))"
+                                tick={{ fontSize: '0.75rem' }}
+                              />
+                              <ChartTooltip
+                                cursor={true}
+                                content={({ active, payload, label }) => {
+                                  if (!active || !payload || !payload.length) return null;
+                                  
+                                  // Get the data point from the first payload item
+                                  const dataPoint = payload[0]?.payload;
+                                  if (!dataPoint) return null;
+
+                                  return (
+                                    <div className="grid min-w-[8rem] items-start gap-1.5 rounded-lg border border-sidebar-border bg-[#0f0f0f] px-2.5 py-1.5 text-xs shadow-xl">
+                                      <div className="font-medium">
+                                        {new Date(dataPoint.date).toLocaleDateString("en-US", {
+                                          month: "long",
+                                          day: "numeric"
+                                        })}
+                                      </div>
+                                      <div className="grid gap-1.5">
+                                        {/* Vol/TVL Ratio with line indicator */}
+                                        <div className="flex w-full flex-wrap items-stretch gap-2">
+                                          <div
+                                            className="shrink-0 rounded-[2px] w-1 h-4"
+                                            style={{
+                                              backgroundColor: 'hsl(var(--chart-3))',
+                                            }}
+                                          />
+                                          <div className="flex flex-1 justify-between leading-none items-center">
+                                            <span className="text-muted-foreground">Vol/TVL</span>
                                             <span className="font-mono font-medium tabular-nums text-foreground">
-                                              ${typeof value === 'number' ? Math.round(value).toLocaleString('de-DE') : value}
+                                              {typeof dataPoint.volumeTvlRatio === 'number' ? dataPoint.volumeTvlRatio.toFixed(3) : 'N/A'}
+                                            </span>
+                                          </div>
+                                        </div>
+
+                                        {/* EMA with line indicator */}
+                                        <div className="flex w-full flex-wrap items-stretch gap-2">
+                                          <div
+                                            className="shrink-0 rounded-[2px] w-1 h-4"
+                                            style={{
+                                              backgroundColor: 'hsl(var(--chart-2))',
+                                            }}
+                                          />
+                                          <div className="flex flex-1 justify-between leading-none items-center">
+                                            <span className="text-muted-foreground">EMA</span>
+                                            <span className="font-mono font-medium tabular-nums text-foreground">
+                                              {typeof dataPoint.emaRatio === 'number' ? dataPoint.emaRatio.toFixed(3) : 'N/A'}
+                                            </span>
+                                          </div>
+                                        </div>
+
+                                        {/* Dashed separator */}
+                                        <div className="border-t border-dashed border-border my-1"></div>
+
+                                        {/* Dynamic Fee with rounded line indicator */}
+                                        <div className="flex w-full flex-wrap items-stretch gap-2">
+                                          <div
+                                            className="shrink-0 rounded-[2px] w-1 h-4"
+                                            style={{
+                                              backgroundColor: '#e85102',
+                                            }}
+                                          />
+                                          <div className="flex flex-1 justify-between leading-none items-center">
+                                            <span className="text-muted-foreground">Fee</span>
+                                            <span className="font-mono font-medium tabular-nums text-foreground">
+                                              {typeof dataPoint.dynamicFee === 'number' ? `${dataPoint.dynamicFee.toFixed(2)}%` : 'N/A'}
                                             </span>
                                           </div>
                                         </div>
                                       </div>
-                                    );
-                                  }}
-                                  labelFormatter={(value) => {
-                                    return new Date(value).toLocaleDateString("en-US", {
-                                      month: "short",
-                                      day: "numeric"
-                                    });
-                                  }}
-                                />
-                              }
-                            />
-                            <Bar dataKey={activeChart === 'volume' ? 'volumeUSD' : 'tvlUSD'} fill={chartConfig[activeChart]?.color || `var(--color-${activeChart})`} />
-                          </BarChart>
+                                    </div>
+                                  );
+                                }}
+                              />
+                              <Line
+                                yAxisId="left"
+                                type="monotone"
+                                dataKey="volumeTvlRatio"
+                                strokeWidth={2}
+                                dot={false}
+                                stroke={chartConfig.volumeTvlRatio.color}
+                                name={chartConfig.volumeTvlRatio.label}
+                                isAnimationActive={false}
+                              />
+                              <Line
+                                yAxisId="left"
+                                type="monotone"
+                                dataKey="emaRatio"
+                                strokeWidth={2}
+                                dot={false}
+                                stroke={chartConfig.emaRatio.color}
+                                name={chartConfig.emaRatio.label}
+                                strokeDasharray="5 5"
+                                isAnimationActive={false}
+                              />
+                              <Line
+                                yAxisId="right"
+                                type="stepAfter"
+                                dataKey="dynamicFee"
+                                strokeWidth={2}
+                                dot={false}
+                                stroke={chartConfig.dynamicFee.color}
+                                name={chartConfig.dynamicFee.label}
+                                isAnimationActive={false}
+                              />
+                            </LineChart>
+                          ) : (
+                            // BarChart for volume and TVL views
+                            <BarChart
+                              accessibilityLayer
+                              data={processChartDataForScreenSize(apiChartData)}
+                              margin={{
+                                left: 25,
+                                right: 25,
+                                top: 20, 
+                                bottom: 0
+                              }}
+                            >
+                              <CartesianGrid vertical={false} />
+                              <XAxis
+                                dataKey="date"
+                                tickLine={false}
+                                axisLine={false}
+                                tickMargin={8}
+                                minTickGap={32}
+                                tickFormatter={(value) => {
+                                  const date = new Date(value);
+                                  return date.toLocaleDateString("en-US", {
+                                    month: "short",
+                                    day: "numeric",
+                                  });
+                                }}
+                              />
+                              <YAxis
+                                tickLine={false}
+                                axisLine={false}
+                                tickMargin={8}
+                                tickFormatter={(value) => formatUSD(value)}
+                              />
+                              <ChartTooltip
+                                cursor={false}
+                                content={
+                                  <ChartTooltipContent 
+                                    indicator="line"
+                                    className="!bg-[#0f0f0f] !text-card-foreground border border-sidebar-border shadow-lg rounded-lg"
+                                    formatter={(value, name, item, index, payload) => {
+                                      const itemConfig = chartConfig[name as keyof typeof chartConfig];
+                                      const indicatorColor = item?.color || (itemConfig && 'color' in itemConfig ? itemConfig.color : '#404040');
+                                      
+                                      return (
+                                        <div className="flex gap-2">
+                                          <div
+                                            className="shrink-0 rounded-[2px] border-[--color-border] bg-[--color-bg] w-1"
+                                            style={{
+                                              "--color-bg": indicatorColor,
+                                              "--color-border": indicatorColor,
+                                            } as React.CSSProperties}
+                                          />
+                                          <div className="grid gap-1 flex-1">
+                                            {index === 0 && (
+                                              <div className="font-medium">
+                                                {new Date(item.payload?.date).toLocaleDateString("en-US", {
+                                                  month: "long",
+                                                  day: "numeric"
+                                                })}
+                                              </div>
+                                            )}
+                                            <div className="flex justify-between leading-none items-center gap-4">
+                                              <span className="text-muted-foreground">
+                                                {itemConfig?.label || name}
+                                              </span>
+                                              <span className="font-mono font-medium tabular-nums text-foreground">
+                                                ${typeof value === 'number' ? Math.round(value).toLocaleString('en-US') : value}
+                                              </span>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      );
+                                    }}
+                                    labelFormatter={(value) => {
+                                      return new Date(value).toLocaleDateString("en-US", {
+                                        month: "short",
+                                        day: "numeric"
+                                      });
+                                    }}
+                                  />
+                                }
+                              />
+                              <Bar dataKey={activeChart === 'volume' ? 'volumeUSD' : 'tvlUSD'} fill={chartConfig[activeChart]?.color || `var(--color-${activeChart})`} />
+                            </BarChart>
+                          )
                         )
                       ) : (
                         <div className="flex justify-center items-center h-full text-muted-foreground">
@@ -2030,8 +2419,8 @@ export default function PoolDetailPage() {
               </div>
             </div>
 
-            {/* Right Column: Add Liquidity Form (fixed width) */}
-            <div className="w-[450px] flex-shrink-0" ref={addLiquidityFormRef}>
+            {/* Right Column: Add Liquidity Form (fixed width on desktop, full width on mobile) */}
+            <div className="w-full lg:w-[450px] flex-shrink-0 min-w-0" ref={addLiquidityFormRef}>
               {/* Tabs for Swap/Deposit/Withdraw - REMOVED */}
               {/* <div className="flex border-b border-border mb-4 px-6 pt-6">
                 <button
@@ -2067,12 +2456,12 @@ export default function PoolDetailPage() {
               </div> */}
 
               {poolId && currentPoolData && ( // Always render form (removed activeTab condition)
-                <div ref={addLiquidityFormRef} className="w-full rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors">
+                <div ref={addLiquidityFormRef} className="w-full rounded-lg bg-muted/30 p-3 sm:p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors">
                   <AddLiquidityFormMemo
                     selectedPoolId={poolId}
                     poolApr={currentPoolData?.apr}
                     onLiquidityAdded={() => {
-                      fetchPageData();
+                      refreshAfterLiquidityAdded();
                       // Clear copied parameters after liquidity is added
                       setCopiedPositionParams(null);
                     }}
@@ -2097,7 +2486,7 @@ export default function PoolDetailPage() {
           </div>
           
           {/* Your Positions Section (Full width below the columns) */}
-          <div className="space-y-4 mt-3 lg:mt-6"> {/* Added margin-top to match spacing between Pool Activity and stats containers */}
+          <div className="space-y-3 lg:space-y-4 mt-3 lg:mt-6"> {/* Added margin-top to match spacing between Pool Activity and stats containers */}
             {/* Static title - always visible */}
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-medium">Your Positions</h3>
@@ -2110,7 +2499,7 @@ export default function PoolDetailPage() {
             ) : userPositions.length > 0 ? (
               <div>
                 {/* Replace Table with individual position segments */}
-                <div className="grid gap-4">
+                <div className="grid gap-3 lg:gap-4">
                   {userPositions.map((position) => {
                     const getTokenIcon = (positionToken: { symbol?: string; address?: string }) => {
                       if (!positionToken?.symbol && !positionToken?.address) return "/placeholder-logo.svg";
@@ -2158,182 +2547,225 @@ export default function PoolDetailPage() {
                                             return (
                           <div 
                             key={position.positionId}
-                            className="rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors group"
+                            className="rounded-lg bg-muted/30 p-3 sm:p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors group"
                           >
-                            {/* Single Line Layout */}
-                            <div className="flex items-center justify-between">
-                              {/* Token Icons + Pool Info */}
-                              <div className="flex items-center gap-3 min-w-0">
-                                {/* Token Icons - Made bigger */}
-                                <div className="relative w-16 h-8 flex-shrink-0">
-                                  <div className="absolute top-0 left-0 w-8 h-8 rounded-full overflow-hidden bg-background z-10">
-                                    <Image 
-                                      src={getTokenIcon(position.token0)} 
-                                      alt={position.token0.symbol || 'Token 0'} 
-                                      width={32} 
-                                      height={32} 
-                                      className="w-full h-full object-cover"
-                                      onError={() => {
-                                        console.warn(`Failed to load icon for ${position.token0.symbol}`);
-                                      }}
-                                    />
-                </div>
-                                  <div className="absolute top-0 left-6 w-8 h-8 rounded-full overflow-hidden bg-background z-30">
-                                    <Image 
-                                      src={getTokenIcon(position.token1)} 
-                                      alt={position.token1.symbol || 'Token 1'} 
-                                      width={32} 
-                                      height={32} 
-                                      className="w-full h-full object-cover"
-                                      onError={() => {
-                                        console.warn(`Failed to load icon for ${position.token1.symbol}`);
-                                      }}
-                                    />
+                            {/* Mobile: Stack vertically, Desktop: 4-column layout */}
+                            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-6">
+                              {/* Column 1: Token Icons + Pool Info (left-aligned) */}
+                              <div className="flex items-center gap-3 min-w-0 sm:flex-1 sm:max-w-[200px]">
+                                {/* Mobile: 2-column layout for Token Info + TickRangePreview */}
+                                <div className="flex items-center gap-3 min-w-0 flex-1">
+                                  <div className="relative w-12 sm:w-16 h-6 sm:h-8 flex-shrink-0">
+                                    <div className="absolute top-0 left-0 w-6 sm:w-8 h-6 sm:h-8 rounded-full overflow-hidden bg-background z-10">
+                                      <Image 
+                                        src={getTokenIcon(position.token0)} 
+                                        alt={position.token0.symbol || 'Token 0'} 
+                                        width={24} 
+                                        height={24} 
+                                        className="w-full h-full object-cover sm:w-8 sm:h-8"
+                                      />
+                                    </div>
+                                    <div className="absolute top-0 left-4 sm:left-6 w-6 sm:w-8 h-6 sm:h-8 rounded-full overflow-hidden bg-background z-30">
+                                      <Image 
+                                        src={getTokenIcon(position.token1)} 
+                                        alt={position.token1.symbol || 'Token 1'} 
+                                        width={24} 
+                                        height={24} 
+                                        className="w-full h-full object-cover sm:w-8 sm:h-8"
+                                      />
+                                    </div>
+                                    <div className="absolute top-[-1px] left-[18px] sm:left-[22px] w-7 sm:w-9 h-7 sm:h-9 rounded-full bg-[#0f0f0f] z-20"></div>
                                   </div>
-                                  {/* Background circle for cut-out effect */}
-                                  <div className="absolute top-[-1px] left-[22px] w-9 h-9 rounded-full bg-[#0f0f0f] z-20"></div>
-                                </div>
-                                
-                                {/* Token Pair Name + Price Range */}
-                                <div className="min-w-0">
-                                  <div className="font-medium text-sm">
-                                    {position.token0.symbol || 'N/A'} / {position.token1.symbol || 'N/A'}
-                                  </div>
-                                  <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                                    {(() => {
-                                      // Determine status icon based on position range
-                                      const StatusIcon = () => {
-                                        const getIcon = () => {
-                                          if (position.isInRange) {
-                                            return <ChevronsLeftRight className="h-3 w-3 text-green-500" />;
-                                          } else {
-                                            // Determine if position is out of range to the left or right
-                                            const currentTick = estimatedCurrentTick;
-                                            const isOutOfRangeLeft = currentTick < position.tickLower;
-                                            const isOutOfRangeRight = currentTick > position.tickUpper;
-                                            
-                                            // Check if denomination is flipped to determine chevron direction
-                                            const baseToken = determineBaseTokenForPriceDisplay(
-                                              position.token0.symbol || '', 
-                                              position.token1.symbol || ''
-                                            );
-                                            const isDenominationFlipped = baseToken === position.token0.symbol;
-                                            
-                                            if (isOutOfRangeLeft) {
-                                              // If current price is below position range
-                                              // With normal denomination: price needs to go up (right arrow)
-                                              // With flipped denomination: price needs to go down (left arrow)
-                                              return isDenominationFlipped 
-                                                ? <ChevronsRight className="h-3 w-3 text-red-500" />
-                                                : <ChevronsLeft className="h-3 w-3 text-red-500" />;
-                                            } else if (isOutOfRangeRight) {
-                                              // If current price is above position range
-                                              // With normal denomination: price needs to go down (left arrow)
-                                              // With flipped denomination: price needs to go up (right arrow)
-                                              return isDenominationFlipped 
-                                                ? <ChevronsLeft className="h-3 w-3 text-red-500" />
-                                                : <ChevronsRight className="h-3 w-3 text-red-500" />;
-                                            } else {
-                                              // Fallback
+                                  <div className="min-w-0 flex-1">
+                                    <div className="font-medium text-sm">
+                                      {position.token0.symbol || 'N/A'} / {position.token1.symbol || 'N/A'}
+                                    </div>
+                                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                                      {(() => {
+                                        // Determine status icon based on position range
+                                        const StatusIcon = () => {
+                                          const getIcon = () => {
+                                            if (position.isInRange) {
                                               return <ChevronsLeftRight className="h-3 w-3 text-green-500" />;
+                                            } else {
+                                              // Determine if position is out of range to the left or right
+                                              const currentTick = estimatedCurrentTick;
+                                              const isOutOfRangeLeft = currentTick < position.tickLower;
+                                              const isOutOfRangeRight = currentTick > position.tickUpper;
+                                              
+                                              // Check if denomination is flipped to determine chevron direction
+                                              const baseToken = determineBaseTokenForPriceDisplay(
+                                                position.token0.symbol || '', 
+                                                position.token1.symbol || ''
+                                              );
+                                              const isDenominationFlipped = baseToken === position.token0.symbol;
+                                              
+                                              if (isOutOfRangeLeft) {
+                                                // If current price is below position range
+                                                // With normal denomination: price needs to go up (right arrow)
+                                                // With flipped denomination: price needs to go down (left arrow)
+                                                return isDenominationFlipped 
+                                                  ? <ChevronsRight className="h-3 w-3 text-red-500" />
+                                                  : <ChevronsLeft className="h-3 w-3 text-red-500" />;
+                                              } else if (isOutOfRangeRight) {
+                                                // If current price is above position range
+                                                // With normal denomination: price needs to go down (left arrow)
+                                                // With flipped denomination: price needs to go up (right arrow)
+                                                return isDenominationFlipped 
+                                                  ? <ChevronsLeft className="h-3 w-3 text-red-500" />
+                                                  : <ChevronsRight className="h-3 w-3 text-red-500" />;
+                                              } else {
+                                                // Fallback
+                                                return <ChevronsLeftRight className="h-3 w-3 text-green-500" />;
+                                              }
                                             }
-                                          }
+                                          };
+
+                                          return (
+                                            <HoverCard>
+                                              <HoverCardTrigger asChild>
+                                                <div className="cursor-pointer">
+                                                  {getIcon()}
+                                                </div>
+                                              </HoverCardTrigger>
+                                              <HoverCardContent className="w-64 h-24">
+                                                <TickRangePreview
+                                                  tickLower={position.tickLower}
+                                                  tickUpper={position.tickUpper}
+                                                  currentTick={estimatedCurrentTick}
+                                                  tickSpacing={currentPoolData?.tickSpacing || DEFAULT_TICK_SPACING}
+                                                  poolId={params.poolId}
+                                                  token0Symbol={position.token0.symbol}
+                                                  token1Symbol={position.token1.symbol}
+                                                  currentPrice={currentPrice}
+                                                />
+                                              </HoverCardContent>
+                                            </HoverCard>
+                                          );
                                         };
 
-                                        return (
-                                          <HoverCard>
-                                            <HoverCardTrigger asChild>
-                                              <div className="cursor-pointer">
-                                                {getIcon()}
-                                              </div>
-                                            </HoverCardTrigger>
-                                            <HoverCardContent className="w-64 h-24">
-                                              <TickRangePreview
-                                                tickLower={position.tickLower}
-                                                tickUpper={position.tickUpper}
-                                                currentTick={estimatedCurrentTick}
-                                                tickSpacing={currentPoolData?.tickSpacing || DEFAULT_TICK_SPACING}
-                                                poolId={params.poolId}
-                                                token0Symbol={position.token0.symbol}
-                                                token1Symbol={position.token1.symbol}
-                                                currentPrice={currentPrice}
-                                              />
-                                            </HoverCardContent>
-                                          </HoverCard>
+                                        const baseTokenForPriceDisplay = determineBaseTokenForPriceDisplay(
+                                          position.token0.symbol || '', 
+                                          position.token1.symbol || ''
                                         );
-                                      };
-
-                                      const baseTokenForPriceDisplay = determineBaseTokenForPriceDisplay(
-                                        position.token0.symbol || '', 
-                                        position.token1.symbol || ''
-                                      );
-                                      const lowerPrice = convertTickToPrice(
-                                        position.tickLower,
-                                        currentPoolTick,
-                                        currentPrice,
-                                        baseTokenForPriceDisplay,
-                                        position.token0.symbol || '',
-                                        position.token1.symbol || ''
-                                      );
-                                      const upperPrice = convertTickToPrice(
-                                        position.tickUpper,
-                                        currentPoolTick,
-                                        currentPrice,
-                                        baseTokenForPriceDisplay,
-                                        position.token0.symbol || '',
-                                        position.token1.symbol || ''
-                                      );
-                                      
-                                      return (
-                                        <>
-                                          <StatusIcon />
-                                          <span>{lowerPrice} - {upperPrice}</span>
-                                        </>
-                                      );
-                                    })()}
+                                        const lowerPrice = convertTickToPrice(
+                                          position.tickLower,
+                                          currentPoolTick,
+                                          currentPrice,
+                                          baseTokenForPriceDisplay,
+                                          position.token0.symbol || '',
+                                          position.token1.symbol || ''
+                                        );
+                                        const upperPrice = convertTickToPrice(
+                                          position.tickUpper,
+                                          currentPoolTick,
+                                          currentPrice,
+                                          baseTokenForPriceDisplay,
+                                          position.token0.symbol || '',
+                                          position.token1.symbol || ''
+                                        );
+                                        
+                                        return (
+                                          <>
+                                            <StatusIcon />
+                                            <span>{lowerPrice} - {upperPrice}</span>
+                                          </>
+                                        );
+                                      })()}
+                                    </div>
                                   </div>
+                                </div>
+                                
+                                {/* Mobile: TickRangePreview - only show on mobile */}
+                                <div className="sm:hidden w-28 h-8 flex-shrink-0 rounded-lg overflow-hidden">
+                                  <TickRangePreview
+                                    tickLower={position.tickLower}
+                                    tickUpper={position.tickUpper}
+                                    currentTick={estimatedCurrentTick}
+                                    tickSpacing={currentPoolData?.tickSpacing || DEFAULT_TICK_SPACING}
+                                    poolId={params.poolId}
+                                    token0Symbol={position.token0.symbol}
+                                    token1Symbol={position.token1.symbol}
+                                    currentPrice={currentPrice}
+                                  />
                                 </div>
                               </div>
 
-                              {/* Principal - Token amounts side by side */}
-                              <div className="flex flex-col min-w-0 ml-8">
+                              {/* Column 2: Principal (left-aligned) */}
+                              <div className="flex flex-col min-w-0 sm:flex-1 sm:max-w-[200px]">
                                 <div className="text-xs text-muted-foreground mb-1">Principal</div>
-                                <div className="flex items-center gap-1">
-                                  <div className="text-xs font-medium">
-                                    {(() => {
-                                      const amount = parseFloat(position.token0.amount);
-                                      if (amount < 0.0001) return "> 0.0001";
-                                      if (amount < 1) return amount.toFixed(4);
-                                      return amount.toFixed(2);
-                                    })()} {position.token0.symbol}
+                                <div className="flex items-center gap-1 text-xs">
+                                  <span className="font-medium truncate">
+                                    {formatTokenDisplayAmount(position.token0.amount)} {position.token0.symbol}
+                                  </span>
+                                  <div className="w-px h-3 bg-border mx-1"></div>
+                                  <span className="font-medium truncate">
+                                    {formatTokenDisplayAmount(position.token1.amount)} {position.token1.symbol}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* Column 3: Position Value (left-aligned) */}
+                              <div className="flex flex-col min-w-0 sm:flex-1 sm:max-w-[200px]">
+                                <div className="flex items-end justify-between sm:justify-start sm:gap-2">
+                                  <div className="flex flex-col gap-1">
+                                    <div className="text-xs text-muted-foreground">Position Value</div>
+                                    <div className="flex items-center gap-2">
+                                      <div className="text-xs font-medium">
+                                        ~${calculateTotalValueUSD(position).toFixed(2)}
+                                      </div>
+                                      <div className="flex items-center justify-center h-5 rounded-md bg-green-500/20 text-green-500 px-2 text-xs font-medium">
+                                        {currentPoolData?.apr || "N/A"}
+                                      </div>
+                                    </div>
                                   </div>
-                                  <div className="w-px h-4 bg-border mx-1"></div>
-                                  <div className="text-xs font-medium">
-                                    {(() => {
-                                      const amount = parseFloat(position.token1.amount);
-                                      if (amount < 0.0001) return "> 0.0001";
-                                      if (amount < 1) return amount.toFixed(4);
-                                      return amount.toFixed(2);
-                                    })()} {position.token1.symbol}
+                                  {/* Actions - only show on mobile in this row */}
+                                  <div className="flex items-center gap-2 flex-shrink-0 sm:hidden">
+                                    <a
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleBurnPosition(position);
+                                      }}
+                                      className="flex h-8 cursor-pointer items-center justify-center gap-2 rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-2 text-xs font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30"
+                                      style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: '200%', backgroundPosition: 'center' }}
+                                    >
+                                      {isBurningLiquidity && positionToBurn?.positionId === position.positionId 
+                                        ? <RefreshCwIcon className="h-3 w-3 animate-spin relative z-0" /> 
+                                        : null}
+                                      <span className="relative z-0 whitespace-nowrap">Withdraw</span>
+                                    </a>
+                                    <DropdownMenu>
+                                      <DropdownMenuTrigger asChild>
+                                        <Button variant="ghost" className="h-6 w-6 p-0">
+                                          <span className="sr-only">Open menu</span>
+                                          <MoreHorizontal className="h-3 w-3" />
+                                        </Button>
+                                      </DropdownMenuTrigger>
+                                      <DropdownMenuContent align="end">
+                                        <DropdownMenuItem
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleIncreasePosition(position);
+                                          }}
+                                        >
+                                          Add Liquidity
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleCopyParameters(position);
+                                          }}
+                                        >
+                                          Copy Parameters
+                                        </DropdownMenuItem>
+                                      </DropdownMenuContent>
+                                    </DropdownMenu>
                                   </div>
                                 </div>
                               </div>
 
-                              {/* Position Value - USD value + APR */}
-                              <div className="flex flex-col min-w-0 ml-8">
-                                <div className="text-xs text-muted-foreground mb-1">Position Value</div>
-                                <div className="flex items-center gap-2">
-                                  <div className="text-xs font-medium">
-                                    ~${calculateTotalValueUSD(position).toFixed(2)}
-                                  </div>
-                                  <div className="flex items-center justify-center h-6 rounded-md bg-green-500/20 text-green-500 px-2 text-xs font-medium">
-                                    {currentPoolData?.apr || "N/A"}
-                                  </div>
-                                </div>
-                              </div>
-
-                              {/* Actions */}
-                              <div className="flex items-center gap-2">
+                              {/* Column 4: Actions (right-aligned) - only show on desktop */}
+                              <div className="hidden sm:flex items-center gap-2 flex-shrink-0 self-center">
                                 <a
                                   onClick={(e) => {
                                     e.stopPropagation();
@@ -2384,7 +2816,7 @@ export default function PoolDetailPage() {
               /* Dashed outline container with centered text */
               <div className="border border-dashed rounded-lg bg-muted/10 p-8 flex items-center justify-center">
                 <div className="text-sm font-medium text-white/75">
-                  {isConnected ? "No Positions" : "Connect Wallet"}
+                  No Positions
                 </div>
               </div>
             )}
@@ -2399,16 +2831,16 @@ export default function PoolDetailPage() {
           setShowBurnConfirmDialog(open);
         }
       }}>
-        <DialogContent className="max-w-lg bg-card border border-border shadow-lg [&>button]:hidden">
+        <DialogContent className="w-[calc(100%-2rem)] sm:w-full max-w-lg border border-border shadow-lg [&>button]:hidden" style={{ backgroundColor: 'var(--modal-background)' }}>
           {positionToBurn && (
             <div className="space-y-4">
               {/* Current Position - moved out of striped container */}
               <div className="flex items-center justify-between">
                 <span className="text-sm font-medium">Current Position</span>
                 {!positionToBurn.isInRange && (
-                  <span className="text-xs text-orange-600 bg-orange-50 px-2 py-1 rounded">
+                  <div className="inline-flex items-center border px-2.5 py-0.5 text-xs focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 bg-[#3d271b] text-sidebar-primary border-sidebar-primary rounded-md font-normal hover:bg-[#4a2f1f] transition-colors cursor-default">
                     Out of Range
-                  </span>
+                  </div>
                 )}
               </div>
               <div className="p-3 border border-dashed rounded-md bg-muted/10 space-y-2">
@@ -2446,75 +2878,23 @@ export default function PoolDetailPage() {
 
               {/* Percentage Slider */}
               <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex-1">
-                    <input
-                      type="range"
-                      min="0"
-                      max="100"
-                      value={sliderValue}
-                      onChange={(e) => {
-                        const newValue = parseInt(e.target.value);
-                        sliderValueRef.current = newValue;
-                        
-                        if (!isSliderDragging) {
-                          // If not dragging, update immediately
-                          setSliderValue(newValue);
-                          setWithdrawPercentage(newValue);
-                        } else {
-                          // If dragging, just update the visual slider and defer calculation
-                          if (animationFrameRef.current) {
-                            cancelAnimationFrame(animationFrameRef.current);
-                          }
-                          animationFrameRef.current = requestAnimationFrame(() => {
-                            setSliderValue(newValue);
-                          });
-                        }
-                      }}
-                      onMouseDown={() => {
-                        setIsSliderDragging(true);
-                      }}
-                      onTouchStart={() => {
-                        setIsSliderDragging(true);
-                      }}
-                      onMouseUp={() => {
-                        const finalValue = sliderValueRef.current;
-                        setIsSliderDragging(false);
-                        setSliderValue(finalValue);
-                        setWithdrawPercentage(finalValue);
-                        // Calculate amounts based on percentage
-                        const maxAmount0 = parseFloat(positionToBurn.token0.amount);
-                        const maxAmount1 = parseFloat(positionToBurn.token1.amount);
-                        const amount0 = (maxAmount0 * finalValue) / 100;
-                        const amount1 = (maxAmount1 * finalValue) / 100;
-                        setWithdrawAmount0(amount0.toFixed(6));
-                        setWithdrawAmount1(amount1.toFixed(6));
-                        setIsFullWithdraw(finalValue >= 99);
-                      }}
-                      onTouchEnd={() => {
-                        const finalValue = sliderValueRef.current;
-                        setIsSliderDragging(false);
-                        setSliderValue(finalValue);
-                        setWithdrawPercentage(finalValue);
-                        // Calculate amounts based on percentage
-                        const maxAmount0 = parseFloat(positionToBurn.token0.amount);
-                        const maxAmount1 = parseFloat(positionToBurn.token1.amount);
-                        const amount0 = (maxAmount0 * finalValue) / 100;
-                        const amount1 = (maxAmount1 * finalValue) / 100;
-                        setWithdrawAmount0(amount0.toFixed(6));
-                        setWithdrawAmount1(amount1.toFixed(6));
-                        setIsFullWithdraw(finalValue >= 99);
-                      }}
-                      className="w-full h-2 rounded-lg appearance-none cursor-pointer slider"
-                      style={{
-                        background: sliderValue > 0 
-                          ? `linear-gradient(to right, #f97316 0%, #f97316 ${sliderValue}%, rgb(41 41 41 / 0.3) ${sliderValue}%, rgb(41 41 41 / 0.3) 100%)`
-                          : 'rgb(41 41 41 / 0.3)'
-                      }}
-                    />
-                  </div>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="1"
+                    value={withdrawPercentage}
+                    onChange={(e) => handleWithdrawPercentageChange(parseInt(e.target.value))}
+                    className="flex-1 h-2 rounded-lg appearance-none cursor-pointer slider focus:outline-none focus:ring-0 focus:ring-offset-0"
+                    style={{
+                      background: withdrawPercentage > 0 
+                        ? `linear-gradient(to right, #f45502 0%, #f45502 ${withdrawPercentage}%, rgb(41 41 41 / 0.3) ${withdrawPercentage}%, rgb(41 41 41 / 0.3) 100%)`
+                        : 'rgb(41 41 41 / 0.3)'
+                    }}
+                  />
                   <span className="text-sm text-muted-foreground min-w-[3rem] text-right">
-                    {sliderValue}%
+                    {withdrawPercentage}%
                   </span>
                 </div>
               </div>
@@ -2532,7 +2912,7 @@ export default function PoolDetailPage() {
                       onClick={() => handleMaxWithdraw('amount0')}
                       disabled={isBurningLiquidity}
                     >  
-                      {formatTokenDisplayAmount(positionToBurn.token0.amount)}
+                      Balance: {formatTokenDisplayAmount(positionToBurn.token0.amount)}
                     </Button>
                   </div>
                   <div className="rounded-lg bg-muted/30 p-4">
@@ -2556,10 +2936,10 @@ export default function PoolDetailPage() {
                             const newValue = e.target.value;
                             const maxAmount = parseFloat(positionToBurn.token0.amount);
                             if (parseFloat(newValue) > maxAmount) {
-                              setWithdrawAmount0(maxAmount.toString());
+                              handleWithdrawAmountChange(maxAmount.toString(), 'amount0');
                               return;
                             }
-                            setWithdrawAmount0(newValue);
+                            handleWithdrawAmountChange(newValue, 'amount0');
                             setWithdrawActiveInputSide('amount0');
                             if (newValue && parseFloat(newValue) > 0) {
                               calculateWithdrawAmount(newValue, 'amount0');
@@ -2569,7 +2949,7 @@ export default function PoolDetailPage() {
                             }
                           }}
                           disabled={isBurningLiquidity}
-                          className="border-0 bg-transparent text-right text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
+                          className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
                         />
                       </div>
                     </div>
@@ -2594,7 +2974,7 @@ export default function PoolDetailPage() {
                       onClick={() => handleMaxWithdraw('amount1')}
                       disabled={isBurningLiquidity}
                     >  
-                      {formatTokenDisplayAmount(positionToBurn.token1.amount)}
+                      Balance: {formatTokenDisplayAmount(positionToBurn.token1.amount)}
                     </Button>
                   </div>
                   <div className="rounded-lg bg-muted/30 p-4">
@@ -2618,10 +2998,10 @@ export default function PoolDetailPage() {
                             const newValue = e.target.value;
                             const maxAmount = parseFloat(positionToBurn.token1.amount);
                             if (parseFloat(newValue) > maxAmount) {
-                              setWithdrawAmount1(maxAmount.toString());
+                              handleWithdrawAmountChange(maxAmount.toString(), 'amount1');
                               return;
                             }
-                            setWithdrawAmount1(newValue);
+                            handleWithdrawAmountChange(newValue, 'amount1');
                             setWithdrawActiveInputSide('amount1');
                             if (newValue && parseFloat(newValue) > 0) {
                               calculateWithdrawAmount(newValue, 'amount1');
@@ -2631,7 +3011,7 @@ export default function PoolDetailPage() {
                             }
                           }}
                           disabled={isBurningLiquidity}
-                          className="border-0 bg-transparent text-right text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
+                          className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
                         />
                       </div>
                     </div>
@@ -2641,7 +3021,7 @@ export default function PoolDetailPage() {
 
             </div>
           )}
-          <DialogFooter className="grid grid-cols-2 gap-3 mt-6">
+          <DialogFooter className="grid grid-cols-2 gap-3">
             <Button 
               variant="outline"
               className="relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 text-white/75 disabled:opacity-50"
@@ -2674,19 +3054,19 @@ export default function PoolDetailPage() {
 
       {/* Increase Position Modal */}
       <Dialog open={showIncreaseModal} onOpenChange={setShowIncreaseModal}>
-        <DialogContent className="max-w-lg bg-card border border-border shadow-lg [&>button]:hidden">
+        <DialogContent className="w-[calc(100%-2rem)] sm:w-full max-w-lg border border-border shadow-lg [&>button]:hidden" style={{ backgroundColor: 'var(--modal-background)' }}>
           {positionToModify && (
             <div className="space-y-4">
               {/* Current Position - moved out of striped container */}
               <div className="flex items-center justify-between">
                 <span className="text-sm font-medium">Current Position</span>
                 {!positionToModify.isInRange && (
-                  <span className="text-xs text-orange-600 bg-orange-50 px-2 py-1 rounded">
+                  <div className="inline-flex items-center border px-2.5 py-0.5 text-xs focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 bg-[#3d271b] text-sidebar-primary border-sidebar-primary rounded-md font-normal hover:bg-[#4a2f1f] transition-colors cursor-default">
                     Out of Range
-                  </span>
+                  </div>
                 )}
               </div>
-              <div className="space-y-2">
+              <div className="p-3 border border-dashed rounded-md bg-muted/10 space-y-2">
                 <div className="flex justify-between items-center">
                   <div className="flex items-center gap-2">
                     <Image 
@@ -2721,26 +3101,24 @@ export default function PoolDetailPage() {
 
               {/* Percentage Slider */}
               <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium">Add Percentage</span>
-                  <span className="text-sm text-muted-foreground">
-                    {increasePercentage}%
-                  </span>
-                </div>
-                <div className="relative">
+                <div className="flex items-center gap-3">
                   <input
                     type="range"
                     min="0"
                     max="100"
+                    step="1"
                     value={increasePercentage}
-                    onChange={(e) => setIncreasePercentage(parseInt(e.target.value))}
-                    className="w-full h-2 bg-muted/30 rounded-lg appearance-none cursor-pointer slider"
+                    onChange={(e) => handleIncreasePercentageChange(parseInt(e.target.value))}
+                    className="flex-1 h-2 rounded-lg appearance-none cursor-pointer slider focus:outline-none focus:ring-0 focus:ring-offset-0"
                     style={{
                       background: increasePercentage > 0 
-                        ? `linear-gradient(to right, #f97316 0%, #f97316 ${increasePercentage}%, #374151 ${increasePercentage}%, #374151 100%)`
-                        : 'linear-gradient(to right, #374151 0%, #374151 100%)'
+                        ? `linear-gradient(to right, #f45502 0%, #f45502 ${increasePercentage}%, rgb(41 41 41 / 0.3) ${increasePercentage}%, rgb(41 41 41 / 0.3) 100%)`
+                        : 'rgb(41 41 41 / 0.3)'
                     }}
                   />
+                  <span className="text-sm text-muted-foreground min-w-[3rem] text-right">
+                    {increasePercentage}%
+                  </span>
                 </div>
               </div>
 
@@ -2757,7 +3135,7 @@ export default function PoolDetailPage() {
                       onClick={() => handleUseFullBalance(token0BalanceData?.formatted || "0", 'aUSDC' as TokenSymbol, true)}
                       disabled={isIncreasingLiquidity || isIncreaseCalculating}
                     >  
-                      {positionToModify.token0.symbol}: {displayToken0Balance}
+                      Balance: {displayToken0Balance} {positionToModify.token0.symbol}
                     </Button>
                   </div>
                   <div className="rounded-lg bg-muted/30 p-4">
@@ -2779,8 +3157,7 @@ export default function PoolDetailPage() {
                           value={increaseAmount0}
                           onChange={(e) => {
                             const newValue = e.target.value;
-                            setIncreaseAmount0(newValue);
-                            setIncreaseActiveInputSide('amount0');
+                            handleIncreaseAmountChange(newValue, 'amount0');
                             if (newValue && parseFloat(newValue) > 0) {
                               calculateIncreaseAmount(newValue, 'amount0');
                             } else {
@@ -2788,7 +3165,7 @@ export default function PoolDetailPage() {
                             }
                           }}
                           disabled={isIncreaseCalculating && increaseActiveInputSide === 'amount1'}
-                          className="border-0 bg-transparent text-right text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
+                          className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
                         />
                       </div>
                     </div>
@@ -2816,7 +3193,7 @@ export default function PoolDetailPage() {
                       onClick={() => handleUseFullBalance(token1BalanceData?.formatted || "0", 'aUSDT' as TokenSymbol, false)}
                       disabled={isIncreasingLiquidity || isIncreaseCalculating}
                     >  
-                      {positionToModify.token1.symbol}: {displayToken1Balance}
+                      Balance: {displayToken1Balance} {positionToModify.token1.symbol}
                     </Button>
                   </div>
                   <div className="rounded-lg bg-muted/30 p-4">
@@ -2838,8 +3215,7 @@ export default function PoolDetailPage() {
                           value={increaseAmount1}
                           onChange={(e) => {
                             const newValue = e.target.value;
-                            setIncreaseAmount1(newValue);
-                            setIncreaseActiveInputSide('amount1');
+                            handleIncreaseAmountChange(newValue, 'amount1');
                             if (newValue && parseFloat(newValue) > 0) {
                               calculateIncreaseAmount(newValue, 'amount1');
                             } else {
@@ -2847,7 +3223,7 @@ export default function PoolDetailPage() {
                             }
                           }}
                           disabled={isIncreaseCalculating && increaseActiveInputSide === 'amount0'}
-                          className="border-0 bg-transparent text-right text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
+                          className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
                         />
                       </div>
                     </div>
@@ -2859,7 +3235,7 @@ export default function PoolDetailPage() {
               </div>
             </div>
           )}
-          <DialogFooter className="grid grid-cols-2 gap-3 mt-6">
+          <DialogFooter className="grid grid-cols-2 gap-3">
             <Button 
               variant="outline"
               className="relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 text-white/75 disabled:opacity-50"
@@ -2907,7 +3283,7 @@ export default function PoolDetailPage() {
 
       {/* Decrease Position Modal */}
       <Dialog open={showDecreaseModal} onOpenChange={setShowDecreaseModal}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="w-[calc(100%-2rem)] sm:w-full max-w-md">
           <DialogHeader>
             <DialogTitle>Decrease Liquidity Position</DialogTitle>
             <DialogDescription>

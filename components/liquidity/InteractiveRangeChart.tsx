@@ -112,12 +112,24 @@ export function InteractiveRangeChart({
   const [isDragging, setIsDragging] = useState<'left' | 'right' | 'center' | null>(null);
   const [dragStart, setDragStart] = useState<{ x: number; tickLower: number; tickUpper: number } | null>(null);
   const [isHovering, setIsHovering] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
   const finalDragPositionRef = useRef<{ 
     tickLower: number; 
     tickUpper: number; 
     hitRightEdge: boolean; 
     hitLeftEdge: boolean; 
   } | null>(null);
+
+  // Check if device is mobile
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768 || 'ontouchstart' in window);
+    };
+    
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
 
   // Chart data state
   const [rawHookPositions, setRawHookPositions] = useState<Array<HookPosition & { pool: string }> | null>(null);
@@ -162,15 +174,6 @@ export function InteractiveRangeChart({
     
     const currentPriceNum = parseFloat(currentPrice);
     const inversePrice = 1 / currentPriceNum;
-    
-    console.log("[InteractiveRangeChart] shouldFlipDenomination calculation:", {
-      currentPrice,
-      currentPriceNum,
-      inversePrice,
-      token0Symbol,
-      token1Symbol,
-      shouldFlip: inversePrice > currentPriceNum
-    });
     
     // If the inverse price is larger, we should flip the denomination
     return inversePrice > currentPriceNum;
@@ -594,7 +597,7 @@ export function InteractiveRangeChart({
         
         // Create 3 labels: left border, center, right border
         for (const pricePoint of pricePoints) {
-          const displayLabel = pricePoint.price.toLocaleString(undefined, { 
+          const displayLabel = pricePoint.price.toLocaleString('en-US', { 
             maximumFractionDigits: finalDisplayDecimals, 
             minimumFractionDigits: Math.min(2, finalDisplayDecimals) 
           });
@@ -658,6 +661,18 @@ export function InteractiveRangeChart({
     setIsDragging(side);
     setDragStart({
       x: e.clientX,
+      tickLower: parseInt(tickLower),
+      tickUpper: parseInt(tickUpper)
+    });
+  };
+
+  const handleTouchStart = (e: React.TouchEvent, side: 'left' | 'right' | 'center') => {
+    e.preventDefault();
+    e.stopPropagation();
+    const touch = e.touches[0];
+    setIsDragging(side);
+    setDragStart({
+      x: touch.clientX,
       tickLower: parseInt(tickLower),
       tickUpper: parseInt(tickUpper)
     });
@@ -732,6 +747,81 @@ export function InteractiveRangeChart({
       tickUpper: newTickUpper,
       hitRightEdge: false, // Will be calculated on mouse up
       hitLeftEdge: false   // Will be calculated on mouse up
+    };
+  };
+
+  const handleTouchMove = (e: TouchEvent) => {
+    if (!isDragging || !dragStart || !containerRef.current) return;
+
+    e.preventDefault(); // Prevent scrolling while dragging
+    e.stopPropagation();
+    const touch = e.touches[0];
+    const rect = containerRef.current.getBoundingClientRect();
+    const deltaX = touch.clientX - dragStart.x;
+    const containerWidth = rect.width;
+    const [minTick, maxTick] = xDomain;
+    const tickRange = maxTick - minTick;
+    const deltaTicks = (deltaX / containerWidth) * tickRange;
+
+    let newTickLower = dragStart.tickLower;
+    let newTickUpper = dragStart.tickUpper;
+
+    if (isDragging === 'left') {
+      // Constrain left handle to visible domain and maintain minimum spacing
+      newTickLower = Math.min(dragStart.tickUpper - defaultTickSpacing, dragStart.tickLower + deltaTicks);
+      newTickLower = Math.round(newTickLower / defaultTickSpacing) * defaultTickSpacing;
+      // Constrain to visible domain
+      newTickLower = Math.max(minTick, Math.min(maxTick, newTickLower));
+    } else if (isDragging === 'right') {
+      // Constrain right handle to visible domain and maintain minimum spacing
+      newTickUpper = Math.max(dragStart.tickLower + defaultTickSpacing, dragStart.tickUpper + deltaTicks);
+      newTickUpper = Math.round(newTickUpper / defaultTickSpacing) * defaultTickSpacing;
+      // Constrain to visible domain
+      newTickUpper = Math.max(minTick, Math.min(maxTick, newTickUpper));
+    } else if (isDragging === 'center') {
+      // Constrain center dragging to keep entire range within visible domain
+      const rangeWidth = dragStart.tickUpper - dragStart.tickLower;
+      const newCenter = ((dragStart.tickLower + dragStart.tickUpper) / 2) + deltaTicks;
+      newTickLower = newCenter - rangeWidth / 2;
+      newTickUpper = newCenter + rangeWidth / 2;
+      
+      // Constrain the entire range to stay within visible domain
+      if (newTickLower < minTick) {
+        const adjustment = minTick - newTickLower;
+        newTickLower = minTick;
+        newTickUpper = newTickUpper + adjustment;
+      }
+      if (newTickUpper > maxTick) {
+        const adjustment = newTickUpper - maxTick;
+        newTickUpper = maxTick;
+        newTickLower = newTickLower - adjustment;
+      }
+      
+      newTickLower = Math.round(newTickLower / defaultTickSpacing) * defaultTickSpacing;
+      newTickUpper = Math.round(newTickUpper / defaultTickSpacing) * defaultTickSpacing;
+    }
+
+    // Final constraint to valid range (broader constraint for edge cases)
+    newTickLower = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTickLower));
+    newTickUpper = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTickUpper));
+
+    // Ensure minimum spacing
+    if (newTickUpper - newTickLower < defaultTickSpacing) {
+      if (isDragging === 'left') {
+        newTickLower = newTickUpper - defaultTickSpacing;
+      } else if (isDragging === 'right') {
+        newTickUpper = newTickLower + defaultTickSpacing;
+      }
+    }
+
+    onRangeChange(newTickLower.toString(), newTickUpper.toString());
+    
+    // Store the final position for viewport adjustment on touch end
+    finalDragPositionRef.current = { 
+      tickLower: newTickLower, 
+      tickUpper: newTickUpper,
+      hitRightEdge: false, // Will be calculated on touch end
+      hitLeftEdge: false   // Will be calculated on touch end
     };
   };
 
@@ -875,13 +965,24 @@ export function InteractiveRangeChart({
     finalDragPositionRef.current = null;
   };
 
+  const handleTouchEnd = () => {
+    // Use the same logic as handleMouseUp
+    handleMouseUp();
+  };
+
   useEffect(() => {
     if (isDragging) {
       document.addEventListener('mousemove', handleMouseMove);
       document.addEventListener('mouseup', handleMouseUp);
+      document.addEventListener('touchmove', handleTouchMove, { passive: false });
+      document.addEventListener('touchend', handleTouchEnd);
+      document.addEventListener('touchcancel', handleTouchEnd);
       return () => {
         document.removeEventListener('mousemove', handleMouseMove);
         document.removeEventListener('mouseup', handleMouseUp);
+        document.removeEventListener('touchmove', handleTouchMove);
+        document.removeEventListener('touchend', handleTouchEnd);
+        document.removeEventListener('touchcancel', handleTouchEnd);
       };
     }
   }, [isDragging, dragStart]);
@@ -889,10 +990,16 @@ export function InteractiveRangeChart({
   return (
     <div className="space-y-2">
       <div 
-        className="relative h-[80px] w-full" 
+        className="relative h-[80px] w-full touch-manipulation" 
         ref={containerRef}
         onMouseEnter={() => setIsHovering(true)}
         onMouseLeave={() => setIsHovering(false)}
+        onTouchStart={(e) => {
+          // Prevent scrolling when touching the chart area
+          if (e.touches.length === 1) {
+            e.preventDefault();
+          }
+        }}
       >
         {/* Chart */}
         <ResponsiveContainer width="100%" height="100%">
@@ -971,7 +1078,7 @@ export function InteractiveRangeChart({
         </ResponsiveContainer>
 
         {/* Interactive drag handles */}
-        <div className={`absolute inset-0 pointer-events-none transition-opacity duration-200 ${isHovering ? 'opacity-100' : 'opacity-0'}`}>
+        <div className={`absolute inset-0 pointer-events-none transition-opacity duration-200 ${isHovering || isMobile ? 'opacity-100' : 'opacity-0'}`}>
           {/* Invisible center area - drag to move entire range */}
           <div 
             className="absolute top-0 bottom-0 pointer-events-auto cursor-move"
@@ -980,6 +1087,7 @@ export function InteractiveRangeChart({
               width: `${rightPos - leftPos}%`
             }}
             onMouseDown={(e) => handleMouseDown(e, 'center')}
+            onTouchStart={(e) => handleTouchStart(e, 'center')}
           />
           
           {/* Left handle */}
@@ -987,6 +1095,7 @@ export function InteractiveRangeChart({
             className="absolute top-1/2 -translate-y-1/2 w-4 h-1/3 flex items-center justify-center pointer-events-auto cursor-pointer group"
             style={{ left: `calc(${leftPos}% + 4px)` }}
             onMouseDown={(e) => handleMouseDown(e, 'left')}
+            onTouchStart={(e) => handleTouchStart(e, 'left')}
           >
             <div className="z-10 flex h-4 w-3 items-center justify-center rounded-sm bg-muted/30 group-hover:bg-muted/10 transition-colors">
               <ChevronLeft className="h-3 w-3 text-[#a1a1aa] group-hover:hidden" />
@@ -1002,6 +1111,7 @@ export function InteractiveRangeChart({
             className="absolute top-1/2 -translate-y-1/2 w-4 h-1/3 flex items-center justify-center pointer-events-auto cursor-pointer group"
             style={{ left: `calc(${rightPos}% - 20px)` }}
             onMouseDown={(e) => handleMouseDown(e, 'right')}
+            onTouchStart={(e) => handleTouchStart(e, 'right')}
           >
             <div className="z-10 flex h-4 w-3 items-center justify-center rounded-sm bg-muted/30 group-hover:bg-muted/10 transition-colors">
               <ChevronRight className="h-3 w-3 text-[#a1a1aa] group-hover:hidden" />

@@ -461,7 +461,7 @@ export function AddLiquidityForm({
           }
         newLabels.push({ 
           tickValue: minTickDomain, 
-          displayLabel: isNaN(priceAtTick) ? minTickDomain.toString() : priceAtTick.toLocaleString(undefined, { maximumFractionDigits: displayDecimals, minimumFractionDigits: 2 })
+          displayLabel: isNaN(priceAtTick) ? minTickDomain.toString() : priceAtTick.toLocaleString('en-US', { maximumFractionDigits: displayDecimals, minimumFractionDigits: 2 })
         });
       } else if (isFinite(minTickDomain) && isFinite(maxTickDomain)) {
         const range = maxTickDomain - minTickDomain;
@@ -484,7 +484,7 @@ export function AddLiquidityForm({
           }
           newLabels.push({ 
             tickValue: tickVal, 
-            displayLabel: isNaN(priceAtTick) ? tickVal.toString() : priceAtTick.toLocaleString(undefined, { maximumFractionDigits: displayDecimals, minimumFractionDigits: Math.min(2, displayDecimals) }) 
+            displayLabel: isNaN(priceAtTick) ? tickVal.toString() : priceAtTick.toLocaleString('en-US', { maximumFractionDigits: displayDecimals, minimumFractionDigits: Math.min(2, displayDecimals) }) 
           });
         }
       } 
@@ -1789,7 +1789,7 @@ export function AddLiquidityForm({
           if (price === Infinity) priceAtTickDisplay = "∞";
           else if (price < 1e-8 && price > 0) priceAtTickDisplay = "<0.00000001";
           else if (price === 0) priceAtTickDisplay = "0";
-          else priceAtTickDisplay = price.toLocaleString(undefined, { maximumFractionDigits: displayDecimals, minimumFractionDigits: Math.min(2, displayDecimals) });
+          else priceAtTickDisplay = price.toLocaleString('en-US', { maximumFractionDigits: displayDecimals, minimumFractionDigits: Math.min(2, displayDecimals) });
           priceAtTickDisplay += ` ${priceOfTokenSymbol}/${quoteTokenSymbol}`;
         } else {
             priceAtTickDisplay = "Price Calc Error";
@@ -1861,11 +1861,11 @@ export function AddLiquidityForm({
     // });
     
     // Format prices with proper decimals
-    const formattedLower = priceAtLowerTick.toLocaleString(undefined, { 
+    const formattedLower = priceAtLowerTick.toLocaleString('en-US', { 
       maximumFractionDigits: finalDisplayDecimals, 
       minimumFractionDigits: finalDisplayDecimals 
     });
-    const formattedUpper = priceAtUpperTick.toLocaleString(undefined, { 
+    const formattedUpper = priceAtUpperTick.toLocaleString('en-US', { 
       maximumFractionDigits: finalDisplayDecimals, 
       minimumFractionDigits: finalDisplayDecimals 
     });
@@ -1959,14 +1959,16 @@ export function AddLiquidityForm({
                         placeholder="0.0"
                         value={amount0}
                         onChange={(e) => { 
-                          const newValue = e.target.value; 
+                          const newValue = e.target.value.replace(',', '.'); // Ensure decimal separator is always period
                           if (preparedTxData) { resetTransactionState(); } 
                           setAmount0(newValue); 
                           setActiveInputSide('amount0'); 
                         }} 
                         onFocus={() => setIsAmount0Focused(true)}
                         onBlur={() => setIsAmount0Focused(false)}
-                        type={amount0.startsWith('<') ? "text" : "number"}
+                        type="text"
+                        pattern="[0-9]*\.?[0-9]*"
+                        inputMode="decimal"
                         disabled={isWorking || (isCalculating && activeInputSide === 'amount1')}
                         className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
                       />
@@ -2014,14 +2016,16 @@ export function AddLiquidityForm({
                         placeholder="0.0"
                         value={amount1}
                         onChange={(e) => { 
-                          const newValue = e.target.value; 
+                          const newValue = e.target.value.replace(',', '.'); // Ensure decimal separator is always period
                           if (preparedTxData) { resetTransactionState(); } 
                           setAmount1(newValue); 
                           setActiveInputSide('amount1'); 
                         }} 
                         onFocus={() => setIsAmount1Focused(true)}
                         onBlur={() => setIsAmount1Focused(false)}
-                        type={amount1.startsWith('<') ? "text" : "number"}
+                        type="text"
+                        pattern="[0-9]*\.?[0-9]*"
+                        inputMode="decimal"
                         disabled={isWorking || (isCalculating && activeInputSide === 'amount0')}
                         className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
                       />

@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { useAccount, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { toast } from 'sonner';
 import { V4PositionPlanner } from '@uniswap/v4-sdk';
-import { Token } from '@uniswap/sdk-core';
+import { Token, ChainId } from '@uniswap/sdk-core'; // Import ChainId
 import { V4_POSITION_MANAGER_ADDRESS, EMPTY_BYTES, V4_POSITION_MANAGER_ABI } from '@/lib/swap-constants';
 import { getToken, TokenSymbol } from '@/lib/pools-config';
 import { baseSepolia } from '@/lib/wagmiConfig';
@@ -27,9 +27,21 @@ export interface IncreasePositionData {
 }
 
 export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquidityProps) {
-  const { address: accountAddress, chainId } = useAccount();
+  const { address: accountAddress, chainId, connection } = useAccount();
   const { data: hash, writeContract, isPending: isIncreaseSendPending, error: increaseSendError, reset: resetWriteContract } = useWriteContract();
   const { isLoading: isIncreaseConfirming, isSuccess: isIncreaseConfirmed, error: increaseConfirmError, status: waitForTxStatus } = useWaitForTransactionReceipt({ hash });
+
+  // Log full useAccount details for debugging
+  useEffect(() => {
+    console.log("useAccount details in useIncreaseLiquidity:", {
+      accountAddress,
+      chainId,
+      connection,
+      connector: connection?.connector, // Access connector if connection exists
+      connectorChainId: connection?.connector?.chainId, // Try to get chainId from connector
+      connectorGetChainId: typeof connection?.connector?.getChainId === 'function' ? 'function exists' : 'function missing',
+    });
+  }, [accountAddress, chainId, connection]);
 
   const [isIncreasing, setIsIncreasing] = useState(false);
 
@@ -84,6 +96,13 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
         throw new Error("Token addresses are missing in definitions.");
       }
 
+      // Initialize these variables at the top of the try block
+      let amount0Raw = 0n; 
+      let amount1Raw = 0n;
+      let amount0MaxJSBI = JSBI.BigInt(0);
+      let amount1MaxJSBI = JSBI.BigInt(0);
+
+      // Revert to original chainId usage, rely on wagmi's type for Token constructor
       const sdkToken0 = new Token(chainId, getAddress(token0Def.address), token0Def.decimals, token0Def.symbol);
       const sdkToken1 = new Token(chainId, getAddress(token1Def.address), token1Def.decimals, token1Def.symbol);
 
@@ -94,12 +113,12 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
       const tokenIdJSBI = JSBI.BigInt(nftTokenId.toString());
       
       // Convert additional amounts to proper units using parseUnits, then to JSBI
-      const amount0Raw = parseUnits(positionData.additionalAmount0, token0Def.decimals);
-      const amount1Raw = parseUnits(positionData.additionalAmount1, token1Def.decimals);
+      amount0Raw = parseUnits(positionData.additionalAmount0, token0Def.decimals);
+      amount1Raw = parseUnits(positionData.additionalAmount1, token1Def.decimals);
       
       // Convert to JSBI BigInt
-      const amount0MaxJSBI = JSBI.BigInt(amount0Raw.toString());
-      const amount1MaxJSBI = JSBI.BigInt(amount1Raw.toString());
+      amount0MaxJSBI = JSBI.BigInt(amount0Raw.toString());
+      amount1MaxJSBI = JSBI.BigInt(amount1Raw.toString());
       
       // For liquidity calculation, we need to determine which token has a non-zero amount
       let liquidityJSBI: JSBI;
@@ -124,37 +143,68 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
       }
 
       try {
-        const calcResponse = await fetch('/api/liquidity/calculate-liquidity-parameters', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            token0Symbol: positionData.token0Symbol,
-            token1Symbol: positionData.token1Symbol,
-            inputAmount: inputAmount,
-            inputTokenSymbol: inputTokenSymbol,
-            userTickLower: positionData.tickLower,
-            userTickUpper: positionData.tickUpper,
-            chainId: chainId,
-          }),
-        });
+        // Fetch current position data from get-positions API to get current liquidity
+        console.log(`Fetching positions for owner ${accountAddress} from /api/liquidity/get-positions`);
+        const positionsResponse = await fetch(`/api/liquidity/get-positions?ownerAddress=${accountAddress}`);
+        
+        if (!positionsResponse.ok) {
+          console.error("get-positions API response not OK:", positionsResponse.status, positionsResponse.statusText);
+          const errorBody = await positionsResponse.text();
+          console.error("get-positions API error body:", errorBody);
+          throw new Error(`Failed to fetch current position data: ${positionsResponse.statusText}. Details: ${errorBody.substring(0, 100)}...`);
+        }
+        const positionsData = await positionsResponse.json();
+        console.log("get-positions API data received:", positionsData); // Log the received data
 
-        if (calcResponse.ok) {
-          const result = await calcResponse.json();
-          liquidityJSBI = JSBI.BigInt(result.liquidity);
-          console.log("Calculated liquidity for increase:", result.liquidity, "from", inputAmount, inputTokenSymbol);
+        console.log(`Searching for position with tokenId: ${positionData.tokenId.toString()}`);
+        const currentPosition = positionsData.find((pos: any) => {
+          console.log(`Comparing with API positionId: ${pos.positionId}`);
+          return pos.positionId === positionData.tokenId.toString();
+        });
+        
+        if (currentPosition && currentPosition.liquidity) {
+          const currentLiquidityJSBI = JSBI.BigInt(currentPosition.liquidity);
+          
+          // For partial increase, calculate new liquidity
+          // This is a placeholder; real calculation involves pool state, tick range, and token amounts
+          // For now, we'll just use a simple sum or a more robust calculation if `calculate-liquidity-parameters` is available
+          
+          const calcResponse = await fetch('/api/liquidity/calculate-liquidity-parameters', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              token0Symbol: positionData.token0Symbol,
+              token1Symbol: positionData.token1Symbol,
+              inputAmount: inputAmount,
+              inputTokenSymbol: inputTokenSymbol,
+              userTickLower: positionData.tickLower,
+              userTickUpper: positionData.tickUpper,
+              chainId: chainId,
+            }),
+          });
+
+          if (calcResponse.ok) {
+            const result = await calcResponse.json();
+            liquidityJSBI = JSBI.BigInt(result.liquidity);
+            console.log("Calculated liquidity for increase:", result.liquidity, "from", inputAmount, inputTokenSymbol);
+          } else {
+            console.warn("Failed to calculate liquidity, using estimated value");
+            // For fallback, use a more reasonable estimate based on the actual input amount
+            const inputAmountRawLocal = inputTokenSymbol === positionData.token0Symbol ? amount0Raw : amount1Raw;
+            const inputAmountJSBI = JSBI.BigInt(inputAmountRawLocal.toString());
+            const estimatedLiquidity = JSBI.divide(inputAmountJSBI, JSBI.BigInt(1000)); // Simple estimation
+            liquidityJSBI = JSBI.greaterThan(estimatedLiquidity, JSBI.BigInt(0)) ? estimatedLiquidity : JSBI.BigInt(1000000);
+          }
         } else {
-          console.warn("Failed to calculate liquidity, using estimated value");
-          // For fallback, use a more reasonable estimate based on the actual input amount
-          const inputAmountRaw = inputTokenSymbol === positionData.token0Symbol ? amount0Raw : amount1Raw;
-          const inputAmountJSBI = JSBI.BigInt(inputAmountRaw.toString());
-          const estimatedLiquidity = JSBI.divide(inputAmountJSBI, JSBI.BigInt(1000)); // Simple estimation
-          liquidityJSBI = JSBI.greaterThan(estimatedLiquidity, JSBI.BigInt(0)) ? estimatedLiquidity : JSBI.BigInt(1000000);
+          console.error("get-positions API: current position not found or liquidity is missing for tokenId:", positionData.tokenId, "Data:", positionsData);
+          throw new Error("Could not find current position data or liquidity");
         }
       } catch (error) {
-        console.warn("Error calculating liquidity, using fallback:", error);
+        console.error("Error fetching current position for increase or calculating liquidity:", error); // Changed from warn to error
+        
         // For fallback, use a more reasonable estimate
-        const inputAmountRaw = inputTokenSymbol === positionData.token0Symbol ? amount0Raw : amount1Raw;
-        const inputAmountJSBI = JSBI.BigInt(inputAmountRaw.toString());
+        const inputAmountRawLocal = inputTokenSymbol === positionData.token0Symbol ? amount0Raw : amount1Raw;
+        const inputAmountJSBI = JSBI.BigInt(inputAmountRawLocal.toString());
         const estimatedLiquidity = JSBI.divide(inputAmountJSBI, JSBI.BigInt(1000)); // Simple estimation
         liquidityJSBI = JSBI.greaterThan(estimatedLiquidity, JSBI.BigInt(0)) ? estimatedLiquidity : JSBI.BigInt(1000000);
       }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -24,6 +24,7 @@ import {
 export default function Home() {
   const router = useRouter();
   const textContainerRef = useRef<HTMLDivElement>(null);
+  const throttleTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [rightMargin, setRightMargin] = useState(0);
   const [showNavbar, setShowNavbar] = useState(true);
   const [currentWord, setCurrentWord] = useState('');
@@ -44,8 +45,15 @@ export default function Home() {
     transition: 'transform 0.3s ease-in-out',
   };
 
-  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     if (!animationFinished) return;
+    
+    // Throttle the mouse move to prevent too many updates
+    if (throttleTimerRef.current) return;
+    
+    throttleTimerRef.current = setTimeout(() => {
+      throttleTimerRef.current = null;
+    }, 16); // ~60fps
     
     const rect = e.currentTarget.getBoundingClientRect();
     const centerX = rect.left + rect.width / 2;
@@ -54,7 +62,7 @@ export default function Home() {
     const mouseY = e.clientY - centerY;
     
     setMousePosition({ x: mouseX * 0.02, y: mouseY * -0.01 });
-  };
+  }, [animationFinished]);
 
   const handleMouseEnter = () => {
     if (!animationFinished) return;

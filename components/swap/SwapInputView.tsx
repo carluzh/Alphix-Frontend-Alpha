@@ -275,20 +275,33 @@ export function SwapInputView({
               ) : (
                 <>
                   <Input
-                    value={parseFloat(toAmount || "0").toFixed(displayToToken.displayDecimals)}
+                    value={(() => {
+                      const amount = parseFloat(toAmount || "0");
+                      // Show placeholder "0" for true zero values or when there's no meaningful amount
+                      if (amount === 0 || isNaN(amount)) {
+                        return "";
+                      }
+                      return amount.toFixed(displayToToken.displayDecimals);
+                    })()}
                     readOnly
                     disabled={!isConnected || isAttemptingSwitch}
                     className={cn(
                       "text-right text-xl md:text-xl font-medium h-auto p-0 focus-visible:ring-0 focus-visible:ring-offset-0 border-0 bg-transparent",
                       { "text-muted-foreground animate-pulse": quoteLoading }
                     )}
-                    placeholder="0.00"
+                    placeholder="0"
                   />
                   <div className={cn(
                     "text-right text-xs text-muted-foreground",
                     { "animate-pulse": quoteLoading }
                   )}>
-                    {formatCurrency((parseFloat(toAmount || "0") * displayToToken.usdPrice).toString())}
+                    {(() => {
+                      const amount = parseFloat(toAmount || "0");
+                      if (amount === 0 || isNaN(amount)) {
+                        return formatCurrency("0");
+                      }
+                      return formatCurrency((amount * displayToToken.usdPrice).toString());
+                    })()}
                   </div>
                 </>
               )}
@@ -305,11 +318,9 @@ export function SwapInputView({
               const path = routeInfo?.path || [displayFromToken.symbol, displayToToken.symbol];
               const isMultiHop = path.length > 2;
 
-              if (!isMultiHop) return null;
-
               return (
                 <>
-                  {/* Route: Only for multi-hop */}
+                  {/* Route: Show for both single-hop and multi-hop */}
                   <div className="flex items-center justify-between text-xs text-muted-foreground">
                     <span>Route:</span>
                     <div className="flex items-center gap-1.5">

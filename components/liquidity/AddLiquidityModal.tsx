@@ -412,7 +412,7 @@ export function AddLiquidityModal({
         const priceAtTick = calculatePriceFromTick(minTickDomain);
         newLabels.push({ 
           tickValue: minTickDomain, 
-          displayLabel: isNaN(priceAtTick) ? minTickDomain.toString() : priceAtTick.toLocaleString(undefined, { maximumFractionDigits: displayDecimals, minimumFractionDigits: 2 })
+          displayLabel: isNaN(priceAtTick) ? minTickDomain.toString() : priceAtTick.toLocaleString('en-US', { maximumFractionDigits: displayDecimals, minimumFractionDigits: 2 })
         });
       } else if (isFinite(minTickDomain) && isFinite(maxTickDomain)) {
         const range = maxTickDomain - minTickDomain;
@@ -424,7 +424,7 @@ export function AddLiquidityModal({
           
           newLabels.push({ 
             tickValue: tickVal, 
-            displayLabel: isNaN(priceAtTick) ? tickVal.toString() : priceAtTick.toLocaleString(undefined, { maximumFractionDigits: displayDecimals, minimumFractionDigits: Math.min(2, displayDecimals) }) 
+            displayLabel: isNaN(priceAtTick) ? tickVal.toString() : priceAtTick.toLocaleString('en-US', { maximumFractionDigits: displayDecimals, minimumFractionDigits: Math.min(2, displayDecimals) }) 
           });
         }
       } 
@@ -880,7 +880,7 @@ export function AddLiquidityModal({
           
           const fees24h = parseFloat(feeData.feesUSD);
           if (!isNaN(fees24h)) {
-            setPoolDailyFeesUSD(fees24h.toLocaleString(undefined, { style: 'currency', currency: 'USD' }));
+            setPoolDailyFeesUSD(fees24h.toLocaleString('en-US', { style: 'currency', currency: 'USD' }));
             
             setPoolAPR("APR (TVL N/A)"); // Placeholder until TVL is implemented
           } else {
@@ -1677,7 +1677,7 @@ export function AddLiquidityModal({
       const tooltipData = payload[0].payload; 
       const currentTick = tooltipData.tick; // 'label' is often the same, but payload.tick is more direct
       const formattedTickLabel = currentTick ? currentTick.toLocaleString() : 'N/A'; 
-      const cumulativeValue = tooltipData.cumulativeUnifiedValue ? tooltipData.cumulativeUnifiedValue.toLocaleString(undefined, {maximumFractionDigits: 8}) : 'N/A';
+      const cumulativeValue = tooltipData.cumulativeUnifiedValue ? tooltipData.cumulativeUnifiedValue.toLocaleString('en-US', {maximumFractionDigits: 8}) : 'N/A';
       const displayPoolTokenSymbol = poolToken0Symbol || '';
 
       let priceAtTickDisplay = "Price N/A";
@@ -1743,7 +1743,7 @@ export function AddLiquidityModal({
           if (price === Infinity) priceAtTickDisplay = "∞";
           else if (price < 1e-8 && price > 0) priceAtTickDisplay = "<0.00000001";
           else if (price === 0) priceAtTickDisplay = "0";
-          else priceAtTickDisplay = price.toLocaleString(undefined, { maximumFractionDigits: displayDecimals, minimumFractionDigits: Math.min(2, displayDecimals) });
+          else priceAtTickDisplay = price.toLocaleString('en-US', { maximumFractionDigits: displayDecimals, minimumFractionDigits: Math.min(2, displayDecimals) });
           priceAtTickDisplay += ` ${priceOfTokenSymbol}/${quoteTokenSymbol}`;
         } else {
             priceAtTickDisplay = "Price Calc Error";
@@ -2007,7 +2007,7 @@ export function AddLiquidityModal({
         <RadixDialogPrimitive.Content
           aria-label="Add Liquidity"
           className={cn(
-            "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%] sm:rounded-lg",
+            "fixed left-[50%] top-[50%] z-50 grid w-[calc(100%-2rem)] sm:w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%] sm:rounded-lg",
             "sm:max-w-4xl" // Keep the larger modal size
           )}
         >
@@ -2058,7 +2058,7 @@ export function AddLiquidityModal({
                           <p className="text-sm font-medium mb-1">Predicted APR</p>
                           <p className="text-xs text-muted-foreground">
                             Calculated using current volume and adjusted by a capital efficiency factor of 
-                            <span className="font-semibold text-foreground"> {capitalEfficiencyFactor.toLocaleString(undefined, {minimumFractionDigits: 1, maximumFractionDigits: 2})}x</span>. Actual returns might deviate.
+                            <span className="font-semibold text-foreground"> {capitalEfficiencyFactor.toLocaleString('en-US', {minimumFractionDigits: 1, maximumFractionDigits: 2})}x</span>. Actual returns might deviate.
                             {activePreset !== "Full Range" && !(parseInt(tickLower) <= sdkMinTick && parseInt(tickUpper) >= sdkMaxTick)}
                           </p>
                           {poolApr && !["Loading APR...", "APR N/A", "APR Error", "Yield N/A", "Fees N/A"].includes(poolApr) && enhancedAprDisplay !== poolApr && enhancedAprDisplay !== "0.00% (Out of Range)" &&
@@ -2245,12 +2245,12 @@ export function AddLiquidityModal({
                           <div className="h-4 w-40 bg-muted/40 rounded animate-pulse"></div>
                         ) : currentPrice && !isCalculating ? (
                           baseTokenForPriceDisplay === token0Symbol ? (
-                            `1 ${token1Symbol} = ${(1 / parseFloat(currentPrice)).toLocaleString(undefined, { 
+                            `1 ${token1Symbol} = ${(1 / parseFloat(currentPrice)).toLocaleString('en-US', { 
                               minimumFractionDigits: TOKEN_DEFINITIONS[token0Symbol]?.displayDecimals || 2, 
                               maximumFractionDigits: TOKEN_DEFINITIONS[token0Symbol]?.displayDecimals || 4
                             })} ${token0Symbol}`
                           ) : (
-                            `1 ${token0Symbol} = ${parseFloat(currentPrice).toLocaleString(undefined, { 
+                            `1 ${token0Symbol} = ${parseFloat(currentPrice).toLocaleString('en-US', { 
                               minimumFractionDigits: TOKEN_DEFINITIONS[token1Symbol]?.displayDecimals || 2,
                               maximumFractionDigits: TOKEN_DEFINITIONS[token1Symbol]?.displayDecimals || 4
                             })} ${token1Symbol}`

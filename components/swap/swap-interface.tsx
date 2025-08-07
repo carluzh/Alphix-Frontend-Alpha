@@ -458,6 +458,102 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
 
   // Mock data generation removed - using real API data instead
 
+  // New function for route calculation that can be called independently
+  const calculateRoute = useCallback(async (fromTokenSymbol: string, toTokenSymbol: string) => {
+    if (!isConnected || currentChainId !== TARGET_CHAIN_ID) {
+      return null;
+    }
+
+    try {
+      // Find the best route for this token pair
+      const routeResult = findBestRoute(fromTokenSymbol, toTokenSymbol);
+      
+      if (!routeResult.bestRoute) {
+        console.warn(`No route found for token pair ${fromTokenSymbol}/${toTokenSymbol}`);
+        return null;
+      }
+
+      const route = routeResult.bestRoute;
+      
+      // Update the route if it has actually changed
+      if (JSON.stringify(route) !== JSON.stringify(currentRoute)) {
+        setCurrentRoute(route);
+        setSelectedPoolIndexForChart(0);
+      }
+
+      // Update routeInfo for display
+      const routeInfoForDisplay = {
+        path: route.path,
+        hops: route.hops,
+        isDirectRoute: route.isDirectRoute,
+        pools: route.pools.map(pool => pool.poolName)
+      };
+      setRouteInfo(routeInfoForDisplay);
+
+      return route;
+    } catch (error) {
+      console.error("[calculateRoute] Error calculating route:", error);
+      return null;
+    }
+  }, [isConnected, currentChainId, setCurrentRoute, setSelectedPoolIndexForChart]);
+
+  // New function for fetching route fees that can be called independently
+  const fetchRouteFees = useCallback(async (route: SwapRoute) => {
+    if (!route || route.pools.length === 0) {
+      setRouteFees([]);
+      return;
+    }
+
+    setRouteFeesLoading(true);
+    const fees: Array<{ poolName: string; fee: number }> = [];
+    
+    try {
+      for (const pool of route.pools) {
+        const cacheKey = getPoolDynamicFeeCacheKey(pool.token0 as TokenSymbol, pool.token1 as TokenSymbol, TARGET_CHAIN_ID);
+        let poolFee: number;
+
+        // Check cache first
+        const cachedFee = getFromCache<{ dynamicFee: string }>(cacheKey);
+        
+        if (cachedFee) {
+          poolFee = Number(cachedFee.dynamicFee);
+        } else {
+          const response = await fetch('/api/swap/get-dynamic-fee', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              fromTokenSymbol: pool.token0,
+              toTokenSymbol: pool.token1,
+              chainId: TARGET_CHAIN_ID,
+            }),
+          });
+          
+          const data = await response.json();
+          if (!response.ok) {
+            throw new Error(data.message || data.errorDetails || `Failed to fetch dynamic fee for ${pool.poolName}`);
+          }
+          
+          poolFee = Number(data.dynamicFee);
+          if (isNaN(poolFee)) {
+            throw new Error(`Dynamic fee received is not a number for ${pool.poolName}: ${data.dynamicFee}`);
+          }
+          
+          // Cache the result
+          setToCache(cacheKey, { dynamicFee: data.dynamicFee });
+        }
+
+        fees.push({ poolName: pool.poolName, fee: poolFee });
+      }
+
+      setRouteFees(fees);
+    } catch (error) {
+      console.error("[fetchRouteFees] Error fetching route fees:", error);
+      setRouteFees([]);
+    } finally {
+      setRouteFeesLoading(false);
+    }
+  }, [TARGET_CHAIN_ID]);
+
   // Effect to fetch dynamic fee for display (updated to handle multi-hop)
   const fetchFee = useCallback(async () => {
     if (
@@ -498,67 +594,19 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     setDynamicFeeError(null);
 
     try {
-      // First, find the best route for this token pair
-      const routeResult = findBestRoute(fromTokenSymbolForCache, toTokenSymbolForCache);
+      // Use the new route calculation function
+      const route = await calculateRoute(fromTokenSymbolForCache, toTokenSymbolForCache);
       
-      if (!routeResult.bestRoute) {
+      if (!route) {
         throw new Error(`No route found for token pair ${fromTokenSymbolForCache}/${toTokenSymbolForCache}`);
       }
 
-      const route = routeResult.bestRoute;
-      
-      // Only update the route if it has actually changed to prevent unnecessary re-renders
-      if (JSON.stringify(route) !== JSON.stringify(currentRoute)) {
-        setCurrentRoute(route); // Use prop setter
-        setSelectedPoolIndexForChart(0); // Use prop setter
-      }
-
-      // Fetch fees for each pool in the route
-      const fees: Array<{ poolName: string; fee: number }> = [];
-      
-      for (const pool of route.pools) {
-        const cacheKey = getPoolDynamicFeeCacheKey(pool.token0 as TokenSymbol, pool.token1 as TokenSymbol, TARGET_CHAIN_ID);
-        let poolFee: number;
-
-        // Check cache first
-        const cachedFee = getFromCache<{ dynamicFee: string }>(cacheKey);
-        
-        if (cachedFee) {
-          poolFee = Number(cachedFee.dynamicFee);
-        } else {
-          
-          const response = await fetch('/api/swap/get-dynamic-fee', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              fromTokenSymbol: pool.token0,
-              toTokenSymbol: pool.token1,
-              chainId: TARGET_CHAIN_ID,
-            }),
-          });
-          
-          const data = await response.json();
-          if (!response.ok) {
-            throw new Error(data.message || data.errorDetails || `Failed to fetch dynamic fee for ${pool.poolName}`);
-          }
-          
-          poolFee = Number(data.dynamicFee);
-          if (isNaN(poolFee)) {
-            throw new Error(`Dynamic fee received is not a number for ${pool.poolName}: ${data.dynamicFee}`);
-          }
-          
-          // Cache the result
-          setToCache(cacheKey, { dynamicFee: data.dynamicFee });
-        }
-
-        fees.push({ poolName: pool.poolName, fee: poolFee });
-      }
-
-      setRouteFees(fees);
+      // Use the new route fees function
+      await fetchRouteFees(route);
 
       // For backward compatibility, set the first fee as the main dynamic fee
-      if (fees.length > 0) {
-        setDynamicFeeBps(fees[0].fee);
+      if (routeFees.length > 0) {
+        setDynamicFeeBps(routeFees[0].fee);
       }
 
       setDynamicFeeLoading(false);
@@ -575,7 +623,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     } finally {
       isFetchingDynamicFeeRef.current = false;
     }
-  }, [isConnected, currentChainId, fromToken?.address, toToken?.address, TARGET_CHAIN_ID, currentRoute, setCurrentRoute, setSelectedPoolIndexForChart]); // Added currentRoute, setCurrentRoute, setSelectedPoolIndexForChart
+  }, [isConnected, currentChainId, fromToken?.address, toToken?.address, TARGET_CHAIN_ID, calculateRoute, fetchRouteFees, routeFees.length]); // Updated dependencies
 
   useEffect(() => {
     fetchFee(); // Fetch once on mount / relevant dep change
@@ -584,6 +632,29 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       isFetchingDynamicFeeRef.current = false; // Reset ref on cleanup
     };
   }, [fetchFee]);
+
+  // Effect for initial route calculation on component mount and token changes
+  useEffect(() => {
+    if (!isConnected || currentChainId !== TARGET_CHAIN_ID || !fromToken || !toToken) {
+      return;
+    }
+
+    const fromTokenSymbol = Object.keys(TOKEN_DEFINITIONS).find(
+      (key) => TOKEN_DEFINITIONS[key as TokenSymbol].address === fromToken.address
+    ) as TokenSymbol | undefined;
+    const toTokenSymbol = Object.keys(TOKEN_DEFINITIONS).find(
+      (key) => TOKEN_DEFINITIONS[key as TokenSymbol].address === toToken.address
+    ) as TokenSymbol | undefined;
+
+    if (fromTokenSymbol && toTokenSymbol) {
+      // Calculate route for the initial token pair
+      calculateRoute(fromTokenSymbol, toTokenSymbol).then((route) => {
+        if (route) {
+          fetchRouteFees(route);
+        }
+      });
+    }
+  }, [isConnected, currentChainId, fromToken?.address, toToken?.address, calculateRoute, fetchRouteFees]);
 
   // First, create a completely new function for the Change button
   const handleChangeButton = () => {
@@ -1069,6 +1140,22 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       setFromToken(token);
       setFromAmount("");
       setToAmount("");
+      
+      // Calculate route for the new token pair
+      const fromTokenSymbol = Object.keys(TOKEN_DEFINITIONS).find(
+        (key) => TOKEN_DEFINITIONS[key as TokenSymbol].address === token.address
+      ) as TokenSymbol | undefined;
+      const toTokenSymbol = Object.keys(TOKEN_DEFINITIONS).find(
+        (key) => TOKEN_DEFINITIONS[key as TokenSymbol].address === toToken.address
+      ) as TokenSymbol | undefined;
+      
+      if (fromTokenSymbol && toTokenSymbol) {
+        calculateRoute(fromTokenSymbol, toTokenSymbol).then((route) => {
+          if (route) {
+            fetchRouteFees(route);
+          }
+        });
+      }
     }
   };
 
@@ -1077,6 +1164,22 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       setToToken(token);
       setFromAmount("");
       setToAmount("");
+      
+      // Calculate route for the new token pair
+      const fromTokenSymbol = Object.keys(TOKEN_DEFINITIONS).find(
+        (key) => TOKEN_DEFINITIONS[key as TokenSymbol].address === fromToken.address
+      ) as TokenSymbol | undefined;
+      const toTokenSymbol = Object.keys(TOKEN_DEFINITIONS).find(
+        (key) => TOKEN_DEFINITIONS[key as TokenSymbol].address === token.address
+      ) as TokenSymbol | undefined;
+      
+      if (fromTokenSymbol && toTokenSymbol) {
+        calculateRoute(fromTokenSymbol, toTokenSymbol).then((route) => {
+          if (route) {
+            fetchRouteFees(route);
+          }
+        });
+      }
     }
   };
 

@@ -177,14 +177,14 @@ export function TickRangeControl({
 
     if (quoteTokenSymbol?.toUpperCase().includes("YUSD")) {
         if (priceNum > 0 && priceNum < 0.01) return "<$0.01";
-        return `$${priceNum.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+        return `$${priceNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     }
 
     if (priceNum === 0) return "0.00";
     
     // For very large numbers not YUSD, avoid scientific notation and use commas
     if (priceNum > 100000) { // Arbitrary threshold for large numbers
-        return priceNum.toLocaleString(undefined, { maximumFractionDigits: 2 }); 
+        return priceNum.toLocaleString('en-US', { maximumFractionDigits: 2 }); 
     }
     // For very small numbers or reasonably sized numbers, toPrecision is fine
     if (priceNum < 0.00001 && priceNum > 0) return "<0.00001";

@@ -79,6 +79,8 @@
     --sidebar-background: #131313;
     --sidebar-background-popover: #0f0f0f;
     --sidebar-foreground: #ffffff;
+    /* Modal background */
+    --modal-background: #161616;
     --sidebar-primary: #f45502;
     --sidebar-primary-foreground: #ffffff;
     --sidebar-accent: #282828;
