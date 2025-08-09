@@ -11,6 +11,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import Image from "next/image";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import * as React from "react";
 import { 
   ColumnDef,
@@ -116,6 +117,11 @@ export default function LiquidityPage() {
   const [addLiquidityOpen, setAddLiquidityOpen] = useState(false);
   const [selectedPoolApr, setSelectedPoolApr] = useState<string | undefined>(undefined);
   const router = useRouter();
+  const [selectedCategory, setSelectedCategory] = useState<string>('All');
+  const categories = useMemo(() => {
+    const types = Array.from(new Set((poolsData || []).map(p => p.type).filter(Boolean))) as string[];
+    return ['All', ...types];
+  }, [poolsData]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -332,6 +338,11 @@ export default function LiquidityPage() {
       return { ...pool, positionsCount: count };
     });
   }, [poolsData, userPositions]);
+
+  const filteredPools = useMemo(() => {
+    if (selectedCategory === 'All') return poolsWithPositionCounts;
+    return poolsWithPositionCounts.filter(p => (p.type || '') === selectedCategory);
+  }, [poolsWithPositionCounts, selectedCategory]);
 
   const columns: ColumnDef<Pool>[] = useMemo(() => [
     {
@@ -601,7 +612,7 @@ export default function LiquidityPage() {
   }, [isMobile, windowWidth, columns]);
 
   const table = useReactTable({
-    data: poolsWithPositionCounts,
+    data: filteredPools,
     columns: visibleColumns,
     getCoreRowModel: getCoreRowModel(),
     onSortingChange: setSorting,
@@ -633,89 +644,114 @@ export default function LiquidityPage() {
       <div className="flex flex-1 flex-col">
         <div className="flex flex-1 flex-col p-6 px-10">
           <div className="mb-6 mt-6">
-            {!isMobile && (
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <h2 className="text-xl font-semibold">Liquidity Pools</h2>
-                  <p className="text-sm text-muted-foreground">
-                    Explore and manage your liquidity positions.
-                  </p>
-                </div>
-                
+            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <h2 className="text-xl font-semibold">Liquidity Pools</h2>
+                <p className="text-sm text-muted-foreground">Explore and manage your liquidity positions.</p>
               </div>
-            )}
-            
-            {isMobile ? (
-              <MobileLiquidityList 
-                pools={poolsWithPositionCounts}
-                onSelectPool={handlePoolClick}
-              />
-            ) : (
-              <div className="rounded-md border">
-                <Table className="w-full" style={{ tableLayout: 'fixed' }}>
-                  <TableHeader>
-                    {table.getHeaderGroups().map((headerGroup) => (
-                      <TableRow key={headerGroup.id} className="hover:bg-transparent">
-                        {headerGroup.headers.map((header, index) => (
-                          <TableHead 
-                            key={header.id}
-                            className={`px-2 relative ${index === 0 ? 'pl-6' : ''} ${index === headerGroup.headers.length - 1 ? 'pr-6' : ''}`}
-                            style={{ width: `${header.getSize()}px` }}
-                          >
-                            {header.isPlaceholder
-                              ? null
-                              : flexRender(
-                                  header.column.columnDef.header,
-                                  header.getContext()
-                                )}
-                            <div
-                              onMouseDown={header.getResizeHandler()}
-                              onTouchStart={header.getResizeHandler()}
-                              className={`absolute right-0 top-0 h-full w-1 bg-border cursor-col-resize select-none touch-none ${
-                                header.column.getIsResizing() ? 'bg-primary opacity-100' : 'opacity-0 hover:opacity-100'
-                              }`}
-                            />
-                          </TableHead>
-                        ))}
-                      </TableRow>
+              <div className="sm:self-end">
+                <Tabs value={selectedCategory} onValueChange={setSelectedCategory}>
+                  <TabsList className="bg-transparent p-0 h-auto">
+                    {categories.map((cat) => (
+                      <TabsTrigger
+                        key={cat}
+                        value={cat}
+                        className="px-2 py-1 text-xs rounded-md data-[state=active]:bg-muted data-[state=active]:text-foreground"
+                      >
+                        {cat}
+                      </TabsTrigger>
                     ))}
-                  </TableHeader>
-                  <TableBody>
-                    {table.getRowModel().rows?.length ? (
-                      table.getRowModel().rows.map((row) => (
-                        <TableRow
-                          key={row.id}
-                          className="group cursor-pointer transition-colors hover:bg-muted/30"
-                        >
-                          {row.getVisibleCells().map((cell, index) => (
-                            <TableCell 
-                              key={cell.id}
-                              onClick={() => handlePoolClick(row.original.id)}
-                              className={`relative py-4 px-2 ${index === 0 ? 'pl-6' : ''} ${index === row.getVisibleCells().length - 1 ? 'pr-6' : ''}`}
-                              style={{ width: `${cell.column.getSize()}px` }}
-                            >
-                              {flexRender(
-                                cell.column.columnDef.cell,
-                                cell.getContext()
-                              )}
-                            </TableCell>
-                          ))}
-                        </TableRow>
-                      ))
-                    ) : (
-                      <TableRow>
-                        <TableCell
-                          colSpan={columns.length}
-                          className="h-24 text-center"
-                        >
-                          No pools available.
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
+                  </TabsList>
+                </Tabs>
               </div>
-            )}
+            </div>
+
+            <div className="rounded-lg bg-muted/30 border border-sidebar-border/60">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-sidebar-border/60">
+                <div className="flex items-center gap-3">
+                  <h2 className="text-xs tracking-wider text-muted-foreground font-mono font-bold">POOLS</h2>
+                </div>
+                <div className="hidden md:flex items-center gap-6 text-xs text-muted-foreground">
+                  <span className="inline-block w-[120px] text-left">Volume (24h)</span>
+                  <span className="inline-block w-[100px] text-left">Fees (24h)</span>
+                  <span className="inline-block w-[120px] text-left">Liquidity</span>
+                  <span className="inline-block w-[80px] text-right">Yield</span>
+                </div>
+              </div>
+              <div className="p-2">
+                {isMobile ? (
+                  <MobileLiquidityList 
+                    pools={filteredPools}
+                    onSelectPool={handlePoolClick}
+                  />
+                ) : (
+                  <div className="overflow-x-auto">
+                    <Table className="w-full" style={{ tableLayout: 'fixed' }}>
+                      <TableHeader>
+                        {table.getHeaderGroups().map((headerGroup) => (
+                          <TableRow key={headerGroup.id} className="hover:bg-transparent">
+                            {headerGroup.headers.map((header, index) => (
+                              <TableHead 
+                                key={header.id}
+                                className={`px-2 relative ${index === 0 ? 'pl-6' : ''} ${index === headerGroup.headers.length - 1 ? 'pr-6' : ''}`}
+                                style={{ width: `${header.getSize()}px` }}
+                              >
+                                {header.isPlaceholder
+                                  ? null
+                                  : flexRender(
+                                      header.column.columnDef.header,
+                                      header.getContext()
+                                    )}
+                                <div
+                                  onMouseDown={header.getResizeHandler()}
+                                  onTouchStart={header.getResizeHandler()}
+                                  className={`absolute right-0 top-0 h-full w-1 bg-border cursor-col-resize select-none touch-none ${
+                                    header.column.getIsResizing() ? 'bg-primary opacity-100' : 'opacity-0 hover:opacity-100'
+                                  }`}
+                                />
+                              </TableHead>
+                            ))}
+                          </TableRow>
+                        ))}
+                      </TableHeader>
+                      <TableBody>
+                        {table.getRowModel().rows?.length ? (
+                          table.getRowModel().rows.map((row) => (
+                            <TableRow
+                              key={row.id}
+                              className="group cursor-pointer transition-colors hover:bg-muted/30"
+                            >
+                              {row.getVisibleCells().map((cell, index) => (
+                                <TableCell 
+                                  key={cell.id}
+                                  onClick={() => handlePoolClick(row.original.id)}
+                                  className={`relative py-4 px-2 ${index === 0 ? 'pl-6' : ''} ${index === row.getVisibleCells().length - 1 ? 'pr-6' : ''}`}
+                                  style={{ width: `${cell.column.getSize()}px` }}
+                                >
+                                  {flexRender(
+                                    cell.column.columnDef.cell,
+                                    cell.getContext()
+                                  )}
+                                </TableCell>
+                              ))}
+                            </TableRow>
+                          ))
+                        ) : (
+                          <TableRow>
+                            <TableCell
+                              colSpan={columns.length}
+                              className="h-24 text-center"
+                            >
+                              No pools available.
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -740,7 +776,7 @@ export default function LiquidityPage() {
         }}
         sdkMinTick={SDK_MIN_TICK}
         sdkMaxTick={SDK_MAX_TICK}
-                          defaultTickSpacing={getPoolById(selectedPoolId)?.tickSpacing || DEFAULT_TICK_SPACING}
+        defaultTickSpacing={getPoolById(selectedPoolId)?.tickSpacing || DEFAULT_TICK_SPACING}
       />
     </AppLayout>
   );

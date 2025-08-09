@@ -8,6 +8,7 @@ import { Area, AreaChart, XAxis, YAxis } from "recharts";
 import { ChartContainer, type ChartConfig } from "@/components/ui/chart";
 import { useAccount } from "wagmi";
 import poolsConfig from "@/config/pools.json";
+import { getAllPools } from "@/lib/pools-config";
 
 const RANGES = ["1D", "1W", "1M", "1Y", "MAX"] as const;
 type Range = typeof RANGES[number];
@@ -220,6 +221,188 @@ export default function PortfolioPage() {
   const [isMobileVisReady, setIsMobileVisReady] = useState<boolean>(false);
   const blockVisContainerRef = useRef<HTMLDivElement>(null);
   
+  // NEW: local state for positions and activity
+  const { address: accountAddress, isConnected } = useAccount();
+  const allowedPoolIds = useMemo(() => {
+    try {
+      const ids = getAllPools().map(p => p.subgraphId?.toLowerCase()).filter(Boolean) as string[];
+      return new Set(ids);
+    } catch {
+      return new Set<string>();
+    }
+  }, []);
+  const [activePositions, setActivePositions] = useState<any[]>([]);
+  const [oldPositions, setOldPositions] = useState<any[]>([]);
+  const [activityItems, setActivityItems] = useState<any[]>([]);
+  const [isLoadingPositions, setIsLoadingPositions] = useState<boolean>(true);
+  const [isLoadingActivity, setIsLoadingActivity] = useState<boolean>(false);
+  const [positionsError, setPositionsError] = useState<string | undefined>(undefined);
+  const [activityError, setActivityError] = useState<string | undefined>(undefined);
+
+  // Load positions (processed for active), and raw for old positions
+  useEffect(() => {
+    let isCancelled = false;
+
+    const fetchPositions = async () => {
+      if (!isConnected || !accountAddress) {
+        if (!isCancelled) {
+          setActivePositions([]);
+          setOldPositions([]);
+          setIsLoadingPositions(false);
+          setPositionsError(undefined);
+        }
+        return;
+      }
+
+      setIsLoadingPositions(true);
+      setPositionsError(undefined);
+
+      try {
+        // Processed active positions (amounts computed server-side)
+        const res = await fetch(`/api/liquidity/get-positions?ownerAddress=${accountAddress}`);
+        const data = await res.json();
+        const processedActive = Array.isArray(data) ? data : [];
+
+        // Raw positions from subgraph to identify old (withdrawn) ones by zero liquidity
+        const SUBGRAPH_URL = "https://api.studio.thegraph.com/query/111443/alphix-test/version/latest";
+        const RAW_QUERY = `
+          query GetUserPositionsRaw($owner: Bytes!) {
+            hookPositions(first: 200, orderBy: blockTimestamp, orderDirection: desc, where: { owner: $owner }) {
+              id
+              owner
+              pool
+              tickLower
+              tickUpper
+              liquidity
+              blockTimestamp
+              currency0 { symbol decimals }
+              currency1 { symbol decimals }
+            }
+          }
+        `;
+        const rawRes = await fetch(SUBGRAPH_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: RAW_QUERY, variables: { owner: accountAddress.toLowerCase() } }),
+        });
+        let rawPositions: any[] = [];
+        if (rawRes.ok) {
+          const rawJson = await rawRes.json();
+          rawPositions = (rawJson?.data?.hookPositions ?? []).filter((p: any) => 
+            allowedPoolIds.has(String(p.pool || '').toLowerCase())
+          );
+        }
+
+        const old = rawPositions.filter(p => {
+          try {
+            return (BigInt(p.liquidity ?? '0') === 0n);
+          } catch {
+            return String(p.liquidity ?? '0') === '0';
+          }
+        });
+
+        if (!isCancelled) {
+          setActivePositions(processedActive);
+          setOldPositions(old);
+        }
+      } catch (e: any) {
+        if (!isCancelled) {
+          setPositionsError(e?.message || 'Failed to load positions');
+          setActivePositions([]);
+          setOldPositions([]);
+        }
+      } finally {
+        if (!isCancelled) setIsLoadingPositions(false);
+      }
+    };
+
+    fetchPositions();
+    return () => { isCancelled = true; };
+  }, [isConnected, accountAddress]);
+
+  // Load activity (best-effort): mints, burns, collects for owner
+  useEffect(() => {
+    let isCancelled = false;
+    const fetchActivity = async () => {
+      if (!isConnected || !accountAddress) {
+        if (!isCancelled) {
+          setActivityItems([]);
+          setActivityError(undefined);
+        }
+        return;
+      }
+      setIsLoadingActivity(true);
+      setActivityError(undefined);
+      try {
+        const SUBGRAPH_URL = "https://api.studio.thegraph.com/query/111443/alphix-test/version/latest";
+        const ACTIVITY_QUERY = `
+          query GetUserActivity($owner: Bytes!, $first: Int!) {
+            mints(first: $first, orderBy: timestamp, orderDirection: desc, where: { owner: $owner }) {
+              id
+              timestamp
+              tickLower
+              tickUpper
+              amount0
+              amount1
+              pool { id currency0 { symbol decimals } currency1 { symbol decimals } }
+              transaction { id }
+            }
+            burns(first: $first, orderBy: timestamp, orderDirection: desc, where: { owner: $owner }) {
+              id
+              timestamp
+              tickLower
+              tickUpper
+              amount0
+              amount1
+              pool { id currency0 { symbol decimals } currency1 { symbol decimals } }
+              transaction { id }
+            }
+            collects(first: $first, orderBy: timestamp, orderDirection: desc, where: { owner: $owner }) {
+              id
+              timestamp
+              amount0
+              amount1
+              pool { id currency0 { symbol decimals } currency1 { symbol decimals } }
+              transaction { id }
+            }
+          }
+        `;
+        const resp = await fetch(SUBGRAPH_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: ACTIVITY_QUERY, variables: { owner: accountAddress.toLowerCase(), first: 50 } }),
+        });
+        if (!resp.ok) throw new Error(`Subgraph error ${resp.status}`);
+        const json = await resp.json();
+        const mk = (type: string, rows: any[]) => rows.map((r: any) => ({
+          type,
+          id: r.id,
+          ts: Number(r.timestamp || r.blockTimestamp || 0),
+          poolSymbols: [r.pool?.currency0?.symbol, r.pool?.currency1?.symbol].filter(Boolean).join('/'),
+          poolId: r.pool?.id,
+          amount0: r.amount0,
+          amount1: r.amount1,
+          tx: r.transaction?.id,
+          tickLower: r.tickLower,
+          tickUpper: r.tickUpper,
+        }));
+        const items = [
+          ...mk('Mint', json?.data?.mints ?? []),
+          ...mk('Burn', json?.data?.burns ?? []),
+          ...mk('Collect', json?.data?.collects ?? []),
+        ].filter((it: any) => allowedPoolIds.has(String(it.poolId || '').toLowerCase()))
+         .sort((a, b) => b.ts - a.ts).slice(0, 50);
+        if (!isCancelled) setActivityItems(items);
+      } catch (e: any) {
+        if (!isCancelled) setActivityError(e?.message || 'Failed to load activity');
+      } finally {
+        if (!isCancelled) setIsLoadingActivity(false);
+      }
+    };
+    fetchActivity();
+    return () => { isCancelled = true; };
+  }, [isConnected, accountAddress]);
+
   // Set initial responsive states immediately
   useEffect(() => {
     const setInitialStates = () => {
@@ -491,6 +674,157 @@ export default function PortfolioPage() {
               </div>
             </div>
           )}
+        </div>
+
+        {/* NEW: Three-section content grid */}
+        <div className="mt-6 grid gap-6" style={{ gridTemplateColumns: '1fr', gridAutoRows: 'min-content' }}>
+          {/* Active Positions */}
+          <div className="rounded-lg bg-muted/30 border border-sidebar-border/60">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-sidebar-border/60">
+              <div className="flex items-center gap-2">
+                <h2 className="text-xs tracking-wider text-muted-foreground font-mono font-bold">ACTIVE POSITIONS</h2>
+                {isLoadingPositions && <span className="text-[10px] text-muted-foreground">Loading…</span>}
+                {positionsError && <span className="text-[10px] text-red-500">{positionsError}</span>}
+              </div>
+              <div className="text-xs text-muted-foreground">{activePositions.length}</div>
+            </div>
+            <div className="p-2">
+              {activePositions.length === 0 && !isLoadingPositions ? (
+                <div className="text-sm text-muted-foreground px-2 py-6">No active positions.</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm" style={{ tableLayout: 'fixed' }}>
+                    <thead>
+                      <tr className="text-left text-xs text-muted-foreground">
+                        <th className="font-normal py-2 px-3">Pool</th>
+                        <th className="font-normal py-2 px-3">Status</th>
+                        <th className="font-normal py-2 px-3">Amounts</th>
+                        <th className="font-normal py-2 px-3 text-right">Value (USD)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {activePositions.map((p, idx) => {
+                        const valueUSD = (() => {
+                          const sym0 = p?.token0?.symbol;
+                          const sym1 = p?.token1?.symbol;
+                          const amt0 = parseFloat(p?.token0?.amount || '0');
+                          const amt1 = parseFloat(p?.token1?.amount || '0');
+                          const price0 = 0; // Unknown here; could be improved by sharing priceMap from usePortfolioData
+                          const price1 = 0;
+                          return amt0 * price0 + amt1 * price1;
+                        })();
+                        return (
+                          <tr key={p.positionId || idx} className="hover:bg-muted/20">
+                            <td className="py-2 px-3 align-middle">
+                              <div className="flex items-center gap-2">
+                                <span className="font-medium">{p?.token0?.symbol}/{p?.token1?.symbol}</span>
+                              </div>
+                            </td>
+                            <td className="py-2 px-3 align-middle">
+                              <span className={`text-xs ${p?.isInRange ? 'text-green-500' : 'text-amber-500'}`}>{p?.isInRange ? 'In range' : 'Out of range'}</span>
+                            </td>
+                            <td className="py-2 px-3 align-middle">
+                              <div className="text-xs text-muted-foreground">
+                                <span>{Number.parseFloat(p?.token0?.amount || '0').toFixed(4)} {p?.token0?.symbol}</span>
+                                <span className="mx-1">·</span>
+                                <span>{Number.parseFloat(p?.token1?.amount || '0').toFixed(4)} {p?.token1?.symbol}</span>
+                              </div>
+                            </td>
+                            <td className="py-2 px-3 align-middle text-right">
+                              {formatUSD(valueUSD)}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Old Positions */}
+          <div className="rounded-lg bg-muted/30 border border-sidebar-border/60">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-sidebar-border/60">
+              <div className="flex items-center gap-2">
+                <h2 className="text-xs tracking-wider text-muted-foreground font-mono font-bold">OLD POSITIONS</h2>
+                {isLoadingPositions && <span className="text-[10px] text-muted-foreground">Loading…</span>}
+              </div>
+              <div className="text-xs text-muted-foreground">{oldPositions.length}</div>
+            </div>
+            <div className="p-2">
+              {oldPositions.length === 0 && !isLoadingPositions ? (
+                <div className="text-sm text-muted-foreground px-2 py-6">No withdrawn positions.</div>
+              ) : (
+                <div className="flex flex-col divide-y divide-sidebar-border/60">
+                  {oldPositions.map((op, i) => (
+                    <div key={op.id || i} className="flex items-center justify-between py-3 px-3">
+                      <div className="flex items-center gap-3">
+                        <div className="px-1.5 py-0.5 text-[10px] rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-muted-foreground" style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}>
+                          Withdrawn
+                        </div>
+                        <div className="text-sm">
+                          <span className="font-medium">{op?.currency0?.symbol}/{op?.currency1?.symbol}</span>
+                          <span className="ml-2 text-xs text-muted-foreground">ticks {op?.tickLower} – {op?.tickUpper}</span>
+                        </div>
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {op?.blockTimestamp ? new Date(Number(op.blockTimestamp) * 1000).toLocaleDateString() : ''}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Activity */}
+          <div className="rounded-lg bg-muted/30 border border-sidebar-border/60">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-sidebar-border/60">
+              <div className="flex items-center gap-2">
+                <h2 className="text-xs tracking-wider text-muted-foreground font-mono font-bold">ACTIVITY</h2>
+                {isLoadingActivity && <span className="text-[10px] text-muted-foreground">Loading…</span>}
+                {activityError && <span className="text-[10px] text-red-500">{activityError}</span>}
+              </div>
+              <div className="text-xs text-muted-foreground">{activityItems.length}</div>
+            </div>
+            <div className="p-2">
+              {activityItems.length === 0 && !isLoadingActivity ? (
+                <div className="text-sm text-muted-foreground px-2 py-6">No recent activity.</div>
+              ) : (
+                <div className="flex flex-col">
+                  {activityItems.map((it, idx) => (
+                    <div key={it.id || idx} className="flex items-start justify-between px-3 py-3 hover:bg-muted/20 rounded-md">
+                      <div className="flex items-center gap-3">
+                        <div className={`h-6 w-6 rounded-full border border-sidebar-border flex items-center justify-center text-[10px] ${it.type === 'Mint' ? 'text-green-500' : it.type === 'Burn' ? 'text-amber-500' : 'text-blue-400'}`}>
+                          {it.type.charAt(0)}
+                        </div>
+                        <div className="flex flex-col">
+                          <div className="text-sm">
+                            <span className="font-medium mr-2">{it.type}</span>
+                            <span className="text-muted-foreground">{it.poolSymbols}</span>
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {it.amount0 && (<span className="mr-2">{it.amount0}</span>)}
+                            {it.amount1 && (<span>{it.amount1}</span>)}
+                            {(it.tickLower || it.tickUpper) && (
+                              <span className="ml-2">ticks {it.tickLower} – {it.tickUpper}</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="text-xs text-muted-foreground text-right">
+                        {it.ts ? new Date(Number(it.ts) * 1000).toLocaleString() : ''}
+                        {it.tx && (
+                          <div className="mt-1 opacity-70 truncate max-w-[140px]">{it.tx.slice(0, 10)}…</div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
         {/* no third state below 1100px */}
       </div>
