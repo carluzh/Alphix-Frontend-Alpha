@@ -405,8 +405,33 @@ export default function LiquidityPage() {
     },
     {
       accessorKey: "volume24h",
-      header: () => <div>Volume (24h)</div>,
+      header: ({ column }) => (
+        <div
+          className="flex items-center justify-start gap-1 cursor-pointer group"
+          onClick={() => {
+            const state = column.getIsSorted();
+            if (!state) column.toggleSorting(false); // asc
+            else if (state === "asc") column.toggleSorting(true); // desc
+            else setSorting([]); // default (clear)
+          }}
+        >
+          Volume (24h)
+          {column.getIsSorted() === "asc" ? (
+            <ChevronUpIcon className="ml-1 h-4 w-4 text-foreground group-hover:text-foreground" />
+          ) : column.getIsSorted() === "desc" ? (
+            <ChevronDownIcon className="ml-1 h-4 w-4 text-foreground group-hover:text-foreground" />
+          ) : (
+            <ChevronsUpDownIcon className="ml-1 h-4 w-4 text-muted-foreground group-hover:text-foreground" />
+          )}
+        </div>
+      ),
       size: 100, // 1/7 of total width
+      sortingFn: (rowA, rowB) => {
+        const a = typeof rowA.original.volume24hUSD === 'number' ? rowA.original.volume24hUSD : 0;
+        const b = typeof rowB.original.volume24hUSD === 'number' ? rowB.original.volume24hUSD : 0;
+        return a - b;
+      },
+      sortDescFirst: true,
       cell: ({ row }) => (
         <div className="flex items-center justify-start gap-1">
           {typeof row.original.volume24hUSD === 'number' ? (
@@ -445,8 +470,33 @@ export default function LiquidityPage() {
     },
     {
       accessorKey: "fees24h",
-      header: () => <div>Fees (24h)</div>,
+      header: ({ column }) => (
+        <div
+          className="flex items-center justify-start gap-1 cursor-pointer group"
+          onClick={() => {
+            const state = column.getIsSorted();
+            if (!state) column.toggleSorting(false); // asc
+            else if (state === "asc") column.toggleSorting(true); // desc
+            else setSorting([]); // default (clear)
+          }}
+        >
+          Fees (24h)
+          {column.getIsSorted() === "asc" ? (
+            <ChevronUpIcon className="ml-1 h-4 w-4 text-foreground group-hover:text-foreground" />
+          ) : column.getIsSorted() === "desc" ? (
+            <ChevronDownIcon className="ml-1 h-4 w-4 text-foreground group-hover:text-foreground" />
+          ) : (
+            <ChevronsUpDownIcon className="ml-1 h-4 w-4 text-muted-foreground group-hover:text-foreground" />
+          )}
+        </div>
+      ),
       size: 100, // 1/7 of total width
+      sortingFn: (rowA, rowB) => {
+        const a = typeof rowA.original.fees24hUSD === 'number' ? rowA.original.fees24hUSD : 0;
+        const b = typeof rowB.original.fees24hUSD === 'number' ? rowB.original.fees24hUSD : 0;
+        return a - b;
+      },
+      sortDescFirst: true,
       cell: ({ row }) => (
          <div className="flex items-center justify-start">
           {typeof row.original.fees24hUSD === 'number' ? (
@@ -578,7 +628,7 @@ export default function LiquidityPage() {
         hidePriority: 4,
       },
     },
-  ], []);
+  ], [setSorting]);
 
   const visibleColumns = useMemo(() => {
     if (isMobile) {
@@ -639,6 +689,15 @@ export default function LiquidityPage() {
     router.push(`/liquidity/${poolId}`);
   };
 
+  const handleSortCycle = (columnId: string) => {
+    const col = table.getColumn(columnId as any);
+    if (!col) return;
+    const state = col.getIsSorted();
+    if (!state) col.toggleSorting(false); // asc
+    else if (state === 'asc') col.toggleSorting(true); // desc
+    else setSorting([]); // default
+  };
+
   return (
     <AppLayout>
       <div className="flex flex-1 flex-col">
@@ -671,10 +730,20 @@ export default function LiquidityPage() {
                 <div className="flex items-center gap-3">
                   <h2 className="text-xs tracking-wider text-muted-foreground font-mono font-bold">POOLS</h2>
                 </div>
-                <div className="hidden md:flex items-center gap-6 text-xs text-muted-foreground">
-                  <span className="inline-block w-[120px] text-left">Volume (24h)</span>
-                  <span className="inline-block w-[100px] text-left">Fees (24h)</span>
-                  <span className="inline-block w-[120px] text-left">Liquidity</span>
+                <div className="hidden md:flex items-center gap-0 text-xs text-muted-foreground">
+                  <span
+                    className="inline-block w-[100px] text-left cursor-pointer select-none"
+                    onClick={() => handleSortCycle('volume24h')}
+                  >
+                    Volume (24h)
+                  </span>
+                  <span
+                    className="inline-block w-[100px] text-left cursor-pointer select-none"
+                    onClick={() => handleSortCycle('fees24h')}
+                  >
+                    Fees (24h)
+                  </span>
+                  <span className="inline-block w-[100px] text-left">Liquidity</span>
                   <span className="inline-block w-[80px] text-right">Yield</span>
                 </div>
               </div>
