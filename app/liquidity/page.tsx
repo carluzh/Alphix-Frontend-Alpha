@@ -2,7 +2,7 @@
 
 import { AppLayout } from "@/components/app-layout";
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { ArrowRightLeftIcon, PlusIcon, MinusIcon, ArrowLeftIcon, MoreHorizontal, ArrowUpDown, ExternalLinkIcon, RefreshCwIcon, Settings2Icon, XIcon, TrendingUpIcon, ChevronUpIcon } from "lucide-react";
+import { ArrowRightLeftIcon, PlusIcon, MinusIcon, ArrowLeftIcon, MoreHorizontal, ArrowUpDown, ArrowUp as ArrowUpIcon, ArrowDown as ArrowDownIcon, ExternalLinkIcon, RefreshCwIcon, Settings2Icon, XIcon, TrendingUpIcon, ChevronUpIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -498,14 +498,31 @@ export default function LiquidityPage() {
       },
     },
     {
-      accessorKey: "volume24h",
-      header: () => <div className="text-right w-full">Volume (24h)</div>,
+      id: "volume24h",
+      accessorFn: (row) =>
+        typeof row.volume24hUSD === 'number' ? row.volume24hUSD : Number.NEGATIVE_INFINITY,
+      enableSorting: true,
+      sortDescFirst: false,
+      header: ({ column }) => (
+        <button
+          className="w-full flex items-center justify-end gap-1 text-right select-none"
+          onClick={column.getToggleSortingHandler()}
+        >
+          <span>Volume (24h)</span>
+          {column.getIsSorted() === 'asc' ? (
+            <ArrowUpIcon className="h-3.5 w-3.5" />
+          ) : column.getIsSorted() === 'desc' ? (
+            <ArrowDownIcon className="h-3.5 w-3.5" />
+          ) : (
+            <ArrowUpDown className="h-3.5 w-3.5 opacity-50" />
+          )}
+        </button>
+      ),
       cell: ({ row }) => (
         <div className="text-right flex items-center justify-end gap-1">
           {typeof row.original.volume24hUSD === 'number' ? (
             <>
               {formatUSD(row.original.volume24hUSD)}
-              {/* Conditionally render arrow based on volumeChangeDirection */}
               {row.original.volumeChangeDirection === 'up' && (
                 <Image
                   src="/arrow_up.svg"
@@ -524,9 +541,8 @@ export default function LiquidityPage() {
                   className="text-red-500"
                 />
               )}
-              {/* Neutral or loading state can render nothing or a placeholder */}
-               {row.original.volumeChangeDirection === 'loading' && (
-                 <div className="inline-block h-3 w-3 bg-muted/60 rounded-full loading-skeleton"></div> // Optional loading indicator
+              {row.original.volumeChangeDirection === 'loading' && (
+                <div className="inline-block h-3 w-3 bg-muted/60 rounded-full loading-skeleton"></div>
               )}
             </>
           ) : (
@@ -557,10 +573,28 @@ export default function LiquidityPage() {
       }
     },
     {
-      accessorKey: "fees24h",
-      header: () => <div className="text-right w-full">Fees (24h)</div>,
+      id: "fees24h",
+      accessorFn: (row) =>
+        typeof row.fees24hUSD === 'number' ? row.fees24hUSD : Number.NEGATIVE_INFINITY,
+      enableSorting: true,
+      sortDescFirst: false,
+      header: ({ column }) => (
+        <button
+          className="w-full flex items-center justify-end gap-1 text-right select-none"
+          onClick={column.getToggleSortingHandler()}
+        >
+          <span>Fees (24h)</span>
+          {column.getIsSorted() === 'asc' ? (
+            <ArrowUpIcon className="h-3.5 w-3.5" />
+          ) : column.getIsSorted() === 'desc' ? (
+            <ArrowDownIcon className="h-3.5 w-3.5" />
+          ) : (
+            <ArrowUpDown className="h-3.5 w-3.5 opacity-50" />
+          )}
+        </button>
+      ),
       cell: ({ row }) => (
-         <div className="text-right flex items-center justify-end">
+        <div className="text-right flex items-center justify-end">
           {typeof row.original.fees24hUSD === 'number' ? (
             formatUSD(row.original.fees24hUSD)
           ) : (
@@ -692,6 +726,7 @@ export default function LiquidityPage() {
     getCoreRowModel: getCoreRowModel(),
     onSortingChange: setSorting,
     getSortedRowModel: getSortedRowModel(),
+    enableSortingRemoval: true,
     state: {
       sorting,
     },
