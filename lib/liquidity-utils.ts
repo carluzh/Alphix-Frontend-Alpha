@@ -1,4 +1,24 @@
 import { encodeFunctionData, parseUnits, type Address, type Hex, getAddress } from 'viem';
+
+// Helper function to safely parse amounts and prevent scientific notation errors
+const safeParseUnits = (amount: string, decimals: number): bigint => {
+  // Convert scientific notation to decimal format
+  const numericAmount = parseFloat(amount);
+  if (isNaN(numericAmount)) {
+    throw new Error("Invalid number format");
+  }
+  
+  // Convert to string with full decimal representation (no scientific notation)
+  const fullDecimalString = numericAmount.toFixed(decimals);
+  
+  // Remove trailing zeros after decimal point
+  const trimmedString = fullDecimalString.replace(/\.?0+$/, '');
+  
+  // If the result is just a decimal point, return "0"
+  const finalString = trimmedString === '.' ? '0' : trimmedString;
+  
+  return parseUnits(finalString, decimals);
+};
 import { Token } from '@uniswap/sdk-core';
 import { PoolKey } from '@uniswap/v4-sdk';
 import { TickMath } from '@uniswap/v3-sdk'; // TickMath is usually available
@@ -176,11 +196,11 @@ export async function prepareAddLiquidityTx(
         : [inputToken1, inputToken0];
     
     const amount0DesiredRaw = inputToken0.sortsBefore(inputToken1) 
-        ? parseUnits(amount0Desired, inputToken0.decimals)
-        : parseUnits(amount1Desired, inputToken1.decimals);
+        ? safeParseUnits(amount0Desired, inputToken0.decimals)
+        : safeParseUnits(amount1Desired, inputToken1.decimals);
     const amount1DesiredRaw = inputToken0.sortsBefore(inputToken1)
-        ? parseUnits(amount1Desired, inputToken1.decimals)
-        : parseUnits(amount0Desired, inputToken0.decimals);
+        ? safeParseUnits(amount1Desired, inputToken1.decimals)
+        : safeParseUnits(amount0Desired, inputToken0.decimals);
 
     // Explicitly define PoolKey with getAddress to ensure Address types
     const C0_ADDRESS: Address = getAddress(currency0.address);

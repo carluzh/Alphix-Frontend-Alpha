@@ -7,6 +7,26 @@ import { V4_POSITION_MANAGER_ADDRESS, EMPTY_BYTES, V4_POSITION_MANAGER_ABI } fro
 import { getToken, TokenSymbol } from '@/lib/pools-config';
 import { baseSepolia } from '@/lib/wagmiConfig';
 import { getAddress, type Hex, BaseError, parseUnits } from 'viem';
+
+// Helper function to safely parse amounts and prevent scientific notation errors
+const safeParseUnits = (amount: string, decimals: number): bigint => {
+  // Convert scientific notation to decimal format
+  const numericAmount = parseFloat(amount);
+  if (isNaN(numericAmount)) {
+    throw new Error("Invalid number format");
+  }
+  
+  // Convert to string with full decimal representation (no scientific notation)
+  const fullDecimalString = numericAmount.toFixed(decimals);
+  
+  // Remove trailing zeros after decimal point
+  const trimmedString = fullDecimalString.replace(/\.?0+$/, '');
+  
+  // If the result is just a decimal point, return "0"
+  const finalString = trimmedString === '.' ? '0' : trimmedString;
+  
+  return parseUnits(finalString, decimals);
+};
 import JSBI from 'jsbi';
 
 interface UseIncreaseLiquidityProps {
@@ -113,8 +133,8 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
       const tokenIdJSBI = JSBI.BigInt(nftTokenId.toString());
       
       // Convert additional amounts to proper units using parseUnits, then to JSBI
-      amount0Raw = parseUnits(positionData.additionalAmount0, token0Def.decimals);
-      amount1Raw = parseUnits(positionData.additionalAmount1, token1Def.decimals);
+      amount0Raw = safeParseUnits(positionData.additionalAmount0, token0Def.decimals);
+      amount1Raw = safeParseUnits(positionData.additionalAmount1, token1Def.decimals);
       
       // Convert to JSBI BigInt
       amount0MaxJSBI = JSBI.BigInt(amount0Raw.toString());

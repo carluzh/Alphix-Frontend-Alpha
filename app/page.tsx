@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import { PulsatingDot } from "@/components/pulsating-dot";
 import { MockSwapComponent } from "@/components/swap/MockSwapComponent";
 import { useRouter } from 'next/navigation';
+import { DynamicFeeChartPreview } from "@/components/dynamic-fee-chart-preview";
 
 import {
   Card,
@@ -529,6 +530,13 @@ export default function Home() {
               </div>
             </div>
 
+            {/* Dynamic Fee Preview (always skeleton on homepage) */}
+            <div className="mt-10 w-full flex justify-center">
+              <div className="w-full max-w-md">
+                <DynamicFeeChartPreview data={[]} alwaysShowSkeleton />
+              </div>
+            </div>
+
             {/* Features in a horizontal row */}
             <div className="mt-24 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-x-8 gap-y-10">
               {/* Feature 1: Adaptive Pricing */}
@@ -825,6 +833,8 @@ function Navbar({
 function WebGLCanvas({ rightMargin }: { rightMargin: number }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const marginRef = useRef(rightMargin);
+  const rafIdRef = useRef<number | null>(null);
+  const resizeObserverRef = useRef<ResizeObserver | null>(null);
 
   useEffect(() => {
     marginRef.current = rightMargin;
@@ -834,11 +844,29 @@ function WebGLCanvas({ rightMargin }: { rightMargin: number }) {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+    // Ensure opaque canvas to avoid white flash on route transitions
+    const gl =
+      (canvas.getContext('webgl2', {
+        alpha: false,
+        antialias: true,
+        powerPreference: 'high-performance',
+        desynchronized: true,
+        preserveDrawingBuffer: false,
+      }) as WebGL2RenderingContext | null) ||
+      (canvas.getContext('webgl', {
+        alpha: false,
+        antialias: true,
+        powerPreference: 'high-performance',
+        desynchronized: true,
+        preserveDrawingBuffer: false,
+      }) as WebGLRenderingContext | null);
     if (!gl) {
       console.error('WebGL not supported');
       return;
     }
+
+    // Match page background to avoid any white flash
+    canvas.style.backgroundColor = '#0a0908';
 
     // Vertex shader source (from their code)
     const vertexShaderSource = `
@@ -1138,7 +1166,8 @@ function WebGLCanvas({ rightMargin }: { rightMargin: number }) {
     }
 
     const observer = new ResizeObserver(resizeCanvas);
-    if(canvas?.parentElement) {
+    resizeObserverRef.current = observer;
+    if (canvas?.parentElement) {
       observer.observe(canvas.parentElement, { box: 'content-box' });
     }
     
@@ -1171,15 +1200,38 @@ function WebGLCanvas({ rightMargin }: { rightMargin: number }) {
       // Draw
       gl.drawArrays(gl.TRIANGLES, 0, 6);
 
-      requestAnimationFrame(render);
+      rafIdRef.current = requestAnimationFrame(render);
     }
 
     startTime = Date.now();
     lastScrollY = window.scrollY;
-    requestAnimationFrame(render);
+    rafIdRef.current = requestAnimationFrame(render);
+
+    // Prevent context loss (which can cause white canvas)
+    const onContextLost = (e: Event) => {
+      e.preventDefault();
+    };
+    const onContextRestored = () => {
+      resizeCanvas();
+    };
+    canvas.addEventListener('webglcontextlost', onContextLost, false);
+    canvas.addEventListener('webglcontextrestored', onContextRestored, false);
 
     return () => {
       window.removeEventListener('resize', resizeCanvas);
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current);
+      }
+      if (resizeObserverRef.current) {
+        try { resizeObserverRef.current.disconnect(); } catch {}
+        resizeObserverRef.current = null;
+      }
+      try {
+        canvas.removeEventListener('webglcontextlost', onContextLost);
+        canvas.removeEventListener('webglcontextrestored', onContextRestored);
+      } catch {}
+      // Keep canvas visually dark during unmount
+      canvas.style.backgroundColor = '#0a0908';
     };
   }, []);
 

@@ -15,6 +15,26 @@ import {
     type Hex 
 } from "viem";
 
+// Helper function to safely parse amounts and prevent scientific notation errors
+const safeParseUnits = (amount: string, decimals: number): bigint => {
+  // Convert scientific notation to decimal format
+  const numericAmount = parseFloat(amount);
+  if (isNaN(numericAmount)) {
+    throw new Error("Invalid number format");
+  }
+  
+  // Convert to string with full decimal representation (no scientific notation)
+  const fullDecimalString = numericAmount.toFixed(decimals);
+  
+  // Remove trailing zeros after decimal point
+  const trimmedString = fullDecimalString.replace(/\.?0+$/, '');
+  
+  // If the result is just a decimal point, return "0"
+  const finalString = trimmedString === '.' ? '0' : trimmedString;
+  
+  return parseUnits(finalString, decimals);
+};
+
 // Contract addresses from pools config
 const STATE_VIEW_ADDRESS = getStateViewAddress(); 
 const ETHERS_ADDRESS_ZERO = "0x0000000000000000000000000000000000000000";
@@ -170,7 +190,7 @@ export default async function handler(
         const sdkInputToken = new Token(chainId, getAddress(inputTokenConfig.address), inputTokenConfig.decimals, inputTokenConfig.symbol);
         // console.log("[API] Successfully created InputToken.", sdkInputToken);
 
-        const parsedInputAmount = parseUnits(inputAmount, sdkInputToken.decimals);
+        const parsedInputAmount = safeParseUnits(inputAmount, sdkInputToken.decimals);
 
         // --- Tick Alignment ---
         const clampedUserTickLower = Math.max(userTickLower, SDK_MIN_TICK);

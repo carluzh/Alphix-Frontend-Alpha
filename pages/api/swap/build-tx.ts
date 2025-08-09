@@ -1,5 +1,25 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getAddress, parseUnits, encodeFunctionData, type Address, type Hex, type Abi, TransactionExecutionError } from 'viem';
+
+// Helper function to safely parse amounts and prevent scientific notation errors
+const safeParseUnits = (amount: string, decimals: number): bigint => {
+  // Convert scientific notation to decimal format
+  const numericAmount = parseFloat(amount);
+  if (isNaN(numericAmount)) {
+    throw new Error("Invalid number format");
+  }
+  
+  // Convert to string with full decimal representation (no scientific notation)
+  const fullDecimalString = numericAmount.toFixed(decimals);
+  
+  // Remove trailing zeros after decimal point
+  const trimmedString = fullDecimalString.replace(/\.?0+$/, '');
+  
+  // If the result is just a decimal point, return "0"
+  const finalString = trimmedString === '.' ? '0' : trimmedString;
+  
+  return parseUnits(finalString, decimals);
+};
 import { Token } from '@uniswap/sdk-core';
 import { RoutePlanner, CommandType } from '@uniswap/universal-router-sdk';
 import { Pool, Route as V4Route, PoolKey, V4Planner, Actions, encodeRouteToPath } from '@uniswap/v4-sdk';
@@ -518,8 +538,8 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
 
         // 2. Prepare V4 Swap Data and add V4_SWAP command
         // Use the actual swap amount (parsedPermitAmount or amountDecimalsStr) for swap logic
-        const actualSwapAmount = parseUnits(amountDecimalsStr, INPUT_TOKEN.decimals); 
-        const actualLimitAmount = parseUnits(limitAmountDecimalsStr, OUTPUT_TOKEN.decimals); // Assuming ExactIn for limit parsing
+        const actualSwapAmount = safeParseUnits(amountDecimalsStr, INPUT_TOKEN.decimals); 
+        const actualLimitAmount = safeParseUnits(limitAmountDecimalsStr, OUTPUT_TOKEN.decimals); // Assuming ExactIn for limit parsing
 
         // Determine the value to send with the transaction
         const valueToSend = fromTokenSymbol === 'ETH' ? actualSwapAmount : 0n;

@@ -7,6 +7,26 @@ import { V4_POSITION_MANAGER_ADDRESS, EMPTY_BYTES, V4_POSITION_MANAGER_ABI } fro
 import { getToken, TokenSymbol } from '@/lib/pools-config';
 import { baseSepolia } from '@/lib/wagmiConfig';
 import { getAddress, type Hex, BaseError, parseUnits } from 'viem';
+
+// Helper function to safely parse amounts and prevent scientific notation errors
+const safeParseUnits = (amount: string, decimals: number): bigint => {
+  // Convert scientific notation to decimal format
+  const numericAmount = parseFloat(amount);
+  if (isNaN(numericAmount)) {
+    throw new Error("Invalid number format");
+  }
+  
+  // Convert to string with full decimal representation (no scientific notation)
+  const fullDecimalString = numericAmount.toFixed(decimals);
+  
+  // Remove trailing zeros after decimal point
+  const trimmedString = fullDecimalString.replace(/\.?0+$/, '');
+  
+  // If the result is just a decimal point, return "0"
+  const finalString = trimmedString === '.' ? '0' : trimmedString;
+  
+  return parseUnits(finalString, decimals);
+};
 import JSBI from 'jsbi';
 
 interface UseDecreaseLiquidityProps {
@@ -189,8 +209,8 @@ export function useDecreaseLiquidity({ onLiquidityDecreased }: UseDecreaseLiquid
           console.error("Error fetching current position for decrease:", error); // Changed from warn to error
           
           // Fallback: use a conservative estimate based on the amounts
-          const amount0Raw = parseUnits(positionData.decreaseAmount0 || "0", token0Def.decimals);
-          const amount1Raw = parseUnits(positionData.decreaseAmount1 || "0", token1Def.decimals);
+          const amount0Raw = safeParseUnits(positionData.decreaseAmount0 || "0", token0Def.decimals);
+          const amount1Raw = safeParseUnits(positionData.decreaseAmount1 || "0", token1Def.decimals);
           const maxAmountRaw = amount0Raw > amount1Raw ? amount0Raw : amount1Raw;
           
           // Use a conservative liquidity estimate

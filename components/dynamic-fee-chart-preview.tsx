@@ -2,11 +2,11 @@
 
 import { LineChart, Line, ResponsiveContainer, XAxis, YAxis } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { ArrowRightIcon } from "lucide-react";
 import Image from "next/image";
 import { getToken, getPoolByTokens } from "@/lib/pools-config";
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
+import { ArrowUpRight } from "lucide-react";
 
 interface FeeHistoryPoint {
   timeLabel: string;
@@ -25,9 +25,10 @@ interface DynamicFeeChartPreviewProps {
   };
   isLoading?: boolean; // Show loading state during pool switches
   onContentStableChange?: (stable: boolean) => void; // New callback prop
+  alwaysShowSkeleton?: boolean; // Force skeleton even with no data (e.g., homepage preview)
 }
 
-function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = false, onContentStableChange }: DynamicFeeChartPreviewProps) {
+function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = false, onContentStableChange, alwaysShowSkeleton = false }: DynamicFeeChartPreviewProps) {
   const router = useRouter();
   
   // State to track if the content is stable and rendered
@@ -98,8 +99,12 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
     }
   }, [isLoading, data, onContentStableChange, isContentStable]);
 
-  // Debug effect for artificial loading delay
+  // Debug/UX effect for loading skeleton visibility
   useEffect(() => {
+    if (alwaysShowSkeleton) {
+      setShowLoadingSkeleton(true);
+      return;
+    }
     if (isLoading) {
       setShowLoadingSkeleton(true);
       const timer = setTimeout(() => {
@@ -110,7 +115,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
       // Immediately hide skeleton when not loading
       setShowLoadingSkeleton(false);
     }
-  }, [isLoading]);
+  }, [isLoading, alwaysShowSkeleton]);
 
   // Handle click to navigate to pool page
   const handleClick = () => {
@@ -120,8 +125,13 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
     const poolConfig = getPoolByTokens(poolInfo.token0Symbol, poolInfo.token1Symbol);
     
     if (poolConfig) {
-      // Navigate to the pool page using the pool ID
-      router.push(`/liquidity/${poolConfig.id}`);
+      // Open the pool page in a new tab
+      const url = `/liquidity/${poolConfig.id}`;
+      if (typeof window !== "undefined") {
+        window.open(url, "_blank", "noopener,noreferrer");
+      } else {
+        router.push(url);
+      }
     } else {
       console.warn(`No pool configuration found for ${poolInfo.token0Symbol}/${poolInfo.token1Symbol}`);
     }
@@ -194,6 +204,21 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
   }, [data, hasDataChanged]);
 
   // Render different Card structures based on data availability
+  if (alwaysShowSkeleton) {
+    return (
+      <Card 
+        className="w-full max-w-md shadow-md rounded-lg cursor-pointer hover:shadow-lg transition-shadow bg-muted/30 group"
+        onClick={handleClick}
+      >
+        <CardContent className="px-2 pb-2 pt-2 h-[100px]">
+          <div className="w-full h-full">
+            <div className="w-full h-full bg-muted/40 rounded animate-pulse" />
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
   if (!data || data.length === 0) {
     return (
       <Card 
@@ -216,9 +241,10 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
 
     return (
       <Card 
-        className="w-full max-w-md shadow-md rounded-lg cursor-pointer hover:shadow-lg transition-shadow bg-muted/30 group"
+        className="w-full max-w-md shadow-md rounded-lg cursor-pointer hover:shadow-lg transition-shadow bg-muted/30"
         onClick={handleClick}
       >
+        <div className="group/active-area">
         <CardHeader className="flex flex-row items-start justify-between pb-2 pt-3 px-4">
           <div className="space-y-0.5">
               <CardTitle className="text-sm font-medium">Dynamic Fee Trend</CardTitle>
@@ -254,7 +280,10 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
                   )}
               </CardDescription>
           </div>
-          <ArrowRightIcon className="h-4 w-4 text-muted-foreground group-hover:text-white transition-colors duration-150" />
+          <ArrowUpRight
+            aria-hidden="true"
+            className="lucide lucide-arrow-right h-4 w-4 text-muted-foreground transition-colors duration-150 group-hover/active-area:text-white"
+          />
         </CardHeader>
         <CardContent className="px-2 pb-2 pt-0 h-[80px]"> {/* Restored height for actual chart */}
           <div className="w-full h-full cursor-pointer [&_.recharts-wrapper]:outline-none [&_.recharts-wrapper]:focus:outline-none [&_.recharts-surface]:outline-none">
@@ -305,6 +334,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
             )}
           </div>
         </CardContent>
+        </div>
       </Card>
     );
   }

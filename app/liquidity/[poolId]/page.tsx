@@ -97,17 +97,8 @@ const formatTokenDisplayAmount = (amount: string) => {
   const num = parseFloat(amount);
   if (isNaN(num)) return amount;
   if (num === 0) return "0.00";
-  if (num < 0.0001) return "< 0.0001"; // Keep this for now, it handles values strictly less than 0.0001 that are not 0
-
-  // Determine if the number should be treated as ">= 1" for display purposes
-  // This handles cases like 0.999999 becoming 1.00
-  const roundedNumTwoDecimals = Math.round(num * 100) / 100;
-
-  if (roundedNumTwoDecimals >= 1) {
-    return num.toFixed(2); // If effectively >= 1, show 2 decimal places
-  } else {
-    return num.toFixed(4); // Otherwise (between 0.0001 and <1), show 4 decimal places
-  }
+  if (num > 0 && num < 0.0001) return "< 0.0001";
+  return num.toFixed(4);
 };
 
 // Get token icon for display
@@ -276,12 +267,7 @@ export default function PoolDetailPage() {
   const [isLoadingPositions, setIsLoadingPositions] = useState(false);
   const [activeChart, setActiveChart] = useState<keyof Pick<typeof chartConfig, 'volume' | 'tvl' | 'volumeTvlRatio' | 'emaRatio' | 'dynamicFee'>>("volumeTvlRatio");
   
-  // State for copying position parameters
-  const [copiedPositionParams, setCopiedPositionParams] = useState<{
-    tickLower: number;
-    tickUpper: number;
-    token0Amount: string;
-  } | null>(null);
+
   
   const { address: accountAddress, isConnected, chainId } = useAccount();
   
@@ -382,6 +368,8 @@ export default function PoolDetailPage() {
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const isMobile = useIsMobile();
 
+  // New state variables to track if amounts exceed balance/position
+  const [isIncreaseAmountValid, setIsIncreaseAmountValid] = useState(true);
 
   const [windowWidth, setWindowWidth] = useState<number>(1200);
   const [toggleMetric, setToggleMetric] = useState<'liquidity' | 'volume' | 'fees'>('liquidity');
@@ -962,6 +950,7 @@ export default function PoolDetailPage() {
     setIncreaseAmount1("");
     setIncreaseActiveInputSide(null);
     setIncreasePercentage(0);
+    setIsIncreaseAmountValid(true);
     setShowIncreaseModal(true);
   };
 
@@ -980,30 +969,7 @@ export default function PoolDetailPage() {
     setShowDecreaseModal(true);
   };
 
-  // Handle copying position parameters to AddLiquidityForm
-  const handleCopyParameters = (position: ProcessedPosition) => {
-    if (!position.tickLower || !position.tickUpper || !position.token0.symbol) {
-      toast.error("Cannot copy parameters: Missing critical position data.");
-      return;
-    }
-    
-    // Set the copied parameters which will be passed to AddLiquidityForm
-    setCopiedPositionParams({
-      tickLower: position.tickLower,
-      tickUpper: position.tickUpper,
-      token0Amount: position.token0.amount || "0", // Use token0 amount, let API calculate token1
-    });
-    
-    // Scroll to the AddLiquidityForm
-    if (addLiquidityFormRef.current) {
-      addLiquidityFormRef.current.scrollIntoView({ 
-        behavior: 'smooth',
-        block: 'start' 
-      });
-    }
-    
-    toast.success("Position parameters copied to form");
-  };
+
 
   // Helper function for debounced calculations (simplified version)
   const debounce = (func: Function, waitFor: number) => {
@@ -1359,9 +1325,13 @@ export default function PoolDetailPage() {
       if (isToken0) {
         setIncreaseAmount0(formattedBalance);
         setIncreaseActiveInputSide('amount0');
+        // Trigger calculation for the other side
+        calculateIncreaseAmount(formattedBalance, 'amount0');
       } else { 
         setIncreaseAmount1(formattedBalance);
         setIncreaseActiveInputSide('amount1');
+        // Trigger calculation for the other side
+        calculateIncreaseAmount(formattedBalance, 'amount1');
       }
       // Update slider to 100% when using full balance
       setIncreasePercentage(100);
@@ -1392,7 +1362,8 @@ export default function PoolDetailPage() {
       const amount0 = parseFloat(positionToBurn.token0.amount);
       const percentage = snappedPercentage / 100; // This is the percentage of the max amount
       
-      const calculatedAmount0 = (amount0 * percentage).toFixed(6); // Calculate token0 amount
+      const displayDecimals0 = TOKEN_DEFINITIONS[positionToBurn.token0.symbol as TokenSymbol]?.displayDecimals ?? 4;
+      const calculatedAmount0 = (amount0 * percentage).toFixed(displayDecimals0); // Calculate token0 amount
       setWithdrawAmount0(calculatedAmount0); // Update token0 amount directly
       setWithdrawActiveInputSide('amount0'); // Set active input side to token0
       setIsFullWithdraw(snappedPercentage >= 99); // Update full withdraw status
@@ -1435,7 +1406,8 @@ export default function PoolDetailPage() {
     const balance0 = parseFloat(token0BalanceData?.formatted || "0");
     const percentage = snappedPercentage / 100;
     
-    const calculatedAmount0 = (balance0 * percentage).toFixed(6);
+    const displayDecimals0 = TOKEN_DEFINITIONS[positionToModify?.token0.symbol as TokenSymbol]?.displayDecimals ?? 4;
+    const calculatedAmount0 = (balance0 * percentage).toFixed(displayDecimals0);
     
     setIncreaseAmount0(calculatedAmount0); // Update token0 amount directly
     setIncreaseActiveInputSide('amount0'); // Set active input side to token0
@@ -1445,7 +1417,7 @@ export default function PoolDetailPage() {
     if (parseFloat(calculatedAmount0) > 0) {
       calculateIncreaseAmount(calculatedAmount0, 'amount0');
     } else {
-      setIncreaseAmount1(''); // Clear token1 amount if token0 is zero
+      setIncreaseAmount1(""); // Clear token1 amount if token0 is zero
     }
   };
 
@@ -1467,7 +1439,12 @@ export default function PoolDetailPage() {
       if (maxAmount > 0 && !isNaN(currentAmount)) {
         const percentage = Math.min(100, Math.max(0, (currentAmount / maxAmount) * 100));
         setIncreasePercentage(Math.round(percentage));
+        setIsIncreaseAmountValid(currentAmount <= maxAmount);
+      } else {
+        setIsIncreaseAmountValid(true);
       }
+    } else {
+      setIsIncreaseAmountValid(true);
     }
   };
 
@@ -1748,10 +1725,10 @@ export default function PoolDetailPage() {
             <div ref={leftColumnRef} className="flex-1 flex flex-col space-y-3 lg:space-y-6 min-w-0">
               {/* Pool stats - Mobile: columns, Desktop: grid */}
               <div className="flex flex-col sm:grid sm:grid-cols-2 xl:grid-cols-2 min-[1500px]:grid-cols-4 gap-3 sm:gap-6 flex-shrink-0 lg:max-w-none">
-                {/* APR and Total Liquidity in columns on mobile */}
+                {/* APY and Total Liquidity in columns on mobile */}
                 <div className="flex gap-3 sm:hidden w-full">
                   <div className="rounded-lg bg-muted/30 p-3 hover:outline hover:outline-1 hover:outline-muted transition-colors flex-1 min-w-0">
-                    <div className="text-xs text-muted-foreground mb-1">APR</div>
+                    <div className="text-xs text-muted-foreground mb-1">APY</div>
                     <div className="text-sm font-medium truncate">{currentPoolData.apr}</div>
                   </div>
                   <div className="rounded-lg bg-muted/30 p-3 hover:outline hover:outline-1 hover:outline-muted transition-colors flex-1 min-w-0 cursor-pointer" onClick={cycleToggleMetric}>
@@ -1775,9 +1752,9 @@ export default function PoolDetailPage() {
                   </div>
                 </div>
                 
-                {/* Desktop APR */}
+                {/* Desktop APY */}
                 <div className="rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors hidden md:block">
-                  <div className="text-sm text-muted-foreground mb-1">APR</div>
+                  <div className="text-sm text-muted-foreground mb-1">APY</div>
                   <div className="text-lg font-medium">{currentPoolData.apr}</div>
                 </div>
                 
@@ -2006,7 +1983,7 @@ export default function PoolDetailPage() {
                                             {/* Vol/TVL Ratio with line indicator */}
                                             <div className="flex w-full flex-wrap items-stretch gap-2">
                                               <div
-                                                className="shrink-0 rounded-[2px] w-1 h-4"
+                                                className="shrink-0 rounded-[2px] w-[2px] h-4"
                                                 style={{
                                                   backgroundColor: 'hsl(var(--chart-3))',
                                                 }}
@@ -2022,9 +1999,10 @@ export default function PoolDetailPage() {
                                             {/* EMA with line indicator */}
                                             <div className="flex w-full flex-wrap items-stretch gap-2">
                                               <div
-                                                className="shrink-0 rounded-[2px] w-1 h-4"
+                                                className="shrink-0 rounded-[2px] w-[2px] h-4"
                                                 style={{
-                                                  backgroundColor: 'hsl(var(--chart-2))',
+                                                  backgroundImage:
+                                                    'repeating-linear-gradient(to bottom, hsl(var(--chart-2)) 0 2px, transparent 2px 4px)',
                                                 }}
                                               />
                                               <div className="flex flex-1 justify-between leading-none items-center">
@@ -2041,7 +2019,7 @@ export default function PoolDetailPage() {
                                             {/* Dynamic Fee with rounded line indicator */}
                                             <div className="flex w-full flex-wrap items-stretch gap-2">
                                               <div
-                                                className="shrink-0 rounded-[2px] w-1 h-4"
+                                                className="shrink-0 rounded-[2px] w-[2px] h-4"
                                                 style={{
                                                   backgroundColor: '#e85102',
                                                 }}
@@ -2238,7 +2216,7 @@ export default function PoolDetailPage() {
                                         {/* Vol/TVL Ratio with line indicator */}
                                         <div className="flex w-full flex-wrap items-stretch gap-2">
                                           <div
-                                            className="shrink-0 rounded-[2px] w-1 h-4"
+                                            className="shrink-0 rounded-[2px] w-[2px] h-4"
                                             style={{
                                               backgroundColor: 'hsl(var(--chart-3))',
                                             }}
@@ -2254,9 +2232,10 @@ export default function PoolDetailPage() {
                                         {/* EMA with line indicator */}
                                         <div className="flex w-full flex-wrap items-stretch gap-2">
                                           <div
-                                            className="shrink-0 rounded-[2px] w-1 h-4"
+                                            className="shrink-0 rounded-[2px] w-[2px] h-4"
                                             style={{
-                                              backgroundColor: 'hsl(var(--chart-2))',
+                                              backgroundImage:
+                                                'repeating-linear-gradient(to bottom, hsl(var(--chart-2)) 0 2px, transparent 2px 4px)',
                                             }}
                                           />
                                           <div className="flex flex-1 justify-between leading-none items-center">
@@ -2273,7 +2252,7 @@ export default function PoolDetailPage() {
                                         {/* Dynamic Fee with rounded line indicator */}
                                         <div className="flex w-full flex-wrap items-stretch gap-2">
                                           <div
-                                            className="shrink-0 rounded-[2px] w-1 h-4"
+                                            className="shrink-0 rounded-[2px] w-[2px] h-4"
                                             style={{
                                               backgroundColor: '#e85102',
                                             }}
@@ -2462,16 +2441,12 @@ export default function PoolDetailPage() {
                     poolApr={currentPoolData?.apr}
                     onLiquidityAdded={() => {
                       refreshAfterLiquidityAdded();
-                      // Clear copied parameters after liquidity is added
-                      setCopiedPositionParams(null);
                     }}
                     sdkMinTick={SDK_MIN_TICK}
                     sdkMaxTick={SDK_MAX_TICK}
                     defaultTickSpacing={getPoolById(poolId)?.tickSpacing || DEFAULT_TICK_SPACING}
                     activeTab={'deposit'} // Always pass 'deposit'
-                    initialTickLower={copiedPositionParams?.tickLower}
-                    initialTickUpper={copiedPositionParams?.tickUpper}
-                    initialToken0Amount={copiedPositionParams?.token0Amount}
+
                   />
                 </div>
               )}
@@ -2549,10 +2524,12 @@ export default function PoolDetailPage() {
                             key={position.positionId}
                             className="rounded-lg bg-muted/30 p-3 sm:p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors group"
                           >
-                            {/* Mobile: Stack vertically, Desktop: 4-column layout */}
-                            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-6">
+                            {/* Grid layout on non-mobile; stacked on mobile */}
+                            <div className="grid gap-3 sm:gap-4 sm:grid-cols-[1fr_auto] sm:items-center">
+                              {/* Main content group (cols 1-3) */}
+                              <div className="grid gap-3 sm:gap-4 sm:grid-cols-3">
                               {/* Column 1: Token Icons + Pool Info (left-aligned) */}
-                              <div className="flex items-center gap-3 min-w-0 sm:flex-1 sm:max-w-[200px]">
+                              <div className="flex items-center gap-2 sm:gap-3 min-w-0 sm:min-w-[14rem] sm:overflow-hidden">
                                 {/* Mobile: 2-column layout for Token Info + TickRangePreview */}
                                 <div className="flex items-center gap-3 min-w-0 flex-1">
                                   <div className="relative w-12 sm:w-16 h-6 sm:h-8 flex-shrink-0">
@@ -2577,102 +2554,104 @@ export default function PoolDetailPage() {
                                     <div className="absolute top-[-1px] left-[18px] sm:left-[22px] w-7 sm:w-9 h-7 sm:h-9 rounded-full bg-[#0f0f0f] z-20"></div>
                                   </div>
                                   <div className="min-w-0 flex-1">
-                                    <div className="font-medium text-sm">
-                                      {position.token0.symbol || 'N/A'} / {position.token1.symbol || 'N/A'}
-                                    </div>
-                                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                                      {(() => {
-                                        // Determine status icon based on position range
-                                        const StatusIcon = () => {
-                                          const getIcon = () => {
-                                            if (position.isInRange) {
-                                              return <ChevronsLeftRight className="h-3 w-3 text-green-500" />;
-                                            } else {
-                                              // Determine if position is out of range to the left or right
-                                              const currentTick = estimatedCurrentTick;
-                                              const isOutOfRangeLeft = currentTick < position.tickLower;
-                                              const isOutOfRangeRight = currentTick > position.tickUpper;
-                                              
-                                              // Check if denomination is flipped to determine chevron direction
-                                              const baseToken = determineBaseTokenForPriceDisplay(
+                                    <HoverCard>
+                                      <HoverCardTrigger asChild>
+                                        <div>
+                                           <div className="font-medium text-sm">
+                                             {position.token0.symbol || 'N/A'} / {position.token1.symbol || 'N/A'}
+                                           </div>
+                                           <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                                            {(() => {
+                                              // Determine status icon based on position range
+                                              const StatusIcon = () => {
+                                                const getIcon = () => {
+                                                  if (position.isInRange) {
+                                                    return <ChevronsLeftRight className="h-3 w-3 text-green-500" />;
+                                                  } else {
+                                                    // Determine if position is out of range to the left or right
+                                                    const currentTick = estimatedCurrentTick;
+                                                    const isOutOfRangeLeft = currentTick < position.tickLower;
+                                                    const isOutOfRangeRight = currentTick > position.tickUpper;
+                                                    
+                                                    // Check if denomination is flipped to determine chevron direction
+                                                    const baseToken = determineBaseTokenForPriceDisplay(
+                                                      position.token0.symbol || '', 
+                                                      position.token1.symbol || ''
+                                                    );
+                                                    const isDenominationFlipped = baseToken === position.token0.symbol;
+                                                    
+                                                    if (isOutOfRangeLeft) {
+                                                      // If current price is below position range
+                                                      // With normal denomination: price needs to go up (right arrow)
+                                                      // With flipped denomination: price needs to go down (left arrow)
+                                                      return isDenominationFlipped 
+                                                        ? <ChevronsRight className="h-3 w-3 text-red-500" />
+                                                        : <ChevronsLeft className="h-3 w-3 text-red-500" />;
+                                                    } else if (isOutOfRangeRight) {
+                                                      // If current price is above position range
+                                                      // With normal denomination: price needs to go down (left arrow)
+                                                      // With flipped denomination: price needs to go up (right arrow)
+                                                      return isDenominationFlipped 
+                                                        ? <ChevronsLeft className="h-3 w-3 text-red-500" />
+                                                        : <ChevronsRight className="h-3 w-3 text-red-500" />;
+                                                    } else {
+                                                      // Fallback
+                                                      return <ChevronsLeftRight className="h-3 w-3 text-green-500" />;
+                                                    }
+                                                  }
+                                                };
+
+                                                return (
+                                                  <div className="cursor-pointer">
+                                                    {getIcon()}
+                                                  </div>
+                                                );
+                                              };
+
+                                              const baseTokenForPriceDisplay = determineBaseTokenForPriceDisplay(
                                                 position.token0.symbol || '', 
                                                 position.token1.symbol || ''
                                               );
-                                              const isDenominationFlipped = baseToken === position.token0.symbol;
+                                              const lowerPrice = convertTickToPrice(
+                                                position.tickLower,
+                                                currentPoolTick,
+                                                currentPrice,
+                                                baseTokenForPriceDisplay,
+                                                position.token0.symbol || '',
+                                                position.token1.symbol || ''
+                                              );
+                                              const upperPrice = convertTickToPrice(
+                                                position.tickUpper,
+                                                currentPoolTick,
+                                                currentPrice,
+                                                baseTokenForPriceDisplay,
+                                                position.token0.symbol || '',
+                                                position.token1.symbol || ''
+                                              );
                                               
-                                              if (isOutOfRangeLeft) {
-                                                // If current price is below position range
-                                                // With normal denomination: price needs to go up (right arrow)
-                                                // With flipped denomination: price needs to go down (left arrow)
-                                                return isDenominationFlipped 
-                                                  ? <ChevronsRight className="h-3 w-3 text-red-500" />
-                                                  : <ChevronsLeft className="h-3 w-3 text-red-500" />;
-                                              } else if (isOutOfRangeRight) {
-                                                // If current price is above position range
-                                                // With normal denomination: price needs to go down (left arrow)
-                                                // With flipped denomination: price needs to go up (right arrow)
-                                                return isDenominationFlipped 
-                                                  ? <ChevronsLeft className="h-3 w-3 text-red-500" />
-                                                  : <ChevronsRight className="h-3 w-3 text-red-500" />;
-                                              } else {
-                                                // Fallback
-                                                return <ChevronsLeftRight className="h-3 w-3 text-green-500" />;
-                                              }
-                                            }
-                                          };
-
-                                          return (
-                                            <HoverCard>
-                                              <HoverCardTrigger asChild>
-                                                <div className="cursor-pointer">
-                                                  {getIcon()}
-                                                </div>
-                                              </HoverCardTrigger>
-                                              <HoverCardContent className="w-64 h-24">
-                                                <TickRangePreview
-                                                  tickLower={position.tickLower}
-                                                  tickUpper={position.tickUpper}
-                                                  currentTick={estimatedCurrentTick}
-                                                  tickSpacing={currentPoolData?.tickSpacing || DEFAULT_TICK_SPACING}
-                                                  poolId={params.poolId}
-                                                  token0Symbol={position.token0.symbol}
-                                                  token1Symbol={position.token1.symbol}
-                                                  currentPrice={currentPrice}
-                                                />
-                                              </HoverCardContent>
-                                            </HoverCard>
-                                          );
-                                        };
-
-                                        const baseTokenForPriceDisplay = determineBaseTokenForPriceDisplay(
-                                          position.token0.symbol || '', 
-                                          position.token1.symbol || ''
-                                        );
-                                        const lowerPrice = convertTickToPrice(
-                                          position.tickLower,
-                                          currentPoolTick,
-                                          currentPrice,
-                                          baseTokenForPriceDisplay,
-                                          position.token0.symbol || '',
-                                          position.token1.symbol || ''
-                                        );
-                                        const upperPrice = convertTickToPrice(
-                                          position.tickUpper,
-                                          currentPoolTick,
-                                          currentPrice,
-                                          baseTokenForPriceDisplay,
-                                          position.token0.symbol || '',
-                                          position.token1.symbol || ''
-                                        );
-                                        
-                                        return (
-                                          <>
-                                            <StatusIcon />
-                                            <span>{lowerPrice} - {upperPrice}</span>
-                                          </>
-                                        );
-                                      })()}
-                                    </div>
+                                              return (
+                                                <>
+                                                  <StatusIcon />
+                                                  <span className="hover:underline transition-all duration-200 whitespace-nowrap">{lowerPrice} - {upperPrice}</span>
+                                                </>
+                                              );
+                                            })()}
+                                          </div>
+                                        </div>
+                                      </HoverCardTrigger>
+                                      <HoverCardContent align="start" side="bottom" className="w-64 h-24">
+                                        <TickRangePreview
+                                          tickLower={position.tickLower}
+                                          tickUpper={position.tickUpper}
+                                          currentTick={estimatedCurrentTick}
+                                          tickSpacing={currentPoolData?.tickSpacing || DEFAULT_TICK_SPACING}
+                                          poolId={params.poolId}
+                                          token0Symbol={position.token0.symbol}
+                                          token1Symbol={position.token1.symbol}
+                                          currentPrice={currentPrice}
+                                        />
+                                      </HoverCardContent>
+                                    </HoverCard>
                                   </div>
                                 </div>
                                 
@@ -2692,21 +2671,21 @@ export default function PoolDetailPage() {
                               </div>
 
                               {/* Column 2: Principal (left-aligned) */}
-                              <div className="flex flex-col min-w-0 sm:flex-1 sm:max-w-[200px]">
+                              <div className="flex flex-col min-w-[12rem] sm:flex-1">
                                 <div className="text-xs text-muted-foreground mb-1">Principal</div>
-                                <div className="flex items-center gap-1 text-xs">
-                                  <span className="font-medium truncate">
+                                <div className="flex items-center gap-1 sm:gap-1 text-xs whitespace-nowrap">
+                                  <span className="font-medium">
                                     {formatTokenDisplayAmount(position.token0.amount)} {position.token0.symbol}
                                   </span>
                                   <div className="w-px h-3 bg-border mx-1"></div>
-                                  <span className="font-medium truncate">
+                                  <span className="font-medium">
                                     {formatTokenDisplayAmount(position.token1.amount)} {position.token1.symbol}
                                   </span>
                                 </div>
                               </div>
 
                               {/* Column 3: Position Value (left-aligned) */}
-                              <div className="flex flex-col min-w-0 sm:flex-1 sm:max-w-[200px]">
+                              <div className="flex flex-col min-w-[10rem] sm:max-w-[14rem] sm:flex-1">
                                 <div className="flex items-end justify-between sm:justify-start sm:gap-2">
                                   <div className="flex flex-col gap-1">
                                     <div className="text-xs text-muted-foreground">Position Value</div>
@@ -2719,7 +2698,7 @@ export default function PoolDetailPage() {
                                       </div>
                                     </div>
                                   </div>
-                                  {/* Actions - only show on mobile in this row */}
+                                  {/* Actions - mobile only */}
                                   <div className="flex items-center gap-2 flex-shrink-0 sm:hidden">
                                     <a
                                       onClick={(e) => {
@@ -2747,25 +2726,20 @@ export default function PoolDetailPage() {
                                             e.stopPropagation();
                                             handleIncreasePosition(position);
                                           }}
+                                          className="cursor-pointer"
                                         >
                                           Add Liquidity
                                         </DropdownMenuItem>
-                                        <DropdownMenuItem
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            handleCopyParameters(position);
-                                          }}
-                                        >
-                                          Copy Parameters
-                                        </DropdownMenuItem>
+
                                       </DropdownMenuContent>
                                     </DropdownMenu>
                                   </div>
                                 </div>
                               </div>
+                              </div>
 
-                              {/* Column 4: Actions (right-aligned) - only show on desktop */}
-                              <div className="hidden sm:flex items-center gap-2 flex-shrink-0 self-center">
+                              {/* Column 4: Actions (desktop) */}
+                              <div className="hidden sm:flex items-center gap-2">
                                 <a
                                   onClick={(e) => {
                                     e.stopPropagation();
@@ -2792,17 +2766,11 @@ export default function PoolDetailPage() {
                                         e.stopPropagation();
                                         handleIncreasePosition(position);
                                       }}
+                                      className="cursor-pointer"
                                     >
                                       Add Liquidity
                                     </DropdownMenuItem>
-                                    <DropdownMenuItem
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleCopyParameters(position);
-                                      }}
-                                    >
-                                      Copy Parameters
-                                    </DropdownMenuItem>
+
                                   </DropdownMenuContent>
                                 </DropdownMenu>
                               </div>
@@ -3025,7 +2993,9 @@ export default function PoolDetailPage() {
             <Button 
               variant="outline"
               className="relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 text-white/75 disabled:opacity-50"
-              onClick={() => setShowBurnConfirmDialog(false)}
+              onClick={() => {
+                setShowBurnConfirmDialog(false);
+              }}
               disabled={isBurningLiquidity || isDecreasingLiquidity}
               style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
             >
@@ -3239,7 +3209,10 @@ export default function PoolDetailPage() {
             <Button 
               variant="outline"
               className="relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 text-white/75 disabled:opacity-50"
-              onClick={() => setShowIncreaseModal(false)}
+              onClick={() => {
+                setShowIncreaseModal(false);
+                setIsIncreaseAmountValid(true);
+              }}
               disabled={isIncreasingLiquidity}
               style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
             >
@@ -3254,6 +3227,7 @@ export default function PoolDetailPage() {
               disabled={
                 isIncreasingLiquidity ||
                 isIncreaseCalculating ||
+                !isIncreaseAmountValid ||
                 (positionToModify?.isInRange ? 
                   // For in-range positions, require both amounts
                   (!increaseAmount0 || !increaseAmount1 || parseFloat(increaseAmount0) <= 0 || parseFloat(increaseAmount1) <= 0) :
@@ -3329,7 +3303,9 @@ export default function PoolDetailPage() {
                   <Label htmlFor="decrease-amount0">Remove {positionToModify.token0.symbol}</Label>
                   <Input
                     id="decrease-amount0"
-                    type="number"
+                    type="text"
+                    pattern="[0-9]*\.?[0-9]*"
+                    inputMode="decimal"
                     placeholder="0.0"
                     className="mt-1"
                     max={positionToModify.token0.amount}
@@ -3360,7 +3336,9 @@ export default function PoolDetailPage() {
                   <Label htmlFor="decrease-amount1">Remove {positionToModify.token1.symbol}</Label>
                   <Input
                     id="decrease-amount1"
-                    type="number"
+                    type="text"
+                    pattern="[0-9]*\.?[0-9]*"
+                    inputMode="decimal"
                     placeholder="0.0"
                     className="mt-1"
                     max={positionToModify.token1.amount}

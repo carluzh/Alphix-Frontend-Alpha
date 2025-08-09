@@ -1,5 +1,25 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getAddress, parseUnits, type Address } from 'viem';
+
+// Helper function to safely parse amounts and prevent scientific notation errors
+const safeParseUnits = (amount: string, decimals: number): bigint => {
+  // Convert scientific notation to decimal format
+  const numericAmount = parseFloat(amount);
+  if (isNaN(numericAmount)) {
+    throw new Error("Invalid number format");
+  }
+  
+  // Convert to string with full decimal representation (no scientific notation)
+  const fullDecimalString = numericAmount.toFixed(decimals);
+  
+  // Remove trailing zeros after decimal point
+  const trimmedString = fullDecimalString.replace(/\.?0+$/, '');
+  
+  // If the result is just a decimal point, return "0"
+  const finalString = trimmedString === '.' ? '0' : trimmedString;
+  
+  return parseUnits(finalString, decimals);
+};
 import { Token } from '@uniswap/sdk-core';
 import { 
   TokenSymbol, 
@@ -353,7 +373,7 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
     }
     
     // Parse the input amount to smallest units
-    const amountInSmallestUnits = parseUnits(amountDecimalsStr, fromToken.decimals);
+    const amountInSmallestUnits = safeParseUnits(amountDecimalsStr, fromToken.decimals);
     
     // Find the best route using the routing engine
     const routeResult = findBestRoute(fromTokenSymbol, toTokenSymbol);

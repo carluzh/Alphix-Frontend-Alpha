@@ -22,6 +22,26 @@ import {
     type Hex 
 } from "viem";
 
+// Helper function to safely parse amounts and prevent scientific notation errors
+const safeParseUnits = (amount: string, decimals: number): bigint => {
+  // Convert scientific notation to decimal format
+  const numericAmount = parseFloat(amount);
+  if (isNaN(numericAmount)) {
+    throw new Error("Invalid number format");
+  }
+  
+  // Convert to string with full decimal representation (no scientific notation)
+  const fullDecimalString = numericAmount.toFixed(decimals);
+  
+  // Remove trailing zeros after decimal point
+  const trimmedString = fullDecimalString.replace(/\.?0+$/, '');
+  
+  // If the result is just a decimal point, return "0"
+  const finalString = trimmedString === '.' ? '0' : trimmedString;
+  
+  return parseUnits(finalString, decimals);
+};
+
 // Constants for Permit2
 import {
     PERMIT_TYPES,
@@ -171,7 +191,7 @@ export default async function handler(
         
         const inputTokenIsSdkToken0 = inputTokenSymbol === token0Symbol;
         const sdkInputToken = inputTokenIsSdkToken0 ? sdkToken0 : sdkToken1;
-        const parsedInputAmount_BigInt = parseUnits(inputAmount, sdkInputToken.decimals); 
+        const parsedInputAmount_BigInt = safeParseUnits(inputAmount, sdkInputToken.decimals); 
         const parsedInputAmount_JSBI = JSBI.BigInt(parsedInputAmount_BigInt.toString()); 
 
         // Use configured pool ID from pools.json instead of deriving

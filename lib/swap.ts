@@ -4,6 +4,26 @@ import {
   parseUnits,
   getAddress,
 } from "viem";
+
+// Helper function to safely parse amounts and prevent scientific notation errors
+const safeParseUnits = (amount: string, decimals: number): bigint => {
+  // Convert scientific notation to decimal format
+  const numericAmount = parseFloat(amount);
+  if (isNaN(numericAmount)) {
+    throw new Error("Invalid number format");
+  }
+  
+  // Convert to string with full decimal representation (no scientific notation)
+  const fullDecimalString = numericAmount.toFixed(decimals);
+  
+  // Remove trailing zeros after decimal point
+  const trimmedString = fullDecimalString.replace(/\.?0+$/, '');
+  
+  // If the result is just a decimal point, return "0"
+  const finalString = trimmedString === '.' ? '0' : trimmedString;
+  
+  return parseUnits(finalString, decimals);
+};
 import {
   TOKEN_DEFINITIONS,
   TokenSymbol,
@@ -95,7 +115,7 @@ export async function needsApproval(
     throw new Error("Public client not found for checking approval.");
   }
 
-  const parsedAmount = parseUnits(amount, fromToken.decimals);
+  const parsedAmount = safeParseUnits(amount, fromToken.decimals);
 
   const allowance = await publicClient.readContract({
     address: fromToken.address as Address,

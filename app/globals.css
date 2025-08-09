@@ -166,6 +166,10 @@ appkit-button:hover {
   color: hsl(var(--card-foreground)) !important;
 }
 
+  /* Sidebar ring colors */
+  .sidebar-ring-track { color: #303030; }
+  .sidebar-ring-progress { color: #c7c7c7; }
+
 /* Ensure toast notifications have solid backgrounds */
 [data-sonner-toaster] [data-sonner-toast] {
   background-color: hsl(var(--card)) !important;

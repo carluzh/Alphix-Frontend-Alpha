@@ -59,7 +59,9 @@ export function MockSwapComponent({ className, zoom = 1.5 }: MockSwapComponentPr
   const handleMouseLeaveArc = () => {
     setHoveredArcPercentage(null);
   };
-  const handleSwap = () => {};
+  const handleSwap = () => {
+    window.location.href = '/swap';
+  };
   const onSlippageChange = () => {};
 
   const formatCurrency = (value: string) => {
@@ -111,6 +113,9 @@ export function MockSwapComponent({ className, zoom = 1.5 }: MockSwapComponentPr
             // Don't call stopPropagation() to allow parent navigation to work
           }
         }
+
+        // Always navigate to /swap on any click inside the mock (demo behavior)
+        window.location.href = '/swap';
       }}
     >
       <SwapInputView
@@ -141,15 +146,16 @@ export function MockSwapComponent({ className, zoom = 1.5 }: MockSwapComponentPr
         dynamicFeeLoading={false}
         quoteLoading={false}
         quoteError={null}
-        actionButtonText="Swap"
-        actionButtonDisabled={true}
-        handleSwap={handleSwap}
+         actionButtonText="Swap"
+         actionButtonDisabled={false}
+         handleSwap={handleSwap}
         isMounted={true}
         currentChainId={1}
         TARGET_CHAIN_ID={1}
         routeInfo={routeInfo}
         routeFees={routeFees}
         routeFeesLoading={false}
+        showRoute={false}
         selectedPoolIndexForChart={0}
         onSelectPoolForChart={() => {}}
         swapContainerRect={swapContainerRect}

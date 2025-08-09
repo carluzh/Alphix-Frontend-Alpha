@@ -20,6 +20,7 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuBadge,
 } from "@/components/ui/sidebar"
 
 // Copied from components/swap-interface.tsx for consistent error icon styling
@@ -54,6 +55,15 @@ export function NavMain({
   // State for faucet cooldown and caching
   const [faucetCooldown, setFaucetCooldown] = useState<string | null>(null);
   const [cachedLastCalled, setCachedLastCalled] = useState<number | null>(null);
+  const [faucetAvailableAt, setFaucetAvailableAt] = useState<number | null>(null);
+  const [isFaucetUnread, setIsFaucetUnread] = useState<boolean>(false);
+  const [faucetStep, setFaucetStep] = useState<number>(10); // 1..10
+
+  // Portfolio count/unread state (sourced from localStorage, updated by portfolio page)
+  const [portfolioCount, setPortfolioCount] = useState<number | null>(null);
+  const [isPortfolioUnread, setIsPortfolioUnread] = useState<boolean>(false);
+  const PROGRESS_RADIUS = 8;
+  const PROGRESS_CIRC = 2 * Math.PI * PROGRESS_RADIUS;
 
   // Read the lastCalled timestamp from the contract
   const { data: contractLastCalled, isLoading: isLoadingLastCalled, refetch: refetchLastCalled } = useReadContract({
@@ -90,6 +100,71 @@ export function NavMain({
     if (cached) {
       setCachedLastCalled(parseInt(cached, 10));
     }
+
+    // Initialize portfolio count and unread state
+    const currentCount = localStorage.getItem(`portfolioCurrentCount_${userAddress}`);
+    const lastSeenCount = localStorage.getItem(`portfolioLastSeenCount_${userAddress}`);
+    if (currentCount !== null) {
+      const n = Number(currentCount);
+      setPortfolioCount(Number.isFinite(n) ? n : 0);
+      const seen = lastSeenCount !== null ? Number(lastSeenCount) : null;
+      setIsPortfolioUnread(seen === null ? n > 0 : seen !== n);
+    } else {
+      setPortfolioCount(0);
+      setIsPortfolioUnread(false);
+    }
+
+    // Listen to cross-tab storage changes
+    const onStorage = (e: StorageEvent) => {
+      if (!e.key || !userAddress) return;
+      if (e.key === `portfolioCurrentCount_${userAddress}` || e.key === `portfolioLastSeenCount_${userAddress}`) {
+        const curr = Number(localStorage.getItem(`portfolioCurrentCount_${userAddress}`) || "0");
+        const seen = localStorage.getItem(`portfolioLastSeenCount_${userAddress}`);
+        setPortfolioCount(Number.isFinite(curr) ? curr : 0);
+        setIsPortfolioUnread(seen === null ? curr > 0 : Number(seen) !== curr);
+      }
+      if (e.key === `faucetClaimLastSeenAt_${userAddress}`) {
+        const seenAt = Number(localStorage.getItem(`faucetClaimLastSeenAt_${userAddress}`) || "0");
+        setIsFaucetUnread(Boolean(faucetAvailableAt && seenAt < faucetAvailableAt));
+      }
+    };
+    window.addEventListener('storage', onStorage);
+
+    // Listen to in-app custom event for immediate updates
+    const onPortfolioUpdate = (ev: Event) => {
+      try {
+        const detail = (ev as CustomEvent).detail as { count?: number; address?: string } | undefined;
+        if (!detail || (detail.address && detail.address !== userAddress)) return;
+        if (typeof detail.count === 'number') {
+          setPortfolioCount(detail.count);
+          const seen = localStorage.getItem(`portfolioLastSeenCount_${userAddress}`);
+          setIsPortfolioUnread(seen === null ? detail.count > 0 : Number(seen) !== detail.count);
+        }
+      } catch {}
+    };
+    window.addEventListener('portfolioPositionsUpdated', onPortfolioUpdate as EventListener);
+
+    // If we have no portfolio count cached, fetch lightweight count once
+    const init = async () => {
+      try {
+        const hasCache = localStorage.getItem(`portfolioCurrentCount_${userAddress}`);
+        if (!hasCache) {
+          const res = await fetch(`/api/liquidity/get-positions?ownerAddress=${userAddress}&countOnly=1`);
+          const json = await res.json();
+          const count = Number(json?.count ?? 0);
+          localStorage.setItem(`portfolioCurrentCount_${userAddress}`, String(count));
+          setPortfolioCount(count);
+          const seen = localStorage.getItem(`portfolioLastSeenCount_${userAddress}`);
+          setIsPortfolioUnread(seen === null ? count > 0 : Number(seen) !== count);
+        }
+      } catch {}
+    };
+    void init();
+
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener('portfolioPositionsUpdated', onPortfolioUpdate as EventListener);
+    };
   }, [userAddress]);
 
   // Effect to calculate and update cooldown time
@@ -111,10 +186,28 @@ export function NavMain({
       const timeLeft = nextClaimTimestamp - currentTime;
 
       if (timeLeft <= 0) {
-        setFaucetCooldown(formatTimeLeft(timeLeft)); // Use formatTimeLeft to get "Claim"
+        // Transitioned to Claim state
+        setFaucetCooldown(formatTimeLeft(timeLeft));
+        setFaucetStep(10);
+        if (!faucetAvailableAt) {
+          const now = Math.floor(Date.now() / 1000);
+          setFaucetAvailableAt(now);
+          const seenAt = Number(localStorage.getItem(`faucetClaimLastSeenAt_${userAddress}`) || "0");
+          setIsFaucetUnread(seenAt < now);
+        }
         return;
       }
       setFaucetCooldown(formatTimeLeft(timeLeft));
+      const elapsed = oneDayInSeconds - timeLeft;
+      // 10 discrete steps, start at 1 immediately; never show 10 (100%) until claimable
+      const raw = Math.floor((elapsed / oneDayInSeconds) * 10);
+      const step = Math.max(1, Math.min(9, raw));
+      setFaucetStep(step);
+      // Reset availability and unread when not claimable
+      if (faucetAvailableAt !== null) {
+        setFaucetAvailableAt(null);
+        setIsFaucetUnread(false);
+      }
     };
 
     calculateCooldown(); // Initial calculation
@@ -193,6 +286,14 @@ export function NavMain({
   }
 
   const handleFaucetClick = async () => {
+    // Mark faucet notification as seen if it's currently claimable
+    if (faucetCooldown === "Claim" && userAddress) {
+      try {
+        const now = Math.floor(Date.now() / 1000);
+        localStorage.setItem(`faucetClaimLastSeenAt_${userAddress}`, String(now));
+        setIsFaucetUnread(false);
+      } catch {}
+    }
     if (!isConnected) {
       toast.error("Please connect your wallet first.")
       return
@@ -238,6 +339,16 @@ export function NavMain({
     }
   }
 
+  const handlePortfolioClick = () => {
+    if (!userAddress) return;
+    try {
+      if (typeof portfolioCount === 'number') {
+        localStorage.setItem(`portfolioLastSeenCount_${userAddress}`, String(portfolioCount));
+        setIsPortfolioUnread(false);
+      }
+    } catch {}
+  }
+
   return (
     <SidebarMenu className="flex flex-col gap-1 px-3">
       {items.map((item) => {
@@ -263,7 +374,7 @@ export function NavMain({
             ) : item.isFaucet ? (
               <SidebarMenuButton
                 onClick={handleFaucetClick}
-                className="w-full flex items-center"
+                className="group/faucet w-full flex items-center"
                 tooltip={item.title}
                 disabled={isTxPending || isConfirming}
               >
@@ -271,21 +382,79 @@ export function NavMain({
                 <span className="flex-1 truncate">
                   {isTxPending || isConfirming ? "Processing..." : item.title}
                 </span>
-                {faucetCooldown && item.isFaucet && (
-                  <Badge
-                    variant="outline" /* Keep outline variant for base structural styles and border handling */
-                    className={cn(
-                      "ml-2 inline-flex items-center px-2 py-1 text-xs font-mono leading-none font-normal rounded-md", // Manual padding, restored structural classes, font, and shape
-                      faucetCooldown === "Claim" ?
-                        "bg-[#3d271b] text-sidebar-primary border-sidebar-primary hover:bg-[#4a2f1f] transition-colors cursor-default"
-                        :
-                        "bg-sidebar-accent text-white border-transparent opacity-70"
-                    )}
-                    style={faucetCooldown === "Claim" ? { fontFamily: 'Consolas, monospace' } : undefined}
-                  >
-                    {faucetCooldown}
-                  </Badge>
+                {item.isFaucet && faucetCooldown && (
+                  faucetCooldown === "Claim" ? (
+                    isFaucetUnread && (
+                      <SidebarMenuBadge className="bg-[#3d271b] text-sidebar-primary border border-sidebar-primary">1</SidebarMenuBadge>
+                    )
+                  ) : (
+                    <>
+                      {/* Align ring to the same slot as SidebarMenuBadge so it lines up with Portfolio */}
+                      <SidebarMenuBadge className="p-0 px-0 bg-transparent border-0 group-hover/faucet:hidden">
+                        <svg
+                          className="h-5 w-5"
+                          viewBox="0 0 24 24"
+                          aria-label="Faucet cooldown"
+                        >
+                          {/* Track (100%) */}
+                          <circle
+                            cx="12"
+                            cy="12"
+                            r="8"
+                            fill="none"
+                            className="sidebar-ring-track"
+                            stroke="currentColor"
+                            strokeWidth="3"
+                            strokeLinecap="round"
+                          />
+                          {/* Progress (rounded ends) */}
+                          <circle
+                            cx="12"
+                            cy="12"
+                            r="8"
+                            fill="none"
+                            className="sidebar-ring-progress"
+                            stroke="currentColor"
+                            strokeOpacity="0.85"
+                            strokeWidth="3"
+                            strokeLinecap="round"
+                            strokeDasharray={`${PROGRESS_CIRC}`}
+                            strokeDashoffset={`${PROGRESS_CIRC * (1 - (faucetStep * 0.1))}`}
+                            transform="rotate(-90 12 12)"
+                          />
+                        </svg>
+                      </SidebarMenuBadge>
+
+                      {/* Hover state: show old time badge fully, aligned to the same position */}
+                      <SidebarMenuBadge
+                        className={cn(
+                          "hidden group-hover/faucet:inline-flex px-2 py-1 text-xs font-mono leading-none font-normal rounded-md",
+                          "bg-sidebar-accent text-white border-transparent opacity-70"
+                        )}
+                      >
+                        {faucetCooldown}
+                      </SidebarMenuBadge>
+                    </>
+                  )
                 )}
+              </SidebarMenuButton>
+            ) : item.title === "Portfolio" ? (
+              <SidebarMenuButton tooltip={item.title} asChild className="w-full" isActive={isActive}>
+                <a href={item.url!} onClick={handlePortfolioClick} className="flex items-center w-full">
+                  {item.icon && <item.icon />}
+                  <span className="flex-1 truncate">{item.title}</span>
+                  {typeof portfolioCount === 'number' && portfolioCount > 0 && (
+                    <SidebarMenuBadge
+                      className={
+                        isPortfolioUnread
+                          ? "bg-[#3d271b] text-sidebar-primary border border-sidebar-primary"
+                          : "bg-sidebar-accent text-white border-transparent opacity-70"
+                      }
+                    >
+                      {portfolioCount > 99 ? '99+' : portfolioCount}
+                    </SidebarMenuBadge>
+                  )}
+                </a>
               </SidebarMenuButton>
             ) : item.title === "Swap" ? (
               <SidebarMenuButton

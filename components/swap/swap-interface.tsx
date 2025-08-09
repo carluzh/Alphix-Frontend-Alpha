@@ -4,6 +4,8 @@ import { useState, useRef, useEffect, useCallback, useMemo } from "react"
 import {
   ArrowDownIcon,
   ChevronDownIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
   RefreshCwIcon,
   SettingsIcon,
   SlashIcon,
@@ -352,6 +354,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   const isMobile = useIsMobile();
   const [isMounted, setIsMounted] = useState(false);
   useEffect(() => { setIsMounted(true); }, []);
+  // Removed route-row hover logic; arrows only show on preview hover
   
   const [swapState, setSwapState] = useState<SwapState>("input");
   const [swapProgressState, setSwapProgressState] = useState<SwapProgressState>("init");
@@ -497,11 +500,11 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     }
   }, [isConnected, currentChainId, setCurrentRoute, setSelectedPoolIndexForChart]);
 
-  // New function for fetching route fees that can be called independently
-  const fetchRouteFees = useCallback(async (route: SwapRoute) => {
+  // Fetch route fees; returns the computed fees and updates state
+  const fetchRouteFees = useCallback(async (route: SwapRoute): Promise<Array<{ poolName: string; fee: number }>> => {
     if (!route || route.pools.length === 0) {
       setRouteFees([]);
-      return;
+      return [];
     }
 
     setRouteFeesLoading(true);
@@ -546,9 +549,11 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       }
 
       setRouteFees(fees);
+      return fees;
     } catch (error) {
       console.error("[fetchRouteFees] Error fetching route fees:", error);
       setRouteFees([]);
+      return [];
     } finally {
       setRouteFeesLoading(false);
     }
@@ -601,12 +606,12 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
         throw new Error(`No route found for token pair ${fromTokenSymbolForCache}/${toTokenSymbolForCache}`);
       }
 
-      // Use the new route fees function
-      await fetchRouteFees(route);
-
-      // For backward compatibility, set the first fee as the main dynamic fee
-      if (routeFees.length > 0) {
-        setDynamicFeeBps(routeFees[0].fee);
+      // Fetch fees and use the result directly (avoid coupling to routeFees state updates)
+      const fees = await fetchRouteFees(route);
+      if (fees.length > 0) {
+        setDynamicFeeBps(fees[0].fee);
+      } else {
+        setDynamicFeeBps(null);
       }
 
       setDynamicFeeLoading(false);
@@ -623,7 +628,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     } finally {
       isFetchingDynamicFeeRef.current = false;
     }
-  }, [isConnected, currentChainId, fromToken?.address, toToken?.address, TARGET_CHAIN_ID, calculateRoute, fetchRouteFees, routeFees.length]); // Updated dependencies
+  }, [isConnected, currentChainId, fromToken?.address, toToken?.address, TARGET_CHAIN_ID, calculateRoute, fetchRouteFees]);
 
   useEffect(() => {
     fetchFee(); // Fetch once on mount / relevant dep change
@@ -634,27 +639,13 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   }, [fetchFee]);
 
   // Effect for initial route calculation on component mount and token changes
+  // Remove overlapping initial fetch (fetchFee() already handles route+fees)
   useEffect(() => {
     if (!isConnected || currentChainId !== TARGET_CHAIN_ID || !fromToken || !toToken) {
       return;
     }
-
-    const fromTokenSymbol = Object.keys(TOKEN_DEFINITIONS).find(
-      (key) => TOKEN_DEFINITIONS[key as TokenSymbol].address === fromToken.address
-    ) as TokenSymbol | undefined;
-    const toTokenSymbol = Object.keys(TOKEN_DEFINITIONS).find(
-      (key) => TOKEN_DEFINITIONS[key as TokenSymbol].address === toToken.address
-    ) as TokenSymbol | undefined;
-
-    if (fromTokenSymbol && toTokenSymbol) {
-      // Calculate route for the initial token pair
-      calculateRoute(fromTokenSymbol, toTokenSymbol).then((route) => {
-        if (route) {
-          fetchRouteFees(route);
-        }
-      });
-    }
-  }, [isConnected, currentChainId, fromToken?.address, toToken?.address, calculateRoute, fetchRouteFees]);
+    // No-op: prevent duplicate initial calls
+  }, [isConnected, currentChainId, fromToken?.address, toToken?.address]);
 
   // First, create a completely new function for the Change button
   const handleChangeButton = () => {
@@ -1140,22 +1131,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       setFromToken(token);
       setFromAmount("");
       setToAmount("");
-      
-      // Calculate route for the new token pair
-      const fromTokenSymbol = Object.keys(TOKEN_DEFINITIONS).find(
-        (key) => TOKEN_DEFINITIONS[key as TokenSymbol].address === token.address
-      ) as TokenSymbol | undefined;
-      const toTokenSymbol = Object.keys(TOKEN_DEFINITIONS).find(
-        (key) => TOKEN_DEFINITIONS[key as TokenSymbol].address === toToken.address
-      ) as TokenSymbol | undefined;
-      
-      if (fromTokenSymbol && toTokenSymbol) {
-        calculateRoute(fromTokenSymbol, toTokenSymbol).then((route) => {
-          if (route) {
-            fetchRouteFees(route);
-          }
-        });
-      }
+      // Let the centralized fetchFee() effect handle route + fee fetching to avoid duplicate API calls
     }
   };
 
@@ -1164,22 +1140,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       setToToken(token);
       setFromAmount("");
       setToAmount("");
-      
-      // Calculate route for the new token pair
-      const fromTokenSymbol = Object.keys(TOKEN_DEFINITIONS).find(
-        (key) => TOKEN_DEFINITIONS[key as TokenSymbol].address === fromToken.address
-      ) as TokenSymbol | undefined;
-      const toTokenSymbol = Object.keys(TOKEN_DEFINITIONS).find(
-        (key) => TOKEN_DEFINITIONS[key as TokenSymbol].address === token.address
-      ) as TokenSymbol | undefined;
-      
-      if (fromTokenSymbol && toTokenSymbol) {
-        calculateRoute(fromTokenSymbol, toTokenSymbol).then((route) => {
-          if (route) {
-            fetchRouteFees(route);
-          }
-        });
-      }
+      // Let the centralized fetchFee() effect handle route + fee fetching to avoid duplicate API calls
     }
   };
 
@@ -1273,7 +1234,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     // --- End Helper ---
 
     try {
-      const parsedAmount = parseUnits(fromAmount, fromToken.decimals);
+      const parsedAmount = safeParseUnits(fromAmount, fromToken.decimals);
 
       // 2. Check ERC20 Allowance
       const allowance = await publicClient.readContract({
@@ -1429,7 +1390,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
 
     try {
         // 2. Determine Action based on CURRENT progress state
-        const parsedAmount = parseUnits(fromAmount, fromToken.decimals); // Needed in multiple branches
+        const parsedAmount = safeParseUnits(fromAmount, fromToken.decimals); // Needed in multiple branches
 
         // ACTION: Need to Approve
         if (stateBeforeAction === "needs_approval") {
@@ -1438,7 +1399,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 address: fromToken.address,
                 abi: Erc20AbiDefinition,
                 functionName: 'approve',
-                args: [PERMIT2_ADDRESS, parseUnits("1000000", fromToken.decimals)], // Consistent large approval
+                args: [PERMIT2_ADDRESS, safeParseUnits("1000000", fromToken.decimals)], // Consistent large approval
             });
             if (!approveTxHash) throw new Error("Failed to send approval transaction");
 
@@ -1536,8 +1497,8 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
             if (fromToken.symbol === 'ETH') {
                 console.log("DEBUG: Taking ETH swap path for token:", fromToken.symbol);
                 // --- Sanity Check for balance (can remain) ---
-                const currentBalanceBigInt = parseUnits(fromToken.balance || "0", fromToken.decimals);
-                const parsedAmountForSwap = parseUnits(fromAmount, fromToken.decimals);
+                const currentBalanceBigInt = safeParseUnits(fromToken.balance || "0", fromToken.decimals);
+                const parsedAmountForSwap = safeParseUnits(fromAmount, fromToken.decimals);
                 if (currentBalanceBigInt < parsedAmountForSwap) {
                      throw new Error(`Insufficient balance. Required: ${fromAmount}, Available: ${fromToken.balance}`);
                 }
@@ -1713,8 +1674,8 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
 
 
             // --- Sanity Check for balance (can remain) ---
-            const currentBalanceBigInt = parseUnits(fromToken.balance || "0", fromToken.decimals);
-            const parsedAmountForSwap = parseUnits(fromAmount, fromToken.decimals);
+            const currentBalanceBigInt = safeParseUnits(fromToken.balance || "0", fromToken.decimals);
+            const parsedAmountForSwap = safeParseUnits(fromAmount, fromToken.decimals);
             if (currentBalanceBigInt < parsedAmountForSwap) {
                  throw new Error(`Insufficient balance. Required: ${fromAmount}, Available: ${fromToken.balance}`);
             }
@@ -2150,6 +2111,9 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
 
   // Create a stable key for fee history to prevent unnecessary reloads
   const feeHistoryKey = useMemo(() => {
+    if (!isMounted) {
+      return null;
+    }
     if (!isConnected || currentChainId !== TARGET_CHAIN_ID || !currentRoute) {
       return null;
     }
@@ -2161,7 +2125,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     }
     
     return poolIdForHistory ? `${poolIdForHistory}_${selectedPoolIndexForChart}` : null;
-  }, [isConnected, currentChainId, TARGET_CHAIN_ID, currentRoute, selectedPoolIndexForChart]);
+  }, [isMounted, isConnected, currentChainId, TARGET_CHAIN_ID, currentRoute, selectedPoolIndexForChart]);
 
   // Effect to fetch historical fee data - with session caching and optimized loading
   useEffect(() => {
@@ -2244,9 +2208,9 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       }
     };
 
-    // Debounce the fetch to prevent rapid consecutive calls
-    const timeoutId = setTimeout(fetchHistoricalFeeData, 100);
-    return () => clearTimeout(timeoutId);
+    // Fire immediately to avoid double render flash; rely on stable key deps for throttling
+    fetchHistoricalFeeData();
+    return () => {};
   }, [feeHistoryKey, currentRoute, selectedPoolIndexForChart]); // Optimized dependencies
 
   // Helper functions for action button text and disabled state
@@ -2431,9 +2395,28 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     }
   }, [currentRoute, selectedPoolIndexForChart]);
 
-  // NEW: Determine if chart preview should be shown at all (always mounted, animates based on this)
-  const showChartPreviewRegardlessOfData = isMounted && isConnected && currentChainId === TARGET_CHAIN_ID && currentRoute !== null;
+  // NEW: Determine if chart preview should be shown at all (always show; content decides skeleton vs data)
+  const showChartPreviewRegardlessOfData = isMounted;
 
+  // Helper function to safely parse amounts and prevent scientific notation errors
+  const safeParseUnits = (amount: string, decimals: number): bigint => {
+    // Convert scientific notation to decimal format
+    const numericAmount = parseFloat(amount);
+    if (isNaN(numericAmount)) {
+      throw new Error("Invalid number format");
+    }
+    
+    // Convert to string with full decimal representation (no scientific notation)
+    const fullDecimalString = numericAmount.toFixed(decimals);
+    
+    // Remove trailing zeros after decimal point
+    const trimmedString = fullDecimalString.replace(/\.?0+$/, '');
+    
+    // If the result is just a decimal point, return "0"
+    const finalString = trimmedString === '.' ? '0' : trimmedString;
+    
+    return parseUnits(finalString, decimals);
+  };
 
   return (
     <div className="flex flex-col" ref={containerRef}> {/* Container ref wraps everything */}
@@ -2469,6 +2452,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 hoveredArcPercentage={hoveredArcPercentage}
                 isSellInputFocused={isSellInputFocused}
                 setIsSellInputFocused={setIsSellInputFocused}
+                onRouteHoverChange={undefined}
                 formatCurrency={formatCurrency}
                 isConnected={isConnected}
                 isAttemptingSwitch={isAttemptingSwitch}
@@ -2520,38 +2504,62 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
         </CardContent>
       </Card>
 
-      {/* Preview Chart - Conditionally rendered below the main card */}
-      <AnimatePresence>
-        {/* 
-          Show preview if:
-          - Not loading dynamic fee (for current fee)
-          - No error with dynamic fee (for current fee)
-          - Dynamic fee bps is available (successfully fetched for current fee)
-          - Historical Fee history data is available AND not loading AND no error
-          - User is connected and on the target chain
-        */}
-        {/* The motion.div is now always mounted, and its animation controls its visibility/size. */}
-        <motion.div
-          key="dynamic-fee-preview-auto" // New key for AnimatePresence
-          className="w-full max-w-md mx-auto" // Preview matches main card width
-          initial={{ y: -10, opacity: 0.5, height: '80px', marginTop: '24px' }} // Skeleton state: larger margin
-          animate={showChartPreviewRegardlessOfData ? { y: 0, opacity: 1, height: 'auto', marginTop: '16px' } : { y: -10, opacity: 0, height: '0px', marginTop: '0px' }}       
-          transition={{ type: "spring", stiffness: 300, damping: 30, duration: 0.2 }}
+      {/* Preview Chart Row with external nav arrows */}
+      <div className="w-full relative">
+        <div className="w-full max-w-md mx-auto relative group">
+          {/* Hover buffer extends horizontally so arrows remain clickable while visible */}
+          <div className="absolute inset-y-0 left-[-2.75rem] right-[-2.75rem]"></div>
+          <div className="relative">
+          <AnimatePresence>
+            {/* The motion.div is now always mounted, and its animation controls its visibility/size. */}
+            <motion.div
+              key="dynamic-fee-preview-auto"
+              className="w-full"
+              initial={{ y: -10, opacity: 0.5, height: '80px', marginTop: '24px' }}
+              animate={showChartPreviewRegardlessOfData ? { y: 0, opacity: 1, height: 'auto', marginTop: '16px' } : { y: -10, opacity: 0, height: '0px', marginTop: '0px' }}
+              transition={{ type: "spring", stiffness: 300, damping: 30, duration: 0.2 }}
+              onAnimationComplete={() => {
+                setCombinedRect(getContainerRect());
+              }}
+            >
+              <DynamicFeeChartPreview 
+                data={(!isConnected || !currentRoute || isFeeHistoryLoading) ? [] : feeHistoryData} 
+                onClick={handlePreviewChartClick}
+                poolInfo={poolInfo}
+                isLoading={isFeeHistoryLoading}
+                alwaysShowSkeleton={!isConnected || !currentRoute || isFeeHistoryLoading}
+              />
+            </motion.div>
+          </AnimatePresence>
 
-          onAnimationComplete={() => {
-            // Ensure a re-measurement after the animation to catch final dimensions
-            setCombinedRect(getContainerRect()); 
-
-          }}
-        >
-          <DynamicFeeChartPreview 
-            data={feeHistoryData} 
-            onClick={handlePreviewChartClick}
-            poolInfo={poolInfo}
-            isLoading={isFeeHistoryLoading}
-          />
-        </motion.div>
-      </AnimatePresence>
+          {/* External nav arrows - positioned outside the preview container by 1rem (16px) */}
+          {currentRoute && currentRoute.pools.length > 1 && (
+            <>
+              {selectedPoolIndexForChart > 0 && (
+                <button
+                  type="button"
+                  aria-label="Previous pool"
+                  onClick={handlePreviousPool}
+                  className="absolute left-[-2.5rem] top-1/2 -translate-y-1/2 h-8 w-8 flex items-center justify-center text-muted-foreground hover:text-white opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity duration-150"
+                >
+                  <ChevronLeftIcon className="h-4 w-4" />
+                </button>
+              )}
+              {selectedPoolIndexForChart < currentRoute.pools.length - 1 && (
+                <button
+                  type="button"
+                  aria-label="Next pool"
+                  onClick={handleNextPool}
+                  className="absolute right-[-2.5rem] top-1/2 -translate-y-1/2 h-8 w-8 flex items-center justify-center text-muted-foreground hover:text-white opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity duration-150"
+                >
+                  <ChevronRightIcon className="h-4 w-4" />
+                </button>
+              )}
+            </>
+          )}
+        </div>
+        </div>
+      </div>
 
       {/* Full Chart Modal - Controlled by isFeeChartModalOpen - Moved outside the mapping */}
       <Dialog open={isFeeChartModalOpen} onOpenChange={setIsFeeChartModalOpen}>

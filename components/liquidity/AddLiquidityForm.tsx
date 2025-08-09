@@ -15,6 +15,26 @@ import { TOKEN_DEFINITIONS, TokenSymbol } from "@/lib/pools-config";
 import { baseSepolia } from "@/lib/wagmiConfig";
 import { getPoolById, getToken } from "@/lib/pools-config";
 import { formatUnits as viemFormatUnits, parseUnits as viemParseUnits, getAddress, type Hex } from "viem";
+
+// Helper function to safely parse amounts and prevent scientific notation errors
+const safeParseUnits = (amount: string, decimals: number): bigint => {
+  // Convert scientific notation to decimal format
+  const numericAmount = parseFloat(amount);
+  if (isNaN(numericAmount)) {
+    throw new Error("Invalid number format");
+  }
+  
+  // Convert to string with full decimal representation (no scientific notation)
+  const fullDecimalString = numericAmount.toFixed(decimals);
+  
+  // Remove trailing zeros after decimal point
+  const trimmedString = fullDecimalString.replace(/\.?0+$/, '');
+  
+  // If the result is just a decimal point, return "0"
+  const finalString = trimmedString === '.' ? '0' : trimmedString;
+  
+  return viemParseUnits(finalString, decimals);
+};
 import { useAddLiquidityTransaction } from "./useAddLiquidityTransaction";
 import { InteractiveRangeChart } from "./InteractiveRangeChart";
 import {
@@ -1665,14 +1685,14 @@ export function AddLiquidityForm({
 
     let valueToCheck0AsWei: bigint | null = null;
     if (isAmount0InputPositive) {
-      try { valueToCheck0AsWei = viemParseUnits(amount0, t0Def.decimals); } catch { /* ignore error if not a valid number */ }
+      try { valueToCheck0AsWei = safeParseUnits(amount0, t0Def.decimals); } catch { /* ignore error if not a valid number */ }
     } else if (calculatedData && BigInt(calculatedData.amount0) > 0n && isAmount1InputPositive) {
       valueToCheck0AsWei = BigInt(calculatedData.amount0);
     }
 
     let valueToCheck1AsWei: bigint | null = null;
     if (isAmount1InputPositive) {
-      try { valueToCheck1AsWei = viemParseUnits(amount1, t1Def.decimals); } catch { /* ignore error if not a valid number */ }
+      try { valueToCheck1AsWei = safeParseUnits(amount1, t1Def.decimals); } catch { /* ignore error if not a valid number */ }
     } else if (calculatedData && BigInt(calculatedData.amount1) > 0n && isAmount0InputPositive) {
       valueToCheck1AsWei = BigInt(calculatedData.amount1);
     }
@@ -2240,6 +2260,31 @@ export function AddLiquidityForm({
                           </span>
                       </div>
                   </div>
+                </div>
+              )}
+
+              {/* Current Price Display - outside striped container, above Deposit button */}
+              {currentPrice && token0Symbol && token1Symbol && (
+                <div className="text-xs text-muted-foreground mt-2 text-right">
+                  {(() => {
+                    // Check if denomination was flipped (same logic as in the chart)
+                    const inversePrice = 1 / parseFloat(currentPrice);
+                    const shouldFlipDenomination = inversePrice > parseFloat(currentPrice);
+                    
+                    // Get display decimals for the appropriate token
+                    const token0Def = TOKEN_DEFINITIONS[token0Symbol];
+                    const token1Def = TOKEN_DEFINITIONS[token1Symbol];
+                    
+                    if (shouldFlipDenomination) {
+                      // Show flipped denomination: "1 aUSDT = XXXX aETH"
+                      const displayDecimals = token0Def?.displayDecimals ?? 4;
+                      return `1 ${token1Symbol} = ${inversePrice.toFixed(displayDecimals)} ${token0Symbol}`;
+                    } else {
+                      // Show normal denomination: "1 aETH = XXXX aUSDT"
+                      const displayDecimals = token1Def?.displayDecimals ?? 4;
+                      return `1 ${token0Symbol} = ${parseFloat(currentPrice).toFixed(displayDecimals)} ${token1Symbol}`;
+                    }
+                  })()}
                 </div>
               )}
 

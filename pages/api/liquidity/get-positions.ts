@@ -327,22 +327,42 @@ async function fetchAndProcessUserPositionsForApi(ownerAddress: string): Promise
 
 export default async function handler(
   req: NextApiRequest,
-  res: NextApiResponse<ProcessedPosition[] | { message: string; error?: any }>
+  res: NextApiResponse<ProcessedPosition[] | { message: string; count?: number; error?: any }>
 ) {
   if (req.method !== 'GET') {
     res.setHeader('Allow', ['GET']);
     return res.status(405).json({ message: `Method ${req.method} Not Allowed` });
   }
 
-  const { ownerAddress } = req.query;
+  const { ownerAddress, countOnly } = req.query as { ownerAddress?: string; countOnly?: string };
 
   if (!ownerAddress || typeof ownerAddress !== 'string' || !ethers.utils.isAddress(ownerAddress)) { // Keep ethers for isAddress for now, or switch to viem's isAddress
     return res.status(400).json({ message: 'Valid ownerAddress query parameter is required.' });
   }
 
   try {
-    const positions = await fetchAndProcessUserPositionsForApi(ownerAddress);
-    return res.status(200).json(positions);
+    if (countOnly === '1') {
+      // Lightweight count query straight to subgraph without processing pools
+      const response = await fetch(SUBGRAPH_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: `query GetUserPositionsCount($owner: Bytes!) { hookPositions(where: { owner: $owner }) { id } }`,
+          variables: { owner: ownerAddress.toLowerCase() },
+        }),
+      });
+      if (!response.ok) {
+        const errorBody = await response.text();
+        console.error(`API: Count subgraph query failed: ${errorBody}`);
+        return res.status(200).json({ message: 'ok', count: 0 });
+      }
+      const json = (await response.json()) as { data?: { hookPositions: { id: string }[] } };
+      const count = json?.data?.hookPositions?.length ?? 0;
+      return res.status(200).json({ message: 'ok', count });
+    } else {
+      const positions = await fetchAndProcessUserPositionsForApi(ownerAddress);
+      return res.status(200).json(positions);
+    }
   } catch (error: any) {
     console.error(`API Error in /api/liquidity/get-positions for ${ownerAddress}:`, error);
     // Ensure error is serializable

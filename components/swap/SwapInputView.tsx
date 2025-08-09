@@ -68,6 +68,8 @@ interface SwapInputViewProps {
   swapContainerRect: { top: number; left: number; width: number; height: number; }; // New prop
   slippage: number; // Add slippage prop
   onSlippageChange: (newSlippage: number) => void; // Add slippage change handler
+  showRoute?: boolean; // control showing route section
+  onRouteHoverChange?: (hover: boolean) => void;
 }
 
 export function SwapInputView({
@@ -113,6 +115,8 @@ export function SwapInputView({
   swapContainerRect,
   slippage,
   onSlippageChange,
+  showRoute = true,
+  onRouteHoverChange,
 }: SwapInputViewProps) {
   const [isSlippageEditing, setIsSlippageEditing] = React.useState(false);
   const [customSlippage, setCustomSlippage] = React.useState("");
@@ -311,8 +315,9 @@ export function SwapInputView({
       </div>
 
       {/* Route, Fee, and Slippage Information */}
+      {/* Route can be toggled via showRoute */}
       <div className="mt-3 mb-1 space-y-1.5">
-        {isConnected && currentChainId === TARGET_CHAIN_ID && (
+        {showRoute && isConnected && currentChainId === TARGET_CHAIN_ID && (
           <>
             {(() => {
               const path = routeInfo?.path || [displayFromToken.symbol, displayToToken.symbol];
@@ -321,7 +326,11 @@ export function SwapInputView({
               return (
                 <>
                   {/* Route: Show for both single-hop and multi-hop */}
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <div
+                    className="flex items-center justify-between text-xs text-muted-foreground"
+                    onMouseEnter={() => onRouteHoverChange?.(true)}
+                    onMouseLeave={() => onRouteHoverChange?.(false)}
+                  >
                     <span>Route:</span>
                     <div className="flex items-center gap-1.5">
                       {path.map((tokenSymbol, index) => {
@@ -335,21 +344,30 @@ export function SwapInputView({
 
                         return (
                           <React.Fragment key={`${tokenSymbol}-${index}`}>
-                            <div className="flex items-center gap-1">
-                              <Image src={tokenIcon} alt={tokenSymbol} width={16} height={16} className="rounded-full"/>
-                              {fee && (
-                                <button 
-                                  onClick={() => onSelectPoolForChart?.(index)}
-                                  className={`text-xs font-medium transition-colors hover:text-foreground cursor-pointer ${
-                                    isSelectedForChart 
-                                      ? 'text-foreground/80 underline decoration-dotted decoration-1 underline-offset-2' 
-                                      : 'text-foreground/80'
-                                  }`}
-                                >
-                                  {fee}
-                                </button>
-                              )}
-                            </div>
+                            {fee ? (
+                              <button
+                                type="button"
+                                title={`Show fee trend for pool ${index + 1}`}
+                                onClick={() => onSelectPoolForChart?.(index)}
+                                onPointerDown={(e) => {
+                                  // Improves reliability on rapid clicks/taps
+                                  e.preventDefault();
+                                  onSelectPoolForChart?.(index);
+                                }}
+                                className={`group relative z-[1] pointer-events-auto flex items-center gap-1 text-xs font-medium transition-colors hover:text-foreground cursor-pointer ${
+                                  isSelectedForChart
+                                    ? 'text-foreground/80 underline decoration-dotted decoration-1 underline-offset-2'
+                                    : 'text-foreground/80'
+                                }`}
+                              >
+                                <Image src={tokenIcon} alt={tokenSymbol} width={16} height={16} className="rounded-full"/>
+                                <span>{fee}</span>
+                              </button>
+                            ) : (
+                              <div className="flex items-center gap-1">
+                                <Image src={tokenIcon} alt={tokenSymbol} width={16} height={16} className="rounded-full"/>
+                              </div>
+                            )}
                             {index < path.length - 1 && <div className="h-1 w-1 rounded-full bg-muted-foreground/60"></div>}
                           </React.Fragment>
                         );
@@ -460,8 +478,9 @@ export function SwapInputView({
         ) : (
           <div
             className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30"
-            style={{ backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+            style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
           >
+            {/* @ts-expect-error custom element provided by wallet kit */}
             <appkit-button className="absolute inset-0 z-10 block h-full w-full cursor-pointer p-0 opacity-0" />
             <span className="relative z-0 pointer-events-none">{actionButtonText}</span>
           </div>
