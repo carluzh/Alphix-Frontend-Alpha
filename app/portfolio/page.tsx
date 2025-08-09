@@ -8,6 +8,10 @@ import { Area, AreaChart, XAxis, YAxis } from "recharts";
 import { ChartContainer, type ChartConfig } from "@/components/ui/chart";
 import { useAccount } from "wagmi";
 import poolsConfig from "@/config/pools.json";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { useRouter } from "next/navigation";
+import { getAllPools, getToken } from "@/lib/pools-config";
+import type { ProcessedPosition } from "../../pages/api/liquidity/get-positions";
 
 const RANGES = ["1D", "1W", "1M", "1Y", "MAX"] as const;
 type Range = typeof RANGES[number];
@@ -23,6 +27,8 @@ interface PortfolioData {
   totalValue: number;
   tokenBalances: TokenBalance[];
   isLoading: boolean;
+  tokenPrices: Record<string, number>;
+  positions: ProcessedPosition[];
   error?: string;
 }
 
@@ -73,6 +79,8 @@ function usePortfolioData(): PortfolioData {
     totalValue: 0,
     tokenBalances: [],
     isLoading: true,
+    tokenPrices: {},
+    positions: [],
     error: undefined,
   });
 
@@ -82,6 +90,8 @@ function usePortfolioData(): PortfolioData {
         totalValue: 0,
         tokenBalances: [],
         isLoading: false,
+        tokenPrices: {},
+        positions: [],
         error: undefined,
       });
       return;
@@ -182,10 +192,16 @@ function usePortfolioData(): PortfolioData {
 
         const totalValue = tokenBalances.reduce((sum, token) => sum + token.usdValue, 0);
 
+        // Convert priceMap to plain object for state
+        const tokenPrices: Record<string, number> = {};
+        Array.from(priceMap.entries()).forEach(([sym, price]) => { tokenPrices[sym] = price; });
+
         setPortfolioData({
           totalValue,
           tokenBalances,
           isLoading: false,
+          tokenPrices,
+          positions: Array.isArray(positions) ? positions : [],
           error: undefined,
         });
 
@@ -195,6 +211,8 @@ function usePortfolioData(): PortfolioData {
           totalValue: 0,
           tokenBalances: [],
           isLoading: false,
+          tokenPrices: {},
+          positions: [],
           error: error instanceof Error ? error.message : 'Unknown error',
         });
       }
@@ -219,7 +237,37 @@ export default function PortfolioPage() {
   const [isVerySmallScreen, setIsVerySmallScreen] = useState<boolean>(false);
   const [isMobileVisReady, setIsMobileVisReady] = useState<boolean>(false);
   const blockVisContainerRef = useRef<HTMLDivElement>(null);
-  
+  const router = useRouter();
+
+  const subgraphToRouteId = useMemo(() => {
+    const m = new Map<string, string>();
+    getAllPools().forEach(p => {
+      if (p.subgraphId) m.set(p.subgraphId.toLowerCase(), p.id);
+    });
+    return m;
+  }, []);
+
+  const getTokenIcon = (symbol?: string) => {
+    if (!symbol) return "/placeholder-logo.svg";
+    return getToken(symbol)?.icon || "/placeholder-logo.svg";
+  };
+
+  const formatTokenAmount = (amount: string) => {
+    const n = parseFloat(amount);
+    if (!isFinite(n)) return "0.00";
+    if (n === 0) return "0.00";
+    if (n > 0 && n < 0.0001) return "< 0.0001";
+    return n.toFixed(4);
+  };
+
+  const getPositionUSDValue = (pos: ProcessedPosition) => {
+    const p0 = portfolioData.tokenPrices[pos.token0.symbol] || 0;
+    const p1 = portfolioData.tokenPrices[pos.token1.symbol] || 0;
+    const v0 = parseFloat(pos.token0.amount || '0') * p0;
+    const v1 = parseFloat(pos.token1.amount || '0') * p1;
+    return v0 + v1;
+  };
+
   // Set initial responsive states immediately
   useEffect(() => {
     const setInitialStates = () => {
@@ -491,6 +539,90 @@ export default function PortfolioPage() {
               </div>
             </div>
           )}
+        </div>
+
+        {/* Active Positions */}
+        <div className="mt-6">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-lg font-semibold">Active Positions</h2>
+          </div>
+          <div className="rounded-md border">
+            {portfolioData.positions.length > 0 ? (
+              <Table className="w-full" style={{ tableLayout: 'fixed' }}>
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead className="pl-6">Pool</TableHead>
+                    <TableHead>Amounts</TableHead>
+                    <TableHead>Range (ticks)</TableHead>
+                    <TableHead>In Range</TableHead>
+                    <TableHead className="pr-6 text-right">Value</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {portfolioData.positions.map((pos) => {
+                    const poolRouteId = subgraphToRouteId.get(pos.poolId.toLowerCase()) || pos.poolId;
+                    const valueUSD = getPositionUSDValue(pos);
+                    const inRange = pos.isInRange;
+                    return (
+                      <TableRow
+                        key={pos.positionId}
+                        className="group cursor-pointer transition-colors hover:bg-muted/30"
+                        onClick={() => router.push(`/liquidity/${poolRouteId}`)}
+                      >
+                        <TableCell className="pl-6">
+                          <div className="flex items-center gap-2">
+                            <div className="relative w-14 h-7">
+                              <div className="absolute top-0 left-0 w-7 h-7 rounded-full overflow-hidden bg-background z-10">
+                                <Image
+                                  src={getTokenIcon(pos.token0.symbol)}
+                                  alt={pos.token0.symbol}
+                                  width={28}
+                                  height={28}
+                                  className="w-full h-full object-cover"
+                                />
+                              </div>
+                              <div className="absolute top-0 left-4 w-7 h-7">
+                                <div className="absolute inset-0 rounded-full overflow-hidden bg-background z-30">
+                                  <Image
+                                    src={getTokenIcon(pos.token1.symbol)}
+                                    alt={pos.token1.symbol}
+                                    width={28}
+                                    height={28}
+                                    className="w-full h-full object-cover"
+                                  />
+                                </div>
+                                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-[#111111] z-20"></div>
+                              </div>
+                            </div>
+                            <div className="flex flex-col">
+                              <span className="font-medium">{pos.token0.symbol} / {pos.token1.symbol}</span>
+                            </div>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-col text-sm">
+                            <span>{formatTokenAmount(pos.token0.amount)} {pos.token0.symbol}</span>
+                            <span className="text-muted-foreground">{formatTokenAmount(pos.token1.amount)} {pos.token1.symbol}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="text-sm">[{pos.tickLower}, {pos.tickUpper}]</div>
+                        </TableCell>
+                        <TableCell>
+                          <span className={inRange ? "text-green-500" : "text-red-500"}>{inRange ? "In range" : "Out of range"}</span>
+                        </TableCell>
+                        <TableCell className="pr-6 text-right">
+                          {formatUSD(valueUSD)}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            ) : (
+              <div className="p-6 text-center text-muted-foreground">No active positions</div>
+            )}
+          </div>
         </div>
         {/* no third state below 1100px */}
       </div>
