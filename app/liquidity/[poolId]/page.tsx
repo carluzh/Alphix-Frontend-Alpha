@@ -1727,11 +1727,11 @@ export default function PoolDetailPage() {
               <div className="flex flex-col sm:grid sm:grid-cols-2 xl:grid-cols-2 min-[1500px]:grid-cols-4 gap-3 sm:gap-6 flex-shrink-0 lg:max-w-none">
                 {/* APY and Total Liquidity in columns on mobile */}
                 <div className="flex gap-3 sm:hidden w-full">
-                  <div className="rounded-lg bg-muted/30 p-3 hover:outline hover:outline-1 hover:outline-muted transition-colors flex-1 min-w-0">
+                  <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-3 hover:outline hover:outline-1 hover:outline-muted transition-colors flex-1 min-w-0">
                     <div className="text-xs text-muted-foreground mb-1">APY</div>
                     <div className="text-sm font-medium truncate">{currentPoolData.apr}</div>
                   </div>
-                  <div className="rounded-lg bg-muted/30 p-3 hover:outline hover:outline-1 hover:outline-muted transition-colors flex-1 min-w-0 cursor-pointer" onClick={cycleToggleMetric}>
+                  <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-3 hover:outline hover:outline-1 hover:outline-muted transition-colors flex-1 min-w-0 cursor-pointer" onClick={cycleToggleMetric}>
                     <div className="text-xs text-muted-foreground mb-1">
                       <div className="flex items-center gap-1">
                         <span className="truncate flex-1 min-w-0 text-xs">
@@ -1753,13 +1753,13 @@ export default function PoolDetailPage() {
                 </div>
                 
                 {/* Desktop APY */}
-                <div className="rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors hidden md:block">
+                <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors hidden md:block">
                   <div className="text-sm text-muted-foreground mb-1">APY</div>
                   <div className="text-lg font-medium">{currentPoolData.apr}</div>
                 </div>
                 
                 {/* Desktop Total Liquidity */}
-                <div className="rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors hidden md:block">
+                <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors hidden md:block">
                   <div className="text-sm text-muted-foreground mb-1">
                     {windowWidth < 1500 ? (
                       <div className="flex items-center justify-between">
@@ -1792,11 +1792,11 @@ export default function PoolDetailPage() {
                   </div>
                 </div>
                 
-                <div className="rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors hidden min-[1500px]:block">
+                <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors hidden min-[1500px]:block">
                   <div className="text-sm text-muted-foreground mb-1">Volume (24h)</div>
                   <div className="text-lg font-medium">{currentPoolData.volume24h}</div>
                 </div>
-                <div className="rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors hidden min-[1500px]:block">
+                <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors hidden min-[1500px]:block">
                   <div className="text-sm text-muted-foreground mb-1">Fees (24h)</div>
                   <div className="text-lg font-medium">{currentPoolData.fees24h}</div>
                 </div>
@@ -1804,7 +1804,7 @@ export default function PoolDetailPage() {
               
               {/* Pool Overview Section (formerly Tab) */}
               <div className="flex-1 min-h-0 lg:max-w-none">
-                <div className="rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors flex flex-col h-full min-h-[300px] sm:min-h-[350px]">
+                <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors flex flex-col h-full min-h-[300px] sm:min-h-[350px]">
                   <div className="mb-4 flex-shrink-0">
                     <div className="flex justify-between items-center">
                       <h3 className="text-lg font-medium">Pool Activity</h3>
@@ -2435,7 +2435,7 @@ export default function PoolDetailPage() {
               </div> */}
 
               {poolId && currentPoolData && ( // Always render form (removed activeTab condition)
-                <div ref={addLiquidityFormRef} className="w-full rounded-lg bg-muted/30 p-3 sm:p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors">
+                <div ref={addLiquidityFormRef} className="w-full rounded-lg bg-muted/30 border border-sidebar-border/60 p-3 sm:p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors">
                   <AddLiquidityFormMemo
                     selectedPoolId={poolId}
                     poolApr={currentPoolData?.apr}
@@ -2469,7 +2469,7 @@ export default function PoolDetailPage() {
             
             {isLoadingPositions ? (
               /* Simple pulsing skeleton container */
-              <div className="rounded-lg bg-muted/30 p-4 h-20 animate-pulse">
+              <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4 h-20 animate-pulse">
               </div>
             ) : userPositions.length > 0 ? (
               <div>
@@ -2522,7 +2522,7 @@ export default function PoolDetailPage() {
                                             return (
                           <div 
                             key={position.positionId}
-                            className="rounded-lg bg-muted/30 p-3 sm:p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors group"
+                            className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-3 sm:p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors group"
                           >
                             {/* Grid layout on non-mobile; stacked on mobile */}
                             <div className="grid gap-3 sm:gap-4 sm:grid-cols-[1fr_auto] sm:items-center">
@@ -2883,7 +2883,7 @@ export default function PoolDetailPage() {
                       Balance: {formatTokenDisplayAmount(positionToBurn.token0.amount)}
                     </Button>
                   </div>
-                  <div className="rounded-lg bg-muted/30 p-4">
+                  <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4">
                     <div className="flex items-center gap-2">
                       <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
                         <Image 
@@ -2945,7 +2945,7 @@ export default function PoolDetailPage() {
                       Balance: {formatTokenDisplayAmount(positionToBurn.token1.amount)}
                     </Button>
                   </div>
-                  <div className="rounded-lg bg-muted/30 p-4">
+                  <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4">
                     <div className="flex items-center gap-2">
                       <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
                         <Image 
@@ -3108,7 +3108,7 @@ export default function PoolDetailPage() {
                       Balance: {displayToken0Balance} {positionToModify.token0.symbol}
                     </Button>
                   </div>
-                  <div className="rounded-lg bg-muted/30 p-4">
+                  <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4">
                     <div className="flex items-center gap-2">
                       <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
                         <Image 
@@ -3166,7 +3166,7 @@ export default function PoolDetailPage() {
                       Balance: {displayToken1Balance} {positionToModify.token1.symbol}
                     </Button>
                   </div>
-                  <div className="rounded-lg bg-muted/30 p-4">
+                  <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4">
                     <div className="flex items-center gap-2">
                       <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
                         <Image 
