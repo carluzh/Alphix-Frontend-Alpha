@@ -11,7 +11,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import Image from "next/image";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+
 import * as React from "react";
 import { 
   ColumnDef,
@@ -405,8 +405,33 @@ export default function LiquidityPage() {
     },
     {
       accessorKey: "volume24h",
-      header: () => <div>Volume (24h)</div>,
+      header: ({ column }) => (
+        <div
+          className="flex items-center justify-start gap-1 cursor-pointer group"
+          onClick={() => {
+            const state = column.getIsSorted();
+            if (!state) column.toggleSorting(false); // asc
+            else if (state === "asc") column.toggleSorting(true); // desc
+            else setSorting([]); // default (clear)
+          }}
+        >
+          Volume (24h)
+          {column.getIsSorted() === "asc" ? (
+            <ChevronUpIcon className="ml-1 h-4 w-4 text-foreground group-hover:text-foreground" />
+          ) : column.getIsSorted() === "desc" ? (
+            <ChevronDownIcon className="ml-1 h-4 w-4 text-foreground group-hover:text-foreground" />
+          ) : (
+            <ChevronsUpDownIcon className="ml-1 h-4 w-4 text-muted-foreground group-hover:text-foreground" />
+          )}
+        </div>
+      ),
       size: 100, // 1/7 of total width
+      sortingFn: (rowA, rowB) => {
+        const a = typeof rowA.original.volume24hUSD === 'number' ? rowA.original.volume24hUSD : 0;
+        const b = typeof rowB.original.volume24hUSD === 'number' ? rowB.original.volume24hUSD : 0;
+        return a - b;
+      },
+      sortDescFirst: true,
       cell: ({ row }) => (
         <div className="flex items-center justify-start gap-1">
           {typeof row.original.volume24hUSD === 'number' ? (
@@ -445,8 +470,33 @@ export default function LiquidityPage() {
     },
     {
       accessorKey: "fees24h",
-      header: () => <div>Fees (24h)</div>,
+      header: ({ column }) => (
+        <div
+          className="flex items-center justify-start gap-1 cursor-pointer group"
+          onClick={() => {
+            const state = column.getIsSorted();
+            if (!state) column.toggleSorting(false); // asc
+            else if (state === "asc") column.toggleSorting(true); // desc
+            else setSorting([]); // default (clear)
+          }}
+        >
+          Fees (24h)
+          {column.getIsSorted() === "asc" ? (
+            <ChevronUpIcon className="ml-1 h-4 w-4 text-foreground group-hover:text-foreground" />
+          ) : column.getIsSorted() === "desc" ? (
+            <ChevronDownIcon className="ml-1 h-4 w-4 text-foreground group-hover:text-foreground" />
+          ) : (
+            <ChevronsUpDownIcon className="ml-1 h-4 w-4 text-muted-foreground group-hover:text-foreground" />
+          )}
+        </div>
+      ),
       size: 100, // 1/7 of total width
+      sortingFn: (rowA, rowB) => {
+        const a = typeof rowA.original.fees24hUSD === 'number' ? rowA.original.fees24hUSD : 0;
+        const b = typeof rowB.original.fees24hUSD === 'number' ? rowB.original.fees24hUSD : 0;
+        return a - b;
+      },
+      sortDescFirst: true,
       cell: ({ row }) => (
          <div className="flex items-center justify-start">
           {typeof row.original.fees24hUSD === 'number' ? (
@@ -465,7 +515,12 @@ export default function LiquidityPage() {
       header: ({ column }) => (
         <div 
           className="flex items-center justify-start gap-1 cursor-pointer group"
-          onClick={() => column.toggleSorting()}
+          onClick={() => {
+            const state = column.getIsSorted();
+            if (!state) column.toggleSorting(false); // asc
+            else if (state === "asc") column.toggleSorting(true); // desc
+            else setSorting([]); // default (clear)
+          }}
         >
           Liquidity
           {column.getIsSorted() === "asc" ? (
@@ -525,7 +580,12 @@ export default function LiquidityPage() {
       header: ({ column }) => (
         <div 
           className="flex items-center justify-end cursor-pointer group"
-          onClick={() => column.toggleSorting()}
+          onClick={() => {
+            const state = column.getIsSorted();
+            if (!state) column.toggleSorting(false); // asc
+            else if (state === "asc") column.toggleSorting(true); // desc
+            else setSorting([]); // default (clear)
+          }}
         >
           Yield
           {column.getIsSorted() === "asc" ? (
@@ -578,7 +638,7 @@ export default function LiquidityPage() {
         hidePriority: 4,
       },
     },
-  ], []);
+  ], [setSorting]);
 
   const visibleColumns = useMemo(() => {
     if (isMobile) {
@@ -627,6 +687,22 @@ export default function LiquidityPage() {
     },
   });
 
+  // Derive current visible column sizes to align the top category header exactly with the table columns
+  const columnSizes = React.useMemo(() => {
+    const pairCol = table.getColumn('pair' as any);
+    const volCol = table.getColumn('volume24h' as any);
+    const feesCol = table.getColumn('fees24h' as any);
+    const liqCol = table.getColumn('liquidity' as any);
+    const aprCol = table.getColumn('apr' as any);
+    return {
+      pair: pairCol ? pairCol.getSize() : 300,
+      volume24h: volCol ? volCol.getSize() : 100,
+      fees24h: feesCol ? feesCol.getSize() : 100,
+      liquidity: liqCol ? liqCol.getSize() : 100,
+      apr: aprCol ? aprCol.getSize() : (windowWidth >= 1800 ? 40 : 80),
+    };
+  }, [table, columnSizing, windowWidth, visibleColumns]);
+
   const handleAddLiquidity = (e: React.MouseEvent, poolId: string) => {
     e.stopPropagation();
     setSelectedPoolId(poolId); 
@@ -637,6 +713,21 @@ export default function LiquidityPage() {
 
   const handlePoolClick = (poolId: string) => {
     router.push(`/liquidity/${poolId}`);
+  };
+
+  const handleSortCycle = (columnId: string) => {
+    const col = table.getColumn(columnId as any);
+    if (!col) return;
+    const state = col.getIsSorted();
+    if (!state) col.toggleSorting(false); // asc
+    else if (state === 'asc') col.toggleSorting(true); // desc
+    else setSorting([]); // default
+  };
+
+  const renderSortIcon = (state: false | 'asc' | 'desc') => {
+    if (state === 'asc') return <ChevronUpIcon className="ml-1 h-4 w-4" />;
+    if (state === 'desc') return <ChevronDownIcon className="ml-1 h-4 w-4" />;
+    return <ChevronsUpDownIcon className="ml-1 h-4 w-4 text-muted-foreground" />;
   };
 
   return (
@@ -650,35 +741,27 @@ export default function LiquidityPage() {
                 <p className="text-sm text-muted-foreground">Explore and manage your liquidity positions.</p>
               </div>
               <div className="sm:self-end">
-                <Tabs value={selectedCategory} onValueChange={setSelectedCategory}>
-                  <TabsList className="bg-transparent p-0 h-auto">
-                    {categories.map((cat) => (
-                      <TabsTrigger
-                        key={cat}
-                        value={cat}
-                        className="px-2 py-1 text-xs rounded-md data-[state=active]:bg-muted data-[state=active]:text-foreground"
-                      >
-                        {cat}
-                      </TabsTrigger>
-                    ))}
-                  </TabsList>
-                </Tabs>
+                <div className="flex items-center gap-2">
+                  {categories.map((cat) => (
+                               <button
+             key={cat}
+             onClick={() => setSelectedCategory(cat)}
+             className={`px-2 py-1 text-xs rounded-md transition-all duration-200 cursor-pointer ${
+               selectedCategory === cat
+                 ? 'border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-foreground brightness-110'
+                 : 'text-muted-foreground hover:text-foreground'
+             }`}
+             style={selectedCategory === cat ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
+           >
+                      {cat}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
             <div className="rounded-lg bg-muted/30 border border-sidebar-border/60">
-              <div className="flex items-center justify-between px-4 py-3 border-b border-sidebar-border/60">
-                <div className="flex items-center gap-3">
-                  <h2 className="text-xs tracking-wider text-muted-foreground font-mono font-bold">POOLS</h2>
-                </div>
-                <div className="hidden md:flex items-center gap-6 text-xs text-muted-foreground">
-                  <span className="inline-block w-[120px] text-left">Volume (24h)</span>
-                  <span className="inline-block w-[100px] text-left">Fees (24h)</span>
-                  <span className="inline-block w-[120px] text-left">Liquidity</span>
-                  <span className="inline-block w-[80px] text-right">Yield</span>
-                </div>
-              </div>
-              <div className="p-2">
+              <div className="p-0">
                 {isMobile ? (
                   <MobileLiquidityList 
                     pools={filteredPools}
@@ -688,31 +771,35 @@ export default function LiquidityPage() {
                   <div className="overflow-x-auto">
                     <Table className="w-full" style={{ tableLayout: 'fixed' }}>
                       <TableHeader>
-                        {table.getHeaderGroups().map((headerGroup) => (
-                          <TableRow key={headerGroup.id} className="hover:bg-transparent">
-                            {headerGroup.headers.map((header, index) => (
-                              <TableHead 
-                                key={header.id}
-                                className={`px-2 relative ${index === 0 ? 'pl-6' : ''} ${index === headerGroup.headers.length - 1 ? 'pr-6' : ''}`}
-                                style={{ width: `${header.getSize()}px` }}
-                              >
-                                {header.isPlaceholder
-                                  ? null
-                                  : flexRender(
-                                      header.column.columnDef.header,
-                                      header.getContext()
-                                    )}
-                                <div
-                                  onMouseDown={header.getResizeHandler()}
-                                  onTouchStart={header.getResizeHandler()}
-                                  className={`absolute right-0 top-0 h-full w-1 bg-border cursor-col-resize select-none touch-none ${
-                                    header.column.getIsResizing() ? 'bg-primary opacity-100' : 'opacity-0 hover:opacity-100'
-                                  }`}
-                                />
-                              </TableHead>
-                            ))}
-                          </TableRow>
-                        ))}
+                        {/* New category header row inside the table for perfect alignment */}
+                        <TableRow className="hover:bg-transparent">
+                          {table.getVisibleLeafColumns().map((col, index, arr) => (
+                            <TableHead
+                              key={`cat-${col.id}`}
+                              className={`px-2 relative text-xs text-muted-foreground ${index === 0 ? 'pl-6' : ''} ${index === arr.length - 1 ? 'pr-6' : ''}`}
+                              style={{ width: `${col.getSize()}px` }}
+                            >
+                              {col.id === 'pair' ? (
+                                <span className="tracking-wider font-mono font-bold">POOLS</span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => handleSortCycle(col.id)}
+                                  className={`flex w-full items-center ${col.id === 'apr' ? 'justify-end text-right' : 'justify-start text-left'} cursor-pointer select-none`}
+                                >
+                                  <span>
+                                    {col.id === 'volume24h' && 'Volume (24h)'}
+                                    {col.id === 'fees24h' && 'Fees (24h)'}
+                                    {col.id === 'liquidity' && 'Liquidity'}
+                                    {col.id === 'apr' && 'Yield'}
+                                  </span>
+                                  {renderSortIcon(table.getColumn(col.id as any)?.getIsSorted?.() as any)}
+                                </button>
+                              )}
+                              {/* no resizer in category row */}
+                            </TableHead>
+                          ))}
+                        </TableRow>
                       </TableHeader>
                       <TableBody>
                         {table.getRowModel().rows?.length ? (

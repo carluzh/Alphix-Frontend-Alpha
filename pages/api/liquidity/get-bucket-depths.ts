@@ -28,9 +28,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const { poolId: reqPoolId, tickLower, tickUpper, tickSpacing, bucketCount = 25 } = req.body;
     poolId = reqPoolId;
 
-    if (!poolId || tickLower === undefined || tickUpper === undefined || !tickSpacing) {
-      return res.status(400).json({ 
-        error: 'Missing required parameters: poolId, tickLower, tickUpper, tickSpacing' 
+    // Parse numeric inputs robustly and validate
+    const lowerNum = Number(tickLower);
+    const upperNum = Number(tickUpper);
+    const spacingNum = Number(tickSpacing);
+    const bucketCountNum = Number(bucketCount);
+
+    if (!poolId || Number.isNaN(lowerNum) || Number.isNaN(upperNum) || !Number.isFinite(spacingNum) || spacingNum <= 0) {
+      return res.status(400).json({
+        error: 'Invalid parameters',
+        details: {
+          poolIdPresent: !!poolId,
+          tickLower: tickLower,
+          tickUpper: tickUpper,
+          tickSpacing: tickSpacing,
+          parsed: { lowerNum, upperNum, spacingNum }
+        }
       });
     }
 
@@ -49,14 +62,34 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       variables: {}
     };
 
-    // Map pool ID to subgraph ID
+    // Map provided identifier to a subgraph ID
+    // Accept either configured pool.id (e.g., "aeth-ausdt") OR the raw subgraphId (0x...)
     const pools = getAllPools();
-    const pool = pools.find(p => p.id === poolId);
-    const subgraphId = pool?.subgraphId;
-    
+    let subgraphId: string | undefined;
+
+    // 1) Exact match on configured pool.id
+    const byId = pools.find((p) => p.id === poolId);
+    if (byId?.subgraphId) {
+      subgraphId = byId.subgraphId;
+    }
+
+    // 2) Exact match on configured subgraphId
     if (!subgraphId) {
-      return res.status(400).json({ 
-        error: 'Invalid poolId: no subgraphId found' 
+      const bySubgraph = pools.find(
+        (p) => String(p.subgraphId).toLowerCase().trim() === String(poolId).toLowerCase().trim()
+      );
+      if (bySubgraph?.subgraphId) subgraphId = bySubgraph.subgraphId;
+    }
+
+    // 3) Heuristic: if the input looks like a 32-byte hex string, treat it as subgraphId
+    if (!subgraphId) {
+      const looksLikeHexId = /^0x[0-9a-fA-F]{64}$/.test(String(poolId));
+      if (looksLikeHexId) subgraphId = String(poolId);
+    }
+
+    if (!subgraphId) {
+      return res.status(400).json({
+        error: 'Invalid poolId: no subgraphId found'
       });
     }
 
@@ -85,20 +118,25 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Filter positions for the specific pool
     const allPositions = result.data.hookPositions as HookPosition[];
     const relevantPositions = allPositions.filter(
-      pos => pos.pool && pos.pool.toLowerCase().trim() === subgraphId.toLowerCase().trim()
+      (pos) => pos.pool && pos.pool.toLowerCase().trim() === subgraphId!.toLowerCase().trim()
     );
 
     // Calculate bucket size based on the range and desired bucket count
-    const tickRange = tickUpper - tickLower;
-    const rawBucketSize = tickRange / bucketCount;
-    const bucketSize = Math.max(tickSpacing, Math.ceil(rawBucketSize / tickSpacing) * tickSpacing);
+    // Normalize and clamp the requested range; ensure lower < upper
+    const normalizedLower = Math.floor(Math.min(lowerNum, upperNum));
+    const normalizedUpper = Math.ceil(Math.max(lowerNum, upperNum));
+    const effectiveRange = Math.max(1, normalizedUpper - normalizedLower);
+
+    const safeBucketCount = Number.isFinite(bucketCountNum) && bucketCountNum > 0 ? bucketCountNum : 25;
+    const rawBucketSize = effectiveRange / safeBucketCount;
+    const bucketSize = Math.max(spacingNum, Math.ceil(rawBucketSize / spacingNum) * spacingNum);
 
     const buckets: BucketData[] = [];
     
     // Generate buckets across the range
-    for (let currentTick = tickLower; currentTick < tickUpper; currentTick += bucketSize) {
+    for (let currentTick = normalizedLower; currentTick < normalizedUpper; currentTick += bucketSize) {
       const bucketTickLower = currentTick;
-      const bucketTickUpper = Math.min(currentTick + bucketSize, tickUpper);
+      const bucketTickUpper = Math.min(currentTick + bucketSize, normalizedUpper);
       const midTick = Math.floor((bucketTickLower + bucketTickUpper) / 2);
       
       // Calculate liquidity for this bucket by summing overlapping positions

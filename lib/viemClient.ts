@@ -5,10 +5,10 @@ import { baseSepolia } from './wagmiConfig';
 // Multiple RPC endpoints for better reliability
 const RPC_URLS = [
   process.env.NEXT_PUBLIC_RPC_URL || process.env.RPC_URL,
-  "https://base-sepolia.drpc.org",
+  // Prefer the official endpoint first
   "https://sepolia.base.org",
-  "https://base-sepolia.publicnode.com",
-  "https://1rpc.io/base-sepolia"
+  // Keep one reliable fallback
+  "https://base-sepolia.drpc.org",
 ].filter(Boolean) as string[];
 
 if (RPC_URLS.length === 0) {
@@ -17,10 +17,10 @@ if (RPC_URLS.length === 0) {
 
 // Create a fallback transport with multiple RPC endpoints
 const transport = fallback(
-  RPC_URLS.map(url => http(url, { 
-    timeout: 10000, // 10 second timeout
-    retryCount: 2,  // Retry up to 2 times
-    retryDelay: 1000 // Wait 1 second between retries
+  RPC_URLS.map(url => http(url, {
+    timeout: 12000, // 12s per endpoint
+    retryCount: 1,  // minimal retries to avoid long cascades
+    retryDelay: 800  // short delay
   }))
 );
 

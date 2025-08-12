@@ -1942,10 +1942,7 @@ export function AddLiquidityForm({
         <>
           {/* Amount Input Step */}
             <>
-              {/* Header */}
-              <div className="flex items-center mb-4">
-                <span className="text-lg font-medium">Add Liquidity</span>
-              </div>
+            {/* Header removed; now provided by parent container */}
               
               {/* Input for Token 0 */}
               <div className="space-y-2">
@@ -1967,7 +1964,7 @@ export function AddLiquidityForm({
                     </Button>
                   </div>
                 </div>
-                <div className={cn("rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted", { "outline outline-1 outline-muted": isAmount0Focused })}>
+                <div className={cn("rounded-lg bg-muted/30 p-4", { "outline outline-1 outline-muted": isAmount0Focused })}>
                   <div className="flex items-center gap-2">
                     <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
                       <Image src={getTokenIcon(token0Symbol)} alt={token0Symbol} width={20} height={20} className="rounded-full"/>
@@ -2024,7 +2021,7 @@ export function AddLiquidityForm({
                     </Button>
                   </div>
                 </div>
-                <div className={cn("rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted", { "outline outline-1 outline-muted": isAmount1Focused })}>
+                <div className={cn("rounded-lg bg-muted/30 p-4", { "outline outline-1 outline-muted": isAmount1Focused })}>
                   <div className="flex items-center gap-2">
                     <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
                       <Image src={getTokenIcon(token1Symbol)} alt={token1Symbol} width={20} height={20} className="rounded-full"/>
@@ -2180,7 +2177,7 @@ export function AddLiquidityForm({
               {/* Range Preview Chart with Interactive Controls */}
               {step === 'input' ? (
                 <div 
-                  className="p-3 border border-dashed rounded-md bg-muted/10 mb-4 hover:bg-muted/20 transition-colors"
+                  className="p-3 border border-dashed rounded-md bg-muted/10 mb-4"
                 >
                   {isPoolStateLoading || !isConnected ? (
                     <div className="w-full h-[80px] relative overflow-hidden flex flex-col items-center justify-center bg-muted/50 rounded-md"

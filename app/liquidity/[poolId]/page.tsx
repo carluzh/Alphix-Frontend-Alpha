@@ -2,7 +2,7 @@
 
 import { AppLayout } from "@/components/app-layout";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { ArrowRightLeftIcon, PlusIcon, MinusIcon, ArrowLeftIcon, RefreshCwIcon, ChevronLeftIcon, Trash2Icon } from "lucide-react";
+import { ArrowRightLeftIcon, PlusIcon, MinusIcon, ArrowLeftIcon, RefreshCwIcon, ChevronLeftIcon, Trash2Icon, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -64,7 +64,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
-import { EllipsisVerticalIcon, CopyIcon, ChevronDownIcon, MoreHorizontal, ChevronsLeftRight, ChevronsRight, ChevronsLeft } from "lucide-react";
+import { EllipsisVerticalIcon, CopyIcon, ChevronDownIcon, EllipsisVertical, ChevronsLeftRight, ChevronsRight, ChevronsLeft } from "lucide-react";
 import { shortenAddress } from "@/lib/utils";
 import {
   DropdownMenu,
@@ -1606,7 +1606,7 @@ export default function PoolDetailPage() {
       <div className="flex flex-1 flex-col">
         <div className="flex flex-1 flex-col p-3 sm:p-6 sm:px-10">
           {/* Back button and header */}
-          <div className="mb-6">
+          <div className="mt-3 mb-6 sm:mt-0">
             {/* Desktop back button */}
             <Button 
               variant="ghost" 
@@ -1617,7 +1617,7 @@ export default function PoolDetailPage() {
             </Button>
             
             <div className="flex items-center justify-between">
-              <div className="flex items-center group">
+              <div className="flex items-center group sm:mb-0 mb-0">
                 {/* Mobile back button - positioned to the left of logo icons */}
                 <Button 
                   variant="ghost" 
@@ -1727,165 +1727,198 @@ export default function PoolDetailPage() {
               <div className="flex flex-col sm:grid sm:grid-cols-2 xl:grid-cols-2 min-[1500px]:grid-cols-4 gap-3 sm:gap-6 flex-shrink-0 lg:max-w-none">
                 {/* APY and Total Liquidity in columns on mobile */}
                 <div className="flex gap-3 sm:hidden w-full">
-                  <div className="rounded-lg bg-muted/30 p-3 hover:outline hover:outline-1 hover:outline-muted transition-colors flex-1 min-w-0">
-                    <div className="text-xs text-muted-foreground mb-1">APY</div>
-                    <div className="text-sm font-medium truncate">{currentPoolData.apr}</div>
-                  </div>
-                  <div className="rounded-lg bg-muted/30 p-3 hover:outline hover:outline-1 hover:outline-muted transition-colors flex-1 min-w-0 cursor-pointer" onClick={cycleToggleMetric}>
-                    <div className="text-xs text-muted-foreground mb-1">
-                      <div className="flex items-center gap-1">
-                        <span className="truncate flex-1 min-w-0 text-xs">
-                          {toggleMetric === 'liquidity' && 'TVL'}
-                          {toggleMetric === 'volume' && 'Volume (24h)'}
-                          {toggleMetric === 'fees' && 'Fees (24h)'}
-                        </span>
-                        <div className="p-0.5 hover:bg-muted/50 rounded transition-colors flex-shrink-0">
-                          <ArrowRightLeftIcon className="h-3 w-3" />
-                        </div>
-                      </div>
+                  {/* APY */}
+                  <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 flex-1 min-w-0">
+                    <div className="flex items-center justify-between px-4 h-9">
+                      <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">APY</h2>
                     </div>
-                    <div className="text-sm font-medium truncate">
-                      {toggleMetric === 'liquidity' && currentPoolData.liquidity}
-                      {toggleMetric === 'volume' && currentPoolData.volume24h}
-                      {toggleMetric === 'fees' && currentPoolData.fees24h}
+                    <div className="px-4 py-1">
+                      <div className="text-lg font-medium truncate">{currentPoolData.apr}</div>
+                    </div>
+                  </div>
+                  {/* Toggle card (TVL/Volume/Fees) */}
+                  <div
+                    className="rounded-lg bg-muted/30 border border-sidebar-border/60 flex-1 min-w-0 cursor-pointer group"
+                    onClick={cycleToggleMetric}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        cycleToggleMetric();
+                      }
+                    }}
+                  >
+                    <div className="flex items-center justify-between px-4 h-9">
+                      <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold truncate">
+                        {toggleMetric === 'liquidity' && 'TOTAL LIQUIDITY'}
+                        {toggleMetric === 'volume' && 'VOLUME (24H)'}
+                        {toggleMetric === 'fees' && 'FEES (24H)'}
+                      </h2>
+                      <button
+                        className="ml-2 p-1 rounded transition-colors hover:bg-muted/50 group-hover:bg-muted/50"
+                        aria-label="Cycle metric"
+                      >
+                        <ArrowRightLeftIcon className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                    <div className="px-4 py-1">
+                      <div className="text-lg font-medium truncate">
+                        {toggleMetric === 'liquidity' && currentPoolData.liquidity}
+                        {toggleMetric === 'volume' && currentPoolData.volume24h}
+                        {toggleMetric === 'fees' && currentPoolData.fees24h}
+                      </div>
                     </div>
                   </div>
                 </div>
                 
                 {/* Desktop APY */}
-                <div className="rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors hidden md:block">
-                  <div className="text-sm text-muted-foreground mb-1">APY</div>
-                  <div className="text-lg font-medium">{currentPoolData.apr}</div>
+                <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 hidden md:block">
+                  <div className="flex items-center justify-between px-4 py-2">
+                    <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">APY</h2>
+                  </div>
+                  <div className="px-4 py-1">
+                    <div className="text-lg font-medium">{currentPoolData.apr}</div>
+                  </div>
                 </div>
                 
                 {/* Desktop Total Liquidity */}
-                <div className="rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors hidden md:block">
-                  <div className="text-sm text-muted-foreground mb-1">
-                    {windowWidth < 1500 ? (
-                      <div className="flex items-center justify-between">
-                        <span>
-                          {toggleMetric === 'liquidity' && 'Total Liquidity'}
-                          {toggleMetric === 'volume' && 'Volume (24h)'}
-                          {toggleMetric === 'fees' && 'Fees (24h)'}
-                        </span>
-                        <button
-                          onClick={cycleToggleMetric}
-                          className="ml-2 p-1 hover:bg-muted/50 rounded transition-colors"
-                        >
-                          <ArrowRightLeftIcon className="h-3 w-3" />
-                        </button>
-                      </div>
-                    ) : (
-                      'Total Liquidity'
+                <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 hidden md:block">
+                  <div className="flex items-center justify-between px-4 py-2">
+                    <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">
+                      {windowWidth < 1500
+                        ? (toggleMetric === 'liquidity' ? 'TOTAL LIQUIDITY' : toggleMetric === 'volume' ? 'VOLUME (24H)' : 'FEES (24H)')
+                        : 'TOTAL LIQUIDITY'}
+                    </h2>
+                    {windowWidth < 1500 && (
+                      <button
+                        onClick={cycleToggleMetric}
+                        className="ml-2 p-1 hover:bg-muted/50 rounded transition-colors"
+                        aria-label="Cycle metric"
+                      >
+                        <ArrowRightLeftIcon className="h-3.5 w-3.5" />
+                      </button>
                     )}
                   </div>
-                  <div className="text-lg font-medium">
-                    {windowWidth < 1500 ? (
-                      <>
-                        {toggleMetric === 'liquidity' && currentPoolData.liquidity}
-                        {toggleMetric === 'volume' && currentPoolData.volume24h}
-                        {toggleMetric === 'fees' && currentPoolData.fees24h}
-                      </>
-                    ) : (
-                      currentPoolData.liquidity
-                    )}
+                  <div className="px-4 py-1">
+                    <div className="text-lg font-medium">
+                      {windowWidth < 1500 ? (
+                        <>
+                          {toggleMetric === 'liquidity' && currentPoolData.liquidity}
+                          {toggleMetric === 'volume' && currentPoolData.volume24h}
+                          {toggleMetric === 'fees' && currentPoolData.fees24h}
+                        </>
+                      ) : (
+                        currentPoolData.liquidity
+                      )}
+                    </div>
                   </div>
                 </div>
                 
-                <div className="rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors hidden min-[1500px]:block">
-                  <div className="text-sm text-muted-foreground mb-1">Volume (24h)</div>
-                  <div className="text-lg font-medium">{currentPoolData.volume24h}</div>
+                <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 hidden min-[1500px]:block">
+                  <div className="flex items-center justify-between px-4 py-2">
+                    <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">VOLUME (24H)</h2>
+                  </div>
+                  <div className="px-4 py-1">
+                    <div className="text-lg font-medium">{currentPoolData.volume24h}</div>
+                  </div>
                 </div>
-                <div className="rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors hidden min-[1500px]:block">
-                  <div className="text-sm text-muted-foreground mb-1">Fees (24h)</div>
-                  <div className="text-lg font-medium">{currentPoolData.fees24h}</div>
+                <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 hidden min-[1500px]:block">
+                  <div className="flex items-center justify-between px-4 py-2">
+                    <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">FEES (24H)</h2>
+                  </div>
+                  <div className="px-4 py-1">
+                    <div className="text-lg font-medium">{currentPoolData.fees24h}</div>
+                  </div>
                 </div>
               </div>
               
               {/* Pool Overview Section (formerly Tab) */}
               <div className="flex-1 min-h-0 lg:max-w-none">
-                <div className="rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors flex flex-col h-full min-h-[300px] sm:min-h-[350px]">
-                  <div className="mb-4 flex-shrink-0">
-                    <div className="flex justify-between items-center">
-                      <h3 className="text-lg font-medium">Pool Activity</h3>
-                      {windowWidth < 1500 ? (
-                        // Dropdown for smaller screens
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              variant="outline"
-                              className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium border border-sidebar-border"
-                            >
-                              {activeChart === 'volumeTvlRatio' && 'Dynamic Fee'}
-                              {activeChart === 'volume' && 'Volume'}
-                              {activeChart === 'tvl' && 'TVL'}
-                              <ChevronDownIcon className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent 
-                            align="end" 
-                            className="w-40 rounded-lg border-sidebar-border"
-                            style={{ backgroundColor: '#0f0f0f' }}
+                <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 transition-colors flex flex-col h-full min-h-[300px] sm:min-h-[350px] max-h-[420px] sm:max-h-none">
+                  <div className="flex items-center justify-between px-4 py-2 border-b border-sidebar-border/60">
+                    <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">POOL ACTIVITY</h2>
+                    {windowWidth < 1500 ? (
+                      // Dropdown for smaller screens
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            className="flex items-center gap-2 px-2.5 py-1 text-xs font-medium rounded-md bg-transparent text-muted-foreground hover:bg-muted/30 border border-border"
                           >
-                            <DropdownMenuItem
-                              onClick={() => setActiveChart('volumeTvlRatio')}
-                              className={`cursor-pointer ${activeChart === 'volumeTvlRatio' ? 'bg-muted' : ''}`}
-                            >
-                              Dynamic Fee
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() => setActiveChart('volume')}
-                              className={`cursor-pointer ${activeChart === 'volume' ? 'bg-muted' : ''}`}
-                            >
-                              Volume
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() => setActiveChart('tvl')}
-                              className={`cursor-pointer ${activeChart === 'tvl' ? 'bg-muted' : ''}`}
-                            >
-                              TVL
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      ) : (
-                        // Buttons for larger screens
-                        <div className="flex items-center space-x-2">
-                          <button 
-                            className={`px-3 py-1.5 text-sm font-medium rounded-md border border-sidebar-border transition-all duration-200 ${
-                              activeChart === 'volumeTvlRatio' 
-                                ? 'bg-muted hover:bg-muted/80' 
-                                : 'bg-transparent hover:bg-muted/30'
-                            }`}
+                            {activeChart === 'volumeTvlRatio' && 'Dynamic Fee'}
+                            {activeChart === 'volume' && 'Volume'}
+                            {activeChart === 'tvl' && 'TVL'}
+                            <ChevronDownIcon className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent 
+                          align="end" 
+                          className="w-40 rounded-lg border border-sidebar-border p-1"
+                          sideOffset={8}
+                          style={{ backgroundColor: '#0f0f0f' }}
+                        >
+                          <DropdownMenuItem
                             onClick={() => setActiveChart('volumeTvlRatio')}
+                            className={`flex items-center justify-between cursor-pointer rounded-md text-xs ${activeChart === 'volumeTvlRatio' ? 'bg-muted text-foreground' : ''}`}
                           >
-                            Dynamic Fee
-                          </button>
-                          <div className="w-px h-4 bg-border"></div>
-                          <button 
-                            className={`px-3 py-1.5 text-sm font-medium rounded-md border border-sidebar-border transition-all duration-200 ${
-                              activeChart === 'volume' 
-                                ? 'bg-muted hover:bg-muted/80' 
-                                : 'bg-transparent hover:bg-muted/30'
-                            }`}
+                            <span>Dynamic Fee</span>
+                            {activeChart === 'volumeTvlRatio' && <Check className="h-3.5 w-3.5" />}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
                             onClick={() => setActiveChart('volume')}
+                            className={`flex items-center justify-between cursor-pointer rounded-md text-xs ${activeChart === 'volume' ? 'bg-muted text-foreground' : ''}`}
                           >
-                            Volume
-                          </button>
-                          <button 
-                            className={`px-3 py-1.5 text-sm font-medium rounded-md border border-sidebar-border transition-all duration-200 ${
-                              activeChart === 'tvl' 
-                                ? 'bg-muted hover:bg-muted/80' 
-                                : 'bg-transparent hover:bg-muted/30'
-                            }`}
+                            <span>Volume</span>
+                            {activeChart === 'volume' && <Check className="h-3.5 w-3.5" />}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
                             onClick={() => setActiveChart('tvl')}
+                            className={`flex items-center justify-between cursor-pointer rounded-md text-xs ${activeChart === 'tvl' ? 'bg-muted text-foreground' : ''}`}
                           >
-                            TVL
-                          </button>
-                        </div>
-                      )}
-                    </div>
+                            <span>TVL</span>
+                            {activeChart === 'tvl' && <Check className="h-3.5 w-3.5" />}
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    ) : (
+                      // Buttons for larger screens - mimic category tabs styling
+                      <div className="flex items-center gap-2">
+                        <button 
+                          className={`px-2 py-1 text-xs rounded-md transition-colors ${
+                            activeChart === 'volumeTvlRatio' 
+                              ? 'bg-muted text-foreground' 
+                              : 'bg-transparent text-muted-foreground hover:bg-muted/30'
+                          }`}
+                          onClick={() => setActiveChart('volumeTvlRatio')}
+                        >
+                          Dynamic Fee
+                        </button>
+                        <div className="w-px h-4 bg-border mx-1" />
+                        <button 
+                          className={`px-2 py-1 text-xs rounded-md transition-colors ${
+                            activeChart === 'volume' 
+                              ? 'bg-muted text-foreground' 
+                              : 'bg-transparent text-muted-foreground hover:bg-muted/30'
+                          }`}
+                          onClick={() => setActiveChart('volume')}
+                        >
+                          Volume
+                        </button>
+                        <button 
+                          className={`px-2 py-1 text-xs rounded-md transition-colors ${
+                            activeChart === 'tvl' 
+                              ? 'bg-muted text-foreground' 
+                              : 'bg-transparent text-muted-foreground hover:bg-muted/30'
+                          }`}
+                          onClick={() => setActiveChart('tvl')}
+                        >
+                          TVL
+                        </button>
+                      </div>
+                    )}
                   </div>
-                  <div className="flex-1 min-h-0">
+                  <div className="p-0 flex-1 min-h-0">
                     <ChartContainer
                       config={chartConfig}
                       className="aspect-auto w-full h-full relative"
@@ -1934,8 +1967,8 @@ export default function PoolDetailPage() {
                                   data={processChartDataForScreenSize(apiChartData)}
                                   margin={{
                                     top: 5,
-                                    right: 5,
-                                    left: 5,
+                                    right: 20,
+                                    left: 16,
                                     bottom: 5,
                                   }}
                                 >
@@ -1945,6 +1978,7 @@ export default function PoolDetailPage() {
                                     tickLine={false}
                                     axisLine={false}
                                     tickMargin={10}
+                                    padding={{ left: 16, right: 20 }}
                                     tickFormatter={(value) => {
                                       const date = new Date(value);
                                       return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
@@ -2076,10 +2110,10 @@ export default function PoolDetailPage() {
                               accessibilityLayer
                               data={processChartDataForScreenSize(apiChartData)}
                               margin={{
-                                left: 5,
-                                right: 5,
+                                left: 16,
+                                right: 20,
                                 top: 20, 
-                                bottom: 0
+                                bottom: 3
                               }}
                             >
                               <CartesianGrid vertical={false} />
@@ -2088,6 +2122,7 @@ export default function PoolDetailPage() {
                                 tickLine={false}
                                 axisLine={false}
                                 tickMargin={8}
+                                 padding={{ left: 16, right: 20 }}
                                 minTickGap={32}
                                 tickFormatter={(value) => {
                                   const date = new Date(value);
@@ -2152,155 +2187,196 @@ export default function PoolDetailPage() {
                         ) : (
                           // Desktop chart (original implementation)
                           activeChart === 'volumeTvlRatio' ? (
-                            // LineChart for dynamic fee view (like dynamic-fee-chart.tsx)
-                            <LineChart
-                              data={processChartDataForScreenSize(apiChartData)}
-                              margin={{
-                                top: 5,
-                                right: 20,
-                                left: 5,
-                                bottom: 5,
-                              }}
-                            >
-                              <CartesianGrid vertical={false} strokeDasharray="3 3" />
-                              <XAxis
-                                dataKey="date"
-                                tickLine={false}
-                                axisLine={false}
-                                tickMargin={10}
-                                tickFormatter={(value) => {
-                                  const date = new Date(value);
-                                  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-                                }}
-                                tick={{ fontSize: '0.75rem' }}
-                              />
-                              <YAxis
-                                yAxisId="left"
-                                tickLine={false}
-                                axisLine={false}
-                                tickMargin={8}
-                                tickFormatter={(value) => value.toFixed(2)}
-                                domain={['auto', 'auto']}
-                                stroke="hsl(var(--muted-foreground))"
-                                tick={{ fontSize: '0.75rem' }}
-                              />
-                              <YAxis
-                                yAxisId="right"
-                                orientation="right"
-                                tickLine={false}
-                                axisLine={false}
-                                tickMargin={8}
-                                tickFormatter={(value) => `${value.toFixed(2)}%`}
-                                domain={['auto', 'auto']}
-                                stroke="hsl(var(--muted-foreground))"
-                                tick={{ fontSize: '0.75rem' }}
-                              />
-                              <ChartTooltip
-                                cursor={true}
-                                content={({ active, payload, label }) => {
-                                  if (!active || !payload || !payload.length) return null;
-                                  
-                                  // Get the data point from the first payload item
-                                  const dataPoint = payload[0]?.payload;
-                                  if (!dataPoint) return null;
+                            // LineChart for dynamic fee view (desktop) with uniform margins and padded domains
+                            (() => {
+                              const processed = processChartDataForScreenSize(apiChartData);
+                              const ratios = processed
+                                .flatMap(d => [d.volumeTvlRatio, d.emaRatio])
+                                .filter(v => typeof v === 'number' && isFinite(v));
+                              const fees = processed
+                                .map(d => d.dynamicFee)
+                                .filter(v => typeof v === 'number' && isFinite(v));
 
-                                  return (
-                                    <div className="grid min-w-[8rem] items-start gap-1.5 rounded-lg border border-sidebar-border bg-[#0f0f0f] px-2.5 py-1.5 text-xs shadow-xl">
-                                      <div className="font-medium">
-                                        {new Date(dataPoint.date).toLocaleDateString("en-US", {
-                                          month: "long",
-                                          day: "numeric"
-                                        })}
-                                      </div>
-                                      <div className="grid gap-1.5">
-                                        {/* Vol/TVL Ratio with line indicator */}
-                                        <div className="flex w-full flex-wrap items-stretch gap-2">
-                                          <div
-                                            className="shrink-0 rounded-[2px] w-[2px] h-4"
-                                            style={{
-                                              backgroundColor: 'hsl(var(--chart-3))',
-                                            }}
-                                          />
-                                          <div className="flex flex-1 justify-between leading-none items-center">
-                                            <span className="text-muted-foreground">Vol/TVL</span>
-                                            <span className="font-mono font-medium tabular-nums text-foreground">
-                                              {typeof dataPoint.volumeTvlRatio === 'number' ? dataPoint.volumeTvlRatio.toFixed(3) : 'N/A'}
-                                            </span>
+                              const ratioMin = ratios.length ? Math.min(...ratios) : 0;
+                              const ratioMax = ratios.length ? Math.max(...ratios) : 1;
+                              const feeMin = fees.length ? Math.min(...fees) : 0;
+                              const feeMax = fees.length ? Math.max(...fees) : 1;
+
+                              const ratioRange = ratioMax - ratioMin || 1;
+                              const feeRange = feeMax - feeMin || 1;
+
+                              const paddingFactor = 0.1; // 10% padding top/bottom to avoid flush edges
+                              const ratioDomain: [number, number] = [
+                                Math.max(0, ratioMin - ratioRange * paddingFactor),
+                                ratioMax + ratioRange * paddingFactor,
+                              ];
+                              const feeDomain: [number, number] = [
+                                feeMin - feeRange * paddingFactor,
+                                feeMax + feeRange * paddingFactor,
+                              ];
+
+                              // Generate evenly spaced ticks for left Y axis to ensure grid lines at each label
+                              const leftTickCount = 6;
+                              const leftTicks = Array.from({ length: leftTickCount }, (_, i) => {
+                                const t = i / (leftTickCount - 1);
+                                return ratioDomain[0] + t * (ratioDomain[1] - ratioDomain[0]);
+                              });
+
+                              // Dynamically estimate a shared axis width so labels never overlap the lines
+                              const estimateWidth = (label: string, basePadding: number, charWidth: number) => {
+                                return basePadding + Math.max(0, label.length) * charWidth;
+                              };
+                              const leftLabelA = (ratioDomain[0]).toFixed(2);
+                              const leftLabelB = (ratioDomain[1]).toFixed(2);
+                              const rightLabelA = `${feeDomain[0].toFixed(2)}%`;
+                              const rightLabelB = `${feeDomain[1].toFixed(2)}%`;
+                              const maxChars = Math.max(
+                                leftLabelA.length,
+                                leftLabelB.length,
+                                rightLabelA.length,
+                                rightLabelB.length,
+                              );
+                              const axisWidth = Math.max(32, estimateWidth(''.padStart(maxChars, '0'), 12, 7));
+
+                              return (
+                                <LineChart
+                                  data={processed}
+                                  margin={{ top: 24, right: 16, bottom: 24, left: 16 }}
+                                >
+                                  <CartesianGrid horizontal vertical={false} strokeDasharray="3 3" />
+                                  <XAxis
+                                    dataKey="date"
+                                    tickLine={false}
+                                    axisLine={false}
+                                    height={18}
+                                    tickMargin={2}
+                                     padding={{ left: 16, right: 16 }}
+                                    tickFormatter={(value) => {
+                                      const date = new Date(value);
+                                      return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+                                    }}
+                                    tick={{ fontSize: '0.75rem', dy: 6 }}
+                                  />
+                                  <YAxis
+                                    yAxisId="left"
+                                    tickLine={false}
+                                    axisLine={false}
+                                    tickMargin={0}
+                                    width={32}
+                                    tickCount={leftTickCount}
+                                    ticks={leftTicks}
+                                    tickFormatter={(value) => value.toFixed(2)}
+                                    domain={ratioDomain}
+                                    stroke="hsl(var(--muted-foreground))"
+                                    tick={{ fontSize: '0.75rem' }}
+                                  />
+                                  <YAxis
+                                    yAxisId="right"
+                                    orientation="right"
+                                    tickLine={false}
+                                    axisLine={false}
+                                    tickMargin={0}
+                                    width={axisWidth}
+                                    tickFormatter={(value) => `${value.toFixed(2)}%`}
+                                    domain={feeDomain}
+                                    stroke="hsl(var(--muted-foreground))"
+                                    tick={{ fontSize: '0.75rem', textAnchor: 'start' }}
+                                  />
+                                  <ChartTooltip
+                                    cursor={true}
+                                    content={({ active, payload }) => {
+                                      if (!active || !payload || !payload.length) return null;
+                                      const dataPoint = payload[0]?.payload;
+                                      if (!dataPoint) return null;
+
+                                      return (
+                                        <div className="grid min-w-[8rem] items-start gap-1.5 rounded-lg border border-sidebar-border bg-[#0f0f0f] px-2.5 py-1.5 text-xs shadow-xl">
+                                          <div className="font-medium">
+                                            {new Date(dataPoint.date).toLocaleDateString("en-US", {
+                                              month: "long",
+                                              day: "numeric",
+                                            })}
+                                          </div>
+                                          <div className="grid gap-1.5">
+                                            <div className="flex w-full flex-wrap items-stretch gap-2">
+                                              <div
+                                                className="shrink-0 rounded-[2px] w-[2px] h-4"
+                                                style={{ backgroundColor: 'hsl(var(--chart-3))' }}
+                                              />
+                                              <div className="flex flex-1 justify-between leading-none items-center">
+                                                <span className="text-muted-foreground">Vol/TVL</span>
+                                                <span className="font-mono font-medium tabular-nums text-foreground">
+                                                  {typeof dataPoint.volumeTvlRatio === 'number' ? dataPoint.volumeTvlRatio.toFixed(3) : 'N/A'}
+                                                </span>
+                                              </div>
+                                            </div>
+                                            <div className="flex w-full flex-wrap items-stretch gap-2">
+                                              <div
+                                                className="shrink-0 rounded-[2px] w-[2px] h-4"
+                                                style={{
+                                                  backgroundImage:
+                                                    'repeating-linear-gradient(to bottom, hsl(var(--chart-2)) 0 2px, transparent 2px 4px)',
+                                                }}
+                                              />
+                                              <div className="flex flex-1 justify-between leading-none items-center">
+                                                <span className="text-muted-foreground">EMA</span>
+                                                <span className="font-mono font-medium tabular-nums text-foreground">
+                                                  {typeof dataPoint.emaRatio === 'number' ? dataPoint.emaRatio.toFixed(3) : 'N/A'}
+                                                </span>
+                                              </div>
+                                            </div>
+                                            <div className="border-t border-dashed border-border my-1"></div>
+                                            <div className="flex w-full flex-wrap items-stretch gap-2">
+                                              <div
+                                                className="shrink-0 rounded-[2px] w-[2px] h-4"
+                                                style={{ backgroundColor: '#e85102' }}
+                                              />
+                                              <div className="flex flex-1 justify-between leading-none items-center">
+                                                <span className="text-muted-foreground">Fee</span>
+                                                <span className="font-mono font-medium tabular-nums text-foreground">
+                                                  {typeof dataPoint.dynamicFee === 'number' ? `${dataPoint.dynamicFee.toFixed(2)}%` : 'N/A'}
+                                                </span>
+                                              </div>
+                                            </div>
                                           </div>
                                         </div>
-
-                                        {/* EMA with line indicator */}
-                                        <div className="flex w-full flex-wrap items-stretch gap-2">
-                                          <div
-                                            className="shrink-0 rounded-[2px] w-[2px] h-4"
-                                            style={{
-                                              backgroundImage:
-                                                'repeating-linear-gradient(to bottom, hsl(var(--chart-2)) 0 2px, transparent 2px 4px)',
-                                            }}
-                                          />
-                                          <div className="flex flex-1 justify-between leading-none items-center">
-                                            <span className="text-muted-foreground">EMA</span>
-                                            <span className="font-mono font-medium tabular-nums text-foreground">
-                                              {typeof dataPoint.emaRatio === 'number' ? dataPoint.emaRatio.toFixed(3) : 'N/A'}
-                                            </span>
-                                          </div>
-                                        </div>
-
-                                        {/* Dashed separator */}
-                                        <div className="border-t border-dashed border-border my-1"></div>
-
-                                        {/* Dynamic Fee with rounded line indicator */}
-                                        <div className="flex w-full flex-wrap items-stretch gap-2">
-                                          <div
-                                            className="shrink-0 rounded-[2px] w-[2px] h-4"
-                                            style={{
-                                              backgroundColor: '#e85102',
-                                            }}
-                                          />
-                                          <div className="flex flex-1 justify-between leading-none items-center">
-                                            <span className="text-muted-foreground">Fee</span>
-                                            <span className="font-mono font-medium tabular-nums text-foreground">
-                                              {typeof dataPoint.dynamicFee === 'number' ? `${dataPoint.dynamicFee.toFixed(2)}%` : 'N/A'}
-                                            </span>
-                                          </div>
-                                        </div>
-                                      </div>
-                                    </div>
-                                  );
-                                }}
-                              />
-                              <Line
-                                yAxisId="left"
-                                type="monotone"
-                                dataKey="volumeTvlRatio"
-                                strokeWidth={2}
-                                dot={false}
-                                stroke={chartConfig.volumeTvlRatio.color}
-                                name={chartConfig.volumeTvlRatio.label}
-                                isAnimationActive={false}
-                              />
-                              <Line
-                                yAxisId="left"
-                                type="monotone"
-                                dataKey="emaRatio"
-                                strokeWidth={2}
-                                dot={false}
-                                stroke={chartConfig.emaRatio.color}
-                                name={chartConfig.emaRatio.label}
-                                strokeDasharray="5 5"
-                                isAnimationActive={false}
-                              />
-                              <Line
-                                yAxisId="right"
-                                type="stepAfter"
-                                dataKey="dynamicFee"
-                                strokeWidth={2}
-                                dot={false}
-                                stroke={chartConfig.dynamicFee.color}
-                                name={chartConfig.dynamicFee.label}
-                                isAnimationActive={false}
-                              />
-                            </LineChart>
+                                      );
+                                    }}
+                                  />
+                                  <Line
+                                    yAxisId="left"
+                                    type="monotone"
+                                    dataKey="volumeTvlRatio"
+                                    strokeWidth={2}
+                                    dot={false}
+                                    stroke={chartConfig.volumeTvlRatio.color}
+                                    name={chartConfig.volumeTvlRatio.label}
+                                    isAnimationActive={false}
+                                  />
+                                  <Line
+                                    yAxisId="left"
+                                    type="monotone"
+                                    dataKey="emaRatio"
+                                    strokeWidth={2}
+                                    dot={false}
+                                    stroke={chartConfig.emaRatio.color}
+                                    name={chartConfig.emaRatio.label}
+                                    strokeDasharray="5 5"
+                                    isAnimationActive={false}
+                                  />
+                                  <Line
+                                    yAxisId="right"
+                                    type="stepAfter"
+                                    dataKey="dynamicFee"
+                                    strokeWidth={2}
+                                    dot={false}
+                                    stroke={chartConfig.dynamicFee.color}
+                                    name={chartConfig.dynamicFee.label}
+                                    isAnimationActive={false}
+                                  />
+                                </LineChart>
+                              );
+                            })()
                           ) : (
                             // BarChart for volume and TVL views
                             <BarChart
@@ -2310,7 +2386,7 @@ export default function PoolDetailPage() {
                                 left: 25,
                                 right: 25,
                                 top: 20, 
-                                bottom: 0
+                                bottom: 10
                               }}
                             >
                               <CartesianGrid vertical={false} />
@@ -2319,6 +2395,7 @@ export default function PoolDetailPage() {
                                 tickLine={false}
                                 axisLine={false}
                                 tickMargin={8}
+                                padding={{ left: 16, right: 16 }}
                                 minTickGap={32}
                                 tickFormatter={(value) => {
                                   const date = new Date(value);
@@ -2435,19 +2512,27 @@ export default function PoolDetailPage() {
               </div> */}
 
               {poolId && currentPoolData && ( // Always render form (removed activeTab condition)
-                <div ref={addLiquidityFormRef} className="w-full rounded-lg bg-muted/30 p-3 sm:p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors">
-                  <AddLiquidityFormMemo
-                    selectedPoolId={poolId}
-                    poolApr={currentPoolData?.apr}
-                    onLiquidityAdded={() => {
-                      refreshAfterLiquidityAdded();
-                    }}
-                    sdkMinTick={SDK_MIN_TICK}
-                    sdkMaxTick={SDK_MAX_TICK}
-                    defaultTickSpacing={getPoolById(poolId)?.tickSpacing || DEFAULT_TICK_SPACING}
-                    activeTab={'deposit'} // Always pass 'deposit'
-
-                  />
+                <div ref={addLiquidityFormRef} className="w-full rounded-lg bg-muted/30 border border-sidebar-border/60 transition-colors overflow-hidden relative">
+                  {/* Container header to match novel layout */}
+                  <div className="flex items-center justify-between px-4 py-2 border-b border-sidebar-border/60">
+                    <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">ADD LIQUIDITY</h2>
+                  </div>
+                  {/* Content */}
+                  <div className="p-3 sm:p-4">
+                    <AddLiquidityFormMemo
+                      selectedPoolId={poolId}
+                      poolApr={currentPoolData?.apr}
+                      onLiquidityAdded={() => {
+                        refreshAfterLiquidityAdded();
+                      }}
+                      sdkMinTick={SDK_MIN_TICK}
+                      sdkMaxTick={SDK_MAX_TICK}
+                      defaultTickSpacing={getPoolById(poolId)?.tickSpacing || DEFAULT_TICK_SPACING}
+                      activeTab={'deposit'} // Always pass 'deposit'
+                    />
+                  </div>
+                  {/* Right vertical divider to align with novel layout sections */}
+                  <div className="hidden lg:block absolute top-0 right-0 bottom-0 w-0.5 bg-white/5" />
                 </div>
               )}
               
@@ -2461,7 +2546,7 @@ export default function PoolDetailPage() {
           </div>
           
           {/* Your Positions Section (Full width below the columns) */}
-          <div className="space-y-3 lg:space-y-4 mt-3 lg:mt-6"> {/* Added margin-top to match spacing between Pool Activity and stats containers */}
+          <div className="space-y-3 lg:space-y-4 mt-6 mb-3 lg:mt-6 lg:mb-0"> {/* Mobile: top margin double bottom; desktop unchanged */}
             {/* Static title - always visible */}
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-medium">Your Positions</h3>
@@ -2469,7 +2554,7 @@ export default function PoolDetailPage() {
             
             {isLoadingPositions ? (
               /* Simple pulsing skeleton container */
-              <div className="rounded-lg bg-muted/30 p-4 h-20 animate-pulse">
+              <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4 h-20 animate-pulse">
               </div>
             ) : userPositions.length > 0 ? (
               <div>
@@ -2522,7 +2607,7 @@ export default function PoolDetailPage() {
                                             return (
                           <div 
                             key={position.positionId}
-                            className="rounded-lg bg-muted/30 p-3 sm:p-4 hover:outline hover:outline-1 hover:outline-muted transition-colors group"
+                            className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-3 sm:p-4 transition-colors group"
                           >
                             {/* Grid layout on non-mobile; stacked on mobile */}
                             <div className="grid gap-3 sm:gap-4 sm:grid-cols-[1fr_auto] sm:items-center">
@@ -2556,14 +2641,14 @@ export default function PoolDetailPage() {
                                   <div className="min-w-0 flex-1">
                                     <HoverCard>
                                       <HoverCardTrigger asChild>
-                                        <div>
+                                        <div className="cursor-default select-none">
                                            <div className="font-medium text-sm">
                                              {position.token0.symbol || 'N/A'} / {position.token1.symbol || 'N/A'}
                                            </div>
                                            <div className="flex items-center gap-1 text-xs text-muted-foreground">
                                             {(() => {
                                               // Determine status icon based on position range
-                                              const StatusIcon = () => {
+                                               const StatusIcon = () => {
                                                 const getIcon = () => {
                                                   if (position.isInRange) {
                                                     return <ChevronsLeftRight className="h-3 w-3 text-green-500" />;
@@ -2601,11 +2686,11 @@ export default function PoolDetailPage() {
                                                   }
                                                 };
 
-                                                return (
-                                                  <div className="cursor-pointer">
-                                                    {getIcon()}
-                                                  </div>
-                                                );
+                                                 return (
+                                                   <div className="cursor-default select-none">
+                                                     {getIcon()}
+                                                   </div>
+                                                 );
                                               };
 
                                               const baseTokenForPriceDisplay = determineBaseTokenForPriceDisplay(
@@ -2632,7 +2717,7 @@ export default function PoolDetailPage() {
                                               return (
                                                 <>
                                                   <StatusIcon />
-                                                  <span className="hover:underline transition-all duration-200 whitespace-nowrap">{lowerPrice} - {upperPrice}</span>
+                                                  <span className="transition-all duration-200 whitespace-nowrap cursor-default select-none">{lowerPrice} - {upperPrice}</span>
                                                 </>
                                               );
                                             })()}
@@ -2717,7 +2802,7 @@ export default function PoolDetailPage() {
                                       <DropdownMenuTrigger asChild>
                                         <Button variant="ghost" className="h-6 w-6 p-0">
                                           <span className="sr-only">Open menu</span>
-                                          <MoreHorizontal className="h-3 w-3" />
+                                          <EllipsisVertical className="h-3 w-3" />
                                         </Button>
                                       </DropdownMenuTrigger>
                                       <DropdownMenuContent align="end">
@@ -2757,7 +2842,7 @@ export default function PoolDetailPage() {
                                   <DropdownMenuTrigger asChild>
                                     <Button variant="ghost" className="h-8 w-8 p-0">
                                       <span className="sr-only">Open menu</span>
-                                      <MoreHorizontal className="h-4 w-4" />
+                                      <EllipsisVertical className="h-4 w-4" />
                                     </Button>
                                   </DropdownMenuTrigger>
                                   <DropdownMenuContent align="end">
@@ -2883,7 +2968,7 @@ export default function PoolDetailPage() {
                       Balance: {formatTokenDisplayAmount(positionToBurn.token0.amount)}
                     </Button>
                   </div>
-                  <div className="rounded-lg bg-muted/30 p-4">
+                  <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4">
                     <div className="flex items-center gap-2">
                       <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
                         <Image 
@@ -2945,7 +3030,7 @@ export default function PoolDetailPage() {
                       Balance: {formatTokenDisplayAmount(positionToBurn.token1.amount)}
                     </Button>
                   </div>
-                  <div className="rounded-lg bg-muted/30 p-4">
+                  <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4">
                     <div className="flex items-center gap-2">
                       <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
                         <Image 
@@ -3108,7 +3193,7 @@ export default function PoolDetailPage() {
                       Balance: {displayToken0Balance} {positionToModify.token0.symbol}
                     </Button>
                   </div>
-                  <div className="rounded-lg bg-muted/30 p-4">
+                  <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4">
                     <div className="flex items-center gap-2">
                       <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
                         <Image 
@@ -3166,7 +3251,7 @@ export default function PoolDetailPage() {
                       Balance: {displayToken1Balance} {positionToModify.token1.symbol}
                     </Button>
                   </div>
-                  <div className="rounded-lg bg-muted/30 p-4">
+                  <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4">
                     <div className="flex items-center gap-2">
                       <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
                         <Image 

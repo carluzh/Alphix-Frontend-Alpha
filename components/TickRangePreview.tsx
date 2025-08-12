@@ -12,6 +12,7 @@ interface TickRangePreviewProps {
   token0Symbol?: string;
   token1Symbol?: string;
   currentPrice?: string | null;
+  bare?: boolean; // when true, no background/rounded styles
 }
 
 interface BucketData {
@@ -21,6 +22,8 @@ interface BucketData {
   liquidityToken0: string;
 }
 
+
+
 export function TickRangePreview({ 
   tickLower, 
   tickUpper, 
@@ -29,64 +32,35 @@ export function TickRangePreview({
   poolId,
   token0Symbol,
   token1Symbol,
-  currentPrice
+  currentPrice,
+  bare
 }: TickRangePreviewProps) {
   const [bucketData, setBucketData] = useState<BucketData[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
   // Calculate the domain for display (always show current price ±5% and position range)
   const xDomain = useMemo(() => {
-    if (!currentTick || !currentPrice) {
-      // Fallback to position range with padding if no current price data
-      const positionRange = tickUpper - tickLower;
-      const padding = positionRange * 0.3; // Add 30% padding on each side
-      const minTick = tickLower - padding;
-      const maxTick = tickUpper + padding;
-      return [minTick, maxTick];
+    // Validate input tick values
+    if (!isFinite(tickLower) || !isFinite(tickUpper) || tickLower >= tickUpper) {
+      console.warn('[TickRangePreview] Invalid tick range:', { tickLower, tickUpper });
+      return [-1000, 1000]; // Fallback range
     }
-
-    // Calculate ±5% range around current price
-    const currentPriceNum = parseFloat(currentPrice);
-    if (isNaN(currentPriceNum) || currentPriceNum <= 0) {
-      // Fallback to position range with padding
-      const positionRange = tickUpper - tickLower;
-      const padding = positionRange * 0.3;
-      const minTick = tickLower - padding;
-      const maxTick = tickUpper + padding;
-      return [minTick, maxTick];
+    
+    // Use a reasonable range around the position regardless of current price/tick
+    const positionRange = Math.abs(tickUpper - tickLower);
+    const maxRange = 5000; // Limit the range to prevent API overload
+    const padding = Math.min(positionRange * 0.5, maxRange * 0.3); // Reasonable padding
+    const minTick = Math.min(tickLower, tickUpper) - padding;
+    const maxTick = Math.max(tickLower, tickUpper) + padding;
+    
+    // Ensure the range isn't too large for the API
+    const finalRange = maxTick - minTick;
+    if (finalRange > maxRange) {
+      const center = (tickLower + tickUpper) / 2;
+      return [center - maxRange/2, center + maxRange/2];
     }
-
-    // Calculate the tick range for ±5% price movement
-    // For a 5% price increase: newPrice = currentPrice * 1.05
-    // For a 5% price decrease: newPrice = currentPrice * 0.95
-    const priceIncrease5Percent = currentPriceNum * 1.05;
-    const priceDecrease5Percent = currentPriceNum * 0.95;
-
-    // Convert price changes to tick changes
-    // Using the formula: tick = currentTick + log(priceRatio) / log(1.0001)
-    const tickForPriceIncrease = currentTick + Math.log(priceIncrease5Percent / currentPriceNum) / Math.log(1.0001);
-    const tickForPriceDecrease = currentTick + Math.log(priceDecrease5Percent / currentPriceNum) / Math.log(1.0001);
-
-    // Calculate the minimum and maximum ticks to show
-    const priceRangeMinTick = Math.min(tickForPriceIncrease, tickForPriceDecrease);
-    const priceRangeMaxTick = Math.max(tickForPriceIncrease, tickForPriceDecrease);
-
-    // Include the position range as well
-    const positionMinTick = Math.min(tickLower, tickUpper);
-    const positionMaxTick = Math.max(tickLower, tickUpper);
-
-    // Combine price range and position range with some padding
-    const combinedMinTick = Math.min(priceRangeMinTick, positionMinTick);
-    const combinedMaxTick = Math.max(priceRangeMaxTick, positionMaxTick);
-
-    // Add padding to ensure we have some margin around the combined range
-    const totalRange = combinedMaxTick - combinedMinTick;
-    const padding = totalRange * 0.1; // Add 10% padding on each side
-
-    const finalMinTick = combinedMinTick - padding;
-    const finalMaxTick = combinedMaxTick + padding;
-
-    return [finalMinTick, finalMaxTick];
+    
+    return [minTick, maxTick];
   }, [tickLower, tickUpper, currentTick, currentPrice]);
 
   // Determine if we need to flip the denomination to show higher prices
@@ -133,7 +107,27 @@ export function TickRangePreview({
   // Fetch real liquidity depth data
   useEffect(() => {
     const fetchBucketData = async () => {
-      if (!poolId) return;
+      if (!poolId || !tickSpacing) {
+        console.log('[TickRangePreview] Missing poolId or tickSpacing:', { poolId, tickSpacing });
+        return;
+      }
+      
+      // Validate xDomain values before making API call
+      const [minTick, maxTick] = xDomain;
+      if (!isFinite(minTick) || !isFinite(maxTick) || minTick >= maxTick) {
+        console.warn('[TickRangePreview] Invalid xDomain values:', xDomain);
+        return;
+      }
+      
+      const requestData = {
+        poolId,
+        tickLower: Math.floor(minTick),
+        tickUpper: Math.ceil(maxTick),
+        tickSpacing: Number(tickSpacing),
+        bucketCount: 25
+      };
+      
+      console.log('[TickRangePreview] API request data:', requestData);
       
       setIsLoading(true);
       try {
@@ -142,13 +136,7 @@ export function TickRangePreview({
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({
-            poolId,
-            tickLower: xDomain[0],
-            tickUpper: xDomain[1],
-            tickSpacing,
-            bucketCount: 25
-          }),
+          body: JSON.stringify(requestData),
         });
 
         if (!response.ok) {
@@ -218,7 +206,7 @@ export function TickRangePreview({
   }
 
   return (
-    <div className="w-full h-full bg-muted/30 rounded-lg overflow-hidden">
+    <div className={bare ? "w-full h-full overflow-hidden" : "w-full h-full bg-muted/30 rounded-lg overflow-hidden"}>
       <ResponsiveContainer width="100%" height="100%">
         <ComposedChart 
           data={chartData}

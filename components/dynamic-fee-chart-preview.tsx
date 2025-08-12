@@ -1,11 +1,10 @@
 "use client"
 
 import { LineChart, Line, ResponsiveContainer, XAxis, YAxis } from "recharts";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import Image from "next/image";
 import { getToken, getPoolByTokens } from "@/lib/pools-config";
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import { ArrowUpRight } from "lucide-react";
 
 interface FeeHistoryPoint {
@@ -206,32 +205,107 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
   // Render different Card structures based on data availability
   if (alwaysShowSkeleton) {
     return (
-      <Card 
-        className="w-full max-w-md shadow-md rounded-lg cursor-pointer hover:shadow-lg transition-shadow bg-muted/30 group"
+      <div
+        className="w-full rounded-lg bg-muted/30 border border-sidebar-border/60 transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow"
         onClick={handleClick}
+        onMouseEnter={(e) => {
+          const arrow = e.currentTarget.querySelector('[data-arrow]') as HTMLElement;
+          if (arrow) arrow.style.color = 'white';
+        }}
+        onMouseLeave={(e) => {
+          const arrow = e.currentTarget.querySelector('[data-arrow]') as HTMLElement;
+          if (arrow) arrow.style.color = '';
+        }}
       >
-        <CardContent className="px-2 pb-2 pt-2 h-[100px]">
-          <div className="w-full h-full">
-            <div className="w-full h-full bg-muted/40 rounded animate-pulse" />
+        <div className="flex items-center justify-between px-4 py-2 border-b border-sidebar-border/60">
+          <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">DYNAMIC FEE TREND</h2>
+                     <div className="flex items-center gap-3">
+             {poolInfo && (
+               <div className="flex items-center">
+                 <div className="relative w-8 h-4">
+                   <div className="absolute top-0 left-0 w-4 h-4 rounded-full overflow-hidden bg-background border border-border/50">
+                     <Image 
+                       src={getToken(poolInfo.token0Symbol)?.icon || "/placeholder-logo.svg"} 
+                       alt={poolInfo.token0Symbol} 
+                       width={16} 
+                       height={16} 
+                       className="w-full h-full object-cover" 
+                     />
+                   </div>
+                   <div className="absolute top-0 left-2.5 w-4 h-4 rounded-full overflow-hidden bg-background border border-border/50">
+                     <Image 
+                       src={getToken(poolInfo.token1Symbol)?.icon || "/placeholder-logo.svg"} 
+                       alt={poolInfo.token1Symbol} 
+                       width={16} 
+                       height={16} 
+                       className="w-full h-full object-cover" 
+                     />
+                   </div>
+                 </div>
+                 <span className="text-xs text-muted-foreground">{poolInfo.token0Symbol}/{poolInfo.token1Symbol}</span>
+               </div>
+             )}
+             <ArrowUpRight aria-hidden="true" data-arrow className="h-4 w-4 text-muted-foreground transition-colors duration-150" />
           </div>
-        </CardContent>
-      </Card>
+        </div>
+        <div className="px-2 pb-2 pt-2 h-[100px]">
+          <div className="w-full h-full bg-muted/40 rounded animate-pulse" />
+        </div>
+        
+      </div>
     );
   }
 
   if (!data || data.length === 0) {
     return (
-      <Card 
-        className="w-full max-w-md shadow-md rounded-lg cursor-pointer hover:shadow-lg transition-shadow bg-muted/30 group"
+      <div
+        className="w-full rounded-lg bg-muted/30 border border-sidebar-border/60 transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow"
         onClick={handleClick}
+        onMouseEnter={(e) => {
+          const arrow = e.currentTarget.querySelector('[data-arrow]') as HTMLElement;
+          if (arrow) arrow.style.color = 'white';
+        }}
+        onMouseLeave={(e) => {
+          const arrow = e.currentTarget.querySelector('[data-arrow]') as HTMLElement;
+          if (arrow) arrow.style.color = '';
+        }}
       >
-        {/* CardHeader is entirely absent in no-data state */}
-        <CardContent className="px-2 pb-2 pt-0 h-[120px]">
-          <div className="w-full h-full flex items-center justify-center">
-            {null /* Render null if no data, no text or arrow */}
+        <div className="flex items-center justify-between px-4 py-2 border-b border-sidebar-border/60">
+          <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">DYNAMIC FEE TREND</h2>
+                     <div className="flex items-center gap-3">
+             {poolInfo && (
+               <div className="flex items-center">
+                 <div className="relative w-8 h-4">
+                   <div className="absolute top-0 left-0 w-4 h-4 rounded-full overflow-hidden bg-background border border-border/50">
+                     <Image 
+                       src={getToken(poolInfo.token0Symbol)?.icon || "/placeholder-logo.svg"} 
+                       alt={poolInfo.token0Symbol} 
+                       width={16} 
+                       height={16} 
+                       className="w-full h-full object-cover" 
+                     />
+                   </div>
+                   <div className="absolute top-0 left-2.5 w-4 h-4 rounded-full overflow-hidden bg-background border border-border/50">
+                     <Image 
+                       src={getToken(poolInfo.token1Symbol)?.icon || "/placeholder-logo.svg"} 
+                       alt={poolInfo.token1Symbol} 
+                       width={16} 
+                       height={16} 
+                       className="w-full h-full object-cover" 
+                     />
+                   </div>
+                 </div>
+                 <span className="text-xs text-muted-foreground">{poolInfo.token0Symbol}/{poolInfo.token1Symbol}</span>
+               </div>
+             )}
+             <ArrowUpRight aria-hidden="true" data-arrow className="h-4 w-4 text-muted-foreground transition-colors duration-150" />
           </div>
-        </CardContent>
-      </Card>
+        </div>
+        <div className="px-2 pb-2 pt-0 h-[120px]">
+          <div className="w-full h-full flex items-center justify-center" />
+        </div>
+        
+      </div>
     );
   } else {
 
@@ -240,55 +314,53 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
     const effectiveMaxValue = 200;
 
     return (
-      <Card 
-        className="w-full max-w-md shadow-md rounded-lg cursor-pointer hover:shadow-lg transition-shadow bg-muted/30"
+      <div
+        className="w-full rounded-lg bg-muted/30 border border-sidebar-border/60 transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow"
         onClick={handleClick}
+        onMouseEnter={(e) => {
+          const arrow = e.currentTarget.querySelector('[data-arrow]') as HTMLElement;
+          if (arrow) arrow.style.color = 'white';
+        }}
+        onMouseLeave={(e) => {
+          const arrow = e.currentTarget.querySelector('[data-arrow]') as HTMLElement;
+          if (arrow) arrow.style.color = '';
+        }}
       >
-        <div className="group/active-area">
-        <CardHeader className="flex flex-row items-start justify-between pb-2 pt-3 px-4">
-          <div className="space-y-0.5">
-              <CardTitle className="text-sm font-medium">Dynamic Fee Trend</CardTitle>
-              <CardDescription className="text-xs text-muted-foreground">
-                  {poolInfo ? (
-                    <div className="flex items-center">
-                      {/* Overlapping token icons - smaller version */}
-                      <div className="relative w-8 h-4">
-                        <div className="absolute top-0 left-0 w-4 h-4 rounded-full overflow-hidden bg-background border border-border/50">
-                          <Image 
-                            src={getToken(poolInfo.token0Symbol)?.icon || "/placeholder-logo.svg"} 
-                            alt={poolInfo.token0Symbol} 
-                            width={16} 
-                            height={16} 
-                            className="w-full h-full object-cover" 
-                          />
-                        </div>
-                        <div className="absolute top-0 left-2.5 w-4 h-4 rounded-full overflow-hidden bg-background border border-border/50">
-                          <Image 
-                            src={getToken(poolInfo.token1Symbol)?.icon || "/placeholder-logo.svg"} 
-                            alt={poolInfo.token1Symbol} 
-                            width={16} 
-                            height={16} 
-                            className="w-full h-full object-cover" 
-                          />
-                        </div>
-                      </div>
-                      {/* Pool pair name */}
-                      <span>{poolInfo.token0Symbol}/{poolInfo.token1Symbol}</span>
-                    </div>
-                  ) : (
-                    "30-Day Fee Snapshot"
-                  )}
-              </CardDescription>
+        <div className="flex items-center justify-between px-4 py-2 border-b border-sidebar-border/60">
+          <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">DYNAMIC FEE TREND</h2>
+                     <div className="flex items-center gap-3">
+             {poolInfo && (
+               <div className="flex items-center">
+                 <div className="relative w-8 h-4">
+                   <div className="absolute top-0 left-0 w-4 h-4 rounded-full overflow-hidden bg-background border border-border/50">
+                     <Image 
+                       src={getToken(poolInfo.token0Symbol)?.icon || "/placeholder-logo.svg"} 
+                       alt={poolInfo.token0Symbol} 
+                       width={16} 
+                       height={16} 
+                       className="w-full h-full object-cover" 
+                     />
+                   </div>
+                   <div className="absolute top-0 left-2.5 w-4 h-4 rounded-full overflow-hidden bg-background border border-border/50">
+                     <Image 
+                       src={getToken(poolInfo.token1Symbol)?.icon || "/placeholder-logo.svg"} 
+                       alt={poolInfo.token1Symbol} 
+                       width={16} 
+                       height={16} 
+                       className="w-full h-full object-cover" 
+                     />
+                   </div>
+                 </div>
+                 <span className="text-xs text-muted-foreground">{poolInfo.token0Symbol}/{poolInfo.token1Symbol}</span>
+               </div>
+             )}
+             <ArrowUpRight aria-hidden="true" data-arrow className="h-4 w-4 text-muted-foreground transition-colors duration-150" />
           </div>
-          <ArrowUpRight
-            aria-hidden="true"
-            className="lucide lucide-arrow-right h-4 w-4 text-muted-foreground transition-colors duration-150 group-hover/active-area:text-white"
-          />
-        </CardHeader>
-        <CardContent className="px-2 pb-2 pt-0 h-[80px]"> {/* Restored height for actual chart */}
+        </div>
+        <div className="px-2 pb-2 pt-0 h-[100px]">
           <div className="w-full h-full cursor-pointer [&_.recharts-wrapper]:outline-none [&_.recharts-wrapper]:focus:outline-none [&_.recharts-surface]:outline-none">
-            {showLoadingSkeleton ? ( // Show skeleton when loading (pool switch skeleton)
-              <div className="w-full h-[72px] bg-muted/40 rounded animate-pulse mt-2"></div>
+            {showLoadingSkeleton ? (
+              <div className="w-full h-[92px] bg-muted/40 rounded animate-pulse mt-2"></div>
             ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart 
@@ -301,30 +373,27 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
                     hide={true} 
                     domain={[effectiveMinValue, effectiveMaxValue]}
                   />
-                  {/* Volume/TVL Ratio Line */}
                   <Line
                     type="monotone"
                     dataKey="volume"
-                    stroke={"hsl(var(--chart-3))"} // Using chart-3 color (same as main chart)
+                    stroke={"hsl(var(--chart-3))"}
                     strokeWidth={1.5}
                     dot={false}
                     activeDot={false}
                   />
-                  {/* EMA Line */}
                   <Line
                     type="monotone"
                     dataKey="ema"
-                    stroke={"hsl(var(--chart-2))"} // Using chart-2 color (same as main chart)
+                    stroke={"hsl(var(--chart-2))"}
                     strokeWidth={1}
-                    strokeDasharray="3 3" // Dashed line for EMA
+                    strokeDasharray="3 3"
                     dot={false}
                     activeDot={false}
                   />
-                  {/* Dynamic Fee Line */}
                   <Line
                     type="stepAfter"
                     dataKey="fee"
-                    stroke={"#e85102"} // Same color as main chart's dynamic fee
+                    stroke={"#e85102"}
                     strokeWidth={1.5}
                     dot={false}
                     activeDot={false}
@@ -333,9 +402,9 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
               </ResponsiveContainer>
             )}
           </div>
-        </CardContent>
         </div>
-      </Card>
+        
+      </div>
     );
   }
 }

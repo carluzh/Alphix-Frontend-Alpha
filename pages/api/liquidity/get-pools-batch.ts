@@ -123,13 +123,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     });
 
     if (!poolResponse.ok) {
-      throw new Error(`Pool data request failed: ${poolResponse.status}`);
+      return res.status(200).json({ success: false, pools: [], message: `Pool data request failed: ${poolResponse.status}` });
     }
 
     const poolData = await poolResponse.json();
     if (poolData.errors) {
       console.error('[Batch API] Pool data GraphQL errors:', poolData.errors);
-      throw new Error(`GraphQL errors: ${JSON.stringify(poolData.errors)}`);
+      return res.status(200).json({ success: false, pools: [], message: `GraphQL errors: ${JSON.stringify(poolData.errors)}` });
     }
 
     // Fetch swaps data
@@ -149,13 +149,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     });
 
     if (!swapsResponse.ok) {
-      throw new Error(`Swaps data request failed: ${swapsResponse.status}`);
+      return res.status(200).json({ success: false, pools: [], message: `Swaps data request failed: ${swapsResponse.status}` });
     }
 
     const swapsData = await swapsResponse.json();
     if (swapsData.errors) {
       console.error('[Batch API] Swaps data GraphQL errors:', swapsData.errors);
-      throw new Error(`GraphQL errors: ${JSON.stringify(swapsData.errors)}`);
+      return res.status(200).json({ success: false, pools: [], message: `GraphQL errors: ${JSON.stringify(swapsData.errors)}` });
     }
 
     const { trackedPools } = poolData.data;

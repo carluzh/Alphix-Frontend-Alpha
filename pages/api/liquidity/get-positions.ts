@@ -2,29 +2,24 @@ import { ethers } from "ethers";
 import { Token } from '@uniswap/sdk-core';
 import { Pool as V4Pool, Position as V4Position } from "@uniswap/v4-sdk";
 import JSBI from 'jsbi';
-// import dotenv from "dotenv"; // Removed
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from "../../../lib/abis/state_view_abi"; // Adjusted path
-import { publicClient } from "../../../lib/viemClient"; // Import publicClient
-import { getAddress, parseAbi, type Address, type Abi } from "viem"; // Import getAddress and parseAbi, and added Abi for type cast
-import { getTokenSymbolByAddress, getAllPools, getStateViewAddress, CHAIN_ID } from "../../../lib/pools-config"; // Import the mapping utility
+import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from "../../../lib/abis/state_view_abi";
+import { publicClient } from "../../../lib/viemClient";
+import { getAddress, parseAbi, parseAbiItem, type Address, type Abi, type Hex } from "viem";
+import { getTokenSymbolByAddress, getAllPools, getStateViewAddress, getPositionManagerAddress, CHAIN_ID } from "../../../lib/pools-config";
+import { position_manager_abi } from "../../../lib/abis/PositionManager_abi";
 
 // Load environment variables - ensure .env is at the root or configure path
 // dotenv.config({ path: '.env.local' }); // Removed: Next.js handles .env.local automatically
 
 // Constants
-const SUBGRAPH_URL = "https://api.studio.thegraph.com/query/111443/alphix-test/version/latest";
-// const RPC_URL = process.env.RPC_URL; // No longer directly used here
 const STATE_VIEW_ADDRESS = getStateViewAddress();
+const POSITION_MANAGER_ADDRESS = getPositionManagerAddress();
 const DEFAULT_CHAIN_ID = CHAIN_ID;
+const SUBGRAPH_URL = "https://api.studio.thegraph.com/query/111443/alphix-test/version/latest";
 
-// --- Interfaces for Subgraph Response ---
-interface SubgraphToken {
-    id: string;
-    symbol: string;
-    decimals: string;
-}
-
+// Minimal subgraph types and query
+interface SubgraphToken { id: string; symbol: string; decimals: string }
 interface SubgraphHookPosition {
     id: string;
     pool: string;
@@ -38,13 +33,24 @@ interface SubgraphHookPosition {
     blockNumber: string;
     blockTimestamp: string;
 }
-
-interface SubgraphResponse {
-    data?: { // Make data optional to handle potential subgraph errors better
-        hookPositions: SubgraphHookPosition[];
-    };
-    errors?: any[]; // To capture subgraph errors
-}
+const GET_USER_POSITIONS_QUERY = `
+  query GetUserPositions($owner: Bytes!) {
+    hookPositions(first: 200, orderBy: liquidity, orderDirection: desc, where: { owner: $owner }) {
+      id
+      pool
+      owner
+      hook
+      currency0 { id symbol decimals }
+      currency1 { id symbol decimals }
+      tickLower
+      tickUpper
+      liquidity
+      blockNumber
+      blockTimestamp
+    }
+  }
+`;
+// duplicate removed
 
 // --- Interface for Processed Position Data ---
 interface ProcessedPositionToken {
@@ -67,261 +73,381 @@ export interface ProcessedPosition { // Export for frontend type usage
     isInRange: boolean;
 }
 
-const GET_USER_POSITIONS_QUERY = `
-  query GetUserPositions($owner: Bytes!) {
-    hookPositions(first: 100, orderBy: liquidity, orderDirection: desc, where: { owner: $owner }) {
-      id
-      pool
-      owner
-      hook
-      currency0 {
-        id
-        symbol
-        decimals
-      }
-      currency1 {
-        id
-        symbol
-        decimals
-      }
-      tickLower
-      tickUpper
-      liquidity
-      blockNumber
-      blockTimestamp
-    }
-  }
-`;
+// duplicate types/query removed
 
-// Create pool mapping from pools.json for dynamic lookup
-function createPoolTickSpacingMap(): { [poolId: string]: number } {
+// Create lookups from pools.json for dynamic lookup
+function createPoolLookups() {
     const pools = getAllPools();
-    const mapping: { [poolId: string]: number } = {};
-    
-    pools.forEach(pool => {
-        if (pool.subgraphId) {
-            mapping[pool.subgraphId.toLowerCase()] = pool.tickSpacing;
+    const bySubgraphIdTickSpacing: { [poolSubgraphId: string]: number } = {};
+    const byKey: Record<string, { subgraphId: string; fee: number; tickSpacing: number; hooks: string; currency0: string; currency1: string } > = {};
+
+    for (const p of pools) {
+        const key = [getAddress(p.currency0.address), getAddress(p.currency1.address), String(p.fee), String(p.tickSpacing), getAddress(p.hooks)].join('-');
+        bySubgraphIdTickSpacing[p.subgraphId.toLowerCase()] = p.tickSpacing;
+        byKey[key] = {
+            subgraphId: p.subgraphId,
+            fee: p.fee,
+            tickSpacing: p.tickSpacing,
+            hooks: getAddress(p.hooks),
+            currency0: getAddress(p.currency0.address),
+            currency1: getAddress(p.currency1.address)
+        };
+    }
+    return { bySubgraphIdTickSpacing, byKey };
+}
+
+function poolKeyToConfigKey(poolKey: { currency0: Address; currency1: Address; fee: number; tickSpacing: number; hooks: Address }): string {
+    return [getAddress(poolKey.currency0), getAddress(poolKey.currency1), String(poolKey.fee), String(poolKey.tickSpacing), getAddress(poolKey.hooks)].join('-');
+}
+
+// Decode ticks from PositionManager tokenURI metadata (base64 JSON)
+function parseTicksFromTokenURI(tokenUri: string): { tickLower: number | null; tickUpper: number | null } {
+    try {
+        const commaIdx = tokenUri.indexOf(',');
+        const payload = commaIdx >= 0 ? tokenUri.slice(commaIdx + 1) : tokenUri;
+        const jsonStr = Buffer.from(payload, 'base64').toString('utf8');
+        const data = JSON.parse(jsonStr);
+        // Try attributes array first
+        if (Array.isArray(data?.attributes)) {
+            let lower: number | null = null;
+            let upper: number | null = null;
+            for (const attr of data.attributes) {
+                const t = String(attr?.trait_type || attr?.traitType || '').toLowerCase();
+                if (t.includes('tick lower') || t.includes('ticklower')) lower = Number(attr?.value);
+                if (t.includes('tick upper') || t.includes('tickupper')) upper = Number(attr?.value);
+            }
+            return { tickLower: Number.isFinite(lower as number) ? (lower as number) : null, tickUpper: Number.isFinite(upper as number) ? (upper as number) : null };
         }
-    });
-    
-    console.log("Created pool tick spacing mapping:", mapping);
-    return mapping;
+        // Fallback: direct properties
+        const lower = Number((data?.tickLower ?? data?.tick_lower));
+        const upper = Number((data?.tickUpper ?? data?.tick_upper));
+        return {
+            tickLower: Number.isFinite(lower) ? lower : null,
+            tickUpper: Number.isFinite(upper) ? upper : null,
+        };
+    } catch {
+        return { tickLower: null, tickUpper: null };
+    }
 }
 
 async function fetchAndProcessUserPositionsForApi(ownerAddress: string): Promise<ProcessedPosition[]> {
-    // Removed the explicit RPC_URL check here, as publicClient handles its own RPC configuration, including defaults.
-    // if (!process.env.RPC_URL && !process.env.NEXT_PUBLIC_RPC_URL) { 
-    //     console.error("Missing environment variable: RPC_URL or NEXT_PUBLIC_RPC_URL for get-positions API (used by publicClient)");
-    //     throw new Error("Server configuration error: RPC_URL is not set for publicClient.");
-    // }
-
+    const reqId = Math.random().toString(36).slice(2, 8);
+    const log = (...args: any[]) => console.log(`API:get-positions#${reqId} ▶`, ...args);
+    const timeStart = (label: string) => ({ label, t: Date.now() });
+    const timeEnd = (ctx: { label: string; t: number }) => log(`${ctx.label} took ${Date.now() - ctx.t}ms`);
+    async function withTimeout<T>(p: Promise<T>, ms: number, step: string): Promise<T> {
+        const start = Date.now();
+        let t: any;
+        const timeout = new Promise<never>((_, rej) => { t = setTimeout(() => rej(new Error(`timeout after ${ms}ms`)), ms); });
+        try {
+            const res = await Promise.race([p, timeout]);
+            log(`${step} ok in ${Date.now() - start}ms`);
+            return res as T;
+        } finally {
+            clearTimeout(t);
+        }
+    }
     const stateViewAbiViem = parseAbi(STATE_VIEW_HUMAN_READABLE_ABI);
+    const pmAbi: Abi = position_manager_abi as unknown as Abi;
 
-    console.log(`API: Fetching positions for owner: ${ownerAddress}`);
-
-    const response = await fetch(SUBGRAPH_URL, {
+    const owner = getAddress(ownerAddress);
+    // Simple subgraph log of position IDs (requested)
+    try {
+        const resp = await fetch(SUBGRAPH_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            query: GET_USER_POSITIONS_QUERY,
-            variables: { owner: ownerAddress.toLowerCase() },
-        }),
-    });
+            body: JSON.stringify({ query: GET_USER_POSITIONS_QUERY, variables: { owner: owner.toLowerCase() } }),
+        });
+        if (resp.ok) {
+            const json = await resp.json() as { data?: { hookPositions: SubgraphHookPosition[] } };
+            const raw = json?.data?.hookPositions ?? [];
+            console.log('Subgraph position IDs:', raw.map(r => r.id));
+            // Also return processed results using live slot0 for balances
+            if (raw.length > 0) {
+                const stateViewAbiViem = parseAbi(STATE_VIEW_HUMAN_READABLE_ABI);
+                const processed: ProcessedPosition[] = [];
+                const slot0Cache = new Map<string, { sqrtPriceX96: string; tick: number }>();
+                for (const r of raw) {
+                    try {
+                        const poolCfg = getAllPools().find(p => p.subgraphId?.toLowerCase() === r.pool.toLowerCase());
+                        if (!poolCfg) continue;
+                        let slot0 = slot0Cache.get(r.pool);
+                        if (!slot0) {
+                            const s = await publicClient.readContract({
+                                address: STATE_VIEW_ADDRESS,
+                                abi: stateViewAbiViem,
+                                functionName: 'getSlot0',
+                                args: [r.pool as unknown as Hex],
+                            }) as readonly [bigint, number, number, number];
+                            slot0 = { sqrtPriceX96: s[0].toString(), tick: Number(s[1]) };
+                            slot0Cache.set(r.pool, slot0);
+                        }
+                        const t0Addr = (r.currency0 && r.currency0.id) ? (r.currency0.id as Address) : (getAllPools().find(p => p.subgraphId?.toLowerCase() === r.pool.toLowerCase())?.currency0.address as Address);
+                        const t1Addr = (r.currency1 && r.currency1.id) ? (r.currency1.id as Address) : (getAllPools().find(p => p.subgraphId?.toLowerCase() === r.pool.toLowerCase())?.currency1.address as Address);
+                        const t0Dec = r.currency0?.decimals ? parseInt(r.currency0.decimals, 10) : 18;
+                        const t1Dec = r.currency1?.decimals ? parseInt(r.currency1.decimals, 10) : 18;
+                        const t0Sym = r.currency0?.symbol || 'T0';
+                        const t1Sym = r.currency1?.symbol || 'T1';
+                        const t0 = new Token(DEFAULT_CHAIN_ID, t0Addr, t0Dec, t0Sym);
+                        const t1 = new Token(DEFAULT_CHAIN_ID, t1Addr, t1Dec, t1Sym);
+                        const v4Pool = new V4Pool(t0, t1, poolCfg.fee, poolCfg.tickSpacing, poolCfg.hooks, slot0.sqrtPriceX96, JSBI.BigInt(0), slot0.tick);
+                        const v4Position = new V4Position({ pool: v4Pool, tickLower: Number(r.tickLower), tickUpper: Number(r.tickUpper), liquidity: JSBI.BigInt(r.liquidity) });
+                        const raw0 = v4Position.amount0.quotient.toString();
+                        const raw1 = v4Position.amount1.quotient.toString();
+                        processed.push({
+                            positionId: r.id || '',
+                            poolId: r.pool || '',
+                            token0: { address: t0.address, symbol: t0.symbol || 'T0', amount: ethers.utils.formatUnits(raw0, t0.decimals), rawAmount: raw0 },
+                            token1: { address: t1.address, symbol: t1.symbol || 'T1', amount: ethers.utils.formatUnits(raw1, t1.decimals), rawAmount: raw1 },
+                            tickLower: Number(r.tickLower),
+                            tickUpper: Number(r.tickUpper),
+                            liquidityRaw: r.liquidity,
+                            ageSeconds: Math.max(0, Math.floor(Date.now()/1000) - Number(r.blockTimestamp)),
+                            blockTimestamp: r.blockTimestamp,
+                            isInRange: slot0.tick >= Number(r.tickLower) && slot0.tick < Number(r.tickUpper),
+                        });
+                    } catch {}
+                }
+                return processed;
+            }
+        }
+    } catch {}
+    // Fall back to previous logic below if subgraph path fails
+    log(`start for ${owner}`);
 
-    if (!response.ok) {
-        const errorBody = await response.text();
-        console.error(`API: Subgraph query failed with status ${response.status}: ${errorBody}`);
-        throw new Error(`Subgraph query failed: ${errorBody}`);
+    // Enumerate ownership strictly via Transfer logs using balanceOf target
+    let ownedTokenIds: bigint[] = [];
+    let balance: bigint | null = null;
+    try {
+        balance = await withTimeout(publicClient.readContract({
+            address: POSITION_MANAGER_ADDRESS,
+            abi: pmAbi,
+            functionName: 'balanceOf',
+            args: [owner]
+        }) as Promise<bigint>, 20000, 'balanceOf(owner)') as bigint;
+        log(`balanceOf = ${balance}`);
+        if (balance === 0n) {
+            log('no NFTs owned, returning []');
+            return [];
+        }
+    } catch (e) {
+        log('balanceOf failed; cannot proceed efficiently');
+        throw e;
     }
 
-    const result = (await response.json()) as SubgraphResponse;
-
-    if (result.errors) {
-        console.error("API: Subgraph returned errors:", result.errors);
-        throw new Error(`Subgraph error(s): ${JSON.stringify(result.errors)}`);
+    // Scan Transfer logs backwards until we reach balance
+    {
+        const targetCount = Number(balance);
+        const transferEvent = parseAbiItem('event Transfer(address indexed from,address indexed to,uint256 id)');
+        const latestBlock = await withTimeout(publicClient.getBlockNumber(), 15000, 'getBlockNumber');
+        log(`log-scan latestBlock=${latestBlock}`);
+        const chunkSize = 35000n;
+        const seen = new Set<bigint>();
+        const ownedSet = new Set<bigint>();
+        let end = latestBlock;
+        let iterations = 0;
+        const maxIterations = 200; // safety cap
+        while (ownedSet.size < targetCount && end > 0n && iterations < maxIterations) {
+            const start = end > chunkSize ? (end - chunkSize) : 0n;
+            log(`log-scan chunk #${iterations + 1} [${start}..${end}]`);
+            let logsTo: any[] = [];
+            let logsFrom: any[] = [];
+            try {
+                [logsTo, logsFrom] = await Promise.all([
+                    withTimeout(publicClient.getLogs({ address: POSITION_MANAGER_ADDRESS, event: transferEvent, args: { to: owner }, fromBlock: start, toBlock: end }), 20000, `getLogs(to) [${start}..${end}]`),
+                    withTimeout(publicClient.getLogs({ address: POSITION_MANAGER_ADDRESS, event: transferEvent, args: { from: owner }, fromBlock: start, toBlock: end }), 20000, `getLogs(from) [${start}..${end}]`),
+                ]);
+            } catch (err) {
+                log('getLogs failed, continuing');
+                end = start === 0n ? 0n : (start - 1n);
+                iterations += 1;
+                continue;
+            }
+            const merged = [...logsTo, ...logsFrom].sort((a, b) => {
+                const bnA = (a.blockNumber ?? 0n) as bigint;
+                const bnB = (b.blockNumber ?? 0n) as bigint;
+                if (bnA !== bnB) return bnA > bnB ? -1 : 1;
+                const liA = (a.logIndex ?? 0) as number;
+                const liB = (b.logIndex ?? 0) as number;
+                return liA > liB ? -1 : (liA < liB ? 1 : 0);
+            });
+            for (const ev of merged) {
+                const id = ev.args?.id as bigint;
+                if (seen.has(id)) continue;
+                seen.add(id);
+                const toAddr = ev.args?.to ? getAddress(ev.args.to as string) : undefined;
+                const fromAddr = ev.args?.from ? getAddress(ev.args.from as string) : undefined;
+                if (toAddr === owner) ownedSet.add(id);
+                else if (fromAddr === owner) ownedSet.delete(id);
+                if (ownedSet.size >= targetCount) break;
+            }
+            end = start === 0n ? 0n : (start - 1n);
+            iterations += 1;
+        }
+        ownedTokenIds = Array.from(ownedSet);
+        log(`log-scan found tokenIds = [${ownedTokenIds.join(', ')}]`);
     }
-    
-    if (!result.data || !result.data.hookPositions) {
-        console.warn("API: Subgraph response is missing data.hookPositions field or it's null.", result);
-        return []; // No positions found or error in query structure
-    }
-    const rawPositions = result.data.hookPositions;
-
-    if (rawPositions.length === 0) {
-        console.log("API: No positions found for this owner.");
+    if (ownedTokenIds.length === 0) {
+        log('no tokenIds discovered, returning []');
         return [];
     }
 
-    console.log(`API: Found ${rawPositions.length} raw positions. Processing...`);
+    // Read pool keys, liquidity and tokenURIs for each tokenId
+    type PoolKey = { currency0: Address; currency1: Address; fee: number; tickSpacing: number; hooks: Address };
+    const { bySubgraphIdTickSpacing, byKey } = createPoolLookups();
 
+    // Batch calls
+    const poolAndInfoCalls = ownedTokenIds.map((id) => ({
+        address: POSITION_MANAGER_ADDRESS,
+        abi: pmAbi,
+        functionName: 'getPoolAndPositionInfo',
+        args: [id],
+    }));
+    const liqCalls = ownedTokenIds.map((id) => ({
+        address: POSITION_MANAGER_ADDRESS,
+        abi: pmAbi,
+        functionName: 'getPositionLiquidity',
+        args: [id],
+    }));
+    const uriCalls = ownedTokenIds.map((id) => ({
+        address: POSITION_MANAGER_ADDRESS,
+        abi: pmAbi,
+        functionName: 'tokenURI',
+        args: [id],
+    }));
+
+    log(`reading pool/info for ${ownedTokenIds.length} tokenIds...`);
+    const poolAndInfoResults = await Promise.all(
+        poolAndInfoCalls.map((c) => publicClient.readContract(c as any).then(
+            (res) => ({ status: 'success' as const, result: res }),
+            (err) => { log('getPoolAndPositionInfo failed'); return ({ status: 'error' as const, result: null as any }); }
+        ))
+    );
+    log('reading position liquidity...');
+    const liqResults = await Promise.all(
+        liqCalls.map((c) => publicClient.readContract(c as any).then(
+            (res) => ({ status: 'success' as const, result: res }),
+            (err) => { log('getPositionLiquidity failed'); return ({ status: 'error' as const, result: null as any }); }
+        ))
+    );
+    log('reading tokenURI...');
+    const uriResults = await Promise.all(
+        uriCalls.map((c) => publicClient.readContract(c as any).then(
+            (res) => ({ status: 'success' as const, result: res }),
+            (err) => { log('tokenURI failed'); return ({ status: 'error' as const, result: null as any }); }
+        ))
+    );
+
+    // Prepare processed positions
     const processedPositions: ProcessedPosition[] = [];
-    const poolStatesCache = new Map<string, { sqrtPriceX96: string; tick: number }>();
-    
-    // Get pool tick spacing mapping from pools.json
-    const poolTickSpacingMap = createPoolTickSpacingMap();
+    const poolStateCache = new Map<string, { sqrtPriceX96: string; tick: number }>();
 
-    for (const rawPos of rawPositions) {
+    for (let i = 0; i < ownedTokenIds.length; i += 1) {
         try {
-            const poolId = rawPos.pool;
-            const token0Data = rawPos.currency0;
-            const token1Data = rawPos.currency1;
+            const tokenId = ownedTokenIds[i];
+            const poolAndInfo = poolAndInfoResults[i];
+            const liqRes = liqResults[i];
+            const uriRes = uriResults[i];
 
-            if (!poolId) {
-                console.error(`API: Error processing position ID ${rawPos.id}: 'pool' ID string is missing. Skipping.`, rawPos);
+            if (poolAndInfo.status !== 'success' || liqRes.status !== 'success' || uriRes.status !== 'success') {
+                console.warn(`Skipping tokenId ${tokenId} due to failed multicall result`);
                 continue;
             }
-            if (!token0Data || typeof token0Data.decimals === 'undefined' || typeof token0Data.symbol === 'undefined' || typeof token0Data.id === 'undefined') {
-                console.error(`API: Error processing position ID ${rawPos.id}: currency0 or its fields (id, symbol, decimals) are missing. Skipping. Currency0 data:`, token0Data);
+
+            const [poolKey /*, info*/] = poolAndInfo.result as unknown as [PoolKey, bigint];
+            const liquidity = liqRes.result as bigint;
+            const tokenUri = uriRes.result as string;
+            log(`tokenId=${tokenId} poolKey={c0:${poolKey.currency0}, c1:${poolKey.currency1}, fee:${poolKey.fee}, ts:${poolKey.tickSpacing}, hooks:${poolKey.hooks}} liquidity=${liquidity} tokenURI.length=${tokenUri?.length ?? 0}`);
+
+            // Map poolKey to configured pool (to get subgraphId & verify allowed pools)
+            const lookupKey = poolKeyToConfigKey(poolKey);
+            const poolCfg = byKey[lookupKey];
+            if (!poolCfg) {
+                log(`tokenId=${tokenId} poolKey not in pools.json, skipping`);
                 continue; 
             }
-            if (!token1Data || typeof token1Data.decimals === 'undefined' || typeof token1Data.symbol === 'undefined' || typeof token1Data.id === 'undefined') {
-                console.error(`API: Error processing position ID ${rawPos.id}: currency1 or its fields (id, symbol, decimals) are missing. Skipping. Currency1 data:`, token1Data);
+
+            // Parse ticks from tokenURI metadata
+            const { tickLower, tickUpper } = parseTicksFromTokenURI(tokenUri);
+            if (tickLower === null || tickUpper === null) {
+                log(`tokenId=${tokenId} ticks not found in tokenURI; skipping`);
                 continue;
             }
+            log(`tokenId=${tokenId} ticks [${tickLower}, ${tickUpper}]`);
 
-            const token0Decimals = parseInt(token0Data.decimals, 10);
-            const token1Decimals = parseInt(token1Data.decimals, 10);
-            
-            const sdkToken0 = new Token(DEFAULT_CHAIN_ID, token0Data.id, token0Decimals, token0Data.symbol);
-            const sdkToken1 = new Token(DEFAULT_CHAIN_ID, token1Data.id, token1Decimals, token1Data.symbol);
-
-            let slot0;
-            if (poolStatesCache.has(poolId)) {
-                slot0 = poolStatesCache.get(poolId)!;
-            } else {
-                try {
-                    // const slot0Data = await stateViewContract.getSlot0(poolId); // Old ethers call
+            // Fetch live slot0 for this pool
+            let slot0 = poolStateCache.get(poolCfg.subgraphId);
+            if (!slot0) {
                     const slot0Data = await publicClient.readContract({
                         address: STATE_VIEW_ADDRESS,
                         abi: stateViewAbiViem,
                         functionName: 'getSlot0',
-                        args: [poolId as `0x${string}`] // poolId should be bytes32, ensure it's correctly formatted hex
-                    }) as readonly [bigint, number, number, number]; // Explicit type assertion for the result
-                    // Viem returns an array/tuple for multiple return values or an object if named
-                    // Based on ABI: "returns (uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 lpFee)"
-                    // It will be an array: [sqrtPriceX96, tick, protocolFee, lpFee]
-                    slot0 = {
-                        sqrtPriceX96: slot0Data[0].toString(),
-                        tick: Number(slot0Data[1]),
-                        // protocolFee: Number(slot0Data[2]), // if needed
-                        // lpFee: Number(slot0Data[3]), // if needed
-                    };
-                    poolStatesCache.set(poolId, slot0);
-                } catch (err) {
-                    console.error(`API: Error fetching slot0 for pool ${poolId}:`, err);
-                    continue; 
-                }
+                    args: [poolCfg.subgraphId as unknown as Hex],
+                }) as readonly [bigint, number, number, number];
+                slot0 = { sqrtPriceX96: slot0Data[0].toString(), tick: Number(slot0Data[1]) };
+                poolStateCache.set(poolCfg.subgraphId, slot0);
+                log(`pool ${poolCfg.subgraphId} slot0.tick=${slot0.tick}`);
             }
 
-            // Get the correct tick spacing for this pool
-            let v4PoolTickSpacing = poolTickSpacingMap[poolId.toLowerCase()];
-            
-            // Find the pool configuration to get fee and hooks
-            const pools = getAllPools();
-            const poolConfig = pools.find(p => p.subgraphId?.toLowerCase() === poolId.toLowerCase());
-            
-            if (!poolConfig) {
-                console.warn(`API: No pool configuration found for pool ${poolId}, skipping position ${rawPos.id}`);
-                continue;
-            }
-            
-            if (!v4PoolTickSpacing) {
-                console.warn(`API: No tick spacing found for pool ${poolId}, skipping position ${rawPos.id}`);
-                continue;
-            }
+            // SDK tokens
+            const sdkToken0 = new Token(DEFAULT_CHAIN_ID, poolCfg.currency0, getTokenSymbolByAddress(poolCfg.currency0)?.toString() ? (getAllPools().find(p => getAddress(p.currency0.address) === poolCfg.currency0)?.currency0 ? (getAllPools().find(p => getAddress(p.currency0.address) === poolCfg.currency0) as any).currency0.decimals : 18) : 18, (getAllPools().find(p => getAddress(p.currency0.address) === poolCfg.currency0)?.currency0?.symbol as string) || getTokenSymbolByAddress(poolCfg.currency0) || 'T0');
+            const sdkToken1 = new Token(DEFAULT_CHAIN_ID, poolCfg.currency1, (getAllPools().find(p => getAddress(p.currency1.address) === poolCfg.currency1)?.currency1 ? (getAllPools().find(p => getAddress(p.currency1.address) === poolCfg.currency1) as any).currency1.decimals : 18), (getAllPools().find(p => getAddress(p.currency1.address) === poolCfg.currency1)?.currency1?.symbol as string) || getTokenSymbolByAddress(poolCfg.currency1) || 'T1');
 
+            // Above, decimals discovery via pools.json tokens would be more reliable; do that instead
+            const tokensCfg = (await import('../../../lib/pools-config')).getAllTokens();
+            const t0Meta = Object.values(tokensCfg).find(t => getAddress(t.address) === poolCfg.currency0);
+            const t1Meta = Object.values(tokensCfg).find(t => getAddress(t.address) === poolCfg.currency1);
+            const sdk0 = new Token(DEFAULT_CHAIN_ID, poolCfg.currency0, t0Meta?.decimals ?? 18, t0Meta?.symbol ?? 'T0');
+            const sdk1 = new Token(DEFAULT_CHAIN_ID, poolCfg.currency1, t1Meta?.decimals ?? 18, t1Meta?.symbol ?? 'T1');
+
+            // Build V4 pool and position
             const v4Pool = new V4Pool(
-                sdkToken0,
-                sdkToken1,
-                poolConfig.fee, // Use fee from pool configuration
-                v4PoolTickSpacing, // Use the correct tick spacing for this pool
-                rawPos.hook || poolConfig.hooks, // Use hook from position or pool config
+                sdk0,
+                sdk1,
+                poolCfg.fee,
+                poolCfg.tickSpacing,
+                poolCfg.hooks,
                 slot0.sqrtPriceX96,
-                JSBI.BigInt(0), // Liquidity (not strictly needed for position.amount0/1 calc from existing liquidity)
+                JSBI.BigInt(0),
                 slot0.tick
             );
-
-            // Validate tick values before creating V4Position
-            const tickLower = Number(rawPos.tickLower);
-            const tickUpper = Number(rawPos.tickUpper);
-            
-            console.log(`API: Processing position ${rawPos.id} with tickLower=${tickLower}, tickUpper=${tickUpper}, liquidity=${rawPos.liquidity}`);
-            
-            // Check for valid tick range
-            if (tickLower >= tickUpper) {
-                console.warn(`API: Skipping position ${rawPos.id} with invalid tick range: tickLower=${tickLower} >= tickUpper=${tickUpper}`);
-                continue;
-            }
-            
-            // Check for extreme tick values (V4 has limits around ±887272)
-            const MAX_TICK = 887270; // Slightly below the actual max to be safe
-            const MIN_TICK = -887270;
-            if (tickLower < MIN_TICK || tickUpper > MAX_TICK) {
-                console.warn(`API: Skipping position ${rawPos.id} with ticks outside valid range: tickLower=${tickLower}, tickUpper=${tickUpper}`);
-                continue;
-            }
-            
-            // Check for zero liquidity positions (closed positions)
-            const liquidityBigInt = JSBI.BigInt(rawPos.liquidity);
-            if (JSBI.equal(liquidityBigInt, JSBI.BigInt(0))) {
-                console.warn(`API: Skipping position ${rawPos.id} with zero liquidity (closed position)`);
-                continue;
-            }
-            
-            // Check tick spacing alignment - this is crucial for V4
-            if (tickLower % v4PoolTickSpacing !== 0) {
-                console.warn(`API: Skipping position ${rawPos.id} with tickLower ${tickLower} not aligned to tick spacing ${v4PoolTickSpacing}`);
-                continue;
-            }
-            if (tickUpper % v4PoolTickSpacing !== 0) {
-                console.warn(`API: Skipping position ${rawPos.id} with tickUpper ${tickUpper} not aligned to tick spacing ${v4PoolTickSpacing}`);
-                continue;
-            }
-
-            const v4Position = new V4Position({
-                pool: v4Pool,
-                tickLower: tickLower,
-                tickUpper: tickUpper,
-                liquidity: liquidityBigInt
-            });
+            const v4Position = new V4Position({ pool: v4Pool, tickLower, tickUpper, liquidity: JSBI.BigInt(liquidity.toString()) });
 
             const rawAmount0 = v4Position.amount0.quotient.toString();
             const rawAmount1 = v4Position.amount1.quotient.toString();
-            
-            const formattedAmount0 = ethers.utils.formatUnits(rawAmount0, sdkToken0.decimals);
-            const formattedAmount1 = ethers.utils.formatUnits(rawAmount1, sdkToken1.decimals);
-
-            const ageSeconds = Math.floor(Date.now() / 1000) - Number(rawPos.blockTimestamp);
-            const isInRange = slot0.tick >= Number(rawPos.tickLower) && slot0.tick < Number(rawPos.tickUpper);
+            const formattedAmount0 = ethers.utils.formatUnits(rawAmount0, sdk0.decimals);
+            const formattedAmount1 = ethers.utils.formatUnits(rawAmount1, sdk1.decimals);
+            const isInRange = slot0.tick >= tickLower && slot0.tick < tickUpper;
+            log(`tokenId=${tokenId} amounts {${sdk0.symbol}:${formattedAmount0}, ${sdk1.symbol}:${formattedAmount1}} inRange=${isInRange}`);
 
             processedPositions.push({
-                positionId: rawPos.id,
-                poolId: poolId,
+                positionId: tokenId.toString(),
+                poolId: poolCfg.subgraphId,
                 token0: {
-                    address: sdkToken0.address,
-                    symbol: getTokenSymbolByAddress(sdkToken0.address) || sdkToken0.symbol || 'N/A',
+                    address: sdk0.address,
+                    symbol: t0Meta?.symbol ?? getTokenSymbolByAddress(sdk0.address) ?? 'N/A',
                     amount: formattedAmount0,
                     rawAmount: rawAmount0,
                 },
                 token1: {
-                    address: sdkToken1.address,
-                    symbol: getTokenSymbolByAddress(sdkToken1.address) || sdkToken1.symbol || 'N/A',
+                    address: sdk1.address,
+                    symbol: t1Meta?.symbol ?? getTokenSymbolByAddress(sdk1.address) ?? 'N/A',
                     amount: formattedAmount1,
                     rawAmount: rawAmount1,
                 },
-                tickLower: Number(rawPos.tickLower),
-                tickUpper: Number(rawPos.tickUpper),
-                liquidityRaw: rawPos.liquidity,
-                ageSeconds,
-                blockTimestamp: rawPos.blockTimestamp,
+                tickLower,
+                tickUpper,
+                liquidityRaw: liquidity.toString(),
+                ageSeconds: 0, // Unknown without subgraph; omit
+                blockTimestamp: '0',
                 isInRange,
             });
-        } catch (error) {
-            console.error(`API: Error processing position ID ${rawPos.id} (outer try-catch):`, error);
+        } catch (err) {
+            log(`error processing tokenId ${ownedTokenIds[i]}`);
         }
     }
 
-    console.log(`API: Successfully processed ${processedPositions.length} of ${rawPositions.length} positions.`);
+    log(`done, total positions ${processedPositions.length}`);
     return processedPositions;
 }
 
@@ -342,27 +468,21 @@ export default async function handler(
 
   try {
     if (countOnly === '1') {
-      // Lightweight count query straight to subgraph without processing pools
-      const response = await fetch(SUBGRAPH_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          query: `query GetUserPositionsCount($owner: Bytes!) { hookPositions(where: { owner: $owner }) { id } }`,
-          variables: { owner: ownerAddress.toLowerCase() },
-        }),
-      });
-      if (!response.ok) {
-        const errorBody = await response.text();
-        console.error(`API: Count subgraph query failed: ${errorBody}`);
-        return res.status(200).json({ message: 'ok', count: 0 });
-      }
-      const json = (await response.json()) as { data?: { hookPositions: { id: string }[] } };
-      const count = json?.data?.hookPositions?.length ?? 0;
+      // Lightweight count from onchain logs
+      const transferEvent = parseAbiItem('event Transfer(address indexed from,address indexed to,uint256 id)');
+      const [logsTo, logsFrom] = await Promise.all([
+        publicClient.getLogs({ address: POSITION_MANAGER_ADDRESS, event: transferEvent, args: { to: getAddress(ownerAddress) }, fromBlock: 0n }),
+        publicClient.getLogs({ address: POSITION_MANAGER_ADDRESS, event: transferEvent, args: { from: getAddress(ownerAddress) }, fromBlock: 0n }),
+      ]);
+      const tokenIdToDelta = new Map<bigint, number>();
+      for (const l of logsTo) tokenIdToDelta.set(l.args?.id as bigint, (tokenIdToDelta.get(l.args?.id as bigint) || 0) + 1);
+      for (const l of logsFrom) tokenIdToDelta.set(l.args?.id as bigint, (tokenIdToDelta.get(l.args?.id as bigint) || 0) - 1);
+      const count = Array.from(tokenIdToDelta.values()).filter((d) => d > 0).length;
       return res.status(200).json({ message: 'ok', count });
-    } else {
+    }
+
       const positions = await fetchAndProcessUserPositionsForApi(ownerAddress);
       return res.status(200).json(positions);
-    }
   } catch (error: any) {
     console.error(`API Error in /api/liquidity/get-positions for ${ownerAddress}:`, error);
     // Ensure error is serializable
