@@ -1,6 +1,8 @@
 "use client";
 
 import { useMemo, useState, useEffect, useRef, useCallback } from "react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { TOKEN_DEFINITIONS, type TokenSymbol } from "@/lib/pools-config";
 
 interface TickRangePortfolioProps {
   tickLower: number;
@@ -160,6 +162,30 @@ export function TickRangePortfolio({
     return BAR_COUNT * BAR_PX + Math.max(0, BAR_COUNT - 1) * GAP_PX;
   }, []);
 
+  // Hover interactions
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+  const [isHovering, setIsHovering] = useState<boolean>(false);
+  const [mouseX, setMouseX] = useState<number>(0);
+  const isIndexInRange = useCallback(
+    (idx: number) => idx >= rangeStartIdx && idx <= rangeEndIdx,
+    [rangeStartIdx, rangeEndIdx]
+  );
+
+  // Sticky hover so tooltip does not flicker per-bar while swiping
+  // Single moving tooltip logic: update hoverIndex based on cursor across the whole bar row
+  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    setMouseX(Math.max(0, Math.min(x, rowWidthPx)));
+    // map x to index by columns of BAR_PX + GAP_PX
+    const per = BAR_PX + GAP_PX;
+    let idx = Math.round(x / per);
+    idx = Math.max(0, Math.min(BAR_COUNT - 1, idx));
+    setHoverIndex(idx);
+    setIsHovering(true);
+  }, [rowWidthPx]);
+
   if (showLoadingSkeleton) {
     return (
       <div
@@ -169,18 +195,15 @@ export function TickRangePortfolio({
           width: rowWidthPx,
         }}
       >
-        <div className="absolute inset-0 flex items-center justify-center">
-          <img src="/Logo Icon (white).svg" alt="Loading" className="w-4 h-4 animate-pulse opacity-70" />
-        </div>
-        <div className="absolute inset-0 flex items-center" style={{ gap: `${GAP_PX}px` }}>
+        <div
+          className="absolute inset-0 flex items-center"
+          style={{ gap: `${GAP_PX}px`, paddingLeft: 0, paddingRight: 0 }}
+        >
           {Array.from({ length: BAR_COUNT }).map((_, i) => (
             <div
               key={i}
-              className="flex-shrink-0 bg-muted/40 animate-pulse"
-              style={{
-                width: `${BAR_PX}px`,
-                height: '20%', // consistent skeleton height
-              }}
+              className="flex-shrink-0 bg-muted/60 animate-pulse"
+              style={{ width: `${BAR_PX}px`, height: `40%` }}
             />
           ))}
         </div>
@@ -196,6 +219,7 @@ export function TickRangePortfolio({
         minHeight: 24,
         width: rowWidthPx,
       }}
+      onMouseLeave={() => { setHoverIndex(null); setIsHovering(false); }}
     >
       {/* Bars */}
       <div
@@ -205,6 +229,7 @@ export function TickRangePortfolio({
           paddingLeft: 0,
           paddingRight: 0,
         }}
+        onMouseMove={handleMouseMove}
       >
         {Array.from({ length: BAR_COUNT }).map((_, i) => {
           const heightPct = Math.round(barHeights[i] * 100);
@@ -218,16 +243,21 @@ export function TickRangePortfolio({
           );
           const positionInRange = currentTick >= tickLower && currentTick <= tickUpper;
           const isNearEdge = positionInRange && (distToEdgeTicks / positionWidthTicks) <= 0.15;
-          const baseGrey = 'hsl(0 0% 60%)'; // composition mid grey
-          const rangeGrey = 'hsl(0 0% 40%)'; // darker grey
-          // Swap: in-range uses baseGrey, out-of-range uses rangeGrey
-          // Current tick: green when in-range, red when out-of-range
-          const barColor = isCurrent
-            ? (isNearEdge ? '#f59e0b' : (positionInRange ? '#22c55e' : '#ef4444'))
-            : (inRange ? baseGrey : rangeGrey);
-          // Ensure consistent scaling - always use same formula
-          const scaledHeight = Math.round(heightPct * 0.4); // increased scaling factor
-          const barHeight = Math.max(16, scaledHeight); // consistent minimum height
+          const baseGrey = 'hsl(0 0% 60%)';
+          const rangeGrey = 'hsl(0 0% 40%)';
+          const effectiveHover = hoverIndex;
+          const hoverActive = effectiveHover !== null && isHovering;
+          const hoveredInRange = hoverActive && isIndexInRange(effectiveHover!);
+          const isNeighbor = effectiveHover !== null && (i === effectiveHover || i === effectiveHover - 1 || i === effectiveHover + 1);
+          // Only emphasize in-range, never emphasize outside on hover
+          const emphasize = inRange;
+          const colorForBar = (() => {
+            if (isCurrent) return positionInRange ? '#22c55e' : '#ef4444';
+            return emphasize ? baseGrey : rangeGrey;
+          })();
+          const scaledHeight = Math.round(heightPct * 0.4);
+          let barHeight = Math.max(16, scaledHeight);
+          if (isNeighbor) barHeight = Math.min(100, Math.round(barHeight * 1.25));
           return (
             <div
               key={i}
@@ -235,13 +265,49 @@ export function TickRangePortfolio({
               style={{
                 width: `${BAR_PX}px`,
                 height: `${barHeight}%`,
-                backgroundColor: barColor,
-                opacity: isCurrent ? 0.95 : 0.92,
+                backgroundColor: colorForBar,
+                opacity: isNeighbor ? 1 : (isCurrent ? 0.95 : 0.92),
               }}
             />
           );
         })}
       </div>
+
+      {/* Single moving tooltip using shadcn; trigger is a tiny absolutely positioned element following the cursor */}
+      {isHovering && hoverIndex !== null && (() => {
+        const idx = hoverIndex ?? 0;
+        const inRange = idx >= rangeStartIdx && idx <= rangeEndIdx;
+        if (!inRange && idx !== currentIdx) return null;
+        const s0 = (token0Symbol || '') as TokenSymbol;
+        const s1 = (token1Symbol || '') as TokenSymbol;
+        const showPrice = idx === currentIdx && currentPrice && s0 && s1;
+        const content = showPrice ? (() => {
+          const dec0 = TOKEN_DEFINITIONS[s0]?.displayDecimals ?? 4;
+          const dec1 = TOKEN_DEFINITIONS[s1]?.displayDecimals ?? 4;
+          const priceNum = Number(currentPrice);
+          if (!isFinite(priceNum) || priceNum <= 0) return '';
+          const priority: Record<string, number> = { aUSDC: 10, aUSDT: 9, USDC: 8, USDT: 7, aETH: 6, ETH: 5, YUSD: 4, mUSDT: 3 };
+          const base = (priority[s1] || 0) > (priority[s0] || 0) ? s1 : s0;
+          const invert = base === s0;
+          const value = invert ? 1 / priceNum : priceNum;
+          const decimals = invert ? (TOKEN_DEFINITIONS[s0]?.displayDecimals ?? dec0) : (TOKEN_DEFINITIONS[s1]?.displayDecimals ?? dec1);
+          const denom = invert ? s0 : s1;
+          const formatted = value.toLocaleString('de-DE', { minimumFractionDigits: Math.min(2, decimals), maximumFractionDigits: decimals });
+          return `${formatted} ${denom}`;
+        })() : 'Liquidity Range';
+        return (
+          <TooltipProvider>
+            <Tooltip open disableHoverableContent>
+              <TooltipTrigger asChild>
+                <div style={{ position: 'absolute', left: `${Math.max(0, Math.min(mouseX, rowWidthPx))}px`, top: 0, width: 1, height: 1 }} />
+              </TooltipTrigger>
+              <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
+                {content}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        );
+      })()}
     </div>
   );
 }

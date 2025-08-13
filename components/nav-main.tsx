@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useRef, useEffect } from "react"
-import { PlusCircleIcon, /* LockIcon, */ type LucideIcon, CoinsIcon, Trash2Icon } from "lucide-react"
+import { PlusCircleIcon, /* LockIcon, */ type LucideIcon, CoinsIcon, Trash2Icon, OctagonX } from "lucide-react"
 import { CustomLockIcon } from "./CustomLockIcon"
 import { usePathname } from "next/navigation";
 import { toast } from "sonner"
@@ -11,7 +11,7 @@ import { getAddress, parseUnits, type Address, type Hex } from "viem"
 import { publicClient } from "../lib/viemClient";
 import { FAUCET_CONTRACT_ADDRESS, FAUCET_FUNCTION_SIGNATURE, faucetContractAbi } from "../pages/api/misc/faucet"; // Import constants
 import { useRouter } from "next/navigation"; // Import useRouter
-import { WarningToastIcon, SuccessToastIcon } from "./swap/swap-interface"; // Adjusted import for toasts
+import { /* WarningToastIcon, */ SuccessToastIcon } from "./swap/swap-interface"; // Adjusted import for toasts
 import { parseAbi } from "viem"
 import { Badge } from "./ui/badge"; // Added import for Badge
 import { cn } from "@/lib/utils"; // Added import for cn
@@ -23,12 +23,7 @@ import {
   SidebarMenuBadge,
 } from "@/components/ui/sidebar"
 
-// Copied from components/swap-interface.tsx for consistent error icon styling
-const WarningToastIcon = () => (
-  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 flex-shrink-0 opacity-80">
-    <path fillRule="evenodd" clipRule="evenodd" d="M19.5 12C19.5 16.1421 16.1421 19.5 12 19.5C7.85786 19.5 4.5 16.1421 4.5 12C4.5 7.85786 7.85786 4.5 12 4.5C16.9706 4.5 19.5 7.85786 19.5 12ZM21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12ZM11.25 13.5V8.25H12.75V13.5H11.25ZM11.25 15.75V14.25H12.75V15.75H11.25Z" fill="#e94c4c"/>
-  </svg>
-);
+const OutOfRangeToastIcon = () => (<OctagonX className="h-4 w-4 text-red-500" />);
 
 interface NavMainItem {
   title: string
@@ -268,9 +263,12 @@ export function NavMain({
       
       console.log('Faucet Debug - Determined errorMessage:', finalErrorMessage);
 
-      toast.error(finalErrorMessage, {
-        icon: <WarningToastIcon />,
-      });
+      const lower2 = String(finalErrorMessage).toLowerCase();
+      if (lower2.includes('once per day')) {
+        toast.error('Can only claim once per day', { icon: <OutOfRangeToastIcon /> });
+      } else {
+        toast.error(finalErrorMessage, { icon: <OutOfRangeToastIcon /> });
+      }
       resetWriteContract();
     }
   }, [isConfirming, isConfirmed, writeTxError, receiptError, receipt, resetWriteContract]);
@@ -316,10 +314,13 @@ export function NavMain({
       })
       const faucetTxData = await apiRes.json()
       if (!apiRes.ok) {
-        const toastMessage = faucetTxData.errorDetails || `API Error: ${faucetTxData.message || 'Unknown error'}`;
-        toast.error(toastMessage, {
-          icon: <WarningToastIcon />,
-        });
+      const toastMessage = faucetTxData.errorDetails || `API Error: ${faucetTxData.message || 'Unknown error'}`;
+      const lower = String(toastMessage).toLowerCase();
+      if (lower.includes('once per day')) {
+        toast.error('Can only claim once per day', { icon: <OutOfRangeToastIcon /> });
+      } else {
+        toast.error(toastMessage, { icon: <OutOfRangeToastIcon /> });
+      }
         return
       }
       console.log("Faucet API response:", faucetTxData)
@@ -333,9 +334,12 @@ export function NavMain({
       })
     } catch (error: any) {
       console.error("Faucet action error:", error)
-      toast.error(`Error during faucet action: ${error.message}`, {
-        icon: <WarningToastIcon />,
-      })
+      const msg = String(error?.message || '').toLowerCase();
+      if (msg.includes('once per day')) {
+        toast.error('Can only claim once per day', { icon: <OutOfRangeToastIcon /> });
+      } else {
+        toast.error(`Error during faucet action: ${error.message}`, { icon: <OutOfRangeToastIcon /> })
+      }
     }
   }
 
