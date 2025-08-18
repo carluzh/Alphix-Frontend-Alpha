@@ -1751,7 +1751,7 @@ export default function PoolDetailPage() {
                   >
                     <div className="flex items-center justify-between px-4 h-9">
                       <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold truncate">
-                        {toggleMetric === 'liquidity' && 'TOTAL LIQUIDITY'}
+                        {toggleMetric === 'liquidity' && 'TVL'}
                         {toggleMetric === 'volume' && 'VOLUME (24H)'}
                         {toggleMetric === 'fees' && 'FEES (24H)'}
                       </h2>
@@ -1782,13 +1782,13 @@ export default function PoolDetailPage() {
                   </div>
                 </div>
                 
-                {/* Desktop Total Liquidity */}
+                {/* Desktop TVL */}
                 <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 hidden md:block">
                   <div className="flex items-center justify-between px-4 py-2">
                     <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">
                       {windowWidth < 1500
-                        ? (toggleMetric === 'liquidity' ? 'TOTAL LIQUIDITY' : toggleMetric === 'volume' ? 'VOLUME (24H)' : 'FEES (24H)')
-                        : 'TOTAL LIQUIDITY'}
+                        ? (toggleMetric === 'liquidity' ? 'TVL' : toggleMetric === 'volume' ? 'VOLUME (24H)' : 'FEES (24H)')
+                        : 'TVL'}
                     </h2>
                     {windowWidth < 1500 && (
                       <button
