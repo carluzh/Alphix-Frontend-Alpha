@@ -1,3 +1,4 @@
+// app/api/save-beta-user/route.ts
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 
@@ -25,19 +26,18 @@ export async function POST(request: Request) {
       .insert([{ email: email }]);
 
     if (error) {
-      // Handle unique constraint violation (email already exists) gracefully
+      // Gracefully handle unique constraint violation (email already exists)
       if (error.code === '23505') {
-        // Still return a success response to prevent email enumeration
-        return NextResponse.json({ message: 'Access request submitted successfully' }, { status: 200 });
+        return NextResponse.json({ message: 'Email already registered' }, { status: 200 });
       }
       console.error('Supabase insert error:', error);
-      return NextResponse.json({ error: 'Failed to request access' }, { status: 500 });
+      return NextResponse.json({ error: 'Failed to save beta user' }, { status: 500 });
     }
 
-    return NextResponse.json({ message: 'Access request submitted successfully' }, { status: 200 });
+    return NextResponse.json({ message: 'Beta user saved successfully' }, { status: 200 });
 
   } catch (error) {
-    console.error('Request access API error:', error);
+    console.error('Save beta user API error:', error);
     return NextResponse.json({ error: 'An unexpected error occurred' }, { status: 500 });
   }
-} 
+}

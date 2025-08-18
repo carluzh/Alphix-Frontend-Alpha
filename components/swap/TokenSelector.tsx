@@ -275,10 +275,10 @@ export function TokenSelector({
       <Button
         variant="ghost"
         className={cn(
-          "flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2 hover:bg-muted/50 transition-colors",
+          "flex items-center gap-1.5 bg-[var(--token-selector-background)] rounded-lg h-11 px-3 border border-sidebar-border/60 hover:bg-muted/30 transition-colors",
           {
             "cursor-not-allowed opacity-50": disabled,
-            "bg-muted/50": isOpen
+            "bg-muted/30": isOpen
           }
         )}
         onClick={() => setIsOpen(!isOpen)} // Directly toggle isOpen

@@ -92,6 +92,11 @@
     /* Swap interface dark theme */
     --swap-background: #131313; /* Same as sidebar background */
     --swap-border: #323232; /* Same as sidebar border */
+
+    /* Custom Swap Interface Colors */
+    --token-container-background: #181818;
+    --token-container-border-hover: #2d2d2d;
+    --token-selector-background: #1b1b1b;
   }
 }
 

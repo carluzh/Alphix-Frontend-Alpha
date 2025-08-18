@@ -11,6 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { Token, FeeDetail, OutlineArcIcon } from './swap-interface';
 import { TokenSelector, TokenSelectorToken } from './TokenSelector';
@@ -118,6 +119,7 @@ export function SwapInputView({
   showRoute = true,
   onRouteHoverChange,
 }: SwapInputViewProps) {
+  const [hoveredRouteIndex, setHoveredRouteIndex] = React.useState<number | null>(null);
   const [isSlippageEditing, setIsSlippageEditing] = React.useState(false);
   const [customSlippage, setCustomSlippage] = React.useState("");
   const [isCustomSlippage, setIsCustomSlippage] = React.useState(false);
@@ -214,7 +216,14 @@ export function SwapInputView({
             </Button>
           </div>
         </div>
-        <div className={cn("rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted", { "outline outline-1 outline-muted": isSellInputFocused })}>
+        <div 
+          className={cn(
+            "rounded-lg bg-[var(--token-container-background)] p-4 border transition-colors hover:border-[var(--token-container-border-hover)]",
+            isSellInputFocused
+              ? "border-[var(--token-container-border-hover)]"
+              : "border-transparent"
+          )}
+        >
           <div className="flex items-center gap-2">
             <TokenSelector
               selectedToken={displayFromToken as TokenSelectorToken}
@@ -257,7 +266,9 @@ export function SwapInputView({
               Balance: { (isConnected ? (isLoadingCurrentToTokenBalance ? "Loading..." : displayToToken.balance) : "~")} {displayToToken.symbol}
             </span>
         </div>
-        <div className="rounded-lg bg-muted/30 p-4">
+        <div 
+          className="rounded-lg bg-[var(--token-container-background)] p-4 border border-transparent"
+        >
           <div className="flex items-center gap-2">
             <TokenSelector
               selectedToken={displayToToken as TokenSelectorToken}
@@ -319,70 +330,110 @@ export function SwapInputView({
       <div className="mt-3 mb-1 space-y-1.5">
         {showRoute && isConnected && currentChainId === TARGET_CHAIN_ID && (
           <>
-            {(() => {
-              const path = routeInfo?.path || [displayFromToken.symbol, displayToToken.symbol];
-              const isMultiHop = path.length > 2;
+            {/* NEW: Animated Route Display */}
+            <div
+              className="flex items-center justify-between text-xs text-muted-foreground"
+              onMouseLeave={() => setHoveredRouteIndex(null)}
+            >
+              <span>Route:</span>
+              <div className="relative flex items-center h-7">
+                {(() => {
+                  const path = routeInfo?.path || [displayFromToken.symbol, displayToToken.symbol];
+                  
+                  const iconSize = 20;
+                  const overlap = 0.3 * iconSize; // 30% overlap
+                  const step = iconSize - overlap;
+                  const feeWidth = 40;
+                  const totalWidth = iconSize + (path.length - 1) * step; // Remove feeWidth from container width
 
-              return (
-                <>
-                  {/* Route: Show for both single-hop and multi-hop */}
-                  <div
-                    className="flex items-center justify-between text-xs text-muted-foreground"
-                    onMouseEnter={() => onRouteHoverChange?.(true)}
-                    onMouseLeave={() => onRouteHoverChange?.(false)}
-                  >
-                    <span>Route:</span>
-                    <div className="flex items-center gap-1.5">
+                  return (
+                    <div className="absolute right-0" style={{ width: totalWidth, height: iconSize }}>
                       {path.map((tokenSymbol, index) => {
                         const tokenConfig = getToken(tokenSymbol);
                         const tokenIcon = tokenConfig?.icon || "/placeholder-logo.svg";
-                        const showFee = index < path.length - 1;
-                        const fee = showFee && routeFees && routeFees[index] 
-                          ? `${(routeFees[index].fee / 10000).toFixed(2)}%` 
+                        // Fee for the pool OUTGOING from this token (to the next one)
+                        const fee = (routeFees && index < routeFees.length)
+                          ? `${(routeFees[index].fee / 10000).toFixed(2)}%`
                           : null;
-                        const isSelectedForChart = selectedPoolIndexForChart === index;
+
+                        const isHovered = hoveredRouteIndex === index;
+                        const isRightmost = index === path.length - 1;
+                        
+                        // Default stacked positions from left to right, container anchored to the right
+                        const leftPos = index * step;
+                        
+                        // Simple approach: create equal spacing around hovered token
+                        let xOffset = 0;
+                        if (hoveredRouteIndex !== null && hoveredRouteIndex < path.length - 1) {
+                          const margin = 10; // Predefined margin (increased by 25%)
+                          
+                          if (index === hoveredRouteIndex) {
+                            // Hovered token moves left by margin
+                            xOffset = -margin;
+                          } else if (index < hoveredRouteIndex) {
+                            // Tokens to the left move left by double margin (to create parallel spacing)
+                            xOffset = -(margin * 2);
+                          }
+                          // Tokens to the right (index > hoveredRouteIndex) don't move (xOffset = 0)
+                        }
 
                         return (
-                          <React.Fragment key={`${tokenSymbol}-${index}`}>
-                            {fee ? (
-                              <button
-                                type="button"
-                                title={`Show fee trend for pool ${index + 1}`}
-                                onClick={() => onSelectPoolForChart?.(index)}
-                                onPointerDown={(e) => {
-                                  // Improves reliability on rapid clicks/taps
-                                  e.preventDefault();
-                                  onSelectPoolForChart?.(index);
-                                }}
-                                className={`group relative z-[1] pointer-events-auto flex items-center gap-1 text-xs font-medium transition-colors hover:text-foreground cursor-pointer ${
-                                  isSelectedForChart
-                                    ? 'text-foreground/80 underline decoration-dotted decoration-1 underline-offset-2'
-                                    : 'text-foreground/80'
-                                }`}
-                              >
-                                <Image src={tokenIcon} alt={tokenSymbol} width={16} height={16} className="rounded-full"/>
-                                <span>{fee}</span>
-                              </button>
-                            ) : (
-                              <div className="flex items-center gap-1">
-                                <Image src={tokenIcon} alt={tokenSymbol} width={16} height={16} className="rounded-full"/>
-                              </div>
-                            )}
-                            {index < path.length - 1 && <div className="h-1 w-1 rounded-full bg-muted-foreground/60"></div>}
-                          </React.Fragment>
+                          <motion.div
+                            key={tokenSymbol}
+                            className="absolute top-0"
+                            style={{ 
+                              zIndex: index + 1,
+                              left: `${leftPos}px`
+                            }}
+                            animate={{ x: xOffset }}
+                            transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                            onHoverStart={() => setHoveredRouteIndex(index)}
+                            onHoverEnd={() => setHoveredRouteIndex(null)}
+                          >
+                            <div className="flex items-center">
+                              {/* Icon */}
+                                                              <TooltipProvider delayDuration={0}>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <motion.div
+                                        className="relative"
+                                        whileHover={{ scale: 1.08 }}
+                                        style={{ 
+                                          padding: `${iconSize * 0.1}px`,
+                                          margin: `-${iconSize * 0.1}px`
+                                        }}
+                                      >
+                                        <Image 
+                                          src={tokenIcon} 
+                                          alt={tokenSymbol} 
+                                          width={iconSize} 
+                                          height={iconSize} 
+                                          className="rounded-full bg-background"
+                                          style={{ boxShadow: '0 0 0 2px var(--background)' }}
+                                        />
+                                      </motion.div>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
+                                      {tokenSymbol}
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                            </div>
+                          </motion.div>
                         );
                       })}
                     </div>
-                  </div>
-                  {/* Divider: Only shows if Route is visible and there's an amount */}
-                  {parseFloat(fromAmount || "0") > 0 && (
-                    <div className="py-0.5">
-                      <div className="border-t border-dashed border-muted-foreground/20" />
-                    </div>
-                  )}
-                </>
-              );
-            })()}
+                  );
+                })()}
+              </div>
+            </div>
+
+            {/* Divider: Only shows if Route is visible and there's an amount */}
+            {parseFloat(fromAmount || "0") > 0 && (
+              <div className="py-0.5">
+                <div className="border-t border-dashed border-muted-foreground/20" />
+              </div>
+            )}
 
             {/* Fee and Slippage: Shown for any swap with an amount */}
             {parseFloat(fromAmount || "0") > 0 && (

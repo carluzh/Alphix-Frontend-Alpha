@@ -4,21 +4,15 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ChevronRight, Menu, X } from "lucide-react";
+import { Menu, X } from "lucide-react";
 import { RequestAccessButton } from "@/components/RequestAccessButton";
 import DisplayCards from "@/components/ui/display-cards";
 import { toast } from "sonner";
 import { PulsatingDot } from "@/components/pulsating-dot";
 import { MockSwapComponent } from "@/components/swap/MockSwapComponent";
 import { useRouter } from 'next/navigation';
-import { DynamicFeeChartPreview } from "@/components/dynamic-fee-chart-preview";
 
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+
 
 
 
@@ -28,18 +22,12 @@ export default function Home() {
   const throttleTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [rightMargin, setRightMargin] = useState(0);
   const [showNavbar, setShowNavbar] = useState(true);
-  const [currentWord, setCurrentWord] = useState('');
-  const [wordIndex, setWordIndex] = useState(0);
-  const [isDeleting, setIsDeleting] = useState(false);
-  const [isAnimationComplete, setIsAnimationComplete] = useState(false);
-  const [showFinalDot, setShowFinalDot] = useState(false);
+
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
   const [isHovering, setIsHovering] = useState(false);
   const [animationFinished, setAnimationFinished] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isPoolsImageHovered, setIsPoolsImageHovered] = useState(false);
-
-  const words = ['dynamic', 'composable', 'efficient', 'unified', 'here'];
 
   const imageStyle = {
     transform: `perspective(1000px) rotateY(-12deg) rotateX(4deg) ${isPoolsImageHovered ? 'translateY(-8px)' : ''}`,
@@ -79,10 +67,6 @@ export default function Home() {
     setAnimationFinished(true);
   };
 
-  const handleNavigateToSwap = () => {
-    window.location.href = '/swap';
-  };
-
   const handleCopyEmail = async () => {
     try {
       await navigator.clipboard.writeText('contact@alphix.fi');
@@ -103,40 +87,6 @@ export default function Home() {
       document.body.removeChild(textArea);
     }
   };
-
-  useEffect(() => {
-    const typeSpeed = isDeleting ? 50 : 100;
-    const word = words[wordIndex];
-    
-    const timer = setTimeout(() => {
-      if (!isDeleting && currentWord === word) {
-        // If it's the last word ("here"), don't delete it and add a dot
-        if (wordIndex === words.length - 1) {
-          if (!showFinalDot) {
-            setTimeout(() => {
-              setShowFinalDot(true);
-              setIsAnimationComplete(true);
-            }, 500);
-          }
-          return;
-        }
-        // Word is complete, wait then start deleting
-        setTimeout(() => setIsDeleting(true), 1500);
-      } else if (isDeleting && currentWord === '') {
-        // Finished deleting, move to next word
-        setIsDeleting(false);
-        setWordIndex((prev) => (prev + 1) % words.length);
-      } else if (isDeleting) {
-        // Continue deleting
-        setCurrentWord(word.substring(0, currentWord.length - 1));
-      } else {
-        // Continue typing
-        setCurrentWord(word.substring(0, currentWord.length + 1));
-      }
-    }, typeSpeed);
-
-    return () => clearTimeout(timer);
-  }, [currentWord, wordIndex, isDeleting, words, showFinalDot]);
 
   useEffect(() => {
     const calculateMargin = () => {
@@ -312,7 +262,7 @@ export default function Home() {
                   variant="alphix"
                   className="text-base flex items-center px-4 py-4 h-11 rounded-md cursor-pointer" 
                   style={{ fontFamily: 'Inter, sans-serif' }}
-                  onClick={handleNavigateToSwap}
+                  onClick={() => router.push('/swap')}
                 >
                   <div className="flex items-center justify-center">
                     Open App
@@ -347,7 +297,7 @@ export default function Home() {
                 style={{ 
                   filter: 'drop-shadow(0 4px 20px rgba(0, 0, 0, 0.25))'
                 }}
-                onClick={handleNavigateToSwap}
+                onClick={() => router.push('/swap')}
               >
                 <MockSwapComponent zoom={1.2} />
               </div>
@@ -374,7 +324,7 @@ export default function Home() {
                 style={{ 
                   filter: 'drop-shadow(0 4px 20px rgba(0, 0, 0, 0.25))'
                 }}
-                onClick={handleNavigateToSwap}
+                onClick={() => router.push('/swap')}
               >
                 <MockSwapComponent zoom={0.9} />
               </div>
@@ -527,13 +477,6 @@ export default function Home() {
                     <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-[#0a0908] to-transparent"></div>
                   </div>
                 </div>
-              </div>
-            </div>
-
-            {/* Dynamic Fee Preview (always skeleton on homepage) */}
-            <div className="mt-10 w-full flex justify-center">
-              <div className="w-full max-w-md">
-                <DynamicFeeChartPreview data={[]} alwaysShowSkeleton />
               </div>
             </div>
 
@@ -1149,9 +1092,6 @@ function WebGLCanvas({ rightMargin }: { rightMargin: number }) {
     const texCoords = [0, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 1];
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(texCoords), gl.STATIC_DRAW);
     
-    let startTime = Date.now();
-    let lastScrollY = window.scrollY;
-    
     function resizeCanvas() {
         if (!canvas || !gl || !canvas.parentElement) return false;
         const { width, height } = canvas.parentElement.getBoundingClientRect();
@@ -1203,8 +1143,6 @@ function WebGLCanvas({ rightMargin }: { rightMargin: number }) {
       rafIdRef.current = requestAnimationFrame(render);
     }
 
-    startTime = Date.now();
-    lastScrollY = window.scrollY;
     rafIdRef.current = requestAnimationFrame(render);
 
     // Prevent context loss (which can cause white canvas)
@@ -1218,7 +1156,6 @@ function WebGLCanvas({ rightMargin }: { rightMargin: number }) {
     canvas.addEventListener('webglcontextrestored', onContextRestored, false);
 
     return () => {
-      window.removeEventListener('resize', resizeCanvas);
       if (rafIdRef.current !== null) {
         cancelAnimationFrame(rafIdRef.current);
       }
