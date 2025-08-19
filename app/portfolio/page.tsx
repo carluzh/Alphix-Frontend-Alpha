@@ -773,6 +773,13 @@ export default function PortfolioPage() {
       localStorage.setItem(`faucetClaimLastSeenAt_${accountAddress}`, String(now));
       setFaucetLastClaimTs(now);
       setIsFaucetBusy(false);
+      // Also trigger wallet balances refetch after a brief delay to allow chain state to settle
+      setTimeout(() => {
+        try {
+          localStorage.setItem(`walletBalancesRefreshAt_${accountAddress}`, String(Date.now()));
+          window.dispatchEvent(new Event('walletBalancesRefresh'));
+        } catch {}
+      }, 2000);
     } catch {}
   }, [isFaucetConfirmed, accountAddress]);
 

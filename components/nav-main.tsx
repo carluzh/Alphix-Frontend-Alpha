@@ -238,13 +238,16 @@ export function NavMain({
         setCachedLastCalled(now); // Update state to trigger recalculation
       }
       refetchLastCalled(); // Immediately refetch from contract for accuracy
-      // Force wallet balances refetch across the app (and tabs)
-      try {
-        if (userAddress) {
-          localStorage.setItem(`walletBalancesRefreshAt_${userAddress}`, String(Date.now()));
-        }
-        window.dispatchEvent(new Event('walletBalancesRefresh'));
-      } catch {}
+      // Force wallet balances refetch across the app (and tabs) after a delay
+      // to ensure blockchain state has settled
+      setTimeout(() => {
+        try {
+          if (userAddress) {
+            localStorage.setItem(`walletBalancesRefreshAt_${userAddress}`, String(Date.now()));
+          }
+          window.dispatchEvent(new Event('walletBalancesRefresh'));
+        } catch {}
+      }, 2000); // 2 second delay
     }
     const anError = writeTxError || receiptError;
     if (anError) {

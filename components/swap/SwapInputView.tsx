@@ -7,7 +7,7 @@ import {
   ArrowDownIcon,
   ChevronRightIcon,
   InfoIcon,
-  Settings,
+  ChevronDown as ChevronDownIcon,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -619,15 +619,23 @@ export function SwapInputView({
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
                   <div className="flex items-center gap-1.5" ref={slippageRef}>
                     <span>Max Slippage:</span>
-                    <span className="text-foreground/80 font-medium">{slippage}%</span>
-                    <Settings
-                      className="ml-0.5 h-3 w-3 text-muted-foreground/60 hover:text-muted-foreground cursor-pointer"
+                    <button
+                      type="button"
+                      className="flex items-center gap-0.5 text-foreground/80 font-medium"
                       onClick={() => {
                         ignoreNextOutsideClickRef.current = true;
                         setIsSlippageEditing((v) => !v);
                         setCustomSlippage(slippage.toString());
                       }}
-                    />
+                    >
+                      <span>{slippage}%</span>
+                      <motion.span
+                        animate={{ rotate: isSlippageEditing ? 180 : 0 }}
+                        transition={{ type: "tween", duration: 0.18 }}
+                      >
+                        <ChevronDownIcon className="h-3 w-3 text-muted-foreground/60 hover:text-muted-foreground" />
+                      </motion.span>
+                    </button>
                   </div>
                   <div className="flex items-center gap-1.5">
                     <span>Min Received:</span>

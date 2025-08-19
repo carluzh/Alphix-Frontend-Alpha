@@ -204,6 +204,8 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
     return newChartData;
   }, [data, hasDataChanged]);
 
+  const hasData = Array.isArray(data) && data.length > 0;
+
   // Render different Card structures based on data availability
   if (alwaysShowSkeleton) {
     return (
@@ -258,7 +260,8 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
     );
   }
 
-  if (!data || data.length === 0) {
+  // If no data and not loading, show the empty state. If loading, fall through to the chart card (it shows a skeleton inside).
+  if (!hasData && !isLoading) {
     return (
       <div
         className="w-full rounded-lg bg-muted/30 border border-sidebar-border/60 transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow"

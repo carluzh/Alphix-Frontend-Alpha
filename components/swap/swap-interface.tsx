@@ -712,19 +712,47 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   };
 
   // --- Dynamic Balance Fetching for current tokens ---
-  const { data: fromTokenBalanceData, isLoading: isLoadingFromTokenBalance, error: fromTokenBalanceError } = useBalance({
+  const { data: fromTokenBalanceData, isLoading: isLoadingFromTokenBalance, error: fromTokenBalanceError, refetch: refetchFromTokenBalance } = useBalance({
     address: accountAddress,
     token: fromToken.address === "0x0000000000000000000000000000000000000000" ? undefined : fromToken.address,
     chainId: TARGET_CHAIN_ID,
     query: { enabled: !!accountAddress && !!fromToken.address }
   });
 
-  const { data: toTokenBalanceData, isLoading: isLoadingToTokenBalance, error: toTokenBalanceError } = useBalance({
+  const { data: toTokenBalanceData, isLoading: isLoadingToTokenBalance, error: toTokenBalanceError, refetch: refetchToTokenBalance } = useBalance({
     address: accountAddress,
     token: toToken.address === "0x0000000000000000000000000000000000000000" ? undefined : toToken.address,
     chainId: TARGET_CHAIN_ID,
     query: { enabled: !!accountAddress && !!toToken.address }
   });
+
+  // Listen for faucet claim to refresh balances
+  useEffect(() => {
+    if (!accountAddress) return;
+    
+    const onRefresh = () => {
+      // Force refetch of current token balances
+      if (fromToken.address !== "0x0000000000000000000000000000000000000000") {
+        refetchFromTokenBalance();
+      }
+      if (toToken.address !== "0x0000000000000000000000000000000000000000") {
+        refetchToTokenBalance();
+      }
+    };
+    
+    const onStorage = (e: StorageEvent) => {
+      if (!e.key || !accountAddress) return;
+      if (e.key === `walletBalancesRefreshAt_${accountAddress}`) onRefresh();
+    };
+    
+    window.addEventListener('walletBalancesRefresh', onRefresh as EventListener);
+    window.addEventListener('storage', onStorage);
+    
+    return () => {
+      window.removeEventListener('walletBalancesRefresh', onRefresh as EventListener);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, [accountAddress, fromToken.address, toToken.address, refetchFromTokenBalance, refetchToTokenBalance]);
 
   // Update fromToken balance
   useEffect(() => {
@@ -2111,34 +2139,38 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
 
   // Create a stable key for fee history to prevent unnecessary reloads
   const feeHistoryKey = useMemo(() => {
-    if (!isMounted) {
-      return null;
+    if (!isMounted) return null;
+    // When not connected, fallback to aUSDC/aUSDT pool
+    if (!isConnected) {
+      const fallback = getPoolByTokens('aUSDC', 'aUSDT');
+      return fallback ? `${fallback.subgraphId}_fallback` : null;
     }
-    if (!isConnected || currentChainId !== TARGET_CHAIN_ID || !currentRoute) {
-      return null;
-    }
-    
-    let poolIdForHistory: string | undefined;
-    if (currentRoute.pools.length > 0) {
-      const poolIndex = Math.min(selectedPoolIndexForChart, currentRoute.pools.length - 1);
-      poolIdForHistory = currentRoute.pools[poolIndex].subgraphId;
-    }
-    
+    if (!currentRoute) return null;
+    const poolIndex = Math.min(selectedPoolIndexForChart, currentRoute.pools.length - 1);
+    const poolIdForHistory = currentRoute.pools[poolIndex]?.subgraphId;
     return poolIdForHistory ? `${poolIdForHistory}_${selectedPoolIndexForChart}` : null;
-  }, [isMounted, isConnected, currentChainId, TARGET_CHAIN_ID, currentRoute, selectedPoolIndexForChart]);
+  }, [isMounted, isConnected, currentRoute, selectedPoolIndexForChart]);
 
   // Effect to fetch historical fee data - with session caching and optimized loading
   useEffect(() => {
     const fetchHistoricalFeeData = async () => {
-      if (!feeHistoryKey || !currentRoute) {
+      if (!feeHistoryKey) {
         setFeeHistoryData([]);
         return; // Preview is always mounted, just no data
       }
 
       // Get the selected pool's subgraph ID
-      const poolIndex = Math.min(selectedPoolIndexForChart, currentRoute.pools.length - 1);
-      const poolIdForFeeHistory = currentRoute.pools[poolIndex].subgraphId;
-      const selectedPool = currentRoute.pools[poolIndex];
+      let poolIdForFeeHistory: string | undefined;
+      let selectedPool: any = null;
+      if (currentRoute) {
+        const poolIndex = Math.min(selectedPoolIndexForChart, currentRoute.pools.length - 1);
+        poolIdForFeeHistory = currentRoute.pools[poolIndex]?.subgraphId;
+        selectedPool = currentRoute.pools[poolIndex];
+      } else {
+        const fallback = getPoolByTokens('aUSDC', 'aUSDT');
+        poolIdForFeeHistory = fallback?.subgraphId;
+        selectedPool = fallback ? { token0: fallback.currency0.symbol, token1: fallback.currency1.symbol, poolName: fallback.name } : null;
+      }
 
       const cacheKey = `feeHistory_${poolIdForFeeHistory}_30days`;
       
@@ -2524,11 +2556,15 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
               }}
             >
               <DynamicFeeChartPreview 
-                data={(!currentRoute || isFeeHistoryLoading) ? [] : feeHistoryData} 
+                data={isFeeHistoryLoading ? [] : feeHistoryData} 
                 onClick={handlePreviewChartClick}
-                poolInfo={poolInfo}
+                poolInfo={poolInfo || (getPoolByTokens('aUSDC', 'aUSDT') ? {
+                  token0Symbol: getPoolByTokens('aUSDC', 'aUSDT')!.currency0.symbol,
+                  token1Symbol: getPoolByTokens('aUSDC', 'aUSDT')!.currency1.symbol,
+                  poolName: getPoolByTokens('aUSDC', 'aUSDT')!.name,
+                } : undefined)}
                 isLoading={isFeeHistoryLoading}
-                alwaysShowSkeleton={!currentRoute || isFeeHistoryLoading}
+                alwaysShowSkeleton={false}
                 totalPools={currentRoute?.pools?.length}
                 activePoolIndex={selectedPoolIndexForChart}
               />
