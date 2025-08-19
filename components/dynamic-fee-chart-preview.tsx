@@ -25,6 +25,8 @@ interface DynamicFeeChartPreviewProps {
   isLoading?: boolean; // Show loading state during pool switches
   onContentStableChange?: (stable: boolean) => void; // New callback prop
   alwaysShowSkeleton?: boolean; // Force skeleton even with no data (e.g., homepage preview)
+  totalPools?: number; // multihop: number of pools (kept for compatibility, not rendered here)
+  activePoolIndex?: number; // which pool is currently selected (kept for compatibility)
 }
 
 function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = false, onContentStableChange, alwaysShowSkeleton = false }: DynamicFeeChartPreviewProps) {

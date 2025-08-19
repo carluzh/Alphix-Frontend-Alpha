@@ -1,11 +1,13 @@
 "use client";
 
 import React from 'react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import Image from 'next/image';
 import {
   ArrowDownIcon,
   ChevronRightIcon,
+  InfoIcon,
+  Settings,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -124,8 +126,18 @@ export function SwapInputView({
   const [customSlippage, setCustomSlippage] = React.useState("");
   const [isCustomSlippage, setIsCustomSlippage] = React.useState(false);
   const slippageRef = React.useRef<HTMLDivElement>(null);
+  const [clickedTokenIndex, setClickedTokenIndex] = React.useState<number | null>(0);
+  const ignoreNextOutsideClickRef = React.useRef(false);
 
-  const presetSlippages = [0.5, 2, 5];
+  const presetSlippages = [0.05, 0.10, 0.50, 1.00];
+
+  // Ensure first pool is selected initially
+  React.useEffect(() => {
+    if (onSelectPoolForChart) {
+      onSelectPoolForChart(0);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   
   const handleSlippageSelect = (value: number) => {
     onSlippageChange(value);
@@ -167,6 +179,10 @@ export function SwapInputView({
   // Handle clicks outside the slippage editor to close it
   React.useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
+      if (ignoreNextOutsideClickRef.current) {
+        ignoreNextOutsideClickRef.current = false;
+        return;
+      }
       if (slippageRef.current && !slippageRef.current.contains(event.target as Node)) {
         setIsSlippageEditing(false);
         setIsCustomSlippage(false);
@@ -259,7 +275,7 @@ export function SwapInputView({
       </div>
 
       {/* Buy Section - Uses `displayToToken` */}
-      <div className="mb-6 mt-2">
+      <div className="mt-2">
         <div className="flex items-center justify-between mb-2">
           <Label className="text-sm font-medium">Buy</Label>
           <span className={cn("text-xs text-muted-foreground", { "opacity-50": !isConnected })}>
@@ -330,86 +346,208 @@ export function SwapInputView({
       <div className="mt-3 mb-1 space-y-1.5">
         {showRoute && isConnected && currentChainId === TARGET_CHAIN_ID && (
           <>
-            {/* NEW: Animated Route Display */}
             <div
               className="flex items-center justify-between text-xs text-muted-foreground"
               onMouseLeave={() => setHoveredRouteIndex(null)}
             >
-              <span>Route:</span>
-              <div className="relative flex items-center h-7">
-                {(() => {
-                  const path = routeInfo?.path || [displayFromToken.symbol, displayToToken.symbol];
-                  
-                  const iconSize = 20;
-                  const overlap = 0.3 * iconSize; // 30% overlap
-                  const step = iconSize - overlap;
-                  const feeWidth = 40;
-                  const totalWidth = iconSize + (path.length - 1) * step; // Remove feeWidth from container width
+              <div className="flex items-center gap-2"> {/* Left section: Route label */}
+                <span>Route:</span>
+              </div>
 
-                  return (
-                    <div className="absolute right-0" style={{ width: totalWidth, height: iconSize }}>
-                      {path.map((tokenSymbol, index) => {
-                        const tokenConfig = getToken(tokenSymbol);
-                        const tokenIcon = tokenConfig?.icon || "/placeholder-logo.svg";
-                        // Fee for the pool OUTGOING from this token (to the next one)
-                        const fee = (routeFees && index < routeFees.length)
-                          ? `${(routeFees[index].fee / 10000).toFixed(2)}%`
-                          : null;
+              <div className="flex items-center gap-3"> {/* Right section: Fee and Token Picker */}
+                {/* Currently selected pool fee percentage */}
+                {clickedTokenIndex !== null && routeFees?.[selectedPoolIndexForChart] && (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-muted-foreground text-xs">
+                      {routeFeesLoading ? (
+                        <div className="h-3 w-8 bg-muted/60 rounded animate-pulse"></div>
+                      ) : (
+                        `${(routeFees[selectedPoolIndexForChart].fee / 10000).toFixed(2)}%`
+                      )}
+                    </span>
+                    <TooltipProvider delayDuration={0}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <InfoIcon className="h-3 w-3 text-muted-foreground/60 hover:text-muted-foreground cursor-pointer" />
+                        </TooltipTrigger>
+                        <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs max-w-xs">
+                          <p>
+                            {(() => {
+                              const fromSym = routeInfo?.path?.[selectedPoolIndexForChart] ?? displayFromToken.symbol;
+                              const toIdx = Math.min((routeInfo?.path?.length || 1) - 1, selectedPoolIndexForChart + 1);
+                              const toSym = routeInfo?.path?.[toIdx] ?? displayToToken.symbol;
+                              return `Fee: ${fromSym} › ${toSym}`;
+                            })()}
+                          </p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </div>
+                )}
+                
+                {/* Animated token picker */}
+                <div className="relative flex items-center h-7">
+                  {(() => {
+                    const path = routeInfo?.path || [displayFromToken.symbol, displayToToken.symbol];
+                    const iconSize = 20;
+                    const overlap = 0.3 * iconSize;
+                    const step = iconSize - overlap;
 
-                        const isHovered = hoveredRouteIndex === index;
-                        const isRightmost = index === path.length - 1;
-                        
-                        // Default stacked positions from left to right, container anchored to the right
-                        const leftPos = index * step;
-                        
-                        // Simple approach: create equal spacing around hovered token
-                        let xOffset = 0;
-                        if (hoveredRouteIndex !== null && hoveredRouteIndex < path.length - 1) {
-                          const margin = 10; // Predefined margin (increased by 25%)
-                          
-                          if (index === hoveredRouteIndex) {
-                            // Hovered token moves left by margin
-                            xOffset = -margin;
-                          } else if (index < hoveredRouteIndex) {
-                            // Tokens to the left move left by double margin (to create parallel spacing)
-                            xOffset = -(margin * 2);
-                          }
-                          // Tokens to the right (index > hoveredRouteIndex) don't move (xOffset = 0)
-                        }
+                    const pairMargin = 10; // same as hover margin for consistency
+                    const hoverMargin = 10;
 
-                        return (
-                          <motion.div
-                            key={tokenSymbol}
-                            className="absolute top-0"
-                            style={{ 
-                              zIndex: index + 1,
-                              left: `${leftPos}px`
-                            }}
-                            animate={{ x: xOffset }}
-                            transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                            onHoverStart={() => setHoveredRouteIndex(index)}
-                            onHoverEnd={() => setHoveredRouteIndex(null)}
-                          >
-                            <div className="flex items-center">
-                              {/* Icon */}
-                                                              <TooltipProvider delayDuration={0}>
+                    const baseWidth = path.length > 0 ? iconSize + (path.length - 1) * step : 0;
+
+                    // Compute boundary gaps (between token i and i+1), using max() so hover never over-increases existing pair margins
+                    const gaps: number[] = Array(Math.max(0, path.length - 1)).fill(0);
+
+                    // Pair margins (added before and after the selected pair, never inside it)
+                    const rawPoolIndex = selectedPoolIndexForChart;
+                    const poolIndex = Math.max(0, Math.min(rawPoolIndex, path.length - 2));
+                    if (clickedTokenIndex !== null) {
+                      if (poolIndex > 0) gaps[poolIndex - 1] = Math.max(gaps[poolIndex - 1], pairMargin);
+                      if (poolIndex < path.length - 2) gaps[poolIndex + 1] = Math.max(gaps[poolIndex + 1], pairMargin);
+                    }
+
+                    // Hover margins: symmetrical (left and right) except at edges
+                    if (hoveredRouteIndex !== null && path.length > 1) {
+                      const h = hoveredRouteIndex;
+                      const applyLeft = h > 0;
+                      const applyRight = h < path.length - 1;
+                      if (applyLeft) gaps[h - 1] = Math.max(gaps[h - 1], hoverMargin);
+                      if (applyRight) gaps[h] = Math.max(gaps[h], hoverMargin);
+                    }
+
+                    // Prefix sums to get per-token x offsets
+                    const offsets: number[] = new Array(path.length).fill(0);
+                    for (let i = 1; i < path.length; i++) {
+                      offsets[i] = offsets[i - 1] + (gaps[i - 1] || 0);
+                    }
+
+                    const totalExtraWidth = gaps.reduce((a, b) => a + b, 0);
+                    const animatedWidth = baseWidth + totalExtraWidth;
+
+                    const isRouteHovered = hoveredRouteIndex !== null;
+
+                    return (
+                      <motion.div
+                        className="relative"
+                        style={{ height: iconSize }}
+                        animate={{ width: animatedWidth }}
+                        transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                      >
+                        {/* Group outline for selected pair */}
+                        {clickedTokenIndex !== null && (() => {
+                          const ringPadding = 3; // small margin so hover-scaled tokens fit inside
+
+                          // Final positions of the pair's tokens (left edges) with offsets
+                          const token1FinalLeft = (poolIndex * step) + offsets[poolIndex];
+                          const token2FinalLeft = ((poolIndex + 1) * step) + offsets[poolIndex + 1];
+
+                          const ringLeft = token1FinalLeft - ringPadding;
+                          const ringTop = -ringPadding;
+                          const ringWidth = (token2FinalLeft + iconSize) - token1FinalLeft + (ringPadding * 2);
+                          const ringHeight = iconSize + (ringPadding * 2);
+
+                          return (
+                            <motion.div
+                              className="absolute top-0 left-0"
+                              initial={false}
+                              animate={{ x: ringLeft, y: ringTop, width: ringWidth, height: ringHeight }}
+                              transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                              style={{ pointerEvents: 'none', zIndex: 0 }}
+                            >
+                              <svg width="100%" height="100%">
+                                <rect
+                                  x="0.5"
+                                  y="0.5"
+                                  width="calc(100% - 1px)"
+                                  height="calc(100% - 1px)"
+                                  rx={ringHeight / 2}
+                                  fill="var(--sidebar-connect-button-bg)"
+                                  stroke="white"
+                                  strokeWidth="1"
+                                  strokeOpacity={isRouteHovered ? 0.3 : 0.18}
+                                />
+                              </svg>
+                            </motion.div>
+                          );
+                        })()}
+                        {path.map((tokenSymbol, index) => {
+                          const tokenConfig = getToken(tokenSymbol);
+                          const tokenIcon = tokenConfig?.icon || "/placeholder-logo.svg";
+
+                          // Determine selected pair (both tokens get outline)
+                          const isSelected = clickedTokenIndex !== null && (index === poolIndex || index === poolIndex + 1);
+
+                          const leftPos = index * step;
+                          const xOffset = offsets[index];
+
+                          return (
+                            <motion.div
+                              key={tokenSymbol}
+                              className="absolute top-0"
+                              style={{
+                                zIndex: index + 1,
+                                left: `${leftPos}px`
+                              }}
+                              animate={{ x: xOffset }}
+                              transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                              onHoverStart={() => setHoveredRouteIndex(index)}
+                              onHoverEnd={() => setHoveredRouteIndex(null)}
+                            >
+                              <div className="flex items-center">
+                                <TooltipProvider delayDuration={0}>
                                   <Tooltip>
                                     <TooltipTrigger asChild>
                                       <motion.div
-                                        className="relative"
+                                        className="relative cursor-pointer"
                                         whileHover={{ scale: 1.08 }}
-                                        style={{ 
+                                        style={{
                                           padding: `${iconSize * 0.1}px`,
                                           margin: `-${iconSize * 0.1}px`
                                         }}
+                                        onClick={() => {
+                                          const n = path.length;
+                                          const currentPool = Math.max(0, Math.min(selectedPoolIndexForChart, n - 2));
+                                          const leftIdx = currentPool;
+                                          const rightIdx = currentPool + 1;
+
+                                          let nextPoolIndex = currentPool;
+
+                                          // Adjacent clicks shift by one
+                                          if (index === rightIdx + 1 && rightIdx + 1 < n) {
+                                            nextPoolIndex = currentPool + 1; // shift right
+                                          } else if (index === leftIdx - 1 && leftIdx - 1 >= 0) {
+                                            nextPoolIndex = currentPool - 1; // shift left
+                                          } else if (index === rightIdx && rightIdx < n - 1) {
+                                            // Click on right token of current pair -> move to (right, right+1)
+                                            nextPoolIndex = rightIdx;
+                                          } else if (index === leftIdx && leftIdx > 0) {
+                                            // Click on left token of current pair -> move to (left-1, left)
+                                            nextPoolIndex = leftIdx - 1;
+                                          } else {
+                                            // Far clicks select (clicked, clicked+1) (or clamp to last pair)
+                                            nextPoolIndex = Math.min(index, n - 2);
+                                          }
+
+                                          setClickedTokenIndex(index);
+                                          if (onSelectPoolForChart) {
+                                            const poolsCount = (routeInfo?.pools.length || Math.max(1, n - 1));
+                                            const maxPoolIdx = Math.max(0, poolsCount - 1);
+                                            const poolIndexToSelect = Math.max(0, Math.min(nextPoolIndex, maxPoolIdx));
+                                            onSelectPoolForChart(poolIndexToSelect);
+                                          }
+                                        }}
                                       >
-                                        <Image 
-                                          src={tokenIcon} 
-                                          alt={tokenSymbol} 
-                                          width={iconSize} 
-                                          height={iconSize} 
-                                          className="rounded-full bg-background"
-                                          style={{ boxShadow: '0 0 0 2px var(--background)' }}
+                                        <Image
+                                          src={tokenIcon}
+                                          alt={tokenSymbol}
+                                          width={iconSize}
+                                          height={iconSize}
+                                          className={cn(
+                                            "rounded-full bg-background transition-all duration-200"
+                                          )}
                                         />
                                       </motion.div>
                                     </TooltipTrigger>
@@ -418,13 +556,14 @@ export function SwapInputView({
                                     </TooltipContent>
                                   </Tooltip>
                                 </TooltipProvider>
-                            </div>
-                          </motion.div>
-                        );
-                      })}
-                    </div>
-                  );
-                })()}
+                              </div>
+                            </motion.div>
+                          );
+                        })}
+                      </motion.div>
+                    );
+                  })()}
+                </div>
               </div>
             </div>
 
@@ -443,7 +582,7 @@ export function SwapInputView({
                   <div className="flex items-center gap-1.5">
                     {(() => {
                       if (routeFeesLoading) {
-                        return <div className="h-3 w-12 bg-muted/60 rounded animate-pulse"></div>;
+                        return <div className="h-3 w-16 bg-muted/60 rounded animate-pulse"></div>;
                       }
                       if (!routeFees || routeFees.length === 0) {
                         return <span className="text-muted-foreground">N/A</span>;
@@ -451,49 +590,106 @@ export function SwapInputView({
                       const totalFeeBps = routeFees.reduce((total, routeFee) => total + routeFee.fee, 0);
                       const inputAmountUSD = parseFloat(fromAmount || "0") * (displayFromToken.usdPrice || 0);
                       const feeInUSD = inputAmountUSD * (totalFeeBps / 1000000);
-                      return <span className="text-foreground/80 font-medium">{formatCurrency(feeInUSD.toString())}</span>;
+                      const isMultiHop = (routeInfo?.path?.length || 2) > 2;
+                      const percentDisplay = (totalFeeBps / 10000).toFixed(2) + "%";
+                      const amountDisplay = feeInUSD > 0 && feeInUSD < 0.01 ? "< $0.01" : formatCurrency(feeInUSD.toString());
+                      return (
+                        <>
+                          {isMultiHop && <span className="text-muted-foreground">{percentDisplay}</span>}
+                          {isMultiHop && (
+                            <TooltipProvider delayDuration={0}>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <InfoIcon className="h-3 w-3 mr-1 text-muted-foreground/60 hover:text-muted-foreground cursor-pointer" />
+                                </TooltipTrigger>
+                                <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs max-w-xs">
+                                  Total Fee for Swap
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          )}
+                          <span className="text-foreground/80 font-medium">{amountDisplay}</span>
+                        </>
+                      );
                     })()}
                   </div>
                 </div>
-                {/* Minimum Received and Slippage */}
+
+                {/* Max Slippage and Minimum Received - one row + inline presets row */}
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <div className="flex items-center gap-1">
-                        <span>Minimum Received:</span>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                        <div className="flex items-center gap-1.5" ref={slippageRef}>
-                          {!isSlippageEditing ? (
-                            <span 
-                              className="text-foreground/80 font-medium cursor-pointer hover:underline transition-all duration-200"
-                              onClick={() => {
-                                setIsSlippageEditing(true);
-                                setCustomSlippage(slippage.toString()); // Pre-fill with current slippage
-                              }}
-                            >
-                              {slippage}%
-                            </span>
-                          ) : (
-                            <div className="flex items-center gap-1 outline outline-1 outline-muted rounded">
-                              <input
-                                type="text"
-                                value={customSlippage}
-                                onChange={handleCustomSlippageInput}
-                                onKeyDown={handleCustomSlippageKeyDown}
-                                onBlur={handleCustomSlippageSubmit}
-                                placeholder="0.00"
-                                className="w-12 px-1 py-0.5 text-xs text-center bg-background border-none focus:outline-none focus:ring-0 focus-visible:ring-offset-0"
-                                autoFocus
-                              />
-                              <span className="text-xs">%</span>
-                            </div>
-                          )}
-                        </div>
-                        <ChevronRightIcon className="h-3 w-3 text-muted-foreground" />
-                        <span className="text-foreground/80 font-medium">
-                            {calculatedValues.minimumReceived} {displayToToken.symbol}
-                        </span>
-                    </div>
+                  <div className="flex items-center gap-1.5" ref={slippageRef}>
+                    <span>Max Slippage:</span>
+                    <span className="text-foreground/80 font-medium">{slippage}%</span>
+                    <Settings
+                      className="ml-0.5 h-3 w-3 text-muted-foreground/60 hover:text-muted-foreground cursor-pointer"
+                      onClick={() => {
+                        ignoreNextOutsideClickRef.current = true;
+                        setIsSlippageEditing((v) => !v);
+                        setCustomSlippage(slippage.toString());
+                      }}
+                    />
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span>Min Received:</span>
+                    <span className="text-foreground/80 font-medium">
+                      {calculatedValues.minimumReceived} {displayToToken.symbol}
+                    </span>
+                  </div>
                 </div>
+                <AnimatePresence initial={false}>
+                  {isSlippageEditing && (
+                    <motion.div
+                      key="slippage-row"
+                      className="flex flex-wrap items-center gap-1.5 pt-1"
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.18, ease: 'easeOut' }}
+                    >
+                      {presetSlippages.map((val) => (
+                        <button
+                          key={val}
+                          type="button"
+                          className={cn(
+                            "px-1.5 py-0.5 text-xs font-normal rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-muted-foreground transition-colors",
+                            "hover:brightness-110 hover:border-white/30",
+                            slippage === val && "border-white/30"
+                          )}
+                          onClick={() => handleSlippageSelect(val)}
+                        >
+                          {val.toFixed(2)}%
+                        </button>
+                      ))}
+                      {/* Custom option */}
+                      {!isCustomSlippage ? (
+                        <button
+                          type="button"
+                          className="px-1.5 py-0.5 text-xs font-normal rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-muted-foreground transition-colors hover:brightness-110 hover:border-white/30"
+                          onClick={() => {
+                            setIsCustomSlippage(true);
+                            setCustomSlippage(slippage.toString());
+                          }}
+                        >
+                          Custom
+                        </button>
+                      ) : (
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="text"
+                            value={customSlippage}
+                            onChange={handleCustomSlippageInput}
+                            onKeyDown={handleCustomSlippageKeyDown}
+                            onBlur={handleCustomSlippageSubmit}
+                            placeholder="0.00"
+                            className="w-14 px-1 py-0.5 text-xs text-center bg-background border border-sidebar-border rounded"
+                            autoFocus
+                          />
+                          <span className="text-xs">%</span>
+                        </div>
+                      )}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
             )}
           </>
@@ -529,7 +725,7 @@ export function SwapInputView({
         ) : (
           <div
             className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30"
-            style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+            style={{ backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
           >
             {/* @ts-expect-error custom element provided by wallet kit */}
             <appkit-button className="absolute inset-0 z-10 block h-full w-full cursor-pointer p-0 opacity-0" />

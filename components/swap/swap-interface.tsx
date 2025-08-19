@@ -2528,6 +2528,8 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 poolInfo={poolInfo}
                 isLoading={isFeeHistoryLoading}
                 alwaysShowSkeleton={!isConnected || !currentRoute || isFeeHistoryLoading}
+                totalPools={currentRoute?.pools?.length}
+                activePoolIndex={selectedPoolIndexForChart}
               />
             </motion.div>
           </AnimatePresence>
@@ -2556,6 +2558,17 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 </button>
               )}
             </>
+          )}
+          {/* Dots below container for multihop */}
+          {currentRoute && currentRoute.pools.length > 1 && (
+            <div className="w-full flex justify-center gap-1.5 mt-2">
+              {currentRoute.pools.map((_, i) => (
+                <span
+                  key={i}
+                  className={`h-[5px] w-[5px] rounded-full ${i === selectedPoolIndexForChart ? 'bg-muted-foreground/60' : 'bg-[var(--sidebar-border)]'}`}
+                />
+              ))}
+            </div>
           )}
         </div>
         </div>
