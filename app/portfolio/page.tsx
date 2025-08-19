@@ -1170,6 +1170,21 @@ export default function PortfolioPage() {
       }
     };
     run();
+    // Listen for global balance refresh triggers (from faucet claim)
+    const onRefresh = () => {
+      // Re-run balances fetch immediately
+      run();
+    };
+    const onStorage = (e: StorageEvent) => {
+      if (!e.key || !accountAddress) return;
+      if (e.key === `walletBalancesRefreshAt_${accountAddress}`) run();
+    };
+    window.addEventListener('walletBalancesRefresh', onRefresh as EventListener);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener('walletBalancesRefresh', onRefresh as EventListener);
+      window.removeEventListener('storage', onStorage);
+    };
   }, [isConnected, accountAddress, currentChainId]);
 
   const navigateToPoolBySubgraphId = useCallback((poolSubgraphId?: string) => {

@@ -2396,7 +2396,8 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   }, [currentRoute, selectedPoolIndexForChart]);
 
   // NEW: Determine if chart preview should be shown at all (always show; content decides skeleton vs data)
-  const showChartPreviewRegardlessOfData = isMounted;
+  // Force show preview container even when not mounted/connected; content will skeletonize as needed
+  const showChartPreviewRegardlessOfData = true;
 
   // Helper function to safely parse amounts and prevent scientific notation errors
   const safeParseUnits = (amount: string, decimals: number): bigint => {
@@ -2523,11 +2524,11 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
               }}
             >
               <DynamicFeeChartPreview 
-                data={(!isConnected || !currentRoute || isFeeHistoryLoading) ? [] : feeHistoryData} 
+                data={(!currentRoute || isFeeHistoryLoading) ? [] : feeHistoryData} 
                 onClick={handlePreviewChartClick}
                 poolInfo={poolInfo}
                 isLoading={isFeeHistoryLoading}
-                alwaysShowSkeleton={!isConnected || !currentRoute || isFeeHistoryLoading}
+                alwaysShowSkeleton={!currentRoute || isFeeHistoryLoading}
                 totalPools={currentRoute?.pools?.length}
                 activePoolIndex={selectedPoolIndexForChart}
               />

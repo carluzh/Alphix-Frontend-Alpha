@@ -238,6 +238,13 @@ export function NavMain({
         setCachedLastCalled(now); // Update state to trigger recalculation
       }
       refetchLastCalled(); // Immediately refetch from contract for accuracy
+      // Force wallet balances refetch across the app (and tabs)
+      try {
+        if (userAddress) {
+          localStorage.setItem(`walletBalancesRefreshAt_${userAddress}`, String(Date.now()));
+        }
+        window.dispatchEvent(new Event('walletBalancesRefresh'));
+      } catch {}
     }
     const anError = writeTxError || receiptError;
     if (anError) {
