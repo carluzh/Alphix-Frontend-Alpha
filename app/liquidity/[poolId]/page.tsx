@@ -2,9 +2,9 @@
 
 import { AppLayout } from "@/components/app-layout";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { ArrowRightLeftIcon, PlusIcon, MinusIcon, ArrowLeftIcon, RefreshCwIcon, ChevronLeftIcon, Trash2Icon, Check } from "lucide-react";
+import { ArrowRightLeftIcon, PlusIcon, MinusIcon, ArrowLeftIcon, RefreshCwIcon, ChevronLeftIcon, Trash2Icon, Check, BadgeCheck, OctagonX, Clock3, ChevronsLeftRight, EllipsisVertical, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardFooter } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -16,7 +16,7 @@ import { toast } from "sonner";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import type { ProcessedPosition } from "../../../pages/api/liquidity/get-positions";
 import { TOKEN_DEFINITIONS, TokenSymbol } from "@/lib/pools-config";
-import { formatUnits as viemFormatUnits, type Hex } from "viem";
+import { formatUnits, type Hex } from "viem";
 import { Bar, BarChart, Line, LineChart, CartesianGrid, XAxis, YAxis, ResponsiveContainer, ComposedChart, Area, ReferenceLine, ReferenceArea } from "recharts";
 import { TickRangePreview } from "@/components/TickRangePreview";
 import { getPoolById, getPoolSubgraphId, getToken, getAllTokens } from "@/lib/pools-config";
@@ -64,16 +64,12 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
-import { EllipsisVerticalIcon, CopyIcon, ChevronDownIcon, EllipsisVertical, ChevronsLeftRight, ChevronsRight, ChevronsLeft } from "lucide-react";
+import { EllipsisVerticalIcon, CopyIcon, ChevronDownIcon, ChevronsRight, ChevronsLeft } from "lucide-react";
 import { shortenAddress } from "@/lib/utils";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { motion, AnimatePresence } from "framer-motion";
+import TickRangePortfolio from "@/components/TickRangePortfolio";
 
 // Define the structure of the chart data points from the API
 interface ChartDataPoint {
@@ -120,30 +116,7 @@ const formatUSD = (value: number) => {
   return `$${(value).toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
 };
 
-// Mock function to calculate USD value (in a real app, you'd use actual price feeds)
-const calculateTotalValueUSD = (position: ProcessedPosition) => {
-  // This is a placeholder. In a real app, you would:
-  // 1. Get current token prices from an API or state
-  // 2. Multiply each token amount by its price
-  // 3. Sum them up
-  
-  // For this demo, let's use mock prices
-  const mockPrices: Record<string, number> = {
-    aUSDC: 1.0,
-    aUSDT: 1.0,
-    aBTC: 61000.0,
-    aETH: 2400.0,
-    ETH: 2400.0,
-    // Add other token prices as needed
-  };
-  
-  const token0Value = parseFloat(position.token0.amount) * 
-    (mockPrices[position.token0.symbol] || 1.0);
-  const token1Value = parseFloat(position.token1.amount) * 
-    (mockPrices[position.token1.symbol] || 1.0);
-  
-  return token0Value + token1Value;
-};
+// (Replaced by runtime price-based calculator inside the component)
 
 
 
@@ -259,6 +232,191 @@ const determineBaseTokenForPriceDisplay = (token0: string, token1: string): stri
   return token1Priority > token0Priority ? token1 : token0;
 };
 
+// Token stack component with independent hover state
+function TokenStack({ position, currentPoolData, getToken }: { position: ProcessedPosition, currentPoolData: any, getToken: any }) {
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+
+  const getTokenIcon = (positionToken: { symbol?: string; address?: string }) => {
+    if (!positionToken?.symbol && !positionToken?.address) return "/placeholder-logo.svg";
+
+    // First try to match with currentPoolData.tokens (same as title icons)
+    if (currentPoolData?.tokens) {
+      // Try to match by symbol
+      if (positionToken.symbol) {
+        const matchedToken = currentPoolData.tokens.find(token =>
+          token.symbol?.toLowerCase() === positionToken.symbol?.toLowerCase()
+        );
+        if (matchedToken?.icon) {
+          return matchedToken.icon;
+        }
+      }
+
+      // Try to match by address
+      if (positionToken.address) {
+        const matchedToken = currentPoolData.tokens.find(token =>
+          token.address?.toLowerCase() === positionToken.address?.toLowerCase()
+        );
+        if (matchedToken?.icon) {
+          return matchedToken.icon;
+        }
+      }
+    }
+
+    // Fallback to the original getToken method
+    if (positionToken.symbol) {
+      const tokenConfig = getToken(positionToken.symbol);
+      if (tokenConfig?.icon) {
+        return tokenConfig.icon;
+      }
+    }
+
+    return "/placeholder-logo.svg";
+  };
+
+  // Match SwapInputView defaults exactly, but 20% bigger
+  const iconSize = 24;
+  const overlap = 0.3 * iconSize;
+  const step = iconSize - overlap;
+  const hoverMargin = 0; // Disable lateral movement on hover
+  const tokens = [
+    { symbol: position.token0.symbol || 'Token 0', icon: getTokenIcon(position.token0) },
+    { symbol: position.token1.symbol || 'Token 1', icon: getTokenIcon(position.token1) },
+  ];
+
+  const baseWidth = iconSize + step;
+
+  // Compute boundary gaps (between token i and i+1)
+  const gaps: number[] = Array(Math.max(0, tokens.length - 1)).fill(0);
+
+  // Hover margins: symmetrical (left and right) except at edges
+  // No horizontal gap changes on hover (only scale on hover)
+
+  // Prefix sums to get per-token x offsets
+  const offsets: number[] = new Array(tokens.length).fill(0);
+  for (let i = 1; i < tokens.length; i++) {
+    offsets[i] = offsets[i - 1] + (gaps[i - 1] || 0);
+  }
+
+  const totalExtraWidth = gaps.reduce((a, b) => a + b, 0);
+  const animatedWidth = baseWidth + totalExtraWidth;
+
+  return (
+    <motion.div
+      className="relative flex-shrink-0"
+      style={{ height: iconSize }}
+      animate={{ width: animatedWidth }}
+      transition={{ type: "spring", stiffness: 300, damping: 30 }}
+    >
+      {tokens.map((token, index) => {
+        const leftPos = index * step;
+        const xOffset = offsets[index];
+
+        return (
+          <motion.div
+            key={token.symbol}
+            className="absolute top-0"
+            style={{
+              zIndex: index + 1,
+              left: `${leftPos}px`
+            }}
+            animate={{ x: xOffset }}
+            transition={{ type: "spring", stiffness: 300, damping: 30 }}
+            onHoverStart={() => setHoveredIndex(index)}
+            onHoverEnd={() => setHoveredIndex(null)}
+          >
+            <TooltipProvider delayDuration={0}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <motion.div
+                    className="relative cursor-pointer"
+                    whileHover={{ scale: 1.08 }}
+                    style={{
+                      padding: `${iconSize * 0.1}px`,
+                      margin: `-${iconSize * 0.1}px`
+                    }}
+                    transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                  >
+                    <Image
+                      src={token.icon}
+                      alt={token.symbol}
+                      width={iconSize}
+                      height={iconSize}
+                      className="rounded-full bg-background"
+                    />
+                  </motion.div>
+                </TooltipTrigger>
+                <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
+                  {token.symbol}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </motion.div>
+        );
+      })}
+    </motion.div>
+  );
+}
+
+// Fees cell with hooks (precise uncollected fees)
+function FeesCell({ positionId, sym0, sym1, price0, price1 }: { positionId: string; sym0: string; sym1: string; price0: number; price1: number }) {
+  const { address: accountAddress } = useAccount();
+  const [raw0, setRaw0] = React.useState<string | null>(null);
+  const [raw1, setRaw1] = React.useState<string | null>(null);
+  const [loading, setLoading] = React.useState<boolean>(true);
+  const [lastError, setLastError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      try {
+        setLoading(true);
+        setLastError(null);
+        const resp = await fetch('/api/liquidity/get-uncollected-fees', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ positionId }),
+        });
+        const json = await resp.json();
+        console.log('[FeesCell]', positionId, { ok: resp.ok, success: json?.success, error: json?.error, debug: json?.debug });
+        if (!cancelled && json?.success) {
+          // Store raw on-chain amounts for precise USD conversion client-side
+          setRaw0(json.amount0 ?? null);
+          setRaw1(json.amount1 ?? null);
+        }
+        if (!json?.success && !cancelled) {
+          setLastError(String(json?.error || 'unknown'));
+        }
+      } catch (e: any) {
+        console.log('[FeesCell:error]', positionId, e?.message || e);
+        if (!cancelled) setLastError(String(e?.message || 'request failed'));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    run();
+    return () => { cancelled = true; };
+  }, [positionId]);
+
+  const fmtUsd = (n: number) => {
+    if (!Number.isFinite(n) || n <= 0) return '$0';
+    if (n < 0.01) return '< $0.01';
+    return `$${n.toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}`;
+  };
+
+  if (loading) return <span className="text-muted-foreground">~</span>;
+  if (raw0 === null || raw1 === null) return <span className="text-muted-foreground" title={lastError ? `Fees unavailable: ${lastError}` : undefined}>N/A</span>;
+
+  // Convert using decimals from pools config
+  const d0 = TOKEN_DEFINITIONS?.[sym0 as keyof typeof TOKEN_DEFINITIONS]?.decimals ?? 18;
+  const d1 = TOKEN_DEFINITIONS?.[sym1 as keyof typeof TOKEN_DEFINITIONS]?.decimals ?? 18;
+  let amt0 = 0;
+  let amt1 = 0;
+  try { amt0 = parseFloat(formatUnits(BigInt(raw0), d0)); } catch {}
+  try { amt1 = parseFloat(formatUnits(BigInt(raw1), d1)); } catch {}
+  const usd = (amt0 * (price0 || 0)) + (amt1 * (price1 || 0));
+  return <span className="whitespace-nowrap">{fmtUsd(usd)}</span>;
+}
+
 export default function PoolDetailPage() {
   const router = useRouter();
   const params = useParams<{ poolId: string }>();
@@ -327,6 +485,58 @@ export default function PoolDetailPage() {
   // State for pool state data (currentPoolTick and currentPrice)
   const [currentPoolTick, setCurrentPoolTick] = useState<number | null>(null);
   const [currentPrice, setCurrentPrice] = useState<string | null>(null);
+  // Token prices for USD valuation
+  const [tokenPrices, setTokenPrices] = useState<{ BTC: number; ETH: number; USDC: number }>({ BTC: 0, ETH: 0, USDC: 1 });
+  const [isLoadingPrices, setIsLoadingPrices] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadPrices = async () => {
+      try {
+        setIsLoadingPrices(true);
+        const res = await fetch('/api/prices/get-token-prices');
+        if (!res.ok) throw new Error(`Failed to fetch prices: ${res.statusText}`);
+        const data = await res.json();
+        if (!cancelled) {
+          const next = {
+            BTC: typeof data.BTC === 'number' ? data.BTC : 0,
+            ETH: typeof data.ETH === 'number' ? data.ETH : 0,
+            USDC: typeof data.USDC === 'number' ? data.USDC : 1,
+          };
+          setTokenPrices(next);
+        }
+      } catch (e) {
+        console.error('Failed to load token prices', e);
+      } finally {
+        if (!cancelled) setIsLoadingPrices(false);
+      }
+    };
+    loadPrices();
+    // Refresh occasionally (5 min) to avoid stale values
+    const id = setInterval(loadPrices, 300000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
+
+  const getUsdPriceForSymbol = useCallback((symbolRaw?: string): number => {
+    const symbol = (symbolRaw || '').toUpperCase();
+    if (!symbol) return 0;
+    // Map wrapped/aliased symbols to base tickers we price
+    if (symbol === 'USDC' || symbol === 'AUSDC' || symbol === 'USDT' || symbol === 'AUSDT' || symbol === 'MUSDT' || symbol === 'YUSD') return tokenPrices.USDC || 1;
+    if (symbol === 'ETH' || symbol === 'AETH') return tokenPrices.ETH || 0;
+    if (symbol === 'BTC' || symbol === 'ABTC') return tokenPrices.BTC || 0;
+    return 0; // Unknown
+  }, [tokenPrices]);
+
+  const calculatePositionUsd = useCallback((position: ProcessedPosition): number => {
+    if (!position) return 0;
+    const amt0 = parseFloat(position.token0.amount || '0');
+    const amt1 = parseFloat(position.token1.amount || '0');
+    const p0 = getUsdPriceForSymbol(position.token0.symbol);
+    const p1 = getUsdPriceForSymbol(position.token1.symbol);
+    const v0 = Number.isFinite(amt0) && Number.isFinite(p0) ? amt0 * p0 : 0;
+    const v1 = Number.isFinite(amt1) && Number.isFinite(p1) ? amt1 * p1 : 0;
+    return v0 + v1;
+  }, [getUsdPriceForSymbol]);
 
   // State for managing active tab (Deposit/Withdraw/Swap) - Lifted from AddLiquidityForm
   // const [activeTab, setActiveTab] = useState<'deposit' | 'withdraw' | 'swap'>('deposit');
@@ -377,6 +587,10 @@ export default function PoolDetailPage() {
   // State for height alignment between modal and chart
   const [formContainerRect, setFormContainerRect] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
 
+  // State for position menu
+  const [showPositionMenu, setShowPositionMenu] = useState<string | null>(null);
+  const [positionMenuOpenUp, setPositionMenuOpenUp] = useState<boolean>(false);
+
   // Track window width for responsive chart
   useEffect(() => {
     const handleResize = () => {
@@ -392,6 +606,23 @@ export default function PoolDetailPage() {
       };
     }
   }, []);
+
+  // Click outside handler for position menu
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (showPositionMenu) {
+        const target = event.target as Element;
+        if (!target.closest('.position-menu-trigger')) {
+          setShowPositionMenu(null);
+        }
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showPositionMenu]);
 
   // Function to cycle through toggle metrics
   const cycleToggleMetric = useCallback(() => {
@@ -880,12 +1111,8 @@ export default function PoolDetailPage() {
     fetchPageData();
   }, [fetchPageData]); // Re-fetch if fetchPageData changes
 
-
-
   // Calculate total liquidity value
-  const totalLiquidity = userPositions.reduce((sum, pos) => {
-    return sum + calculateTotalValueUSD(pos);
-  }, 0);
+  const totalLiquidity = userPositions.reduce((sum, pos) => sum + calculatePositionUsd(pos), 0);
 
   // Handle withdraw position
   const handleBurnPosition = (position: ProcessedPosition) => {
@@ -1029,13 +1256,13 @@ export default function PoolDetailPage() {
           // We input amount0, so set the calculated amount1
           const amount1InWei = result.amount1;
           const token1Decimals = TOKEN_DEFINITIONS[positionToModify.token1.symbol as TokenSymbol]?.decimals || 18;
-          const formattedAmount1 = viemFormatUnits(BigInt(amount1InWei), token1Decimals);
+          const formattedAmount1 = formatUnits(BigInt(amount1InWei), token1Decimals);
           setIncreaseAmount1(formatTokenDisplayAmount(formattedAmount1));
         } else {
           // We input amount1, so set the calculated amount0
           const amount0InWei = result.amount0;
           const token0Decimals = TOKEN_DEFINITIONS[positionToModify.token0.symbol as TokenSymbol]?.decimals || 18;
-          const formattedAmount0 = viemFormatUnits(BigInt(amount0InWei), token0Decimals);
+          const formattedAmount0 = formatUnits(BigInt(amount0InWei), token0Decimals);
           setIncreaseAmount0(formatTokenDisplayAmount(formattedAmount0));
         }
       } catch (error: any) {
@@ -1138,13 +1365,13 @@ export default function PoolDetailPage() {
           // We input amount0, so set the calculated amount1
           const amount1InWei = result.amount1;
           const token1Decimals = TOKEN_DEFINITIONS[positionToModify.token1.symbol as TokenSymbol]?.decimals || 18;
-          const formattedAmount1 = viemFormatUnits(BigInt(amount1InWei), token1Decimals);
+          const formattedAmount1 = formatUnits(BigInt(amount1InWei), token1Decimals);
           setDecreaseAmount1(formatTokenDisplayAmount(formattedAmount1));
         } else {
           // We input amount1, so set the calculated amount0
           const amount0InWei = result.amount0;
           const token0Decimals = TOKEN_DEFINITIONS[positionToModify.token0.symbol as TokenSymbol]?.decimals || 18;
-          const formattedAmount0 = viemFormatUnits(BigInt(amount0InWei), token0Decimals);
+          const formattedAmount0 = formatUnits(BigInt(amount0InWei), token0Decimals);
           setDecreaseAmount0(formatTokenDisplayAmount(formattedAmount0));
         }
 
@@ -1254,13 +1481,13 @@ export default function PoolDetailPage() {
           // We input amount0, so set the calculated amount1
           const amount1InWei = result.amount1;
           const token1Decimals = TOKEN_DEFINITIONS[positionToBurn.token1.symbol as TokenSymbol]?.decimals || 18;
-          const formattedAmount1 = viemFormatUnits(BigInt(amount1InWei), token1Decimals);
+          const formattedAmount1 = formatUnits(BigInt(amount1InWei), token1Decimals);
           setWithdrawAmount1(formatTokenDisplayAmount(formattedAmount1));
         } else {
           // We input amount1, so set the calculated amount0
           const amount0InWei = result.amount0;
           const token0Decimals = TOKEN_DEFINITIONS[positionToBurn.token0.symbol as TokenSymbol]?.decimals || 18;
-          const formattedAmount0 = viemFormatUnits(BigInt(amount0InWei), token0Decimals);
+          const formattedAmount0 = formatUnits(BigInt(amount0InWei), token0Decimals);
           setWithdrawAmount0(formatTokenDisplayAmount(formattedAmount0));
         }
 
@@ -1360,20 +1587,46 @@ export default function PoolDetailPage() {
     
     if (positionToBurn) {
       const amount0 = parseFloat(positionToBurn.token0.amount);
-      const percentage = snappedPercentage / 100; // This is the percentage of the max amount
-      
-      const displayDecimals0 = TOKEN_DEFINITIONS[positionToBurn.token0.symbol as TokenSymbol]?.displayDecimals ?? 4;
-      const calculatedAmount0 = (amount0 * percentage).toFixed(displayDecimals0); // Calculate token0 amount
-      setWithdrawAmount0(calculatedAmount0); // Update token0 amount directly
-      setWithdrawActiveInputSide('amount0'); // Set active input side to token0
-      setIsFullWithdraw(snappedPercentage >= 99); // Update full withdraw status
-      
-      // Now, call calculateWithdrawAmount to get the corresponding token1 amount via API
-      // This will also update withdrawAmount1
-      if (parseFloat(calculatedAmount0) > 0) {
-        calculateWithdrawAmount(calculatedAmount0, 'amount0');
+      const amount1 = parseFloat(positionToBurn.token1.amount);
+      const percentage = snappedPercentage / 100; // percentage of max
+
+      setIsFullWithdraw(snappedPercentage >= 99);
+
+      if (amount0 > 0 && amount1 > 0) {
+        const displayDecimals0 = TOKEN_DEFINITIONS[positionToBurn.token0.symbol as TokenSymbol]?.displayDecimals ?? 4;
+        const calculatedAmount0 = (amount0 * percentage).toFixed(displayDecimals0);
+        setWithdrawAmount0(calculatedAmount0);
+        setWithdrawActiveInputSide('amount0');
+        if (parseFloat(calculatedAmount0) > 0) {
+          calculateWithdrawAmount(calculatedAmount0, 'amount0');
+        } else {
+          setWithdrawAmount1('');
+        }
+      } else if (amount1 > 0) {
+        const displayDecimals1 = TOKEN_DEFINITIONS[positionToBurn.token1.symbol as TokenSymbol]?.displayDecimals ?? 4;
+        const calculatedAmount1 = (amount1 * percentage).toFixed(displayDecimals1);
+        setWithdrawAmount1(calculatedAmount1);
+        setWithdrawActiveInputSide('amount1');
+        setWithdrawAmount0('0');
+        if (parseFloat(calculatedAmount1) > 0) {
+          calculateWithdrawAmount(calculatedAmount1, 'amount1');
+        } else {
+          setWithdrawAmount0('');
+        }
+      } else if (amount0 > 0) {
+        const displayDecimals0 = TOKEN_DEFINITIONS[positionToBurn.token0.symbol as TokenSymbol]?.displayDecimals ?? 4;
+        const calculatedAmount0 = (amount0 * percentage).toFixed(displayDecimals0);
+        setWithdrawAmount0(calculatedAmount0);
+        setWithdrawActiveInputSide('amount0');
+        setWithdrawAmount1('0');
+        if (parseFloat(calculatedAmount0) > 0) {
+          calculateWithdrawAmount(calculatedAmount0, 'amount0');
+        } else {
+          setWithdrawAmount1('');
+        }
       } else {
-        setWithdrawAmount1(''); // Clear token1 amount if token0 is zero
+        setWithdrawAmount0('');
+        setWithdrawAmount1('');
       }
     }
   };
@@ -1404,20 +1657,44 @@ export default function PoolDetailPage() {
     setIncreasePercentage(snappedPercentage);
     
     const balance0 = parseFloat(token0BalanceData?.formatted || "0");
+    const balance1 = parseFloat(token1BalanceData?.formatted || "0");
     const percentage = snappedPercentage / 100;
-    
-    const displayDecimals0 = TOKEN_DEFINITIONS[positionToModify?.token0.symbol as TokenSymbol]?.displayDecimals ?? 4;
-    const calculatedAmount0 = (balance0 * percentage).toFixed(displayDecimals0);
-    
-    setIncreaseAmount0(calculatedAmount0); // Update token0 amount directly
-    setIncreaseActiveInputSide('amount0'); // Set active input side to token0
-    
-    // Now, call calculateIncreaseAmount to get the corresponding token1 amount via API
-    // This will also update increaseAmount1
-    if (parseFloat(calculatedAmount0) > 0) {
-      calculateIncreaseAmount(calculatedAmount0, 'amount0');
+
+    if (balance0 > 0 && balance1 > 0) {
+      const displayDecimals0 = TOKEN_DEFINITIONS[positionToModify?.token0.symbol as TokenSymbol]?.displayDecimals ?? 4;
+      const calculatedAmount0 = (balance0 * percentage).toFixed(displayDecimals0);
+      setIncreaseAmount0(calculatedAmount0);
+      setIncreaseActiveInputSide('amount0');
+      if (parseFloat(calculatedAmount0) > 0) {
+        calculateIncreaseAmount(calculatedAmount0, 'amount0');
+      } else {
+        setIncreaseAmount1("");
+      }
+    } else if (balance1 > 0) {
+      const displayDecimals1 = TOKEN_DEFINITIONS[positionToModify?.token1.symbol as TokenSymbol]?.displayDecimals ?? 4;
+      const calculatedAmount1 = (balance1 * percentage).toFixed(displayDecimals1);
+      setIncreaseAmount1(calculatedAmount1);
+      setIncreaseActiveInputSide('amount1');
+      setIncreaseAmount0('0');
+      if (parseFloat(calculatedAmount1) > 0) {
+        calculateIncreaseAmount(calculatedAmount1, 'amount1');
+      } else {
+        setIncreaseAmount0('');
+      }
+    } else if (balance0 > 0) {
+      const displayDecimals0 = TOKEN_DEFINITIONS[positionToModify?.token0.symbol as TokenSymbol]?.displayDecimals ?? 4;
+      const calculatedAmount0 = (balance0 * percentage).toFixed(displayDecimals0);
+      setIncreaseAmount0(calculatedAmount0);
+      setIncreaseActiveInputSide('amount0');
+      setIncreaseAmount1('0');
+      if (parseFloat(calculatedAmount0) > 0) {
+        calculateIncreaseAmount(calculatedAmount0, 'amount0');
+      } else {
+        setIncreaseAmount1('');
+      }
     } else {
-      setIncreaseAmount1(""); // Clear token1 amount if token0 is zero
+      setIncreaseAmount0('');
+      setIncreaseAmount1('');
     }
   };
 
@@ -1588,18 +1865,18 @@ export default function PoolDetailPage() {
 
   // Early return for loading state AFTER all hooks have been called
   if (!poolId || !currentPoolData) return (
-    <AppLayout>
-      <div className="flex flex-1 justify-center items-center p-6">
-        <Image 
-          src="/LogoIconWhite.svg" 
-          alt="Loading..." 
-          width={48}
-          height={48}
-          className="animate-pulse opacity-75"
-        />
-      </div>
-    </AppLayout>
-  );
+      <AppLayout>
+        <div className="flex flex-1 justify-center items-center p-6">
+          <Image 
+            src="/LogoIconWhite.svg" 
+            alt="Loading..." 
+            width={48}
+            height={48}
+            className="animate-pulse opacity-75"
+          />
+        </div>
+      </AppLayout>
+    );
 
   return (
     <AppLayout>
@@ -2559,45 +2836,8 @@ export default function PoolDetailPage() {
             ) : userPositions.length > 0 ? (
               <div>
                 {/* Replace Table with individual position segments */}
-                <div className="grid gap-3 lg:gap-4">
+                <div className="grid gap-3 lg:gap-4 xl:grid-cols-2 xl:gap-4 2xl:grid-cols-2 2xl:gap-4 responsive-grid">
                   {userPositions.map((position) => {
-                    const getTokenIcon = (positionToken: { symbol?: string; address?: string }) => {
-                      if (!positionToken?.symbol && !positionToken?.address) return "/placeholder-logo.svg";
-                      
-                      // First try to match with currentPoolData.tokens (same as title icons)
-                      if (currentPoolData?.tokens) {
-                        // Try to match by symbol
-                        if (positionToken.symbol) {
-                          const matchedToken = currentPoolData.tokens.find(token => 
-                            token.symbol?.toLowerCase() === positionToken.symbol?.toLowerCase()
-                          );
-                          if (matchedToken?.icon) {
-                            return matchedToken.icon;
-                          }
-                        }
-                        
-                        // Try to match by address
-                        if (positionToken.address) {
-                          const matchedToken = currentPoolData.tokens.find(token => 
-                            token.address?.toLowerCase() === positionToken.address?.toLowerCase()
-                          );
-                          if (matchedToken?.icon) {
-                            return matchedToken.icon;
-                          }
-                        }
-                      }
-                      
-                      // Fallback to the original getToken method
-                      if (positionToken.symbol) {
-                        const tokenConfig = getToken(positionToken.symbol);
-                        if (tokenConfig?.icon) {
-                          return tokenConfig.icon;
-                        }
-                      }
-                      
-                      return "/placeholder-logo.svg";
-                    };
-
                     const estimatedCurrentTick = position.isInRange 
                       ? Math.floor((position.tickLower + position.tickUpper) / 2)
                       : (position.tickLower > 0 
@@ -2605,262 +2845,333 @@ export default function PoolDetailPage() {
                           : position.tickUpper + (10 * (currentPoolData?.tickSpacing || DEFAULT_TICK_SPACING)));
 
                                             return (
-                          <div 
+                          <Card 
                             key={position.positionId}
-                            className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-3 sm:p-4 transition-colors group"
+                            className="bg-muted/30 border border-sidebar-border/60 transition-colors group"
                           >
+                            <CardContent className="p-3 sm:p-4 group">
                             {/* Grid layout on non-mobile; stacked on mobile */}
-                            <div className="grid gap-3 sm:gap-4 sm:grid-cols-[1fr_auto] sm:items-center">
-                              {/* Main content group (cols 1-3) */}
-                              <div className="grid gap-3 sm:gap-4 sm:grid-cols-3">
-                              {/* Column 1: Token Icons + Pool Info (left-aligned) */}
-                              <div className="flex items-center gap-2 sm:gap-3 min-w-0 sm:min-w-[14rem] sm:overflow-hidden">
-                                {/* Mobile: 2-column layout for Token Info + TickRangePreview */}
-                                <div className="flex items-center gap-3 min-w-0 flex-1">
-                                  <div className="relative w-12 sm:w-16 h-6 sm:h-8 flex-shrink-0">
-                                    <div className="absolute top-0 left-0 w-6 sm:w-8 h-6 sm:h-8 rounded-full overflow-hidden bg-background z-10">
-                                      <Image 
-                                        src={getTokenIcon(position.token0)} 
-                                        alt={position.token0.symbol || 'Token 0'} 
-                                        width={24} 
-                                        height={24} 
-                                        className="w-full h-full object-cover sm:w-8 sm:h-8"
-                                      />
-                                    </div>
-                                    <div className="absolute top-0 left-4 sm:left-6 w-6 sm:w-8 h-6 sm:h-8 rounded-full overflow-hidden bg-background z-30">
-                                      <Image 
-                                        src={getTokenIcon(position.token1)} 
-                                        alt={position.token1.symbol || 'Token 1'} 
-                                        width={24} 
-                                        height={24} 
-                                        className="w-full h-full object-cover sm:w-8 sm:h-8"
-                                      />
-                                    </div>
-                                    <div className="absolute top-[-1px] left-[18px] sm:left-[22px] w-7 sm:w-9 h-7 sm:h-9 rounded-full bg-[#0f0f0f] z-20"></div>
-                                  </div>
-                                  <div className="min-w-0 flex-1">
-                                    <HoverCard>
-                                      <HoverCardTrigger asChild>
-                                        <div className="cursor-default select-none">
-                                           <div className="font-medium text-sm">
-                                             {position.token0.symbol || 'N/A'} / {position.token1.symbol || 'N/A'}
-                                           </div>
-                                           <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                                            {(() => {
-                                              // Determine status icon based on position range
-                                               const StatusIcon = () => {
-                                                const getIcon = () => {
-                                                  if (position.isInRange) {
-                                                    return <ChevronsLeftRight className="h-3 w-3 text-green-500" />;
-                                                  } else {
-                                                    // Determine if position is out of range to the left or right
-                                                    const currentTick = estimatedCurrentTick;
-                                                    const isOutOfRangeLeft = currentTick < position.tickLower;
-                                                    const isOutOfRangeRight = currentTick > position.tickUpper;
-                                                    
-                                                    // Check if denomination is flipped to determine chevron direction
-                                                    const baseToken = determineBaseTokenForPriceDisplay(
-                                                      position.token0.symbol || '', 
-                                                      position.token1.symbol || ''
-                                                    );
-                                                    const isDenominationFlipped = baseToken === position.token0.symbol;
-                                                    
-                                                    if (isOutOfRangeLeft) {
-                                                      // If current price is below position range
-                                                      // With normal denomination: price needs to go up (right arrow)
-                                                      // With flipped denomination: price needs to go down (left arrow)
-                                                      return isDenominationFlipped 
-                                                        ? <ChevronsRight className="h-3 w-3 text-red-500" />
-                                                        : <ChevronsLeft className="h-3 w-3 text-red-500" />;
-                                                    } else if (isOutOfRangeRight) {
-                                                      // If current price is above position range
-                                                      // With normal denomination: price needs to go down (left arrow)
-                                                      // With flipped denomination: price needs to go up (right arrow)
-                                                      return isDenominationFlipped 
-                                                        ? <ChevronsLeft className="h-3 w-3 text-red-500" />
-                                                        : <ChevronsRight className="h-3 w-3 text-red-500" />;
-                                                    } else {
-                                                      // Fallback
-                                                      return <ChevronsLeftRight className="h-3 w-3 text-green-500" />;
-                                                    }
-                                                  }
-                                                };
-
-                                                 return (
-                                                   <div className="cursor-default select-none">
-                                                     {getIcon()}
-                                                   </div>
-                                                 );
-                                              };
-
-                                              const baseTokenForPriceDisplay = determineBaseTokenForPriceDisplay(
-                                                position.token0.symbol || '', 
-                                                position.token1.symbol || ''
-                                              );
-                                              const lowerPrice = convertTickToPrice(
-                                                position.tickLower,
-                                                currentPoolTick,
-                                                currentPrice,
-                                                baseTokenForPriceDisplay,
-                                                position.token0.symbol || '',
-                                                position.token1.symbol || ''
-                                              );
-                                              const upperPrice = convertTickToPrice(
-                                                position.tickUpper,
-                                                currentPoolTick,
-                                                currentPrice,
-                                                baseTokenForPriceDisplay,
-                                                position.token0.symbol || '',
-                                                position.token1.symbol || ''
-                                              );
-                                              
-                                              return (
-                                                <>
-                                                  <StatusIcon />
-                                                  <span className="transition-all duration-200 whitespace-nowrap cursor-default select-none">{lowerPrice} - {upperPrice}</span>
-                                                </>
-                                              );
-                                            })()}
-                                          </div>
-                                        </div>
-                                      </HoverCardTrigger>
-                                      <HoverCardContent align="start" side="bottom" className="w-64 h-24">
-                                        <TickRangePreview
-                                          tickLower={position.tickLower}
-                                          tickUpper={position.tickUpper}
-                                          currentTick={estimatedCurrentTick}
-                                          tickSpacing={currentPoolData?.tickSpacing || DEFAULT_TICK_SPACING}
-                                          poolId={params.poolId}
-                                          token0Symbol={position.token0.symbol}
-                                          token1Symbol={position.token1.symbol}
-                                          currentPrice={currentPrice}
-                                        />
-                                      </HoverCardContent>
-                                    </HoverCard>
-                                  </div>
-                                </div>
-                                
-                                {/* Mobile: TickRangePreview - only show on mobile */}
-                                <div className="sm:hidden w-28 h-8 flex-shrink-0 rounded-lg overflow-hidden">
-                                  <TickRangePreview
-                                    tickLower={position.tickLower}
-                                    tickUpper={position.tickUpper}
-                                    currentTick={estimatedCurrentTick}
-                                    tickSpacing={currentPoolData?.tickSpacing || DEFAULT_TICK_SPACING}
-                                    poolId={params.poolId}
-                                    token0Symbol={position.token0.symbol}
-                                    token1Symbol={position.token1.symbol}
-                                    currentPrice={currentPrice}
-                                  />
-                                </div>
+                              <div
+                                className="grid sm:items-center"
+                                style={{
+                                  gridTemplateColumns: 'min-content max-content max-content max-content 1fr 5.5rem',
+                                  columnGap: '1.25rem', // slightly increased equal gaps between columns
+                                }}
+                              >
+                              {/* Column 1: Token Icons - Very narrow */}
+                              <div className="flex items-center min-w-0 flex-none gap-0">
+                                <TokenStack position={position} currentPoolData={currentPoolData} getToken={getToken} />
                               </div>
 
-                              {/* Column 2: Principal (left-aligned) */}
-                              <div className="flex flex-col min-w-[12rem] sm:flex-1">
-                                <div className="text-xs text-muted-foreground mb-1">Principal</div>
-                                <div className="flex items-center gap-1 sm:gap-1 text-xs whitespace-nowrap">
-                                  <span className="font-medium">
+                              {/* Column 2: Liquidity - Compact, stacked, allow more width */}
+                              <div className="flex flex-col min-w-0 items-start truncate pr-2">
+                                <div className="flex flex-col text-xs text-muted-foreground whitespace-nowrap">
+                                  <span className="truncate leading-tight">
                                     {formatTokenDisplayAmount(position.token0.amount)} {position.token0.symbol}
                                   </span>
-                                  <div className="w-px h-3 bg-border mx-1"></div>
-                                  <span className="font-medium">
+                                  <span className="truncate leading-tight">
                                     {formatTokenDisplayAmount(position.token1.amount)} {position.token1.symbol}
                                   </span>
                                 </div>
                               </div>
 
-                              {/* Column 3: Position Value (left-aligned) */}
-                              <div className="flex flex-col min-w-[10rem] sm:max-w-[14rem] sm:flex-1">
-                                <div className="flex items-end justify-between sm:justify-start sm:gap-2">
-                                  <div className="flex flex-col gap-1">
-                                    <div className="text-xs text-muted-foreground">Position Value</div>
-                                    <div className="flex items-center gap-2">
-                                      <div className="text-xs font-medium">
-                                        ~${calculateTotalValueUSD(position).toFixed(2)}
-                                      </div>
-                                      <div className="flex items-center justify-center h-5 rounded-md bg-green-500/20 text-green-500 px-2 text-xs font-medium">
-                                        {currentPoolData?.apr || "N/A"}
-                                      </div>
-                                    </div>
-                                  </div>
-                                  {/* Actions - mobile only */}
-                                  <div className="flex items-center gap-2 flex-shrink-0 sm:hidden">
-                                    <a
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleBurnPosition(position);
-                                      }}
-                                      className="flex h-8 cursor-pointer items-center justify-center gap-2 rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-2 text-xs font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30"
-                                      style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: '200%', backgroundPosition: 'center' }}
-                                    >
-                                      {isBurningLiquidity && positionToBurn?.positionId === position.positionId 
-                                        ? <RefreshCwIcon className="h-3 w-3 animate-spin relative z-0" /> 
-                                        : null}
-                                      <span className="relative z-0 whitespace-nowrap">Withdraw</span>
-                                    </a>
-                                    <DropdownMenu>
-                                      <DropdownMenuTrigger asChild>
-                                        <Button variant="ghost" className="h-6 w-6 p-0">
-                                          <span className="sr-only">Open menu</span>
-                                          <EllipsisVertical className="h-3 w-3" />
-                                        </Button>
-                                      </DropdownMenuTrigger>
-                                      <DropdownMenuContent align="end">
-                                        <DropdownMenuItem
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            handleIncreasePosition(position);
-                                          }}
-                                          className="cursor-pointer"
-                                        >
-                                          Add Liquidity
-                                        </DropdownMenuItem>
-
-                                      </DropdownMenuContent>
-                                    </DropdownMenu>
+                              {/* Column 3: Position Value - left-bound, size-to-content */}
+                              <div className="flex items-start pr-2">
+                                <div className="flex flex-col gap-1 items-start">
+                                  <div className="text-xs text-muted-foreground">Position Value</div>
+                                  <div className="flex items-center gap-2 truncate">
+                                    <div className="text-xs font-medium truncate">~${calculatePositionUsd(position).toFixed(2)}</div>
                                   </div>
                                 </div>
                               </div>
+
+                              {/* Column 4: Fees - left-bound, size-to-content */}
+                              <div className="flex items-start pr-2">
+                                <div className="flex flex-col gap-1 items-start">
+                                  <div className="flex items-center gap-1">
+                                    <div className="text-xs text-muted-foreground">Fees</div>
+                                    <TooltipProvider delayDuration={0}>
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <Info className="h-3 w-3 text-muted-foreground/50 hover:text-muted-foreground" />
+                                        </TooltipTrigger>
+                                        <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs max-w-48">
+                                          <p>Claimable Fees</p>
+                                        </TooltipContent>
+                                      </Tooltip>
+                                    </TooltipProvider>
+                                  </div>
+                                  <div className="flex items-center gap-2 text-xs">
+                                    <FeesCell
+                                      positionId={position.positionId}
+                                      sym0={position.token0.symbol || 'T0'}
+                                      sym1={position.token1.symbol || 'T1'}
+                                      price0={getUsdPriceForSymbol(position.token0.symbol)}
+                                      price1={getUsdPriceForSymbol(position.token1.symbol)}
+                                    />
+                                  </div>
+                                </div>
                               </div>
 
-                              {/* Column 4: Actions (desktop) */}
-                              <div className="hidden sm:flex items-center gap-2">
+                              {/* Column 5: Flexible spacer to push Withdraw; absorbs surplus width */}
+                              <div />
+
+                              {/* Column 6: Actions - Static Withdraw button */}
+                              <div className="hidden sm:flex items-center justify-end gap-2 w-[5.5rem] flex-none">
                                 <a
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     handleBurnPosition(position);
                                   }}
-                                  className="flex h-10 cursor-pointer items-center justify-center gap-2 rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30"
+                                  className="flex h-7 cursor-pointer items-center justify-center rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-2 text-xs font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30"
                                   style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: '200%', backgroundPosition: 'center' }}
                                 >
-                                  {isBurningLiquidity && positionToBurn?.positionId === position.positionId 
-                                    ? <RefreshCwIcon className="h-4 w-4 animate-spin relative z-0" /> 
-                                    : null}
-                                  <span className="relative z-0 whitespace-nowrap">Withdraw</span>
+                                  {isBurningLiquidity && positionToBurn?.positionId === position.positionId ? (
+                                    <RefreshCwIcon className="h-3 w-3 animate-spin" />
+                                  ) : (
+                                    <span>Withdraw</span>
+                                  )}
                                 </a>
-                                <DropdownMenu>
-                                  <DropdownMenuTrigger asChild>
-                                    <Button variant="ghost" className="h-8 w-8 p-0">
-                                      <span className="sr-only">Open menu</span>
-                                      <EllipsisVertical className="h-4 w-4" />
-                                    </Button>
-                                  </DropdownMenuTrigger>
-                                  <DropdownMenuContent align="end">
-                                    <DropdownMenuItem
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleIncreasePosition(position);
-                                      }}
-                                      className="cursor-pointer"
-                                    >
-                                      Add Liquidity
-                                    </DropdownMenuItem>
-
-                                  </DropdownMenuContent>
-                                </DropdownMenu>
                               </div>
                             </div>
-                          </div>
+                            </CardContent>
+
+                            {/* Footer with actions and range info */}
+                            <CardFooter className="flex items-center justify-between py-1.5 px-3 bg-muted/10 border-t border-sidebar-border/30 group/subbar">
+                              {/* Left side: Min price - Max price */}
+                              <div className="flex items-center text-xs text-muted-foreground gap-3">
+                                <TooltipProvider delayDuration={0}>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <span className="font-mono tabular-nums flex items-center gap-1.5">
+                                        <ChevronsLeftRight className="h-3 w-3 text-muted-foreground" aria-hidden />
+                                        {(() => {
+                                          const baseTokenForPriceDisplay = determineBaseTokenForPriceDisplay(
+                                            position.token0.symbol || '',
+                                            position.token1.symbol || ''
+                                          );
+                                          const minPrice = convertTickToPrice(
+                                            position.tickLower,
+                                            currentPoolTick,
+                                            currentPrice,
+                                            baseTokenForPriceDisplay,
+                                            position.token0.symbol || '',
+                                            position.token1.symbol || ''
+                                          );
+                                          const maxPrice = convertTickToPrice(
+                                            position.tickUpper,
+                                            currentPoolTick,
+                                            currentPrice,
+                                            baseTokenForPriceDisplay,
+                                            position.token0.symbol || '',
+                                            position.token1.symbol || ''
+                                          );
+                                          return `${minPrice} - ${maxPrice}`;
+                                        })()}
+                                      </span>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
+                                      <div className="font-medium text-foreground">Liquidity Range</div>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                                <div className="w-px h-3 bg-border"></div>
+                                <TooltipProvider delayDuration={0}>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <span className="font-mono tabular-nums flex items-center gap-1.5">
+                                        <Clock3 className="h-2.5 w-2.5 text-muted-foreground" aria-hidden />
+                                        {(() => {
+                                          const ageSeconds = position.ageSeconds;
+                                          if (ageSeconds < 60) return '<1m';
+                                          if (ageSeconds < 3600) return `${Math.floor(ageSeconds / 60)}m`;
+                                          if (ageSeconds < 86400) return `${Math.floor(ageSeconds / 3600)}h`;
+
+                                          const days = Math.floor(ageSeconds / 86400);
+                                          const hours = Math.floor((ageSeconds % 86400) / 3600);
+
+                                          if (ageSeconds < 2592000) { // Less than 30 days
+                                            return hours > 0 ? `${days}d ${hours}h` : `${days}d`;
+                                          }
+
+                                          const months = Math.floor(ageSeconds / 2592000);
+                                          const remainingDays = Math.floor((ageSeconds % 2592000) / 86400);
+
+                                          if (ageSeconds < 31536000) { // Less than 1 year
+                                            return remainingDays > 0 ? `${months}mo ${remainingDays}d` : `${months}mo`;
+                                          }
+
+                                          const years = Math.floor(ageSeconds / 31536000);
+                                          const remainingMonths = Math.floor((ageSeconds % 31536000) / 2592000);
+                                          const remainingDaysForYears = Math.floor((ageSeconds % 2592000) / 86400);
+
+                                          if (remainingMonths > 0 && remainingDaysForYears > 0) {
+                                            return `${years}y ${remainingMonths}mo ${remainingDaysForYears}d`;
+                                          } else if (remainingMonths > 0) {
+                                            return `${years}y ${remainingMonths}mo`;
+                                          } else {
+                                            return `${years}y`;
+                                          }
+                                        })()}
+                                      </span>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
+                                      <div className="font-medium text-foreground">Time Created</div>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              </div>
+
+                              {/* Right side: Range badge and Submenu button */}
+                              <div className="flex items-center gap-1.5">
+                                {/* Range Badge */}
+                                {(() => {
+                                    const isFullRange = position.tickLower === SDK_MIN_TICK && position.tickUpper === SDK_MAX_TICK;
+                                    const statusText = isFullRange ? 'Full Range' : position.isInRange ? 'In Range' : 'Out of Range';
+                                    const statusColor = position.isInRange || isFullRange ? 'bg-green-500/20 text-green-500' : 'bg-red-500/20 text-red-500';
+
+                                    return (
+                                      <HoverCard>
+                                        <HoverCardTrigger asChild>
+                                            <div className={`flex items-center justify-center h-4 rounded-md px-1.5 text-[10px] leading-none ${statusColor}`}>
+                                              {statusText}
+                                            </div>
+                                        </HoverCardTrigger>
+                                        <HoverCardContent
+                                          side="top"
+                                          align="center"
+                                          sideOffset={8}
+                                          className="w-48 p-2 border border-sidebar-border bg-[#0f0f0f] text-xs shadow-lg rounded-lg"
+                                        >
+                                          <div className="grid gap-1">
+                                            <div className="text-[11px] font-medium text-muted-foreground mb-1">Liquidity Range</div>
+                                            <div className="flex items-center justify-between">
+                                              <span className="text-muted-foreground">Min. Price</span>
+                                              <span className="font-mono tabular-nums">
+                                                {(() => {
+                                                  const baseTokenForPriceDisplay = determineBaseTokenForPriceDisplay(
+                                                    position.token0.symbol || '',
+                                                    position.token1.symbol || ''
+                                                  );
+                                                  return convertTickToPrice(
+                                                    position.tickLower,
+                                                    currentPoolTick,
+                                                    currentPrice,
+                                                    baseTokenForPriceDisplay,
+                                                    position.token0.symbol || '',
+                                                    position.token1.symbol || ''
+                                                  );
+                                                })()}
+                                              </span>
+                                            </div>
+                                            <div className="flex items-center justify-between">
+                                              <span className="text-muted-foreground">Max. Price</span>
+                                              <span className="font-mono tabular-nums">
+                                                {(() => {
+                                                  const baseTokenForPriceDisplay = determineBaseTokenForPriceDisplay(
+                                                    position.token0.symbol || '',
+                                                    position.token1.symbol || ''
+                                                  );
+                                                  return convertTickToPrice(
+                                                    position.tickUpper,
+                                                    currentPoolTick,
+                                                    currentPrice,
+                                                    baseTokenForPriceDisplay,
+                                                    position.token0.symbol || '',
+                                                    position.token1.symbol || ''
+                                                  );
+                                                })()}
+                                              </span>
+                                            </div>
+                                            <div className="flex items-center justify-between">
+                                              <span className="text-muted-foreground">Current</span>
+                                              <span className="font-mono tabular-nums">{currentPrice ?? 'N/A'}</span>
+                                            </div>
+                                          </div>
+                                        </HoverCardContent>
+                                      </HoverCard>
+                                    );
+                                  })()}
+
+                                {/* Submenu Button (smaller) */}
+                                <div className="relative position-menu-trigger">
+                                  <Button
+                                    variant="ghost"
+                                    className="h-5 w-5 p-0 text-muted-foreground/70 group-hover/subbar:text-white leading-none flex items-center justify-center"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      // Toggle menu
+                                      const next = showPositionMenu === position.positionId ? null : position.positionId;
+                                      setShowPositionMenu(next);
+                                      if (next) {
+                                        // Compute whether to open upwards
+                                        const trigger = (e.currentTarget as HTMLElement);
+                                        const rect = trigger.getBoundingClientRect();
+                                        const approxMenuHeight = 128; // ~3 items + padding
+                                        const wouldOverflow = rect.bottom + approxMenuHeight > window.innerHeight - 8; // 8px margin
+                                        setPositionMenuOpenUp(wouldOverflow);
+                                      }
+                                    }}
+                                  >
+                                    <span className="sr-only">Open menu</span>
+                                    <EllipsisVertical className="h-3 w-3 block" />
+                                  </Button>
+                                  <AnimatePresence>
+                                    {showPositionMenu === position.positionId && (
+                                      <motion.div
+                                        initial={{ height: 0, opacity: 0 }}
+                                        animate={{ height: 'auto', opacity: 1 }}
+                                        exit={{ height: 0, opacity: 0 }}
+                                        transition={{ duration: 0.18, ease: 'easeOut' }}
+                                        className="absolute z-20 right-0 w-max min-w-[140px] rounded-md border border-sidebar-border bg-[var(--modal-background)] shadow-md overflow-hidden"
+                                        style={{
+                                          marginTop: positionMenuOpenUp ? undefined : 4,
+                                          bottom: positionMenuOpenUp ? '100%' : undefined,
+                                          marginBottom: positionMenuOpenUp ? 4 : undefined,
+                                        }}
+                                      >
+                                        <div className="p-1 grid gap-1">
+                                          <button
+                                            type="button"
+                                            className="px-2 py-1 text-xs rounded text-left transition-colors text-muted-foreground hover:bg-muted/30"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleIncreasePosition(position);
+                                              setShowPositionMenu(null);
+                                            }}
+                                          >
+                                            Add Liquidity
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="px-2 py-1 text-xs rounded text-left transition-colors text-muted-foreground hover:bg-muted/30"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setShowPositionMenu(null);
+                                              // TODO: Implement Claim Fees
+                                            }}
+                                          >
+                                            Claim Fees
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="px-2 py-1 text-xs rounded text-left transition-colors text-muted-foreground hover:bg-muted/30"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setShowPositionMenu(null);
+                                              // TODO: Implement Compound Fees
+                                            }}
+                                          >
+                                            Compound Fees
+                                          </button>
+                                        </div>
+                                      </motion.div>
+                                    )}
+                                  </AnimatePresence>
+                                </div>
+                              </div>
+                            </CardFooter>
+                          </Card>
                         );
                   })}
                 </div>
@@ -2891,7 +3202,7 @@ export default function PoolDetailPage() {
               <div className="flex items-center justify-between">
                 <span className="text-sm font-medium">Current Position</span>
                 {!positionToBurn.isInRange && (
-                  <div className="inline-flex items-center border px-2.5 py-0.5 text-xs focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 bg-[#3d271b] text-sidebar-primary border-sidebar-primary rounded-md font-normal hover:bg-[#4a2f1f] transition-colors cursor-default">
+                  <div className="flex items-center justify-center h-5 rounded-md px-2 text-xs leading-none bg-red-500/20 text-red-500">
                     Out of Range
                   </div>
                 )}
@@ -3116,7 +3427,7 @@ export default function PoolDetailPage() {
               <div className="flex items-center justify-between">
                 <span className="text-sm font-medium">Current Position</span>
                 {!positionToModify.isInRange && (
-                  <div className="inline-flex items-center border px-2.5 py-0.5 text-xs focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 bg-[#3d271b] text-sidebar-primary border-sidebar-primary rounded-md font-normal hover:bg-[#4a2f1f] transition-colors cursor-default">
+                  <div className="flex items-center justify-center h-5 rounded-md px-2 text-xs leading-none bg-red-500/20 text-red-500">
                     Out of Range
                   </div>
                 )}

@@ -260,3 +260,15 @@ appkit-button:hover {
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
+/* Responsive grid for positions */
+.responsive-grid {
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 1400px) {
+  .responsive-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+  }
+}
+

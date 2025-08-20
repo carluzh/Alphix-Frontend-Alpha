@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
-import { ResponsiveContainer, ComposedChart, XAxis, YAxis, Area, ReferenceLine, ReferenceArea } from "recharts";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ResponsiveContainer, ComposedChart, XAxis, YAxis, Area, ReferenceLine, ReferenceArea, Tooltip as RechartsTooltip } from "recharts";
+import { ChevronLeft, ChevronRight, PlusIcon, MinusIcon, CrosshairIcon } from "lucide-react";
 import { toast } from "sonner";
 import { TOKEN_DEFINITIONS, TokenSymbol } from "@/lib/pools-config";
 import { formatUnits as viemFormatUnits } from "viem";
@@ -85,6 +85,7 @@ interface InteractiveRangeChartProps {
   defaultTickSpacing: number;
   poolToken0?: any;
   poolToken1?: any;
+  onDragStateChange?: (state: 'left' | 'right' | 'center' | null) => void;
 }
 
 const SUBGRAPH_URL = "https://api.studio.thegraph.com/query/111443/alphix-test/version/latest";
@@ -106,13 +107,16 @@ export function InteractiveRangeChart({
   sdkMaxTick,
   defaultTickSpacing,
   poolToken0,
-  poolToken1
+  poolToken1,
+  onDragStateChange
 }: InteractiveRangeChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState<'left' | 'right' | 'center' | null>(null);
   const [dragStart, setDragStart] = useState<{ x: number; tickLower: number; tickUpper: number } | null>(null);
   const [isHovering, setIsHovering] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [isPanningViewport, setIsPanningViewport] = useState(false);
+  const panViewportStartRef = useRef<{ x: number; domain: [number, number] } | null>(null);
   const finalDragPositionRef = useRef<{ 
     tickLower: number; 
     tickUpper: number; 
@@ -447,28 +451,24 @@ export function InteractiveRangeChart({
   useEffect(() => {
     console.log("[InteractiveRangeChart] Bucket data generation:", {
       processedPositions: processedPositions?.length || 0,
-      xDomain,
       defaultTickSpacing
     });
     
-    if (processedPositions && processedPositions.length > 0 && xDomain) {
-      const [minTick, maxTick] = xDomain;
-      const buckets = calculateTickBuckets(minTick, maxTick, defaultTickSpacing, 25);
+    if (processedPositions && processedPositions.length > 0) {
+      // Build a stable liquidity profile across full positions span to avoid replot on pan/zoom
+      const globalMin = Math.min(...processedPositions.map(p => p.tickLower));
+      const globalMax = Math.max(...processedPositions.map(p => p.tickUpper));
+      const buckets = calculateTickBuckets(globalMin, globalMax, defaultTickSpacing, 50);
       
       const bucketData: BucketData[] = [];
       
       for (const bucket of buckets) {
         let bucketLiquidity = 0;
-        
         for (const position of processedPositions) {
-          const posTickLower = position.tickLower;
-          const posTickUpper = position.tickUpper;
-          
-          if (posTickLower < bucket.tickUpper && posTickUpper > bucket.tickLower) {
+          if (position.tickLower < bucket.tickUpper && position.tickUpper > bucket.tickLower) {
             bucketLiquidity += position.unifiedValueInToken0;
           }
         }
-        
         bucketData.push({
           tickLower: bucket.tickLower,
           tickUpper: bucket.tickUpper,
@@ -476,14 +476,12 @@ export function InteractiveRangeChart({
           liquidityToken0: bucketLiquidity.toFixed(2)
         });
       }
-      
-      console.log("[InteractiveRangeChart] Generated bucket data:", bucketData.length, "buckets");
+      console.log("[InteractiveRangeChart] Generated stable bucket data:", bucketData.length, "buckets");
       setBucketLiquidityData(bucketData);
     } else {
-      console.log("[InteractiveRangeChart] No bucket data generated - missing dependencies");
       setBucketLiquidityData([]);
     }
-  }, [processedPositions, xDomain, defaultTickSpacing, calculateTickBuckets]);
+  }, [processedPositions, defaultTickSpacing, calculateTickBuckets]);
 
   // Calculate if axis should be flipped based on price order
   const isAxisFlipped = useMemo(() => {
@@ -658,12 +656,67 @@ export function InteractiveRangeChart({
 
   const handleMouseDown = (e: React.MouseEvent, side: 'left' | 'right' | 'center') => {
     e.preventDefault();
+    e.stopPropagation();
     setIsDragging(side);
+    if (onDragStateChange) onDragStateChange(side);
     setDragStart({
       x: e.clientX,
       tickLower: parseInt(tickLower),
       tickUpper: parseInt(tickUpper)
     });
+  };
+  const handleBackgroundMouseDown = (e: React.MouseEvent) => {
+    if (isDragging || !containerRef.current) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setIsPanningViewport(true);
+    panViewportStartRef.current = { x: e.clientX, domain: [...xDomain] as [number, number] };
+  };
+
+  const applyDomainConstraintsLocal = (minTick: number, maxTick: number): [number, number] => {
+    let constrainedMin = minTick;
+    let constrainedMax = maxTick;
+    const minDomainSize = defaultTickSpacing * 10;
+    if (constrainedMax - constrainedMin < minDomainSize) {
+      const center = (constrainedMin + constrainedMax) / 2;
+      constrainedMin = center - minDomainSize / 2;
+      constrainedMax = center + minDomainSize / 2;
+    }
+    if (currentPoolTick !== null) {
+      const maxUpperDelta = Math.round(Math.log(6) / Math.log(1.0001));
+      const maxLowerDelta = Math.round(Math.log(0.05) / Math.log(1.0001));
+      const maxUpperTick = currentPoolTick + maxUpperDelta;
+      const maxLowerTick = currentPoolTick + maxLowerDelta;
+      constrainedMin = Math.max(constrainedMin, maxLowerTick);
+      constrainedMax = Math.min(constrainedMax, maxUpperTick);
+    }
+    constrainedMin = Math.floor(constrainedMin / defaultTickSpacing) * defaultTickSpacing;
+    constrainedMax = Math.ceil(constrainedMax / defaultTickSpacing) * defaultTickSpacing;
+    if (constrainedMax - constrainedMin < minDomainSize) {
+      const center = (constrainedMin + constrainedMax) / 2;
+      constrainedMin = Math.floor((center - minDomainSize / 2) / defaultTickSpacing) * defaultTickSpacing;
+      constrainedMax = Math.ceil((center + minDomainSize / 2) / defaultTickSpacing) * defaultTickSpacing;
+    }
+    return [constrainedMin, constrainedMax];
+  };
+
+  const handleBackgroundMouseMove = (e: MouseEvent) => {
+    if (!isPanningViewport || !panViewportStartRef.current || !containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const dx = e.clientX - panViewportStartRef.current.x;
+    const [minTick, maxTick] = panViewportStartRef.current.domain;
+    const domainSize = maxTick - minTick;
+    const deltaTicks = (dx / rect.width) * domainSize;
+    const newMin = minTick - deltaTicks;
+    const newMax = maxTick - deltaTicks;
+    const [cMin, cMax] = applyDomainConstraintsLocal(newMin, newMax);
+    if (onXDomainChange) onXDomainChange([cMin, cMax]);
+  };
+  const stopBackgroundPan = () => {
+    if (isPanningViewport) {
+      setIsPanningViewport(false);
+      panViewportStartRef.current = null;
+    }
   };
 
   const handleTouchStart = (e: React.TouchEvent, side: 'left' | 'right' | 'center') => {
@@ -671,6 +724,7 @@ export function InteractiveRangeChart({
     e.stopPropagation();
     const touch = e.touches[0];
     setIsDragging(side);
+    if (onDragStateChange) onDragStateChange(side);
     setDragStart({
       x: touch.clientX,
       tickLower: parseInt(tickLower),
@@ -828,139 +882,60 @@ export function InteractiveRangeChart({
   const handleMouseUp = () => {
     if (onXDomainChange && finalDragPositionRef.current) {
       const { tickLower: finalTickLower, tickUpper: finalTickUpper } = finalDragPositionRef.current;
-      const [currentMinTick, currentMaxTick] = xDomain;
-      
-      // Calculate new domain with margins around the final position
-      const finalRange = finalTickUpper - finalTickLower;
-      const marginFactor = 0.05; // 5% margin on each side
-      let sideMargin = finalRange * marginFactor; // Always use 5% of selection range
-      
-      // Apply minimum domain size constraint: ensure at least 10 tick spacings visible
-      const minDomainSize = defaultTickSpacing * 10;
+      let [currentMinTick, currentMaxTick] = xDomain;
       const currentDomainSize = currentMaxTick - currentMinTick;
-      if (currentDomainSize < minDomainSize) {
-        sideMargin = Math.max(sideMargin, (minDomainSize - finalRange) / 2);
-      }
-      
-      // Calculate ideal domain that fits the selection with margins
-      let idealMinTick = finalTickLower - sideMargin;
-      let idealMaxTick = finalTickUpper + sideMargin;
-      
-      // Apply maximum view range constraint: 500% above and 95% below current price
-      if (currentPoolTick !== null) {
-        const maxUpperDelta = Math.round(Math.log(6) / Math.log(1.0001)); // 500% above = 6x price
-        const maxLowerDelta = Math.round(Math.log(0.05) / Math.log(1.0001)); // 95% below = 0.05x price
-        
-        const maxUpperTick = currentPoolTick + maxUpperDelta;
-        const maxLowerTick = currentPoolTick + maxLowerDelta;
-        
-        // Clamp the ideal domain to the maximum view range
-        idealMinTick = Math.max(idealMinTick, maxLowerTick);
-        idealMaxTick = Math.min(idealMaxTick, maxUpperTick);
-      }
-      
-      // Ensure the ideal domain is properly aligned to tick spacing
-      idealMinTick = Math.floor(idealMinTick / defaultTickSpacing) * defaultTickSpacing;
-      idealMaxTick = Math.ceil(idealMaxTick / defaultTickSpacing) * defaultTickSpacing;
-      
-      // Ensure minimum domain size is maintained after constraints
-      const constrainedDomainSize = idealMaxTick - idealMinTick;
-      if (constrainedDomainSize < minDomainSize) {
-        const centerTick = (idealMinTick + idealMaxTick) / 2;
-        idealMinTick = centerTick - minDomainSize / 2;
-        idealMaxTick = centerTick + minDomainSize / 2;
-        
-        // Re-align to tick spacing
-        idealMinTick = Math.floor(idealMinTick / defaultTickSpacing) * defaultTickSpacing;
-        idealMaxTick = Math.ceil(idealMaxTick / defaultTickSpacing) * defaultTickSpacing;
-      }
-      
-      // Determine if we need to expand or can shrink the viewport
-      const needsExpansion = finalTickLower < currentMinTick || finalTickUpper > currentMaxTick;
-      const canShrink = idealMinTick > currentMinTick || idealMaxTick < currentMaxTick;
-      
-      if (needsExpansion || canShrink) {
-        // Use the ideal domain that fits the selection with proper margins
-        let newMinTick = idealMinTick;
-        let newMaxTick = idealMaxTick;
-        
-        // If we're only shrinking (not expanding), we might want to be more conservative
-        if (!needsExpansion && canShrink) {
-          // When shrinking, ensure we don't make the viewport too small
-          const minViewportSize = finalRange * 3; // Minimum 3x the selection range
-          const currentViewportSize = newMaxTick - newMinTick;
-          
-          if (currentViewportSize < minViewportSize) {
-            const centerTick = (finalTickLower + finalTickUpper) / 2;
-            newMinTick = centerTick - minViewportSize / 2;
-            newMaxTick = centerTick + minViewportSize / 2;
-            
-            // Re-align to tick spacing
-            newMinTick = Math.floor(newMinTick / defaultTickSpacing) * defaultTickSpacing;
-            newMaxTick = Math.ceil(newMaxTick / defaultTickSpacing) * defaultTickSpacing;
-          }
-        }
-        
-        // Apply domain constraints before calling onXDomainChange
-        const minDomainSize = defaultTickSpacing * 10;
-        
-        console.log("[InteractiveRangeChart] Adjusting viewport for final position:", {
-          finalTickLower,
-          finalTickUpper,
-          currentDomain: [currentMinTick, currentMaxTick],
-          idealDomain: [idealMinTick, idealMaxTick],
-          newDomain: [newMinTick, newMaxTick],
-          needsExpansion,
-          canShrink,
-          minDomainSize,
-          constrainedDomainSize: idealMaxTick - idealMinTick
-        });
-        
-        let constrainedMinTick = newMinTick;
-        let constrainedMaxTick = newMaxTick;
-        
-        // Apply minimum domain size constraint
-        const domainSize = constrainedMaxTick - constrainedMinTick;
-        if (domainSize < minDomainSize) {
-          const centerTick = (constrainedMinTick + constrainedMaxTick) / 2;
-          constrainedMinTick = centerTick - minDomainSize / 2;
-          constrainedMaxTick = centerTick + minDomainSize / 2;
-        }
-        
-        // Apply maximum view range constraint: 500% above and 95% below current price
+      const minDomainSize = defaultTickSpacing * 10;
+      const minSelectionRatio = 0.2;
+
+      // Detect if we touched either edge of the current viewport
+      const touchedLeft = finalTickLower <= currentMinTick;
+      const touchedRight = finalTickUpper >= currentMaxTick;
+
+      // Only expand viewport if an edge was touched; expand that side by 25%
+      if (touchedLeft || touchedRight) {
+        let newMinTick = currentMinTick;
+        let newMaxTick = currentMaxTick;
+        const expandBy = Math.max(minDomainSize, currentDomainSize) * 0.25;
+
+        if (touchedLeft) newMinTick = currentMinTick - expandBy;
+        if (touchedRight) newMaxTick = currentMaxTick + expandBy;
+
+        // Apply global constraints
         if (currentPoolTick !== null) {
-          const constraintMaxUpperDelta = Math.round(Math.log(6) / Math.log(1.0001)); // 500% above = 6x price
-          const constraintMaxLowerDelta = Math.round(Math.log(0.05) / Math.log(1.0001)); // 95% below = 0.05x price
-          
-          const constraintMaxUpperTick = currentPoolTick + constraintMaxUpperDelta;
-          const constraintMaxLowerTick = currentPoolTick + constraintMaxLowerDelta;
-          
-          // Clamp the domain to the maximum view range
-          constrainedMinTick = Math.max(constrainedMinTick, constraintMaxLowerTick);
-          constrainedMaxTick = Math.min(constrainedMaxTick, constraintMaxUpperTick);
+          const maxUpperDelta = Math.round(Math.log(6) / Math.log(1.0001)); // +500%
+          const maxLowerDelta = Math.round(Math.log(0.05) / Math.log(1.0001)); // -95%
+          const maxUpperTick = currentPoolTick + maxUpperDelta;
+          const maxLowerTick = currentPoolTick + maxLowerDelta;
+          newMinTick = Math.max(newMinTick, maxLowerTick);
+          newMaxTick = Math.min(newMaxTick, maxUpperTick);
         }
-        
-        // Ensure the domain is properly aligned to tick spacing
-        constrainedMinTick = Math.floor(constrainedMinTick / defaultTickSpacing) * defaultTickSpacing;
-        constrainedMaxTick = Math.ceil(constrainedMaxTick / defaultTickSpacing) * defaultTickSpacing;
-        
-        // Ensure minimum domain size is maintained after constraints
-        const finalDomainSize = constrainedMaxTick - constrainedMinTick;
-        if (finalDomainSize < minDomainSize) {
-          const centerTick = (constrainedMinTick + constrainedMaxTick) / 2;
-          constrainedMinTick = centerTick - minDomainSize / 2;
-          constrainedMaxTick = centerTick + minDomainSize / 2;
-          
-          // Re-align to tick spacing
-          constrainedMinTick = Math.floor(constrainedMinTick / defaultTickSpacing) * defaultTickSpacing;
-          constrainedMaxTick = Math.ceil(constrainedMaxTick / defaultTickSpacing) * defaultTickSpacing;
+
+        // Align and enforce minimum domain
+        newMinTick = Math.floor(newMinTick / defaultTickSpacing) * defaultTickSpacing;
+        newMaxTick = Math.ceil(newMaxTick / defaultTickSpacing) * defaultTickSpacing;
+        if (newMaxTick - newMinTick < minDomainSize) {
+          const center = (newMinTick + newMaxTick) / 2;
+          newMinTick = center - minDomainSize / 2;
+          newMaxTick = center + minDomainSize / 2;
+          newMinTick = Math.floor(newMinTick / defaultTickSpacing) * defaultTickSpacing;
+          newMaxTick = Math.ceil(newMaxTick / defaultTickSpacing) * defaultTickSpacing;
         }
-        
-        onXDomainChange([constrainedMinTick, constrainedMaxTick]);
+
+        onXDomainChange([newMinTick, newMaxTick]);
+      } else {
+        // Enforce minimum selection width: if selection < 20% of view, zoom in
+        const selectionSize = finalTickUpper - finalTickLower;
+        if (selectionSize > 0 && selectionSize < currentDomainSize * minSelectionRatio) {
+          const targetSize = Math.max(minDomainSize, currentDomainSize * minSelectionRatio);
+          const center = (finalTickLower + finalTickUpper) / 2;
+          const [cMin, cMax] = applyDomainConstraintsLocal(center - targetSize / 2, center + targetSize / 2);
+          onXDomainChange([cMin, cMax]);
+        }
       }
     }
-    
+
     setIsDragging(null);
+    if (onDragStateChange) onDragStateChange(null);
     setDragStart(null);
     finalDragPositionRef.current = null;
   };
@@ -987,13 +962,43 @@ export function InteractiveRangeChart({
     }
   }, [isDragging, dragStart]);
 
+  useEffect(() => {
+    if (isPanningViewport) {
+      document.addEventListener('mousemove', handleBackgroundMouseMove);
+      document.addEventListener('mouseup', stopBackgroundPan);
+      return () => {
+        document.removeEventListener('mousemove', handleBackgroundMouseMove);
+        document.removeEventListener('mouseup', stopBackgroundPan);
+      };
+    }
+  }, [isPanningViewport]);
+
+  const zoomByFactor = (factor: number) => {
+    const [minTick, maxTick] = xDomain;
+    const center = (minTick + maxTick) / 2;
+    const half = (maxTick - minTick) / 2;
+    const newHalf = half * factor;
+    const [cMin, cMax] = applyDomainConstraintsLocal(center - newHalf, center + newHalf);
+    if (onXDomainChange) onXDomainChange([cMin, cMax]);
+  };
+
+  const centerOnCurrentPrice = () => {
+    if (currentPoolTick === null) return;
+    const [minTick, maxTick] = xDomain;
+    const size = Math.max(defaultTickSpacing * 10, maxTick - minTick);
+    const [cMin, cMax] = applyDomainConstraintsLocal(currentPoolTick - size / 2, currentPoolTick + size / 2);
+    if (onXDomainChange) onXDomainChange([cMin, cMax]);
+  };
+
   return (
     <div className="space-y-2">
+      {/* Legend removed per UX request */}
       <div 
         className="relative h-[80px] w-full touch-manipulation" 
         ref={containerRef}
         onMouseEnter={() => setIsHovering(true)}
-        onMouseLeave={() => setIsHovering(false)}
+        onMouseLeave={() => { setIsHovering(false); stopBackgroundPan(); }}
+        onMouseDown={handleBackgroundMouseDown}
         onTouchStart={(e) => {
           // Prevent scrolling when touching the chart area
           if (e.touches.length === 1) {
@@ -1007,6 +1012,8 @@ export function InteractiveRangeChart({
             data={chartData}
             margin={{ top: 2, right: 5, bottom: 5, left: 5 }}
           >
+            {/* Disable hover cursor/tooltip entirely */}
+            <RechartsTooltip cursor={false} content={() => null} />
             <XAxis 
               dataKey="tick" 
               type="number" 
@@ -1037,6 +1044,19 @@ export function InteractiveRangeChart({
               name="Liquidity Depth"
               dot={false}
               activeDot={false}
+              isAnimationActive={false}
+            />
+            {/* Overlay a top border line for the step area (no dots, no interactivity) */}
+            <Area
+              type="step"
+              dataKey="liquidityToken0"
+              fillOpacity={0}
+              stroke="#404040"
+              strokeWidth={1}
+              yAxisId="bucketAxis"
+              isAnimationActive={false}
+              dot={false}
+              activeDot={false}
             />
             
             {currentPoolTick !== null && (
@@ -1063,7 +1083,8 @@ export function InteractiveRangeChart({
                   return <rect x={0} y={0} width={0} height={0} />;
                 }
                 
-                const radius = isHovering ? 0 : 6;
+                // Sharp bottom corners, rounded top corners
+                const radius = 6;
                 
                 return (
                   <path
@@ -1074,6 +1095,7 @@ export function InteractiveRangeChart({
                 );
               }}
             />
+            {/* Floating tooltip for live lower/upper price during drag - rendered outside chart container */}
           </ComposedChart>
         </ResponsiveContainer>
 
@@ -1121,6 +1143,38 @@ export function InteractiveRangeChart({
               </div>
             </div>
           </div>
+        </div>
+
+        {/* Hover-only zoom controls */}
+        <div className={`absolute top-1 right-1 flex gap-1 pointer-events-auto transition-opacity duration-200 ${isHovering ? 'opacity-100' : 'opacity-0'}`}>
+          <button
+            type="button"
+            className="h-5 w-5 flex items-center justify-center rounded border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] hover:brightness-110 hover:border-white/30"
+            onClick={() => zoomByFactor(0.8)}
+            aria-label="Zoom in"
+          >
+            <PlusIcon className="h-3 w-3" />
+          </button>
+          <button
+            type="button"
+            className="h-5 w-5 flex items-center justify-center rounded border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] hover:brightness-110 hover:border-white/30"
+            onClick={() => zoomByFactor(1.25)}
+            aria-label="Zoom out"
+          >
+            <MinusIcon className="h-3 w-3" />
+          </button>
+          <button
+            type="button"
+            className="h-5 w-5 flex items-center justify-center rounded border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] hover:brightness-110 hover:border-white/30"
+            onClick={centerOnCurrentPrice}
+            aria-label="Center on current price"
+          >
+            {/* Parallel drag-like lines icon */}
+            <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" className="opacity-80">
+              <rect x="4" y="2" width="1" height="8" rx="0.5" fill="currentColor" />
+              <rect x="7" y="2" width="1" height="8" rx="0.5" fill="currentColor" />
+            </svg>
+          </button>
         </div>
       </div>
 

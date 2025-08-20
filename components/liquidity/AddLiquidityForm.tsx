@@ -36,6 +36,7 @@ const safeParseUnits = (amount: string, decimals: number): bigint => {
   return viemParseUnits(finalString, decimals);
 };
 import { useAddLiquidityTransaction } from "./useAddLiquidityTransaction";
+import { motion, AnimatePresence } from "framer-motion";
 import { InteractiveRangeChart } from "./InteractiveRangeChart";
 import {
   Tooltip,
@@ -186,8 +187,8 @@ export function AddLiquidityForm({
   const panStartDomainRef = useRef<[number, number] | null>(null);
   const chartContainerRef = useRef<HTMLDivElement>(null);
   
-  // Range drag state
-  const [isDraggingRange, setIsDraggingRange] = useState(false);
+  // Range drag state (for coloring X/Y while dragging)
+  const [isDraggingRange, setIsDraggingRange] = useState<'left' | 'right' | 'center' | null>(null);
   const [dragStartX, setDragStartX] = useState<number | null>(null);
   const [dragStartTickLower, setDragStartTickLower] = useState<number | null>(null);
   const [dragStartTickUpper, setDragStartTickUpper] = useState<number | null>(null);
@@ -671,7 +672,7 @@ export function AddLiquidityForm({
       setInitialDefaultApplied(true);
       setPriceAtTickLower(null);
       setPriceAtTickUpper(null);
-      // Reset viewbox for full range
+      // Reset viewbox to the ±15% centered style for consistency
       resetChartViewbox(sdkMinTick, sdkMaxTick);
     } else {
       // The percentage presets will be applied by the useEffect that watches activePreset
@@ -947,17 +948,30 @@ export function AddLiquidityForm({
 
   // Reset chart viewbox to center the chosen range with 5% margins
   const resetChartViewbox = useCallback((newTickLower: number, newTickUpper: number) => {
-    if (newTickLower === newTickUpper) return; // Don't reset for invalid ranges
+    if (newTickLower === newTickUpper) return;
     
+    // Center on current price when presets are applied
+    if (currentPoolTick !== null) {
+      const minDomainSize = defaultTickSpacing * 10;
+      const center = currentPoolTick;
+      // Keep the current zoom level if possible; otherwise ensure min domain
+      const currentSize = xDomain[1] - xDomain[0];
+      const targetSize = Math.max(minDomainSize, currentSize || minDomainSize);
+      let newMin = center - targetSize / 2;
+      let newMax = center + targetSize / 2;
+      const [cMin, cMax] = applyDomainConstraints(newMin, newMax);
+      setXDomain([cMin, cMax]);
+      return;
+    }
+    
+    // Fallback to simple margin around selection
     const rangeWidth = newTickUpper - newTickLower;
-    const marginTicks = Math.round(rangeWidth * 0.05); // 5% margin
-    
+    const marginTicks = Math.round(rangeWidth * 0.05);
     const newMinTick = newTickLower - marginTicks;
     const newMaxTick = newTickUpper + marginTicks;
-    
     const [constrainedMinTick, constrainedMaxTick] = applyDomainConstraints(newMinTick, newMaxTick);
     setXDomain([constrainedMinTick, constrainedMaxTick]);
-  }, [applyDomainConstraints]);
+  }, [applyDomainConstraints, currentPoolTick, defaultTickSpacing, xDomain]);
 
   // Handle use full balance
   const handleUseFullBalance = (balanceString: string, tokenSymbolForDecimals: TokenSymbol, isToken0: boolean) => { 
@@ -1248,7 +1262,7 @@ export function AddLiquidityForm({
       return; // Not dragging range
     }
     
-    setIsDraggingRange(true);
+    setIsDraggingRange(dragSide);
     setDragStartX(chartX);
     setDragStartTickLower(currentTickLower);
     setDragStartTickUpper(currentTickUpper);
@@ -1303,11 +1317,24 @@ export function AddLiquidityForm({
       setTickLower(newTickLower.toString());
       setTickUpper(newTickUpper.toString());
       setInitialDefaultApplied(true);
+      // Auto-zoom: ensure selected range is at least 20% of current viewport
+      const [viewMin, viewMax] = xDomain;
+      const viewSize = viewMax - viewMin;
+      const selSize = newTickUpper - newTickLower;
+      const minSelRatio = 0.2;
+      if (viewSize > 0 && selSize / viewSize < minSelRatio) {
+        const targetSize = Math.max(defaultTickSpacing * 10, viewSize * minSelRatio);
+        const center = (newTickLower + newTickUpper) / 2;
+        const newMin = center - targetSize / 2;
+        const newMax = center + targetSize / 2;
+        const [cMin, cMax] = applyDomainConstraints(newMin, newMax);
+        setXDomain([cMin, cMax]);
+      }
     }
   };
 
   const handleRangeDragEnd = () => {
-    setIsDraggingRange(false);
+    setIsDraggingRange(null);
     setDragStartX(null);
     setDragStartTickLower(null);
     setDragStartTickUpper(null);
@@ -1346,10 +1373,16 @@ export function AddLiquidityForm({
         let newTick = Math.log(priceToConvert) / Math.log(1.0001);
         newTick = Math.ceil(newTick / defaultTickSpacing) * defaultTickSpacing;
         newTick = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTick));
-        if (newTick < parseInt(tickUpper)) {
+        if (activePreset === "Full Range") {
+          // When in Full Range, keep the other bound pinned to its extreme
+          const pairedUpper = sdkMaxTick;
+          setTickLower(newTick.toString());
+          setTickUpper(pairedUpper.toString());
+          setInitialDefaultApplied(true);
+          resetChartViewbox(newTick, pairedUpper);
+        } else if (newTick < parseInt(tickUpper)) {
           setTickLower(newTick.toString());
           setInitialDefaultApplied(true);
-          // Reset viewbox for manual range change
           resetChartViewbox(newTick, parseInt(tickUpper));
         } else {
           toast.error("Invalid Range: Min price must be less than max price.");
@@ -1378,10 +1411,15 @@ export function AddLiquidityForm({
         let newTick = Math.log(priceToConvert) / Math.log(1.0001);
         newTick = Math.floor(newTick / defaultTickSpacing) * defaultTickSpacing;
         newTick = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTick));
-        if (newTick > parseInt(tickLower)) {
+        if (activePreset === "Full Range") {
+          const pairedLower = sdkMinTick;
+          setTickUpper(newTick.toString());
+          setTickLower(pairedLower.toString());
+          setInitialDefaultApplied(true);
+          resetChartViewbox(pairedLower, newTick);
+        } else if (newTick > parseInt(tickLower)) {
           setTickUpper(newTick.toString());
           setInitialDefaultApplied(true);
-          // Reset viewbox for manual range change
           resetChartViewbox(parseInt(tickLower), newTick);
         } else {
           toast.error("Invalid Range: Min price must result in a max tick greater than min tick.");
@@ -2064,38 +2102,60 @@ export function AddLiquidityForm({
                     </>
                   ) : (
                     <>
-                      {showPresetSelector ? (
-                        // Inline preset selector
-                        <div className="flex items-center gap-1 preset-selector">
-                          {["Full Range", "±15%", "±8%", "±3%"].map((preset) => (
-                            <div
-                              key={preset}
-                              className={cn(
-                                "px-2 py-1 text-xs rounded transition-colors cursor-pointer",
-                                activePreset === preset 
-                                  ? "text-white font-medium" 
-                                  : "text-muted-foreground hover:text-foreground/80"
-                              )}
-                              onClick={() => handleSelectPreset(preset)}
-                            >
-                              {preset}
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        // Single preset button that opens selector
-                        <div 
-                          className="h-auto p-0 text-xs text-muted-foreground hover:text-foreground/80 transition-colors cursor-pointer rounded px-1" 
-                          onClick={() => setShowPresetSelector(true)}
+                      {/* Animated preset dropdown like Swap Slippage */}
+                      <div className="relative preset-selector">
+                        <button
+                          type="button"
+                          className="px-1.5 py-0.5 text-xs font-normal rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-muted-foreground hover:brightness-110 hover:border-white/30 inline-flex items-center gap-1"
+                          onClick={() => setShowPresetSelector((v) => !v)}
+                          aria-haspopup="listbox"
+                          aria-expanded={showPresetSelector}
+                          title="Change preset range"
                         >
-                          {activePreset || "Custom"}
-                        </div>
-                      )}
-                      {!showPresetSelector && getPriceRangeDisplay() && (
+                          <span>{activePreset || "Custom"}</span>
+                          <svg width="10" height="10" viewBox="0 0 20 20" aria-hidden="true" className="opacity-80">
+                            <path d="M5 7l5 5 5-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        </button>
+                        <AnimatePresence initial={false}>
+                          {showPresetSelector && (
+                            <motion.div
+                              key="range-preset-menu"
+                              initial={{ height: 0, opacity: 0 }}
+                              animate={{ height: 'auto', opacity: 1 }}
+                              exit={{ height: 0, opacity: 0 }}
+                              transition={{ duration: 0.18, ease: 'easeOut' }}
+                              className="absolute z-20 mt-1 left-0 w-max min-w-[180px] rounded-md border border-sidebar-border bg-[var(--modal-background)] shadow-md overflow-hidden"
+                            >
+                              <div className="p-1 grid gap-1">
+                                {["Full Range", "±15%", "±8%", "±3%"].map((preset) => (
+                                  <button
+                                    type="button"
+                                    key={preset}
+                                    className={cn(
+                                      "px-2 py-1 text-xs rounded text-left transition-colors",
+                                      activePreset === preset
+                                        ? "bg-muted text-foreground"
+                                        : "text-muted-foreground hover:bg-muted/30"
+                                    )}
+                                    onClick={() => {
+                                      handleSelectPreset(preset);
+                                      setShowPresetSelector(false);
+                                    }}
+                                  >
+                                    {preset}
+                                  </button>
+                                ))}
+                              </div>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
+                      {getPriceRangeDisplay() && (
                         <>
                           <div className="w-px h-4 bg-border" />
                           {editingSide ? (
-                            // Single input field for editing with other text visible
+                            // Editing: show inputs AND keep the current price pill visible
                             <div className="flex items-center gap-1 text-xs price-range-editor">
                               {editingSide === 'min' ? (
                                 <input
@@ -2148,23 +2208,69 @@ export function AddLiquidityForm({
                                   {maxPriceInputString || "∞"}
                                 </div>
                               )}
+                              {currentPrice && (
+                                <TooltipProvider delayDuration={0}>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <span className="ml-2 inline-flex items-center gap-1 text-[10px] px-1 py-0.5 rounded border border-sidebar-border text-muted-foreground">
+                                        <span className="inline-block w-[2px] h-2" style={{ background: '#e85102' }} />
+                                        <span className="select-none">
+                                          {(() => {
+                                            const inverse = 1 / parseFloat(currentPrice);
+                                            const flip = inverse > parseFloat(currentPrice);
+                                            const displayDecimals = TOKEN_DEFINITIONS[flip ? token0Symbol : token1Symbol]?.displayDecimals ?? 4;
+                                            const numeric = flip ? inverse : parseFloat(currentPrice);
+                                            return isFinite(numeric) ? numeric.toFixed(displayDecimals) : '∞';
+                                          })()}
+                                        </span>
+                                      </span>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
+                                      Current Price
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              )}
                             </div>
                           ) : (
-                            // Clickable price range display with hover effects
-                            <div className="flex items-center gap-0 text-xs">
+                            // Clickable price range display with hover effects and a small "Now" badge
+                            <div className="flex items-center gap-1 text-xs">
                               <div 
-                                className="text-muted-foreground hover:text-white cursor-pointer px-1 py-1 transition-colors"
+                                className={`${(isDraggingRange === 'left' || isDraggingRange === 'center') ? 'text-white' : 'text-muted-foreground'} hover:text-white cursor-pointer px-1 py-1 transition-colors min-price-display`}
                                 onClick={() => handleClickToEditPrice('min')}
                               >
                                 {minPriceInputString || "0.00"}
                               </div>
                               <span className="text-muted-foreground">-</span>
                               <div 
-                                className="text-muted-foreground hover:text-white cursor-pointer px-1 py-1 transition-colors"
+                                className={`${(isDraggingRange === 'right' || isDraggingRange === 'center') ? 'text-white' : 'text-muted-foreground'} hover:text-white cursor-pointer px-1 py-1 transition-colors max-price-display`}
                                 onClick={() => handleClickToEditPrice('max')}
                               >
                                 {maxPriceInputString || "∞"}
                               </div>
+                              {currentPrice && (
+                                <TooltipProvider delayDuration={0}>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <span className="ml-2 inline-flex items-center gap-1 text-[10px] px-1 py-0.5 rounded border border-sidebar-border text-muted-foreground">
+                                        <span className="inline-block w-[2px] h-2" style={{ background: '#e85102' }} />
+                                        <span className="select-none">
+                                          {(() => {
+                                            const inverse = 1 / parseFloat(currentPrice);
+                                            const flip = inverse > parseFloat(currentPrice);
+                                            const displayDecimals = TOKEN_DEFINITIONS[flip ? token0Symbol : token1Symbol]?.displayDecimals ?? 4;
+                                            const numeric = flip ? inverse : parseFloat(currentPrice);
+                                            return isFinite(numeric) ? numeric.toFixed(displayDecimals) : '∞';
+                                          })()}
+                                        </span>
+                                      </span>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
+                                      Current Price
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              )}
                             </div>
                           )}
                         </>
@@ -2223,6 +2329,7 @@ export function AddLiquidityForm({
                         defaultTickSpacing={defaultTickSpacing}
                         poolToken0={poolToken0}
                         poolToken1={poolToken1}
+                        onDragStateChange={(state) => setIsDraggingRange(state)}
                       />
                       
                       {/* Chart labels are now handled internally by InteractiveRangeChart */}
@@ -2260,37 +2367,14 @@ export function AddLiquidityForm({
                 </div>
               )}
 
-              {/* Current Price Display - outside striped container, above Deposit button */}
-              {currentPrice && token0Symbol && token1Symbol && (
-                <div className="text-xs text-muted-foreground mt-2 text-right">
-                  {(() => {
-                    // Check if denomination was flipped (same logic as in the chart)
-                    const inversePrice = 1 / parseFloat(currentPrice);
-                    const shouldFlipDenomination = inversePrice > parseFloat(currentPrice);
-                    
-                    // Get display decimals for the appropriate token
-                    const token0Def = TOKEN_DEFINITIONS[token0Symbol];
-                    const token1Def = TOKEN_DEFINITIONS[token1Symbol];
-                    
-                    if (shouldFlipDenomination) {
-                      // Show flipped denomination: "1 aUSDT = XXXX aETH"
-                      const displayDecimals = token0Def?.displayDecimals ?? 4;
-                      return `1 ${token1Symbol} = ${inversePrice.toFixed(displayDecimals)} ${token0Symbol}`;
-                    } else {
-                      // Show normal denomination: "1 aETH = XXXX aUSDT"
-                      const displayDecimals = token1Def?.displayDecimals ?? 4;
-                      return `1 ${token0Symbol} = ${parseFloat(currentPrice).toFixed(displayDecimals)} ${token1Symbol}`;
-                    }
-                  })()}
-                </div>
-              )}
+              {/* Current Price Display removed per updated UI */}
 
               {/* Continue Button */}
               {!isConnected ? (
                 <div className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30"
                   style={{ backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
                 >
-                  <appkit-button className="absolute inset-0 z-10 block h-full w-full cursor-pointer p-0 opacity-0" />
+                  <span className="absolute inset-0 z-10 block h-full w-full cursor-pointer p-0 opacity-0" />
                   <span className="relative z-0 pointer-events-none">Connect Wallet</span>
                 </div>
               ) : (

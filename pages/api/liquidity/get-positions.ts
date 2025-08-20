@@ -5,16 +5,14 @@ import JSBI from 'jsbi';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from "../../../lib/abis/state_view_abi";
 import { publicClient } from "../../../lib/viemClient";
-import { getAddress, parseAbi, parseAbiItem, type Address, type Abi, type Hex } from "viem";
-import { getTokenSymbolByAddress, getAllPools, getStateViewAddress, getPositionManagerAddress, CHAIN_ID } from "../../../lib/pools-config";
-import { position_manager_abi } from "../../../lib/abis/PositionManager_abi";
+import { getAddress, parseAbi, type Address, type Hex } from "viem";
+import { getTokenSymbolByAddress, getAllPools, getStateViewAddress, CHAIN_ID } from "../../../lib/pools-config";
 
 // Load environment variables - ensure .env is at the root or configure path
 // dotenv.config({ path: '.env.local' }); // Removed: Next.js handles .env.local automatically
 
 // Constants
 const STATE_VIEW_ADDRESS = getStateViewAddress();
-const POSITION_MANAGER_ADDRESS = getPositionManagerAddress();
 const DEFAULT_CHAIN_ID = CHAIN_ID;
 const SUBGRAPH_URL = "https://api.studio.thegraph.com/query/111443/alphix-test/version/latest";
 
@@ -76,29 +74,7 @@ export interface ProcessedPosition { // Export for frontend type usage
 // duplicate types/query removed
 
 // Create lookups from pools.json for dynamic lookup
-function createPoolLookups() {
-    const pools = getAllPools();
-    const bySubgraphIdTickSpacing: { [poolSubgraphId: string]: number } = {};
-    const byKey: Record<string, { subgraphId: string; fee: number; tickSpacing: number; hooks: string; currency0: string; currency1: string } > = {};
-
-    for (const p of pools) {
-        const key = [getAddress(p.currency0.address), getAddress(p.currency1.address), String(p.fee), String(p.tickSpacing), getAddress(p.hooks)].join('-');
-        bySubgraphIdTickSpacing[p.subgraphId.toLowerCase()] = p.tickSpacing;
-        byKey[key] = {
-            subgraphId: p.subgraphId,
-            fee: p.fee,
-            tickSpacing: p.tickSpacing,
-            hooks: getAddress(p.hooks),
-            currency0: getAddress(p.currency0.address),
-            currency1: getAddress(p.currency1.address)
-        };
-    }
-    return { bySubgraphIdTickSpacing, byKey };
-}
-
-function poolKeyToConfigKey(poolKey: { currency0: Address; currency1: Address; fee: number; tickSpacing: number; hooks: Address }): string {
-    return [getAddress(poolKey.currency0), getAddress(poolKey.currency1), String(poolKey.fee), String(poolKey.tickSpacing), getAddress(poolKey.hooks)].join('-');
-}
+// Removed: on-chain pool lookups and key mapping (subgraph-only now)
 
 // Decode ticks from PositionManager tokenURI metadata (base64 JSON)
 function parseTicksFromTokenURI(tokenUri: string): { tickLower: number | null; tickUpper: number | null } {
@@ -148,10 +124,8 @@ async function fetchAndProcessUserPositionsForApi(ownerAddress: string): Promise
         }
     }
     const stateViewAbiViem = parseAbi(STATE_VIEW_HUMAN_READABLE_ABI);
-    const pmAbi: Abi = position_manager_abi as unknown as Abi;
-
     const owner = getAddress(ownerAddress);
-    // Simple subgraph log of position IDs (requested)
+    // Subgraph-only path
     try {
         const resp = await fetch(SUBGRAPH_URL, {
         method: 'POST',
@@ -212,243 +186,8 @@ async function fetchAndProcessUserPositionsForApi(ownerAddress: string): Promise
             }
         }
     } catch {}
-    // Fall back to previous logic below if subgraph path fails
-    log(`start for ${owner}`);
-
-    // Enumerate ownership strictly via Transfer logs using balanceOf target
-    let ownedTokenIds: bigint[] = [];
-    let balance: bigint | null = null;
-    try {
-        balance = await withTimeout(publicClient.readContract({
-            address: POSITION_MANAGER_ADDRESS,
-            abi: pmAbi,
-            functionName: 'balanceOf',
-            args: [owner]
-        }) as Promise<bigint>, 20000, 'balanceOf(owner)') as bigint;
-        log(`balanceOf = ${balance}`);
-        if (balance === 0n) {
-            log('no NFTs owned, returning []');
-            return [];
-        }
-    } catch (e) {
-        log('balanceOf failed; cannot proceed efficiently');
-        throw e;
-    }
-
-    // Scan Transfer logs backwards until we reach balance
-    {
-        const targetCount = Number(balance);
-        const transferEvent = parseAbiItem('event Transfer(address indexed from,address indexed to,uint256 id)');
-        const latestBlock = await withTimeout(publicClient.getBlockNumber(), 15000, 'getBlockNumber');
-        log(`log-scan latestBlock=${latestBlock}`);
-        const chunkSize = 35000n;
-        const seen = new Set<bigint>();
-        const ownedSet = new Set<bigint>();
-        let end = latestBlock;
-        let iterations = 0;
-        const maxIterations = 200; // safety cap
-        while (ownedSet.size < targetCount && end > 0n && iterations < maxIterations) {
-            const start = end > chunkSize ? (end - chunkSize) : 0n;
-            log(`log-scan chunk #${iterations + 1} [${start}..${end}]`);
-            let logsTo: any[] = [];
-            let logsFrom: any[] = [];
-            try {
-                [logsTo, logsFrom] = await Promise.all([
-                    withTimeout(publicClient.getLogs({ address: POSITION_MANAGER_ADDRESS, event: transferEvent, args: { to: owner }, fromBlock: start, toBlock: end }), 20000, `getLogs(to) [${start}..${end}]`),
-                    withTimeout(publicClient.getLogs({ address: POSITION_MANAGER_ADDRESS, event: transferEvent, args: { from: owner }, fromBlock: start, toBlock: end }), 20000, `getLogs(from) [${start}..${end}]`),
-                ]);
-            } catch (err) {
-                log('getLogs failed, continuing');
-                end = start === 0n ? 0n : (start - 1n);
-                iterations += 1;
-                continue;
-            }
-            const merged = [...logsTo, ...logsFrom].sort((a, b) => {
-                const bnA = (a.blockNumber ?? 0n) as bigint;
-                const bnB = (b.blockNumber ?? 0n) as bigint;
-                if (bnA !== bnB) return bnA > bnB ? -1 : 1;
-                const liA = (a.logIndex ?? 0) as number;
-                const liB = (b.logIndex ?? 0) as number;
-                return liA > liB ? -1 : (liA < liB ? 1 : 0);
-            });
-            for (const ev of merged) {
-                const id = ev.args?.id as bigint;
-                if (seen.has(id)) continue;
-                seen.add(id);
-                const toAddr = ev.args?.to ? getAddress(ev.args.to as string) : undefined;
-                const fromAddr = ev.args?.from ? getAddress(ev.args.from as string) : undefined;
-                if (toAddr === owner) ownedSet.add(id);
-                else if (fromAddr === owner) ownedSet.delete(id);
-                if (ownedSet.size >= targetCount) break;
-            }
-            end = start === 0n ? 0n : (start - 1n);
-            iterations += 1;
-        }
-        ownedTokenIds = Array.from(ownedSet);
-        log(`log-scan found tokenIds = [${ownedTokenIds.join(', ')}]`);
-    }
-    if (ownedTokenIds.length === 0) {
-        log('no tokenIds discovered, returning []');
-        return [];
-    }
-
-    // Read pool keys, liquidity and tokenURIs for each tokenId
-    type PoolKey = { currency0: Address; currency1: Address; fee: number; tickSpacing: number; hooks: Address };
-    const { bySubgraphIdTickSpacing, byKey } = createPoolLookups();
-
-    // Batch calls
-    const poolAndInfoCalls = ownedTokenIds.map((id) => ({
-        address: POSITION_MANAGER_ADDRESS,
-        abi: pmAbi,
-        functionName: 'getPoolAndPositionInfo',
-        args: [id],
-    }));
-    const liqCalls = ownedTokenIds.map((id) => ({
-        address: POSITION_MANAGER_ADDRESS,
-        abi: pmAbi,
-        functionName: 'getPositionLiquidity',
-        args: [id],
-    }));
-    const uriCalls = ownedTokenIds.map((id) => ({
-        address: POSITION_MANAGER_ADDRESS,
-        abi: pmAbi,
-        functionName: 'tokenURI',
-        args: [id],
-    }));
-
-    log(`reading pool/info for ${ownedTokenIds.length} tokenIds...`);
-    const poolAndInfoResults = await Promise.all(
-        poolAndInfoCalls.map((c) => publicClient.readContract(c as any).then(
-            (res) => ({ status: 'success' as const, result: res }),
-            (err) => { log('getPoolAndPositionInfo failed'); return ({ status: 'error' as const, result: null as any }); }
-        ))
-    );
-    log('reading position liquidity...');
-    const liqResults = await Promise.all(
-        liqCalls.map((c) => publicClient.readContract(c as any).then(
-            (res) => ({ status: 'success' as const, result: res }),
-            (err) => { log('getPositionLiquidity failed'); return ({ status: 'error' as const, result: null as any }); }
-        ))
-    );
-    log('reading tokenURI...');
-    const uriResults = await Promise.all(
-        uriCalls.map((c) => publicClient.readContract(c as any).then(
-            (res) => ({ status: 'success' as const, result: res }),
-            (err) => { log('tokenURI failed'); return ({ status: 'error' as const, result: null as any }); }
-        ))
-    );
-
-    // Prepare processed positions
-    const processedPositions: ProcessedPosition[] = [];
-    const poolStateCache = new Map<string, { sqrtPriceX96: string; tick: number }>();
-
-    for (let i = 0; i < ownedTokenIds.length; i += 1) {
-        try {
-            const tokenId = ownedTokenIds[i];
-            const poolAndInfo = poolAndInfoResults[i];
-            const liqRes = liqResults[i];
-            const uriRes = uriResults[i];
-
-            if (poolAndInfo.status !== 'success' || liqRes.status !== 'success' || uriRes.status !== 'success') {
-                console.warn(`Skipping tokenId ${tokenId} due to failed multicall result`);
-                continue;
-            }
-
-            const [poolKey /*, info*/] = poolAndInfo.result as unknown as [PoolKey, bigint];
-            const liquidity = liqRes.result as bigint;
-            const tokenUri = uriRes.result as string;
-            log(`tokenId=${tokenId} poolKey={c0:${poolKey.currency0}, c1:${poolKey.currency1}, fee:${poolKey.fee}, ts:${poolKey.tickSpacing}, hooks:${poolKey.hooks}} liquidity=${liquidity} tokenURI.length=${tokenUri?.length ?? 0}`);
-
-            // Map poolKey to configured pool (to get subgraphId & verify allowed pools)
-            const lookupKey = poolKeyToConfigKey(poolKey);
-            const poolCfg = byKey[lookupKey];
-            if (!poolCfg) {
-                log(`tokenId=${tokenId} poolKey not in pools.json, skipping`);
-                continue; 
-            }
-
-            // Parse ticks from tokenURI metadata
-            const { tickLower, tickUpper } = parseTicksFromTokenURI(tokenUri);
-            if (tickLower === null || tickUpper === null) {
-                log(`tokenId=${tokenId} ticks not found in tokenURI; skipping`);
-                continue;
-            }
-            log(`tokenId=${tokenId} ticks [${tickLower}, ${tickUpper}]`);
-
-            // Fetch live slot0 for this pool
-            let slot0 = poolStateCache.get(poolCfg.subgraphId);
-            if (!slot0) {
-                    const slot0Data = await publicClient.readContract({
-                        address: STATE_VIEW_ADDRESS,
-                        abi: stateViewAbiViem,
-                        functionName: 'getSlot0',
-                    args: [poolCfg.subgraphId as unknown as Hex],
-                }) as readonly [bigint, number, number, number];
-                slot0 = { sqrtPriceX96: slot0Data[0].toString(), tick: Number(slot0Data[1]) };
-                poolStateCache.set(poolCfg.subgraphId, slot0);
-                log(`pool ${poolCfg.subgraphId} slot0.tick=${slot0.tick}`);
-            }
-
-            // SDK tokens
-            const sdkToken0 = new Token(DEFAULT_CHAIN_ID, poolCfg.currency0, getTokenSymbolByAddress(poolCfg.currency0)?.toString() ? (getAllPools().find(p => getAddress(p.currency0.address) === poolCfg.currency0)?.currency0 ? (getAllPools().find(p => getAddress(p.currency0.address) === poolCfg.currency0) as any).currency0.decimals : 18) : 18, (getAllPools().find(p => getAddress(p.currency0.address) === poolCfg.currency0)?.currency0?.symbol as string) || getTokenSymbolByAddress(poolCfg.currency0) || 'T0');
-            const sdkToken1 = new Token(DEFAULT_CHAIN_ID, poolCfg.currency1, (getAllPools().find(p => getAddress(p.currency1.address) === poolCfg.currency1)?.currency1 ? (getAllPools().find(p => getAddress(p.currency1.address) === poolCfg.currency1) as any).currency1.decimals : 18), (getAllPools().find(p => getAddress(p.currency1.address) === poolCfg.currency1)?.currency1?.symbol as string) || getTokenSymbolByAddress(poolCfg.currency1) || 'T1');
-
-            // Above, decimals discovery via pools.json tokens would be more reliable; do that instead
-            const tokensCfg = (await import('../../../lib/pools-config')).getAllTokens();
-            const t0Meta = Object.values(tokensCfg).find(t => getAddress(t.address) === poolCfg.currency0);
-            const t1Meta = Object.values(tokensCfg).find(t => getAddress(t.address) === poolCfg.currency1);
-            const sdk0 = new Token(DEFAULT_CHAIN_ID, poolCfg.currency0, t0Meta?.decimals ?? 18, t0Meta?.symbol ?? 'T0');
-            const sdk1 = new Token(DEFAULT_CHAIN_ID, poolCfg.currency1, t1Meta?.decimals ?? 18, t1Meta?.symbol ?? 'T1');
-
-            // Build V4 pool and position
-            const v4Pool = new V4Pool(
-                sdk0,
-                sdk1,
-                poolCfg.fee,
-                poolCfg.tickSpacing,
-                poolCfg.hooks,
-                slot0.sqrtPriceX96,
-                JSBI.BigInt(0),
-                slot0.tick
-            );
-            const v4Position = new V4Position({ pool: v4Pool, tickLower, tickUpper, liquidity: JSBI.BigInt(liquidity.toString()) });
-
-            const rawAmount0 = v4Position.amount0.quotient.toString();
-            const rawAmount1 = v4Position.amount1.quotient.toString();
-            const formattedAmount0 = ethers.utils.formatUnits(rawAmount0, sdk0.decimals);
-            const formattedAmount1 = ethers.utils.formatUnits(rawAmount1, sdk1.decimals);
-            const isInRange = slot0.tick >= tickLower && slot0.tick < tickUpper;
-            log(`tokenId=${tokenId} amounts {${sdk0.symbol}:${formattedAmount0}, ${sdk1.symbol}:${formattedAmount1}} inRange=${isInRange}`);
-
-            processedPositions.push({
-                positionId: tokenId.toString(),
-                poolId: poolCfg.subgraphId,
-                token0: {
-                    address: sdk0.address,
-                    symbol: t0Meta?.symbol ?? getTokenSymbolByAddress(sdk0.address) ?? 'N/A',
-                    amount: formattedAmount0,
-                    rawAmount: rawAmount0,
-                },
-                token1: {
-                    address: sdk1.address,
-                    symbol: t1Meta?.symbol ?? getTokenSymbolByAddress(sdk1.address) ?? 'N/A',
-                    amount: formattedAmount1,
-                    rawAmount: rawAmount1,
-                },
-                tickLower,
-                tickUpper,
-                liquidityRaw: liquidity.toString(),
-                ageSeconds: 0, // Unknown without subgraph; omit
-                blockTimestamp: '0',
-                isInRange,
-            });
-        } catch (err) {
-            log(`error processing tokenId ${ownedTokenIds[i]}`);
-        }
-    }
-
-    log(`done, total positions ${processedPositions.length}`);
-    return processedPositions;
+    // If the subgraph returns nothing or fails, return empty list (no on-chain fallback)
+    return [];
 }
 
 export default async function handler(
@@ -468,21 +207,24 @@ export default async function handler(
 
   try {
     if (countOnly === '1') {
-      // Lightweight count from onchain logs
-      const transferEvent = parseAbiItem('event Transfer(address indexed from,address indexed to,uint256 id)');
-      const [logsTo, logsFrom] = await Promise.all([
-        publicClient.getLogs({ address: POSITION_MANAGER_ADDRESS, event: transferEvent, args: { to: getAddress(ownerAddress) }, fromBlock: 0n }),
-        publicClient.getLogs({ address: POSITION_MANAGER_ADDRESS, event: transferEvent, args: { from: getAddress(ownerAddress) }, fromBlock: 0n }),
-      ]);
-      const tokenIdToDelta = new Map<bigint, number>();
-      for (const l of logsTo) tokenIdToDelta.set(l.args?.id as bigint, (tokenIdToDelta.get(l.args?.id as bigint) || 0) + 1);
-      for (const l of logsFrom) tokenIdToDelta.set(l.args?.id as bigint, (tokenIdToDelta.get(l.args?.id as bigint) || 0) - 1);
-      const count = Array.from(tokenIdToDelta.values()).filter((d) => d > 0).length;
-      return res.status(200).json({ message: 'ok', count });
+      // Count via subgraph only
+      try {
+        const resp = await fetch(SUBGRAPH_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: GET_USER_POSITIONS_QUERY, variables: { owner: ownerAddress.toLowerCase() } }),
+        });
+        if (!resp.ok) return res.status(200).json({ message: 'ok', count: 0 });
+        const json = await resp.json() as { data?: { hookPositions: SubgraphHookPosition[] } };
+        const raw = json?.data?.hookPositions ?? [];
+        return res.status(200).json({ message: 'ok', count: raw.length });
+      } catch {
+        return res.status(200).json({ message: 'ok', count: 0 });
+      }
     }
 
-      const positions = await fetchAndProcessUserPositionsForApi(ownerAddress);
-      return res.status(200).json(positions);
+    const positions = await fetchAndProcessUserPositionsForApi(ownerAddress);
+    return res.status(200).json(positions);
   } catch (error: any) {
     console.error(`API Error in /api/liquidity/get-positions for ${ownerAddress}:`, error);
     // Ensure error is serializable
