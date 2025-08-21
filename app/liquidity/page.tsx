@@ -1,6 +1,7 @@
 "use client";
 
 import { AppLayout } from "@/components/app-layout";
+import { formatUSD as formatUSDShared } from "@/lib/format";
 import { useState, useEffect, useMemo } from "react";
 import {
   Table,
@@ -90,8 +91,7 @@ declare module '@tanstack/react-table' {
 
 const formatUSD = (value: number) => {
   if (value < 0.01) return "< $0.01";
-  if (value < 1000) return `$${value.toFixed(2)}`;
-  return `$${(value).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+  return formatUSDShared(value);
 };
 
 const formatAPR = (aprValue: number) => {

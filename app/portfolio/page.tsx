@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { AppLayout } from "@/components/app-layout";
 import Image from "next/image";
 import { useMemo, useState, useEffect, useRef, useCallback, useLayoutEffect } from "react";
+import { formatUSD as formatUSDShared, formatUSDHeader as formatUSDHeaderShared, formatNumber, formatPercent, formatTokenAmount } from "@/lib/format";
 import JSBI from "jsbi";
 import { Token } from "@uniswap/sdk-core";
 import { Pool as V4Pool, Position as V4Position } from "@uniswap/v4-sdk";
@@ -23,7 +24,7 @@ import { baseSepolia } from "@/lib/wagmiConfig";
 import { toast } from "sonner";
 import { FAUCET_CONTRACT_ADDRESS, faucetContractAbi } from "@/pages/api/misc/faucet";
 import poolsConfig from "@/config/pools.json";
-import { ChevronUpIcon, ChevronDownIcon, ChevronsUpDownIcon, ChevronRight, OctagonX, OctagonAlert, EllipsisVertical, ArrowUpRight, ArrowDownRight, PlusIcon, RefreshCwIcon, BadgeCheck, Menu } from "lucide-react";
+import { ChevronUpIcon, ChevronDownIcon, ChevronsUpDownIcon, ChevronRight, OctagonX, OctagonAlert, EllipsisVertical, PlusIcon, RefreshCwIcon, BadgeCheck, Menu } from "lucide-react";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import TickRangePortfolio from "../../components/TickRangePortfolio";
@@ -493,22 +494,12 @@ async function getUserPositionsOnchain(ownerAddress: string, opts?: { verifyLiqu
 }
 
 function formatUSD(num: number) {
-  if (!isFinite(num)) return "$0,00";
-  const abs = Math.abs(num);
-  const opts = abs >= 100_000
-    ? { minimumFractionDigits: 0, maximumFractionDigits: 0 }
-    : { minimumFractionDigits: 2, maximumFractionDigits: 2 };
-  return `$${num.toLocaleString('de-DE', opts as Intl.NumberFormatOptions)}`;
+  return formatUSDShared(num);
 }
 
 // For the PORTFOLIO header only: show no decimals at >= $1,000,000
 function formatUSDHeader(num: number) {
-  if (!isFinite(num)) return "$0";
-  const abs = Math.abs(num);
-  const opts = abs >= 100_000
-    ? { minimumFractionDigits: 0, maximumFractionDigits: 0 }
-    : { minimumFractionDigits: 2, maximumFractionDigits: 2 };
-  return `$${num.toLocaleString('de-DE', opts as Intl.NumberFormatOptions)}`;
+  return formatUSDHeaderShared(num);
 }
 
 // (removed old PortfolioSkeleton)
@@ -1656,10 +1647,13 @@ export default function PortfolioPage() {
       }
     });
 
+    // Treat an empty portfolio (no tokens/positions) as "ready" so we render the empty state
+    const isEmptyPortfolio = !portfolioData.isLoading && (portfolioData.tokenBalances.length === 0) && activePositions.length === 0;
+
     return {
       core: !portfolioData.isLoading && activePositions.length >= 0, // core data ready
-      prices: Object.keys(portfolioData.priceMap).length > 0, // prices available
-      apr: Object.keys(aprByPoolId).length > 0, // APR calculations done
+      prices: isEmptyPortfolio || Object.keys(portfolioData.priceMap).length > 0, // prices available or nothing to price
+      apr: isEmptyPortfolio || Object.keys(aprByPoolId).length > 0, // APR ready or irrelevant for empty
       buckets, // per-position bucket readiness
     };
   }, [portfolioData.isLoading, portfolioData.priceMap, aprByPoolId, activePositions, loadingBuckets, getCacheKey]);
@@ -2053,6 +2047,9 @@ export default function PortfolioPage() {
       ];
     }
     // If 4 or fewer, show them; keep tiny ones but they may have hidden names
+    if (allItems.length === 0) {
+      return [{ label: 'All', pct: 100, color: 'hsl(0 0% 30%)' }];
+    }
     return allItems;
   }, [portfolioData.tokenBalances, portfolioData.totalValue]);
 
@@ -2084,11 +2081,15 @@ export default function PortfolioPage() {
       ];
     }
     
+    if (tokenItems.length === 0) {
+      return [{ label: 'All', pct: 100, color: 'hsl(0 0% 30%)' }];
+    }
     return tokenItems;
   }, [portfolioData.tokenBalances, portfolioData.totalValue]);
 
   // Use appropriate composition based on view
   const composition = isCompactVis ? compactComposition : wideComposition;
+  const isPlaceholderComposition = composition.length === 1 && composition[0]?.label === 'All' && Math.round((composition[0]?.pct || 0)) === 100;
   // Decide placement purely by measured available inline width
   useLayoutEffect(() => {
     const updateLayoutAndOffset = () => {
@@ -2272,6 +2273,10 @@ export default function PortfolioPage() {
   const positionsCount = portfolioData.tokenBalances.length;
   const poolsCount = portfolioData.tokenBalances.length; // Simplified for now
   const isPositive = pnl24hPct >= 0;
+  const forceHideLabels = (!isConnected || activePositions.length === 0) && portfolioData.tokenBalances.length === 0;
+
+  // Labels visibility control: hide only when not connected OR no positions AND no token balances
+  const hideCompositionLabelsFlag = (!isConnected || activePositions.length === 0) && portfolioData.tokenBalances.length === 0;
 
   // Show skeleton during loading, empty state only after data is loaded
   if (showSkeletonFor.header || showSkeletonFor.table) {
@@ -2325,8 +2330,8 @@ export default function PortfolioPage() {
                 </button>
               )}
               
-              {/* Activity Filter Dropdown */}
-              {selectedSection === 'Activity' && (
+              {/* Activity Filter Dropdown (hide when not connected or no activity) */}
+              {selectedSection === 'Activity' && isConnected && filteredActivityItems.length > 0 && !isLoadingActivity && (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <button className="flex items-center gap-2 px-3 py-1 rounded-md border border-sidebar-border/60 bg-[var(--sidebar-connect-button-bg)] text-xs text-muted-foreground hover:bg-muted/50 transition-colors">
@@ -2535,52 +2540,7 @@ export default function PortfolioPage() {
     );
   }
 
-  // Show empty state only after loading is complete and no positions found
-  if (composition.length === 0) {
-    return (
-      <AppLayout>
-        <div className="flex flex-1 flex-col p-3 sm:p-6 sm:px-10">
-          <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-6">
-            <div 
-              className="grid items-start relative" 
-              style={{ 
-                gridTemplateColumns: isVerySmallScreen 
-                  ? "minmax(100px, max-content) minmax(100px, max-content) 1fr" 
-                  : "minmax(200px, max-content) minmax(200px, max-content) 1fr", 
-                gridTemplateRows: "auto auto", 
-                columnGap: "3rem" 
-              }}
-            >
-              {/* Row 1, Col 1: PORTFOLIO header */}
-              <div className="col-[1] row-[1]">
-                <h1 className="text-xs tracking-wider text-muted-foreground font-mono font-bold">
-                  PORTFOLIO
-                </h1>
-              </div>
-              {/* Row 1, Col 2: NET APY header */}
-              <div className="col-[2] row-[1]">
-                <h1 className="text-xs tracking-wider text-muted-foreground font-mono font-bold">
-                  NET APY
-                </h1>
-              </div>
-              {/* Row 2, Col 1: Portfolio amount */}
-              <div className={`col-[1] row-[2] mt-2 font-medium tracking-tight ${isVerySmallScreen ? 'text-2xl' : 'text-3xl sm:text-4xl'}`}>
-                {formatUSD(0)}
-              </div>
-              {/* Row 2, Col 2: NET APY percentage */}
-              <div className={`col-[2] row-[2] mt-2 font-medium tracking-tight ${isVerySmallScreen ? 'text-2xl' : 'text-3xl sm:text-4xl'}`}>
-                0.0%
-              </div>
-              {/* Empty state message */}
-              <div className="col-[1] col-span-3 mt-6 text-center text-muted-foreground">
-                <p>No liquidity positions found. Add liquidity to start tracking your portfolio.</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </AppLayout>
-    );
-  }
+  // Removed early empty-state return; render full structure with section-level messages instead
 
 
   return (
@@ -2611,13 +2571,8 @@ export default function PortfolioPage() {
                 PORTFOLIO
               </h1>
               <div className="flex items-center gap-1 justify-self-end">
-                {isPositive ? (
-                  <ArrowUpRight className="h-3 w-3 text-green-500" />
-                ) : (
-                  <ArrowDownRight className="h-3 w-3 text-red-500" />
-                )}
                 <span className={`text-xs font-medium ${isPositive ? 'text-green-500' : 'text-red-500'}`}>
-                  {Math.abs(pnl24hPct).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%
+                  {formatPercent(Math.abs(pnl24hPct), { min: 2, max: 2 })}
                 </span>
               </div>
             </div>
@@ -2629,24 +2584,27 @@ export default function PortfolioPage() {
             </div>
             {/* Row 2, Col 1: Portfolio amount */}
             <div className={`col-[1] row-[2] mt-2 font-medium tracking-tight ${isVerySmallScreen ? 'text-2xl' : 'text-3xl sm:text-4xl'}`}>
-              {formatUSDHeader(displayValue)}
+              {isPlaceholderComposition ? (<span className="text-muted-foreground">-</span>) : formatUSDHeader(displayValue)}
             </div>
             {/* Row 2, Col 2: NET APY percentage */}
             <div ref={netApyRef} className={`col-[2] row-[2] mt-2 font-medium tracking-tight ${isVerySmallScreen ? 'text-2xl' : 'text-3xl sm:text-4xl'}`}>
-              {effectiveAprPct !== null ? (
-                effectiveAprPct > 999 ? (
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <span className="cursor-default">&gt;999%</span>
-                      </TooltipTrigger>
-                      <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">{`${effectiveAprPct.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`}</TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                ) : (
-                  `${effectiveAprPct.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`
-                )
-              ) : '—'}
+              {isPlaceholderComposition ? (
+                <span className="text-muted-foreground">-</span>
+              ) : (
+                effectiveAprPct !== null ? (
+                  effectiveAprPct > 999 ? (
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="cursor-default">&gt;999%</span>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">{formatPercent(effectiveAprPct, { min: 2, max: 2 })}</TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  ) : (
+                    formatPercent(effectiveAprPct, { min: 1, max: 1 })
+                  )
+                ) : '—')}
             </div>
             {/* Row 2, Col 3: mobile toggler when visualization is hidden inline */}
             <div className="col-[3] row-[1/3] flex items-center justify-end self-center">
@@ -2697,6 +2655,7 @@ export default function PortfolioPage() {
                       const leftOffset = Math.max(0, apyRect.right - wrapperRect.left + desiredGapPx);
                       return Math.max(0, Math.round(wrapperRect.width - leftOffset));
                     })()}
+                    forceHideLabels={forceHideLabels}
                   />
                 ) : (
                   <PortfolioTickBar
@@ -2709,6 +2668,7 @@ export default function PortfolioPage() {
                     setIsRestCycling={setIsRestCycling}
                     isRestCycling={isRestCycling}
                     restCycleIndex={restCycleIndex}
+                    forceHideLabels={forceHideLabels}
                   />
                 )}
               </div>
@@ -2739,6 +2699,7 @@ export default function PortfolioPage() {
                       setIsRestCycling={setIsRestCycling}
                       isRestCycling={isRestCycling}
                       restCycleIndex={restCycleIndex}
+                      forceHideLabels={forceHideLabels}
                     />
                   </div>
                 )}
@@ -2791,8 +2752,8 @@ export default function PortfolioPage() {
                 </button>
               )}
               
-              {/* Activity Filter Dropdown */}
-              {selectedSection === 'Activity' && (
+              {/* Activity Filter Dropdown (hide when not connected or no activity) */}
+              {selectedSection === 'Activity' && isConnected && filteredActivityItems.length > 0 && !isLoadingActivity && (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <button className="flex items-center gap-2 px-3 py-1 rounded-md border border-sidebar-border/60 bg-[var(--sidebar-connect-button-bg)] text-xs text-muted-foreground hover:bg-muted/50 transition-colors">
@@ -2912,8 +2873,8 @@ export default function PortfolioPage() {
             </div>
           </div>
 
-          <div className={isMobile ? "" : (selectedSection === 'Active Positions' ? "rounded-lg bg-muted/30 border border-sidebar-border/60" : "")}>
-            <div className={isMobile ? "" : (selectedSection === 'Active Positions' ? "p-0" : "") }>
+          <div className={isMobile ? "" : ((selectedSection === 'Active Positions' && (!isConnected || activePositions.length === 0) && !isLoadingPositions && !showSkeletonFor.table) ? "" : (selectedSection === 'Active Positions' ? "rounded-lg bg-muted/30 border border-sidebar-border/60" : ""))}>
+            <div className={isMobile ? "" : ((selectedSection === 'Active Positions' && (!isConnected || activePositions.length === 0) && !isLoadingPositions && !showSkeletonFor.table) ? "" : (selectedSection === 'Active Positions' ? "p-0" : "")) }>
               {/* Active Positions */}
               {selectedSection === 'Active Positions' && (
                 <div className={isMobile ? "" : undefined}>
@@ -3020,8 +2981,10 @@ export default function PortfolioPage() {
                         </div>
                       )
                     ) : (!isConnected || activePositions.length === 0) && !isLoadingPositions ? (
-                      <div className="text-sm text-muted-foreground px-2 py-6">
-                        {!isConnected ? 'Connect your wallet to view your positions.' : 'No active positions.'}
+                      <div className="border border-dashed rounded-lg bg-muted/10 p-8 w-full flex items-center justify-center">
+                        <div className="text-sm text-white/75">
+                          {!isConnected ? 'Connect Wallet to see Positions' : 'No active positions.'}
+                        </div>
                       </div>
                     ) : (
                       isMobile ? (
@@ -3060,9 +3023,9 @@ export default function PortfolioPage() {
                                   <div className="flex-1 min-w-0">
                                     <div className="font-medium text-sm truncate">{position?.token0?.symbol}/{position?.token1?.symbol}</div>
                                     <div className="text-xs text-muted-foreground">
-                                      <span>{Number(position?.token0?.amount || 0).toLocaleString('de-DE', { minimumFractionDigits: 4, maximumFractionDigits: 4 })} {position?.token0?.symbol}</span>
+                                      <span>{formatTokenAmount(Number(position?.token0?.amount || 0), 4)} {position?.token0?.symbol}</span>
                                       <span className="mx-1">·</span>
-                                      <span>{Number(position?.token1?.amount || 0).toLocaleString('de-DE', { minimumFractionDigits: 4, maximumFractionDigits: 4 })} {position?.token1?.symbol}</span>
+                                      <span>{formatTokenAmount(Number(position?.token1?.amount || 0), 4)} {position?.token1?.symbol}</span>
                                     </div>
                                   </div>
                                   <div className="flex items-center gap-2">
@@ -3152,7 +3115,7 @@ export default function PortfolioPage() {
                                         {items.length > 1 && (
                                           <button
                                             type="button"
-                                            onClick={() => togglePoolExpanded(poolKey)}
+                                            onClick={(e) => { e.stopPropagation(); togglePoolExpanded(poolKey); }}
                                             className="text-muted-foreground hover:text-foreground transition-colors"
                                             aria-label={isExpanded ? 'Collapse' : 'Expand'}
                                           >
@@ -3188,8 +3151,8 @@ export default function PortfolioPage() {
                                             const hover = effectiveTokenLabel?.toUpperCase?.();
                                             const s0 = first?.token0?.symbol?.toUpperCase?.();
                                             const s1 = first?.token1?.symbol?.toUpperCase?.();
-                                            const amt0 = Number.parseFloat(first?.token0?.amount || '0').toLocaleString('de-DE', { minimumFractionDigits: 4, maximumFractionDigits: 4 });
-                                            const amt1 = Number.parseFloat(first?.token1?.amount || '0').toLocaleString('de-DE', { minimumFractionDigits: 4, maximumFractionDigits: 4 });
+                                            const amt0 = formatTokenAmount(Number.parseFloat(first?.token0?.amount || '0'), 4);
+                                            const amt1 = formatTokenAmount(Number.parseFloat(first?.token1?.amount || '0'), 4);
                                             if (isStackThreshold) {
                                               return (
                                                 <div className="flex flex-col gap-0.5">
@@ -3223,12 +3186,12 @@ export default function PortfolioPage() {
                                                   <TooltipTrigger asChild>
                                                     <span className="text-xs cursor-default">&gt;999%</span>
                                                   </TooltipTrigger>
-                                                   <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">{`${aprNum.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`}</TooltipContent>
+                                                   <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">{formatPercent(aprNum, { min: 2, max: 2 })}</TooltipContent>
                                                 </Tooltip>
                                               </TooltipProvider>
                                             );
                                           }
-                                           return <span className="text-xs cursor-pointer">{aprNum.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%</span>;
+                                           return <span className="text-xs cursor-pointer">{formatPercent(aprNum, { min: 2, max: 2 })}</span>;
                                         })()
                                       )}
                                     </td>
@@ -3357,8 +3320,8 @@ export default function PortfolioPage() {
                                               const hover = effectiveTokenLabel?.toUpperCase?.();
                                               const s0 = p?.token0?.symbol?.toUpperCase?.();
                                               const s1 = p?.token1?.symbol?.toUpperCase?.();
-                                              const amt0 = Number.parseFloat(p?.token0?.amount || '0').toLocaleString('de-DE', { minimumFractionDigits: 4, maximumFractionDigits: 4 });
-                                              const amt1 = Number.parseFloat(p?.token1?.amount || '0').toLocaleString('de-DE', { minimumFractionDigits: 4, maximumFractionDigits: 4 });
+                                              const amt0 = formatTokenAmount(Number.parseFloat(p?.token0?.amount || '0'), 4);
+                                              const amt1 = formatTokenAmount(Number.parseFloat(p?.token1?.amount || '0'), 4);
                                               if (isStackThreshold) {
                                                 return (
                                                   <div className="flex flex-col gap-0.5">
@@ -3507,209 +3470,212 @@ export default function PortfolioPage() {
 
               {/* Activity */}
               {selectedSection === 'Activity' && (
-                <div>
-                  <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 overflow-hidden">
-                    <div className="border-b border-sidebar-border/60 text-xs text-muted-foreground">
-                      <div
-                        className="grid gap-3 px-2 pl-6 pr-6 py-3"
-                        style={{
-                          gridTemplateColumns: isMobile
-                            ? '88px minmax(0,1fr) minmax(0,2fr)'
-                            : (viewportWidth <= 1200
-                                ? '88px minmax(0,1fr) minmax(0,1.4fr) 90px 100px'
-                                : '88px minmax(0,1fr) minmax(0,2fr) 120px 140px')
-                        }}
-                      >
-                        <div className="tracking-wider font-mono font-bold uppercase">Type</div>
-                        <div className="tracking-wider font-mono font-bold uppercase">Pool</div>
-                        <div className="tracking-wider font-mono font-bold uppercase">Details</div>
-                        {!isMobile && (
-                          <div className="text-center tracking-wider font-mono font-bold uppercase">Time</div>
-                        )}
-                        {!isMobile && (
-                          <div className="text-right tracking-wider font-mono font-bold uppercase">Txn</div>
-                        )}
-                    </div>
+                !isConnected ? (
+                  <div className="border border-dashed rounded-lg bg-muted/10 p-8 w-full flex items-center justify-center">
+                    <div className="text-sm text-white/75">Connect Wallet to view Activity</div>
                   </div>
-                     <div>
-                    {filteredActivityItems.length === 0 && !isLoadingActivity ? (
-                      <div className="text-sm text-muted-foreground px-2 py-6">No recent activity.</div>
-                    ) : (
-                      <div className="flex flex-col">
-                         <div className="divide-y divide-sidebar-border/60">
-                                                   {pagedFilteredActivityItems.map((it, idx) => (
-                            <div
-                              key={it.id || idx}
-                              className="grid items-center gap-3 px-2 pl-6 pr-6 py-3 hover:bg-muted/10"
-                              style={{
-                                gridTemplateColumns: isMobile
-                                  ? '88px minmax(0,1fr) minmax(0,2fr)'
-                                  : (viewportWidth <= 1200
-                                      ? '88px minmax(0,1fr) minmax(0,1.4fr) 90px 100px'
-                                      : '88px minmax(0,1fr) minmax(0,2fr) 120px 140px')
-                              }}
-                              onClick={() => {
-                                if (isMobile && it.tx) {
-                                  window.open(`https://sepolia.basescan.org/tx/${it.tx}`, '_blank');
-                                }
-                              }}
-                            >
-                            {/* Type */}
-                            <div className="min-w-0 text-left">
-                              {it.type === 'Swap' ? (
-                                <span
-                                  className="px-1.5 py-0.5 text-xs font-normal rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-muted-foreground"
-                                  style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
-                                >
-                                  Swap
-                                </span>
-                              ) : (
-                                <span className={`px-1.5 py-0.5 text-xs font-normal rounded-md border ${it.type === 'Add' ? 'text-green-500 border-green-500 bg-green-500/10' : 'text-red-500 border-red-500 bg-red-500/10'}`}>
-                                  Liquidity
-                                </span>
+                ) : (filteredActivityItems.length === 0 && !isLoadingActivity) ? (
+                  <div className="border border-dashed rounded-lg bg-muted/10 p-8 w-full flex items-center justify-center">
+                    <div className="text-sm text-white/75">No Activity</div>
+                  </div>
+                ) : (
+                  <div>
+                    <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 overflow-hidden">
+                      <div className="border-b border-sidebar-border/60 text-xs text-muted-foreground">
+                        <div
+                          className="grid gap-3 px-2 pl-6 pr-6 py-3"
+                          style={{
+                            gridTemplateColumns: isMobile
+                              ? '88px minmax(0,1fr) minmax(0,2fr)'
+                              : (viewportWidth <= 1200
+                                  ? '88px minmax(0,1fr) minmax(0,1.4fr) 90px 100px'
+                                  : '88px minmax(0,1fr) minmax(0,2fr) 120px 140px')
+                          }}
+                        >
+                          <div className="tracking-wider font-mono font-bold uppercase">Type</div>
+                          <div className="tracking-wider font-mono font-bold uppercase">Pool</div>
+                          <div className="tracking-wider font-mono font-bold uppercase">Details</div>
+                          {!isMobile && (
+                            <div className="text-center tracking-wider font-mono font-bold uppercase">Time</div>
+                          )}
+                          {!isMobile && (
+                            <div className="text-right tracking-wider font-mono font-bold uppercase">Txn</div>
+                          )}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="flex flex-col">
+                          <div className="divide-y divide-sidebar-border/60">
+                            {pagedFilteredActivityItems.map((it, idx) => (
+                              <div
+                                key={it.id || idx}
+                                className="grid items-center gap-3 px-2 pl-6 pr-6 py-3 hover:bg-muted/10"
+                                style={{
+                                  gridTemplateColumns: isMobile
+                                    ? '88px minmax(0,1fr) minmax(0,2fr)'
+                                    : (viewportWidth <= 1200
+                                        ? '88px minmax(0,1fr) minmax(0,1.4fr) 90px 100px'
+                                        : '88px minmax(0,1fr) minmax(0,2fr) 120px 140px')
+                                }}
+                                onClick={() => {
+                                  if (isMobile && it.tx) {
+                                    window.open(`https://sepolia.basescan.org/tx/${it.tx}`, '_blank');
+                                  }
+                                }}
+                              >
+                                {/* Type */}
+                                <div className="min-w-0 text-left">
+                                  {it.type === 'Swap' ? (
+                                    <span
+                                      className="px-1.5 py-0.5 text-xs font-normal rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-muted-foreground"
+                                      style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+                                    >
+                                      Swap
+                                    </span>
+                                  ) : (
+                                    <span className={`px-1.5 py-0.5 text-xs font-normal rounded-md border ${it.type === 'Add' ? 'text-green-500 border-green-500 bg-green-500/10' : 'text-red-500 border-red-500 bg-red-500/10'}`}>
+                                      Liquidity
+                                    </span>
                                   )}
                                 </div>
-                            {/* Pool */}
-                            <div className="text-sm text-foreground min-w-0 truncate">{it.poolSymbols}</div>
-                            {/* Details */}
-                            <div className="text-xs text-muted-foreground min-w-0 truncate"
-                              style={{ maxWidth: viewportWidth <= 1200 ? 280 : undefined }}
-                            >
-                              {(() => {
-                                if (it.type === 'Swap') {
-                                  const sym0 = (it.poolSymbols || '').split('/')[0] || '';
-                                  const sym1 = (it.poolSymbols || '').split('/')[1] || '';
-                                  const d0 = getTokenCfg(sym0);
-                                  const d1 = getTokenCfg(sym1);
-                                  const dec0 = d0?.decimals ?? 18;
-                                  const dec1 = d1?.decimals ?? 18;
-                                  const isNeg0 = String(it.amount0 || '').startsWith('-');
-                                  const isNeg1 = String(it.amount1 || '').startsWith('-');
-                                  const amt0 = viemFormatUnits(BigInt(String(it.amount0 || '0').replace(/^-/, '')), dec0);
-                                  const amt1 = viemFormatUnits(BigInt(String(it.amount1 || '0').replace(/^-/, '')), dec1);
-                                  const negPart = isNeg0
-                                    ? `${Number(amt0).toLocaleString('de-DE', { maximumFractionDigits: d0?.displayDecimals ?? 4 })} ${sym0}`
-                                    : `${Number(amt1).toLocaleString('de-DE', { maximumFractionDigits: d1?.displayDecimals ?? 4 })} ${sym1}`;
-                                  const posPart = isNeg0
-                                    ? `${Number(amt1).toLocaleString('de-DE', { maximumFractionDigits: d1?.displayDecimals ?? 4 })} ${sym1}`
-                                    : `${Number(amt0).toLocaleString('de-DE', { maximumFractionDigits: d0?.displayDecimals ?? 4 })} ${sym0}`;
-                                  return (
-                                    <span className="inline-flex items-center gap-1">
-                                      <span>{negPart}</span>
-                                      <ChevronRight className="h-3 w-3 text-muted-foreground" />
-                                      <span>{posPart}</span>
-                                    </span>
-                                  );
-                                }
-                                // For Add/Withdraw show token amounts as token0 + token1 (always positive)
-                                const parts: string[] = [];
-                                if (it.amount0 || it.amount1) {
-                                  const sym0 = (it.poolSymbols || '').split('/')[0] || '';
-                                  const sym1 = (it.poolSymbols || '').split('/')[1] || '';
-                                  const d0 = getTokenCfg(sym0);
-                                  const d1 = getTokenCfg(sym1);
-                                  const dec0 = d0?.decimals ?? 18;
-                                  const dec1 = d1?.decimals ?? 18;
-                                  if (it.amount0) {
-                                    const a0 = viemFormatUnits(BigInt(String(it.amount0 || '0').replace(/^-/, '')), dec0);
-                                    parts.push(`${Number(a0).toLocaleString('de-DE', { maximumFractionDigits: d0?.displayDecimals ?? 4 })} ${sym0}`);
-                                  }
-                                  if (it.amount1) {
-                                    const a1 = viemFormatUnits(BigInt(String(it.amount1 || '0').replace(/^-/, '')), dec1);
-                                    parts.push(`${Number(a1).toLocaleString('de-DE', { maximumFractionDigits: d1?.displayDecimals ?? 4 })} ${sym1}`);
-                                  }
-                                  return parts.join(' + ');
-                                }
-                                if (it.tickLower || it.tickUpper) parts.push(`ticks ${it.tickLower} – ${it.tickUpper}`);
-                                return parts.join(' · ');
-                              })()}
+                                {/* Pool */}
+                                <div className="text-sm text-foreground min-w-0 truncate">{it.poolSymbols}</div>
+                                {/* Details */}
+                                <div className="text-xs text-muted-foreground min-w-0 truncate" style={{ maxWidth: viewportWidth <= 1200 ? 280 : undefined }}>
+                                  {(() => {
+                                    if (it.type === 'Swap') {
+                                      const sym0 = (it.poolSymbols || '').split('/')[0] || '';
+                                      const sym1 = (it.poolSymbols || '').split('/')[1] || '';
+                                      const d0 = getTokenCfg(sym0);
+                                      const d1 = getTokenCfg(sym1);
+                                      const dec0 = d0?.decimals ?? 18;
+                                      const dec1 = d1?.decimals ?? 18;
+                                      const isNeg0 = String(it.amount0 || '').startsWith('-');
+                                      const isNeg1 = String(it.amount1 || '').startsWith('-');
+                                      const amt0 = viemFormatUnits(BigInt(String(it.amount0 || '0').replace(/^-/, '')), dec0);
+                                      const amt1 = viemFormatUnits(BigInt(String(it.amount1 || '0').replace(/^-/, '')), dec1);
+                                      const negPart = isNeg0
+                                        ? `${formatNumber(Number(amt0), { max: d0?.displayDecimals ?? 4 })} ${sym0}`
+                                        : `${formatNumber(Number(amt1), { max: d1?.displayDecimals ?? 4 })} ${sym1}`;
+                                      const posPart = isNeg0
+                                        ? `${formatNumber(Number(amt1), { max: d1?.displayDecimals ?? 4 })} ${sym1}`
+                                        : `${formatNumber(Number(amt0), { max: d0?.displayDecimals ?? 4 })} ${sym0}`;
+                                      return (
+                                        <span className="inline-flex items-center gap-1">
+                                          <span>{negPart}</span>
+                                          <ChevronRight className="h-3 w-3 text-muted-foreground" />
+                                          <span>{posPart}</span>
+                                        </span>
+                                      );
+                                    }
+                                    const parts: string[] = [];
+                                    if (it.amount0 || it.amount1) {
+                                      const sym0 = (it.poolSymbols || '').split('/')[0] || '';
+                                      const sym1 = (it.poolSymbols || '').split('/')[1] || '';
+                                      const d0 = getTokenCfg(sym0);
+                                      const d1 = getTokenCfg(sym1);
+                                      const dec0 = d0?.decimals ?? 18;
+                                      const dec1 = d1?.decimals ?? 18;
+                                      if (it.amount0) {
+                                        const a0 = viemFormatUnits(BigInt(String(it.amount0 || '0').replace(/^-/, '')), dec0);
+                                        parts.push(`${formatNumber(Number(a0), { max: d0?.displayDecimals ?? 4 })} ${sym0}`);
+                                      }
+                                      if (it.amount1) {
+                                        const a1 = viemFormatUnits(BigInt(String(it.amount1 || '0').replace(/^-/, '')), dec1);
+                                        parts.push(`${formatNumber(Number(a1), { max: d1?.displayDecimals ?? 4 })} ${sym1}`);
+                                      }
+                                      return parts.join(' + ');
+                                    }
+                                    if (it.tickLower || it.tickUpper) parts.push(`ticks ${it.tickLower} – ${it.tickUpper}`);
+                                    return parts.join(' · ');
+                                  })()}
+                                </div>
+                                {/* Time */}
+                                {!isMobile && (
+                                  <div className="text-xs text-muted-foreground text-center">
+                                    {(() => {
+                                      const secs = Number(it.ts || 0);
+                                      if (!secs) return '';
+                                      const now = Math.floor(Date.now() / 1000);
+                                      const diff = Math.max(0, now - secs);
+                                      const y = Math.floor(diff / (365*24*3600));
+                                      const m = Math.floor((diff % (365*24*3600)) / (30*24*3600));
+                                      const d = Math.floor((diff % (30*24*3600)) / (24*3600));
+                                      const h = Math.floor((diff % (24*3600)) / 3600);
+                                      const min = Math.floor((diff % 3600) / 60);
+                                      const s = diff % 60;
+                                      let label = '';
+                                      if (y) label += `${y}y `;
+                                      if (m) label += `${m}m `;
+                                      if (d && !y) label += `${d}d `;
+                                      if (!y && !m) {
+                                        if (h) label += `${h}h `;
+                                        if (!h && min) label += `${min}m `;
+                                        if (!h && !min && s) label += `${s}s `;
+                                      }
+                                      label = label.trim() + ' ago';
+                                      const full = new Date(secs * 1000).toLocaleString();
+                                      const fullNoComma = full.replace(/,\s*/g, ' ');
+                                      return (
+                                        <TooltipProvider>
+                                          <Tooltip>
+                                            <TooltipTrigger asChild>
+                                              <span className="text-xs cursor-default">{label}</span>
+                                            </TooltipTrigger>
+                                            <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">{fullNoComma}</TooltipContent>
+                                          </Tooltip>
+                                        </TooltipProvider>
+                                      );
+                                    })()}
+                                  </div>
+                                )}
+                                {/* Txn */}
+                                {!isMobile && (
+                                  <div className="text-xs text-muted-foreground text-right">
+                                    {it.tx ? (
+                                      <a href={`https://sepolia.basescan.org/tx/${it.tx}`} target="_blank" rel="noreferrer" className="hover:underline">
+                                        {it.tx.slice(0, 10)}…
+                                      </a>
+                                    ) : (
+                                      <span className="opacity-60">—</span>
+                                    )}
+                                  </div>
+                                )}
                               </div>
-                            {/* Time */}
-                            {!isMobile && (
-                            <div className="text-xs text-muted-foreground text-center">
-                              {(() => {
-                                const secs = Number(it.ts || 0);
-                                if (!secs) return '';
-                                const now = Math.floor(Date.now() / 1000);
-                                const diff = Math.max(0, now - secs);
-                                const y = Math.floor(diff / (365*24*3600));
-                                const m = Math.floor((diff % (365*24*3600)) / (30*24*3600));
-                                const d = Math.floor((diff % (30*24*3600)) / (24*3600));
-                                const h = Math.floor((diff % (24*3600)) / 3600);
-                                const min = Math.floor((diff % 3600) / 60);
-                                const s = diff % 60;
-                                let label = '';
-                                if (y) label += `${y}y `;
-                                if (m) label += `${m}m `;
-                                if (d && !y) label += `${d}d `;
-                                if (!y && !m) {
-                                  if (h) label += `${h}h `;
-                                  if (!h && min) label += `${min}m `;
-                                  if (!h && !min && s) label += `${s}s `;
-                                }
-                                label = label.trim() + ' ago';
-                                const full = new Date(secs * 1000).toLocaleString();
-                                const fullNoComma = full.replace(/,\s*/g, ' ');
-                                return (
-                                  <TooltipProvider>
-                                    <Tooltip>
-                                      <TooltipTrigger asChild>
-                                        <span className="text-xs cursor-default">{label}</span>
-                                      </TooltipTrigger>
-                                      <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">{fullNoComma}</TooltipContent>
-                                    </Tooltip>
-                                  </TooltipProvider>
-                                );
-                              })()}
-                            </div>
-                            )}
-                            {/* Txn */}
-                            {!isMobile && (
-                            <div className="text-xs text-muted-foreground text-right">
-                              {it.tx ? (
-                                <a href={`https://sepolia.basescan.org/tx/${it.tx}`} target="_blank" rel="noreferrer" className="hover:underline">
-                                  {it.tx.slice(0, 10)}…
-                                </a>
-                              ) : (
-                                <span className="opacity-60">—</span>
-                              )}
-                            </div>
-                            )}
+                            ))}
                           </div>
-                        ))}
                         </div>
                       </div>
+                    </div>
+                    {filteredTotalActivityPages > 1 && (
+                      <>
+                        <div className="flex items-center justify-between px-4 py-3 text-xs text-muted-foreground">
+                          <div>Page {activityPage + 1} / {filteredTotalActivityPages}</div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              className="px-2 py-1 rounded border border-sidebar-border hover:bg-muted/30"
+                              onClick={() => setActivityPage((p) => Math.max(0, p - 1))}
+                              disabled={activityPage === 0}
+                            >Prev</button>
+                            <button
+                              type="button"
+                              className="px-2 py-1 rounded border border-sidebar-border hover:bg-muted/30"
+                              onClick={() => setActivityPage((p) => Math.min(filteredTotalActivityPages - 1, p + 1))}
+                              disabled={activityPage >= filteredTotalActivityPages - 1}
+                            >Next</button>
+                          </div>
+                        </div>
+                      </>
                     )}
                   </div>
-                  </div>
-                                     {filteredTotalActivityPages > 1 && (
-                    <>
-                      <div className="flex items-center justify-between px-4 py-3 text-xs text-muted-foreground">
-                        <div>Page {activityPage + 1} / {filteredTotalActivityPages}</div>
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            className="px-2 py-1 rounded border border-sidebar-border hover:bg-muted/30"
-                            onClick={() => setActivityPage((p) => Math.max(0, p - 1))}
-                            disabled={activityPage === 0}
-                          >Prev</button>
-                          <button
-                            type="button"
-                            className="px-2 py-1 rounded border border-sidebar-border hover:bg-muted/30"
-                            onClick={() => setActivityPage((p) => Math.min(filteredTotalActivityPages - 1, p + 1))}
-                            disabled={activityPage >= filteredTotalActivityPages - 1}
-                          >Next</button>
-                        </div>
-                      </div>
-                    </>
-                  )}
-                </div>
+                )
               )}
               {/* Balances as a tab when integrated (desktop/tablet only) */}
               {isIntegrateBalances && selectedSection === 'Balances' && (
                 <div>
-                  <div className="rounded-lg bg-muted/30 border border-sidebar-border/60">
-                    <div className="flex items-center justify-between pl-6 pr-6 py-3 border-b border-sidebar-border/60 text-xs text-muted-foreground">
+                  <div className={isIntegrateBalances && selectedSection === 'Balances' && (walletBalances.length || 0) === 0 && !isLoadingWalletBalances ? "" : "rounded-lg bg-muted/30 border border-sidebar-border/60"}>
+                    <div className={(walletBalances.length || 0) === 0 && !isLoadingWalletBalances ? "hidden" : "flex items-center justify-between pl-6 pr-6 py-3 border-b border-sidebar-border/60 text-xs text-muted-foreground"}>
                       <span className="tracking-wider font-mono font-bold">TOKEN</span>
                       <button type="button" className="group inline-flex items-center" onClick={() => setBalancesSortDir((d) => d === 'desc' ? 'asc' : 'desc')}>
                         <span className="uppercase tracking-wider font-mono font-bold group-hover:text-foreground">VALUE</span>
@@ -3720,7 +3686,9 @@ export default function PortfolioPage() {
                       {isLoadingWalletBalances ? (
                         <BalancesListSkeleton />
                       ) : (walletBalances.length || 0) === 0 ? (
-                        <div className="text-sm text-muted-foreground px-6 py-6">No token balances.</div>
+                        <div className="border border-dashed rounded-lg bg-muted/10 p-8 w-full flex items-center justify-center">
+                          <div className="text-sm text-white/75">{!isConnected ? 'No Wallet Connected' : 'No Balances'}</div>
+                        </div>
                       ) : (
                         <div className="flex flex-col divide-y divide-sidebar-border/60">
                           {(() => {
@@ -3753,12 +3721,8 @@ export default function PortfolioPage() {
                                 <div className="flex flex-col items-end whitespace-nowrap pl-2 gap-1">
                                   <span className="text-sm text-foreground font-medium leading-none">{formatUSD(tb.usdValue)}</span>
                                   <div className="flex items-center gap-2 leading-none" style={{ marginTop: 2 }}>
-                                    <span className="text-xs text-muted-foreground group-hover:hidden">
-                                      {tb.balance.toLocaleString('de-DE', { minimumFractionDigits: amountDisplayDecimals, maximumFractionDigits: amountDisplayDecimals })}
-                                    </span>
-                                    <span className={`hidden group-hover:inline-flex items-center gap-1 text-xs ${isUp ? 'text-green-500' : 'text-red-500'}`}>
-                                      {isUp ? (<ArrowUpRight className="h-3 w-3" />) : (<ArrowDownRight className="h-3 w-3" />)}
-                                      {Math.abs(ch).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%
+                                    <span className="text-xs text-muted-foreground">
+                                      {formatNumber(tb.balance, { min: amountDisplayDecimals, max: amountDisplayDecimals })}
                                     </span>
                                   </div>
                                 </div>
@@ -3787,7 +3751,7 @@ export default function PortfolioPage() {
               >
                 Balances
               </button>
-              {/* Claim Faucet button aligned to the right, styled like selector */}
+              {/* Claim Faucet button aligned to the right, styled like selector (hidden when no balances) */}
               {(() => {
                 // Use synced cached last claim ts to mirror sidebar behavior
                 // -1 (unknown) should render a neutral disabled state (no active claim button)
@@ -3797,6 +3761,8 @@ export default function PortfolioPage() {
                 const onchainLast = faucetLastCalledOnchain ? Number(faucetLastCalledOnchain) : null;
                 const effectiveLast = onchainLast && onchainLast > 0 ? onchainLast : (last >= 0 ? last : -1);
                 const canClaim = isConnected && currentChainId === baseSepolia.id && effectiveLast >= 0 && (effectiveLast === 0 || now - effectiveLast >= 24 * 60 * 60);
+                const isPortfolioEmpty = (walletBalances.length || 0) === 0 && !isLoadingWalletBalances;
+                if (isPortfolioEmpty) return null;
                 const handleClick = async () => {
                   if (!canClaim) {
                     toast.error('Can only claim once per day', { icon: <OctagonX className="h-4 w-4 text-red-500" /> });
@@ -3849,8 +3815,8 @@ export default function PortfolioPage() {
                 );
               })()}
             </div>
-            <div className="rounded-lg bg-muted/30 border border-sidebar-border/60">
-              <div className="flex items-center justify-between pl-6 pr-6 py-3 border-b border-sidebar-border/60 text-xs text-muted-foreground">
+            <div className={(walletBalances.length || 0) === 0 && !isLoadingWalletBalances ? "" : "rounded-lg bg-muted/30 border border-sidebar-border/60"}>
+              <div className={(walletBalances.length || 0) === 0 && !isLoadingWalletBalances ? "hidden" : "flex items-center justify-between pl-6 pr-6 py-3 border-b border-sidebar-border/60 text-xs text-muted-foreground"}>
                 <span className="tracking-wider font-mono font-bold">TOKEN</span>
                 <button type="button" className="group inline-flex items-center" onClick={() => setBalancesSortDir((d) => d === 'desc' ? 'asc' : 'desc')}>
                   <span className="uppercase tracking-wider font-mono font-bold group-hover:text-foreground">VALUE</span>
@@ -3861,7 +3827,9 @@ export default function PortfolioPage() {
                  {isLoadingWalletBalances ? (
                    <BalancesListSkeleton />
                  ) : (walletBalances.length || 0) === 0 ? (
-                   <div className="text-sm text-muted-foreground px-6 py-6">No token balances.</div>
+                   <div className="border border-dashed rounded-lg bg-muted/10 p-8 w-full flex items-center justify-center">
+                     <div className="text-sm text-white/75">{!isConnected ? 'No Wallet Connected' : 'No Balances'}</div>
+                   </div>
                  ) : (
                   <div className="flex flex-col divide-y divide-sidebar-border/60">
                     {(() => {
@@ -3894,14 +3862,9 @@ export default function PortfolioPage() {
                           <div className="flex flex-col items-end whitespace-nowrap pl-2 gap-1">
                             {/* Top line: current USD (always visible) */}
                             <span className="text-sm text-foreground font-medium leading-none">{formatUSD(tb.usdValue)}</span>
-                            {/* Second line: default shows token amount; on hover shows PnL % (no $ PnL) */}
                             <div className="flex items-center gap-2 leading-none" style={{ marginTop: 2 }}>
-                              <span className="text-xs text-muted-foreground group-hover:hidden">
-                                {tb.balance.toLocaleString('de-DE', { minimumFractionDigits: amountDisplayDecimals, maximumFractionDigits: amountDisplayDecimals })}
-                              </span>
-                              <span className={`hidden group-hover:inline-flex items-center gap-1 text-xs ${isUp ? 'text-green-500' : 'text-red-500'}`}>
-                                {isUp ? (<ArrowUpRight className="h-3 w-3" />) : (<ArrowDownRight className="h-3 w-3" />)}
-                                {Math.abs(ch).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%
+                              <span className="text-xs text-muted-foreground">
+                                {formatNumber(tb.balance, { min: amountDisplayDecimals, max: amountDisplayDecimals })}
                               </span>
                             </div>
                           </div>
@@ -4229,9 +4192,10 @@ interface CompactCompositionBarProps {
   isRestCycling: boolean;
   restCycleIndex: number;
   initialWidth?: number; // width computed by parent for first paint
+  forceHideLabels?: boolean;
 }
 
-function CompactCompositionBar({ composition, onHover, hoveredSegment, handleRestClick, setIsRestCycling, isRestCycling, restCycleIndex, initialWidth }: CompactCompositionBarProps) {
+function CompactCompositionBar({ composition, onHover, hoveredSegment, handleRestClick, setIsRestCycling, isRestCycling, restCycleIndex, initialWidth, forceHideLabels }: CompactCompositionBarProps) {
   //
   const SMALL_SEGMENT_THRESHOLD = 10; // tweakable (e.g., 5)
   const { activeTokenFilter, setActiveTokenFilter } = React.useContext(PortfolioFilterContext);
@@ -4310,6 +4274,14 @@ function CompactCompositionBar({ composition, onHover, hoveredSegment, handleRes
 
   const DEBUG_TICKS = false;
 
+  // Placeholder flag: single 100% segment labeled 'All', or explicitly forced by parent
+  const hideAllLabels = React.useMemo(() => {
+    if (forceHideLabels) return true;
+    return composition.length === 1 && (composition[0] as any)?.label === 'All' && Math.round((composition[0] as any)?.pct || 0) === 100;
+  }, [composition, forceHideLabels]);
+
+  // duplicate removed
+
   const calculateAvailableWidth = React.useCallback(() => {
     const container = barContainerRef.current;
     if (!container) return;
@@ -4342,7 +4314,7 @@ function CompactCompositionBar({ composition, onHover, hoveredSegment, handleRes
 
   return (
     <TooltipProvider>
-    <div ref={barContainerRef} className="relative flex-none box-border" style={{ width: `${availableWidth}px` }} onMouseLeave={() => onHover(null)}>
+    <div ref={barContainerRef} className="relative flex-none box-border" style={{ width: `${availableWidth}px` }} onMouseLeave={() => (!hideAllLabels) && onHover(null)}>
       {/* Bar row */}
       <div className="h-2 w-full flex overflow-hidden rounded-full" style={{ gap: 0 }}>
         {normalized.map((s, i) => (
@@ -4350,11 +4322,11 @@ function CompactCompositionBar({ composition, onHover, hoveredSegment, handleRes
             key={`bar-${i}`}
             style={{ 
               width: `${segmentPixelWidths[i] || 0}px`, 
-              backgroundColor: hoverIdx === i ? hoverColor : (selectedIdx === i ? selectedColor : (isRestSegmentHighlighted(i) ? selectedColor : s.color)), 
+              backgroundColor: hideAllLabels ? s.color : (hoverIdx === i ? hoverColor : (selectedIdx === i ? selectedColor : (isRestSegmentHighlighted(i) ? selectedColor : s.color))), 
               opacity: 0.95 
             }}
-            onMouseEnter={() => onHover(i)}
-            onMouseLeave={() => onHover(null)}
+            onMouseEnter={() => (!hideAllLabels) && onHover(i)}
+            onMouseLeave={() => (!hideAllLabels) && onHover(null)}
             onClick={() => {
               if (s.label === 'Rest') {
                 handleRestClick(s, i);
@@ -4371,6 +4343,7 @@ function CompactCompositionBar({ composition, onHover, hoveredSegment, handleRes
         {normalized.map((s, i) => {
           const pctRounded = Math.round(s.pct);
           const showTip = (() => {
+            if (hideAllLabels) return false;
             if (s.pct < SMALL_SEGMENT_THRESHOLD) return true;
             // also show hover label if name would be hidden
             const segWidth = (segmentPixelWidths[i] || 0);
@@ -4384,7 +4357,7 @@ function CompactCompositionBar({ composition, onHover, hoveredSegment, handleRes
           })();
           const isRest = s.label === 'Rest';
           
-          const content = isRest ? (
+          const content = hideAllLabels ? '' : isRest ? (
             <div className="space-y-1">
               {(s as any).restTokens?.map((token: any, idx: number) => (
                 <div key={idx} className="flex justify-between items-center gap-2">
@@ -4408,8 +4381,8 @@ function CompactCompositionBar({ composition, onHover, hoveredSegment, handleRes
               key={`hover-zone-${i}`}
               className="absolute h-full"
               style={{ left: `${segmentLeftOffsets[i] || 0}px`, width: `${segmentPixelWidths[i] || 0}px`, cursor: 'pointer' }}
-              onMouseEnter={() => onHover(i)}
-              onMouseLeave={() => onHover(null)}
+              onMouseEnter={() => (!hideAllLabels) && onHover(i)}
+              onMouseLeave={() => (!hideAllLabels) && onHover(null)}
               onClick={() => {
                 if (s.label === 'Rest') {
                   handleRestClick(s, i);
@@ -4421,7 +4394,7 @@ function CompactCompositionBar({ composition, onHover, hoveredSegment, handleRes
             />
           );
           // Re-add popup only for cases where label isn't shown (small or hidden)
-          return (showTip || isRest) ? (
+          return (showTip || (isRest && !hideAllLabels)) ? (
             <Tooltip key={`hover-zone-wrap-${i}`} open={hoverIdx === i}>
               <TooltipTrigger asChild>{zone}</TooltipTrigger>
               <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs" style={{ pointerEvents: 'none' }}>{content}</TooltipContent>
@@ -4461,15 +4434,20 @@ function CompactCompositionBar({ composition, onHover, hoveredSegment, handleRes
             const isCycling = isRest && !!isRestCycling && isRestHighlighted;
             const restCount = ((s as any)?.restTokens?.length || 0) as number;
             const nameLabel = isRest ? (isCycling ? ((restToken as any)?.label || 'Assets') : 'Assets') : ((s as any).label as string);
-            const percentText = isRest ? (isCycling ? `${pctRounded}%` : `+${restCount}`) : `${pctRounded}%`;
+            const percentText = hideAllLabels ? '' : (isRest ? (isCycling ? `${pctRounded}%` : `+${restCount}`) : `${pctRounded}%`);
             const estChar = 7; // px per char at this size
             const estNameWidth = (nameLabel?.length || 0) * estChar;
             const estPctWidth = (percentText?.length || 0) * estChar;
             const minGap = 6;
             // Decide if we can show name here
             const barSafetyEarly = 4; // hide a touch earlier to avoid visible overlap
-            let showName = hideNamesFromIndex === null && (availableLabelWidth >= estPctWidth + minGap + estNameWidth + barSafetyEarly);
-            if (!showName && hideNamesFromIndex === null) hideNamesFromIndex = i; // overflow starts here
+            let showName = !hideAllLabels;
+            const fits = availableLabelWidth >= estPctWidth + minGap + estNameWidth + barSafetyEarly;
+            if (!fits && !isHovered) {
+              // mark overflow start but still allow name on hover via overflow visible
+              if (hideNamesFromIndex === null) hideNamesFromIndex = i;
+              showName = false;
+            }
             // No cascade-right; never hide following percentages
             const hideFollowingPct = false;
             // If hovered and the name cannot fit, hide the inline percent for subsequent segments and do NOT force show the name for the hovered segment
@@ -4555,9 +4533,10 @@ interface PortfolioTickBarProps {
   setIsRestCycling: (value: boolean) => void;
   isRestCycling: boolean;
   restCycleIndex: number;
+  forceHideLabels?: boolean;
 }
 
-function PortfolioTickBar({ composition, onHover, hoveredSegment, containerRef, netApyRef, layout = "inline", handleRestClick, setIsRestCycling, isRestCycling, restCycleIndex }: PortfolioTickBarProps) {
+function PortfolioTickBar({ composition, onHover, hoveredSegment, containerRef, netApyRef, layout = "inline", handleRestClick, setIsRestCycling, isRestCycling, restCycleIndex, forceHideLabels }: PortfolioTickBarProps) {
   const SMALL_SEGMENT_THRESHOLD = 10; // tweakable (e.g., 5)
   const { activeTokenFilter, setActiveTokenFilter } = React.useContext(PortfolioFilterContext);
   const selectedIdx = activeTokenFilter
@@ -4801,7 +4780,7 @@ function PortfolioTickBar({ composition, onHover, hoveredSegment, containerRef, 
         }}
       >
         {/* Large hover zones for each segment (cover ticks + label area) */}
-        <div className="absolute inset-0 z-50 flex" style={{ pointerEvents: 'auto' }}>
+        <div className="absolute inset-0 z-50 flex" style={{ pointerEvents: (segments.length === 1 && (segments[0] as any)?.label === 'All') ? 'none' : 'auto' }}>
           {segments.map((segment, segmentIndex) => {
             const pctRounded = Math.round(segment.pct);
             const isRest = segment.label === 'Rest';
@@ -4871,8 +4850,8 @@ function PortfolioTickBar({ composition, onHover, hoveredSegment, containerRef, 
                   height: "calc(100% + 16px)",
                   cursor: 'pointer'
                 }}
-                onMouseEnter={() => onHover(segmentIndex)}
-                onMouseLeave={() => onHover(null)}
+                onMouseEnter={() => { if (!(segments.length === 1 && (segments[0] as any)?.label === 'All')) onHover(segmentIndex); }}
+                onMouseLeave={() => { if (!(segments.length === 1 && (segments[0] as any)?.label === 'All')) onHover(null); }}
                 onClick={() => {
                   if (segment.label === 'Rest') {
                     handleRestClick(segment, segmentIndex);
@@ -4916,11 +4895,11 @@ function PortfolioTickBar({ composition, onHover, hoveredSegment, containerRef, 
                 className="h-full flex-shrink-0"
                 style={{
                   width: `${tickPixelWidth}px`,
-                  backgroundColor: isHovered ? hoverColor : (isSelected ? selectedColor : (isRestSegmentHighlighted(segmentIndex) ? selectedColor : tickColors[i])),
+                  backgroundColor: (segments.length === 1 && (segments[0] as any)?.label === 'All') ? tickColors[i] : (isHovered ? hoverColor : (isSelected ? selectedColor : (isRestSegmentHighlighted(segmentIndex) ? selectedColor : tickColors[i]))),
                   opacity: 0.9,
                 }}
-                onMouseEnter={() => onHover(segmentIndex)}
-                onMouseLeave={() => onHover(null)}
+                onMouseEnter={() => { if (!(segments.length === 1 && (segments[0] as any)?.label === 'All')) onHover(segmentIndex); }}
+                onMouseLeave={() => { if (!(segments.length === 1 && (segments[0] as any)?.label === 'All')) onHover(null); }}
                 onClick={() => {
                   const segment = composition[segmentIndex];
                   if (!segment) return;
@@ -4962,7 +4941,7 @@ function PortfolioTickBar({ composition, onHover, hoveredSegment, containerRef, 
                 style={{
                   width: `${tickPixelWidth}px`,
                   height: shortStartTicks.has(i) ? `calc(100% - 12px)` : "100%",
-                  backgroundColor: isHovered ? hoverColor : (isSelected ? selectedColor : (isRestSegmentHighlighted(segmentIndex) ? selectedColor : tickColors[i])),
+                  backgroundColor: (segments.length === 1 && (segments[0] as any)?.label === 'All') ? tickColors[i] : (isHovered ? hoverColor : (isSelected ? selectedColor : (isRestSegmentHighlighted(segmentIndex) ? selectedColor : tickColors[i]))),
                   opacity: 0.95,
                 }}
               />
@@ -5011,14 +4990,20 @@ function PortfolioTickBar({ composition, onHover, hoveredSegment, containerRef, 
                       const estPctWidth = measureTextWidth(`${pctRounded}%`);
                       const minGap = 6;
                       const barSafetyEarly = 4; // hide a touch earlier to avoid visible overlap
-                      let showName = (s.pct >= 10);
+                      // Hide names for placeholder composition (single 100% segment)
+                      const hideAllLabels = (segments.length === 1 && (segments[0] as any)?.label === 'All' && Math.round((segments[0] as any)?.pct || 0) === 100) || forceHideLabels;
+                      let showName = !hideAllLabels;
                       if (hideNamesFromIndex !== null && segIdx >= hideNamesFromIndex) showName = false;
-                      if (showName && availableLabelWidth < estPctWidth + minGap + estNameWidth + barSafetyEarly) {
-                        hideNamesFromIndex = segIdx;
-                        showName = false;
+                      const fits = availableLabelWidth >= estPctWidth + minGap + estNameWidth + barSafetyEarly;
+                      if (showName && !fits) {
+                        // allow overflow on hover/selected; otherwise hide and start cascade
+                        if (!(isHovered || isSelected)) {
+                          hideNamesFromIndex = segIdx;
+                          showName = false;
+                        }
                       }
-                      // Show name only if it fits; do not force it on hover. Keep selected behavior.
-                      if (isSelected) showName = true;
+                      // Force show on hover or selected (allow overflow)
+                      if (isHovered || isSelected) showName = true;
                       const color = isHovered ? hoverColor : ((isSelected || isRestHighlighted) ? selectedColor : (s as any).color);
                       return (
                         <div
@@ -5046,7 +5031,7 @@ function PortfolioTickBar({ composition, onHover, hoveredSegment, containerRef, 
                                 </span>
                               )
                             ) : (
-                              <span className="font-medium" style={{ color }}>{pctRounded}%</span>
+                              <span className="font-medium" style={{ color }}>{hideAllLabels ? '' : `${pctRounded}%`}</span>
                             )}
                             {showName && (
                               <span className="uppercase tracking-wider text-muted-foreground whitespace-nowrap" style={{ fontSize: 10, maxWidth: (isHovered || isSelected) ? undefined : `${Math.max(0, availableLabelWidth - estPctWidth - minGap)}px`, overflow: (isHovered || isSelected) ? 'visible' : 'hidden', textOverflow: (isHovered || isSelected) ? 'clip' : 'ellipsis', textTransform: (s as any).label === 'Rest' ? 'none' : undefined }}>
@@ -5152,21 +5137,32 @@ function PortfolioTickBar({ composition, onHover, hoveredSegment, containerRef, 
                             const rt = restArr[restCycleIndex] as any;
                             const rp = Math.round(rt?.pct ?? 0);
                             return (
-                              <span className="font-medium" style={{ color: isHovered || isSelected ? hoverColor : ((isSelected || isRestSegmentHighlighted(i)) ? selectedColor : (s as any).color) }}>{rp}%</span>
+                              <span className="font-medium" style={{ color: isHovered || isSelected ? hoverColor : ((isSelected || isRestSegmentHighlighted(i)) ? selectedColor : (s as any).color) }}>{''}</span>
                             );
                           }
                           return (
-                            <span className="font-medium" style={{ color: isHovered || isSelected ? hoverColor : ((isSelected || isRestSegmentHighlighted(i)) ? selectedColor : (s as any).color), fontSize: 12 }}>+{restArr.length}</span>
+                            <span className="font-medium" style={{ color: isHovered || isSelected ? hoverColor : ((isSelected || isRestSegmentHighlighted(i)) ? selectedColor : (s as any).color), fontSize: 12 }}>{''}</span>
                           );
                         })()
                       : (
-                        <span className="font-medium" style={{ color: isHovered ? hoverColor : ((isSelected || isRestSegmentHighlighted(i)) ? selectedColor : (s as any).color) }}>{pctRounded}%</span>
+                        <span className="font-medium" style={{ color: isHovered ? hoverColor : ((isSelected || isRestSegmentHighlighted(i)) ? selectedColor : (s as any).color) }}>{''}</span>
                       )}
-                    {showName && (() => {
+                    {false && showName && (() => {
                       const isRest = (s as any).label === 'Rest';
-                      const restArr = (s as any).restTokens as any[] | undefined;
-                      const isCycling = isRest && !!isRestCycling && Array.isArray(restArr) && restArr.length > 0;
-                      const nameText = isRest ? (isCycling ? (restArr?.[restCycleIndex]?.label ?? 'Assets') : 'Assets') : labelText;
+                      const restArrTmp = ((s as any).restTokens as any[] | undefined) || [];
+                      const hasRest = Array.isArray(restArrTmp) && restArrTmp.length > 0;
+                      const isCycling = isRest && !!isRestCycling && hasRest;
+                      let nameText: string;
+                      if (isRest) {
+                        if (isCycling && hasRest) {
+                          const maybe = (restArrTmp as any[])[restCycleIndex];
+                          nameText = (maybe && maybe.label) ? String(maybe.label) : 'Assets';
+                        } else {
+                          nameText = 'Assets';
+                        }
+                      } else {
+                        nameText = labelText;
+                      }
                       const style: React.CSSProperties = {
                         fontSize: 10,
                         maxWidth: (isHovered || isSelected) ? undefined : `${Math.max(0, availableLabelWidth - estPctWidth - minGap)}px`,

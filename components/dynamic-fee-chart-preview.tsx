@@ -122,11 +122,21 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
   const handleClick = () => {
     if (!poolInfo) return;
     
-    // Get pool configuration using token symbols
+    // Prefer canonical pool id if present to avoid aliasing issues
+    const canonicalId = (poolInfo as any).id || (poolInfo as any).poolId;
+    if (canonicalId) {
+      const url = `/liquidity/${canonicalId}`;
+      if (typeof window !== "undefined") {
+        window.open(url, "_blank", "noopener,noreferrer");
+      } else {
+        router.push(url);
+      }
+      return;
+    }
+
+    // Fallback: map from token symbols to pool config (may choose a canonical mapping if defined)
     const poolConfig = getPoolByTokens(poolInfo.token0Symbol, poolInfo.token1Symbol);
-    
     if (poolConfig) {
-      // Open the pool page in a new tab
       const url = `/liquidity/${poolConfig.id}`;
       if (typeof window !== "undefined") {
         window.open(url, "_blank", "noopener,noreferrer");

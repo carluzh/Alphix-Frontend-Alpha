@@ -66,13 +66,38 @@ export function getFeaturedPools(): PoolConfig[] {
 }
 
 export function getPoolByTokens(tokenA: string, tokenB: string): PoolConfig | null {
-  // Try both orders since pool currencies are ordered
-  const pool1 = poolsConfig.pools.find(pool => 
-    (pool.currency0.symbol === tokenA && pool.currency1.symbol === tokenB) ||
-    (pool.currency0.symbol === tokenB && pool.currency1.symbol === tokenA)
-  );
-  
-  return pool1 || null;
+  // Find all pools that match the unordered pair of symbols
+  const matches = poolsConfig.pools.filter(pool => {
+    const a = pool.currency0.symbol;
+    const b = pool.currency1.symbol;
+    return (a === tokenA && b === tokenB) || (a === tokenB && b === tokenA);
+  });
+
+  if (matches.length === 0) return null;
+
+  // Prefer canonical aliases if multiple pools match
+  const priority: Record<string, number> = {
+    // USDC family
+    'aUSDC': 100,
+    'USDC': 80,
+    'yUSDC': 60,
+    'YUSD': 50,
+    // USDT family
+    'mUSDT': 100,
+    'aUSDT': 90,
+    'USDT': 80,
+    // ETH family
+    'aETH': 90,
+    'ETH': 80,
+    // BTC family
+    'aBTC': 90,
+    'BTC': 80,
+  };
+
+  const rank = (pool: PoolConfig) => (priority[pool.currency0.symbol] || 0) + (priority[pool.currency1.symbol] || 0);
+
+  matches.sort((p1, p2) => rank(p2) - rank(p1));
+  return matches[0];
 }
 
 export function getPoolById(poolId: string): PoolConfig | null {

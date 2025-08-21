@@ -8,24 +8,11 @@ import { getToken, TokenSymbol } from '@/lib/pools-config';
 import { baseSepolia } from '@/lib/wagmiConfig';
 import { getAddress, type Hex, BaseError, parseUnits } from 'viem';
 
-// Helper function to safely parse amounts and prevent scientific notation errors
+// Helper function to safely parse amounts without precision loss
 const safeParseUnits = (amount: string, decimals: number): bigint => {
-  // Convert scientific notation to decimal format
-  const numericAmount = parseFloat(amount);
-  if (isNaN(numericAmount)) {
-    throw new Error("Invalid number format");
-  }
-  
-  // Convert to string with full decimal representation (no scientific notation)
-  const fullDecimalString = numericAmount.toFixed(decimals);
-  
-  // Remove trailing zeros after decimal point
-  const trimmedString = fullDecimalString.replace(/\.?0+$/, '');
-  
-  // If the result is just a decimal point, return "0"
-  const finalString = trimmedString === '.' ? '0' : trimmedString;
-  
-  return parseUnits(finalString, decimals);
+  const cleaned = (amount || '').toString().replace(/,/g, '').trim();
+  if (!cleaned || cleaned === '.' || cleaned === '< 0.0001') return 0n;
+  return parseUnits(cleaned, decimals);
 };
 import JSBI from 'jsbi';
 
@@ -122,6 +109,9 @@ export function useDecreaseLiquidity({ onLiquidityDecreased }: UseDecreaseLiquid
       // Revert to original chainId usage, rely on wagmi's type for Token constructor
       const sdkToken0 = new Token(chainId, getAddress(token0Def.address), token0Def.decimals, token0Def.symbol); 
       const sdkToken1 = new Token(chainId, getAddress(token1Def.address), token1Def.decimals, token1Def.symbol); 
+      const [sortedSdkToken0, sortedSdkToken1] = sdkToken0.sortsBefore(sdkToken1)
+        ? [sdkToken0, sdkToken1]
+        : [sdkToken1, sdkToken0];
 
       const planner = new V4PositionPlanner();
       
@@ -141,107 +131,68 @@ export function useDecreaseLiquidity({ onLiquidityDecreased }: UseDecreaseLiquid
         const amount1MinJSBI = JSBI.BigInt(0);
         planner.addBurn(tokenIdJSBI, amount0MinJSBI, amount1MinJSBI, EMPTY_BYTES || '0x');
       } else {
-        // If partial decrease, we need to get the current position info to calculate percentage
+        // Partial decrease: compute liquidity to remove using the same math as mint calc
         let liquidityJSBI: JSBI;
-        
-        try {
-          // Fetch current position data from get-positions API to get current liquidity
-          console.log(`Fetching positions for owner ${accountAddress} from /api/liquidity/get-positions`);
-          const positionsResponse = await fetch(`/api/liquidity/get-positions?ownerAddress=${accountAddress}`);
-          
-          if (!positionsResponse.ok) {
-            console.error("get-positions API response not OK:", positionsResponse.status, positionsResponse.statusText);
-            const errorBody = await positionsResponse.text();
-            console.error("get-positions API error body:", errorBody);
-            throw new Error(`Failed to fetch current position data: ${positionsResponse.statusText}. Details: ${errorBody.substring(0, 100)}...`);
-          }
-          const positionsData = await positionsResponse.json();
-          console.log("get-positions API data received:", positionsData); // Log the received data
 
-          const currentPosition = positionsData.find((pos: any) => 
-            pos.positionId === positionData.tokenId.toString()
-          );
-          
-          if (currentPosition && currentPosition.liquidity) {
-            const currentLiquidityJSBI = JSBI.BigInt(currentPosition.liquidity);
-            
-            // Calculate percentage to decrease based on token amounts
-            const currentAmount0 = parseFloat(currentPosition.token0.amount);
-            const currentAmount1 = parseFloat(currentPosition.token1.amount);
-            const decreaseAmount0Num = parseFloat(positionData.decreaseAmount0 || "0");
-            const decreaseAmount1Num = parseFloat(positionData.decreaseAmount1 || "0");
-            
-            // Calculate percentage based on the primary token being decreased
-            let decreasePercentage = 0;
-            
-            if (decreaseAmount0Num > 0 && currentAmount0 > 0) {
-              decreasePercentage = Math.max(decreasePercentage, decreaseAmount0Num / currentAmount0);
-            }
-            if (decreaseAmount1Num > 0 && currentAmount1 > 0) {
-              decreasePercentage = Math.max(decreasePercentage, decreaseAmount1Num / currentAmount1);
-            }
-            
-            // Ensure percentage is between 0 and 1, cap at 99% for safety
-            decreasePercentage = Math.min(Math.max(decreasePercentage, 0), 0.99);
-            
-            // Calculate liquidity to remove based on percentage
-            const liquidityToRemove = JSBI.multiply(
-              currentLiquidityJSBI, 
-              JSBI.BigInt(Math.floor(decreasePercentage * 10000))
-            );
-            liquidityJSBI = JSBI.divide(liquidityToRemove, JSBI.BigInt(10000));
-            
-            console.log("Calculated decrease liquidity:", {
-              currentLiquidity: currentPosition.liquidity,
-              decreasePercentage: (decreasePercentage * 100).toFixed(2) + '%',
-              liquidityToRemove: liquidityJSBI.toString(),
-              decreaseAmount0: decreaseAmount0Num,
-              decreaseAmount1: decreaseAmount1Num,
-              currentAmount0,
-              currentAmount1
-            });
-            
-          } else {
-            console.error("get-positions API: current position not found or liquidity is missing for tokenId:", positionData.tokenId, "Data:", positionsData);
-            throw new Error("Could not find current position data or liquidity");
-          }
-        } catch (error) {
-          console.error("Error fetching current position for decrease:", error); // Changed from warn to error
-          
-          // Fallback: use a conservative estimate based on the amounts
-          const amount0Raw = safeParseUnits(positionData.decreaseAmount0 || "0", token0Def.decimals);
-          const amount1Raw = safeParseUnits(positionData.decreaseAmount1 || "0", token1Def.decimals);
-          const maxAmountRaw = amount0Raw > amount1Raw ? amount0Raw : amount1Raw;
-          
-          // Use a conservative liquidity estimate
-          liquidityJSBI = JSBI.divide(JSBI.BigInt(maxAmountRaw.toString()), JSBI.BigInt(1000));
-          
-          // Ensure minimum liquidity
-          if (JSBI.lessThanOrEqual(liquidityJSBI, JSBI.BigInt(0))) {
-            liquidityJSBI = JSBI.BigInt(100000);
-          }
+        // Decide which input side is being used
+        const inputSide = (positionData.decreaseAmount0 && parseFloat(positionData.decreaseAmount0) > 0)
+          ? { amount: positionData.decreaseAmount0, symbol: positionData.token0Symbol }
+          : (positionData.decreaseAmount1 && parseFloat(positionData.decreaseAmount1) > 0)
+            ? { amount: positionData.decreaseAmount1, symbol: positionData.token1Symbol }
+            : null;
+
+        if (!inputSide) {
+          throw new Error('No non-zero decrease amount specified');
         }
-        
-        const amount0MinJSBI = JSBI.BigInt(0); // Minimum amounts for slippage protection
-        const amount1MinJSBI = JSBI.BigInt(0);
-        
-        planner.addDecrease(tokenIdJSBI, liquidityJSBI, amount0MinJSBI, amount1MinJSBI, EMPTY_BYTES || '0x');
+
+        try {
+          const calcResponse = await fetch('/api/liquidity/calculate-liquidity-parameters', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              token0Symbol: positionData.token0Symbol,
+              token1Symbol: positionData.token1Symbol,
+              inputAmount: inputSide.amount,
+              inputTokenSymbol: inputSide.symbol,
+              userTickLower: positionData.tickLower,
+              userTickUpper: positionData.tickUpper,
+              chainId: chainId,
+            }),
+          });
+
+          if (!calcResponse.ok) {
+            const err = await calcResponse.text();
+            throw new Error(`calc-liquidity failed: ${err}`);
+          }
+          const result = await calcResponse.json();
+          liquidityJSBI = JSBI.BigInt(result.liquidity);
+          console.log('Calculated decrease liquidity via API:', liquidityJSBI.toString());
+        } catch (e) {
+          console.error('Fallback decrease liquidity estimate due to calc error:', e);
+          const amount0Raw = safeParseUnits(positionData.decreaseAmount0 || '0', token0Def.decimals);
+          const amount1Raw = safeParseUnits(positionData.decreaseAmount1 || '0', token1Def.decimals);
+          const maxAmountRaw = amount0Raw > amount1Raw ? amount0Raw : amount1Raw;
+          // Less aggressive fallback factor
+          liquidityJSBI = JSBI.max(JSBI.BigInt(1), JSBI.divide(JSBI.BigInt(maxAmountRaw.toString()), JSBI.BigInt(10)));
+        }
+
+        const amountMinSorted0 = JSBI.BigInt(0);
+        const amountMinSorted1 = JSBI.BigInt(0);
+        planner.addDecrease(tokenIdJSBI, liquidityJSBI, amountMinSorted0, amountMinSorted1, EMPTY_BYTES || '0x');
       }
       
       // Check if we're dealing with native ETH
       const hasNativeETH = token0Def.address === "0x0000000000000000000000000000000000000000" || 
                           token1Def.address === "0x0000000000000000000000000000000000000000";
       
-      // Take the tokens back to the user's wallet
-      planner.addTakePair(sdkToken0.wrapped, sdkToken1.wrapped, accountAddress);
+      // Take the tokens back to the user's wallet in sorted order
+      planner.addTakePair(sortedSdkToken0.wrapped, sortedSdkToken1.wrapped, accountAddress);
       
       // For native ETH positions, we need to add a SWEEP to collect any native ETH
-      if (hasNativeETH && token0Def.address === "0x0000000000000000000000000000000000000000") {
-        // Token0 is ETH - need to sweep native ETH to user
-        planner.addSweep(sdkToken0.wrapped, accountAddress);
-      } else if (hasNativeETH && token1Def.address === "0x0000000000000000000000000000000000000000") {
-        // Token1 is ETH - need to sweep native ETH to user  
-        planner.addSweep(sdkToken1.wrapped, accountAddress);
+      if (hasNativeETH && getAddress(sortedSdkToken0.address) === '0x0000000000000000000000000000000000000000') {
+        planner.addSweep(sortedSdkToken0.wrapped, accountAddress);
+      } else if (hasNativeETH && getAddress(sortedSdkToken1.address) === '0x0000000000000000000000000000000000000000') {
+        planner.addSweep(sortedSdkToken1.wrapped, accountAddress);
       }
 
       resetWriteContract(); 

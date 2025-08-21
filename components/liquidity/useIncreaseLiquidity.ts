@@ -8,24 +8,11 @@ import { getToken, TokenSymbol } from '@/lib/pools-config';
 import { baseSepolia } from '@/lib/wagmiConfig';
 import { getAddress, type Hex, BaseError, parseUnits } from 'viem';
 
-// Helper function to safely parse amounts and prevent scientific notation errors
+// Helper function to safely parse amounts without precision loss
 const safeParseUnits = (amount: string, decimals: number): bigint => {
-  // Convert scientific notation to decimal format
-  const numericAmount = parseFloat(amount);
-  if (isNaN(numericAmount)) {
-    throw new Error("Invalid number format");
-  }
-  
-  // Convert to string with full decimal representation (no scientific notation)
-  const fullDecimalString = numericAmount.toFixed(decimals);
-  
-  // Remove trailing zeros after decimal point
-  const trimmedString = fullDecimalString.replace(/\.?0+$/, '');
-  
-  // If the result is just a decimal point, return "0"
-  const finalString = trimmedString === '.' ? '0' : trimmedString;
-  
-  return parseUnits(finalString, decimals);
+  const cleaned = (amount || '').toString().replace(/,/g, '').trim();
+  if (!cleaned || cleaned === '.' || cleaned === '< 0.0001') return 0n;
+  return parseUnits(cleaned, decimals);
 };
 import JSBI from 'jsbi';
 
@@ -125,6 +112,9 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
       // Revert to original chainId usage, rely on wagmi's type for Token constructor
       const sdkToken0 = new Token(chainId, getAddress(token0Def.address), token0Def.decimals, token0Def.symbol);
       const sdkToken1 = new Token(chainId, getAddress(token1Def.address), token1Def.decimals, token1Def.symbol);
+      const [sortedSdkToken0, sortedSdkToken1] = sdkToken0.sortsBefore(sdkToken1)
+        ? [sdkToken0, sdkToken1]
+        : [sdkToken1, sdkToken0];
 
       const planner = new V4PositionPlanner();
       
@@ -139,6 +129,12 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
       // Convert to JSBI BigInt
       amount0MaxJSBI = JSBI.BigInt(amount0Raw.toString());
       amount1MaxJSBI = JSBI.BigInt(amount1Raw.toString());
+
+      // Map raw amounts to sorted token order for max constraints and native value handling
+      const amountSorted0Raw = sdkToken0.address === sortedSdkToken0.address ? amount0Raw : amount1Raw;
+      const amountSorted1Raw = sdkToken0.address === sortedSdkToken0.address ? amount1Raw : amount0Raw;
+      const amountSorted0MaxJSBI = JSBI.BigInt(amountSorted0Raw.toString());
+      const amountSorted1MaxJSBI = JSBI.BigInt(amountSorted1Raw.toString());
       
       // For liquidity calculation, we need to determine which token has a non-zero amount
       let liquidityJSBI: JSBI;
@@ -229,15 +225,16 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
         liquidityJSBI = JSBI.greaterThan(estimatedLiquidity, JSBI.BigInt(0)) ? estimatedLiquidity : JSBI.BigInt(1000000);
       }
 
-      // Increase the position - this adds liquidity to existing position
-      planner.addIncrease(tokenIdJSBI, liquidityJSBI, amount0MaxJSBI, amount1MaxJSBI, EMPTY_BYTES || '0x');
-      
       // Check if we're dealing with native ETH
       const hasNativeETH = token0Def.address === "0x0000000000000000000000000000000000000000" || 
                           token1Def.address === "0x0000000000000000000000000000000000000000";
-      
-      // Settle the tokens from the user's wallet
-      planner.addSettlePair(sdkToken0.wrapped, sdkToken1.wrapped);
+
+      // First settle tokens from the user's wallet (send tokens to PM), then increase
+      // Use sorted token order for settlement to match pool key ordering
+      planner.addSettlePair(sortedSdkToken0.wrapped, sortedSdkToken1.wrapped);
+
+      // Increase the position - this adds liquidity to existing position. Amount maxes must follow sorted order
+      planner.addIncrease(tokenIdJSBI, liquidityJSBI, amountSorted0MaxJSBI, amountSorted1MaxJSBI, EMPTY_BYTES || '0x');
 
       resetWriteContract(); 
       
@@ -250,12 +247,11 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
       // Calculate the transaction value for native ETH
       let transactionValue = BigInt(0);
       if (hasNativeETH) {
-        if (token0Def.address === "0x0000000000000000000000000000000000000000") {
-          // Token0 is ETH
-          transactionValue = amount0Raw;
-        } else if (token1Def.address === "0x0000000000000000000000000000000000000000") {
-          // Token1 is ETH
-          transactionValue = amount1Raw;
+        // Match native value to whichever sorted token is native
+        if (getAddress(sortedSdkToken0.address) === '0x0000000000000000000000000000000000000000') {
+          transactionValue = amountSorted0Raw;
+        } else if (getAddress(sortedSdkToken1.address) === '0x0000000000000000000000000000000000000000') {
+          transactionValue = amountSorted1Raw;
         }
       }
       

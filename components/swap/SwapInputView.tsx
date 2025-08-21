@@ -128,6 +128,14 @@ export function SwapInputView({
   const slippageRef = React.useRef<HTMLDivElement>(null);
   const [clickedTokenIndex, setClickedTokenIndex] = React.useState<number | null>(0);
   const ignoreNextOutsideClickRef = React.useRef(false);
+  const hoverPreviewActiveRef = React.useRef(false);
+  const committedPoolIndexRef = React.useRef<number>(0);
+
+  const formatPercentFromBps = React.useCallback((bps: number) => {
+    const percent = bps / 10000; // convert bps to percent
+    const decimals = percent < 0.1 ? 3 : 2;
+    return `${percent.toFixed(decimals)}%`;
+  }, []);
 
   const presetSlippages = [0.05, 0.10, 0.50, 1.00];
 
@@ -141,7 +149,7 @@ export function SwapInputView({
   
   const handleSlippageSelect = (value: number) => {
     onSlippageChange(value);
-    setIsSlippageEditing(false);
+    // Keep the panel open until the arrow is clicked again
     setIsCustomSlippage(false);
   };
 
@@ -160,8 +168,7 @@ export function SwapInputView({
     if (customSlippage && !isNaN(parseFloat(customSlippage))) {
       const rounded = Math.round(parseFloat(customSlippage) * 100) / 100; // Round to 2 decimals
       onSlippageChange(rounded);
-      setIsSlippageEditing(false);
-      setIsCustomSlippage(false);
+      // Keep the panel open until the arrow is clicked again
       setCustomSlippage("");
     }
   };
@@ -176,26 +183,10 @@ export function SwapInputView({
     }
   };
 
-  // Handle clicks outside the slippage editor to close it
+  // Keep the slippage editor open until the arrow is clicked again
+  // Disable outside-click to close behavior
   React.useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (ignoreNextOutsideClickRef.current) {
-        ignoreNextOutsideClickRef.current = false;
-        return;
-      }
-      if (slippageRef.current && !slippageRef.current.contains(event.target as Node)) {
-        setIsSlippageEditing(false);
-        setIsCustomSlippage(false);
-        setCustomSlippage("");
-      }
-    };
-
-    if (isSlippageEditing) {
-      document.addEventListener('mousedown', handleClickOutside);
-      return () => {
-        document.removeEventListener('mousedown', handleClickOutside);
-      };
-    }
+    return;
   }, [isSlippageEditing]);
   return (
     <motion.div 
@@ -348,7 +339,13 @@ export function SwapInputView({
           <>
             <div
               className="flex items-center justify-between text-xs text-muted-foreground"
-              onMouseLeave={() => setHoveredRouteIndex(null)}
+              onMouseLeave={() => {
+                setHoveredRouteIndex(null);
+                if (hoverPreviewActiveRef.current) {
+                  hoverPreviewActiveRef.current = false;
+                  onRouteHoverChange?.(false);
+                }
+              }}
             >
               <div className="flex items-center gap-2"> {/* Left section: Route label */}
                 <span>Route:</span>
@@ -362,7 +359,7 @@ export function SwapInputView({
                       {routeFeesLoading ? (
                         <div className="h-3 w-8 bg-muted/60 rounded animate-pulse"></div>
                       ) : (
-                        `${(routeFees[selectedPoolIndexForChart].fee / 10000).toFixed(2)}%`
+                        formatPercentFromBps(routeFees[selectedPoolIndexForChart].fee)
                       )}
                     </span>
                     <TooltipProvider delayDuration={0}>
@@ -493,8 +490,40 @@ export function SwapInputView({
                               }}
                               animate={{ x: xOffset }}
                               transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                              onHoverStart={() => setHoveredRouteIndex(index)}
-                              onHoverEnd={() => setHoveredRouteIndex(null)}
+                              onHoverStart={() => {
+                                setHoveredRouteIndex(index);
+                                const n = path.length;
+                                if (n >= 2 && onSelectPoolForChart) {
+                                  const poolsCount = (routeInfo?.pools.length || Math.max(1, n - 1));
+                                  const maxPoolIdx = Math.max(0, poolsCount - 1);
+
+                                  // Stepwise selection change based on relative hover position
+                                  const currentStart = Math.max(0, Math.min((committedPoolIndexRef.current ?? selectedPoolIndexForChart), maxPoolIdx));
+                                  let nextStart = currentStart;
+                                  if (index <= currentStart - 1) {
+                                    nextStart = currentStart - 1; // move one step left
+                                  } else if (index >= currentStart + 2) {
+                                    nextStart = currentStart + 1; // move one step right
+                                  } else {
+                                    nextStart = currentStart; // hovering within or adjacent keeps current
+                                  }
+                                  nextStart = Math.max(0, Math.min(nextStart, maxPoolIdx));
+
+                                  committedPoolIndexRef.current = nextStart;
+                                  onSelectPoolForChart(nextStart);
+                                  if (!hoverPreviewActiveRef.current) {
+                                    hoverPreviewActiveRef.current = true;
+                                    onRouteHoverChange?.(true);
+                                  }
+                                }
+                              }}
+                              onHoverEnd={() => {
+                                setHoveredRouteIndex(null);
+                                if (hoverPreviewActiveRef.current) {
+                                  hoverPreviewActiveRef.current = false;
+                                  onRouteHoverChange?.(false);
+                                }
+                              }}
                             >
                               <div className="flex items-center">
                                 <TooltipProvider delayDuration={0}>
@@ -507,38 +536,8 @@ export function SwapInputView({
                                           padding: `${iconSize * 0.1}px`,
                                           margin: `-${iconSize * 0.1}px`
                                         }}
-                                        onClick={() => {
-                                          const n = path.length;
-                                          const currentPool = Math.max(0, Math.min(selectedPoolIndexForChart, n - 2));
-                                          const leftIdx = currentPool;
-                                          const rightIdx = currentPool + 1;
-
-                                          let nextPoolIndex = currentPool;
-
-                                          // Adjacent clicks shift by one
-                                          if (index === rightIdx + 1 && rightIdx + 1 < n) {
-                                            nextPoolIndex = currentPool + 1; // shift right
-                                          } else if (index === leftIdx - 1 && leftIdx - 1 >= 0) {
-                                            nextPoolIndex = currentPool - 1; // shift left
-                                          } else if (index === rightIdx && rightIdx < n - 1) {
-                                            // Click on right token of current pair -> move to (right, right+1)
-                                            nextPoolIndex = rightIdx;
-                                          } else if (index === leftIdx && leftIdx > 0) {
-                                            // Click on left token of current pair -> move to (left-1, left)
-                                            nextPoolIndex = leftIdx - 1;
-                                          } else {
-                                            // Far clicks select (clicked, clicked+1) (or clamp to last pair)
-                                            nextPoolIndex = Math.min(index, n - 2);
-                                          }
-
-                                          setClickedTokenIndex(index);
-                                          if (onSelectPoolForChart) {
-                                            const poolsCount = (routeInfo?.pools.length || Math.max(1, n - 1));
-                                            const maxPoolIdx = Math.max(0, poolsCount - 1);
-                                            const poolIndexToSelect = Math.max(0, Math.min(nextPoolIndex, maxPoolIdx));
-                                            onSelectPoolForChart(poolIndexToSelect);
-                                          }
-                                        }}
+                                        // Click disabled: selection persists from last hover
+                                        onClick={() => {}}
                                       >
                                         <Image
                                           src={tokenIcon}
@@ -591,7 +590,7 @@ export function SwapInputView({
                       const inputAmountUSD = parseFloat(fromAmount || "0") * (displayFromToken.usdPrice || 0);
                       const feeInUSD = inputAmountUSD * (totalFeeBps / 1000000);
                       const isMultiHop = (routeInfo?.path?.length || 2) > 2;
-                      const percentDisplay = (totalFeeBps / 10000).toFixed(2) + "%";
+                      const percentDisplay = formatPercentFromBps(totalFeeBps);
                       const amountDisplay = feeInUSD > 0 && feeInUSD < 0.01 ? "< $0.01" : formatCurrency(feeInUSD.toString());
                       return (
                         <>
@@ -689,7 +688,7 @@ export function SwapInputView({
                             onKeyDown={handleCustomSlippageKeyDown}
                             onBlur={handleCustomSlippageSubmit}
                             placeholder="0.00"
-                            className="w-14 px-1 py-0.5 text-xs text-center bg-background border border-sidebar-border rounded"
+                            className="w-14 px-1 py-0.5 text-xs text-center bg-background border-0 outline-none focus:outline-none focus:ring-0 focus-visible:ring-0 rounded"
                             autoFocus
                           />
                           <span className="text-xs">%</span>

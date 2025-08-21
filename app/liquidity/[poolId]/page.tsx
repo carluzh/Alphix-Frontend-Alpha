@@ -34,6 +34,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { 
   Select,
   SelectContent,
@@ -109,11 +110,11 @@ const getTokenIcon = (symbol?: string) => {
   return "/placeholder-logo.svg";
 };
 
-// Format USD value
+// Format USD value (centralized)
+import { formatUSD as formatUSDShared } from "@/lib/format";
 const formatUSD = (value: number) => {
   if (value < 0.01) return "$0";
-  if (value < 1000) return `$${value.toFixed(2)}`;
-  return `$${(value).toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
+  return formatUSDShared(value);
 };
 
 // (Replaced by runtime price-based calculator inside the component)
@@ -403,7 +404,9 @@ function FeesCell({ positionId, sym0, sym1, price0, price1 }: { positionId: stri
     return `$${n.toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}`;
   };
 
-  if (loading) return <span className="text-muted-foreground">~</span>;
+  if (loading) return (
+    <span className="inline-block h-3 w-12 rounded bg-muted/40 animate-pulse align-middle" />
+  );
   if (raw0 === null || raw1 === null) return <span className="text-muted-foreground" title={lastError ? `Fees unavailable: ${lastError}` : undefined}>N/A</span>;
 
   // Convert using decimals from pools config
@@ -2880,7 +2883,11 @@ export default function PoolDetailPage() {
                                 <div className="flex flex-col gap-1 items-start">
                                   <div className="text-xs text-muted-foreground">Position Value</div>
                                   <div className="flex items-center gap-2 truncate">
-                                    <div className="text-xs font-medium truncate">~${calculatePositionUsd(position).toFixed(2)}</div>
+                                    {isLoadingPrices ? (
+                                      <span className="inline-block h-3 w-12 rounded bg-muted/40 animate-pulse align-middle" />
+                                    ) : (
+                                      <div className="text-xs font-medium truncate">${calculatePositionUsd(position).toFixed(2)}</div>
+                                    )}
                                   </div>
                                 </div>
                               </div>
@@ -2943,7 +2950,7 @@ export default function PoolDetailPage() {
                                 <TooltipProvider delayDuration={0}>
                                   <Tooltip>
                                     <TooltipTrigger asChild>
-                                      <span className="font-mono tabular-nums flex items-center gap-1.5">
+                                      <span className="font-mono tabular-nums flex items-center gap-1.5 cursor-default">
                                         <ChevronsLeftRight className="h-3 w-3 text-muted-foreground" aria-hidden />
                                         {(() => {
                                           const baseTokenForPriceDisplay = determineBaseTokenForPriceDisplay(
@@ -2979,7 +2986,7 @@ export default function PoolDetailPage() {
                                 <TooltipProvider delayDuration={0}>
                                   <Tooltip>
                                     <TooltipTrigger asChild>
-                                      <span className="font-mono tabular-nums flex items-center gap-1.5">
+                                      <span className="font-mono tabular-nums flex items-center gap-1.5 cursor-default">
                                         <Clock3 className="h-2.5 w-2.5 text-muted-foreground" aria-hidden />
                                         {(() => {
                                           const ageSeconds = position.ageSeconds;
@@ -3033,7 +3040,7 @@ export default function PoolDetailPage() {
                                     return (
                                       <HoverCard>
                                         <HoverCardTrigger asChild>
-                                            <div className={`flex items-center justify-center h-4 rounded-md px-1.5 text-[10px] leading-none ${statusColor}`}>
+                                            <div className={`flex items-center justify-center h-4 rounded-md px-1.5 text-[10px] leading-none ${statusColor} cursor-default`}>
                                               {statusText}
                                             </div>
                                         </HoverCardTrigger>
@@ -3044,7 +3051,6 @@ export default function PoolDetailPage() {
                                           className="w-48 p-2 border border-sidebar-border bg-[#0f0f0f] text-xs shadow-lg rounded-lg"
                                         >
                                           <div className="grid gap-1">
-                                            <div className="text-[11px] font-medium text-muted-foreground mb-1">Liquidity Range</div>
                                             <div className="flex items-center justify-between">
                                               <span className="text-muted-foreground">Min. Price</span>
                                               <span className="font-mono tabular-nums">
@@ -3085,7 +3091,21 @@ export default function PoolDetailPage() {
                                             </div>
                                             <div className="flex items-center justify-between">
                                               <span className="text-muted-foreground">Current</span>
-                                              <span className="font-mono tabular-nums">{currentPrice ?? 'N/A'}</span>
+                                              <span className="font-mono tabular-nums">
+                                                {(() => {
+                                                  if (!currentPrice) return 'N/A';
+                                                  const currentNum = parseFloat(currentPrice);
+                                                  if (!Number.isFinite(currentNum) || currentNum <= 0) return 'N/A';
+                                                  const inverse = 1 / currentNum;
+                                                  const flip = inverse > currentNum;
+                                                  const displaySymbol = flip ? (position.token0.symbol || '') : (position.token1.symbol || '');
+                                                  const decimals = TOKEN_DEFINITIONS[displaySymbol as TokenSymbol]?.displayDecimals ?? 4;
+                                                  const value = flip ? inverse : currentNum;
+                                                  if (!Number.isFinite(value)) return '∞';
+                                                  if (value >= 0 && value < 1e-11) return '0';
+                                                  return value.toFixed(decimals);
+                                                })()}
+                                              </span>
                                             </div>
                                           </div>
                                         </HoverCardContent>
@@ -3119,15 +3139,17 @@ export default function PoolDetailPage() {
                                   <AnimatePresence>
                                     {showPositionMenu === position.positionId && (
                                       <motion.div
-                                        initial={{ height: 0, opacity: 0 }}
-                                        animate={{ height: 'auto', opacity: 1 }}
-                                        exit={{ height: 0, opacity: 0 }}
-                                        transition={{ duration: 0.18, ease: 'easeOut' }}
+                                        initial={{ opacity: 0, y: positionMenuOpenUp ? 6 : -6, scale: 0.98 }}
+                                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                                        exit={{ opacity: 0, y: positionMenuOpenUp ? 6 : -6, scale: 0.98 }}
+                                        transition={{ type: 'spring', stiffness: 420, damping: 26, mass: 0.6 }}
                                         className="absolute z-20 right-0 w-max min-w-[140px] rounded-md border border-sidebar-border bg-[var(--modal-background)] shadow-md overflow-hidden"
                                         style={{
                                           marginTop: positionMenuOpenUp ? undefined : 4,
                                           bottom: positionMenuOpenUp ? '100%' : undefined,
                                           marginBottom: positionMenuOpenUp ? 4 : undefined,
+                                          transformOrigin: positionMenuOpenUp ? 'bottom right' : 'top right',
+                                          willChange: 'transform, opacity',
                                         }}
                                       >
                                         <div className="p-1 grid gap-1">

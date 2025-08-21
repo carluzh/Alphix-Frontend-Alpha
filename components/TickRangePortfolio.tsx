@@ -292,7 +292,7 @@ export function TickRangePortfolio({
           const value = invert ? 1 / priceNum : priceNum;
           const decimals = invert ? (TOKEN_DEFINITIONS[s0]?.displayDecimals ?? dec0) : (TOKEN_DEFINITIONS[s1]?.displayDecimals ?? dec1);
           const denom = invert ? s0 : s1;
-          const formatted = value.toLocaleString('de-DE', { minimumFractionDigits: Math.min(2, decimals), maximumFractionDigits: decimals });
+          const formatted = value.toLocaleString('en-US', { minimumFractionDigits: Math.min(2, decimals), maximumFractionDigits: decimals });
           return `${formatted} ${denom}`;
         })() : 'Liquidity Range';
         return (

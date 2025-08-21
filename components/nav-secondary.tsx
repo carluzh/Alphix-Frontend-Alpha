@@ -3,8 +3,7 @@
 import { useState, useRef, useEffect } from "react"
 import type * as React from "react"
 import type { LucideIcon } from "lucide-react"
-import { SunIcon, MoonIcon, LaptopIcon, Trash2Icon, SettingsIcon, LogOutIcon, CheckIcon } from "lucide-react"
-import { useTheme } from "next-themes"
+import { LaptopIcon, Trash2Icon, SettingsIcon, LogOutIcon, CheckIcon } from "lucide-react"
 import { toast } from "sonner"
 import { CustomLockIcon } from "./CustomLockIcon"
 
@@ -42,7 +41,7 @@ export function NavSecondary({
 }: {
   items: NavSecondaryItem[]
 } & React.ComponentPropsWithoutRef<typeof SidebarGroup>) {
-  const { setTheme, resolvedTheme } = useTheme()
+  
 
   const [lockedItem, setLockedItem] = useState<string | null>(null)
   const timeoutRef = useRef<NodeJS.Timeout | null>(null)
@@ -87,17 +86,6 @@ export function NavSecondary({
                       className="w-56 rounded-lg border-sidebar-border"
                       style={{ backgroundColor: '#0f0f0f' }}
                     >
-                      <DropdownMenuItem onClick={() => {
-                        const currentTheme = document.documentElement.classList.contains('dark') ? 'dark' : 'light';
-                        setTheme(currentTheme === 'dark' ? 'light' : 'dark');
-                      }} className="cursor-pointer">
-                        {resolvedTheme === 'dark' ? (
-                          <MoonIcon className="mr-2 h-4 w-4" />
-                        ) : (
-                          <SunIcon className="mr-2 h-4 w-4" />
-                        )}
-                        <span>Theme</span>
-                      </DropdownMenuItem>
                       <DropdownMenuItem onClick={() => {
                         localStorage.clear();
                         toast(
