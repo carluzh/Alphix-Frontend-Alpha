@@ -5,7 +5,6 @@ import {
     PERMIT2_ADDRESS,
     PERMIT2_ABI_ALLOWANCE_STRINGS,
     Permit2Abi_allowance,
-    UNIVERSAL_ROUTER_ADDRESS,
     PERMIT_TYPES,
     PERMIT2_DOMAIN_NAME,
     PERMIT_EXPIRATION_DURATION_SECONDS,
@@ -20,17 +19,14 @@ import {
     NATIVE_TOKEN_ADDRESS
 } from '../../../lib/pools-config';
 import { iallowance_transfer_abi } from '../../../lib/abis/IAllowanceTransfer_abi';
+import { getUniversalRouterAddress } from '../../../lib/pools-config';
 
 // Define MaxUint160 constant
 const MaxUint160 = BigInt('0xffffffffffffffffffffffffffffffffffffffff');
 
-// Helper functions for chain-specific addresses
+// Helper function for Permit2 address (single network in this app)
 const getPermit2Address = (chainId: number): Address => {
     return PERMIT2_ADDRESS; // Use the constant from swap-constants
-};
-
-const getUniversalRouterAddress = (chainId: number): Address => {
-    return UNIVERSAL_ROUTER_ADDRESS; // Use the constant from swap-constants
 };
 
 // Ensure this matches the structure viem expects for signTypedData
@@ -114,7 +110,7 @@ export default async function handler(req: PreparePermitRequest, res: NextApiRes
 
         // Continue with existing ERC-20 permit logic...
         const PERMIT2_ADDRESS = getPermit2Address(chainId);
-        const UNIVERSAL_ROUTER_ADDRESS = getUniversalRouterAddress(chainId);
+        const UNIVERSAL_ROUTER_ADDRESS = getUniversalRouterAddress();
 
         if (!PERMIT2_ADDRESS || !UNIVERSAL_ROUTER_ADDRESS) {
             return res.status(400).json({ 

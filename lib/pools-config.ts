@@ -34,6 +34,7 @@ export interface PoolConfig {
 
 export interface ContractsConfig {
   poolManager: string;
+  universalRouter?: string;
   quoter: string;
   positionManager: string;
   stateView: string;
@@ -106,26 +107,15 @@ export function getPoolById(poolId: string): PoolConfig | null {
 
 // Create Token SDK instances
 export function createTokenSDK(tokenSymbol: string, chainId: number): Token | null {
-  console.log(`[createTokenSDK] Creating token for symbol: ${tokenSymbol}, chainId: ${chainId}`);
-  
+
   const tokenConfig = getToken(tokenSymbol);
-  console.log(`[createTokenSDK] Token config found:`, tokenConfig);
-  
   if (!tokenConfig) {
     console.log(`[createTokenSDK] No token config found for ${tokenSymbol}`);
     return null;
   }
-  
-  // REVERTED: Removed logic to override address for native ETH
-  // const tokenAddressForSDK = tokenSymbol === 'ETH' ? NATIVE_TOKEN_ADDRESS : tokenConfig.address;
 
-  // REVERTED: Removed debug logs related to `tokenAddressForSDK`
-  // console.log(`[createTokenSDK] Raw address from config: ${tokenConfig.address}, type: ${typeof tokenConfig.address}`);
-  // console.log(`[createTokenSDK] Address used for SDK: ${tokenAddressForSDK}, type: ${typeof tokenAddressForSDK}`);
-  
   try {
-    const checksummedAddress = getAddress(tokenConfig.address); // REVERTED to original `tokenConfig.address`
-    console.log(`[createTokenSDK] Checksummed address: ${checksummedAddress}, type: ${typeof checksummedAddress}`);
+    const checksummedAddress = getAddress(tokenConfig.address);
     
     const token = new Token(
       chainId,
@@ -133,14 +123,6 @@ export function createTokenSDK(tokenSymbol: string, chainId: number): Token | nu
       tokenConfig.decimals,
       tokenConfig.symbol
     );
-    
-    console.log(`[createTokenSDK] Created token:`, {
-      symbol: token.symbol,
-      address: token.address,
-      addressType: typeof token.address,
-      decimals: token.decimals,
-      chainId: token.chainId
-    });
     
     return token;
   } catch (error) {
@@ -177,6 +159,19 @@ export function createPoolKeyFromConfig(pool: PoolConfig) {
   };
 }
 
+// Build a canonical PoolKey by ordering currency0/currency1 via Token.sortsBefore
+export function createCanonicalPoolKey(tokenA: Token, tokenB: Token, pool: PoolConfig) {
+  const currency0 = getAddress(tokenA.sortsBefore(tokenB) ? tokenA.address : tokenB.address);
+  const currency1 = getAddress(tokenA.sortsBefore(tokenB) ? tokenB.address : tokenA.address);
+  return {
+    currency0,
+    currency1,
+    fee: pool.fee,
+    tickSpacing: pool.tickSpacing,
+    hooks: getAddress(pool.hooks)
+  };
+}
+
 // Get subgraph ID for a pool
 export function getPoolSubgraphId(poolId: string): string | null {
   const pool = getPoolById(poolId);
@@ -190,6 +185,13 @@ export function getContracts(): ContractsConfig {
 
 export function getQuoterAddress(): Address {
   return getAddress(poolsConfig.contracts.quoter);
+}
+
+export function getUniversalRouterAddress(): Address {
+  if (!poolsConfig.contracts.universalRouter) {
+    throw new Error('Missing contracts.universalRouter in config/pools.json');
+  }
+  return getAddress(poolsConfig.contracts.universalRouter);
 }
 
 export function getPositionManagerAddress(): Address {

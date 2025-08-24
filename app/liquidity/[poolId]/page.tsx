@@ -35,6 +35,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { 
   Select,
   SelectContent,
@@ -43,14 +44,17 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useWriteContract, useWaitForTransactionReceipt, useSendTransaction } from "wagmi";
+import { getPositionManagerAddress } from '@/lib/pools-config';
+import { position_manager_abi } from '@/lib/abis/PositionManager_abi';
 import { baseSepolia } from "../../../lib/wagmiConfig";
-import { getFromCache, setToCache, getUserPositionsCacheKey, getPoolStatsCacheKey, getPoolDynamicFeeCacheKey } from "../../../lib/client-cache";
+import { getFromCache, setToCache, getFromCacheWithTtl, getUserPositionsCacheKey, getPoolStatsCacheKey, getPoolDynamicFeeCacheKey, getPoolChartDataCacheKey } from "../../../lib/client-cache";
 import type { Pool } from "../../../types";
 import { AddLiquidityForm } from "../../../components/liquidity/AddLiquidityForm";
 import React from "react";
 import { useBurnLiquidity, type BurnPositionData } from "@/components/liquidity/useBurnLiquidity";
 import { useIncreaseLiquidity, type IncreasePositionData } from "@/components/liquidity/useIncreaseLiquidity";
 import { useDecreaseLiquidity, type DecreasePositionData } from "@/components/liquidity/useDecreaseLiquidity";
+import { prefetchService } from "@/lib/prefetch-service";
 
 
 import {
@@ -64,7 +68,6 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { EllipsisVerticalIcon, CopyIcon, ChevronDownIcon, ChevronsRight, ChevronsLeft } from "lucide-react";
 import { shortenAddress } from "@/lib/utils";
 
@@ -113,7 +116,15 @@ const getTokenIcon = (symbol?: string) => {
 // Format USD value (centralized)
 import { formatUSD as formatUSDShared } from "@/lib/format";
 const formatUSD = (value: number) => {
-  if (value < 0.01) return "$0";
+  if (!Number.isFinite(value) || value <= 0) return "$0.00";
+  if (value < 1_000_000) {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(value);
+  }
   return formatUSDShared(value);
 };
 
@@ -128,7 +139,7 @@ const chartConfig = {
   volumeUSD: { label: "Volume", color: "#404040" },
   tvlUSD: { label: "TVL", color: "#404040" },
   volumeTvlRatio: { label: "Vol/TVL Ratio", color: "hsl(var(--chart-3))" },
-  emaRatio: { label: "EMA (Vol/TVL)", color: "hsl(var(--chart-2))" },
+  emaRatio: { label: "Target Ratio", color: "hsl(var(--chart-2))" },
   dynamicFee: { label: "Dynamic Fee (%)", color: "#e85102" },
 } satisfies ChartConfig;
 
@@ -359,7 +370,7 @@ function TokenStack({ position, currentPoolData, getToken }: { position: Process
 }
 
 // Fees cell with hooks (precise uncollected fees)
-function FeesCell({ positionId, sym0, sym1, price0, price1 }: { positionId: string; sym0: string; sym1: string; price0: number; price1: number }) {
+function FeesCell({ positionId, sym0, sym1, price0, price1, refreshKey = 0 }: { positionId: string; sym0: string; sym1: string; price0: number; price1: number; refreshKey?: number }) {
   const { address: accountAddress } = useAccount();
   const [raw0, setRaw0] = React.useState<string | null>(null);
   const [raw1, setRaw1] = React.useState<string | null>(null);
@@ -396,12 +407,18 @@ function FeesCell({ positionId, sym0, sym1, price0, price1 }: { positionId: stri
     };
     run();
     return () => { cancelled = true; };
-  }, [positionId]);
+  }, [positionId, refreshKey]);
 
   const fmtUsd = (n: number) => {
     if (!Number.isFinite(n) || n <= 0) return '$0';
     if (n < 0.01) return '< $0.01';
     return `$${n.toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}`;
+  };
+
+  const formatTokenAmount = (amount: number) => {
+    if (!Number.isFinite(amount) || amount <= 0) return '0';
+    if (amount < 0.001) return '< 0.001';
+    return amount.toLocaleString('en-US', { maximumFractionDigits: 6, minimumFractionDigits: 0 });
   };
 
   if (loading) return (
@@ -417,7 +434,42 @@ function FeesCell({ positionId, sym0, sym1, price0, price1 }: { positionId: stri
   try { amt0 = parseFloat(formatUnits(BigInt(raw0), d0)); } catch {}
   try { amt1 = parseFloat(formatUnits(BigInt(raw1), d1)); } catch {}
   const usd = (amt0 * (price0 || 0)) + (amt1 * (price1 || 0));
-  return <span className="whitespace-nowrap">{fmtUsd(usd)}</span>;
+  
+  // If both amounts are zero, show plain text without hover
+  if (amt0 <= 0 && amt1 <= 0) {
+    return <span className="whitespace-nowrap text-muted-foreground">{fmtUsd(usd)}</span>;
+  }
+
+  return (
+    <HoverCard>
+      <HoverCardTrigger asChild>
+        <span className="whitespace-nowrap cursor-default hover:text-foreground transition-colors">
+          {fmtUsd(usd)}
+        </span>
+      </HoverCardTrigger>
+      <HoverCardContent
+        side="top"
+        align="center"
+        sideOffset={8}
+        className="p-2 border border-sidebar-border bg-[#0f0f0f] text-xs shadow-lg rounded-lg"
+      >
+        <div className="grid gap-1">
+          <div className="flex items-center justify-between">
+            <span className="text-muted-foreground">{sym0}</span>
+            <span className="font-mono tabular-nums">
+              {formatTokenAmount(amt0)}
+            </span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-muted-foreground">{sym1}</span>
+            <span className="font-mono tabular-nums">
+              {formatTokenAmount(amt1)}
+            </span>
+          </div>
+        </div>
+      </HoverCardContent>
+    </HoverCard>
+  );
 }
 
 export default function PoolDetailPage() {
@@ -431,6 +483,9 @@ export default function PoolDetailPage() {
 
   
   const { address: accountAddress, isConnected, chainId } = useAccount();
+  const { writeContract } = useWriteContract();
+  const [collectHash, setCollectHash] = useState<`0x${string}` | undefined>(undefined);
+  const { isLoading: isCollectConfirming, isSuccess: isCollectConfirmed } = useWaitForTransactionReceipt({ hash: collectHash });
   
   // Balance hooks for tokens
   const { data: token0BalanceData, isLoading: isLoadingToken0Balance } = useBalance({
@@ -530,6 +585,30 @@ export default function PoolDetailPage() {
     return 0; // Unknown
   }, [tokenPrices]);
 
+  // Unified Satsuma pool stats loader (25h volume window; 7d window for weekly)
+  const loadPoolStatsFromSubgraph = useCallback(async (apiPoolIdToUse: string, basePoolInfo: ReturnType<typeof getPoolConfiguration>) => {
+    try {
+      // Use existing server batch endpoint (keeps 25h volume logic and server-only SUBGRAPH_URL)
+      const resp = await fetch('/api/liquidity/get-pools-batch');
+      if (!resp.ok) return null;
+      const data = await resp.json();
+      if (!data?.success || !Array.isArray(data?.pools)) return null;
+      const poolIdLc = String(apiPoolIdToUse || '').toLowerCase();
+      const match = data.pools.find((p: any) => String(p.poolId || '').toLowerCase() === poolIdLc);
+      if (!match) return null;
+      return {
+        tvlUSD: Number(match.tvlUSD) || 0,
+        volume24hUSD: Number(match.volume24hUSD) || 0,
+        volume7dUSD: Number(match.volume7dUSD) || 0,
+        fees24hUSD: Number(match.fees24hUSD) || 0,
+        fees7dUSD: Number(match.fees7dUSD) || 0,
+      } as Partial<Pool> & { tvlUSD: number; volume24hUSD: number; volume7dUSD: number };
+    } catch (e) {
+      console.error('[PoolDetail] Subgraph load failed:', e);
+      return null;
+    }
+  }, []);
+
   const calculatePositionUsd = useCallback((position: ProcessedPosition): number => {
     if (!position) return 0;
     const amt0 = parseFloat(position.token0.amount || '0');
@@ -557,6 +636,26 @@ export default function PoolDetailPage() {
   const token0Symbol = positionToModify?.token0.symbol as TokenSymbol || 'aUSDC';
   const token1Symbol = positionToModify?.token1.symbol as TokenSymbol || 'aUSDT';
 
+  // Dynamic balances for the modal tokens (handles native vs ERC20)
+  const modalToken0IsNative = !!positionToModify?.token0.address && positionToModify.token0.address.toLowerCase() === '0x0000000000000000000000000000000000000000';
+  const modalToken1IsNative = !!positionToModify?.token1.address && positionToModify.token1.address.toLowerCase() === '0x0000000000000000000000000000000000000000';
+
+  const { data: modalToken0BalanceData } = useBalance({
+    address: accountAddress,
+    token: modalToken0IsNative ? undefined : (positionToModify?.token0.address as `0x${string}` | undefined),
+    chainId,
+    query: { enabled: !!accountAddress && !!chainId && !!positionToModify?.token0.address },
+  });
+  const { data: modalToken1BalanceData } = useBalance({
+    address: accountAddress,
+    token: modalToken1IsNative ? undefined : (positionToModify?.token1.address as `0x${string}` | undefined),
+    chainId,
+    query: { enabled: !!accountAddress && !!chainId && !!positionToModify?.token1.address },
+  });
+
+  const displayModalToken0Balance = modalToken0BalanceData ? getFormattedDisplayBalance(parseFloat(modalToken0BalanceData.formatted), token0Symbol) : "~";
+  const displayModalToken1Balance = modalToken1BalanceData ? getFormattedDisplayBalance(parseFloat(modalToken1BalanceData.formatted), token1Symbol) : "~";
+
   // State for increase modal inputs
   const [increaseAmount0, setIncreaseAmount0] = useState<string>("");
   const [increaseAmount1, setIncreaseAmount1] = useState<string>("");
@@ -581,6 +680,17 @@ export default function PoolDetailPage() {
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const isMobile = useIsMobile();
 
+  // Determine productive withdraw side for OOR parity with Add
+  const withdrawProductiveSide = useMemo<null | 'amount0' | 'amount1'>(() => {
+    if (!positionToBurn || positionToBurn.isInRange) return null;
+    const tick = currentPoolTick;
+    const below = tick !== null ? tick < positionToBurn.tickLower : positionToBurn.tickLower > 0;
+    const above = tick !== null ? tick > positionToBurn.tickUpper : positionToBurn.tickUpper < 0;
+    if (below) return 'amount0';
+    if (above) return 'amount1';
+    return null;
+  }, [positionToBurn, currentPoolTick]);
+
   // New state variables to track if amounts exceed balance/position
   const [isIncreaseAmountValid, setIsIncreaseAmountValid] = useState(true);
 
@@ -593,6 +703,10 @@ export default function PoolDetailPage() {
   // State for position menu
   const [showPositionMenu, setShowPositionMenu] = useState<string | null>(null);
   const [positionMenuOpenUp, setPositionMenuOpenUp] = useState<boolean>(false);
+
+  // Debounce versioning to avoid stale API results applying to current inputs
+  const increaseCalcVersionRef = React.useRef(0);
+  const withdrawCalcVersionRef = React.useRef(0);
 
   // Track window width for responsive chart
   useEffect(() => {
@@ -758,24 +872,64 @@ export default function PoolDetailPage() {
   }, [currentPoolData, apiChartData]); // Run when data is loaded
 
   // Memoized callback functions to prevent infinite re-renders
+  const refetchPositionsOnly = useCallback(async () => {
+    try {
+      if (!poolId || !isConnected || !accountAddress) return;
+      const basePoolInfo = getPoolConfiguration(poolId);
+      if (!basePoolInfo) return;
+      const res = await fetch(`/api/liquidity/get-positions?ownerAddress=${accountAddress}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!Array.isArray(data)) return;
+      const subgraphId = (basePoolInfo.subgraphId || '').toLowerCase();
+      const [poolToken0Raw, poolToken1Raw] = basePoolInfo.pair.split(' / ');
+      const poolToken0 = poolToken0Raw?.trim().toUpperCase();
+      const poolToken1 = poolToken1Raw?.trim().toUpperCase();
+      const filtered = data.filter((pos: any) => {
+        const poolMatch = subgraphId && String(pos.poolId || '').toLowerCase() === subgraphId;
+        if (poolMatch) return true;
+        const p0 = pos.token0.symbol?.trim().toUpperCase();
+        const p1 = pos.token1.symbol?.trim().toUpperCase();
+        return (p0 === poolToken0 && p1 === poolToken1) || (p0 === poolToken1 && p1 === poolToken0);
+      });
+      setUserPositions(filtered);
+    } catch (e) {
+      console.warn('Refetch positions failed', e);
+    }
+  }, [poolId, isConnected, accountAddress]);
+
+  // Subscribe once to centralized positions refresh events
+  useEffect(() => {
+    if (!isConnected || !accountAddress) return;
+    const unsubscribe = prefetchService.addPositionsListener(accountAddress, () => {
+      refetchPositionsOnly();
+    });
+    return unsubscribe;
+  }, [isConnected, accountAddress, refetchPositionsOnly]);
   const onLiquidityBurnedCallback = useCallback(() => {
-    toast.success("Position burn successful! Refreshing your positions...");
-    setRefreshTrigger(prev => prev + 1); // Trigger refresh
-    setShowBurnConfirmDialog(false); // Close modal after successful transaction
+    toast.success("Position Closed", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
+    setShowBurnConfirmDialog(false);
     setPositionToBurn(null);
   }, []);
 
   const onLiquidityIncreasedCallback = useCallback(() => {
-    toast.success("Position increased successfully! Refreshing your positions...");
-    setRefreshTrigger(prev => prev + 1); // Trigger refresh
+    toast.success("Position Increased", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
+    setShowIncreaseModal(false);
+    // Also refresh pool stats and positions to reflect the change immediately
+    try { refreshAfterLiquidityAdded(); } catch {}
   }, []);
 
   const onLiquidityDecreasedCallback = useCallback(() => {
-    toast.success("Position modified successfully! Refreshing your positions...");
-    setRefreshTrigger(prev => prev + 1); // Trigger refresh
-    setShowBurnConfirmDialog(false); // Close modal after successful transaction
+    // If this came from a compound flow, suppress page-level toast; the hook already showed a single compound toast.
+    if (isCompoundInProgressRef.current) {
+      isCompoundInProgressRef.current = false;
+    } else {
+      const closing = isFullBurn || isFullWithdraw;
+      toast.success(closing ? "Position Closed" : "Position Decreased", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
+    }
+    setShowBurnConfirmDialog(false);
     setPositionToBurn(null);
-  }, []);
+  }, [isFullBurn, isFullWithdraw]);
 
   // Initialize the liquidity modification hooks
   const { burnLiquidity, isLoading: isBurningLiquidity } = useBurnLiquidity({
@@ -786,9 +940,96 @@ export default function PoolDetailPage() {
     onLiquidityIncreased: onLiquidityIncreasedCallback,
   });
 
-  const { decreaseLiquidity, isLoading: isDecreasingLiquidity } = useDecreaseLiquidity({
+  const pendingCompoundRef = useRef<null | { position: ProcessedPosition; raw0: string; raw1: string }>(null);
+
+  const { decreaseLiquidity, compoundFees, isLoading: isDecreasingLiquidity } = useDecreaseLiquidity({
     onLiquidityDecreased: onLiquidityDecreasedCallback,
+    onFeesCollected: () => {
+      const pending = pendingCompoundRef.current;
+      if (pending && pending.position && pending.raw0 && pending.raw1) {
+        try {
+          const pos = pending.position;
+          const token0Def = TOKEN_DEFINITIONS[pos.token0.symbol as TokenSymbol];
+          const token1Def = TOKEN_DEFINITIONS[pos.token1.symbol as TokenSymbol];
+          // Strictly round down by reducing 1 wei if non-zero to avoid any rounding up edge cases
+          const raw0 = BigInt(pending.raw0);
+          const raw1 = BigInt(pending.raw1);
+          const raw0Floored = raw0 > 0n ? raw0 - 1n : 0n;
+          const raw1Floored = raw1 > 0n ? raw1 - 1n : 0n;
+          const amt0Str = token0Def ? formatUnits(raw0Floored, token0Def.decimals) : '0';
+          const amt1Str = token1Def ? formatUnits(raw1Floored, token1Def.decimals) : '0';
+
+          const incData: IncreasePositionData = {
+            tokenId: pos.positionId,
+            token0Symbol: pos.token0.symbol as TokenSymbol,
+            token1Symbol: pos.token1.symbol as TokenSymbol,
+            additionalAmount0: amt0Str,
+            additionalAmount1: amt1Str,
+            poolId: pos.poolId,
+            tickLower: pos.tickLower,
+            tickUpper: pos.tickUpper,
+          };
+
+          pendingCompoundRef.current = null;
+          increaseLiquidity(incData);
+          toast.success("Compounding Fees", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
+        } catch (e) {
+          console.error('Compound follow-up failed:', e);
+          pendingCompoundRef.current = null;
+          toast.error("Failed to compound after collection", { icon: <OctagonX className="h-4 w-4 text-red-500" /> });
+        }
+      } else {
+        toast.success("Fees Collected", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
+        setRefreshTrigger(prev => prev + 1);
+      }
+    },
   });
+
+  // Track compound intent so we can suppress page-level success toast
+  const isCompoundInProgressRef = useRef(false);
+
+  // Handle confirmation lifecycle for SDK-based collect (claim fees / compound)
+  useEffect(() => {
+    if (!isCollectConfirmed || !collectHash) return;
+    const pending = pendingCompoundRef.current;
+    if (pending && pending.position && pending.raw0 && pending.raw1) {
+      try {
+        const pos = pending.position;
+        const token0Def = TOKEN_DEFINITIONS[pos.token0.symbol as TokenSymbol];
+        const token1Def = TOKEN_DEFINITIONS[pos.token1.symbol as TokenSymbol];
+        const raw0 = BigInt(pending.raw0);
+        const raw1 = BigInt(pending.raw1);
+        const raw0Floored = raw0 > 0n ? raw0 - 1n : 0n;
+        const raw1Floored = raw1 > 0n ? raw1 - 1n : 0n;
+        const amt0Str = token0Def ? formatUnits(raw0Floored, token0Def.decimals) : '0';
+        const amt1Str = token1Def ? formatUnits(raw1Floored, token1Def.decimals) : '0';
+        const incData: IncreasePositionData = {
+          tokenId: pos.positionId,
+          token0Symbol: pos.token0.symbol as TokenSymbol,
+          token1Symbol: pos.token1.symbol as TokenSymbol,
+          additionalAmount0: amt0Str,
+          additionalAmount1: amt1Str,
+          poolId: pos.poolId,
+          tickLower: pos.tickLower,
+          tickUpper: pos.tickUpper,
+        };
+        pendingCompoundRef.current = null;
+        increaseLiquidity(incData);
+        toast.success('Compounding Fees', { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
+      } catch (e) {
+        console.error('Compound follow-up failed (SDK path):', e);
+        pendingCompoundRef.current = null;
+        toast.error('Failed to compound after collection', { icon: <OctagonX className="h-4 w-4 text-red-500" /> });
+        setRefreshTrigger(prev => prev + 1);
+      }
+    } else {
+      toast.success('Fees Collected', { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
+      setRefreshTrigger(prev => prev + 1);
+    }
+    // Delay refreshKey bump slightly to ensure subgraph/StateView settles
+    setTimeout(() => setRefreshTrigger(prev => prev + 1), 500);
+    setCollectHash(undefined);
+  }, [isCollectConfirmed, collectHash, increaseLiquidity]);
 
 
 
@@ -798,33 +1039,58 @@ export default function PoolDetailPage() {
 
     // Start loading chart data
     setIsLoadingChartData(true);
-    // Fetch chart data from the new API route
-    fetch(`/api/liquidity/chart-data/${poolId}`)
-      .then(res => {
-        if (!res.ok) {
-          throw new Error(`Failed to fetch chart data: ${res.statusText}`);
+    // Load ratios/fee from historical endpoint and merge Volume/TVL from chart-data endpoint
+    ;(async () => {
+      try {
+        const basePoolInfoTmp = getPoolConfiguration(poolId);
+        const subgraphIdForHist = basePoolInfoTmp?.subgraphId || '';
+        if (!subgraphIdForHist) throw new Error('Missing subgraph id for pool');
+        // 10-minute cached chart merge
+        const chartCacheKey = getPoolChartDataCacheKey(poolId);
+        const cached = getFromCacheWithTtl<ChartDataPoint[]>(chartCacheKey, 10 * 60 * 1000);
+        if (cached && cached.length) {
+          setApiChartData(cached);
+          return;
         }
-        return res.json();
-      })
-      .then(data => {
-        // Check if the response has a data property that is an array
-        if (data && Array.isArray(data.data)) { 
-          setApiChartData(data.data);
-        } else if (Array.isArray(data)) { // Fallback if API returns array directly
-          setApiChartData(data)
-        }else {
-          console.error("Chart API response is not in the expected format:", data);
-          setApiChartData([]); // Set to empty array on error or bad format
+        // Reduce heavy volume/TVL window on smaller screens to speed up first paint
+        const targetDays = windowWidth < 1500 ? 30 : 60;
+        const [histRes, volTvlRes] = await Promise.all([
+          fetch(`/api/liquidity/get-historical-dynamic-fees?poolId=${encodeURIComponent(subgraphIdForHist)}&days=${targetDays}`),
+          fetch(`/api/liquidity/chart-data/${encodeURIComponent(poolId)}?days=${targetDays}`),
+        ]);
+        if (!histRes.ok) throw new Error(`Failed ratios: ${histRes.statusText}`);
+        if (!volTvlRes.ok) throw new Error(`Failed vol/tvl: ${volTvlRes.statusText}`);
+        const histJson = await histRes.json();
+        const volTvlJson = await volTvlRes.json();
+        if (!Array.isArray(histJson)) throw new Error('Unexpected historical response');
+        const volTvlMap = new Map<string, { volumeUSD: number; tvlUSD: number }>();
+        if (volTvlJson?.data && Array.isArray(volTvlJson.data)) {
+          for (const d of volTvlJson.data) {
+            if (d?.date) volTvlMap.set(d.date, { volumeUSD: Number(d.volumeUSD) || 0, tvlUSD: Number(d.tvlUSD) || 0 });
+          }
         }
-      })
-      .catch(error => {
-        console.error("Failed to fetch chart data from API:", error);
-        toast.error("Could not load pool chart data.", { description: error.message });
-        setApiChartData([]); // Set to empty array on error
-      })
-      .finally(() => {
+        const mapped: ChartDataPoint[] = histJson.map((h: any) => {
+          const date = String(h?.timeLabel || '');
+          const volTvl = volTvlMap.get(date) || { volumeUSD: 0, tvlUSD: 0 };
+          return {
+            date,
+            volumeUSD: volTvl.volumeUSD,
+            tvlUSD: volTvl.tvlUSD,
+            volumeTvlRatio: Number(h?.volumeTvlRatio) || 0,
+            emaRatio: Number(h?.emaRatio) || 0,
+            dynamicFee: Number(h?.dynamicFee) || 0,
+          };
+        });
+        setApiChartData(mapped);
+        setToCache(chartCacheKey, mapped);
+      } catch (error: any) {
+        console.error('Failed to fetch historical ratios for chart:', error);
+        toast.error('Could not load pool chart data.', { description: error?.message || String(error) });
+        setApiChartData([]);
+      } finally {
         setIsLoadingChartData(false);
-      });
+      }
+    })();
 
     const basePoolInfo = getPoolConfiguration(poolId);
     if (!basePoolInfo) {
@@ -859,40 +1125,23 @@ export default function PoolDetailPage() {
       console.error("Failed to fetch pool state:", error);
     }
 
-    // 1. Fetch/Cache Pool Stats (Volume, Fees, TVL)
+    // 1. Fetch/Cache Pool Stats (Volume 24h/7d via Satsuma; TVL)
     let poolStats: Partial<Pool> | null = getFromCache(getPoolStatsCacheKey(apiPoolIdToUse));
     if (poolStats) {
       console.log(`[Cache HIT] Using cached stats for pool detail: ${apiPoolIdToUse}`);
     } else {
-      console.log(`[Cache MISS] Fetching stats from API for pool detail: ${apiPoolIdToUse}`);
+      console.log(`[Cache MISS] Fetching stats from Satsuma for pool detail: ${apiPoolIdToUse}`);
       try {
-        const [res24h, res7d, resTvl] = await Promise.all([
-          fetch(`/api/liquidity/get-rolling-volume-fees?poolId=${apiPoolIdToUse}&days=1`),
-          fetch(`/api/liquidity/get-rolling-volume-fees?poolId=${apiPoolIdToUse}&days=7`),
-          fetch(`/api/liquidity/get-pool-tvl?poolId=${apiPoolIdToUse}`)
-        ]);
-
-        if (!res24h.ok || !res7d.ok || !resTvl.ok) {
-          console.error(`Failed to fetch all stats for pool detail ${apiPoolIdToUse}.`);
-          // Handle partial failures if necessary, or just mark as error
-        } else {
-          const data24h = await res24h.json();
-          const data7d = await res7d.json();
-          const dataTvl = await resTvl.json();
+        const loaded = await loadPoolStatsFromSubgraph(apiPoolIdToUse, basePoolInfo);
+        if (loaded) {
           poolStats = {
-            volume24hUSD: parseFloat(data24h.volumeUSD),
-            fees24hUSD: parseFloat(data7d.feesUSD),
-            volume7dUSD: parseFloat(data7d.volumeUSD),
-            fees7dUSD: parseFloat(data7d.feesUSD),
-            tvlUSD: parseFloat(dataTvl.tvlUSD),
-            // APR might need its own source or calculation
-          };
+            ...loaded,
+          } as Partial<Pool>;
           setToCache(getPoolStatsCacheKey(apiPoolIdToUse), poolStats);
           console.log(`[Cache SET] Cached stats for pool detail: ${apiPoolIdToUse}`);
         }
       } catch (error) {
-        console.error(`Error fetching stats for pool detail ${apiPoolIdToUse}:`, error);
-        // poolStats remains null or previous cached value if any part fails
+        console.error(`Error loading Satsuma stats for pool detail ${apiPoolIdToUse}:`, error);
       }
     }
 
@@ -1002,11 +1251,14 @@ export default function PoolDetailPage() {
 
       // Filter positions for this specific pool
       if (allUserPositions && allUserPositions.length > 0) {
+        const subgraphId = (basePoolInfo.subgraphId || '').toLowerCase();
         const [poolToken0Raw, poolToken1Raw] = basePoolInfo.pair.split(' / ');
         const poolToken0 = poolToken0Raw?.trim().toUpperCase();
         const poolToken1 = poolToken1Raw?.trim().toUpperCase();
         
         const filteredPositions = allUserPositions.filter(pos => {
+          const poolMatch = subgraphId && String(pos.poolId || '').toLowerCase() === subgraphId;
+          if (poolMatch) return true;
           const posToken0 = pos.token0.symbol?.trim().toUpperCase();
           const posToken1 = pos.token1.symbol?.trim().toUpperCase();
           return (posToken0 === poolToken0 && posToken1 === poolToken1) ||
@@ -1088,11 +1340,14 @@ export default function PoolDetailPage() {
             setToCache(userPositionsCacheKey, data);
 
             // Filter positions for this specific pool
+            const subgraphId = (basePoolInfo.subgraphId || '').toLowerCase();
             const [poolToken0Raw, poolToken1Raw] = basePoolInfo.pair.split(' / ');
             const poolToken0 = poolToken0Raw?.trim().toUpperCase();
             const poolToken1 = poolToken1Raw?.trim().toUpperCase();
             
             const filteredPositions = data.filter((pos: ProcessedPosition) => {
+              const poolMatch = subgraphId && String(pos.poolId || '').toLowerCase() === subgraphId;
+              if (poolMatch) return true;
               const posToken0 = pos.token0.symbol?.trim().toUpperCase();
               const posToken1 = pos.token1.symbol?.trim().toUpperCase();
               return (posToken0 === poolToken0 && posToken1 === poolToken1) ||
@@ -1178,7 +1433,26 @@ export default function PoolDetailPage() {
     // Reset increase state
     setIncreaseAmount0("");
     setIncreaseAmount1("");
-    setIncreaseActiveInputSide(null);
+    // Enforce single-sided on open for out-of-range positions
+    if (!position.isInRange) {
+      // Use live pool tick if available; otherwise infer from ticks
+      const tick = currentPoolTick;
+      const below = tick !== null ? tick < position.tickLower : position.tickLower > 0;
+      const above = tick !== null ? tick > position.tickUpper : position.tickUpper < 0;
+      if (below) {
+        // Only token0 is productive
+        setIncreaseActiveInputSide('amount0');
+        setIncreaseAmount1('0');
+      } else if (above) {
+        // Only token1 is productive
+        setIncreaseActiveInputSide('amount1');
+        setIncreaseAmount0('0');
+      } else {
+        setIncreaseActiveInputSide(null);
+      }
+    } else {
+      setIncreaseActiveInputSide(null);
+    }
     setIncreasePercentage(0);
     setIsIncreaseAmountValid(true);
     setShowIncreaseModal(true);
@@ -1210,9 +1484,22 @@ export default function PoolDetailPage() {
     };
   };
 
+  // Sanitize numeric decimal inputs to avoid letters or multiple dots
+  const sanitizeDecimalInput = (input: string) => {
+    if (!input) return '';
+    const cleaned = input.replace(/[^0-9.]/g, '');
+    const firstDot = cleaned.indexOf('.');
+    if (firstDot === -1) return cleaned;
+    // keep first dot, remove subsequent dots
+    const head = cleaned.slice(0, firstDot + 1);
+    const tail = cleaned.slice(firstDot + 1).replace(/\./g, '');
+    return head + tail;
+  };
+
   // Calculate corresponding amount for increase
   const calculateIncreaseAmount = useCallback(
     debounce(async (inputAmount: string, inputSide: 'amount0' | 'amount1') => {
+      const version = ++increaseCalcVersionRef.current;
       if (!positionToModify || !inputAmount || parseFloat(inputAmount) <= 0) {
         if (inputSide === 'amount0') setIncreaseAmount1("");
         else setIncreaseAmount0("");
@@ -1233,7 +1520,7 @@ export default function PoolDetailPage() {
           return;
         }
 
-        // For in-range positions, use the API for proper calculations
+        // In-range: compute counterpart amount via API for good UX
         const calcResponse = await fetch('/api/liquidity/calculate-liquidity-parameters', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1250,19 +1537,18 @@ export default function PoolDetailPage() {
 
         if (!calcResponse.ok) {
           const errorData = await calcResponse.json();
-          throw new Error(errorData.message || "Failed to calculate parameters.");
+          throw new Error(errorData.message || 'Failed to calculate parameters.');
         }
 
         const result = await calcResponse.json();
+        if (version !== increaseCalcVersionRef.current) return; // stale response, drop
 
         if (inputSide === 'amount0') {
-          // We input amount0, so set the calculated amount1
           const amount1InWei = result.amount1;
           const token1Decimals = TOKEN_DEFINITIONS[positionToModify.token1.symbol as TokenSymbol]?.decimals || 18;
           const formattedAmount1 = formatUnits(BigInt(amount1InWei), token1Decimals);
           setIncreaseAmount1(formatTokenDisplayAmount(formattedAmount1));
         } else {
-          // We input amount1, so set the calculated amount0
           const amount0InWei = result.amount0;
           const token0Decimals = TOKEN_DEFINITIONS[positionToModify.token0.symbol as TokenSymbol]?.decimals || 18;
           const formattedAmount0 = formatUnits(BigInt(amount0InWei), token0Decimals);
@@ -1324,59 +1610,7 @@ export default function PoolDetailPage() {
           return;
         }
 
-        // For in-range positions, use the API for proper calculations
-        // Map position token addresses to correct token symbols from our configuration
-        const getTokenSymbolByAddress = (address: string): TokenSymbol | null => {
-          const normalizedAddress = address.toLowerCase();
-          for (const [symbol, tokenConfig] of Object.entries(TOKEN_DEFINITIONS)) {
-            if (tokenConfig.address.toLowerCase() === normalizedAddress) {
-              return symbol as TokenSymbol;
-            }
-          }
-          return null;
-        };
-        
-        const token0Symbol = getTokenSymbolByAddress(positionToModify.token0.address);
-        const token1Symbol = getTokenSymbolByAddress(positionToModify.token1.address);
-        
-        if (!token0Symbol || !token1Symbol) {
-          throw new Error(`Token definitions not found for position tokens: ${positionToModify.token0.address}, ${positionToModify.token1.address}`);
-        }
-        
-        const calcResponse = await fetch('/api/liquidity/calculate-liquidity-parameters', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            token0Symbol: token0Symbol,
-            token1Symbol: token1Symbol,
-            inputAmount: inputAmount,
-            inputTokenSymbol: inputSide === 'amount0' ? token0Symbol : token1Symbol,
-            userTickLower: positionToModify.tickLower,
-            userTickUpper: positionToModify.tickUpper,
-            chainId: chainId,
-          }),
-        });
-
-        if (!calcResponse.ok) {
-          const errorData = await calcResponse.json();
-          throw new Error(errorData.message || "Failed to calculate parameters.");
-        }
-
-        const result = await calcResponse.json();
-
-        if (inputSide === 'amount0') {
-          // We input amount0, so set the calculated amount1
-          const amount1InWei = result.amount1;
-          const token1Decimals = TOKEN_DEFINITIONS[positionToModify.token1.symbol as TokenSymbol]?.decimals || 18;
-          const formattedAmount1 = formatUnits(BigInt(amount1InWei), token1Decimals);
-          setDecreaseAmount1(formatTokenDisplayAmount(formattedAmount1));
-        } else {
-          // We input amount1, so set the calculated amount0
-          const amount0InWei = result.amount0;
-          const token0Decimals = TOKEN_DEFINITIONS[positionToModify.token0.symbol as TokenSymbol]?.decimals || 18;
-          const formattedAmount0 = formatUnits(BigInt(amount0InWei), token0Decimals);
-          setDecreaseAmount0(formatTokenDisplayAmount(formattedAmount0));
-        }
+        // In-range: skip server calc; percentage-based remove will be applied at submit.
 
         // Check if this is effectively a full burn
         const maxAmount0 = parseFloat(positionToModify.token0.amount);
@@ -1401,6 +1635,7 @@ export default function PoolDetailPage() {
   // Calculate corresponding amount for withdraw
   const calculateWithdrawAmount = useCallback(
     debounce(async (inputAmount: string, inputSide: 'amount0' | 'amount1') => {
+      const version = ++withdrawCalcVersionRef.current;
       if (!positionToBurn || !inputAmount || parseFloat(inputAmount) <= 0) {
         if (inputSide === 'amount0') setWithdrawAmount1("");
         else setWithdrawAmount0("");
@@ -1440,33 +1675,15 @@ export default function PoolDetailPage() {
           return;
         }
 
-        // For in-range positions, use the API for proper calculations
-        // Map position token addresses to correct token symbols from our configuration
-        const getTokenSymbolByAddress = (address: string): TokenSymbol | null => {
-          const normalizedAddress = address.toLowerCase();
-          for (const [symbol, tokenConfig] of Object.entries(TOKEN_DEFINITIONS)) {
-            if (tokenConfig.address.toLowerCase() === normalizedAddress) {
-              return symbol as TokenSymbol;
-            }
-          }
-          return null;
-        };
-        
-        const token0Symbol = getTokenSymbolByAddress(positionToBurn.token0.address);
-        const token1Symbol = getTokenSymbolByAddress(positionToBurn.token1.address);
-        
-        if (!token0Symbol || !token1Symbol) {
-          throw new Error(`Token definitions not found for position tokens: ${positionToBurn.token0.address}, ${positionToBurn.token1.address}`);
-        }
-        
+        // In-range: prefill counterpart amount for UX
         const calcResponse = await fetch('/api/liquidity/calculate-liquidity-parameters', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            token0Symbol: token0Symbol,
-            token1Symbol: token1Symbol,
+            token0Symbol: positionToBurn.token0.symbol,
+            token1Symbol: positionToBurn.token1.symbol,
             inputAmount: inputAmount,
-            inputTokenSymbol: inputSide === 'amount0' ? token0Symbol : token1Symbol,
+            inputTokenSymbol: inputSide === 'amount0' ? positionToBurn.token0.symbol : positionToBurn.token1.symbol,
             userTickLower: positionToBurn.tickLower,
             userTickUpper: positionToBurn.tickUpper,
             chainId: chainId,
@@ -1475,19 +1692,18 @@ export default function PoolDetailPage() {
 
         if (!calcResponse.ok) {
           const errorData = await calcResponse.json();
-          throw new Error(errorData.message || "Failed to calculate parameters.");
+          throw new Error(errorData.message || 'Failed to calculate parameters.');
         }
 
         const result = await calcResponse.json();
+        if (version !== withdrawCalcVersionRef.current) return; // stale response, drop
 
         if (inputSide === 'amount0') {
-          // We input amount0, so set the calculated amount1
           const amount1InWei = result.amount1;
           const token1Decimals = TOKEN_DEFINITIONS[positionToBurn.token1.symbol as TokenSymbol]?.decimals || 18;
           const formattedAmount1 = formatUnits(BigInt(amount1InWei), token1Decimals);
           setWithdrawAmount1(formatTokenDisplayAmount(formattedAmount1));
         } else {
-          // We input amount1, so set the calculated amount0
           const amount0InWei = result.amount0;
           const token0Decimals = TOKEN_DEFINITIONS[positionToBurn.token0.symbol as TokenSymbol]?.decimals || 18;
           const formattedAmount0 = formatUnits(BigInt(amount0InWei), token0Decimals);
@@ -1593,6 +1809,28 @@ export default function PoolDetailPage() {
       const amount1 = parseFloat(positionToBurn.token1.amount);
       const percentage = snappedPercentage / 100; // percentage of max
 
+      // Special-case: 100% must map to exact full position amounts (no rounding)
+      if (snappedPercentage === 100) {
+        setIsFullWithdraw(true);
+        if (amount0 > 0 && amount1 > 0) {
+          setWithdrawAmount0(positionToBurn.token0.amount);
+          setWithdrawAmount1(positionToBurn.token1.amount);
+          setWithdrawActiveInputSide('amount0');
+        } else if (amount0 > 0) {
+          setWithdrawAmount0(positionToBurn.token0.amount);
+          setWithdrawAmount1('0');
+          setWithdrawActiveInputSide('amount0');
+        } else if (amount1 > 0) {
+          setWithdrawAmount1(positionToBurn.token1.amount);
+          setWithdrawAmount0('0');
+          setWithdrawActiveInputSide('amount1');
+        } else {
+          setWithdrawAmount0('');
+          setWithdrawAmount1('');
+        }
+        return;
+      }
+
       setIsFullWithdraw(snappedPercentage >= 99);
 
       if (amount0 > 0 && amount1 > 0) {
@@ -1663,6 +1901,44 @@ export default function PoolDetailPage() {
     const balance1 = parseFloat(token1BalanceData?.formatted || "0");
     const percentage = snappedPercentage / 100;
 
+    // Special-case: 100% must map to exact full wallet balance on the anchor side
+    if (snappedPercentage === 100) {
+      if (balance0 > 0 && balance1 > 0) {
+        const full0 = token0BalanceData?.formatted || '0';
+        setIncreaseAmount0(full0);
+        setIncreaseActiveInputSide('amount0');
+        if (parseFloat(full0) > 0) {
+          calculateIncreaseAmount(full0, 'amount0');
+        } else {
+          setIncreaseAmount1('');
+        }
+      } else if (balance1 > 0) {
+        const full1 = token1BalanceData?.formatted || '0';
+        setIncreaseAmount1(full1);
+        setIncreaseActiveInputSide('amount1');
+        setIncreaseAmount0('0');
+        if (parseFloat(full1) > 0) {
+          calculateIncreaseAmount(full1, 'amount1');
+        } else {
+          setIncreaseAmount0('');
+        }
+      } else if (balance0 > 0) {
+        const full0 = token0BalanceData?.formatted || '0';
+        setIncreaseAmount0(full0);
+        setIncreaseActiveInputSide('amount0');
+        setIncreaseAmount1('0');
+        if (parseFloat(full0) > 0) {
+          calculateIncreaseAmount(full0, 'amount0');
+        } else {
+          setIncreaseAmount1('');
+        }
+      } else {
+        setIncreaseAmount0('');
+        setIncreaseAmount1('');
+      }
+      return;
+    }
+
     if (balance0 > 0 && balance1 > 0) {
       const displayDecimals0 = TOKEN_DEFINITIONS[positionToModify?.token0.symbol as TokenSymbol]?.displayDecimals ?? 4;
       const calculatedAmount0 = (balance0 * percentage).toFixed(displayDecimals0);
@@ -1710,6 +1986,15 @@ export default function PoolDetailPage() {
       setIncreaseActiveInputSide('amount1');
     }
     
+    // Out-of-range: prohibit input on the non-active token
+    if (positionToModify && !positionToModify.isInRange) {
+      if (tokenSide === 'amount0') {
+        setIncreaseAmount1('0');
+      } else {
+        setIncreaseAmount0('0');
+      }
+    }
+
     if (newAmount) {
       const maxAmount = tokenSide === 'amount0' 
         ? parseFloat(token0BalanceData?.formatted || "0")
@@ -1743,6 +2028,11 @@ export default function PoolDetailPage() {
         toast.error("Please enter a valid amount to add");
         return;
       }
+      // Enforce only one side (single-sided) when out-of-range
+      if (amount0Num > 0 && amount1Num > 0) {
+        if (increaseActiveInputSide === 'amount0') setIncreaseAmount1('0');
+        else setIncreaseAmount0('0');
+      }
     }
 
     const increaseData: IncreasePositionData = {
@@ -1757,7 +2047,7 @@ export default function PoolDetailPage() {
     };
 
     increaseLiquidity(increaseData);
-    setShowIncreaseModal(false);
+    // Keep modal open until success/failure callback closes it
   };
 
   // Handle decrease transaction
@@ -1809,7 +2099,8 @@ export default function PoolDetailPage() {
       tickUpper: positionToModify.tickUpper,
     };
 
-    decreaseLiquidity(decreaseData, 0); // 0 percentage means use specific amounts from decreaseData
+    // Use amounts mode (percent=0) for precise removal in all cases
+    decreaseLiquidity(decreaseData, 0);
     setShowDecreaseModal(false);
   };
 
@@ -1817,6 +2108,15 @@ export default function PoolDetailPage() {
   const handleConfirmWithdraw = () => {
     if (!positionToBurn || (!withdrawAmount0 && !withdrawAmount1)) {
       toast.error("Please enter at least one amount to withdraw");
+      return;
+    }
+    // Prevent over-withdraw relative to position balances
+    const max0 = parseFloat(positionToBurn.token0.amount || '0');
+    const max1 = parseFloat(positionToBurn.token1.amount || '0');
+    const in0 = parseFloat(withdrawAmount0 || '0');
+    const in1 = parseFloat(withdrawAmount1 || '0');
+    if ((in0 > max0 + 1e-12) || (in1 > max1 + 1e-12)) {
+      toast.error("Invalid Withdraw Amount", { description: "Amount exceeds position balance." });
       return;
     }
     
@@ -1850,19 +2150,38 @@ export default function PoolDetailPage() {
       return;
     }
 
+    // Compute effective percentage and full-burn intent from current inputs (authoritative)
+    const amt0 = parseFloat(withdrawAmount0 || '0');
+    const amt1 = parseFloat(withdrawAmount1 || '0');
+    const max0Eff = parseFloat(positionToBurn.token0.amount || '0');
+    const max1Eff = parseFloat(positionToBurn.token1.amount || '0');
+    const pct0 = max0Eff > 0 ? amt0 / max0Eff : 0;
+    const pct1 = max1Eff > 0 ? amt1 / max1Eff : 0;
+    const effectivePct = Math.max(pct0, pct1) * 100;
+    const nearFull0 = max0Eff > 0 ? pct0 >= 0.99 : true;
+    const nearFull1 = max1Eff > 0 ? pct1 >= 0.99 : true;
+    const isBurnAllEffective = positionToBurn.isInRange ? (nearFull0 && nearFull1) : (pct0 >= 0.99 || pct1 >= 0.99);
+
     const withdrawData: DecreasePositionData = {
       tokenId: positionToBurn.positionId,
       token0Symbol: token0Symbol,
       token1Symbol: token1Symbol,
       decreaseAmount0: withdrawAmount0 || "0",
       decreaseAmount1: withdrawAmount1 || "0",
-      isFullBurn: isFullWithdraw,
+      isFullBurn: isBurnAllEffective,
       poolId: positionToBurn.poolId,
       tickLower: positionToBurn.tickLower,
       tickUpper: positionToBurn.tickUpper,
+      enteredSide: withdrawActiveInputSide === 'amount0' ? 'token0' : withdrawActiveInputSide === 'amount1' ? 'token1' : undefined,
     };
 
-    decreaseLiquidity(withdrawData, 0); // 0 percentage means use specific amounts from withdrawData
+    // In-range: use percentage flow (SDK), OOR: amounts mode
+    if (positionToBurn.isInRange) {
+      const pctRounded = isBurnAllEffective ? 100 : Math.max(0, Math.min(100, Math.round(effectivePct)));
+      decreaseLiquidity(withdrawData, pctRounded);
+    } else {
+      decreaseLiquidity(withdrawData, 0);
+    }
     // Modal will close automatically when transaction completes via onLiquidityDecreasedCallback
   };
 
@@ -1885,115 +2204,116 @@ export default function PoolDetailPage() {
     <AppLayout>
       <div className="flex flex-1 flex-col">
         <div className="flex flex-1 flex-col p-3 sm:p-6 sm:px-10">
-          {/* Back button and header */}
+          {/* Header: Token icons with pair and fee inline */}
           <div className="mt-3 mb-6 sm:mt-0">
-            {/* Desktop back button */}
-            <Button 
-              variant="ghost" 
-              onClick={() => router.push('/liquidity')}
-              className="mb-4 pl-2 hidden sm:flex"
-            >
-              <ChevronLeftIcon className="mr-2 h-4 w-4" /> Back to Pools
-            </Button>
-            
-            <div className="flex items-center justify-between">
-              <div className="flex items-center group sm:mb-0 mb-0">
-                {/* Mobile back button - positioned to the left of logo icons */}
-                <Button 
-                  variant="ghost" 
-                  onClick={() => router.push('/liquidity')}
-                  className="mr-3 sm:hidden p-2 h-8 w-8"
-                >
-                  <ChevronLeftIcon className="h-4 w-4" />
-                </Button>
-                
-                <div className="relative w-20 h-10">
-                  <div className="absolute top-0 left-0 w-10 h-10 rounded-full overflow-hidden bg-background z-10">
-                    <Image 
-                      src={currentPoolData.tokens[0].icon} 
-                      alt={currentPoolData.tokens[0].symbol} 
-                      width={40} 
-                      height={40} 
-                      className="w-full h-full object-cover" 
-                    />
-                  </div>
-                  <div className="absolute top-0 left-6 w-10 h-10 rounded-full overflow-hidden bg-background z-30">
-                    <Image 
-                      src={currentPoolData.tokens[1].icon} 
-                      alt={currentPoolData.tokens[1].symbol} 
-                      width={40} 
-                      height={40} 
-                      className="w-full h-full object-cover" 
-                    />
-                  </div>
-                  {/* New background circle for cut-out effect */}
-                  <div className="absolute top-[-2px] left-[22px] w-11 h-11 rounded-full bg-[#0f0f0f] z-20"></div>
+            <div className="flex items-center group gap-3">
+              <Button 
+                variant="ghost" 
+                onClick={() => router.push('/liquidity')}
+                className="p-2 h-8 w-8"
+              >
+                <ChevronLeftIcon className="h-4 w-4" />
+                <span className="sr-only">Back to Pools</span>
+              </Button>
+              <div className="flex items-center mr-2">
+                <Image 
+                  src={currentPoolData.tokens[0].icon} 
+                  alt={currentPoolData.tokens[0].symbol} 
+                  width={40} 
+                  height={40} 
+                  className="rounded-full bg-background object-cover" 
+                />
+                <div className="-ml-4 relative z-10">
+                  <Image 
+                    src={currentPoolData.tokens[1].icon} 
+                    alt={currentPoolData.tokens[1].symbol} 
+                    width={40} 
+                    height={40} 
+                    className="rounded-full bg-background object-cover" 
+                  />
                 </div>
-                <div>
-                  <div className="flex items-center">
-                    <h1 className="text-xl font-bold">{currentPoolData.pair}</h1>
-                    <Popover open={isPopoverOpen} onOpenChange={setIsPopoverOpen}>
-                      <PopoverTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className={`ml-2 h-6 w-6 transition-opacity ${isPopoverOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
-                        >
-                          <EllipsisVerticalIcon className="h-4 w-4" />
-                          <span className="sr-only">Token Details</span>
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent className="w-48 p-2" align="start" side="right" style={{ transform: 'translateY(-8px)' }}>
-                        <div className="grid gap-1">
-                          <div className="flex justify-between items-center">
-                            <span className="text-sm">{currentPoolData.tokens[0].symbol}</span>
-                            <div className="flex items-center gap-1">
-                              <span className="text-xs text-muted-foreground font-mono break-all">{currentPoolData.tokens[0].address ? shortenAddress(currentPoolData.tokens[0].address) : 'N/A'}</span>
-                              {currentPoolData.tokens[0].address && (
-                                <Button 
-                                  variant="ghost" 
-                                  size="icon" 
-                                  className="h-4 w-4 text-muted-foreground hover:bg-muted/30"
-                                  onClick={() => {
-                                    navigator.clipboard.writeText(currentPoolData.tokens[0].address!);
-                                    toast.success("Address copied to clipboard!");
-                                  }}
-                                >
-                                  <CopyIcon style={{ width: '10px', height: '10px' }} />
-                                  <span className="sr-only">Copy address</span>
-                                </Button>
-                              )}
-                            </div>
-                          </div>
-                          <div className="flex justify-between items-center">
-                            <span className="text-sm">{currentPoolData.tokens[1].symbol}</span>
-                            <div className="flex items-center gap-1">
-                              <span className="text-xs text-muted-foreground font-mono break-all">{currentPoolData.tokens[1].address ? shortenAddress(currentPoolData.tokens[1].address) : 'N/A'}</span>
-                              {currentPoolData.tokens[1].address && (
-                                <Button 
-                                  variant="ghost" 
-                                  size="icon" 
-                                  className="h-4 w-4 text-muted-foreground hover:bg-muted/30"
-                                  onClick={() => {
-                                    navigator.clipboard.writeText(currentPoolData.tokens[1].address!);
-                                    toast.success("Address copied to clipboard!");
-                                  }}
-                                >
-                                  <CopyIcon style={{ width: '10px', height: '10px' }} />
-                                  <span className="sr-only">Copy address</span>
-                                </Button>
-                              )}
-                            </div>
+              </div>
+              <div className="flex flex-col justify-center">
+                <div className="flex items-center">
+                  <h1 className="text-xl font-bold">{currentPoolData.pair}</h1>
+                  <Popover open={isPopoverOpen} onOpenChange={setIsPopoverOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className={`ml-2 h-6 w-6 transition-opacity ${isPopoverOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                      >
+                        <EllipsisVerticalIcon className="h-4 w-4" />
+                        <span className="sr-only">Token Details</span>
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-48 p-2" align="start" side="right" style={{ transform: 'translateY(-8px)' }}>
+                      <div className="grid gap-1">
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm">{currentPoolData.tokens[0].symbol}</span>
+                          <div className="flex items-center gap-1">
+                            <span className="text-xs text-muted-foreground font-mono break-all">{currentPoolData.tokens[0].address ? shortenAddress(currentPoolData.tokens[0].address) : 'N/A'}</span>
+                            {currentPoolData.tokens[0].address && (
+                              <Button 
+                                variant="ghost" 
+                                size="icon" 
+                                className="h-4 w-4 text-muted-foreground hover:bg-muted/30"
+                                onClick={() => {
+                                  navigator.clipboard.writeText(currentPoolData.tokens[0].address!);
+                                  toast.success("Address copied to clipboard!");
+                                }}
+                              >
+                                <CopyIcon style={{ width: '10px', height: '10px' }} />
+                                <span className="sr-only">Copy address</span>
+                              </Button>
+                            )}
                           </div>
                         </div>
-                      </PopoverContent>
-                    </Popover>
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    {currentPoolData.dynamicFeeBps !== undefined 
-                      ? `Fee: ${(currentPoolData.dynamicFeeBps / 10000).toFixed(2)}%` // Assumes 4000 means 0.40% (rate * 1,000,000)
-                      : "Fee: Loading..."}
-                  </p>
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm">{currentPoolData.tokens[1].symbol}</span>
+                          <div className="flex items-center gap-1">
+                            <span className="text-xs text-muted-foreground font-mono break-all">{currentPoolData.tokens[1].address ? shortenAddress(currentPoolData.tokens[1].address) : 'N/A'}</span>
+                            {currentPoolData.tokens[1].address && (
+                              <Button 
+                                variant="ghost" 
+                                size="icon" 
+                                className="h-4 w-4 text-muted-foreground hover:bg-muted/30"
+                                onClick={() => {
+                                  navigator.clipboard.writeText(currentPoolData.tokens[1].address!);
+                                  toast.success("Address copied to clipboard!");
+                                }}
+                              >
+                                <CopyIcon style={{ width: '10px', height: '10px' }} />
+                                <span className="sr-only">Copy address</span>
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+                </div>
+                <div className="mt-0.5 text-sm text-muted-foreground">
+                  <HoverCard>
+                    <HoverCardTrigger asChild>
+                      <span className="cursor-default">
+                        {(() => {
+                          if (currentPoolData.dynamicFeeBps === undefined) return "Loading...";
+                          const pct = currentPoolData.dynamicFeeBps / 10000;
+                          const formatted = pct < 0.1 ? pct.toFixed(3) : pct.toFixed(2);
+                          return `${formatted}%`;
+                        })()}
+                      </span>
+                    </HoverCardTrigger>
+                    <HoverCardContent
+                      side="top"
+                      align="center"
+                      sideOffset={8}
+                      className="w-auto p-2 border border-sidebar-border bg-[#0f0f0f] text-xs shadow-lg rounded-lg"
+                    >
+                      Dynamic Fee
+                    </HoverCardContent>
+                  </HoverCard>
                 </div>
               </div>
             </div>
@@ -2247,7 +2567,7 @@ export default function PoolDetailPage() {
                                   data={processChartDataForScreenSize(apiChartData)}
                                   margin={{
                                     top: 5,
-                                    right: 20,
+                                    right: 28,
                                     left: 16,
                                     bottom: 5,
                                   }}
@@ -2387,6 +2707,7 @@ export default function PoolDetailPage() {
                           ) : (
                             // Mobile BarChart for volume and TVL views (no Y-axis)
                             <BarChart
+                              key={`bar-${activeChart}`}
                               accessibilityLayer
                               data={processChartDataForScreenSize(apiChartData)}
                               margin={{
@@ -2461,7 +2782,15 @@ export default function PoolDetailPage() {
                                   />
                                 }
                               />
-                              <Bar dataKey={activeChart === 'volume' ? 'volumeUSD' : 'tvlUSD'} fill={chartConfig[activeChart]?.color || `var(--color-${activeChart})`} />
+                              <Bar
+                                dataKey={activeChart === 'volume' ? 'volumeUSD' : 'tvlUSD'}
+                                fill={
+                                  (chartConfig[(activeChart === 'volume' ? 'volumeUSD' : 'tvlUSD') as keyof typeof chartConfig] as any)?.color
+                                  || (chartConfig[activeChart as keyof typeof chartConfig] as any)?.color
+                                  || `var(--color-${activeChart})`
+                                }
+                                barSize={12}
+                              />
                             </BarChart>
                           )
                         ) : (
@@ -2521,7 +2850,7 @@ export default function PoolDetailPage() {
                               return (
                                 <LineChart
                                   data={processed}
-                                  margin={{ top: 24, right: 16, bottom: 24, left: 16 }}
+                                  margin={{ top: 24, right: 28, bottom: 24, left: 16 }}
                                 >
                                   <CartesianGrid horizontal vertical={false} strokeDasharray="3 3" />
                                   <XAxis
@@ -2660,6 +2989,7 @@ export default function PoolDetailPage() {
                           ) : (
                             // BarChart for volume and TVL views
                             <BarChart
+                              key={`desk-bar-${activeChart}`}
                               accessibilityLayer
                               data={processChartDataForScreenSize(apiChartData)}
                               margin={{
@@ -2689,7 +3019,12 @@ export default function PoolDetailPage() {
                                 tickLine={false}
                                 axisLine={false}
                                 tickMargin={8}
-                                tickFormatter={(value) => formatUSD(value)}
+                                tickFormatter={(value: number) => {
+                                  if (typeof value === 'number' && value >= 10000) {
+                                    return `$${Math.round(value).toLocaleString('en-US')}`;
+                                  }
+                                  return formatUSD(value as number);
+                                }}
                               />
                               <ChartTooltip
                                 cursor={false}
@@ -2740,7 +3075,15 @@ export default function PoolDetailPage() {
                                   />
                                 }
                               />
-                              <Bar dataKey={activeChart === 'volume' ? 'volumeUSD' : 'tvlUSD'} fill={chartConfig[activeChart]?.color || `var(--color-${activeChart})`} />
+                              <Bar
+                                dataKey={activeChart === 'volume' ? 'volumeUSD' : 'tvlUSD'}
+                                fill={
+                                  (chartConfig[(activeChart === 'volume' ? 'volumeUSD' : 'tvlUSD') as keyof typeof chartConfig] as any)?.color
+                                  || (chartConfig[activeChart as keyof typeof chartConfig] as any)?.color
+                                  || `var(--color-${activeChart})`
+                                }
+                                barSize={14}
+                              />
                             </BarChart>
                           )
                         )
@@ -2915,6 +3258,7 @@ export default function PoolDetailPage() {
                                       sym1={position.token1.symbol || 'T1'}
                                       price0={getUsdPriceForSymbol(position.token0.symbol)}
                                       price1={getUsdPriceForSymbol(position.token1.symbol)}
+                                      refreshKey={refreshTrigger}
                                     />
                                   </div>
                                 </div>
@@ -2989,7 +3333,10 @@ export default function PoolDetailPage() {
                                       <span className="font-mono tabular-nums flex items-center gap-1.5 cursor-default">
                                         <Clock3 className="h-2.5 w-2.5 text-muted-foreground" aria-hidden />
                                         {(() => {
-                                          const ageSeconds = position.ageSeconds;
+                                          // Prefer immutable mint time (blockTimestamp) if available to avoid reset on modifications
+                                          const mintTs = Number(position.blockTimestamp || 0);
+                                          const nowSec = Math.floor(Date.now() / 1000);
+                                          const ageSeconds = mintTs > 0 ? Math.max(0, nowSec - mintTs) : Number(position.ageSeconds || 0);
                                           if (ageSeconds < 60) return '<1m';
                                           if (ageSeconds < 3600) return `${Math.floor(ageSeconds / 60)}m`;
                                           if (ageSeconds < 86400) return `${Math.floor(ageSeconds / 3600)}h`;
@@ -3022,9 +3369,9 @@ export default function PoolDetailPage() {
                                         })()}
                                       </span>
                                     </TooltipTrigger>
-                                    <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
-                                      <div className="font-medium text-foreground">Time Created</div>
-                                    </TooltipContent>
+                                                        <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
+                      <div className="font-medium text-foreground">Last Modification</div>
+                    </TooltipContent>
                                   </Tooltip>
                                 </TooltipProvider>
                               </div>
@@ -3170,7 +3517,29 @@ export default function PoolDetailPage() {
                                             onClick={(e) => {
                                               e.stopPropagation();
                                               setShowPositionMenu(null);
-                                              // TODO: Implement Claim Fees
+                                              (async () => {
+                                                try {
+                                                  // Build and submit collect calldata via v4 SDK
+                                                  const tokenIdHex = String(position.positionId || '').split('-').pop() as string;
+                                                  if (!tokenIdHex || !tokenIdHex.startsWith('0x')) { toast.error('Invalid tokenId'); return; }
+                                                  const tokenId = BigInt(tokenIdHex);
+                                                  const { buildCollectFeesCall } = await import('@/lib/liquidity-utils');
+                                                  const { calldata, value } = await buildCollectFeesCall({ tokenId, userAddress: accountAddress as `0x${string}` });
+                                                  writeContract({
+                                                    address: getPositionManagerAddress() as `0x${string}`,
+                                                    abi: position_manager_abi as any,
+                                                    functionName: 'multicall',
+                                                    args: [[calldata]],
+                                                    value,
+                                                    chainId,
+                                                  } as any, {
+                                                    onSuccess: (hash) => setCollectHash(hash as `0x${string}`),
+                                                  } as any);
+                                                } catch (err: any) {
+                                                  console.error('Collect via SDK failed:', err);
+                                                  toast.error('Collect failed', { description: err?.message });
+                                                }
+                                              })();
                                             }}
                                           >
                                             Claim Fees
@@ -3181,7 +3550,44 @@ export default function PoolDetailPage() {
                                             onClick={(e) => {
                                               e.stopPropagation();
                                               setShowPositionMenu(null);
-                                              // TODO: Implement Compound Fees
+                                              // New single-tx compound: fetch fees, then call compoundFees (modifyLiquidities)
+                                              (async () => {
+                                                try {
+                                                  const resp = await fetch('/api/liquidity/get-uncollected-fees', {
+                                                    method: 'POST',
+                                                    headers: { 'Content-Type': 'application/json' },
+                                                    body: JSON.stringify({ positionId: position.positionId }),
+                                                  });
+                                                  const json = await resp.json();
+                                                  if (!resp.ok || !json?.success) {
+                                                    throw new Error(json?.error || 'Failed to fetch fees');
+                                                  }
+                                                  if (!position.isInRange) { 
+                                                    toast.error('Cannot Compound Out of Range Position', { icon: <OctagonX className="h-4 w-4 text-red-500" /> });
+                                                    return; 
+                                                  }
+                                                  let raw0: string = json.amount0 || '0';
+                                                  let raw1: string = json.amount1 || '0';
+                                                  // Strictly floor by 1 wei to avoid rounding edge cases
+                                                  try { const b0 = BigInt(raw0); raw0 = (b0 > 0n ? b0 - 1n : 0n).toString(); } catch {}
+                                                  try { const b1 = BigInt(raw1); raw1 = (b1 > 0n ? b1 - 1n : 0n).toString(); } catch {}
+                                                  if (raw0 === '0' && raw1 === '0') { toast.info('No fees to compound'); return; }
+                                                  isCompoundInProgressRef.current = true;
+                                                  await compoundFees({
+                                                    tokenId: position.positionId,
+                                                    token0Symbol: position.token0.symbol as TokenSymbol,
+                                                    token1Symbol: position.token1.symbol as TokenSymbol,
+                                                    poolId: position.poolId,
+                                                    tickLower: position.tickLower,
+                                                    tickUpper: position.tickUpper,
+                                                  }, raw0, raw1);
+                                                  // Success toast will show after on-chain confirmation from the hook
+                                                } catch (err: any) {
+                                                  console.error('Compound (single-tx) failed:', err);
+                                                  toast.error('Compound failed', { description: err?.message });
+                                                  isCompoundInProgressRef.current = false;
+                                                }
+                                              })();
                                             }}
                                           >
                                             Compound Fees
@@ -3218,6 +3624,9 @@ export default function PoolDetailPage() {
         }
       }}>
         <DialogContent className="w-[calc(100%-2rem)] sm:w-full max-w-lg border border-border shadow-lg [&>button]:hidden" style={{ backgroundColor: 'var(--modal-background)' }}>
+          <DialogHeader>
+            <DialogTitle className="sr-only">Withdraw Position</DialogTitle>
+          </DialogHeader>
           {positionToBurn && (
             <div className="space-y-4">
               {/* Current Position - moved out of striped container */}
@@ -3295,8 +3704,11 @@ export default function PoolDetailPage() {
                     <Button 
                       variant="ghost" 
                       className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent" 
-                      onClick={() => handleMaxWithdraw('amount0')}
-                      disabled={isBurningLiquidity}
+                      onClick={() => {
+                        if (withdrawProductiveSide === 'amount1') return;
+                        handleMaxWithdraw('amount0');
+                      }}
+                      disabled={isBurningLiquidity || withdrawProductiveSide === 'amount1'}
                     >  
                       Balance: {formatTokenDisplayAmount(positionToBurn.token0.amount)}
                     </Button>
@@ -3318,13 +3730,13 @@ export default function PoolDetailPage() {
                           id="withdraw-amount0"
                           placeholder="0.0"
                           value={withdrawAmount0}
+                          autoComplete="off"
+                          autoCorrect="off"
+                          spellCheck={false}
+                          inputMode="decimal"
+                          enterKeyHint="done"
                           onChange={(e) => {
-                            const newValue = e.target.value;
-                            const maxAmount = parseFloat(positionToBurn.token0.amount);
-                            if (parseFloat(newValue) > maxAmount) {
-                              handleWithdrawAmountChange(maxAmount.toString(), 'amount0');
-                              return;
-                            }
+                            const newValue = sanitizeDecimalInput(e.target.value);
                             handleWithdrawAmountChange(newValue, 'amount0');
                             setWithdrawActiveInputSide('amount0');
                             if (newValue && parseFloat(newValue) > 0) {
@@ -3334,7 +3746,7 @@ export default function PoolDetailPage() {
                               setIsFullWithdraw(false);
                             }
                           }}
-                          disabled={isBurningLiquidity}
+                          disabled={(withdrawProductiveSide === 'amount1') || isBurningLiquidity}
                           className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
                         />
                       </div>
@@ -3357,8 +3769,11 @@ export default function PoolDetailPage() {
                     <Button 
                       variant="ghost" 
                       className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent" 
-                      onClick={() => handleMaxWithdraw('amount1')}
-                      disabled={isBurningLiquidity}
+                      onClick={() => {
+                        if (withdrawProductiveSide === 'amount0') return;
+                        handleMaxWithdraw('amount1');
+                      }}
+                      disabled={isBurningLiquidity || withdrawProductiveSide === 'amount0'}
                     >  
                       Balance: {formatTokenDisplayAmount(positionToBurn.token1.amount)}
                     </Button>
@@ -3380,13 +3795,13 @@ export default function PoolDetailPage() {
                           id="withdraw-amount1"
                           placeholder="0.0"
                           value={withdrawAmount1}
+                          autoComplete="off"
+                          autoCorrect="off"
+                          spellCheck={false}
+                          inputMode="decimal"
+                          enterKeyHint="done"
                           onChange={(e) => {
-                            const newValue = e.target.value;
-                            const maxAmount = parseFloat(positionToBurn.token1.amount);
-                            if (parseFloat(newValue) > maxAmount) {
-                              handleWithdrawAmountChange(maxAmount.toString(), 'amount1');
-                              return;
-                            }
+                            const newValue = sanitizeDecimalInput(e.target.value);
                             handleWithdrawAmountChange(newValue, 'amount1');
                             setWithdrawActiveInputSide('amount1');
                             if (newValue && parseFloat(newValue) > 0) {
@@ -3396,7 +3811,7 @@ export default function PoolDetailPage() {
                               setIsFullWithdraw(false);
                             }
                           }}
-                          disabled={isBurningLiquidity}
+                          disabled={(withdrawProductiveSide === 'amount0') || isBurningLiquidity}
                           className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
                         />
                       </div>
@@ -3424,16 +3839,30 @@ export default function PoolDetailPage() {
               onClick={handleConfirmWithdraw}
               disabled={
                 isBurningLiquidity || isDecreasingLiquidity ||
+                // disallow over-withdraw
+                (parseFloat(withdrawAmount0 || '0') > parseFloat(positionToBurn?.token0.amount || '0')) ||
+                (parseFloat(withdrawAmount1 || '0') > parseFloat(positionToBurn?.token1.amount || '0')) ||
                 (positionToBurn?.isInRange ? 
-                  // For in-range positions, require both amounts
                   (!withdrawAmount0 || !withdrawAmount1 || parseFloat(withdrawAmount0) <= 0 || parseFloat(withdrawAmount1) <= 0) :
-                  // For out-of-range positions, require at least one amount
                   ((!withdrawAmount0 || parseFloat(withdrawAmount0) <= 0) && (!withdrawAmount1 || parseFloat(withdrawAmount1) <= 0))
                 )
               }
             >
               <span className={(isBurningLiquidity || isDecreasingLiquidity) ? "animate-pulse" : ""}>
-                {isFullWithdraw ? "Withdraw All" : "Withdraw"}
+                {(() => {
+                  // Show Withdraw All only if both sides are >= 99% of position amounts (in-range)
+                  if (positionToBurn?.isInRange) {
+                    const max0 = parseFloat(positionToBurn.token0.amount || '0');
+                    const max1 = parseFloat(positionToBurn.token1.amount || '0');
+                    const in0 = parseFloat(withdrawAmount0 || '0');
+                    const in1 = parseFloat(withdrawAmount1 || '0');
+                    const near0 = max0 > 0 ? in0 >= max0 * 0.99 : in0 === 0;
+                    const near1 = max1 > 0 ? in1 >= max1 * 0.99 : in1 === 0;
+                    return (near0 && near1) ? 'Withdraw All' : 'Withdraw';
+                  }
+                  // Out of range: only when the single productive side is near 100%
+                  return 'Withdraw';
+                })()}
               </span>
             </Button>
           </DialogFooter>
@@ -3443,6 +3872,9 @@ export default function PoolDetailPage() {
       {/* Increase Position Modal */}
       <Dialog open={showIncreaseModal} onOpenChange={setShowIncreaseModal}>
         <DialogContent className="w-[calc(100%-2rem)] sm:w-full max-w-lg border border-border shadow-lg [&>button]:hidden" style={{ backgroundColor: 'var(--modal-background)' }}>
+          <DialogHeader>
+            <DialogTitle className="sr-only">Add Liquidity</DialogTitle>
+          </DialogHeader>
           {positionToModify && (
             <div className="space-y-4">
               {/* Current Position - moved out of striped container */}
@@ -3520,10 +3952,13 @@ export default function PoolDetailPage() {
                     <Button 
                       variant="ghost" 
                       className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent" 
-                      onClick={() => handleUseFullBalance(token0BalanceData?.formatted || "0", 'aUSDC' as TokenSymbol, true)}
+                      onClick={() => {
+                        if (positionToModify && !positionToModify.isInRange && increaseActiveInputSide === 'amount1') return;
+                        handleUseFullBalance(modalToken0BalanceData?.formatted || "0", token0Symbol, true);
+                      }}
                       disabled={isIncreasingLiquidity || isIncreaseCalculating}
                     >  
-                      Balance: {displayToken0Balance} {positionToModify.token0.symbol}
+                      Balance: {displayModalToken0Balance} {positionToModify.token0.symbol}
                     </Button>
                   </div>
                   <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4">
@@ -3543,8 +3978,13 @@ export default function PoolDetailPage() {
                           id="increase-amount0"
                           placeholder="0.0"
                           value={increaseAmount0}
+                          autoComplete="off"
+                          autoCorrect="off"
+                          spellCheck={false}
+                          inputMode="decimal"
+                          enterKeyHint="done"
                           onChange={(e) => {
-                            const newValue = e.target.value;
+                            const newValue = sanitizeDecimalInput(e.target.value);
                             handleIncreaseAmountChange(newValue, 'amount0');
                             if (newValue && parseFloat(newValue) > 0) {
                               calculateIncreaseAmount(newValue, 'amount0');
@@ -3552,15 +3992,13 @@ export default function PoolDetailPage() {
                               setIncreaseAmount1("");
                             }
                           }}
-                          disabled={isIncreaseCalculating && increaseActiveInputSide === 'amount1'}
+                          disabled={(positionToModify && !positionToModify.isInRange && increaseActiveInputSide === 'amount1') || (isIncreaseCalculating && increaseActiveInputSide === 'amount1')}
                           className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
                         />
                       </div>
                     </div>
                   </div>
-                  {isIncreaseCalculating && increaseActiveInputSide === 'amount0' && (
-                    <div className="text-xs text-muted-foreground mt-1">Calculating...</div>
-                  )}
+                  {/* removed calculating hint for cleaner UX */}
                 </div>
 
                 {/* Plus Icon */}
@@ -3578,10 +4016,13 @@ export default function PoolDetailPage() {
                     <Button 
                       variant="ghost" 
                       className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent" 
-                      onClick={() => handleUseFullBalance(token1BalanceData?.formatted || "0", 'aUSDT' as TokenSymbol, false)}
+                      onClick={() => {
+                        if (positionToModify && !positionToModify.isInRange && increaseActiveInputSide === 'amount0') return;
+                        handleUseFullBalance(modalToken1BalanceData?.formatted || "0", token1Symbol, false);
+                      }}
                       disabled={isIncreasingLiquidity || isIncreaseCalculating}
                     >  
-                      Balance: {displayToken1Balance} {positionToModify.token1.symbol}
+                      Balance: {displayModalToken1Balance} {positionToModify.token1.symbol}
                     </Button>
                   </div>
                   <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4">
@@ -3601,8 +4042,13 @@ export default function PoolDetailPage() {
                           id="increase-amount1"
                           placeholder="0.0"
                           value={increaseAmount1}
+                          autoComplete="off"
+                          autoCorrect="off"
+                          spellCheck={false}
+                          inputMode="decimal"
+                          enterKeyHint="done"
                           onChange={(e) => {
-                            const newValue = e.target.value;
+                            const newValue = sanitizeDecimalInput(e.target.value);
                             handleIncreaseAmountChange(newValue, 'amount1');
                             if (newValue && parseFloat(newValue) > 0) {
                               calculateIncreaseAmount(newValue, 'amount1');
@@ -3610,15 +4056,13 @@ export default function PoolDetailPage() {
                               setIncreaseAmount0("");
                             }
                           }}
-                          disabled={isIncreaseCalculating && increaseActiveInputSide === 'amount0'}
+                          disabled={(positionToModify && !positionToModify.isInRange && increaseActiveInputSide === 'amount0') || (isIncreaseCalculating && increaseActiveInputSide === 'amount0')}
                           className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
                         />
                       </div>
                     </div>
                   </div>
-                  {isIncreaseCalculating && increaseActiveInputSide === 'amount1' && (
-                    <div className="text-xs text-muted-foreground mt-1">Calculating...</div>
-                  )}
+                  {/* removed calculating hint for cleaner UX */}
                 </div>
               </div>
             </div>
@@ -3729,7 +4173,7 @@ export default function PoolDetailPage() {
                     max={positionToModify.token0.amount}
                     value={decreaseAmount0}
                     onChange={(e) => {
-                      const newValue = e.target.value;
+                      const newValue = sanitizeDecimalInput(e.target.value);
                       const maxAmount = parseFloat(positionToModify.token0.amount);
                       if (parseFloat(newValue) > maxAmount) {
                         setDecreaseAmount0(maxAmount.toString());
@@ -3746,9 +4190,7 @@ export default function PoolDetailPage() {
                     }}
                     disabled={isDecreaseCalculating && decreaseActiveInputSide === 'amount1'}
                   />
-                  {isDecreaseCalculating && decreaseActiveInputSide === 'amount0' && (
-                    <div className="text-xs text-muted-foreground mt-1">Calculating...</div>
-                  )}
+                  {/* removed calculating hint for cleaner UX */}
                 </div>
                 <div>
                   <Label htmlFor="decrease-amount1">Remove {positionToModify.token1.symbol}</Label>
@@ -3762,7 +4204,7 @@ export default function PoolDetailPage() {
                     max={positionToModify.token1.amount}
                     value={decreaseAmount1}
                     onChange={(e) => {
-                      const newValue = e.target.value;
+                      const newValue = sanitizeDecimalInput(e.target.value);
                       const maxAmount = parseFloat(positionToModify.token1.amount);
                       if (parseFloat(newValue) > maxAmount) {
                         setDecreaseAmount1(maxAmount.toString());
@@ -3779,9 +4221,7 @@ export default function PoolDetailPage() {
                     }}
                     disabled={isDecreaseCalculating && decreaseActiveInputSide === 'amount0'}
                   />
-                  {isDecreaseCalculating && decreaseActiveInputSide === 'amount1' && (
-                    <div className="text-xs text-muted-foreground mt-1">Calculating...</div>
-                  )}
+                  {/* removed calculating hint for cleaner UX */}
                 </div>
               </div>
               {isFullBurn && (
@@ -3806,9 +4246,7 @@ export default function PoolDetailPage() {
                 isDecreasingLiquidity ||
                 isDecreaseCalculating ||
                 (positionToModify?.isInRange ? 
-                  // For in-range positions, require both amounts
                   (!decreaseAmount0 || !decreaseAmount1 || parseFloat(decreaseAmount0) <= 0 || parseFloat(decreaseAmount1) <= 0) :
-                  // For out-of-range positions, require at least one amount
                   ((!decreaseAmount0 || parseFloat(decreaseAmount0) <= 0) && (!decreaseAmount1 || parseFloat(decreaseAmount1) <= 0))
                 )
               }

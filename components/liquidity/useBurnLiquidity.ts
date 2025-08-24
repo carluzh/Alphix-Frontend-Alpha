@@ -8,6 +8,7 @@ import { getToken, TokenSymbol } from '@/lib/pools-config';
 import { baseSepolia } from '@/lib/wagmiConfig';
 import { getAddress, type Hex, BaseError } from 'viem';
 import JSBI from 'jsbi';
+import { prefetchService } from '@/lib/prefetch-service';
 
 interface UseBurnLiquidityProps {
   onLiquidityBurned: () => void;
@@ -157,6 +158,7 @@ export function useBurnLiquidity({ onLiquidityBurned }: UseBurnLiquidityProps) {
           : undefined,
       });
       onLiquidityBurned();
+      try { if (accountAddress) prefetchService.requestPositionsRefresh({ owner: accountAddress, reason: 'burn' }); } catch {}
       setIsBurning(false);
     } else if (burnConfirmError) {
        const message = burnConfirmError instanceof BaseError ? burnConfirmError.shortMessage : burnConfirmError.message;

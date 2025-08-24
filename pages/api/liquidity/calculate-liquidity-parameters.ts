@@ -1,45 +1,21 @@
-import { Token, Price } from '@uniswap/sdk-core';
-import { Pool as V4Pool, Position as V4Position, PoolKey } from "@uniswap/v4-sdk"; 
-import { TickMath } from '@uniswap/v3-sdk';
+import { Token, Price, Ether } from '@uniswap/sdk-core';
+import { Pool as V4Pool, Position as V4Position } from "@uniswap/v4-sdk"; 
+import { TickMath, nearestUsableTick } from '@uniswap/v3-sdk';
 import JSBI from 'jsbi';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from "@/lib/abis/state_view_abi";
 import { getToken, TokenSymbol, getStateViewAddress } from "@/lib/pools-config";
 import { publicClient } from "@/lib/viemClient"; 
-import { 
-    parseUnits, 
-    isAddress, 
-    getAddress, 
-    parseAbi, 
-    type Hex 
-} from "viem";
+import { parseUnits, getAddress, parseAbi, type Hex } from "viem";
 
-// Helper function to safely parse amounts and prevent scientific notation errors
-const safeParseUnits = (amount: string, decimals: number): bigint => {
-  // Convert scientific notation to decimal format
-  const numericAmount = parseFloat(amount);
-  if (isNaN(numericAmount)) {
-    throw new Error("Invalid number format");
-  }
-  
-  // Convert to string with full decimal representation (no scientific notation)
-  const fullDecimalString = numericAmount.toFixed(decimals);
-  
-  // Remove trailing zeros after decimal point
-  const trimmedString = fullDecimalString.replace(/\.?0+$/, '');
-  
-  // If the result is just a decimal point, return "0"
-  const finalString = trimmedString === '.' ? '0' : trimmedString;
-  
-  return parseUnits(finalString, decimals);
-};
+// No local amount parsing: request supplies a single formatted amount handled in prepare-mint
 
 // Contract addresses from pools config
 const STATE_VIEW_ADDRESS = getStateViewAddress(); 
-const ETHERS_ADDRESS_ZERO = "0x0000000000000000000000000000000000000000";
 const SDK_MIN_TICK = -887272;
 const SDK_MAX_TICK = 887272;
+const ETHERS_ADDRESS_ZERO = "0x0000000000000000000000000000000000000000";
 
 interface CalculateLiquidityParamsRequest extends NextApiRequest {
     body: {
@@ -47,10 +23,11 @@ interface CalculateLiquidityParamsRequest extends NextApiRequest {
         token1Symbol: TokenSymbol;
         inputAmount: string;      
         inputTokenSymbol: TokenSymbol; 
-        userTickLower: number;
-        userTickUpper: number;
+        userTickLower?: number;
+        userTickUpper?: number;
+        fullRange?: boolean;
+        tickRangeAmount?: number;
         chainId: number; 
-        // userAddress is not strictly needed for pure calculation, but good for future use if needed
         userAddress?: string; 
     };
 }
@@ -114,8 +91,7 @@ function calculatePriceString(
         console.log(`  Branch: Desired Price of ${poolSortedToken0.symbol} in terms of ${poolSortedToken1.symbol}. Inverting intermediate price.`);
         finalPriceObject = priceToken1PerToken0.invert();
     } else {
-        console.warn(`  [calculatePriceString - ${callContext}] Desired pair (${desiredPriceOfToken.symbol}/${desiredPriceInToken.symbol}) does not directly match sorted pool pair.`);
-        return "ErrorInPriceCalcLogic";
+        throw new Error(`[calculatePriceString:${callContext}] Desired pair ${desiredPriceOfToken.symbol}/${desiredPriceInToken.symbol} does not match sorted pool pair ${poolSortedToken0.symbol}/${poolSortedToken1.symbol}.`);
     }
     
     const highPrecisionPrice = finalPriceObject.toSignificant(18);
@@ -146,27 +122,20 @@ export default async function handler(
             inputTokenSymbol,
             userTickLower,
             userTickUpper,
+            fullRange,
+            tickRangeAmount,
             chainId,
-            // userAddress // Not used in this version but available
         } = req.body;
 
         // --- Input Validation ---
         const token0Config = getToken(token0Symbol);
         const token1Config = getToken(token1Symbol);
-        const inputTokenConfig = getToken(inputTokenSymbol);
+        const inputTokenConfig = inputTokenSymbol ? getToken(inputTokenSymbol) : null;
 
-        if (!token0Config || !token1Config || !inputTokenConfig) {
+        if (!token0Config || !token1Config) {
             return res.status(400).json({ message: "Invalid token symbol(s) provided." });
         }
-        if (isNaN(parseFloat(inputAmount)) || parseFloat(inputAmount) <= 0) {
-            return res.status(400).json({ message: "Invalid inputAmount." });
-        }
-        if (typeof userTickLower !== 'number' || typeof userTickUpper !== 'number') {
-            return res.status(400).json({ message: "userTickLower and userTickUpper must be numbers." });
-        }
-        if (userTickLower >= userTickUpper) {
-            return res.status(400).json({ message: "userTickLower must be less than userTickUpper." });
-        }
+        // This endpoint does not parse amounts; it's for tick math and quoting outputs only
         // TODO: Add more validation for chainId, perhaps ensure it matches a configured supported ID
 
         // --- Get Pool Configuration ---
@@ -177,227 +146,213 @@ export default async function handler(
             return res.status(400).json({ message: `No pool configuration found for ${token0Symbol}/${token1Symbol}` });
         }
 
-        // --- SDK Token Objects (using original symbols first) ---
+        // --- SDK Token Objects ---
         // console.log("[API] Creating Token0 with", { symbol: token0Symbol, address: token0Config.address });
-        const sdkToken0Original = new Token(chainId, getAddress(token0Config.address), token0Config.decimals, token0Config.symbol);
+        const sdkToken0 = new Token(chainId, getAddress(token0Config.address), token0Config.decimals, token0Config.symbol);
         // console.log("[API] Successfully created Token0.", sdkToken0Original);
 
         // console.log("[API] Creating Token1 with", { symbol: token1Symbol, address: token1Config.address });
-        const sdkToken1Original = new Token(chainId, getAddress(token1Config.address), token1Config.decimals, token1Config.symbol);
+        const sdkToken1 = new Token(chainId, getAddress(token1Config.address), token1Config.decimals, token1Config.symbol);
         // console.log("[API] Successfully created Token1.", sdkToken1Original);
 
-        // console.log("[API] Creating InputToken with", { symbol: inputTokenSymbol, address: inputTokenConfig.address });
-        const sdkInputToken = new Token(chainId, getAddress(inputTokenConfig.address), inputTokenConfig.decimals, inputTokenConfig.symbol);
-        // console.log("[API] Successfully created InputToken.", sdkInputToken);
+        const sdkInputToken = inputTokenSymbol ? new Token(chainId, getAddress(inputTokenConfig!.address), inputTokenConfig!.decimals, inputTokenConfig!.symbol) : undefined;
+        const normalizeAmountString = (raw: string): string => {
+            let s = (raw ?? '').toString().trim().replace(/,/g, '.');
+            if (!/e|E/.test(s)) return s;
+            const m = s.match(/^([+-]?)\n?(\d*\.?\d+)[eE]([+-]?\d+)$/) || s.match(/^([+-]?)(\d*\.?\d+)[eE]([+-]?\d+)$/);
+            if (!m) return s;
+            const sign = m[1] || '';
+            const num = m[2];
+            const exp = parseInt(m[3], 10);
+            const parts = num.split('.');
+            const intPart = parts[0] || '0';
+            const fracPart = parts[1] || '';
+            const digits = (intPart + fracPart).replace(/^0+/, '') || '0';
+            const pointIndex = intPart.length;
+            const newPoint = pointIndex + exp;
+            if (exp >= 0) {
+                if (newPoint >= digits.length) return sign + digits + '0'.repeat(newPoint - digits.length);
+                return sign + digits.slice(0, newPoint) + '.' + digits.slice(newPoint);
+            } else {
+                if (newPoint <= 0) return sign + '0.' + '0'.repeat(-newPoint) + digits;
+                return sign + digits.slice(0, newPoint) + '.' + digits.slice(newPoint);
+            }
+        };
+        const parsedInputAmount = inputAmount && sdkInputToken ? parseUnits(normalizeAmountString(inputAmount), sdkInputToken.decimals) : 0n;
 
-        const parsedInputAmount = safeParseUnits(inputAmount, sdkInputToken.decimals);
-
-        // --- Tick Alignment ---
-        const clampedUserTickLower = Math.max(userTickLower, SDK_MIN_TICK);
-        const clampedUserTickUpper = Math.min(userTickUpper, SDK_MAX_TICK);
-        const finalTickLower = Math.ceil(clampedUserTickLower / poolConfig.tickSpacing) * poolConfig.tickSpacing;
-        const finalTickUpper = Math.floor(clampedUserTickUpper / poolConfig.tickSpacing) * poolConfig.tickSpacing;
-
-        if (finalTickLower >= finalTickUpper) {
-            return res.status(400).json({ message: `Error: finalTickLower (${finalTickLower}) must be less than finalTickUpper (${finalTickUpper}) after alignment.` });
-        }
+        // ticks to be computed once slot0 is known if tickRangeAmount/fullRange used
+        let tickLower: number = 0;
+        let tickUpper: number = 0;
 
         // --- Token Sorting (Crucial for V4 SDK) ---
-        // Use sdkToken0Original and sdkToken1Original for sorting to maintain consistency with how poolId would be derived
-        const [sortedSdkToken0, sortedSdkToken1] = sdkToken0Original.sortsBefore(sdkToken1Original) 
-            ? [sdkToken0Original, sdkToken1Original] 
-            : [sdkToken1Original, sdkToken0Original];
-        
-        // Use configured pool ID from pools.json (already retrieved above)
-        const poolId = poolConfig.subgraphId;
+        const [sortedToken0, sortedToken1] = sdkToken0.sortsBefore(sdkToken1) 
+            ? [sdkToken0, sdkToken1] 
+            : [sdkToken1, sdkToken0];
 
-        // Log Pool ID and State View Address before fetching slot0
-        console.log("[API DEBUG] Derived Pool ID:", poolId);
-        console.log("[API DEBUG] State View Address:", STATE_VIEW_ADDRESS);
+        // Derive poolId with SDK helper
+        const poolId = V4Pool.getPoolId(
+            sortedToken0,
+            sortedToken1,
+            poolConfig.fee,
+            poolConfig.tickSpacing,
+            getAddress(poolConfig.hooks) as `0x${string}`
+        );
 
-        // --- Fetch Pool Slot0 ---
+        // Fetch current pool state
+
+        // --- Fetch Pool Slot0 and Liquidity (Promise.all per guide) ---
         let rawSqrtPriceX96String: string;
         let currentTickFromSlot0: number;
-        let lpFeeFromSlot0: number;
+        // lpFeeFromSlot0 was previously read but unused; removed for clarity
         let currentSqrtPriceX96_JSBI: JSBI;
+        let currentLiquidity: bigint;
 
         try {
-            console.log("[API DEBUG] Calling getSlot0 with Pool ID:", poolId);
-            const slot0DataViem = await publicClient.readContract({
-                address: STATE_VIEW_ADDRESS,
-                abi: stateViewAbiViem,
-                functionName: 'getSlot0',
-                args: [poolId as Hex]
-            }) as readonly [bigint, number, number, number]; // [sqrtPriceX96, tick, protocolFee, lpFee]
+            console.log("[API DEBUG] Calling getSlot0/getLiquidity with Pool ID:", poolId);
+            const [slot0, liquidity] = await Promise.all([
+                publicClient.readContract({
+                    address: STATE_VIEW_ADDRESS,
+                    abi: stateViewAbiViem,
+                    functionName: 'getSlot0',
+                    args: [poolId as Hex]
+                }) as Promise<readonly [bigint, number, number, number]>,
+                publicClient.readContract({
+                    address: STATE_VIEW_ADDRESS,
+                    abi: stateViewAbiViem,
+                    functionName: 'getLiquidity',
+                    args: [poolId as Hex]
+                }) as Promise<bigint>
+            ]);
 
-            rawSqrtPriceX96String = slot0DataViem[0].toString();
-            currentTickFromSlot0 = Number(slot0DataViem[1]);
-            lpFeeFromSlot0 = Number(slot0DataViem[3]); 
+            rawSqrtPriceX96String = slot0[0].toString();
+            currentTickFromSlot0 = Number(slot0[1]);
+            currentLiquidity = liquidity as bigint;
             currentSqrtPriceX96_JSBI = JSBI.BigInt(rawSqrtPriceX96String);
 
         } catch (error) {
-            console.error("API Error (calculate-liquidity-parameters) fetching pool slot0 data:", error);
+            console.error("API Error (calculate-liquidity-parameters) fetching pool state:", error);
             return res.status(500).json({ message: "Failed to fetch current pool data for calculation.", error });
         }
 
-        // Log raw slot0 data after fetching
-        console.log("[API DEBUG] Raw slot0 data processed:", { rawSqrtPriceX96String, currentTickFromSlot0, lpFeeFromSlot0 });
+        // State fetched
+
+        // --- Compute ticks now (guide: nearestUsableTick) ---
+        if (fullRange) {
+            tickLower = nearestUsableTick(SDK_MIN_TICK, poolConfig.tickSpacing);
+            tickUpper = nearestUsableTick(SDK_MAX_TICK, poolConfig.tickSpacing);
+        } else if (typeof tickRangeAmount === 'number' && isFinite(tickRangeAmount)) {
+            tickLower = nearestUsableTick(currentTickFromSlot0 - tickRangeAmount, poolConfig.tickSpacing);
+            tickUpper = nearestUsableTick(currentTickFromSlot0 + tickRangeAmount, poolConfig.tickSpacing);
+        } else {
+            if (typeof userTickLower !== 'number' || typeof userTickUpper !== 'number') {
+                return res.status(400).json({ message: "userTickLower and userTickUpper must be numbers when not using fullRange/tickRangeAmount." });
+            }
+            const clampedLower = Math.max(userTickLower, SDK_MIN_TICK);
+            const clampedUpper = Math.min(userTickUpper, SDK_MAX_TICK);
+            tickLower = nearestUsableTick(clampedLower, poolConfig.tickSpacing);
+            tickUpper = nearestUsableTick(clampedUpper, poolConfig.tickSpacing);
+        }
+        if (tickLower >= tickUpper) {
+            tickLower = tickUpper - poolConfig.tickSpacing;
+        }
 
         // --- Create V4Pool for Calculation ---
+        const poolCurrency0 = sortedToken0.address === ETHERS_ADDRESS_ZERO ? Ether.onChain(Number(chainId)) : sortedToken0;
+        const poolCurrency1 = sortedToken1.address === ETHERS_ADDRESS_ZERO ? Ether.onChain(Number(chainId)) : sortedToken1;
+
         const v4PoolForCalc = new V4Pool(
-            sortedSdkToken0,
-            sortedSdkToken1,
+            poolCurrency0 as any,
+            poolCurrency1 as any,
             poolConfig.fee, // Use fee from pool configuration 
             poolConfig.tickSpacing, // Use tick spacing from pool configuration
             poolConfig.hooks as `0x${string}`, // Use hook address from pool configuration
             currentSqrtPriceX96_JSBI, // Use JSBI instance
-            JSBI.BigInt(0), 
+            JSBI.BigInt(currentLiquidity.toString()),
             currentTickFromSlot0 // Use numeric tick
         );
 
-        console.log(`  Input Token: ${inputTokenSymbol} (${sdkInputToken.address}), Parsed Amount: ${parsedInputAmount.toString()}`);
-        console.log(`  Sorted Token0: ${sortedSdkToken0.symbol} (${sortedSdkToken0.address})`);
-        console.log(`  Sorted Token1: ${sortedSdkToken1.symbol} (${sortedSdkToken1.address})`);
-        console.log(`  Pool Current Tick from v4PoolForCalc: ${v4PoolForCalc.tickCurrent}`); // From constructed pool
-        console.log(`  Pool SqrtPriceX96 from v4PoolForCalc: ${v4PoolForCalc.sqrtRatioX96.toString()}`); // From constructed pool
-        console.log(`  Final Tick Lower: ${finalTickLower}, Final Tick Upper: ${finalTickUpper}`);
 
-        // --- Calculate Position based on inputTokenSymbol ---
-        let positionForCalc: V4Position;
-        
-        // Determine if the input token (sdkInputToken) is the same as sortedSdkToken0
-        if (sdkInputToken.address === sortedSdkToken0.address) {
-            positionForCalc = V4Position.fromAmount0({
-                pool: v4PoolForCalc,
-                tickLower: finalTickLower,
-                tickUpper: finalTickUpper,
-                amount0: JSBI.BigInt(parsedInputAmount.toString()),
-                useFullPrecision: true
-            });
-        } else { // Input token must be sortedSdkToken1
-            positionForCalc = V4Position.fromAmount1({
-                pool: v4PoolForCalc,
-                tickLower: finalTickLower,
-                tickUpper: finalTickUpper,
-                amount1: JSBI.BigInt(parsedInputAmount.toString())
-            });
-        }
-        
-        const calculatedLiquidity = positionForCalc.liquidity.toString();
-        // These are amounts for sortedSdkToken0 and sortedSdkToken1
-        const calculatedAmountSorted0 = positionForCalc.mintAmounts.amount0.toString(); 
-        const calculatedAmountSorted1 = positionForCalc.mintAmounts.amount1.toString();
+        // --- Position calc (single-input only) ---
+        let positionForCalc: V4Position | undefined;
+        let liquidity = "0";
+        let amount0Sorted = "0";
+        let amount1Sorted = "0";
 
-        // Check for impractically large calculated amounts before proceeding
-        const MAX_REASONABLE_AMOUNT_STR_LEN = 70; // Heuristic: numbers like 1e+69 are usually > 70 chars
-        let parsedCalcAmount0: bigint;
-        let parsedCalcAmount1: bigint;
+        if (sdkInputToken) {
+            if (sdkInputToken.address === sortedToken0.address) {
+                positionForCalc = V4Position.fromAmount0({
+                    pool: v4PoolForCalc,
+                    tickLower: tickLower,
+                    tickUpper: tickUpper,
+                    amount0: JSBI.BigInt(parsedInputAmount.toString()),
+                    useFullPrecision: true
+                });
+            } else {
+                positionForCalc = V4Position.fromAmount1({
+                    pool: v4PoolForCalc,
+                    tickLower: tickLower,
+                    tickUpper: tickUpper,
+                    amount1: JSBI.BigInt(parsedInputAmount.toString())
+                });
+            }
+        }
 
-        try {
-            parsedCalcAmount0 = BigInt(calculatedAmountSorted0);
-            parsedCalcAmount1 = BigInt(calculatedAmountSorted1);
-        } catch (e) {
-            console.error("[API calc-params] Error parsing SDK mintAmounts to BigInt. Values:", calculatedAmountSorted0, calculatedAmountSorted1);
-            return res.status(400).json({
-                message: "Calculated token amounts from SDK are not valid numbers (e.g., contains \"e+\"). This may be due to an extremely narrow price range for the input amount.",
-                error: "SDK amount parsing error"
-            });
+        if (positionForCalc) {
+            liquidity = positionForCalc.liquidity.toString();
+            amount0Sorted = positionForCalc.mintAmounts.amount0.toString();
+            amount1Sorted = positionForCalc.mintAmounts.amount1.toString();
         }
-        
-        // Check if parsed amounts exceed a practical limit (e.g. maxUint256, though amounts should be much smaller)
-        // This catches cases where the SDK might return an absurdly large number for one token amount due to a tiny range.
-        const MAX_UINT_256 = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffn;
-        if (parsedCalcAmount0 > MAX_UINT_256 || parsedCalcAmount1 > MAX_UINT_256) {
-            console.warn("[API calc-params] Impractically large BigInt amount from SDK. A0:", parsedCalcAmount0.toString(), "A1:", parsedCalcAmount1.toString());
-             return res.status(400).json({
-                message: "Calculated dependent token amount is astronomically large (exceeds max representable values for tokens) for the selected price range and input amount. Please widen the price range or reduce the input amount.",
-                error: "Impractical dependent amount (overflow-like)"
-            });
-        }
-        // The previous string length check can be a secondary heuristic if needed, but BigInt comparison is more direct.
-        // if (calculatedAmountSorted0.length > MAX_REASONABLE_AMOUNT_STR_LEN || calculatedAmountSorted1.length > MAX_REASONABLE_AMOUNT_STR_LEN) {
-        //     console.warn("[API calc-params] Impractically large calculated amount string from SDK for range/input. A0:", calculatedAmountSorted0, "A1:", calculatedAmountSorted1);
-        //     return res.status(400).json({
-        //         message: "Calculated dependent token amount is impractically large for the selected price range and input amount. Please widen the price range or reduce the input amount.",
-        //         error: "Impractical dependent amount"
-        //     });
-        // }
+
+        // Removed BigInt overflow/sanity checks to keep endpoint minimal; SDK outputs are trusted here
 
         // --- Map calculated amounts back to original token0Symbol and token1Symbol ---
         let finalAmount0: string;
         let finalAmount1: string;
 
-        if (sdkToken0Original.address === sortedSdkToken0.address) {
+        if (sdkToken0.address === sortedToken0.address) {
             // Original token0 was sortedToken0
-            finalAmount0 = calculatedAmountSorted0;
-            finalAmount1 = calculatedAmountSorted1;
+            finalAmount0 = amount0Sorted;
+            finalAmount1 = amount1Sorted;
         } else {
             // Original token0 was sortedToken1 (meaning order was swapped)
-            finalAmount0 = calculatedAmountSorted1;
-            finalAmount1 = calculatedAmountSorted0;
+            finalAmount0 = amount1Sorted;
+            finalAmount1 = amount0Sorted;
         }
         
         // const currentSqrtPriceX96 = JSBI.BigInt(slot0.sqrtPriceX96); // This was based on the old slot0 object structure
 
         // Calculate human-readable prices of original token1Symbol in terms of original token0Symbol
-        console.log("[API] Calculating Current Price String using currentSqrtPriceX96_JSBI...");
-        console.log("[API] Inputs to calculatePriceString - current:", { 
-            sqrtPriceX96_Value: currentSqrtPriceX96_JSBI.toString(),
-            poolSortedToken0: sortedSdkToken0, 
-            poolSortedToken1: sortedSdkToken1, 
-            desiredPriceOfToken: sdkToken1Original, 
-            desiredPriceInToken: sdkToken0Original 
-        });
         const priceOfReqToken1InReqToken0_Current = calculatePriceString(
             currentSqrtPriceX96_JSBI, // Pass the JSBI object from slot0
-            sortedSdkToken0, 
-            sortedSdkToken1, 
-            sdkToken1Original, // Price OF this token (e.g. BTCRL)
-            sdkToken0Original,  // Price IN TERMS OF this token (e.g. YUSDC)
+            sortedToken0, 
+            sortedToken1, 
+            sdkToken1, // Price OF this token (e.g. BTCRL)
+            sdkToken0,  // Price IN TERMS OF this token (e.g. YUSDC)
             "currentPrice" // context
         );
-        console.log("[API] Calculated Current Price String:", priceOfReqToken1InReqToken0_Current);
 
-        console.log("[API] Calculating Price String at Tick Lower...");
-        console.log("[API] Inputs to calculatePriceString - lower:", { 
-            sqrtPriceX96_Value: TickMath.getSqrtRatioAtTick(finalTickLower).toString(),
-            poolSortedToken0: sortedSdkToken0, 
-            poolSortedToken1: sortedSdkToken1, 
-            desiredPriceOfToken: sdkToken1Original, 
-            desiredPriceInToken: sdkToken0Original 
-        });
         const priceOfReqToken1InReqToken0_Lower = calculatePriceString(
-            TickMath.getSqrtRatioAtTick(finalTickLower),
-            sortedSdkToken0, 
-            sortedSdkToken1, 
-            sdkToken1Original, 
-            sdkToken0Original,
+            TickMath.getSqrtRatioAtTick(tickLower),
+            sortedToken0, 
+            sortedToken1, 
+            sdkToken1, 
+            sdkToken0,
             "priceAtTickLower" // context
         );
-         console.log("[API] Calculated Price String at Tick Lower:", priceOfReqToken1InReqToken0_Lower);
 
-        console.log("[API] Calculating Price String at Tick Upper...");
-         console.log("[API] Inputs to calculatePriceString - upper:", { 
-            sqrtPriceX96_Value: TickMath.getSqrtRatioAtTick(finalTickUpper).toString(),
-            poolSortedToken0: sortedSdkToken0, 
-            poolSortedToken1: sortedSdkToken1, 
-            desiredPriceOfToken: sdkToken1Original, 
-            desiredPriceInToken: sdkToken0Original 
-        });
         const priceOfReqToken1InReqToken0_Upper = calculatePriceString(
-            TickMath.getSqrtRatioAtTick(finalTickUpper),
-            sortedSdkToken0, 
-            sortedSdkToken1, 
-            sdkToken1Original, 
-            sdkToken0Original,
+            TickMath.getSqrtRatioAtTick(tickUpper),
+            sortedToken0, 
+            sortedToken1, 
+            sdkToken1, 
+            sdkToken0,
             "priceAtTickUpper" // context
         );
-        console.log("[API] Calculated Price String at Tick Upper:", priceOfReqToken1InReqToken0_Upper);
 
         res.status(200).json({
-            liquidity: calculatedLiquidity,
-            finalTickLower: finalTickLower,
-            finalTickUpper: finalTickUpper,
+            liquidity: liquidity,
+            finalTickLower: tickLower,
+            finalTickUpper: tickUpper,
             amount0: finalAmount0, 
             amount1: finalAmount1, 
             currentPoolTick: currentTickFromSlot0, // Return the tick from slot0 directly

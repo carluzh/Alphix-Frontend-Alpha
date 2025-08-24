@@ -175,6 +175,7 @@ export default function LoginPage() {
             body: JSON.stringify({ email }),
           }).catch(err => console.error("Failed to save email:", err)); // Fire-and-forget
         }
+        try { sessionStorage.setItem('came_from_login', '1'); } catch {}
         router.push('/swap');
       } else {
         setHasError(true);

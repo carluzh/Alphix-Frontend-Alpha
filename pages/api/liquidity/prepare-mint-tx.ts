@@ -1,46 +1,24 @@
-import { Token, Percent } from '@uniswap/sdk-core';
-import { Pool as V4Pool, Position as V4Position, PoolKey, V4PositionManager } from "@uniswap/v4-sdk"; 
+import { Token, Percent, Ether } from '@uniswap/sdk-core';
+import { Pool as V4Pool, Position as V4Position, V4PositionManager } from "@uniswap/v4-sdk"; 
+import type { MintOptions } from "@uniswap/v4-sdk";
+import { nearestUsableTick } from '@uniswap/v3-sdk';
 import JSBI from 'jsbi';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
-import { position_manager_abi } from "../../../lib/abis/PositionManager_abi";
-import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from "../../../lib/abis/state_view_abi"; 
-import { EMPTY_BYTES } from "../../../lib/swap-constants";
-import { TOKEN_DEFINITIONS, TokenSymbol, getToken, getPositionManagerAddress, getStateViewAddress } from "../../../lib/pools-config";
+import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from "@/lib/abis/state_view_abi"; 
+import { TokenSymbol, getToken, getPositionManagerAddress, getStateViewAddress } from "../../../lib/pools-config";
 import { iallowance_transfer_abi } from "../../../lib/abis/IAllowanceTransfer_abi"; // For Permit2 allowance method
 
 import { publicClient } from "../../../lib/viemClient"; 
 import { 
-    parseUnits, 
     isAddress, 
     getAddress, 
-    encodeFunctionData, 
-    encodeAbiParameters, 
-    encodePacked,
     parseAbi, 
     maxUint256,
+    parseUnits,
     type Hex 
 } from "viem";
 
-// Helper function to safely parse amounts and prevent scientific notation errors
-const safeParseUnits = (amount: string, decimals: number): bigint => {
-  // Convert scientific notation to decimal format
-  const numericAmount = parseFloat(amount);
-  if (isNaN(numericAmount)) {
-    throw new Error("Invalid number format");
-  }
-  
-  // Convert to string with full decimal representation (no scientific notation)
-  const fullDecimalString = numericAmount.toFixed(decimals);
-  
-  // Remove trailing zeros after decimal point
-  const trimmedString = fullDecimalString.replace(/\.?0+$/, '');
-  
-  // If the result is just a decimal point, return "0"
-  const finalString = trimmedString === '.' ? '0' : trimmedString;
-  
-  return parseUnits(finalString, decimals);
-};
 
 // Constants for Permit2
 import {
@@ -188,10 +166,42 @@ export default async function handler(
 
         const sdkToken0 = new Token(chainId, getAddress(token0Config.address), token0Config.decimals, token0Config.symbol);
         const sdkToken1 = new Token(chainId, getAddress(token1Config.address), token1Config.decimals, token1Config.symbol);
-        
-        const inputTokenIsSdkToken0 = inputTokenSymbol === token0Symbol;
-        const sdkInputToken = inputTokenIsSdkToken0 ? sdkToken0 : sdkToken1;
-        const parsedInputAmount_BigInt = safeParseUnits(inputAmount, sdkInputToken.decimals); 
+        const sdkInputToken = inputTokenSymbol === token0Symbol ? sdkToken0 : sdkToken1;
+
+        const normalizeAmountString = (raw: string): string => {
+            let s = (raw ?? '').toString().trim().replace(/,/g, '.');
+            if (!/e|E/.test(s)) return s;
+            // Expand scientific notation without using floats
+            const match = s.match(/^([+-]?)(\d*\.?\d+)[eE]([+-]?\d+)$/);
+            if (!match) return s; // fallback
+            const sign = match[1] || '';
+            const num = match[2];
+            const exp = parseInt(match[3], 10);
+            const parts = num.split('.');
+            const intPart = parts[0] || '0';
+            const fracPart = parts[1] || '';
+            const digits = (intPart + fracPart).replace(/^0+/, '') || '0';
+            let pointIndex = intPart.length;
+            let newPoint = pointIndex + exp;
+            if (exp >= 0) {
+                if (newPoint >= digits.length) {
+                    const zeros = '0'.repeat(newPoint - digits.length);
+                    return sign + digits + zeros;
+                } else {
+                    return sign + digits.slice(0, newPoint) + '.' + digits.slice(newPoint);
+                }
+            } else {
+                if (newPoint <= 0) {
+                    const zeros = '0'.repeat(-newPoint);
+                    return sign + '0.' + zeros + digits;
+                } else {
+                    return sign + digits.slice(0, newPoint) + '.' + digits.slice(newPoint);
+                }
+            }
+        };
+
+        const normalizedInput = normalizeAmountString(inputAmount);
+        const parsedInputAmount_BigInt = parseUnits(normalizedInput, sdkInputToken.decimals); 
         const parsedInputAmount_JSBI = JSBI.BigInt(parsedInputAmount_BigInt.toString()); 
 
         // Use configured pool ID from pools.json instead of deriving
@@ -204,76 +214,60 @@ export default async function handler(
 
         const clampedUserTickLower = Math.max(userTickLower, SDK_MIN_TICK);
         const clampedUserTickUpper = Math.min(userTickUpper, SDK_MAX_TICK);
-        const finalTickLower = Math.ceil(clampedUserTickLower / poolConfig.tickSpacing) * poolConfig.tickSpacing;
-        const finalTickUpper = Math.floor(clampedUserTickUpper / poolConfig.tickSpacing) * poolConfig.tickSpacing;
-
-        if (finalTickLower >= finalTickUpper) {
-            return res.status(400).json({ message: `Error: finalTickLower (${finalTickLower}) must be less than finalTickUpper (${finalTickUpper}) after alignment.` });
+        let tickLower = nearestUsableTick(clampedUserTickLower, poolConfig.tickSpacing);
+        let tickUpper = nearestUsableTick(clampedUserTickUpper, poolConfig.tickSpacing);
+        if (tickLower >= tickUpper) {
+            tickLower = tickUpper - poolConfig.tickSpacing;
         }
+
+        // After alignment, the previous clamp adjusts ordering. No further error required here.
         
-        const poolId = poolConfig.subgraphId;
-        
-        // Still need sorted tokens for V4Pool construction
         const [sortedToken0, sortedToken1] = sdkToken0.sortsBefore(sdkToken1) 
             ? [sdkToken0, sdkToken1] 
             : [sdkToken1, sdkToken0];
 
-        // DIAGNOSTIC: Query actual pool parameters to check for mismatches
-        console.log(`[DIAGNOSTIC] Checking pool parameters for ${token0Symbol}/${token1Symbol}:`);
-        console.log(`[DIAGNOSTIC] Expected pool ID: ${poolId}`);
-        console.log(`[DIAGNOSTIC] Expected fee: ${poolConfig.fee}`);
-        console.log(`[DIAGNOSTIC] Expected tick spacing: ${poolConfig.tickSpacing}`);
-        console.log(`[DIAGNOSTIC] Expected hooks: ${poolConfig.hooks}`);
+        const poolId = V4Pool.getPoolId(
+            sortedToken0,
+            sortedToken1,
+            poolConfig.fee,
+            poolConfig.tickSpacing,
+            getAddress(poolConfig.hooks) as `0x${string}`
+        );
+        
+        // sortedToken0/1 determined above
 
-        let rawSqrtPriceX96String: string;
-        let currentTickFromSlot0: number;
-        let lpFeeFromSlot0: number;
+        // Query current pool state
+
         let currentSqrtPriceX96_JSBI: JSBI;
+        let currentTick: number;
+        let currentLiquidity: bigint;
 
         try {
-            const slot0DataViem = await publicClient.readContract({
-                address: STATE_VIEW_ADDRESS,
-                abi: stateViewAbiViem,
-                functionName: 'getSlot0',
-                args: [poolId as Hex]
-            }) as readonly [bigint, number, number, number];
-            rawSqrtPriceX96String = slot0DataViem[0].toString();
-            currentTickFromSlot0 = Number(slot0DataViem[1]);
-            lpFeeFromSlot0 = Number(slot0DataViem[3]);
-            currentSqrtPriceX96_JSBI = JSBI.BigInt(rawSqrtPriceX96String);
+            const [slot0, liquidity] = await Promise.all([
+                publicClient.readContract({
+                    address: STATE_VIEW_ADDRESS,
+                    abi: stateViewAbiViem,
+                    functionName: 'getSlot0',
+                    args: [poolId as Hex]
+                }) as Promise<readonly [bigint, number, number, number]>,
+                publicClient.readContract({
+                    address: STATE_VIEW_ADDRESS,
+                    abi: stateViewAbiViem,
+                    functionName: 'getLiquidity',
+                    args: [poolId as Hex]
+                }) as Promise<bigint>
+            ]);
 
-            // DIAGNOSTIC: Compare actual vs expected parameters
-            console.log(`[DIAGNOSTIC] Actual pool state from slot0:`);
-            console.log(`[DIAGNOSTIC] - sqrtPriceX96: ${rawSqrtPriceX96String}`);
-            console.log(`[DIAGNOSTIC] - current tick: ${currentTickFromSlot0}`);
-            console.log(`[DIAGNOSTIC] - actual LP fee: ${lpFeeFromSlot0}`);
-            console.log(`[DIAGNOSTIC] - is initialized: ${BigInt(rawSqrtPriceX96String) > 0n}`);
-
-            // Check for fee mismatch
-            if (lpFeeFromSlot0 !== poolConfig.fee) {
-                console.log(`[DIAGNOSTIC] ⚠️ FEE MISMATCH! Expected: ${poolConfig.fee}, Actual: ${lpFeeFromSlot0}`);
-            }
-
-            // Infer tick spacing from current tick
-            let inferredTickSpacing = "unknown";
-            if (currentTickFromSlot0 % 200 === 0) inferredTickSpacing = "200";
-            else if (currentTickFromSlot0 % 60 === 0) inferredTickSpacing = "60";
-            else if (currentTickFromSlot0 % 10 === 0) inferredTickSpacing = "10";
-            else if (currentTickFromSlot0 % 1 === 0) inferredTickSpacing = "1";
-
-            console.log(`[DIAGNOSTIC] Inferred tick spacing: ${inferredTickSpacing}`);
-            if (inferredTickSpacing !== "unknown" && parseInt(inferredTickSpacing) !== poolConfig.tickSpacing) {
-                console.log(`[DIAGNOSTIC] ⚠️ TICK SPACING MISMATCH! Expected: ${poolConfig.tickSpacing}, Inferred: ${inferredTickSpacing}`);
-            }
+            const sqrtPriceX96Current = slot0[0] as bigint;
+            currentTick = slot0[1] as number;
+            currentLiquidity = liquidity as bigint;
+            currentSqrtPriceX96_JSBI = JSBI.BigInt(sqrtPriceX96Current.toString());
 
             // Check if pool is initialized
-            if (BigInt(rawSqrtPriceX96String) === 0n) {
-                console.log(`[DIAGNOSTIC] ❌ POOL NOT INITIALIZED! sqrtPriceX96 = 0`);
+            if (sqrtPriceX96Current === 0n) {
                 return res.status(400).json({ 
                     message: `Pool ${token0Symbol}/${token1Symbol} (${poolId}) is not initialized. sqrtPriceX96 = 0. This is likely why you're getting PoolNotInitialized errors.` 
                 });
-            } else {
-                console.log(`[DIAGNOSTIC] ✅ Pool is properly initialized`);
             }
 
         } catch (error) {
@@ -281,60 +275,61 @@ export default async function handler(
             return res.status(500).json({ message: "Failed to fetch current pool data.", error });
         }
 
+        // Use NativeCurrency for the native leg to satisfy SDK native handling
+        const poolCurrency0 = sortedToken0.address === ETHERS_ADDRESS_ZERO ? Ether.onChain(Number(chainId)) : sortedToken0;
+        const poolCurrency1 = sortedToken1.address === ETHERS_ADDRESS_ZERO ? Ether.onChain(Number(chainId)) : sortedToken1;
+
         const v4PoolForCalc = new V4Pool(
-            sortedToken0,
-            sortedToken1,
+            poolCurrency0 as any,
+            poolCurrency1 as any,
             poolConfig.fee, // Use fee from pool configuration 
             poolConfig.tickSpacing, // Use tick spacing from pool configuration
             poolConfig.hooks as `0x${string}`, // Use hook address from pool configuration
             currentSqrtPriceX96_JSBI, 
-            JSBI.BigInt(0), 
-            currentTickFromSlot0
+            JSBI.BigInt(currentLiquidity.toString()), 
+            currentTick
         );
 
-        let positionForCalc: V4Position;
+        let position: V4Position;
         if (sdkInputToken.address === sortedToken0.address) {
-            positionForCalc = V4Position.fromAmount0({
+            position = V4Position.fromAmount0({
                 pool: v4PoolForCalc,
-                tickLower: finalTickLower,
-                tickUpper: finalTickUpper,
+                tickLower: tickLower,
+                tickUpper: tickUpper,
                 amount0: parsedInputAmount_JSBI, 
                 useFullPrecision: true
             });
         } else { 
-            positionForCalc = V4Position.fromAmount1({
+            position = V4Position.fromAmount1({
                 pool: v4PoolForCalc,
-                tickLower: finalTickLower,
-                tickUpper: finalTickUpper,
+                tickLower: tickLower,
+                tickUpper: tickUpper,
                 amount1: parsedInputAmount_JSBI
             });
         }
         
-        const calculatedLiquidity_JSBI = positionForCalc.liquidity;
-        const sdkCalculatedAmountSorted0_BigInt = BigInt(positionForCalc.mintAmounts.amount0.toString());
-        const sdkCalculatedAmountSorted1_BigInt = BigInt(positionForCalc.mintAmounts.amount1.toString());
+        const liquidity = position.liquidity;
+        const amount0 = BigInt(position.mintAmounts.amount0.toString());
+        const amount1 = BigInt(position.mintAmounts.amount1.toString());
 
         const MAX_UINT_128 = (1n << 128n) - 1n;
-        if (JSBI.GT(calculatedLiquidity_JSBI, JSBI.BigInt(MAX_UINT_128.toString()))) {
+        if (JSBI.GT(liquidity, JSBI.BigInt(MAX_UINT_128.toString()))) {
             return res.status(400).json({
                 message: "The selected price range is too narrow for the provided input amount, resulting in an impractically large liquidity value."
             });
         }
         
-        const isFullRange = (finalTickLower === SDK_MIN_TICK && finalTickUpper === SDK_MAX_TICK);
-        
-        // Allow single-sided positions outside the current price range - this is a valid use case
-        // Only check for completely invalid scenarios (both amounts zero with positive liquidity)
-        if (sdkCalculatedAmountSorted0_BigInt <= 0n && sdkCalculatedAmountSorted1_BigInt <= 0n && JSBI.GT(calculatedLiquidity_JSBI, JSBI.BigInt(0))) {
+
+        if (amount0 <= 0n && amount1 <= 0n && JSBI.GT(liquidity, JSBI.BigInt(0))) {
             return res.status(400).json({ message: "Calculation resulted in zero amounts for both tokens but positive liquidity. This is an unlikely scenario, please check inputs." });
         }
-        if (sdkCalculatedAmountSorted0_BigInt <= 0n && sdkCalculatedAmountSorted1_BigInt <= 0n && JSBI.LE(calculatedLiquidity_JSBI, JSBI.BigInt(0))) { 
+        if (amount0 <= 0n && amount1 <= 0n && JSBI.LE(liquidity, JSBI.BigInt(0))) { 
             return res.status(400).json({ message: "Calculation resulted in zero amounts and zero liquidity. Please provide a valid input amount and range." });
         }
 
         const tokensToCheck = [
-            { sdkToken: sortedToken0, requiredAmount: sdkCalculatedAmountSorted0_BigInt, symbol: getToken(sortedToken0.symbol as TokenSymbol)?.symbol || sortedToken0.symbol || "Token0" },
-            { sdkToken: sortedToken1, requiredAmount: sdkCalculatedAmountSorted1_BigInt, symbol: getToken(sortedToken1.symbol as TokenSymbol)?.symbol || sortedToken1.symbol || "Token1" }
+            { sdkToken: sortedToken0, requiredAmount: amount0, symbol: getToken(sortedToken0.symbol as TokenSymbol)?.symbol || sortedToken0.symbol || "Token0" },
+            { sdkToken: sortedToken1, requiredAmount: amount1, symbol: getToken(sortedToken1.symbol as TokenSymbol)?.symbol || sortedToken1.symbol || "Token1" }
         ];
 
         // Debug calculated amounts
@@ -346,159 +341,121 @@ export default async function handler(
         const hasNativeETH = sortedToken0.address === ETHERS_ADDRESS_ZERO || sortedToken1.address === ETHERS_ADDRESS_ZERO;
         console.log(`[DEBUG] Pool has native ETH: ${hasNativeETH}`);
 
-        // Check ERC20 allowances first - return early if any token needs ERC20 approval
-        // Skip this check for native ETH (address 0x0)
-        for (const tokenInfo of tokensToCheck) {
-            if (getAddress(tokenInfo.sdkToken.address) === ETHERS_ADDRESS_ZERO || tokenInfo.requiredAmount <= 0n) {
-                console.log(`[DEBUG] Skipping approval check for ${tokenInfo.symbol} - native ETH or zero amount`);
-                continue;
-            }
-
-            const eoaToPermit2Erc20Allowance = await publicClient.readContract({
-                address: getAddress(tokenInfo.sdkToken.address),
+        // First, ensure ERC20 approvals to Permit2 exist (one-time per token)
+        for (const t of tokensToCheck) {
+            if (getAddress(t.sdkToken.address) === ETHERS_ADDRESS_ZERO || t.requiredAmount <= 0n) continue;
+            const erc20AllowanceToPermit2 = await publicClient.readContract({
+                address: getAddress(t.sdkToken.address),
                 abi: parseAbi(['function allowance(address owner, address spender) external view returns (uint256)']),
                 functionName: 'allowance',
                 args: [getAddress(userAddress), PERMIT2_ADDRESS]
             }) as bigint;
-
-            if (eoaToPermit2Erc20Allowance < tokenInfo.requiredAmount) {
+            if (erc20AllowanceToPermit2 < t.requiredAmount) {
                 return res.status(200).json({
                     needsApproval: true,
-                    approvalTokenAddress: tokenInfo.sdkToken.address,
-                    approvalTokenSymbol: tokenInfo.symbol as TokenSymbol,
-                    approveToAddress: PERMIT2_ADDRESS, 
+                    approvalTokenAddress: t.sdkToken.address,
+                    approvalTokenSymbol: t.symbol as TokenSymbol,
+                    approveToAddress: PERMIT2_ADDRESS,
                     approvalAmount: maxUint256.toString(),
                     approvalType: 'ERC20_TO_PERMIT2'
                 });
             }
         }
 
-        // Always check Permit2 allowances to determine if permits are actually needed
-        // This ensures we create simple transactions when possible, even if permit data was provided
-        // Skip permit checks for native ETH
-        const tokensNeedingPermits: Array<{
-            token: Hex;
-            amount: string;
-            expiration: number;
-            nonce: number;
-            symbol: TokenSymbol;
-        }> = [];
-
-        const currentTimestamp = Math.floor(Date.now() / 1000);
-
-        for (const tokenInfo of tokensToCheck) {
-            if (getAddress(tokenInfo.sdkToken.address) === ETHERS_ADDRESS_ZERO || tokenInfo.requiredAmount <= 0n) {
-                console.log(`[DEBUG] Skipping permit check for ${tokenInfo.symbol} - native ETH or zero amount`);
-                continue;
-            }
-
-            const permit2AllowanceTuple = await publicClient.readContract({
-                address: PERMIT2_ADDRESS,
-                abi: iallowance_transfer_abi, 
-                functionName: 'allowance',
-                args: [getAddress(userAddress), getAddress(tokenInfo.sdkToken.address), POSITION_MANAGER_ADDRESS]
-            }) as readonly [amount: bigint, expiration: number, nonce: number];
-            
-            const permit2SpenderAmount = permit2AllowanceTuple[0];
-            const permit2SpenderExpiration = permit2AllowanceTuple[1];
-            const permit2SpenderNonce = permit2AllowanceTuple[2];
-
-            console.log(`[DEBUG] ${tokenInfo.symbol} Permit2 state: allowance=${permit2SpenderAmount}, required=${tokenInfo.requiredAmount}, expiration=${permit2SpenderExpiration}`);
-
-            let needsPermitSignature = false;
-
-            // Check if current allowance is sufficient
-            if (tokenInfo.requiredAmount > MAX_UINT_160) { 
-                if (permit2SpenderAmount < MAX_UINT_160) {
-                    needsPermitSignature = true;
-                }
-            } else {
-                if (permit2SpenderAmount < tokenInfo.requiredAmount) {
-                    needsPermitSignature = true;
-                }
-            }
-
-            // Check if current permit is expired
-            if (!needsPermitSignature && permit2SpenderExpiration !== 0 && permit2SpenderExpiration <= currentTimestamp && tokenInfo.requiredAmount > 0n) {
-                needsPermitSignature = true;
-            }
-            
-            if (needsPermitSignature) {
-                const permitExpirationTimestamp = currentTimestamp + PERMIT_EXPIRATION_DURATION_SECONDS;
-                
-                tokensNeedingPermits.push({
-                    token: getAddress(tokenInfo.sdkToken.address),
-                    amount: MAX_UINT_160.toString(),
-                    expiration: permitExpirationTimestamp,
-                    nonce: permit2SpenderNonce,
-                    symbol: tokenInfo.symbol as TokenSymbol
-                });
-            }
-        }
-
-        // If permit signature and data are provided but no tokens actually need permits, ignore the permit data
-        // This ensures we create simple transactions when tokens already have sufficient allowances
-        if (!permitSignature || !permitBatchData || tokensNeedingPermits.length === 0) {
-            // If any tokens need permits and no permit signature provided, return signature request
-            if (tokensNeedingPermits.length > 0) {
-                const sigDeadlineTimestamp = BigInt(currentTimestamp + PERMIT_SIG_DEADLINE_DURATION_SECONDS);
-
-                const domain = {
-                    name: PERMIT2_DOMAIN_NAME,
-                    chainId: Number(chainId),
-                    verifyingContract: PERMIT2_ADDRESS,
-                };
-
-                const messageToSign: PermitBatchMessageForAPI = {
-                    details: tokensNeedingPermits.map(t => ({
-                        token: t.token,
-                        amount: t.amount,
-                        expiration: t.expiration,
-                        nonce: t.nonce
-                    })),
-                    spender: POSITION_MANAGER_ADDRESS,
-                    sigDeadline: sigDeadlineTimestamp.toString(),
-                };
-                
-                return res.status(200).json({
-                    needsApproval: true,
-                    approvalTokenAddress: tokensNeedingPermits[0].token, // For compatibility, use first token
-                    approvalTokenSymbol: tokensNeedingPermits[0].symbol,
-                    approvalType: 'PERMIT2_SIGNATURE_FOR_PM',
-                    signatureDetails: {
-                        domain,
-                        types: PERMIT_TYPES, 
-                        primaryType: 'PermitBatch',
-                        message: messageToSign,
-                    },
-                    permit2Address: PERMIT2_ADDRESS,
-                });
-            }
-        }
-        
-        // If all checks passed for both tokens, proceed to prepare the transaction using V4PositionManager
+        // Build Permit2 details for non-native tokens (gasless approvals per guide)
         const latestBlockViem = await publicClient.getBlock({ blockTag: 'latest' });
         if (!latestBlockViem) throw new Error("Failed to get latest block for deadline.");
         const deadlineBigInt = latestBlockViem.timestamp + 1200n; // 20 minutes from now
 
-        // Create AddLiquidityOptions for V4PositionManager
-        const addLiquidityOptions: any = {
-            slippageTolerance: new Percent(5, 1000), // 0.5% slippage tolerance
+        const permitDetails: { token: Hex; amount: string; expiration: string; nonce: string; symbol: TokenSymbol }[] = [];
+        const currentTime = Number(latestBlockViem.timestamp);
+        for (const t of tokensToCheck) {
+            if (getAddress(t.sdkToken.address) === ETHERS_ADDRESS_ZERO || t.requiredAmount <= 0n) continue;
+            const [permitAmt, permitExp, permitNonce] = await publicClient.readContract({
+                address: PERMIT2_ADDRESS,
+                abi: iallowance_transfer_abi,
+                functionName: 'allowance',
+                args: [getAddress(userAddress), getAddress(t.sdkToken.address), POSITION_MANAGER_ADDRESS]
+            }) as readonly [amount: bigint, expiration: number, nonce: number];
+
+            // Request a new permit only if the existing one is missing/expired/insufficient
+            const hasUnlimitedAndValid = permitAmt >= MAX_UINT_160 && (permitExp === 0 || permitExp > currentTime);
+            const hasEnoughAndValid = permitAmt >= t.requiredAmount && (permitExp === 0 || permitExp > currentTime);
+            const needsPermit = !(hasUnlimitedAndValid || hasEnoughAndValid);
+            if (!needsPermit) continue;
+
+            permitDetails.push({
+                token: getAddress(t.sdkToken.address),
+                amount: MAX_UINT_160.toString(),
+                expiration: deadlineBigInt.toString(),
+                nonce: permitNonce.toString(),
+                symbol: t.symbol as TokenSymbol
+            });
+        }
+
+        if (permitDetails.length > 0 && (!permitSignature || !permitBatchData)) {
+            const domain = {
+                name: PERMIT2_DOMAIN_NAME,
+                chainId: Number(chainId),
+                verifyingContract: PERMIT2_ADDRESS,
+            };
+            const messageToSign: PermitBatchMessageForAPI = {
+                details: permitDetails.map(({ token, amount, expiration, nonce }) => ({
+                    token,
+                    amount,
+                    expiration: Number(expiration),
+                    nonce: Number(nonce)
+                })),
+                spender: POSITION_MANAGER_ADDRESS,
+                sigDeadline: deadlineBigInt.toString(),
+            };
+            return res.status(200).json({
+                needsApproval: true,
+                approvalTokenAddress: permitDetails[0].token,
+                approvalTokenSymbol: permitDetails[0].symbol,
+                approvalType: 'PERMIT2_SIGNATURE_FOR_PM',
+                signatureDetails: {
+                    domain,
+                    types: PERMIT_TYPES,
+                    primaryType: 'PermitBatch',
+                    message: messageToSign,
+                },
+                permit2Address: PERMIT2_ADDRESS,
+            });
+        }
+        
+        // If all checks passed for both tokens, proceed to prepare the transaction using V4PositionManager
+        // latestBlockViem and deadlineBigInt computed above
+
+        // Create MintOptions for V4PositionManager
+        const mintOptions: MintOptions = {
+            slippageTolerance: new Percent(50, 10_000), // 0.5% slippage
             deadline: deadlineBigInt.toString(),
-            recipient: getAddress(userAddress)
+            recipient: getAddress(userAddress),
+            hookData: '0x',
+            // Always set when the pool involves the native token to satisfy SDK invariant
+            useNative: hasNativeETH ? Ether.onChain(Number(chainId)) : undefined
         };
 
-        // Never include batchPermit - permits are now handled separately
-        console.log(`[DEBUG] prepare-mint-tx for ${token0Symbol}/${token1Symbol}:`);
-        console.log(`[DEBUG] Using pool ID: ${poolId}`);
-        console.log(`[DEBUG] tokensNeedingPermits count:`, tokensNeedingPermits.length);
-        console.log(`[DEBUG] Transaction deadline set to:`, deadlineBigInt.toString(), `(${new Date(Number(deadlineBigInt) * 1000).toISOString()})`);
-        console.log(`[DEBUG] Slippage tolerance: 5%`);
-        console.log(`[DEBUG] Pool current tick:`, currentTickFromSlot0);
-        console.log(`[DEBUG] Position tick range: ${finalTickLower} to ${finalTickUpper}`);
-        console.log(`[DEBUG] Position liquidity:`, calculatedLiquidity_JSBI.toString());
-        console.log(`[DEBUG] Token amounts: ${sortedToken0.symbol}=${sdkCalculatedAmountSorted0_BigInt.toString()}, ${sortedToken1.symbol}=${sdkCalculatedAmountSorted1_BigInt.toString()}`);
-        console.log(`[DEBUG] Creating simple transaction (permits handled separately)`);
+        // If client provided a signed batch permit, attach it to the mint options
+        if (permitSignature && permitBatchData && permitBatchData.details?.length > 0) {
+            mintOptions.batchPermit = {
+                owner: getAddress(userAddress),
+                permitBatch: {
+                    details: permitBatchData.details.map(d => ({
+                        token: getAddress(d.token) as Hex,
+                        amount: d.amount,
+                        expiration: d.expiration,
+                        nonce: d.nonce,
+                    })),
+                    spender: POSITION_MANAGER_ADDRESS,
+                    sigDeadline: permitBatchData.sigDeadline,
+                },
+                signature: permitSignature,
+            };
+        }
+
+        // Minimal debug
         
         // Note: Permits are now submitted separately to Permit2 contract before this transaction
 
@@ -512,22 +469,11 @@ export default async function handler(
         console.log(`[DEBUG] Expected pool ID: ${poolId}`);
 
         // Use V4PositionManager to generate the complete call parameters
-        const methodParameters = V4PositionManager.addCallParameters(positionForCalc, addLiquidityOptions);
+        const methodParameters = V4PositionManager.addCallParameters(position, mintOptions);
         
         const encodedModifyLiquiditiesCallDataViem = methodParameters.calldata;
         console.log(`[DEBUG] Generated calldata length:`, encodedModifyLiquiditiesCallDataViem.length);
-
-        // Calculate transaction value for native ETH
-        let transactionValue = "0";
-        if (hasNativeETH) {
-            // If sortedToken0 is ETH, use its amount; otherwise use sortedToken1's amount
-            const ethAmount = sortedToken0.address === ETHERS_ADDRESS_ZERO 
-                ? sdkCalculatedAmountSorted0_BigInt 
-                : sdkCalculatedAmountSorted1_BigInt;
-            
-            transactionValue = ethAmount.toString();
-            console.log(`[DEBUG] Setting transaction value for native ETH: ${transactionValue} wei`);
-        }
+        const transactionValue = methodParameters.value ?? "0";
         
         console.log(`[DEBUG] Transaction ready for ${token0Symbol}/${token1Symbol}`);
 
@@ -540,11 +486,11 @@ export default async function handler(
             },
             deadline: deadlineBigInt.toString(),
             details: {
-                token0: { address: sortedToken0.address, symbol: (getToken(sortedToken0.symbol as TokenSymbol)?.symbol || sortedToken0.symbol) as TokenSymbol, amount: sdkCalculatedAmountSorted0_BigInt.toString() },
-                token1: { address: sortedToken1.address, symbol: (getToken(sortedToken1.symbol as TokenSymbol)?.symbol || sortedToken1.symbol) as TokenSymbol, amount: sdkCalculatedAmountSorted1_BigInt.toString() },
-                liquidity: calculatedLiquidity_JSBI.toString(), 
-                finalTickLower,
-                finalTickUpper
+                token0: { address: sortedToken0.address, symbol: (getToken(sortedToken0.symbol as TokenSymbol)?.symbol || sortedToken0.symbol) as TokenSymbol, amount: amount0.toString() },
+                token1: { address: sortedToken1.address, symbol: (getToken(sortedToken1.symbol as TokenSymbol)?.symbol || sortedToken1.symbol) as TokenSymbol, amount: amount1.toString() },
+                liquidity: liquidity.toString(), 
+                finalTickLower: tickLower,
+                finalTickUpper: tickUpper
             }
         });
 

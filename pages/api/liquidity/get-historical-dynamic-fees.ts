@@ -1,95 +1,93 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { batchGetTokenPrices, calculateTotalUSD, calculateSwapVolumeUSD } from '../../../lib/price-service';
-import { getTokenDecimals } from '../../../lib/pools-config';
+import { getTokenDecimals, getAllPools } from '../../../lib/pools-config';
 import { formatUnits } from 'viem';
 
-// Subgraph URL (same as in get-rolling-volume-fees.ts)
-const SUBGRAPH_URL = "https://api.studio.thegraph.com/query/111443/alphix-test/version/latest";
+// Simple in-memory cache to minimize subgraph calls
+const HIST_CACHE = new Map<string, { ts: number; data: FeeHistoryPoint[] }>();
+const HIST_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
-// GraphQL query to fetch fee updates for a given pool within a time range
+// Subgraph URL selection (Satsuma default with env/query overrides)
+const LEGACY_SUBGRAPH_URL = process.env.SUBGRAPH_URL || "";
+function selectSubgraphUrl(_req: NextApiRequest): string {
+  const envDefault = process.env.NEXT_PUBLIC_SUBGRAPH_URL || process.env.SUBGRAPH_URL;
+  return envDefault || LEGACY_SUBGRAPH_URL;
+}
+
+// GraphQL query to fetch fee updates for a given pool within a time range (legacy schema)
 const GET_HISTORICAL_FEE_UPDATES_QUERY = `
   query GetFeeUpdatesForPool($poolId: Bytes!, $cutoffTimestamp: BigInt!) {
     feeUpdates(
-      where: {
-        pool: $poolId,
-        timestamp_gte: $cutoffTimestamp
-      }
+      where: { pool: $poolId, timestamp_gte: $cutoffTimestamp }
       orderBy: timestamp
       orderDirection: asc
     ) {
-      id
       timestamp
-      newFeeRateBps # In Basis Points, e.g., "30" for 0.30%
-      transactionHash
+      newFeeRateBps
     }
   }
 `;
 
-// NEW: GraphQL query to fetch pool day data (volume and TVL) with new schema
+// Hook-based fee updates (new Satsuma schema)
+const GET_HOOK_FEE_UPDATES_QUERY = `
+  query GetHookFeeUpdates($poolId: Bytes!, $cutoffTimestamp: BigInt!) {
+    alphixHooks(
+      where: { pool: $poolId, timestamp_gte: $cutoffTimestamp }
+      orderBy: timestamp
+      orderDirection: asc
+      first: 1000
+    ) {
+      timestamp
+      newFeeBps
+      currentTargetRatio
+      newTargetRatio
+    }
+  }
+`;
+
+// Pool day data (trimmed for new schema compatibility)
 const GET_POOL_DAY_DATAS_QUERY = `
   query GetPoolDayDatas($poolId: Bytes!, $startDateTimestamp: Int!, $endDateTimestamp: Int!) {
     poolDayDatas(
       orderBy: date
       orderDirection: asc
-      where: {
-        pool: $poolId,
-        date_gte: $startDateTimestamp,
-        date_lte: $endDateTimestamp
-      }
+      where: { pool: $poolId, date_gte: $startDateTimestamp, date_lte: $endDateTimestamp }
     ) {
-      id
-      date      
+      date
       volumeToken0
       volumeToken1
-      tvlToken0
-      tvlToken1
-      pool {
-        currency0 {
-          symbol
-          decimals
-        }
-        currency1 {
-          symbol
-          decimals
-        }
-      }
     }
   }
 `;
 
-interface SubgraphFeeUpdate {
-    id: string;
-    timestamp: string;
-    newFeeRateBps: string;
-    transactionHash: string;
-}
+// Get the block number at or before a timestamp
+const GET_BLOCK_FOR_TIMESTAMP_QUERY = `
+  query GetBlockAtOrBefore($ts: Int!) {
+    transactions(first: 1, orderBy: timestamp, orderDirection: desc, where: { timestamp_lte: $ts }) {
+      timestamp
+      blockNumber
+    }
+  }
+`;
+
+// Get pool TVL (token balances across all ticks) at a specific block
+const GET_POOL_TVL_AT_BLOCK_QUERY = `
+  query GetPoolTvlAtBlock($poolId: Bytes!, $blockNumber: Int!) {
+    pool(id: $poolId, block: { number: $blockNumber }) {
+      totalValueLockedToken0
+      totalValueLockedToken1
+    }
+  }
+`;
+
+interface SubgraphFeeUpdate { id?: string; timestamp: string; newFeeRateBps: string; transactionHash?: string }
+interface HookFeeUpdate { timestamp: string; newFeeBps?: string; newFeeRateBps?: string }
 
 // NEW: Interface for Subgraph PoolDayData
-interface SubgraphPoolDayData {
-    id: string;
-    date: string; // Timestamp (seconds since epoch for the start of the day)
-    volumeToken0: string;
-    volumeToken1: string;
-    tvlToken0: string;
-    tvlToken1: string;
-    pool: {
-        currency0: {
-            symbol: string;
-            decimals: string;
-        };
-        currency1: {
-            symbol: string;
-            decimals: string;
-        };
-    };
-}
+interface SubgraphPoolDayData { date: string; volumeToken0: string; volumeToken1: string }
 
-interface SubgraphFeeResponse {
-    data?: {
-        feeUpdates: SubgraphFeeUpdate[];
-    };
-    errors?: any[];
-}
+interface SubgraphFeeResponse { data?: { feeUpdates: SubgraphFeeUpdate[] }; errors?: any[] }
+interface HookFeeResponse { data?: { alphixHooks: HookFeeUpdate[] }; errors?: any[] }
 
 // NEW: Interface for Subgraph PoolDayData Response
 interface SubgraphPoolDayDataResponse {
@@ -170,125 +168,106 @@ export default async function handler(
     // Fee updates are rare, so we need to look back further than just the display period
     const feeUpdatesCutoffTimestamp = nowInSeconds - (365 * 24 * 60 * 60); // Look back 1 year for fee updates
     
-    const endDateForPoolDayData = Math.floor(new Date().setUTCHours(0,0,0,0) / 1000); // Midnight today UTC
-    const startDateForPoolDayData = endDateForPoolDayData - ((days -1) * 24 * 60 * 60); // Go back `days - 1` days
+    const endDateForLoop = Math.floor(new Date().setUTCHours(0,0,0,0) / 1000); // Midnight today UTC
+    const startDateForLoop = endDateForLoop - ((days -1) * 24 * 60 * 60);
 
     const feeVariables = {
         poolId: poolId.toLowerCase(),
         cutoffTimestamp: BigInt(feeUpdatesCutoffTimestamp).toString(), // Use longer period for fee updates
     };
 
-    const poolDayDataVariables = {
-        poolId: poolId.toLowerCase(),
-        startDateTimestamp: startDateForPoolDayData,
-        endDateTimestamp: endDateForPoolDayData,
-    };
-
     try {
-        // Fetch both fee updates and pool day data in parallel
-        const [feeResponse, poolDayDataResponse] = await Promise.all([
-            fetch(SUBGRAPH_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    query: GET_HISTORICAL_FEE_UPDATES_QUERY,
-                    variables: feeVariables,
-                }),
+        // Cache key and check
+        const cacheKey = `${feeVariables.poolId}:${days}`;
+        const cached = HIST_CACHE.get(cacheKey);
+        if (cached && (Date.now() - cached.ts) < HIST_TTL_MS) {
+            return res.status(200).json(cached.data);
+        }
+
+        // Fetch hook updates only (ratio + fee)
+        const SUBGRAPH_URL = selectSubgraphUrl(req);
+        const preferHook = true;
+        const feeResponse = await fetch(SUBGRAPH_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                query: preferHook ? GET_HOOK_FEE_UPDATES_QUERY : GET_HISTORICAL_FEE_UPDATES_QUERY,
+                variables: feeVariables,
             }),
-            fetch(SUBGRAPH_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    query: GET_POOL_DAY_DATAS_QUERY,
-                    variables: poolDayDataVariables,
-                }),
-            })
-        ]);
+        });
 
         if (!feeResponse.ok) {
             const errorBody = await feeResponse.text();
             throw new Error(`Subgraph query for fee updates failed: ${errorBody}`);
         }
-        if (!poolDayDataResponse.ok) {
-            const errorBody = await poolDayDataResponse.text();
-            throw new Error(`Subgraph query for pool day data failed: ${errorBody}`);
+        let feeRaw = await feeResponse.json();
+
+        // If legacy path failed due to missing field, auto-retry with hook query (kept for safety)
+        if (feeRaw?.errors) {
+            const messages = Array.isArray(feeRaw.errors) ? feeRaw.errors.map((e: any) => String(e?.message || '')) : [];
+            const missingLegacy = messages.some(m => m.includes('feeUpdates'));
+            if (!preferHook && missingLegacy) {
+                const retry = await fetch(SUBGRAPH_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query: GET_HOOK_FEE_UPDATES_QUERY, variables: feeVariables }),
+                });
+                if (retry.ok) {
+                    const retriedJson = await retry.json();
+                    if (!retriedJson?.errors) {
+                        feeRaw = retriedJson;
+                    } else {
+                        throw new Error(`Subgraph error(s) for fee updates (retry): ${JSON.stringify(retriedJson.errors)}`);
+                    }
+                } else {
+                    const body = await retry.text();
+                    throw new Error(`Subgraph fee updates retry failed: ${body}`);
+                }
+            } else {
+                throw new Error(`Subgraph error(s) for fee updates: ${JSON.stringify(feeRaw.errors)}`);
+            }
+        }
+        // No PoolDayData; ratios sourced from hook
+
+        // Normalize fee updates from either schema (carry target ratio when present)
+        let normalizedUpdates: { timestamp: string; bps: number; target?: number; nextTarget?: number }[] = [];
+        const hookResp = feeRaw as HookFeeResponse;
+        const legacyResp = feeRaw as SubgraphFeeResponse;
+        if (hookResp?.data?.alphixHooks) {
+            normalizedUpdates = hookResp.data.alphixHooks.map((u: any) => ({
+                timestamp: String(u.timestamp),
+                bps: Number(u.newFeeBps ?? u.newFeeRateBps ?? '0'),
+                target: u?.currentTargetRatio !== undefined && u?.currentTargetRatio !== null ? Number(u.currentTargetRatio) : undefined,
+                nextTarget: u?.newTargetRatio !== undefined && u?.newTargetRatio !== null ? Number(u.newTargetRatio) : undefined,
+            }));
+        } else if (legacyResp?.data?.feeUpdates) {
+            normalizedUpdates = legacyResp.data.feeUpdates.map(u => ({
+                timestamp: String(u.timestamp),
+                bps: Number(u.newFeeRateBps ?? '0')
+            }));
         }
 
-        const feeResult = (await feeResponse.json()) as SubgraphFeeResponse;
-        const poolDayDataResult = (await poolDayDataResponse.json()) as SubgraphPoolDayDataResponse;
-
-        if (feeResult.errors) throw new Error(`Subgraph error(s) for fee updates: ${JSON.stringify(feeResult.errors)}`);
-        if (poolDayDataResult.errors) throw new Error(`Subgraph error(s) for pool day data: ${JSON.stringify(poolDayDataResult.errors)}`);
-
-        const feeUpdates = feeResult.data?.feeUpdates || [];
-        const poolDayDatas = poolDayDataResult.data?.poolDayDatas || [];
+        // No PoolDayData in this mode
 
         // If no fee updates, use a default fee but still process pool data
-        let sortedFeeUpdates = feeUpdates.sort((a, b) => parseInt(a.timestamp) - parseInt(b.timestamp));
+        let sortedFeeUpdates = normalizedUpdates.sort((a, b) => parseInt(a.timestamp) - parseInt(b.timestamp));
         let defaultFeeIfNoUpdates = 3000; // Default to 0.3% if no fee updates found
         
         if (sortedFeeUpdates.length === 0) {
             console.log(`API: No fee update data found for pool ${poolId}, using default fee of ${defaultFeeIfNoUpdates} bps`);
-            // Create a synthetic fee update for the default fee
-            sortedFeeUpdates = [{
-                id: 'default',
-                timestamp: '0',
-                newFeeRateBps: defaultFeeIfNoUpdates.toString(),
-                transactionHash: '0x'
-            }];
+            sortedFeeUpdates = [{ timestamp: '0', bps: defaultFeeIfNoUpdates }];
         }
         
-        // Get token prices for USD conversion
-        const tokenSymbols = poolDayDatas.length > 0 ? [
-            poolDayDatas[0].pool.currency0.symbol,
-            poolDayDatas[0].pool.currency1.symbol
-        ] : [];
-        
-        const tokenPrices = tokenSymbols.length > 0 ? await batchGetTokenPrices(tokenSymbols) : {};
-        
-        // Create a map for quick lookup of pool day data by date (YYYY-MM-DD string)
-        const dayDataMap = new Map<string, { volumeUSD: number; tvlUSD: number }>();
-        poolDayDatas.forEach(pdd => {
-            const dateStr = new Date(parseInt(pdd.date) * 1000).toISOString().split('T')[0];
-            
-            // Get prices without fallbacks to see real errors
-            const token0Price = tokenPrices[pdd.pool.currency0.symbol];
-            const token1Price = tokenPrices[pdd.pool.currency1.symbol];
-            
-            if (!token0Price || !token1Price) {
-                console.error(`Missing prices for historical fees ${poolId}:`, {
-                    token0Symbol: pdd.pool.currency0.symbol,
-                    token1Symbol: pdd.pool.currency1.symbol,
-                    token0Price,
-                    token1Price,
-                    availablePrices: Object.keys(tokenPrices)
-                });
-                throw new Error(`Missing price data for historical fees: ${pdd.pool.currency0.symbol}=${token0Price}, ${pdd.pool.currency1.symbol}=${token1Price}`);
-            }
-            
-            const volumeUSD = calculateSwapVolumeUSD(
-                pdd.volumeToken0 || "0",
-                pdd.volumeToken1 || "0",
-                token0Price,
-                token1Price
-            );
-            
-            const tvlUSD = calculateTotalUSD(
-                pdd.tvlToken0 || "0",
-                pdd.tvlToken1 || "0",
-                token0Price,
-                token1Price
-            );
-            
-            dayDataMap.set(dateStr, { volumeUSD, tvlUSD });
-        });
+        // Build day loop range
 
         const dailyFeeHistoryPoints: FeeHistoryPoint[] = [];
-        const endDateLoop = new Date(); // Today
-        const startDateLoop = new Date();
-        startDateLoop.setDate(endDateLoop.getDate() - (days - 1)); 
+        const endDateLoop = new Date(endDateForLoop * 1000);
+        const startDateLoop = new Date(startDateForLoop * 1000);
 
-        let currentFeeBpsNum = parseFloat(sortedFeeUpdates[0].newFeeRateBps);
+        // Infer scale: if any value is very large, assume micro-bps (1e6 = 100%). Otherwise standard bps (1e4 = 100%).
+        const anyLarge = sortedFeeUpdates.some(u => Number(u.bps) > 100000);
+        const scaleDivisor = anyLarge ? 1_000_000 : 10_000;
+        let currentFeeBpsNum = parseFloat(String(sortedFeeUpdates[0].bps));
         const volumeTvlRatiosForEma: number[] = [];
 
         for (let d = new Date(startDateLoop); d <= endDateLoop; d.setDate(d.getDate() + 1)) {
@@ -300,43 +279,81 @@ export default async function handler(
             for (const update of sortedFeeUpdates) {
                 const updateTimestampSeconds = parseInt(update.timestamp);
                 if (updateTimestampSeconds <= loopDayTimestampSeconds) {
-                    activeFeeForDay = parseFloat(update.newFeeRateBps);
-                    currentFeeBpsNum = activeFeeForDay; // Update current fee
+                    activeFeeForDay = parseFloat(String(update.bps));
+                    currentFeeBpsNum = activeFeeForDay;
                 } else {
                     break;
                 }
             }
             
-            // Convert fee from subgraph format to percentage
-            // Subgraph stores as basis points: 900 = 0.09%, 2000 = 0.20%, etc.
-            const dynamicFeeValue = activeFeeForDay / 1000000; // Convert to decimal percentage
+            // Convert fee to decimal percentage based on inferred scale
+            const dynamicFeeValue = activeFeeForDay / scaleDivisor;
 
-            const dayData = dayDataMap.get(loopDateString);
-            const volumeUSD = dayData?.volumeUSD || 0;
-            const tvlUSD = dayData?.tvlUSD || 0;
-            const volumeTvlRatio = tvlUSD > 0 ? parseFloat((volumeUSD / tvlUSD).toFixed(4)) : 0;
+            // Ratio: use latest currentTargetRatio at or before this day
+            let activeTarget: number | undefined = undefined;
+            let activeNextTarget: number | undefined = undefined;
+            for (const update of sortedFeeUpdates) {
+                const updateTimestampSeconds = parseInt(update.timestamp);
+                if (updateTimestampSeconds <= loopDayTimestampSeconds && (update as any).target !== undefined) {
+                    activeTarget = Number((update as any).target);
+                    if ((update as any).nextTarget !== undefined) {
+                        activeNextTarget = Number((update as any).nextTarget);
+                    }
+                } else if (updateTimestampSeconds > loopDayTimestampSeconds) {
+                    break;
+                }
+            }
+            // Scale currentTargetRatio to a plain ratio in [0, +inf).
+            // Priority: 1e18 -> 100% (divide by 1e18), else 1e14 -> 100% (divide by 1e14),
+            // else fallback to 1e6/1e4 heuristics, else raw.
+            let volumeTvlRatio = 0;
+            if (typeof activeTarget === 'number') {
+                const abs = Math.abs(activeTarget);
+                if (abs >= 1e17) {
+                    volumeTvlRatio = activeTarget / 1e18; // 1e18 == 100%
+                } else if (abs >= 1e13) {
+                    volumeTvlRatio = activeTarget / 1e14; // 1e14 == 100%
+                } else if (abs >= 1e6) {
+                    volumeTvlRatio = activeTarget / 1e6;  // micro-units
+                } else if (abs >= 1e4) {
+                    volumeTvlRatio = activeTarget / 1e4;  // bps-like
+                } else {
+                    volumeTvlRatio = activeTarget;
+                }
+                volumeTvlRatio = parseFloat(volumeTvlRatio.toFixed(6));
+            }
             volumeTvlRatiosForEma.push(volumeTvlRatio);
 
+            // Scale newTargetRatio identically; we will return it as emaRatio field
+            let targetRatioForEma = 0;
+            if (typeof activeNextTarget === 'number') {
+                const abs = Math.abs(activeNextTarget);
+                if (abs >= 1e17) {
+                    targetRatioForEma = activeNextTarget / 1e18;
+                } else if (abs >= 1e13) {
+                    targetRatioForEma = activeNextTarget / 1e14;
+                } else if (abs >= 1e6) {
+                    targetRatioForEma = activeNextTarget / 1e6;
+                } else if (abs >= 1e4) {
+                    targetRatioForEma = activeNextTarget / 1e4;
+                } else {
+                    targetRatioForEma = activeNextTarget;
+                }
+                targetRatioForEma = parseFloat(targetRatioForEma.toFixed(6));
+            }
+
             dailyFeeHistoryPoints.push({
-                timeLabel: d.toLocaleDateString(), 
+                timeLabel: d.toISOString().split('T')[0], 
                 volumeTvlRatio: volumeTvlRatio,
-                emaRatio: 0, // Placeholder, will be filled next
+                emaRatio: targetRatioForEma, // Reused field to carry newTargetRatio
                 dynamicFee: dynamicFeeValue,
             });
         }
-
-        // Calculate EMA for volumeTvlRatio
-        const emaPeriod = 10; // Define your EMA period, e.g., 10 days
-        const emaValues = calculateEMA(volumeTvlRatiosForEma, emaPeriod);
-
-        // Add EMA values to the data points
-        for (let i = 0; i < dailyFeeHistoryPoints.length; i++) {
-            if (dailyFeeHistoryPoints[i] && emaValues[i] !== undefined) { // Check if emaValues[i] exists
-                 dailyFeeHistoryPoints[i].emaRatio = emaValues[i];
-            }
-        }
+        // NOTE: We now return emaRatio as the scaled newTargetRatio, not a computed EMA.
         
         console.log(`API: Successfully processed ${dailyFeeHistoryPoints.length} daily data points for pool ${poolId}.`);
+        // save to cache
+        HIST_CACHE.set(cacheKey, { ts: Date.now(), data: dailyFeeHistoryPoints });
         return res.status(200).json(dailyFeeHistoryPoints);
 
     } catch (error: any) {

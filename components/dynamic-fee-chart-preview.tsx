@@ -195,10 +195,12 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
         normalizedEma = 45 + (emaScale * 100); // Scale from 45 to 145
       }
 
-      // Fee normalization: keep in middle range
-      let normalizedFee = 90; // Middle of chart
+      // Fee normalization: use a larger band so small bps changes look like visible steps
+      // Map fee to ~60-180 (fills most of chart height). Guard for flat series.
+      let normalizedFee = 120;
       if (maxFee > minFee) {
-        normalizedFee = 80 + ((point.dynamicFee - minFee) / (maxFee - minFee)) * 40; // 80 to 120
+        const feeScale = (point.dynamicFee - minFee) / (maxFee - minFee);
+        normalizedFee = 60 + (feeScale * 120); // 60..180 band
       }
 
       return {
@@ -206,6 +208,8 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
         volume: normalizedVolume,
         ema: normalizedEma,
         fee: normalizedFee,
+        // keep original for change-point dots
+        _origFee: point.dynamicFee,
       };
     });
     
@@ -213,6 +217,8 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
     previousChartDataRef.current = newChartData;
     return newChartData;
   }, [data, hasDataChanged]);
+
+  // Removed change-point dots per design preference; keep normalization only
 
   const hasData = Array.isArray(data) && data.length > 0;
 

@@ -26,11 +26,15 @@ import {
   getPoolConfigForTokens,
   createTokenSDK,
   createPoolKeyFromConfig,
+  createCanonicalPoolKey,
   getQuoterAddress,
-  CHAIN_ID
+  getStateViewAddress,
+  getPoolById
 } from '../../../lib/pools-config';
+import { STATE_VIEW_ABI } from '../../../lib/abis/state_view_abi';
 import { V4QuoterAbi, EMPTY_BYTES } from '../../../lib/swap-constants';
 import { publicClient } from '../../../lib/viemClient';
+import { ethers } from 'ethers';
 import { findBestRoute, SwapRoute, routeToString } from '../../../lib/routing-engine';
 
 interface GetQuoteRequest extends NextApiRequest {
@@ -56,12 +60,7 @@ interface PathKey {
 // Helper function to encode multi-hop path for V4
 function encodeMultihopPath(route: SwapRoute, chainId: number): PathKey[] {
   const pathKeys: PathKey[] = [];
-  
-  console.log(`[encodeMultihopPath] Encoding route with ${route.pools.length} pools:`, {
-    path: route.path,
-    poolCount: route.pools.length
-  });
-  
+
   for (let i = 0; i < route.pools.length; i++) {
     const pool = route.pools[i];
     
@@ -73,11 +72,9 @@ function encodeMultihopPath(route: SwapRoute, chainId: number): PathKey[] {
     if (i === route.pools.length - 1) {
       // Last hop - intermediate currency is the final destination
       targetToken = route.path[route.path.length - 1];
-      console.log(`[encodeMultihopPath] Last hop ${i}: target token = ${targetToken}`);
     } else {
       // Not the last hop - intermediate currency is the next token in the path
       targetToken = route.path[i + 1];
-      console.log(`[encodeMultihopPath] Hop ${i}: target token = ${targetToken}`);
     }
     
     const targetTokenSDK = createTokenSDK(targetToken as TokenSymbol, chainId);
@@ -91,7 +88,6 @@ function encodeMultihopPath(route: SwapRoute, chainId: number): PathKey[] {
     }
     
     intermediateCurrency = targetTokenSDK.address as Address;
-    console.log(`[encodeMultihopPath] Hop ${i}: intermediateCurrency = ${intermediateCurrency}`);
     
     if (!pool.hooks) {
       throw new Error(`Pool at hop ${i} has undefined hooks address`);
@@ -106,25 +102,19 @@ function encodeMultihopPath(route: SwapRoute, chainId: number): PathKey[] {
       fee: pool.fee,
       tickSpacing: pool.tickSpacing,
       hooks: validatedHooks,
-      hookData: '0x' as `0x${string}`
+      hookData: EMPTY_BYTES
     });
   }
-  
-  console.log(`[encodeMultihopPath] Successfully encoded ${pathKeys.length} path keys`);
+
   return pathKeys;
 }
 
 // Helper function to create pool key and determine swap direction
 function createPoolKeyAndDirection(fromToken: Token, toToken: Token, poolConfig: any) {
-  // Determine token order (same as build-tx.ts)
-  const token0 = fromToken.sortsBefore(toToken) ? fromToken : toToken;
-  const token1 = fromToken.sortsBefore(toToken) ? toToken : fromToken;
-  
-  const poolKey = createPoolKeyFromConfig(poolConfig.pool);
-  
+  // Build canonical PoolKey based on Token ordering to mirror SDK docs
+  const poolKey = createCanonicalPoolKey(fromToken, toToken, poolConfig.pool);
   // zeroForOne is true if swapping from currency0 to currency1
   const zeroForOne = fromToken.sortsBefore(toToken);
-  
   return { poolKey, zeroForOne };
 }
 
@@ -136,14 +126,7 @@ async function getV4QuoteExactInputSingle(
   poolConfig: any
 ): Promise<{ amountOut: bigint; gasEstimate: bigint }> {
   const { poolKey, zeroForOne } = createPoolKeyAndDirection(fromToken, toToken, poolConfig);
-  
-  console.log(`[V4 Quoter] Calling quoteExactInputSingle:`, {
-    poolKey,
-    zeroForOne,
-    exactAmount: amountInSmallestUnits.toString(),
-    hookData: EMPTY_BYTES
-  });
-  
+
   // Structure the parameters as QuoteExactSingleParams struct
   const quoteParams = [
     [poolKey.currency0, poolKey.currency1, poolKey.fee, poolKey.tickSpacing, poolKey.hooks], // poolKey struct
@@ -153,33 +136,22 @@ async function getV4QuoteExactInputSingle(
   ] as const;
 
   try {
-    const result = await publicClient.readContract({
-      address: getQuoterAddress(),
-      abi: V4QuoterAbi,
-      functionName: 'quoteExactInputSingle',
-      args: [quoteParams]
-    }) as [bigint, bigint]; // [amountOut, gasEstimate]
-    
-    return {
-      amountOut: result[0],
-      gasEstimate: result[1]
-    };
+
+    const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL || process.env.RPC_URL || 'https://sepolia.base.org';
+    const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
+    const quoter = new ethers.Contract(getQuoterAddress(), V4QuoterAbi as any, provider);
+
+    const poolId = ethers.utils.solidityKeccak256(
+      ['address','address','uint24','int24','address'],
+      [poolKey.currency0, poolKey.currency1, poolKey.fee, poolKey.tickSpacing, poolKey.hooks]
+      );
+
+      const stateView = new ethers.Contract(getStateViewAddress(), STATE_VIEW_ABI as any, provider);
+      await stateView.callStatic.getSlot0(poolId);
+
+    const [amountOut, gasEstimate] = await quoter.callStatic.quoteExactInputSingle(quoteParams);
+    return { amountOut, gasEstimate };
   } catch (error: any) {
-    console.error(`[V4 Quoter] Single-hop quote error:`, {
-      message: error.message,
-      signature: error.signature,
-      cause: error.cause?.signature,
-      data: error.data,
-      shortMessage: error.shortMessage
-    });
-    
-    // Handle specific error signatures - check multiple possible locations
-    const errorSignature = error.signature || error.cause?.signature;
-    if (errorSignature === '0x6190b2b0' || error.message?.includes('0x6190b2b0')) {
-      throw new Error('Insufficient Liquidity');
-    }
-    
-    // Re-throw other errors
     throw error;
   }
 }
@@ -192,14 +164,6 @@ async function getV4QuoteExactInputMultiHop(
   chainId: number
 ): Promise<{ amountOut: bigint; gasEstimate: bigint }> {
   
-  console.log(`[V4 Quoter] Multi-hop debug info:`, {
-    fromTokenSymbol: fromToken.symbol,
-    fromTokenAddress: fromToken.address,
-    fromTokenIsValid: !!fromToken.address,
-    routePath: route.path,
-    chainId
-  });
-  
   if (!fromToken.address) {
     throw new Error(`From token ${fromToken.symbol} has undefined address`);
   }
@@ -207,23 +171,7 @@ async function getV4QuoteExactInputMultiHop(
   // Encode the multi-hop path
   const pathKeys = encodeMultihopPath(route, chainId);
   
-  console.log(`[V4 Quoter] Calling quoteExactInput for multi-hop:`, {
-    path: routeToString(route),
-    pathKeys: pathKeys.length,
-    exactAmount: amountInSmallestUnits.toString(),
-    fromTokenAddress: fromToken.address
-  });
   
-  // Debug the pathKeys before making the contract call
-  console.log(`[V4 Quoter] Detailed pathKeys debug:`, pathKeys.map((pk, i) => ({
-    hop: i,
-    intermediateCurrency: pk.intermediateCurrency,
-    intermediateType: typeof pk.intermediateCurrency,
-    hooks: pk.hooks,
-    hooksType: typeof pk.hooks,
-    fee: pk.fee,
-    tickSpacing: pk.tickSpacing
-  })));
 
   // Structure the parameters as QuoteExactParams struct
   // ABI expects: (address,(address,uint24,int24,address,bytes)[],uint128)
@@ -246,24 +194,7 @@ async function getV4QuoteExactInputMultiHop(
 
   const quoterAddress = getQuoterAddress();
   
-  console.log(`[V4 Quoter] Full quoteParams debug:`, {
-    currencyIn: quoteParams[0],
-    currencyInType: typeof quoteParams[0],
-    pathLength: quoteParams[1].length,
-    amountIn: quoteParams[2].toString(),
-    quoterAddress: quoterAddress,
-    quoterAddressType: typeof quoterAddress
-  });
   
-  // Debug the converted path tuples
-  console.log(`[V4 Quoter] Path tuples:`, pathTuples.map((tuple, i) => ({
-    hop: i,
-    intermediateCurrency: tuple[0],
-    fee: tuple[1],
-    tickSpacing: tuple[2],
-    hooks: tuple[3],
-    hookData: tuple[4]
-  })));
 
   // Validate quoter address
   if (!quoterAddress) {
@@ -288,33 +219,29 @@ async function getV4QuoteExactInputMultiHop(
   // Note: Cannot JSON.stringify quoteParams due to BigInt values
 
   try {
-    const result = await publicClient.readContract({
-      address: quoterAddress,
-      abi: V4QuoterAbi,
-      functionName: 'quoteExactInput',
-      args: [quoteParams] // Keep the array wrapper for the struct
-    }) as [bigint, bigint]; // [amountOut, gasEstimate]
-    
-    return {
-      amountOut: result[0],
-      gasEstimate: result[1]
-    };
-  } catch (error: any) {
-    console.error(`[V4 Quoter] Multi-hop quote failed:`, {
-      message: error.message,
-      signature: error.signature,
-      cause: error.cause?.signature,
-      data: error.data,
-      shortMessage: error.shortMessage
-    });
-    
-    // Handle specific error signatures - check multiple possible locations
-    const errorSignature = error.signature || error.cause?.signature;
-    if (errorSignature === '0x6190b2b0' || error.message?.includes('0x6190b2b0')) {
-      throw new Error('Insufficient Liquidity');
+    const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL || process.env.RPC_URL || 'https://sepolia.base.org';
+    const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
+
+    // Preflight: verify each hop pool exists via StateView
+    const stateView = new ethers.Contract(getStateViewAddress(), STATE_VIEW_ABI as any, provider);
+    for (let i = 0; i < route.pools.length; i++) {
+      const hop = route.pools[i];
+      const poolCfg = getPoolById(hop.poolId);
+      if (!poolCfg) {
+        throw new Error(`Missing pool config for hop ${i}: ${hop.poolId}`);
+      }
+      const poolId = ethers.utils.solidityKeccak256(
+        ['address','address','uint24','int24','address'],
+        [poolCfg.currency0.address, poolCfg.currency1.address, poolCfg.fee, poolCfg.tickSpacing, poolCfg.hooks]
+      );
+      await stateView.callStatic.getSlot0(poolId);
     }
-    
-    throw new Error(`Multi-hop quote failed: ${error.message || 'Unknown error'}`);
+
+    const quoter = new ethers.Contract(quoterAddress, V4QuoterAbi as any, provider);
+    const [amountOut, gasEstimate] = await quoter.callStatic.quoteExactInput(quoteParams);
+    return { amountOut, gasEstimate };
+  } catch (error: any) {
+    throw error;
   }
 }
 
@@ -409,8 +336,8 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
       gasEstimate = result.gasEstimate;
     }
     
-    // Convert back to decimal string for response
-    const toAmountDecimals = Number(amountOut) / Math.pow(10, toToken.decimals);
+    // Format using ethers like the guide
+    const toAmountDecimals = ethers.utils.formatUnits(amountOut, toToken.decimals);
     
     return res.status(200).json({
       success: true,
@@ -428,29 +355,6 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
       debug: true
     });
   } catch (error: any) {
-    console.error('[V4 Quoter] Error:', error);
-    
-    // Handle specific V4Quoter errors
-    let errorMessage = 'Failed to get quote from V4Quoter';
-    if (error.message) {
-      if (error.message.includes('Pool does not exist') || error.message.includes('POOL_NOT_FOUND')) {
-        errorMessage = 'Pool not found for this token pair';
-      } else if (error.message.includes('Insufficient liquidity')) {
-        errorMessage = error.message; // Use the specific liquidity error message
-      } else if (error.message.includes('execution reverted')) {
-        errorMessage = 'Pool may not exist or be initialized for this token pair. Please check if the V4 pool exists with the specified parameters.';
-      } else if (error.message.includes('V4_QUOTER_ADDRESS_PLACEHOLDER')) {
-        errorMessage = 'V4Quoter contract address not configured';
-      } else if (error.message.includes('Multi-hop quote failed')) {
-        errorMessage = error.message;
-      } else {
-        errorMessage = error.message;
-      }
-    }
-    
-    return res.status(500).json({
-      success: false,
-      error: errorMessage
-    });
+    return res.status(500).json({ success: false, error: 'Failed to get quote' });
   }
 } 

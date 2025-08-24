@@ -1,7 +1,16 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { getAllPools } from '../../../lib/pools-config';
 
-const SUBGRAPH_URL = "https://api.studio.thegraph.com/query/111443/alphix-test/version/latest";
+// Simple in-memory cache and in-flight dedupe to prevent spamming the subgraph
+type CacheVal = { ts: number; resp: any };
+const CACHE = new Map<string, CacheVal>();
+const INFLIGHT = new Map<string, Promise<any>>();
+const TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+const SUBGRAPH_URL = process.env.SUBGRAPH_URL as string;
+if (!SUBGRAPH_URL) {
+  throw new Error('SUBGRAPH_URL env var is required');
+}
 
 interface HookPosition {
   pool: string;
@@ -47,6 +56,31 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
     }
 
+    // Build a stable cache key for this request (use request params only)
+    const cacheKey = JSON.stringify({ k: 'bucket-depths', poolId, tickLower: lowerNum, tickUpper: upperNum, spacingNum, bucketCountNum });
+
+    // Serve cached response if fresh
+    const cached = CACHE.get(cacheKey);
+    if (cached && (Date.now() - cached.ts) < TTL_MS) {
+      return res.status(200).json(cached.resp);
+    }
+
+    // TEMPORARY: The current subgraph schema does not expose tickLower/tickUpper/liquidity on Position
+    // so this endpoint cannot compute real depth right now. To avoid spamming the subgraph and 429s,
+    // return an empty-but-successful payload and cache it for 10 minutes.
+    const disabledResp = {
+      success: true,
+      buckets: [] as BucketData[],
+      bucketSize: spacingNum,
+      totalBuckets: 0,
+      totalPositions: 0,
+      disabled: true,
+      message: 'Depth disabled: subgraph lacks tick/liquidity fields on Position',
+    };
+    CACHE.set(cacheKey, { ts: Date.now(), resp: disabledResp });
+    return res.status(200).json(disabledResp);
+
+    // --- The code below is kept for future re-enable when schema supports it ---
     // Fetch real liquidity data from subgraph
     const graphqlQuery = {
       query: `
@@ -68,17 +102,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     let subgraphId: string | undefined;
 
     // 1) Exact match on configured pool.id
-    const byId = pools.find((p) => p.id === poolId);
-    if (byId?.subgraphId) {
-      subgraphId = byId.subgraphId;
+    const byId = pools.find((p) => p.id === poolId) || null;
+    if (byId && (byId as any).subgraphId) {
+      subgraphId = (byId as any).subgraphId as string;
     }
 
     // 2) Exact match on configured subgraphId
     if (!subgraphId) {
       const bySubgraph = pools.find(
-        (p) => String(p.subgraphId).toLowerCase().trim() === String(poolId).toLowerCase().trim()
-      );
-      if (bySubgraph?.subgraphId) subgraphId = bySubgraph.subgraphId;
+        (p) => String((p as any).subgraphId).toLowerCase().trim() === String(poolId).toLowerCase().trim()
+      ) || null;
+      if (bySubgraph && (bySubgraph as any).subgraphId) subgraphId = (bySubgraph as any).subgraphId as string;
     }
 
     // 3) Heuristic: if the input looks like a 32-byte hex string, treat it as subgraphId
@@ -122,21 +156,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     );
 
     // Calculate bucket size based on the range and desired bucket count
-    // Normalize and clamp the requested range; ensure lower < upper
-    const normalizedLower = Math.floor(Math.min(lowerNum, upperNum));
-    const normalizedUpper = Math.ceil(Math.max(lowerNum, upperNum));
-    const effectiveRange = Math.max(1, normalizedUpper - normalizedLower);
+    // Snap the requested range to tickSpacing multiples to avoid visual shifts
+    const alignedLower = Math.floor(Math.min(lowerNum, upperNum) / spacingNum) * spacingNum;
+    const alignedUpper = Math.ceil(Math.max(lowerNum, upperNum) / spacingNum) * spacingNum;
+    const effectiveRange = Math.max(spacingNum, alignedUpper - alignedLower);
 
-    const safeBucketCount = Number.isFinite(bucketCountNum) && bucketCountNum > 0 ? bucketCountNum : 25;
-    const rawBucketSize = effectiveRange / safeBucketCount;
-    const bucketSize = Math.max(spacingNum, Math.ceil(rawBucketSize / spacingNum) * spacingNum);
+    // Force bucket size to exactly one tickSpacing so each bar is one spacing wide
+    const bucketSize = spacingNum;
 
     const buckets: BucketData[] = [];
     
-    // Generate buckets across the range
-    for (let currentTick = normalizedLower; currentTick < normalizedUpper; currentTick += bucketSize) {
+    // Generate buckets across the range, starting on a spacing-aligned boundary
+    for (let currentTick = alignedLower; currentTick < alignedUpper; currentTick += bucketSize) {
       const bucketTickLower = currentTick;
-      const bucketTickUpper = Math.min(currentTick + bucketSize, normalizedUpper);
+      const bucketTickUpper = Math.min(currentTick + bucketSize, alignedUpper);
       const midTick = Math.floor((bucketTickLower + bucketTickUpper) / 2);
       
       // Calculate liquidity for this bucket by summing overlapping positions

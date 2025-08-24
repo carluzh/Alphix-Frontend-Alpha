@@ -5,8 +5,11 @@ import { parseAbi, getAddress, type Hex } from 'viem';
 import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from "../../../lib/abis/state_view_abi";
 import { batchGetTokenPrices, calculateTotalUSD } from '../../../lib/price-service';
 
-// Use the subgraph URL from other liquidity API files
-const SUBGRAPH_URL = "https://api.studio.thegraph.com/query/111443/alphix-test/version/latest";
+// Server-only subgraph URL
+const SUBGRAPH_URL = process.env.SUBGRAPH_URL as string;
+if (!SUBGRAPH_URL) {
+  throw new Error('SUBGRAPH_URL env var is required');
+}
 const STATE_VIEW_ADDRESS = getAddress("0x571291b572ed32ce6751a2cb2486ebee8defb9b4");
 
 // Querying 'trackedPool' by ID with new schema

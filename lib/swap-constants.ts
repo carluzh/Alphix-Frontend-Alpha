@@ -10,9 +10,7 @@ export const NATIVE_CURRENCY_DECIMALS = 18;
 
 // --- Contract Addresses ---
 export const PERMIT2_ADDRESS_RAW = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
-export const UNIVERSAL_ROUTER_ADDRESS_RAW = '0x492e6456d9528771018deb9e87ef7750ef184104';
 export const PERMIT2_ADDRESS: Address = getAddress(PERMIT2_ADDRESS_RAW);
-export const UNIVERSAL_ROUTER_ADDRESS: Address = getAddress(UNIVERSAL_ROUTER_ADDRESS_RAW);
 
 // --- TOKEN DEFINITIONS ---
 export const TOKEN_DEFINITIONS = {
@@ -139,11 +137,10 @@ export const V4_POSITION_MANAGER_ADDRESS_RAW = '0x4b2c77d209d3405f41a037ec6c77f7
 export const V4_POSITION_MANAGER_ADDRESS: Address = getAddress(V4_POSITION_MANAGER_ADDRESS_RAW);
 
 // --- V4 Quoter Configuration ---
-export const V4_QUOTER_ADDRESS_RAW = '0x4a6513c898fe1b2d0e78d3b0e0a4a151589b1cba'; // TODO: Replace with actual V4Quoter address
-export const V4_QUOTER_ADDRESS: Address = getAddress(V4_QUOTER_ADDRESS_RAW);
+// Use pools-config.getQuoterAddress() instead of hardcoding here
 
 // Empty bytes constant for hook data
-export const EMPTY_BYTES = '0x' as const;
+export const EMPTY_BYTES = '0x00' as const;
 export const V4_POSITION_MANAGER_ABI = position_manager_abi;
 
 // --- V4 Quoter ABI ---
@@ -152,9 +149,9 @@ export const V4_POSITION_MANAGER_ABI = position_manager_abi;
 // QuoteExactParams struct: { currencyIn, path: PathKey[], amountIn }
 // PathKey struct: { intermediateCurrency, fee, tickSpacing, hooks, hookData }
 export const V4_QUOTER_ABI_STRINGS = [
-  "function quoteExactInputSingle(((address,address,uint24,int24,address),bool,uint128,bytes)) external returns (uint256, uint256)",
-  "function quoteExactOutputSingle(((address,address,uint24,int24,address),bool,uint128,bytes)) external returns (uint256, uint256)",
-  "function quoteExactInput((address,(address,uint24,int24,address,bytes)[],uint128)) external returns (uint256, uint256)",
-  "function quoteExactOutput((address,(address,uint24,int24,address,bytes)[],uint128)) external returns (uint256, uint256)"
+  "function quoteExactInputSingle(((address,address,uint24,int24,address),bool,uint128,bytes)) external returns (uint256 amountOut, uint256 gasEstimate)",
+  "function quoteExactOutputSingle(((address,address,uint24,int24,address),bool,uint128,bytes)) external returns (uint256 amountIn, uint256 gasEstimate)",
+  "function quoteExactInput((address,(address,uint24,int24,address,bytes)[],uint128)) external returns (uint256 amountOut, uint256 gasEstimate)",
+  "function quoteExactOutput((address,(address,uint24,int24,address,bytes)[],uint128)) external returns (uint256 amountIn, uint256 gasEstimate)"
 ] as const;
 export const V4QuoterAbi: Abi = parseAbi(V4_QUOTER_ABI_STRINGS);

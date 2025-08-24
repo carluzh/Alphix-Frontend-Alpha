@@ -1,7 +1,5 @@
 import type { NextRequest } from 'next/server';
-import { batchGetTokenPrices, calculateTotalUSD, calculateSwapVolumeUSD } from '../../../../../lib/price-service';
-import { getTokenDecimals } from '../../../../../lib/pools-config';
-import { formatUnits } from 'viem';
+// No pricing needed; use subgraph's USD fields
 
 // Define the structure of the chart data points
 interface ChartDataPoint {
@@ -19,37 +17,45 @@ interface PoolChartData {
 }
 
 // In-memory cache
-const cache = new Map<string, { data: PoolChartData; timestamp: number }>();
-// const CACHE_DURATION_MS = 24 * 60 * 60 * 1000; // Old: 24 hours from last fetch
+const cache = new Map<string, { data: PoolChartData; timestamp: number; tailRefreshedAt?: number }>();
+const TAIL_TTL_MS = 2 * 60 * 1000; // refresh today's point at most every 2 minutes
 
-// Subgraph URL - ensure this is correct
-const SUBGRAPH_URL = "https://api.studio.thegraph.com/query/111443/alphix-test/version/latest";
+const SUBGRAPH_URL = process.env.SUBGRAPH_URL as string;
 
-// Updated GraphQL query for new schema
-const GET_POOL_DAILY_HISTORY_QUERY = `
-  query GetPoolDailyHistory($poolId: Bytes!) {
-    poolDayDatas(
-      first: 30 
-      orderBy: date
-      orderDirection: desc 
-      where: { pool: $poolId }
+// Removed DayData/hourly queries; use Pool at end-of-day blocks only
+
+const GET_FEE_UPDATES_QUERY = `
+  query FeeUpdates($poolId: Bytes!, $cutoff: Int!) {
+    alphixHooks(
+      where: { pool: $poolId, timestamp_gt: $cutoff }
+      orderBy: timestamp
+      orderDirection: asc
+      first: 50
     ) {
       id
-      date      
+      timestamp
+      newFeeBps
+    }
+  }
+`;
+
+const GET_BLOCK_FOR_TS_QUERY = `
+  query BlockForTs($ts: Int!) {
+    transactions(first: 1, orderBy: timestamp, orderDirection: desc, where: { timestamp_lte: $ts }) {
+      timestamp
+      blockNumber
+    }
+  }
+`;
+
+const GET_POOL_AT_BLOCK_QUERY = `
+  query PoolAtBlock($poolId: String!, $block: Int!) {
+    pools(where: { id: $poolId }, block: { number: $block }) {
+      id
+      totalValueLockedToken0
+      totalValueLockedToken1
       volumeToken0
       volumeToken1
-      tvlToken0
-      tvlToken1
-      pool {
-        currency0 {
-          symbol
-          decimals
-        }
-        currency1 {
-          symbol
-          decimals
-        }
-      }
     }
   }
 `;
@@ -88,144 +94,229 @@ export async function GET(
 
   const subgraphPoolId = getSubgraphPoolId(friendlyPoolId);
 
+  // Optional days param (default 60, cap 120)
+  const url = new URL(request.url);
+  const daysParam = parseInt(url.searchParams.get('days') || '60', 10);
+  const days = Number.isFinite(daysParam) && daysParam > 0 && daysParam <= 120 ? daysParam : 60;
+
   // Calculate midnight UTC timestamp for today
   const now = new Date();
   now.setUTCHours(0, 0, 0, 0);
   const midnightTodayTimestamp = Math.floor(now.getTime() / 1000);
 
-  // Check cache using the original friendlyPoolId as the cache key
-  const cachedEntry = cache.get(friendlyPoolId);
+  // Check cache using friendlyPoolId + days as the cache key
+  const cacheKey = `${friendlyPoolId}:${days}`;
+  const cachedEntry = cache.get(cacheKey);
   if (cachedEntry && (Math.floor(cachedEntry.timestamp / 1000) >= midnightTodayTimestamp)) {
-    console.log(`[API Cache HIT] Returning cached chart data for pool: ${friendlyPoolId}`);
-    return Response.json(cachedEntry.data);
+    // Live-tail refresh for today's point
+    try {
+      const todayKey = new Date().toISOString().split('T')[0];
+      const hasToday = Array.isArray(cachedEntry.data?.data) && cachedEntry.data.data.some(d => d.date === todayKey);
+      const shouldRefreshTail = hasToday && (!cachedEntry.tailRefreshedAt || (Date.now() - cachedEntry.tailRefreshedAt) > TAIL_TTL_MS);
+      if (shouldRefreshTail) {
+        const nowSec = Math.floor(Date.now() / 1000);
+        const dayStartToday = Math.floor(new Date(todayKey + 'T00:00:00Z').getTime() / 1000);
+        const prevDayEnd = dayStartToday - 1; // end of yesterday
+
+        // Fetch prices and pool config
+        const { getPoolSubgraphId, getAllPools } = await import('../../../../../lib/pools-config');
+        const { batchGetTokenPrices } = await import('../../../../../lib/price-service');
+        const all = getAllPools();
+        const poolCfg = all.find(p => (getPoolSubgraphId(p.id) || p.id).toLowerCase() === subgraphPoolId.toLowerCase());
+        const sym0 = poolCfg?.currency0?.symbol || 'USDC';
+        const sym1 = poolCfg?.currency1?.symbol || 'USDC';
+        const prices = await batchGetTokenPrices([sym0, sym1]);
+        const p0 = prices[sym0] || 1;
+        const p1 = prices[sym1] || 1;
+
+        // Blocks for now and yesterday end
+        const [blkNowResp, blkPrevResp] = await Promise.all([
+          fetch(SUBGRAPH_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: GET_BLOCK_FOR_TS_QUERY, variables: { ts: nowSec } }) }),
+          fetch(SUBGRAPH_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: GET_BLOCK_FOR_TS_QUERY, variables: { ts: prevDayEnd } }) }),
+        ]);
+        let updatedPoint: ChartDataPoint | null = null;
+        if (blkNowResp.ok && blkPrevResp.ok) {
+          const blkNowJson = await blkNowResp.json();
+          const blkPrevJson = await blkPrevResp.json();
+          const blockNow = Number(blkNowJson?.data?.transactions?.[0]?.blockNumber) || 0;
+          const blockPrev = Number(blkPrevJson?.data?.transactions?.[0]?.blockNumber) || 0;
+          if (blockNow) {
+            const [poolNowResp, poolPrevResp] = await Promise.all([
+              fetch(SUBGRAPH_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: GET_POOL_AT_BLOCK_QUERY, variables: { poolId: subgraphPoolId, block: blockNow } }) }),
+              blockPrev ? fetch(SUBGRAPH_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: GET_POOL_AT_BLOCK_QUERY, variables: { poolId: subgraphPoolId, block: blockPrev } }) }) : Promise.resolve(null as any),
+            ]);
+            if (poolNowResp?.ok) {
+              const nowJson = await poolNowResp.json();
+              const nowPool = nowJson?.data?.pools?.[0];
+              const tvl0 = Number(nowPool?.totalValueLockedToken0) || 0;
+              const tvl1 = Number(nowPool?.totalValueLockedToken1) || 0;
+              const tvlUSD = tvl0 * p0 + tvl1 * p1;
+              const cum0Now = Number(nowPool?.volumeToken0) || 0;
+              let cum0Prev = 0;
+              if (blockPrev && poolPrevResp && (poolPrevResp as Response).ok) {
+                const prevJson = await (poolPrevResp as Response).json();
+                const prevPool = prevJson?.data?.pools?.[0];
+                cum0Prev = Number(prevPool?.volumeToken0) || 0;
+              }
+              const d0 = Math.max(0, cum0Now - cum0Prev);
+              const volumeUSD = d0 * p0;
+              const volumeTvlRatio = tvlUSD > 0 ? volumeUSD / tvlUSD : 0;
+              // dynamicFee unchanged here; keep cached value
+              const existing = cachedEntry.data.data.find(d => d.date === todayKey);
+              updatedPoint = {
+                date: todayKey,
+                volumeUSD,
+                tvlUSD: Number.isFinite(tvlUSD) && tvlUSD > 0 ? tvlUSD : (existing?.tvlUSD || 0),
+                volumeTvlRatio,
+                emaRatio: existing?.emaRatio ?? volumeTvlRatio, // preserve mapped "target ratio" field from historical endpoint if merged later
+                dynamicFee: existing?.dynamicFee ?? 0,
+              };
+            }
+          }
+        }
+        if (updatedPoint) {
+          const nextData = cachedEntry.data.data.map(d => (d.date === todayKey ? updatedPoint! : d));
+          cachedEntry.data = { ...cachedEntry.data, data: nextData };
+          cachedEntry.tailRefreshedAt = Date.now();
+          cache.set(cacheKey, cachedEntry);
+        }
+      }
+    } catch (e) {
+      console.warn('[API Cache HIT] Tail refresh failed; serving cached data', e);
+    }
+    console.log(`[API Cache HIT] Returning cached chart data for pool: ${friendlyPoolId} days=${days}`);
+    return Response.json(cache.get(cacheKey)!.data);
   }
-  console.log(`[API Cache MISS or STALE] Fetching chart data for pool: ${friendlyPoolId} (using subgraph ID: ${subgraphPoolId})`);
+  console.log(`[API Cache MISS or STALE] Fetching chart data for pool: ${friendlyPoolId} days=${days} (using subgraph ID: ${subgraphPoolId})`);
 
   try {
-    const subgraphResponse = await fetch(SUBGRAPH_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            query: GET_POOL_DAILY_HISTORY_QUERY,
-            variables: { 
-              poolId: subgraphPoolId, 
-            },
-        }),
-    });
+    // Build time window: last N days from now (midnight UTC)
+    const nowSec = Math.floor(Date.now() / 1000);
+    const fromDay = Math.floor((nowSec - days * 24 * 60 * 60) / 86400) * 86400;
 
-    if (!subgraphResponse.ok) {
-        const errorBody = await subgraphResponse.text();
-        console.error(`Subgraph query failed with status ${subgraphResponse.status}: ${errorBody}`);
-        throw new Error(`Subgraph query failed for chart data: ${errorBody}`);
+    // Continuous daily series from fromDay..yesterday
+    const start = new Date(fromDay * 1000);
+    const end = new Date();
+    end.setUTCHours(0, 0, 0, 0);
+    const processedChartData: ChartDataPoint[] = [];
+    let cursor = new Date(start);
+    // token prices for USD conversion
+    try {
+      const { getPoolSubgraphId, getAllPools } = await import('../../../../../lib/pools-config');
+      const { batchGetTokenPrices } = await import('../../../../../lib/price-service');
+      const all = getAllPools();
+      const poolCfg = all.find(p => (getPoolSubgraphId(p.id) || p.id).toLowerCase() === subgraphPoolId.toLowerCase());
+      const sym0 = poolCfg?.currency0?.symbol || 'USDC';
+      const sym1 = poolCfg?.currency1?.symbol || 'USDC';
+      const prices = await batchGetTokenPrices([sym0, sym1]);
+      const p0 = prices[sym0] || 1;
+      const p1 = prices[sym1] || 1;
+      // track previous cumulative volumeToken0 to compute daily deltas (token0 only)
+      let prevVol0: number | null = null;
+      // carry-forward TVL to avoid holes when a day's snapshot is missing
+      let lastTvlUSD: number | null = null;
+      while (cursor <= end) {
+        const key = cursor.toISOString().split('T')[0];
+        const dayEnd = Math.floor(new Date(key + 'T23:59:59Z').getTime() / 1000);
+        // 1) block <= dayEnd
+        const blkResp = await fetch(SUBGRAPH_URL, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: GET_BLOCK_FOR_TS_QUERY, variables: { ts: dayEnd } })
+        });
+        let volumeUSD = 0;
+        let tvlUSD = 0;
+        if (blkResp.ok) {
+          const blkJson = await blkResp.json();
+          const blockNum = Number(blkJson?.data?.transactions?.[0]?.blockNumber) || 0;
+          if (blockNum) {
+            // 2) pool at block
+            const poolResp = await fetch(SUBGRAPH_URL, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ query: GET_POOL_AT_BLOCK_QUERY, variables: { poolId: subgraphPoolId, block: blockNum } })
+            });
+            if (poolResp.ok) {
+              const poolJson = await poolResp.json();
+              const poolData = poolJson?.data?.pools?.[0];
+              if (poolData) {
+                const tvl0 = Number(poolData.totalValueLockedToken0) || 0;
+                const tvl1 = Number(poolData.totalValueLockedToken1) || 0;
+                tvlUSD = tvl0 * p0 + tvl1 * p1;
+                const cum0 = Number(poolData.volumeToken0) || 0;
+                if (prevVol0 !== null) {
+                  const d0 = Math.max(0, cum0 - prevVol0);
+                  // Use only token0 volume valued in USD
+                  volumeUSD = d0 * p0;
+                }
+                prevVol0 = cum0;
+              }
+            }
+          }
+        }
+        // If we failed to read a snapshot for the day, carry forward the last known TVL
+        if ((!Number.isFinite(tvlUSD) || tvlUSD <= 0) && lastTvlUSD !== null && lastTvlUSD > 0) {
+          tvlUSD = lastTvlUSD;
+        }
+        const volumeTvlRatio = tvlUSD > 0 ? volumeUSD / tvlUSD : 0;
+        processedChartData.push({ date: key, volumeUSD, tvlUSD, volumeTvlRatio, emaRatio: volumeTvlRatio, dynamicFee: 0.3 });
+        // update carry-forward state
+        if (Number.isFinite(tvlUSD) && tvlUSD > 0) {
+          lastTvlUSD = tvlUSD;
+        }
+        cursor.setUTCDate(cursor.getUTCDate() + 1);
+      }
+    } catch {}
+
+    // EMA (period 10)
+    for (let i = 1; i < processedChartData.length; i++) {
+      const current = processedChartData[i];
+      const prev = processedChartData[i - 1];
+      const k = 2 / (10 + 1);
+      current.emaRatio = current.volumeTvlRatio * k + prev.emaRatio * (1 - k);
     }
 
-    const subgraphResult = await subgraphResponse.json();
+    // Map dynamicFee from on-chain hook updates (alphixHooks)
+    if (processedChartData.length > 0) {
+      const firstDay = processedChartData[0].date;
+      const cutoff = Math.floor(new Date(firstDay + 'T00:00:00Z').getTime() / 1000);
+      try {
+        const hooksResp = await fetch(SUBGRAPH_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: GET_FEE_UPDATES_QUERY, variables: { poolId: subgraphPoolId, cutoff } })
+        });
+        if (hooksResp.ok) {
+          const hooksJson = await hooksResp.json();
+          const hooks = (hooksJson?.data?.alphixHooks || [])
+            .map((h: any) => ({ ts: Number(h?.timestamp) || 0, bps: Number(h?.newFeeBps) || 0 }))
+            .filter((h: any) => h.ts > 0)
+            .sort((a: any, b: any) => a.ts - b.ts);
 
-    if (subgraphResult.errors) {
-        console.error("Subgraph returned errors for chart data:", subgraphResult.errors);
-        throw new Error(`Subgraph error(s) for chart data: ${JSON.stringify(subgraphResult.errors)}`);
+          let idx = 0;
+          let currentFeePercent = processedChartData[0].dynamicFee; // default stays if no hooks
+          for (let i = 0; i < processedChartData.length; i++) {
+            const dayStart = Math.floor(new Date(processedChartData[i].date + 'T00:00:00Z').getTime() / 1000);
+            const dayEnd = dayStart + 86400 - 1;
+            while (idx < hooks.length && hooks[idx].ts <= dayEnd) {
+              const bps = hooks[idx].bps;
+              // Convert bps to percent units expected by UI: 2612 -> 0.2612 (percent)
+              currentFeePercent = bps / 10000;
+              idx++;
+            }
+            processedChartData[i].dynamicFee = currentFeePercent;
+          }
+        }
+      } catch (e) {
+        console.warn('[chart-data] fee updates fetch failed; leaving default dynamicFee', e);
+      }
     }
-
-    const rawDailyData = subgraphResult.data?.poolDayDatas;
-    if (!rawDailyData || !Array.isArray(rawDailyData)) {
-      console.warn(`No daily data found or unexpected format for pool ${friendlyPoolId}`, subgraphResult.data);
-      const emptyData: PoolChartData = { poolId: friendlyPoolId, data: [] };
-      cache.set(friendlyPoolId, { data: emptyData, timestamp: Date.now() });
-      return Response.json(emptyData);
-    }
-
-    // Extract token symbols for price fetching
-    const tokenSymbols = rawDailyData.length > 0 ? [
-      rawDailyData[0].pool.currency0.symbol,
-      rawDailyData[0].pool.currency1.symbol
-    ] : [];
-
-    // Get token prices with fallbacks
-    const tokenPrices = tokenSymbols.length > 0 ? await batchGetTokenPrices(tokenSymbols) : {};
-
-     // First pass: Calculate basic data without dependencies
-     const processedChartData: ChartDataPoint[] = rawDailyData.map((dailyEntry: any) => {
-       const token0Symbol = dailyEntry.pool.currency0.symbol;
-       const token1Symbol = dailyEntry.pool.currency1.symbol;
-       
-       // Get prices without fallbacks to see real errors
-       const token0Price = tokenPrices[token0Symbol];
-       const token1Price = tokenPrices[token1Symbol];
-       
-       if (!token0Price || !token1Price) {
-         console.error(`Missing prices for chart data ${friendlyPoolId}:`, {
-           token0Symbol,
-           token1Symbol,
-           token0Price,
-           token1Price,
-           availablePrices: Object.keys(tokenPrices)
-         });
-         throw new Error(`Missing price data for chart: ${token0Symbol}=${token0Price}, ${token1Symbol}=${token1Price}`);
-       }
-       
-       const volumeUSD = calculateSwapVolumeUSD(
-         dailyEntry.volumeToken0 || "0",
-         dailyEntry.volumeToken1 || "0",
-         token0Price,
-         token1Price
-       );
-
-       const tvlUSD = calculateTotalUSD(
-         dailyEntry.tvlToken0 || "0",
-         dailyEntry.tvlToken1 || "0",
-         token0Price,
-         token1Price
-       );
-
-       // Calculate Volume/TVL Ratio
-       const volumeTvlRatio = tvlUSD > 0 ? volumeUSD / tvlUSD : 0;
-       
-       return {
-         date: new Date(parseInt(dailyEntry.date) * 1000).toISOString().split('T')[0],
-         volumeUSD,
-         tvlUSD,
-         volumeTvlRatio,
-         emaRatio: volumeTvlRatio, // Initial value, will be calculated in second pass
-         dynamicFee: 0.3, // Initial value, will be calculated in second pass
-       };
-     }).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-
-     // Second pass: Calculate EMA and dynamic fees
-     for (let i = 1; i < processedChartData.length; i++) {
-       const current = processedChartData[i];
-       const prev = processedChartData[i - 1];
-       
-       // Calculate EMA
-       const k = 2 / (10 + 1); // EMA period of 10
-       current.emaRatio = current.volumeTvlRatio * k + prev.emaRatio * (1 - k);
-       
-       // Calculate Dynamic Fee
-       const deadband = 0.02;
-       let feeAdjustmentDirection = 0;
-       
-       if (current.volumeTvlRatio > current.emaRatio + deadband) {
-         feeAdjustmentDirection = 1; // Increase fee
-       } else if (current.volumeTvlRatio < current.emaRatio - deadband) {
-         feeAdjustmentDirection = -1; // Decrease fee
-       }
-       
-       const feeStepPercent = 0.01;
-       const proposedStepPercent = feeStepPercent * feeAdjustmentDirection;
-       
-       if (feeAdjustmentDirection !== 0) {
-         current.dynamicFee = Math.max(0.05, Math.min(1.0, prev.dynamicFee + proposedStepPercent));
-       } else {
-         current.dynamicFee = prev.dynamicFee;
-       }
-     } 
 
     const result: PoolChartData = {
       poolId: friendlyPoolId, // Return data associated with the friendly ID
       data: processedChartData,
     };
 
-    cache.set(friendlyPoolId, { data: result, timestamp: Date.now() });
-    console.log(`[API Cache SET] Cached chart data for pool: ${friendlyPoolId}`);
+    cache.set(cacheKey, { data: result, timestamp: Date.now() });
+    console.log(`[API Cache SET] Cached chart data for pool: ${friendlyPoolId} days=${days}`);
 
     return Response.json(result);
 

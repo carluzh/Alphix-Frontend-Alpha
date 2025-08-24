@@ -13,6 +13,53 @@ class PrefetchService {
   private maxConcurrent = 3; // Limit concurrent prefetch requests
   private activeRequests = 0;
 
+  // --- Positions refresh (centralized) ---
+  private positionsListeners: Array<{ owner?: string; cb: (payload: { owner: string; reason?: string; poolIds?: string[]; tokenIds?: string[] }) => void }>= [];
+  private positionsDebounceTimers: Map<string, any> = new Map();
+  private positionsPending: Map<string, { owner: string; poolIds?: Set<string>; tokenIds?: Set<string>; reason?: string }>= new Map();
+
+  addPositionsListener(owner: string | undefined, cb: (payload: { owner: string; reason?: string; poolIds?: string[]; tokenIds?: string[] }) => void): () => void {
+    const entry = { owner, cb };
+    this.positionsListeners.push(entry);
+    return () => {
+      this.positionsListeners = this.positionsListeners.filter(x => x !== entry);
+    };
+  }
+
+  requestPositionsRefresh(params: { owner?: string; reason?: string; poolIds?: string[]; tokenIds?: string[]; debounceMs?: number }) {
+    const owner = (params.owner || '').toLowerCase();
+    if (!owner) return;
+    const debounceMs = typeof params.debounceMs === 'number' ? Math.max(0, params.debounceMs) : 300;
+    const existing = this.positionsPending.get(owner) || { owner, poolIds: new Set<string>(), tokenIds: new Set<string>(), reason: undefined as string | undefined };
+    if (params.poolIds) params.poolIds.forEach(p => existing.poolIds!.add(p));
+    if (params.tokenIds) params.tokenIds.forEach(t => existing.tokenIds!.add(t));
+    existing.reason = existing.reason || params.reason;
+    this.positionsPending.set(owner, existing);
+
+    // reset debounce timer
+    if (this.positionsDebounceTimers.has(owner)) {
+      clearTimeout(this.positionsDebounceTimers.get(owner));
+    }
+    this.positionsDebounceTimers.set(owner, setTimeout(() => {
+      this.positionsDebounceTimers.delete(owner);
+      const pending = this.positionsPending.get(owner);
+      if (!pending) return;
+      this.positionsPending.delete(owner);
+      const payload = {
+        owner,
+        reason: pending.reason,
+        poolIds: pending.poolIds && pending.poolIds.size > 0 ? Array.from(pending.poolIds) : undefined,
+        tokenIds: pending.tokenIds && pending.tokenIds.size > 0 ? Array.from(pending.tokenIds) : undefined,
+      };
+      // notify listeners (owner-specific first, then global)
+      for (const l of this.positionsListeners) {
+        if (!l.owner || l.owner.toLowerCase() === owner) {
+          try { l.cb(payload); } catch {}
+        }
+      }
+    }, debounceMs));
+  }
+
   /**
    * Add a pool data prefetch operation to the queue
    */

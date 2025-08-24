@@ -386,6 +386,8 @@ export function useAddLiquidityTransaction({
 
   // Function to handle Permit2 signing and separate submission to Permit2 contract
   const handleSignAndSubmitPermit2 = useCallback(async () => {
+    // Guard against re-entry / wrong step
+    if (isWorking || isPermit2SendPending || isPermit2Confirming || step !== 'permit2Sign') return;
     if (!permit2SignatureRequest || !accountAddress || !chainId) {
       toast.error("Permit2 Error: Missing data for Permit2 signature.");
       return;
@@ -470,7 +472,7 @@ export function useAddLiquidityTransaction({
       setIsWorking(false);
       resetPermit2SendTransaction();
     }
-  }, [accountAddress, chainId, permit2SignatureRequest, signTypedDataAsync, sendPermit2TransactionAsync, resetPermit2SendTransaction]);
+  }, [accountAddress, chainId, permit2SignatureRequest, signTypedDataAsync, sendPermit2TransactionAsync, resetPermit2SendTransaction, isWorking, isPermit2SendPending, isPermit2Confirming, step]);
 
   // Function to handle minting
   const handleMint = useCallback(async () => {
@@ -571,6 +573,9 @@ export function useAddLiquidityTransaction({
           setIsWorking(true);
           setTokenCompletionStatus(prev => ({ ...prev, [currentPermitTokenSymbol]: true }));
           
+          // Clear stale prepared data to avoid UI showing old needsApproval flags
+          setPreparedTxData(null);
+
           // Re-prepare transaction without permit data since permit is now on-chain
           const nextPrepData = await handlePrepareMintInternal(true, currentPermitTokenSymbol);
           if (nextPrepData) {

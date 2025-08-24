@@ -3,8 +3,11 @@ import { getPoolSubgraphId, getTokenDecimals } from '../../../lib/pools-config';
 import { batchGetTokenPrices, calculateSwapVolumeUSD } from '../../../lib/price-service';
 import { formatUnits } from 'viem';
 
-// Use the subgraph URL from get-positions.ts
-const SUBGRAPH_URL = "https://api.studio.thegraph.com/query/111443/alphix-test/version/latest";
+// Server-only subgraph URL from env
+const SUBGRAPH_URL = process.env.SUBGRAPH_URL as string;
+if (!SUBGRAPH_URL) {
+  throw new Error('SUBGRAPH_URL env var is required');
+}
 
 // The GraphQL query to fetch swaps for a given pool within a time range
 const GET_SWAPS_IN_TIME_RANGE_QUERY = `

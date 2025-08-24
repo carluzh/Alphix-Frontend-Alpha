@@ -1,5 +1,6 @@
 const CACHE_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 const LONG_CACHE_DURATION_MS = 15 * 60 * 1000; // 15 minutes for stable data
+const TEN_MINUTES_MS = 10 * 60 * 1000;
 
 interface CacheEntry<T> {
   data: T;
@@ -33,6 +34,18 @@ export function getFromLongCache<T>(key: string): T | null {
   }
   if (entry) {
     delete appCache[key]; // Remove stale entry
+  }
+  return null;
+}
+
+// Generic TTL-based cache getter without changing global defaults
+export function getFromCacheWithTtl<T>(key: string, ttlMs: number = TEN_MINUTES_MS): T | null {
+  const entry = appCache[key];
+  if (entry && (Date.now() - entry.timestamp < ttlMs)) {
+    return entry.data as T;
+  }
+  if (entry) {
+    delete appCache[key];
   }
   return null;
 }
@@ -85,6 +98,9 @@ export const getPoolDynamicFeeCacheKey = (fromTokenSymbol: string, toTokenSymbol
 
 // Batch data loading cache keys
 export const getPoolBatchDataCacheKey = (poolIds: string[]) => `poolBatch_${poolIds.sort().join('_')}`;
+
+// Chart data cache key per pool detail page
+export const getPoolChartDataCacheKey = (poolId: string) => `poolChart_${poolId}`;
 
 // Background refresh for frequently accessed data
 export function refreshCacheInBackground<T>(key: string, refreshFn: () => Promise<T>): void {

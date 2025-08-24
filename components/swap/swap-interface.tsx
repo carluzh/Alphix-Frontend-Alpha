@@ -20,6 +20,7 @@ import {
   CoinsIcon,
   InfoIcon,
   XIcon,
+  OctagonX,
 } from "lucide-react"
 import Image from "next/image"
 import { useAccount, useBalance, useSignTypedData, useWriteContract, useWaitForTransactionReceipt } from "wagmi"
@@ -28,7 +29,7 @@ import React from "react"
 import { switchChain } from '@wagmi/core'
 import { config, baseSepolia } from "../../lib/wagmiConfig";
 import { toast } from "sonner";
-import { getAddress, parseUnits, type Address, type Hex } from "viem"
+import { getAddress, parseUnits, formatUnits, type Address, type Hex } from "viem"
 import { publicClient } from "../../lib/viemClient";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 
@@ -65,7 +66,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { DynamicFeeChart, generateMockFeeHistory } from "../dynamic-fee-chart";
 import { DynamicFeeChartPreview } from "../dynamic-fee-chart-preview";
 import { PulsatingDot } from "../pulsating-dot";
-import { getFromCache, setToCache, getPoolDynamicFeeCacheKey } from "@/lib/client-cache";
+import { getFromCache, setToCache, getFromCacheWithTtl, getPoolDynamicFeeCacheKey } from "@/lib/client-cache";
 import { getPoolByTokens } from "@/lib/pools-config";
 import { findBestRoute, SwapRoute, PoolHop } from "@/lib/routing-engine";
 
@@ -667,6 +668,14 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     setIsSwapping(false);
     
     // Note: We're NOT clearing existingPermitData
+    // Explicitly refresh the quote for the current input so UI is consistent
+    if (fromAmount && parseFloat(fromAmount) > 0) {
+      fetchQuote(fromAmount);
+    } else {
+      setToAmount("0");
+      setQuoteError(null);
+      setRouteInfo(null);
+    }
   };
 
   // Effect for handling wrong network notification
@@ -1606,9 +1615,12 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 const effectiveFallbackSigDeadline = effectiveTimestamp + BigInt(30 * 60); // 30 min fallback
 
                 // Calculate minimum received amount using quote-based calculation (same as UI display)
-                const quotedAmount = parseFloat(toAmount || "0");
-                const minimumReceivedAmount = quotedAmount > 0 ? quotedAmount * (1 - slippage / 100) : 0;
-                const minimumReceivedStr = minimumReceivedAmount.toString();
+                // Compute min received using the latest quote, preserving token decimals precisely
+                const toDecimals = toToken.decimals;
+                const quotedAmountNum = parseFloat(toAmount || "0");
+                const minOutNum = quotedAmountNum > 0 ? quotedAmountNum * (1 - slippage / 100) : 0;
+                // Format string with exact token decimals to avoid rounding too high and tripping minOut
+                const minimumReceivedStr = minOutNum.toFixed(toDecimals);
 
                 // Use dummy permit data for native ETH
                 const bodyForSwapTx = {
@@ -1785,9 +1797,10 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
             const effectiveFallbackSigDeadline = effectiveTimestamp + BigInt(30 * 60); // 30 min fallback
 
             // Calculate minimum received amount using quote-based calculation (same as UI display)
-            const quotedAmount = parseFloat(toAmount || "0");
-            const minimumReceivedAmount = quotedAmount > 0 ? quotedAmount * (1 - slippage / 100) : 0;
-            const minimumReceivedStr = minimumReceivedAmount.toString();
+            const toDecimals2 = toToken.decimals;
+            const quotedAmountNum2 = parseFloat(toAmount || "0");
+            const minOutNum2 = quotedAmountNum2 > 0 ? quotedAmountNum2 * (1 - slippage / 100) : 0;
+            const minimumReceivedStr = minOutNum2.toFixed(toDecimals2);
 
             // Extract permit information based on the new API structure
             let permitNonce, permitExpiration, permitSigDeadline;
@@ -1900,9 +1913,8 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
         }
 
         if (isSlippageError) {
-            toast.error("Slippage Too Large", {
-                description: "The swap would receive less than your minimum. Try increasing slippage tolerance or reducing trade size.",
-                icon: <WarningToastIcon />,
+            toast.error("Slippage to Low", {
+                icon: <OctagonX className="h-4 w-4 text-red-500" />,
                 duration: 5000,
             });
             setSwapProgressState("error");
@@ -2058,12 +2070,18 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   };
 
   const handleSwapAgain = () => {
-    // Use our working reset function
-    handleChangeButton();
-    
-    // Additionally reset amounts since this is for a new swap
-    setFromAmount("0");
+    // Full reset for a brand new swap
+    window.swapBuildData = undefined;
+    setCompletedSteps([]);
+    setSwapTxInfo(null);
+    setQuoteError(null);
+    setSwapState("input");
+    setSwapProgressState("init");
+    setSwapError(null);
+    setIsSwapping(false);
+    setFromAmount("");
     setToAmount("");
+    setRouteInfo(null);
   };
 
   // Calculate actual percentage based on fromAmount and balance
@@ -2181,8 +2199,8 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
           const cached = JSON.parse(cachedItem);
           const now = Date.now();
           
-          // Cache expires after 10 minutes (600,000 ms)
-          if (cached.timestamp && (now - cached.timestamp) < 600000 && cached.data) {
+          // Cache expires after 30 minutes (1,800,000 ms)
+          if (cached.timestamp && (now - cached.timestamp) < 1800000 && cached.data) {
 
             setFeeHistoryData(cached.data);
             setIsFeeHistoryLoading(false);
@@ -2529,7 +2547,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 displayToToken={displayToToken}
                 calculatedValues={calculatedValues} // Pass the whole object, child will pick what it needs
                 swapTxInfo={swapTxInfo}
-                handleChangeButton={handleChangeButton} // Ensure this is the correct handler for "Swap Again"
+                handleChangeButton={handleSwapAgain} // Use full reset for "Swap again"
                 formatTokenAmountDisplay={formatTokenAmountDisplay}
               />
             )}

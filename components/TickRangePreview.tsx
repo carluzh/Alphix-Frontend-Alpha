@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { ResponsiveContainer, ComposedChart, XAxis, YAxis, Area, ReferenceLine, ReferenceArea } from "recharts";
 
 interface TickRangePreviewProps {
@@ -37,6 +37,10 @@ export function TickRangePreview({
 }: TickRangePreviewProps) {
   const [bucketData, setBucketData] = useState<BucketData[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const cacheRef = useRef<Map<string, BucketData[]>>(new Map());
+  const inFlightRef = useRef<Set<string>>(new Set());
+  const debounceRef = useRef<number | undefined>(undefined);
+  const abortRef = useRef<AbortController | null>(null);
 
   // Calculate the domain for display (always show current price ±5% and position range)
   const xDomain = useMemo(() => {
@@ -104,57 +108,76 @@ export function TickRangePreview({
     return shouldFlip;
   }, [currentTick, currentPrice, token0Symbol, bucketData, shouldFlipDenomination]);
 
-  // Fetch real liquidity depth data
+  // Fetch real liquidity depth data (debounced, cached, and in-flight de-duped)
   useEffect(() => {
-    const fetchBucketData = async () => {
-      if (!poolId || !tickSpacing) {
-        console.log('[TickRangePreview] Missing poolId or tickSpacing:', { poolId, tickSpacing });
-        return;
+    if (!poolId || !tickSpacing || Number(tickSpacing) <= 0) {
+      return;
+    }
+
+    const [minTickRaw, maxTickRaw] = xDomain;
+    if (!isFinite(minTickRaw) || !isFinite(maxTickRaw) || minTickRaw >= maxTickRaw) {
+      return;
+    }
+
+    const minTick = Math.floor(minTickRaw);
+    const maxTick = Math.ceil(maxTickRaw);
+    const key = `${poolId}:${minTick}:${maxTick}:${Number(tickSpacing)}`;
+
+    // If cached, serve immediately without hitting API
+    const cached = cacheRef.current.get(key);
+    if (cached) {
+      setBucketData(cached);
+      return;
+    }
+
+    // Debounce rapid changes (e.g., re-renders, tick updates)
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+    }
+
+    debounceRef.current = window.setTimeout(async () => {
+      // If a request for the same key is already in-flight, skip
+      if (inFlightRef.current.has(key)) return;
+      inFlightRef.current.add(key);
+
+      // Abort any previous request for a different key
+      if (abortRef.current) {
+        try { abortRef.current.abort(); } catch {}
       }
-      
-      // Validate xDomain values before making API call
-      const [minTick, maxTick] = xDomain;
-      if (!isFinite(minTick) || !isFinite(maxTick) || minTick >= maxTick) {
-        console.warn('[TickRangePreview] Invalid xDomain values:', xDomain);
-        return;
-      }
-      
-      const requestData = {
-        poolId,
-        tickLower: Math.floor(minTick),
-        tickUpper: Math.ceil(maxTick),
-        tickSpacing: Number(tickSpacing),
-        bucketCount: 25
-      };
-      
-      console.log('[TickRangePreview] API request data:', requestData);
-      
+      const controller = new AbortController();
+      abortRef.current = controller;
+
       setIsLoading(true);
       try {
         const response = await fetch('/api/liquidity/get-bucket-depths', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(requestData),
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ poolId, tickLower: minTick, tickUpper: maxTick, tickSpacing: Number(tickSpacing), bucketCount: 25 }),
+          signal: controller.signal,
         });
-
         if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
+          throw new Error(`HTTP ${response.status}`);
         }
-
         const result = await response.json();
-        if (result.success && result.buckets) {
-          setBucketData(result.buckets);
+        if (result?.success && Array.isArray(result.buckets)) {
+          cacheRef.current.set(key, result.buckets as BucketData[]);
+          setBucketData(result.buckets as BucketData[]);
         }
       } catch (error) {
-        console.error('[TickRangePreview] Error fetching bucket data:', error);
+        if ((error as any)?.name !== 'AbortError') {
+          console.error('[TickRangePreview] Error fetching bucket data:', error);
+        }
       } finally {
+        inFlightRef.current.delete(key);
         setIsLoading(false);
       }
-    };
+    }, 250);
 
-    fetchBucketData();
+    return () => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+      }
+    };
   }, [poolId, xDomain, tickSpacing]);
 
   // Convert bucket data to chart data with proper ordering

@@ -141,6 +141,28 @@ export function InteractiveRangeChart({
   const [bucketLiquidityData, setBucketLiquidityData] = useState<BucketData[]>([]);
   const [isFetchingLiquidityDepth, setIsFetchingLiquidityDepth] = useState(false);
   const [isChartDataLoading, setIsChartDataLoading] = useState(false);
+  
+  // Throttle high-frequency updates with requestAnimationFrame
+  const rafIdRangeRef = useRef<number | null>(null);
+  const rafIdDomainRef = useRef<number | null>(null);
+  const scheduleRangeChange = useCallback((lower: string, upper: string) => {
+    if (rafIdRangeRef.current !== null) cancelAnimationFrame(rafIdRangeRef.current);
+    const lowerArg = lower;
+    const upperArg = upper;
+    rafIdRangeRef.current = requestAnimationFrame(() => {
+      onRangeChange(lowerArg, upperArg);
+      rafIdRangeRef.current = null;
+    });
+  }, [onRangeChange]);
+  const scheduleXDomainChange = useCallback((domain: [number, number]) => {
+    if (!onXDomainChange) return;
+    if (rafIdDomainRef.current !== null) cancelAnimationFrame(rafIdDomainRef.current);
+    const domainArg: [number, number] = [domain[0], domain[1]];
+    rafIdDomainRef.current = requestAnimationFrame(() => {
+      onXDomainChange(domainArg);
+      rafIdDomainRef.current = null;
+    });
+  }, [onXDomainChange]);
 
   // Helper function to determine the better base token for price display (same logic as AddLiquidityModal)
   const determineBaseTokenForPriceDisplay = useCallback((token0: TokenSymbol, token1: TokenSymbol): TokenSymbol => {
@@ -449,16 +471,15 @@ export function InteractiveRangeChart({
 
   // Generate bucket liquidity data
   useEffect(() => {
-    console.log("[InteractiveRangeChart] Bucket data generation:", {
-      processedPositions: processedPositions?.length || 0,
-      defaultTickSpacing
-    });
+    // Skip runtime logging during drag to improve performance
     
     if (processedPositions && processedPositions.length > 0) {
       // Build a stable liquidity profile across full positions span to avoid replot on pan/zoom
       const globalMin = Math.min(...processedPositions.map(p => p.tickLower));
       const globalMax = Math.max(...processedPositions.map(p => p.tickUpper));
-      const buckets = calculateTickBuckets(globalMin, globalMax, defaultTickSpacing, 50);
+      // Generate one bucket per tickSpacing step to ensure bar width = 1 spacing
+      const totalSteps = Math.max(1, Math.ceil((globalMax - globalMin) / defaultTickSpacing));
+      const buckets = calculateTickBuckets(globalMin, globalMax, defaultTickSpacing, totalSteps);
       
       const bucketData: BucketData[] = [];
       
@@ -476,7 +497,6 @@ export function InteractiveRangeChart({
           liquidityToken0: bucketLiquidity.toFixed(2)
         });
       }
-      console.log("[InteractiveRangeChart] Generated stable bucket data:", bucketData.length, "buckets");
       setBucketLiquidityData(bucketData);
     } else {
       setBucketLiquidityData([]);
@@ -486,13 +506,6 @@ export function InteractiveRangeChart({
   // Calculate if axis should be flipped based on price order
   const isAxisFlipped = useMemo(() => {
     if (!currentPoolTick || !currentPrice || !optimalDenomination || !token0Symbol || bucketLiquidityData.length < 2) {
-      console.log("[InteractiveRangeChart] Axis flip calculation skipped - missing dependencies:", {
-        currentPoolTick,
-        currentPrice,
-        optimalDenomination,
-        token0Symbol,
-        bucketLiquidityDataLength: bucketLiquidityData.length
-      });
       return false;
     }
     
@@ -502,11 +515,7 @@ export function InteractiveRangeChart({
     const firstByTick = tickSortedBuckets[0];
     const secondByTick = tickSortedBuckets[1];
     
-    console.log("[InteractiveRangeChart] Bucket data for axis flip:", {
-      bucketCount: bucketLiquidityData.length,
-      firstBucket: firstByTick,
-      secondBucket: secondByTick
-    });
+    // Avoid logging during drag
     
     const firstDelta = Math.pow(1.0001, firstByTick.midTick - currentPoolTick);
     const secondDelta = Math.pow(1.0001, secondByTick.midTick - currentPoolTick);
@@ -523,17 +532,7 @@ export function InteractiveRangeChart({
     }
     
     const shouldFlip = firstPrice > secondPrice;
-    console.log("[InteractiveRangeChart] Axis flip calculation:", {
-      shouldFlipDenomination,
-      currentPrice: currentPriceNum,
-      firstTick: firstByTick.midTick,
-      secondTick: secondByTick.midTick,
-      firstDelta,
-      secondDelta,
-      firstPrice,
-      secondPrice,
-      shouldFlip
-    });
+    // Avoid logging during drag
     
     return shouldFlip;
   }, [currentPoolTick, currentPrice, optimalDenomination, token0Symbol, bucketLiquidityData, shouldFlipDenomination]);
@@ -569,14 +568,7 @@ export function InteractiveRangeChart({
             priceAtTick = currentPriceNum * priceDelta;
           }
 
-          console.log("[InteractiveRangeChart] Price calculation for tick:", {
-            tickVal,
-            currentPoolTick,
-            priceDelta,
-            shouldFlipDenomination,
-            currentPriceNum,
-            priceAtTick
-          });
+          // Avoid logging during drag
 
           if (!isNaN(priceAtTick)) {
             pricePoints.push({ tick: tickVal, price: priceAtTick });
@@ -610,29 +602,25 @@ export function InteractiveRangeChart({
     return newLabels;
   }, [xDomain, optimalDenomination, token0Symbol, token1Symbol, poolToken0, poolToken1, currentPoolTick, currentPrice, isAxisFlipped, shouldFlipDenomination]);
 
-  // Generate chart data with proper ordering
-  const chartData = useMemo(() => {
-    if (bucketLiquidityData.length === 0) {
-      return [];
-    }
+  // Step-area series removed; rectangles will be drawn per bucket via ReferenceArea
+  // Provide minimal frame data so Recharts lays out axes/domains even without a data series
+  const frameData = useMemo(() => {
+    const [minTick, maxTick] = xDomain;
+    return [
+      { tick: minTick, liquidityToken0: 0 },
+      { tick: maxTick, liquidityToken0: 0 }
+    ];
+  }, [xDomain]);
 
-    let data: DepthChartDataPoint[] = bucketLiquidityData.map(bucket => ({
-      tick: bucket.midTick,
-      token0Depth: parseFloat(bucket.liquidityToken0),
-      liquidityToken0: parseFloat(bucket.liquidityToken0),
-      bucketWidth: bucket.tickUpper - bucket.tickLower
-    }));
-
-    // Sort by tick to ensure proper order
-    data.sort((a, b) => a.tick - b.tick);
-
-    // If axis is flipped, reverse the data to maintain ascending price order
-    if (isAxisFlipped) {
-      data.reverse();
-    }
-
-    return data;
-  }, [bucketLiquidityData, isAxisFlipped]);
+  // Render only buckets overlapping the current view (with a small buffer)
+  const visibleBuckets = useMemo(() => {
+    if (!bucketLiquidityData || bucketLiquidityData.length === 0) return [] as BucketData[];
+    const [viewMin, viewMax] = xDomain;
+    const buffer = defaultTickSpacing * 4;
+    const min = viewMin - buffer;
+    const max = viewMax + buffer;
+    return bucketLiquidityData.filter(b => b.tickUpper >= min && b.tickLower <= max);
+  }, [bucketLiquidityData, xDomain, defaultTickSpacing]);
 
   // Calculate max bucket liquidity for chart scaling
   const maxBucketLiquidity = useMemo(() => {
@@ -1009,7 +997,7 @@ export function InteractiveRangeChart({
         {/* Chart */}
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart 
-            data={chartData}
+            data={frameData}
             margin={{ top: 2, right: 5, bottom: 5, left: 5 }}
           >
             {/* Disable hover cursor/tooltip entirely */}
@@ -1033,31 +1021,21 @@ export function InteractiveRangeChart({
               allowDecimals={true}
             />
             
-            <Area
-              type="step"
-              dataKey="liquidityToken0"
-              fill="#404040"
-              fillOpacity={0.4}
-              stroke="#404040"
-              strokeWidth={1}
-              yAxisId="bucketAxis"
-              name="Liquidity Depth"
-              dot={false}
-              activeDot={false}
-              isAnimationActive={false}
-            />
-            {/* Overlay a top border line for the step area (no dots, no interactivity) */}
-            <Area
-              type="step"
-              dataKey="liquidityToken0"
-              fillOpacity={0}
-              stroke="#404040"
-              strokeWidth={1}
-              yAxisId="bucketAxis"
-              isAnimationActive={false}
-              dot={false}
-              activeDot={false}
-            />
+            {/* Draw per-bucket rectangles aligned to [tickLower, tickUpper], touching; culled to viewport */}
+            {visibleBuckets.map((bucket, idx) => (
+              <ReferenceArea
+                key={`bucket-${bucket.tickLower}-${idx}`}
+                x1={bucket.tickLower}
+                x2={bucket.tickUpper}
+                y1={parseFloat(bucket.liquidityToken0)}
+                y2={0}
+                yAxisId="bucketAxis"
+                strokeOpacity={0}
+                fill="#404040"
+                fillOpacity={0.4}
+                ifOverflow="extendDomain"
+              />
+            ))}
             
             {currentPoolTick !== null && (
               <ReferenceLine 

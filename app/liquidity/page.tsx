@@ -2,7 +2,7 @@
 
 import { AppLayout } from "@/components/app-layout";
 import { formatUSD as formatUSDShared } from "@/lib/format";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import {
   Table,
   TableBody,
@@ -32,12 +32,16 @@ import {
 } from "wagmi";
 import { toast } from "sonner";
 import { getEnabledPools, getToken, getPoolSubgraphId, getPoolById } from "../../lib/pools-config";
-import { getFromCache, setToCache, getUserPositionsCacheKey, getPoolStatsCacheKey } from "../../lib/client-cache";
+import { getFromCache, getFromCacheWithTtl, setToCache, getUserPositionsCacheKey, getPoolStatsCacheKey } from "../../lib/client-cache";
 import { Pool } from "../../types";
 import { AddLiquidityModal } from "@liquidity/AddLiquidityModal";
 import { useRouter } from "next/navigation";
 import { ChevronUpIcon, ChevronDownIcon, ChevronsUpDownIcon, PlusIcon } from "lucide-react";
 import { ArrowUpRight, ArrowDownRight } from "lucide-react";
+import { TOKEN_DEFINITIONS, type TokenSymbol } from "@/lib/pools-config";
+import { useIncreaseLiquidity, type IncreasePositionData } from "@/components/liquidity/useIncreaseLiquidity";
+import { useDecreaseLiquidity, type DecreasePositionData } from "@/components/liquidity/useDecreaseLiquidity";
+import { toast as sonnerToast } from "sonner";
 
 const SDK_MIN_TICK = -887272;
 const SDK_MAX_TICK = 887272;
@@ -90,18 +94,21 @@ declare module '@tanstack/react-table' {
 }
 
 const formatUSD = (value: number) => {
-  if (value < 0.01) return "< $0.01";
-  return formatUSDShared(value);
+  if (!isFinite(value)) return "$0.00";
+  if (value >= 1_000_000) return formatUSDShared(value);
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value);
 };
 
 const formatAPR = (aprValue: number) => {
-  if (aprValue < 100) {
-    return aprValue.toFixed(2) + '%';
-  } else if (aprValue < 1000) {
-    return Math.round(aprValue) + '%';
-  } else {
-    return (aprValue / 1000).toFixed(1) + 'K%';
-  }
+  if (!isFinite(aprValue)) return '—';
+  if (aprValue < 1000) return `${aprValue.toFixed(2)}%`;
+  // large APRs: compact to K with two decimals
+  return `${(aprValue / 1000).toFixed(2)}K%`;
 };
 
 export default function LiquidityPage() {
@@ -119,6 +126,79 @@ export default function LiquidityPage() {
   const [selectedPoolApr, setSelectedPoolApr] = useState<string | undefined>(undefined);
   const router = useRouter();
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
+  // Removed expanded row behavior
+  const [poolDataByPoolId, setPoolDataByPoolId] = useState<Record<string, any>>({});
+  const [priceMap, setPriceMap] = useState<Record<string, number>>({});
+  const [isLoadingPoolStates, setIsLoadingPoolStates] = useState(true);
+
+  const determineBaseTokenForPriceDisplay = useCallback((token0: string, token1: string): string => {
+    if (!token0 || !token1) return token0;
+    const quotePriority: Record<string, number> = {
+      'aUSDC': 10, 'aUSDT': 9, 'USDC': 8, 'USDT': 7, 'aETH': 6, 'ETH': 5, 'YUSD': 4, 'mUSDT': 3,
+    };
+    const token0Priority = quotePriority[token0] || 0;
+    const token1Priority = quotePriority[token1] || 0;
+    return token1Priority > token0Priority ? token1 : token0;
+  }, []);
+
+  const convertTickToPrice = useCallback((tick: number, currentPoolTick: number | null, currentPrice: string | null, baseTokenForPriceDisplay: string, token0Symbol: string, token1Symbol: string): string => {
+    if (tick === SDK_MAX_TICK) return '∞';
+    if (tick === SDK_MIN_TICK) return '0.00';
+    if (currentPoolTick === null || !currentPrice) return 'N/A';
+    const currentPriceNum = parseFloat(currentPrice);
+    if (isNaN(currentPriceNum) || currentPriceNum <= 0) return 'N/A';
+    let priceAtTick: number;
+    const priceDelta = Math.pow(1.0001, tick - currentPoolTick);
+    if (baseTokenForPriceDisplay === token0Symbol) {
+      priceAtTick = 1 / (currentPriceNum * priceDelta);
+    } else {
+      priceAtTick = currentPriceNum * priceDelta;
+    }
+    if (!isFinite(priceAtTick) || isNaN(priceAtTick)) return 'N/A';
+    if (priceAtTick < 1e-11 && priceAtTick > 0) return '0';
+    if (priceAtTick > 1e30) return '∞';
+    const displayDecimals = (baseTokenForPriceDisplay === token0Symbol
+      ? (TOKEN_DEFINITIONS[token0Symbol as TokenSymbol]?.displayDecimals ?? 4)
+      : (TOKEN_DEFINITIONS[token1Symbol as TokenSymbol]?.displayDecimals ?? 4));
+    return priceAtTick.toFixed(displayDecimals);
+  }, []);
+
+  const formatTokenDisplayAmount = (amount: string) => {
+    const num = parseFloat(amount);
+    if (isNaN(num)) return amount;
+    if (num === 0) return "0.00";
+    if (num > 0 && num < 0.0001) return "< 0.0001";
+    return num.toFixed(4);
+  };
+
+  const formatAgeShort = (seconds: number | undefined) => {
+    if (!seconds || !isFinite(seconds)) return '';
+    const d = Math.floor(seconds / 86400);
+    if (d >= 1) return `${d}d`;
+    const h = Math.floor(seconds / 3600);
+    if (h >= 1) return `${h}h`;
+    const m = Math.floor(seconds / 60);
+    return `${m}m`;
+  };
+
+  const { increaseLiquidity } = useIncreaseLiquidity({
+    onLiquidityIncreased: () => {
+      sonnerToast.success("Liquidity Increased");
+      // Consider a targeted position refresh here
+    },
+  });
+
+  const { decreaseLiquidity, compoundFees, claimFees } = useDecreaseLiquidity({
+    onLiquidityDecreased: () => {
+      sonnerToast.success("Liquidity Decreased");
+      // Consider a targeted position refresh here
+    },
+    onFeesCollected: () => {
+      sonnerToast.success("Fees Collected");
+      // Consider a targeted position refresh here
+    },
+  });
+
   const categories = useMemo(() => {
     const types = Array.from(new Set((poolsData || []).map(p => p.type).filter(Boolean))) as string[];
     return ['All', ...types];
@@ -176,6 +256,46 @@ export default function LiquidityPage() {
   }, [isConnected, accountAddress]);
 
   useEffect(() => {
+    const fetchPrices = async () => {
+      try {
+        const response = await fetch('/api/prices/get-token-prices');
+        if (response.ok) {
+          const data = await response.json();
+          const prices: Record<string, number> = {};
+          if (data.ETH) prices['ETH'] = data.ETH;
+          if (data.aETH) prices['aETH'] = data.aETH;
+          if (data.BTC) prices['BTC'] = data.BTC;
+          if (data.aBTC) prices['aBTC'] = data.aBTC;
+          prices['USDC'] = prices['aUSDC'] = prices['USDT'] = prices['aUSDT'] = 1.0;
+          setPriceMap(prices);
+        }
+      } catch (error) {
+        console.error("Failed to fetch token prices for liquidity page:", error);
+      }
+    };
+    fetchPrices();
+  }, []);
+
+  const poolsWithPositionCounts = useMemo(() => {
+    return poolsData.map(pool => {
+      const [poolToken0Raw, poolToken1Raw] = pool.pair.split(' / ');
+      const poolToken0 = poolToken0Raw?.trim().toUpperCase();
+      const poolToken1 = poolToken1Raw?.trim().toUpperCase();
+      
+      const count = userPositions.filter(pos => {
+        const posToken0 = pos.token0.symbol?.trim().toUpperCase();
+        const posToken1 = pos.token1.symbol?.trim().toUpperCase();
+        return (posToken0 === poolToken0 && posToken1 === poolToken1) ||
+               (posToken0 === poolToken1 && posToken1 === poolToken0);
+      }).length;
+      
+      return { ...pool, positionsCount: count };
+    });
+  }, [poolsData, userPositions]);
+
+  // Removed expanded row pool-state prefetch; keep placeholder states for helpers
+
+  useEffect(() => {
     const fetchAllPoolStatsBatch = async () => {
       console.log("[LiquidityPage] Starting batch fetch for all pools...");
       
@@ -183,7 +303,7 @@ export default function LiquidityPage() {
         const poolsWithCache = poolsData.map(pool => {
           const apiPoolId = getPoolSubgraphId(pool.id) || pool.id;
           const statsCacheKey = getPoolStatsCacheKey(apiPoolId);
-          const cachedStats = getFromCache<Partial<Pool>>(statsCacheKey);
+          const cachedStats = getFromCacheWithTtl<Partial<Pool>>(statsCacheKey, 10 * 60 * 1000);
           
           return {
             pool,
@@ -253,7 +373,7 @@ export default function LiquidityPage() {
             return { ...pool, ...updatedStats };
           } else {
             const statsCacheKey = getPoolStatsCacheKey(apiPoolId);
-            const cachedStats = getFromCache<Partial<Pool>>(statsCacheKey);
+            const cachedStats = getFromCacheWithTtl<Partial<Pool>>(statsCacheKey, 10 * 60 * 1000);
             
             if (cachedStats) {
               return { ...pool, ...cachedStats };
@@ -284,7 +404,7 @@ export default function LiquidityPage() {
         const fallbackPools = poolsData.map(pool => {
           const apiPoolId = getPoolSubgraphId(pool.id) || pool.id;
           const statsCacheKey = getPoolStatsCacheKey(apiPoolId);
-          const cachedStats = getFromCache<Partial<Pool>>(statsCacheKey);
+          const cachedStats = getFromCacheWithTtl<Partial<Pool>>(statsCacheKey, 10 * 60 * 1000);
           
           if (cachedStats) {
             return { ...pool, ...cachedStats };
@@ -322,23 +442,6 @@ export default function LiquidityPage() {
       clearInterval(intervalId);
     };
   }, []);
-
-  const poolsWithPositionCounts = useMemo(() => {
-    return poolsData.map(pool => {
-      const [poolToken0Raw, poolToken1Raw] = pool.pair.split(' / ');
-      const poolToken0 = poolToken0Raw?.trim().toUpperCase();
-      const poolToken1 = poolToken1Raw?.trim().toUpperCase();
-      
-      const count = userPositions.filter(pos => {
-        const posToken0 = pos.token0.symbol?.trim().toUpperCase();
-        const posToken1 = pos.token1.symbol?.trim().toUpperCase();
-        return (posToken0 === poolToken0 && posToken1 === poolToken1) ||
-               (posToken0 === poolToken1 && posToken1 === poolToken0);
-      }).length;
-      
-      return { ...pool, positionsCount: count };
-    });
-  }, [poolsData, userPositions]);
 
   const filteredPools = useMemo(() => {
     if (selectedCategory === 'All') return poolsWithPositionCounts;
@@ -437,24 +540,12 @@ export default function LiquidityPage() {
         <div className="flex items-center justify-start gap-1">
           {typeof row.original.volume24hUSD === 'number' ? (
             <>
-              <span className="mr-2">{formatUSD(row.original.volume24hUSD)}</span>
+              <span className="mr-1">{formatUSD(row.original.volume24hUSD)}</span>
               {row.original.volumeChangeDirection === 'up' && (
-                <Image
-                  src="/arrow_up.svg"
-                  alt="Volume Increase Icon"
-                  width={8}
-                  height={8}
-                  className="text-green-500"
-                />
+                <ArrowUpRight className="h-3 w-3 text-green-500" />
               )}
               {row.original.volumeChangeDirection === 'down' && (
-                <Image
-                  src="/arrow_down.svg"
-                  alt="Volume Decrease Icon"
-                  width={8}
-                  height={8}
-                  className="text-red-500"
-                />
+                <ArrowDownRight className="h-3 w-3 text-red-500" />
               )}
               {row.original.volumeChangeDirection === 'loading' && (
                 <div className="inline-block h-3 w-3 bg-muted/60 rounded-full animate-pulse"></div>
@@ -544,24 +635,12 @@ export default function LiquidityPage() {
          <div className="flex items-center justify-start gap-1">
           {typeof row.original.tvlUSD === 'number' ? (
             <>
-              <span className="mr-2">{formatUSD(row.original.tvlUSD)}</span>
+              <span className="mr-1">{formatUSD(row.original.tvlUSD)}</span>
               {(row.original.tvlChangeDirection === 'up' || row.original.tvlChangeDirection === 'neutral') && (
-                <Image
-                  src="/arrow_up.svg"
-                  alt="Liquidity Increase Icon"
-                  width={8}
-                  height={8}
-                  className="text-green-500"
-                />
+                <ArrowUpRight className="h-3 w-3 text-green-500" />
               )}
               {row.original.tvlChangeDirection === 'down' && (
-                <Image
-                  src="/arrow_down.svg"
-                  alt="Liquidity Decrease Icon"
-                  width={8}
-                  height={8}
-                  className="text-red-500"
-                />
+                <ArrowDownRight className="h-3 w-3 text-red-500" />
               )}
                {row.original.tvlChangeDirection === 'loading' && (
                  <div className="inline-block h-3 w-3 bg-muted/60 rounded-full animate-pulse"></div>
@@ -613,7 +692,7 @@ export default function LiquidityPage() {
           <div className="relative flex items-center justify-end w-full h-full">
             {/* APR Badge / Loading Skeleton */}
             {isAprCalculated ? (
-              <div className="flex items-center justify-center h-6 rounded-md bg-green-500/20 text-green-500 overflow-hidden transition-opacity duration-200 group-hover:opacity-0" style={{ width: '72px' }}>
+              <div className="flex items-center justify-center h-6 px-2.5 rounded-md bg-green-500/20 text-green-500 text-[12px] font-semibold overflow-hidden transition-opacity duration-200 group-hover:opacity-0">
                 {formattedAPR}
               </div>
             ) : (
@@ -979,7 +1058,7 @@ export default function LiquidityPage() {
                     onSelectPool={handlePoolClick}
                   />
                 ) : (
-                  <div className="overflow-x-auto">
+                  <div className="overflow-x-auto isolate">
                     <Table className="w-full" style={{ tableLayout: 'fixed' }}>
                       <TableHeader>
                         {/* New category header row inside the table for perfect alignment */}
@@ -1014,26 +1093,33 @@ export default function LiquidityPage() {
                       </TableHeader>
                       <TableBody>
                         {table.getRowModel().rows?.length ? (
-                          table.getRowModel().rows.map((row) => (
-                            <TableRow
-                              key={row.id}
-                              className="group cursor-pointer transition-colors hover:bg-muted/30"
-                            >
-                              {row.getVisibleCells().map((cell, index) => (
-                                <TableCell 
-                                  key={cell.id}
-                                  onClick={() => handlePoolClick(row.original.id)}
-                                  className={`relative py-4 px-2 ${index === 0 ? 'pl-6' : ''} ${index === row.getVisibleCells().length - 1 ? 'pr-6' : ''}`}
-                                  style={{ width: `${cell.column.getSize()}px` }}
+                          table.getRowModel().rows.map((row) => {
+                            const pool = row.original;
+                            const isExpanded = false;
+
+                            return (
+                              <React.Fragment key={row.id}>
+                                <TableRow
+                                  className="group cursor-pointer transition-colors hover:bg-muted/30"
+                                  onClick={() => handlePoolClick(pool.id)}
                                 >
-                                  {flexRender(
-                                    cell.column.columnDef.cell,
-                                    cell.getContext()
-                                  )}
-                                </TableCell>
-                              ))}
-                            </TableRow>
-                          ))
+                                  {row.getVisibleCells().map((cell, index) => (
+                                    <TableCell 
+                                      key={cell.id}
+                                      className={`relative py-4 px-2 ${index === 0 ? 'pl-6' : ''} ${index === row.getVisibleCells().length - 1 ? 'pr-6' : ''}`}
+                                      style={{ width: `${cell.column.getSize()}px` }}
+                                    >
+                                      {flexRender(
+                                        cell.column.columnDef.cell,
+                                        cell.getContext()
+                                      )}
+                                    </TableCell>
+                                  ))}
+                                </TableRow>
+                                {/* Expanded positions removed */}
+                              </React.Fragment>
+                            );
+                          })
                         ) : (
                           <TableRow>
                             <TableCell

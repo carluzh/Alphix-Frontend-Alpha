@@ -38,6 +38,7 @@ import { useIsMobile } from "@/hooks/use-mobile"
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import { useRouter } from "next/navigation"; // Import useRouter
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 
 const data = {
   user: {
@@ -135,13 +136,22 @@ export function AppSidebar({ variant = "floating", ...props }: React.ComponentPr
                   />
                 </a>
                 <div onClick={(e) => e.stopPropagation()}>
-                  <Badge
-                    variant="outline"
-                    className="bg-[#3d271b] text-sidebar-primary border-sidebar-primary rounded-md font-normal hover:bg-[#4a2f1f] transition-colors cursor-default"
-                    style={{ fontFamily: 'Consolas, monospace' }}
-                  >
-                    Beta
-                  </Badge>
+                  <TooltipProvider delayDuration={100}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Badge
+                          variant="outline"
+                          className="bg-[#3d271b] text-sidebar-primary border-sidebar-primary rounded-md font-normal hover:bg-[#4a2f1f] transition-colors cursor-default"
+                          style={{ fontFamily: 'Consolas, monospace' }}
+                        >
+                          Beta
+                        </Badge>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" sideOffset={6} className="px-2 py-1 text-xs" style={{ fontFamily: 'Consolas, monospace' }}>
+                        1.0
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
                 </div>
               </div>
             </SidebarMenuButton>

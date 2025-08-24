@@ -31,13 +31,9 @@ import {
     getPoolConfigForTokens,
     createTokenSDK,
     createPoolKeyFromConfig,
-    CHAIN_ID as DEFAULT_CHAIN_ID
 } from '../../../lib/pools-config';
-import {
-    UNIVERSAL_ROUTER_ADDRESS,
-    UniversalRouterAbi,
-    TX_DEADLINE_SECONDS
-} from '../../../lib/swap-constants';
+import { UniversalRouterAbi, TX_DEADLINE_SECONDS } from '../../../lib/swap-constants';
+import { getUniversalRouterAddress } from '../../../lib/pools-config';
 import { findBestRoute, SwapRoute, routeToString } from '../../../lib/routing-engine';
 
 // Define MaxUint160 here as well
@@ -93,69 +89,93 @@ function determineSwapDirection(inputToken: Token, outputToken: Token): boolean 
     return inputToken.sortsBefore(outputToken);
 }
 
+// --- Guide-Exact Helper: encodeMultihopExactInPath ---
+type PathKeyGuide = {
+  intermediateCurrency: string;
+  fee: number;
+  tickSpacing: number;
+  hooks: string;
+  hookData: string;
+};
+
+export function encodeMultihopExactInPath(
+  poolKeys: PoolKey[],
+  currencyIn: string
+): PathKeyGuide[] {
+  const pathKeys: PathKeyGuide[] = []
+  let currentCurrencyIn = currencyIn
+  
+  for (let i = 0; i < poolKeys.length; i++) {
+    // Determine the output currency for this hop
+    const currencyOut = currentCurrencyIn === poolKeys[i].currency0
+      ? poolKeys[i].currency1
+      : poolKeys[i].currency0
+    
+    // Create path key for this hop
+    const pathKey: PathKeyGuide = {
+      intermediateCurrency: currencyOut,
+      fee: poolKeys[i].fee,
+      tickSpacing: poolKeys[i].tickSpacing,
+      hooks: poolKeys[i].hooks,
+      hookData: '0x'
+    }
+    
+    pathKeys.push(pathKey)
+    currentCurrencyIn = currencyOut // Output becomes input for next hop
+  }
+  
+  return pathKeys
+}
+
 // --- Helper: Prepare V4 Exact Input Swap Data (Adapted from original swap.ts) ---
 // This function can be kept within this file or moved to a separate utility if it grows.
+interface V4PlanBuild {
+    encodedActions: Hex;
+    actions: any;
+    params: any;
+}
+
 async function prepareV4ExactInSwapData(
     inputToken: Token,
     outputToken: Token,
     amountInSmallestUnits: bigint,
     minAmountOutSmallestUnits: bigint,
-    poolConfig: any,
-    limitPrice?: string
-): Promise<Hex> {
-    const token0ForV4 = inputToken.sortsBefore(outputToken) ? inputToken : outputToken;
-    const token1ForV4 = inputToken.sortsBefore(outputToken) ? outputToken : inputToken;
-    
+    poolConfig: any
+): Promise<V4PlanBuild> {
     const v4PoolKey: PoolKey = createPoolKeyFromConfig(poolConfig.pool);
-    console.log("V4 Pool Key (Exact In):", v4PoolKey);
-    const poolIdExactIn = Pool.getPoolId(token0ForV4, token1ForV4, v4PoolKey.fee, v4PoolKey.tickSpacing, v4PoolKey.hooks);
-    console.log("V4 Pool ID (Exact In):", poolIdExactIn);
+    // Build plan per guide (no extra logging)
 
     const v4Planner = new V4Planner();
     
-    // For native ETH, we still need to add a settle action but with the ETH currency
-    // The UniversalRouter will handle the ETH->WETH conversion automatically
-    v4Planner.addSettle(inputToken, true, BigNumber.from(amountInSmallestUnits.toString()));
-    
-    const placeholderSqrtPriceX96 = (1n << 96n); 
-    const placeholderLiquidity = '1000000000000000000';
-    const placeholderTick = 0;
+    // Action order will follow the guide exactly; no optional price limit used
+    const sqrtPriceLimitX96 = 0n;
 
-    const dummyV4PoolForRoute = new Pool(
-        token0ForV4, token1ForV4, v4PoolKey.fee, v4PoolKey.tickSpacing, v4PoolKey.hooks,
-        placeholderSqrtPriceX96.toString(), placeholderLiquidity, placeholderTick
-    );
-    const singleHopV4Route = new V4Route([dummyV4PoolForRoute], inputToken, outputToken);
-    const encodedV4Path = encodeRouteToPath(singleHopV4Route, false); // false for exactIn
-
-    // Calculate price limit if provided
-    let sqrtPriceLimitX96 = 0n; // 0 means no limit
-    let adjustedMinAmountOut = minAmountOutSmallestUnits; // Default to provided value
-    
-    if (limitPrice && limitPrice !== "" && parseFloat(limitPrice) > 0) {
-        const zeroForOne = determineSwapDirection(inputToken, outputToken);
-        sqrtPriceLimitX96 = calculatePriceLimitX96(limitPrice, inputToken, outputToken, zeroForOne);
-        
-        // For limit orders, both the price limit and the minimum amount out (for slippage) will be respected.
-        // The swap will not execute if the price is worse than the limit, OR if the final output
-        // is less than the minimum amount (considering slippage tolerance).
-        console.log(`[prepareV4ExactInSwapData] Applied price limit: ${limitPrice}, calculated sqrtPriceLimitX96: ${sqrtPriceLimitX96.toString()}`);
-    }
-
+    const zeroForOne = getAddress(inputToken.address!) === v4PoolKey.currency0;
     v4Planner.addAction(Actions.SWAP_EXACT_IN_SINGLE, [
         {
             poolKey: v4PoolKey,
-            zeroForOne: determineSwapDirection(inputToken, outputToken),
+            zeroForOne,
             amountIn: BigNumber.from(amountInSmallestUnits.toString()),
-            amountOutMinimum: BigNumber.from(adjustedMinAmountOut.toString()),
+            amountOutMinimum: BigNumber.from(minAmountOutSmallestUnits.toString()),
             sqrtPriceLimitX96: BigNumber.from(sqrtPriceLimitX96.toString()),
-            hookData: "0x"
+            hookData: '0x'
         }
     ]);
 
-    v4Planner.addAction(Actions.TAKE_ALL, [outputToken.address, BigNumber.from("0")]); // Take all of the output token
+    // Second: SETTLE_ALL per guide
+    v4Planner.addAction(Actions.SETTLE_ALL, [
+        zeroForOne ? v4PoolKey.currency0 : v4PoolKey.currency1,
+        BigNumber.from(amountInSmallestUnits.toString()),
+    ]);
 
-    return v4Planner.finalize() as Hex;
+    // Third: TAKE_ALL
+    v4Planner.addAction(Actions.TAKE_ALL, [
+        zeroForOne ? v4PoolKey.currency1 : v4PoolKey.currency0,
+        BigNumber.from(minAmountOutSmallestUnits.toString())
+    ]);
+
+    const encodedActions = v4Planner.finalize() as Hex;
+    return { encodedActions, actions: (v4Planner as any).actions, params: (v4Planner as any).params };
 }
 
 // --- Helper: Prepare V4 Exact Output Swap Data (Adapted) ---
@@ -166,25 +186,11 @@ async function prepareV4ExactOutSwapData(
     amountOutSmallestUnits: bigint,
     poolConfig: any,
     limitPrice?: string
-): Promise<Hex> {
-    const token0ForV4 = inputToken.sortsBefore(outputToken) ? inputToken : outputToken;
-    const token1ForV4 = inputToken.sortsBefore(outputToken) ? outputToken : inputToken;
-    
+): Promise<V4PlanBuild> {
     const v4PoolKey: PoolKey = createPoolKeyFromConfig(poolConfig.pool);
-    console.log("V4 Pool Key (Exact Out):", v4PoolKey);
-    const poolIdExactOut = Pool.getPoolId(token0ForV4, token1ForV4, v4PoolKey.fee, v4PoolKey.tickSpacing, v4PoolKey.hooks);
-    console.log("V4 Pool ID (Exact Out):", poolIdExactOut);
+    // Build plan per guide (trimmed logs)
 
-    const placeholderSqrtPriceX96 = (1n << 96n); 
-    const placeholderLiquidity = '100000000000000000000'; 
-    const placeholderTick = 0;
 
-    const dummyV4PoolForRoute = new Pool(
-        token0ForV4, token1ForV4, v4PoolKey.fee, v4PoolKey.tickSpacing, v4PoolKey.hooks,
-        placeholderSqrtPriceX96.toString(), placeholderLiquidity, placeholderTick
-    );
-    const route = new V4Route([dummyV4PoolForRoute], inputToken, outputToken);
-    const encodedV4Path = encodeRouteToPath(route, true); // true for exactOutput
 
     const v4Planner = new V4Planner();
     // Always add settle action for both native ETH and ERC-20 tokens
@@ -193,7 +199,7 @@ async function prepareV4ExactOutSwapData(
     // Calculate price limit if provided
     let sqrtPriceLimitX96 = 0n; // 0 means no limit
     if (limitPrice && limitPrice !== "" && parseFloat(limitPrice) > 0) {
-        const zeroForOne = determineSwapDirection(inputToken, outputToken);
+        const zeroForOne = getAddress(inputToken.address!) === v4PoolKey.currency0;
         sqrtPriceLimitX96 = calculatePriceLimitX96(limitPrice, inputToken, outputToken, zeroForOne);
         console.log(`[prepareV4ExactOutSwapData] Applied price limit: ${limitPrice}, calculated sqrtPriceLimitX96: ${sqrtPriceLimitX96.toString()}`);
     }
@@ -201,17 +207,18 @@ async function prepareV4ExactOutSwapData(
     v4Planner.addAction(Actions.SWAP_EXACT_OUT_SINGLE, [
         {
             poolKey: v4PoolKey,
-            zeroForOne: determineSwapDirection(inputToken, outputToken),
+            zeroForOne: getAddress(inputToken.address!) === v4PoolKey.currency0,
             amountOut: BigNumber.from(amountOutSmallestUnits.toString()),
             amountInMaximum: BigNumber.from(maxAmountInSmallestUnits.toString()),
             sqrtPriceLimitX96: BigNumber.from(sqrtPriceLimitX96.toString()),
-            hookData: "0x"
+            hookData: '0x'
         }
     ]);
 
     v4Planner.addAction(Actions.TAKE_ALL, [outputToken.address, BigNumber.from("0")]);
 
-    return v4Planner.finalize() as Hex;
+    const encodedActions = v4Planner.finalize() as Hex;
+    return { encodedActions, actions: (v4Planner as any).actions, params: (v4Planner as any).params };
 }
 
 // --- Helper: Prepare V4 Multi-Hop Exact Input Swap Data ---
@@ -219,80 +226,51 @@ async function prepareV4MultiHopExactInSwapData(
     route: SwapRoute,
     amountInSmallestUnits: bigint,
     minAmountOutSmallestUnits: bigint,
-    chainId: number,
-    limitPrice?: string
-): Promise<Hex> {
+    chainId: number
+): Promise<V4PlanBuild> {
     const inputToken = createTokenSDK(route.path[0] as TokenSymbol, chainId);
     const outputToken = createTokenSDK(route.path[route.path.length - 1] as TokenSymbol, chainId);
-    
     if (!inputToken || !outputToken) {
         throw new Error(`Failed to create token instances for multi-hop route`);
     }
 
-    console.log("V4 Multi-Hop Route (Exact In):", routeToString(route));
-
-    // Create V4Planner for multi-hop
-    const v4Planner = new V4Planner();
-    // Always add settle action for both native ETH and ERC-20 tokens
-    v4Planner.addSettle(inputToken, true, BigNumber.from(amountInSmallestUnits.toString()));
-    
-    // Build the encoded path for multi-hop
-    const pools: Pool[] = [];
+    // Build PoolKeys for each hop from config, and PathKey[] per guide
+    const poolKeys: PoolKey[] = [];
     for (let i = 0; i < route.pools.length; i++) {
-        const poolInfo = route.pools[i];
-        const token0 = createTokenSDK(poolInfo.token0 as TokenSymbol, chainId);
-        const token1 = createTokenSDK(poolInfo.token1 as TokenSymbol, chainId);
-        
-        if (!token0 || !token1) {
-            throw new Error(`Failed to create token instances for pool: ${poolInfo.poolName}`);
-        }
-        
-        const sortedToken0 = token0.sortsBefore(token1) ? token0 : token1;
-        const sortedToken1 = token0.sortsBefore(token1) ? token1 : token0;
-        
-        // Create pool instance
-        const placeholderSqrtPriceX96 = (1n << 96n);
-        const placeholderLiquidity = '1000000000000000000';
-        const placeholderTick = 0;
-        
-        const pool = new Pool(
-            sortedToken0, sortedToken1, poolInfo.fee, poolInfo.tickSpacing, poolInfo.hooks,
-            placeholderSqrtPriceX96.toString(), placeholderLiquidity, placeholderTick
-        );
-        pools.push(pool);
+        const hop = route.pools[i];
+        const poolCfg = getPoolConfigForTokens(hop.token0, hop.token1);
+        if (!poolCfg) throw new Error(`Pool config not found for hop ${i}: ${hop.poolName}`);
+        poolKeys.push(createPoolKeyFromConfig(poolCfg.pool));
     }
+    // Use the guide helper to encode PathKey[] from PoolKey[]
+    const pathKeys = encodeMultihopExactInPath(poolKeys, inputToken.address);
 
-    // Create the multi-hop route
-    const v4Route = new V4Route(pools, inputToken, outputToken);
-    const encodedPath = encodeRouteToPath(v4Route, false); // false for exactIn
+    const v4Planner = new V4Planner();
 
-    // Calculate price limit if provided (use the first pool for now)
-    let sqrtPriceLimitX96 = 0n;
-    if (limitPrice && limitPrice !== "" && parseFloat(limitPrice) > 0) {
-        const firstPoolInputToken = createTokenSDK(route.pools[0].token0 as TokenSymbol, chainId);
-        const firstPoolOutputToken = createTokenSDK(route.pools[0].token1 as TokenSymbol, chainId);
-        
-        if (firstPoolInputToken && firstPoolOutputToken) {
-            const zeroForOne = determineSwapDirection(firstPoolInputToken, firstPoolOutputToken);
-            sqrtPriceLimitX96 = calculatePriceLimitX96(limitPrice, firstPoolInputToken, firstPoolOutputToken, zeroForOne);
-            console.log(`[prepareV4MultiHopExactInSwapData] Applied price limit: ${limitPrice}, calculated sqrtPriceLimitX96: ${sqrtPriceLimitX96.toString()}`);
-        }
-    }
-
-    // Add the multi-hop swap action
+    // SWAP_EXACT_IN with PathKey[]
     v4Planner.addAction(Actions.SWAP_EXACT_IN, [
         {
             currencyIn: inputToken.address,
-            path: encodedPath,
+            path: pathKeys,
             amountIn: BigNumber.from(amountInSmallestUnits.toString()),
             amountOutMinimum: BigNumber.from(minAmountOutSmallestUnits.toString()),
-            sqrtPriceLimitX96: BigNumber.from(sqrtPriceLimitX96.toString())
         }
     ]);
 
-    v4Planner.addAction(Actions.TAKE_ALL, [outputToken.address, BigNumber.from("0")]);
+    // SETTLE_ALL on true input currency (currencyIn)
+    v4Planner.addAction(Actions.SETTLE_ALL, [
+        inputToken.address,
+        BigNumber.from(amountInSmallestUnits.toString()),
+    ]);
 
-    return v4Planner.finalize() as Hex;
+    // TAKE_ALL on true output currency (final currencyOut)
+    v4Planner.addAction(Actions.TAKE_ALL, [
+        poolKeys[poolKeys.length - 1].currency1,
+        BigNumber.from(minAmountOutSmallestUnits.toString()),
+    ]);
+
+    const encodedActions = v4Planner.finalize() as Hex;
+    return { encodedActions, actions: (v4Planner as any).actions, params: (v4Planner as any).params };
 }
 
 // --- Helper: Prepare V4 Multi-Hop Exact Output Swap Data ---
@@ -300,17 +278,14 @@ async function prepareV4MultiHopExactOutSwapData(
     route: SwapRoute,
     maxAmountInSmallestUnits: bigint,
     amountOutSmallestUnits: bigint,
-    chainId: number,
-    limitPrice?: string
-): Promise<Hex> {
+    chainId: number
+): Promise<V4PlanBuild> {
     const inputToken = createTokenSDK(route.path[0] as TokenSymbol, chainId);
     const outputToken = createTokenSDK(route.path[route.path.length - 1] as TokenSymbol, chainId);
     
     if (!inputToken || !outputToken) {
         throw new Error(`Failed to create token instances for multi-hop route`);
     }
-
-    console.log("V4 Multi-Hop Route (Exact Out):", routeToString(route));
 
     // Create V4Planner for multi-hop
     const v4Planner = new V4Planner();
@@ -343,37 +318,39 @@ async function prepareV4MultiHopExactOutSwapData(
         pools.push(pool);
     }
 
-    // Create the multi-hop route
-    const v4Route = new V4Route(pools, inputToken, outputToken);
-    const encodedPath = encodeRouteToPath(v4Route, true); // true for exactOut
-
-    // Calculate price limit if provided (use the first pool for now)
-    let sqrtPriceLimitX96 = 0n;
-    if (limitPrice && limitPrice !== "" && parseFloat(limitPrice) > 0) {
-        const firstPoolInputToken = createTokenSDK(route.pools[0].token0 as TokenSymbol, chainId);
-        const firstPoolOutputToken = createTokenSDK(route.pools[0].token1 as TokenSymbol, chainId);
-        
-        if (firstPoolInputToken && firstPoolOutputToken) {
-            const zeroForOne = determineSwapDirection(firstPoolInputToken, firstPoolOutputToken);
-            sqrtPriceLimitX96 = calculatePriceLimitX96(limitPrice, firstPoolInputToken, firstPoolOutputToken, zeroForOne);
-            console.log(`[prepareV4MultiHopExactOutSwapData] Applied price limit: ${limitPrice}, calculated sqrtPriceLimitX96: ${sqrtPriceLimitX96.toString()}`);
-        }
+    // Create PathKey[] directly per guide
+    const poolKeys: PoolKey[] = [];
+    for (let i = 0; i < route.pools.length; i++) {
+        const hop = route.pools[i];
+        const poolCfg = getPoolConfigForTokens(hop.token0, hop.token1);
+        if (!poolCfg) throw new Error(`Pool config not found for hop ${i}: ${hop.poolName}`);
+        poolKeys.push(createPoolKeyFromConfig(poolCfg.pool));
     }
+    // Use the guide helper to encode PathKey[] from PoolKey[]
+    const pathKeys = encodeMultihopExactInPath(poolKeys, inputToken.address);
 
     // Add the multi-hop swap action
     v4Planner.addAction(Actions.SWAP_EXACT_OUT, [
         {
             currencyOut: outputToken.address,
-            path: encodedPath,
+            path: pathKeys,
             amountOut: BigNumber.from(amountOutSmallestUnits.toString()),
             amountInMaximum: BigNumber.from(maxAmountInSmallestUnits.toString()),
-            sqrtPriceLimitX96: BigNumber.from(sqrtPriceLimitX96.toString())
         }
     ]);
 
-    v4Planner.addAction(Actions.TAKE_ALL, [outputToken.address, BigNumber.from("0")]);
+    // SETTLE_ALL and TAKE_ALL per guide shape
+    v4Planner.addAction(Actions.SETTLE_ALL, [
+        poolKeys[0].currency0,
+        BigNumber.from(maxAmountInSmallestUnits.toString()),
+    ]);
+    v4Planner.addAction(Actions.TAKE_ALL, [
+        poolKeys[poolKeys.length - 1].currency1,
+        BigNumber.from(amountOutSmallestUnits.toString()),
+    ]);
 
-    return v4Planner.finalize() as Hex;
+    const encodedActions = v4Planner.finalize() as Hex;
+    return { encodedActions, actions: (v4Planner as any).actions, params: (v4Planner as any).params };
 }
 
 interface BuildSwapTxRequest extends NextApiRequest {
@@ -512,7 +489,7 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
 
         let amountInSmallestUnits: bigint;
         let amountOutSmallestUnits: bigint; // Used for ExactOut amount, or for minAmountOut in ExactIn
-        let v4ActionsByteString: Hex;
+        let v4Plan: V4PlanBuild;
 
         const routePlanner = new RoutePlanner();
 
@@ -529,7 +506,7 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
                         permitExpiration,               // expiration (number)
                         permitNonce                     // nonce (number)
                     ],
-                    UNIVERSAL_ROUTER_ADDRESS,           // spender
+                    getUniversalRouterAddress(),        // spender
                     parsedPermitSigDeadline             // sigDeadline (bigint)
                 ],
                 permitSignature // The actual signature
@@ -542,7 +519,7 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
         const actualLimitAmount = safeParseUnits(limitAmountDecimalsStr, OUTPUT_TOKEN.decimals); // Assuming ExactIn for limit parsing
 
         // Determine the value to send with the transaction
-        const valueToSend = fromTokenSymbol === 'ETH' ? actualSwapAmount : 0n;
+        const txValue = fromTokenSymbol === 'ETH' ? actualSwapAmount : 0n;
 
         if (swapType === 'ExactIn') {
             amountInSmallestUnits = actualSwapAmount; // Use the actual amount for the swap
@@ -550,22 +527,20 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
             
             if (route.isDirectRoute) {
                 // Single-hop swap using existing logic
-                v4ActionsByteString = await prepareV4ExactInSwapData(
+                v4Plan = await prepareV4ExactInSwapData(
                     INPUT_TOKEN,
                     OUTPUT_TOKEN,
                     amountInSmallestUnits,
                     minAmountOutSmallestUnits,
-                    poolConfig,
-                    limitPrice
+                    poolConfig
                 );
             } else {
                 // Multi-hop swap using new logic
-                v4ActionsByteString = await prepareV4MultiHopExactInSwapData(
+                v4Plan = await prepareV4MultiHopExactInSwapData(
                     route,
                     amountInSmallestUnits,
                     minAmountOutSmallestUnits,
-                    chainId,
-                    limitPrice
+                    chainId
                 );
             }
         } else { // ExactOut
@@ -574,7 +549,7 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
             
             if (route.isDirectRoute) {
                 // Single-hop swap using existing logic
-                v4ActionsByteString = await prepareV4ExactOutSwapData(
+                v4Plan = await prepareV4ExactOutSwapData(
                     INPUT_TOKEN,
                     OUTPUT_TOKEN,
                     maxAmountInSmallestUnits, // Max Input is the limit amount
@@ -584,39 +559,38 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
                 );
             } else {
                 // Multi-hop swap using new logic
-                v4ActionsByteString = await prepareV4MultiHopExactOutSwapData(
+                v4Plan = await prepareV4MultiHopExactOutSwapData(
                     route,
                     maxAmountInSmallestUnits,
                     amountOutSmallestUnits,
-                    chainId,
-                    limitPrice
+                    chainId
                 );
             }
         }
-        routePlanner.addCommand(CommandType.V4_SWAP, [v4ActionsByteString]);
+        const encodedActions = v4Plan.encodedActions;
+        routePlanner.addCommand(CommandType.V4_SWAP, [encodedActions]);
 
         // 3. Calculate Transaction Deadline
         const currentTimestamp = BigInt(Math.floor(Date.now() / 1000));
         const txDeadline = currentTimestamp + BigInt(TX_DEADLINE_SECONDS);
 
         // 4. Simulate Transaction
-        const { request: simulateRequest, result: simulateResult } = await publicClient.simulateContract({
+        await publicClient.simulateContract({
             account: getAddress(userAddress), // Simulate as if the user is sending
-            address: UNIVERSAL_ROUTER_ADDRESS,
+            address: getUniversalRouterAddress(),
             abi: UniversalRouterAbi, // Ensure UniversalRouterAbi is correctly typed as Abi
             functionName: 'execute',
             args: [routePlanner.commands as Hex, routePlanner.inputs as Hex[], txDeadline],
-            value: valueToSend,
+            value: txValue,
         });
-        // console.log("Transaction simulation successful:", simulateResult);
 
         res.status(200).json({
             ok: true,
             commands: routePlanner.commands as Hex,
             inputs: routePlanner.inputs as Hex[],
             deadline: txDeadline.toString(),
-            to: UNIVERSAL_ROUTER_ADDRESS,
-            value: valueToSend.toString(),
+            to: getUniversalRouterAddress(),
+            value: txValue.toString(),
             route: {
                 path: route.path,
                 hops: route.hops,

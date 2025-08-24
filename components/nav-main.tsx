@@ -13,7 +13,6 @@ import { FAUCET_CONTRACT_ADDRESS, FAUCET_FUNCTION_SIGNATURE, faucetContractAbi }
 import { useRouter } from "next/navigation"; // Import useRouter
 import { /* WarningToastIcon, */ SuccessToastIcon } from "./swap/swap-interface"; // Adjusted import for toasts
 import { parseAbi } from "viem"
-import { Badge } from "./ui/badge"; // Added import for Badge
 import { cn } from "@/lib/utils"; // Added import for cn
 
 import {
@@ -53,10 +52,6 @@ export function NavMain({
   const [faucetAvailableAt, setFaucetAvailableAt] = useState<number | null>(null);
   const [isFaucetUnread, setIsFaucetUnread] = useState<boolean>(false);
   const [faucetStep, setFaucetStep] = useState<number>(10); // 1..10
-
-  // Portfolio count/unread state (sourced from localStorage, updated by portfolio page)
-  const [portfolioCount, setPortfolioCount] = useState<number | null>(null);
-  const [isPortfolioUnread, setIsPortfolioUnread] = useState<boolean>(false);
   const PROGRESS_RADIUS = 8;
   const PROGRESS_CIRC = 2 * Math.PI * PROGRESS_RADIUS;
 
@@ -96,28 +91,9 @@ export function NavMain({
       setCachedLastCalled(parseInt(cached, 10));
     }
 
-    // Initialize portfolio count and unread state
-    const currentCount = localStorage.getItem(`portfolioCurrentCount_${userAddress}`);
-    const lastSeenCount = localStorage.getItem(`portfolioLastSeenCount_${userAddress}`);
-    if (currentCount !== null) {
-      const n = Number(currentCount);
-      setPortfolioCount(Number.isFinite(n) ? n : 0);
-      const seen = lastSeenCount !== null ? Number(lastSeenCount) : null;
-      setIsPortfolioUnread(seen === null ? n > 0 : seen !== n);
-    } else {
-      setPortfolioCount(0);
-      setIsPortfolioUnread(false);
-    }
-
     // Listen to cross-tab storage changes
     const onStorage = (e: StorageEvent) => {
       if (!e.key || !userAddress) return;
-      if (e.key === `portfolioCurrentCount_${userAddress}` || e.key === `portfolioLastSeenCount_${userAddress}`) {
-        const curr = Number(localStorage.getItem(`portfolioCurrentCount_${userAddress}`) || "0");
-        const seen = localStorage.getItem(`portfolioLastSeenCount_${userAddress}`);
-        setPortfolioCount(Number.isFinite(curr) ? curr : 0);
-        setIsPortfolioUnread(seen === null ? curr > 0 : Number(seen) !== curr);
-      }
       if (e.key === `faucetClaimLastSeenAt_${userAddress}`) {
         const seenAt = Number(localStorage.getItem(`faucetClaimLastSeenAt_${userAddress}`) || "0");
         setIsFaucetUnread(Boolean(faucetAvailableAt && seenAt < faucetAvailableAt));
@@ -125,40 +101,8 @@ export function NavMain({
     };
     window.addEventListener('storage', onStorage);
 
-    // Listen to in-app custom event for immediate updates
-    const onPortfolioUpdate = (ev: Event) => {
-      try {
-        const detail = (ev as CustomEvent).detail as { count?: number; address?: string } | undefined;
-        if (!detail || (detail.address && detail.address !== userAddress)) return;
-        if (typeof detail.count === 'number') {
-          setPortfolioCount(detail.count);
-          const seen = localStorage.getItem(`portfolioLastSeenCount_${userAddress}`);
-          setIsPortfolioUnread(seen === null ? detail.count > 0 : Number(seen) !== detail.count);
-        }
-      } catch {}
-    };
-    window.addEventListener('portfolioPositionsUpdated', onPortfolioUpdate as EventListener);
-
-    // If we have no portfolio count cached, fetch lightweight count once
-    const init = async () => {
-      try {
-        const hasCache = localStorage.getItem(`portfolioCurrentCount_${userAddress}`);
-        if (!hasCache) {
-          const res = await fetch(`/api/liquidity/get-positions?ownerAddress=${userAddress}&countOnly=1`);
-          const json = await res.json();
-          const count = Number(json?.count ?? 0);
-          localStorage.setItem(`portfolioCurrentCount_${userAddress}`, String(count));
-          setPortfolioCount(count);
-          const seen = localStorage.getItem(`portfolioLastSeenCount_${userAddress}`);
-          setIsPortfolioUnread(seen === null ? count > 0 : Number(seen) !== count);
-        }
-      } catch {}
-    };
-    void init();
-
     return () => {
       window.removeEventListener('storage', onStorage);
-      window.removeEventListener('portfolioPositionsUpdated', onPortfolioUpdate as EventListener);
     };
   }, [userAddress]);
 
@@ -229,7 +173,7 @@ export function NavMain({
 
   useEffect(() => {
     if (isConfirmed) {
-      toast.success("Faucet Success: Tokens sent");
+      toast.success("Faucet Claimed", { icon: <BadgeCheck className="h-4 w-4 text-sidebar-primary" /> });
       resetWriteContract();
       // On successful claim, update local cache and refetch from contract
       const now = Math.floor(Date.now() / 1000);
@@ -334,7 +278,7 @@ export function NavMain({
         return
       }
       console.log("Faucet API response:", faucetTxData)
-      toast.info("Sending faucet transaction to wallet...")
+      // removed info toast per request
       writeContract({
         address: faucetTxData.to as `0x${string}`,
         abi: faucetAbi,
@@ -348,19 +292,9 @@ export function NavMain({
       if (msg.includes('once per day')) {
         toast.error('Can only claim once per day', { icon: <OutOfRangeToastIcon /> });
       } else {
-        toast.error(`Error during faucet action: ${error.message}`, { icon: <OutOfRangeToastIcon /> })
+        toast.error(`Error during faucet action: ${error.message}`, { icon: <OctagonX className="h-4 w-4 text-red-500" /> })
       }
     }
-  }
-
-  const handlePortfolioClick = () => {
-    if (!userAddress) return;
-    try {
-      if (typeof portfolioCount === 'number') {
-        localStorage.setItem(`portfolioLastSeenCount_${userAddress}`, String(portfolioCount));
-        setIsPortfolioUnread(false);
-      }
-    } catch {}
   }
 
   return (
@@ -454,20 +388,9 @@ export function NavMain({
               </SidebarMenuButton>
             ) : item.title === "Portfolio" ? (
               <SidebarMenuButton tooltip={item.title} asChild className="w-full" isActive={isActive}>
-                <a href={item.url!} onClick={handlePortfolioClick} className="flex items-center w-full">
+                <a href={item.url!} className="flex items-center w-full">
                   {item.icon && <item.icon />}
                   <span className="flex-1 truncate">{item.title}</span>
-                  {typeof portfolioCount === 'number' && portfolioCount > 0 && (
-                    <SidebarMenuBadge
-                      className={
-                        isPortfolioUnread
-                          ? "bg-[#3d271b] text-sidebar-primary border border-sidebar-primary"
-                          : "bg-sidebar-accent text-white border-transparent opacity-70"
-                      }
-                    >
-                      {portfolioCount > 99 ? '99+' : portfolioCount}
-                    </SidebarMenuBadge>
-                  )}
                 </a>
               </SidebarMenuButton>
             ) : item.title === "Swap" ? (

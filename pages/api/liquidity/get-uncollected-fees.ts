@@ -4,6 +4,7 @@ import { publicClient } from '@/lib/viemClient';
 import { position_manager_abi } from '@/lib/abis/PositionManager_abi';
 import { STATE_VIEW_ABI } from '@/lib/abis/state_view_abi';
 import { getPositionManagerAddress, getStateViewAddress, getTokenSymbolByAddress, getToken } from '@/lib/pools-config';
+import { decodePositionInfo, calculateUnclaimedFeesV4 } from '@/lib/liquidity-utils';
 
 const PM_ABI: Abi = position_manager_abi as unknown as Abi;
 const Q128 = (1n << 128n);
@@ -39,10 +40,19 @@ export default async function handler(
       abi: PM_ABI,
       functionName: 'getPoolAndPositionInfo',
       args: [tokenId],
-    } as const);
+    } as const) as readonly [
+      {
+        currency0: `0x${string}`;
+        currency1: `0x${string}`;
+        fee: number;
+        tickSpacing: number;
+        hooks: `0x${string}`;
+      },
+      bigint
+    ];
 
-    const poolKey = pmRead[0] as any;
-    const infoPacked = pmRead[1] as bigint;
+    const poolKey = pmRead[0];
+    const infoPacked = pmRead[1];
 
     // Prefer parsing from positionId (subgraph-style id):
     // <poolId>-<owner>-<tickLower>-<tickUpper>-<salt>
@@ -84,9 +94,10 @@ export default async function handler(
     const computedPoolId = keccak256(encodedPoolKey);
     if (!poolIdBytes32) poolIdBytes32 = computedPoolId as `0x${string}`;
 
-    // Resolve effective owner & ticks
-    const effTickLower = parsedTickLower ?? Number((infoPacked >> 64n) & ((1n << 24n) - 1n));
-    const effTickUpper = parsedTickUpper ?? Number((infoPacked >> 88n) & ((1n << 24n) - 1n));
+    // Resolve effective owner & ticks (prefer parsed; else decode packed info per v4 spec)
+    const decoded = decodePositionInfo(infoPacked);
+    const effTickLower = parsedTickLower ?? decoded.tickLower;
+    const effTickUpper = parsedTickUpper ?? decoded.tickUpper;
     // In v4 PM, the on-pool owner is the PositionManager, not the user. Use pmAddress.
     const effOwner = pmAddress as `0x${string}`;
 
@@ -100,11 +111,11 @@ export default async function handler(
       abi: stateViewAbiParsed,
       functionName: 'getPositionInfo',
       args: [poolIdBytes32 as `0x${string}`, effOwner, effTickLower as any, effTickUpper as any, salt],
-    } as const);
+    } as const) as readonly [bigint, bigint, bigint];
 
-    const liquidity = posInfo[0] as bigint;
-    const feeGrowthInside0LastX128 = posInfo[1] as bigint;
-    const feeGrowthInside1LastX128 = posInfo[2] as bigint;
+    const liquidity = posInfo[0];
+    const feeGrowthInside0LastX128 = posInfo[1];
+    const feeGrowthInside1LastX128 = posInfo[2];
 
     // 4) Read current fee growth inside
     const feeInside = await publicClient.readContract({
@@ -112,16 +123,19 @@ export default async function handler(
       abi: stateViewAbiParsed,
       functionName: 'getFeeGrowthInside',
       args: [poolIdBytes32 as `0x${string}`, effTickLower as any, effTickUpper as any],
-    } as const);
+    } as const) as readonly [bigint, bigint];
 
-    const feeGrowthInside0X128 = feeInside[0] as bigint;
-    const feeGrowthInside1X128 = feeInside[1] as bigint;
+    const feeGrowthInside0X128 = feeInside[0];
+    const feeGrowthInside1X128 = feeInside[1];
 
-    // 5) Compute unclaimed fees
-    const delta0 = feeGrowthInside0X128 >= feeGrowthInside0LastX128 ? (feeGrowthInside0X128 - feeGrowthInside0LastX128) : 0n;
-    const delta1 = feeGrowthInside1X128 >= feeGrowthInside1LastX128 ? (feeGrowthInside1X128 - feeGrowthInside1LastX128) : 0n;
-    const rawAmount0 = (delta0 * liquidity) / Q128;
-    const rawAmount1 = (delta1 * liquidity) / Q128;
+    // 5) Compute unclaimed fees (use shared helper for consistency with guide)
+    const { token0Fees: rawAmount0, token1Fees: rawAmount1 } = calculateUnclaimedFeesV4(
+      liquidity,
+      feeGrowthInside0X128,
+      feeGrowthInside1X128,
+      feeGrowthInside0LastX128,
+      feeGrowthInside1LastX128,
+    );
 
     // 6) Get token symbols and format amounts with proper decimals
     const token0Symbol = getTokenSymbolByAddress(poolKey.currency0);
@@ -170,11 +184,11 @@ export default async function handler(
       success: true,
       amount0: rawAmount0.toString(),
       amount1: rawAmount1.toString(),
-      formattedAmount0,
-      formattedAmount1,
-      token0Symbol,
-      token1Symbol,
       debug: {
+        formattedAmount0,
+        formattedAmount1,
+        token0Symbol,
+        token1Symbol,
         poolKey,
         tickLower: effTickLower,
         tickUpper: effTickUpper,

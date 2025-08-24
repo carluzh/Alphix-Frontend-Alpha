@@ -193,6 +193,8 @@ export function AddLiquidityForm({
   const [dragStartTickLower, setDragStartTickLower] = useState<number | null>(null);
   const [dragStartTickUpper, setDragStartTickUpper] = useState<number | null>(null);
   const [dragSide, setDragSide] = useState<'left' | 'right' | 'center' | null>(null);
+  // Track which side is being edited in the inline price editor
+  const [editingSide, setEditingSide] = useState<'min' | 'max' | null>(null);
   
   // Min/Max price input strings
   const [minPriceInputString, setMinPriceInputString] = useState<string>("");
@@ -306,6 +308,52 @@ export function AddLiquidityForm({
   useEffect(() => {
     setBaseTokenForPriceDisplay(token0Symbol);
   }, [token0Symbol]);
+
+  // Auto flip denomination to match InteractiveRangeChart axis when beneficial
+  const shouldFlipDenomination = useMemo(() => {
+    if (!currentPrice) return false;
+    const currentPriceNum = parseFloat(currentPrice);
+    if (!isFinite(currentPriceNum) || currentPriceNum <= 0) return false;
+    const inverse = 1 / currentPriceNum;
+    return inverse > currentPriceNum;
+  }, [currentPrice]);
+
+  // Inversion state based on current price
+  const isInverted = useMemo(() => {
+    if (!currentPrice) return false;
+    const v = parseFloat(currentPrice);
+    if (!isFinite(v) || v <= 0) return false;
+    return 1 / v > v;
+  }, [currentPrice]);
+
+  // Keep denomination aligned with inversion (but freeze while editing)
+  useEffect(() => {
+    if (editingSide) return;
+    const desiredBase = isInverted ? token0Symbol : token1Symbol;
+    if (desiredBase && desiredBase !== baseTokenForPriceDisplay) {
+      setBaseTokenForPriceDisplay(desiredBase);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isInverted, token0Symbol, token1Symbol, editingSide]);
+
+  // Determine optimal denomination for display decimals (match chart priority)
+  const optimalDenominationForDecimals = useMemo(() => {
+    const quotePriority: Record<string, number> = {
+      'aUSDC': 10,
+      'aUSDT': 9,
+      'USDC': 8,
+      'USDT': 7,
+      'aETH': 6,
+      'ETH': 5,
+      'YUSD': 4,
+      'mUSDT': 3,
+    };
+    const t0 = token0Symbol;
+    const t1 = token1Symbol;
+    const p0 = quotePriority[t0] || 0;
+    const p1 = quotePriority[t1] || 0;
+    return p1 > p0 ? t1 : t0;
+  }, [token0Symbol, token1Symbol]);
 
   // Setup tokens based on selectedPoolId
   useEffect(() => {
@@ -601,7 +649,11 @@ export function AddLiquidityForm({
 
     let finalMinPriceString = "";
     let finalMaxPriceString = "";
-    const displayDecimals = baseTokenForPriceDisplay === token0Symbol ? decimalsForToken0Display : decimalsForToken1Display;
+    // Use optimal denomination for decimals like the chart; force 2 for USD-denominated
+    const baseDisplayToken = optimalDenominationForDecimals;
+    const baseDisplayDefault = TOKEN_DEFINITIONS[baseDisplayToken]?.displayDecimals ?? 4;
+    const isUSDDenom = baseDisplayToken === 'aUSDT' || baseDisplayToken === 'aUSDC' || baseDisplayToken === 'USDT' || baseDisplayToken === 'USDC';
+    const displayDecimals = isUSDDenom ? 2 : baseDisplayDefault;
 
     // Formatting for Min Price String
     if (valForMinInput !== null && !isNaN(valForMinInput)) {
@@ -632,7 +684,7 @@ export function AddLiquidityForm({
     setMinPriceInputString(finalMinPriceString);
     setMaxPriceInputString(finalMaxPriceString);
 
-  }, [tickLower, tickUpper, baseTokenForPriceDisplay, token0Symbol, token1Symbol, sdkMinTick, sdkMaxTick, calculatedData]);
+  }, [tickLower, tickUpper, baseTokenForPriceDisplay, token0Symbol, token1Symbol, sdkMinTick, sdkMaxTick, calculatedData, optimalDenominationForDecimals]);
 
   // Helper function to get formatted display balance
   const getFormattedDisplayBalance = (numericBalance: number | undefined, tokenSymbolForDecimals: TokenSymbol): string => {
@@ -686,7 +738,6 @@ export function AddLiquidityForm({
   // State for editing price range
   const [editingMinPrice, setEditingMinPrice] = useState<string>("");
   const [editingMaxPrice, setEditingMaxPrice] = useState<string>("");
-  const [editingSide, setEditingSide] = useState<'min' | 'max' | null>(null);
 
   // Click outside handler to close preset selector
   useEffect(() => {
@@ -830,50 +881,39 @@ export function AddLiquidityForm({
     let newTickLower = parseInt(tickLower);
     let newTickUpper = parseInt(tickUpper);
     
-    // Process min price input
+    // Map editing sides to actual ticks based on displayed left/right (inversion-aware)
+    // Under inversion, left should update upper and right should update lower
+    const editingMinMapsTo = isInverted ? 'upper' : 'lower';
+    const editingMaxMapsTo = isInverted ? 'lower' : 'upper';
+
+    // Process min price input for the correct underlying tick
     if (editingMinPrice !== minPriceInputString) {
       const newTick = convertPriceToValidTick(editingMinPrice, false);
       if (newTick !== null) {
-        if (baseTokenForPriceDisplay === token0Symbol) {
-          // Min price sets tickLower for token0 denomination
-          newTickLower = newTick;
-        } else {
-          // Min price sets tickUpper for token1 denomination (inverted)
-          newTickUpper = newTick;
-        }
+        if (editingMinMapsTo === 'lower') newTickLower = newTick; else newTickUpper = newTick;
         hasChanges = true;
       }
     }
     
-    // Process max price input
+    // Process max price input for the correct underlying tick
     if (editingMaxPrice !== maxPriceInputString) {
       const newTick = convertPriceToValidTick(editingMaxPrice, true);
       if (newTick !== null) {
-        if (baseTokenForPriceDisplay === token0Symbol) {
-          // Max price sets tickUpper for token0 denomination
-          newTickUpper = newTick;
-        } else {
-          // Max price sets tickLower for token1 denomination (inverted)
-          newTickLower = newTick;
-        }
+        if (editingMaxMapsTo === 'upper') newTickUpper = newTick; else newTickLower = newTick;
         hasChanges = true;
       }
     }
     
-    // Validate that tickLower < tickUpper (this is always true regardless of price denomination)
-    if (hasChanges) {
-      if (newTickLower >= newTickUpper) {
-        toast.error("Invalid Range: Price range results in invalid tick positions. Please adjust your values.");
-      } else {
-        // Apply the changes
-        if (newTickLower !== parseInt(tickLower)) {
-          setTickLower(newTickLower.toString());
-          setInitialDefaultApplied(true);
-        }
-        if (newTickUpper !== parseInt(tickUpper)) {
-          setTickUpper(newTickUpper.toString());
-          setInitialDefaultApplied(true);
-        }
+    // Apply only if resulting ticks form a valid range; avoid error toast on manual input
+    if (hasChanges && newTickLower < newTickUpper) {
+      // Apply the changes
+      if (newTickLower !== parseInt(tickLower)) {
+        setTickLower(newTickLower.toString());
+        setInitialDefaultApplied(true);
+      }
+      if (newTickUpper !== parseInt(tickUpper)) {
+        setTickUpper(newTickUpper.toString());
+        setInitialDefaultApplied(true);
       }
     }
     
@@ -899,6 +939,8 @@ export function AddLiquidityForm({
       setEditingMaxPrice(maxPriceInputString);
     }
   };
+
+  // Removed left/right remapping: left always edits "min" and right edits "max".
 
   // Helper function to apply domain constraints
   const applyDomainConstraints = useCallback((minTick: number, maxTick: number): [number, number] => {
@@ -1350,7 +1392,7 @@ export function AddLiquidityForm({
     debounce((priceStr: string) => {
       const numericPrice = parseFloat(priceStr);
 
-      if (baseTokenForPriceDisplay === token0Symbol) {
+      if (!isInverted) {
         if (priceStr.trim() === "0") {
           const newTick = sdkMinTick;
           if (newTick < parseInt(tickUpper)) {
@@ -1387,7 +1429,7 @@ export function AddLiquidityForm({
         } else {
           toast.error("Invalid Range: Min price must be less than max price.");
         }
-      } else { // baseTokenForPriceDisplay === token1Symbol (Min Price input sets actual tickUpper)
+      } else { // inverted: left edits upper tick (visual flip)
         if (priceStr.trim() === "0") {
           const newTick = sdkMaxTick;
           if (newTick > parseInt(tickLower)) {
@@ -1426,7 +1468,7 @@ export function AddLiquidityForm({
         }
       }
     }, 750), 
-    [baseTokenForPriceDisplay, token0Symbol, defaultTickSpacing, sdkMinTick, sdkMaxTick, tickLower, tickUpper, resetChartViewbox]
+    [isInverted, token0Symbol, defaultTickSpacing, sdkMinTick, sdkMaxTick, tickLower, tickUpper, resetChartViewbox]
   );
 
   // Debounced function to update tickUpper from maxPriceInputString
@@ -1435,7 +1477,7 @@ export function AddLiquidityForm({
       const numericPrice = parseFloat(priceStr);
       const isInfinityInput = priceStr.trim().toLowerCase() === "∞" || priceStr.trim().toLowerCase() === "infinity" || priceStr.trim().toLowerCase() === "infinite";
 
-      if (baseTokenForPriceDisplay === token0Symbol) {
+      if (!isInverted) {
         if (isInfinityInput) {
           const newTick = sdkMaxTick;
           if (newTick > parseInt(tickLower)) {
@@ -1458,7 +1500,7 @@ export function AddLiquidityForm({
         } else {
           toast.error("Invalid Range: Max price must be greater than min price.");
         }
-      } else { // baseTokenForPriceDisplay === token1Symbol (Max Price input sets actual tickLower)
+      } else { // inverted: right edits lower tick (visual flip)
         if (isInfinityInput) {
           const newTick = sdkMinTick;
           if (newTick < parseInt(tickUpper)) {
@@ -1491,7 +1533,7 @@ export function AddLiquidityForm({
         }
       }
     }, 750),
-    [baseTokenForPriceDisplay, token0Symbol, defaultTickSpacing, sdkMinTick, sdkMaxTick, tickLower, tickUpper, resetChartViewbox]
+    [isInverted, token0Symbol, defaultTickSpacing, sdkMinTick, sdkMaxTick, tickLower, tickUpper, resetChartViewbox]
   );
 
   // Calculate amount based on input and check approvals
@@ -1870,7 +1912,7 @@ export function AddLiquidityForm({
 
   // Calculate price range in optimal denomination for display
   const getPriceRangeDisplay = useCallback(() => {
-    if (!currentPoolTick || !currentPrice || !tickLower || !tickUpper) {
+    if (currentPoolTick === null || !currentPrice || !tickLower || !tickUpper) {
       return null;
     }
 
@@ -1883,18 +1925,16 @@ export function AddLiquidityForm({
     const upperPriceDelta = Math.pow(1.0001, upperTick - currentPoolTick);
     
     // Determine optimal denomination (same logic as InteractiveRangeChart)
-    const inversePrice = 1 / currentPriceNum;
-    const shouldFlipDenomination = inversePrice > currentPriceNum;
-    const optimalDenomination = shouldFlipDenomination ? token1Symbol : token0Symbol;
+    // Follow inversion: denominate token0 when inverted, token1 otherwise
+    const optimalDenomination = isInverted ? token0Symbol : token1Symbol;
     
     let priceAtLowerTick, priceAtUpperTick;
     
-    if (shouldFlipDenomination) {
-      // Use inverse price denomination (e.g., ETH/USDT instead of USDT/ETH)
+    if (isInverted) {
+      // When inverted, swap the displayed order and invert values
       priceAtLowerTick = 1 / (currentPriceNum * lowerPriceDelta);
       priceAtUpperTick = 1 / (currentPriceNum * upperPriceDelta);
     } else {
-      // Use direct price denomination (e.g., USDT/ETH)
       priceAtLowerTick = currentPriceNum * lowerPriceDelta;
       priceAtUpperTick = currentPriceNum * upperPriceDelta;
     }
@@ -1929,11 +1969,59 @@ export function AddLiquidityForm({
     });
     
     if (tickLower === sdkMinTick.toString() && tickUpper === sdkMaxTick.toString()) {
-      return `0.00 - ∞`;
+      return isInverted ? `∞ - 0.00` : `0.00 - ∞`;
     }
 
-    return `${formattedLower} - ${formattedUpper}`;
+    // When inverted, flip the order visually: right is lower, left is upper
+    return isInverted ? `${formattedUpper} - ${formattedLower}` : `${formattedLower} - ${formattedUpper}`;
   }, [currentPoolTick, currentPrice, tickLower, tickUpper, sdkMinTick, sdkMaxTick, token0Symbol, token1Symbol]);
+
+  // Compute precise left/right labels to mirror chart axis (ascending by price)
+  const computeRangeLabels = useCallback((): { left: string; right: string } | null => {
+    if (currentPoolTick === null || !currentPrice || !tickLower || !tickUpper) return null;
+    const currentNum = parseFloat(currentPrice);
+    if (!isFinite(currentNum) || currentNum <= 0) return null;
+    const lower = parseInt(tickLower);
+    const upper = parseInt(tickUpper);
+    if (isNaN(lower) || isNaN(upper)) return null;
+
+    // Respect inversion: denominated switching and value inversion
+    const priceAt = (tickVal: number) => {
+      const priceDelta = Math.pow(1.0001, tickVal - currentPoolTick);
+      return isInverted ? 1 / (currentNum * priceDelta) : currentNum * priceDelta;
+    };
+
+    // Full range special
+    if (tickLower === sdkMinTick.toString() && tickUpper === sdkMaxTick.toString()) {
+      return { left: '0.00', right: '∞' };
+    }
+
+    const pLower = priceAt(lower);
+    const pUpper = priceAt(upper);
+
+    const denomToken = isInverted ? token0Symbol : token1Symbol;
+    const isUsd = denomToken === 'aUSDT' || denomToken === 'aUSDC' || denomToken === 'USDT' || denomToken === 'USDC';
+    const decimals = isUsd ? 2 : (TOKEN_DEFINITIONS[denomToken]?.displayDecimals ?? 4);
+
+    const points = [
+      { tick: lower, price: pLower },
+      { tick: upper, price: pUpper },
+    ].filter(p => isFinite(p.price) && !isNaN(p.price));
+
+    if (points.length < 2) return null;
+
+    points.sort((a, b) => a.price - b.price);
+
+    const formatVal = (v: number) => {
+      if (!isFinite(v)) return '∞';
+      return v.toLocaleString('en-US', { maximumFractionDigits: decimals, minimumFractionDigits: Math.min(2, decimals) });
+    };
+
+    // When inverted, flip the visual order
+    return isInverted
+      ? { left: formatVal(points[1].price), right: formatVal(points[0].price) }
+      : { left: formatVal(points[0].price), right: formatVal(points[1].price) };
+  }, [currentPoolTick, currentPrice, tickLower, tickUpper, token0Symbol, token1Symbol, sdkMinTick, sdkMaxTick, isInverted]);
 
   // const { open } = useWeb3Modal();
 
@@ -2179,7 +2267,10 @@ export function AddLiquidityForm({
                                   className="text-muted-foreground hover:text-white cursor-pointer px-1 py-1 transition-colors font-sans"
                                   onClick={() => handleClickToEditPrice('min')}
                                 >
-                                  {minPriceInputString || "0.00"}
+                                  {(() => {
+                                    const labels = computeRangeLabels();
+                                    return labels ? labels.left : (minPriceInputString || "0.00");
+                                  })()}
                                 </div>
                               )}
                               <span className="text-muted-foreground font-sans">-</span>
@@ -2205,7 +2296,10 @@ export function AddLiquidityForm({
                                   className="text-muted-foreground hover:text-white cursor-pointer px-1 py-1 transition-colors font-sans"
                                   onClick={() => handleClickToEditPrice('max')}
                                 >
-                                  {maxPriceInputString || "∞"}
+                                  {(() => {
+                                    const labels = computeRangeLabels();
+                                    return labels ? labels.right : (maxPriceInputString || "∞");
+                                  })()}
                                 </div>
                               )}
                               {currentPrice && (
@@ -2218,7 +2312,9 @@ export function AddLiquidityForm({
                                           {(() => {
                                             const inverse = 1 / parseFloat(currentPrice);
                                             const flip = inverse > parseFloat(currentPrice);
-                                            const displayDecimals = TOKEN_DEFINITIONS[flip ? token0Symbol : token1Symbol]?.displayDecimals ?? 4;
+                                            const denomToken = flip ? token0Symbol : token1Symbol;
+                                            const isUsd = denomToken === 'aUSDT' || denomToken === 'aUSDC' || denomToken === 'USDT' || denomToken === 'USDC';
+                                            const displayDecimals = isUsd ? 2 : (TOKEN_DEFINITIONS[denomToken]?.displayDecimals ?? 4);
                                             const numeric = flip ? inverse : parseFloat(currentPrice);
                                             return isFinite(numeric) ? numeric.toFixed(displayDecimals) : '∞';
                                           })()}
@@ -2239,14 +2335,20 @@ export function AddLiquidityForm({
                                 className={`${(isDraggingRange === 'left' || isDraggingRange === 'center') ? 'text-white' : 'text-muted-foreground'} hover:text-white cursor-pointer px-1 py-1 transition-colors min-price-display`}
                                 onClick={() => handleClickToEditPrice('min')}
                               >
-                                {minPriceInputString || "0.00"}
+                                {(() => {
+                                  const labels = computeRangeLabels();
+                                  return labels ? labels.left : (minPriceInputString || "0.00");
+                                })()}
                               </div>
                               <span className="text-muted-foreground">-</span>
                               <div 
                                 className={`${(isDraggingRange === 'right' || isDraggingRange === 'center') ? 'text-white' : 'text-muted-foreground'} hover:text-white cursor-pointer px-1 py-1 transition-colors max-price-display`}
                                 onClick={() => handleClickToEditPrice('max')}
                               >
-                                {maxPriceInputString || "∞"}
+                                {(() => {
+                                  const labels = computeRangeLabels();
+                                  return labels ? labels.right : (maxPriceInputString || "∞");
+                                })()}
                               </div>
                               {currentPrice && (
                                 <TooltipProvider delayDuration={0}>
@@ -2258,7 +2360,9 @@ export function AddLiquidityForm({
                                           {(() => {
                                             const inverse = 1 / parseFloat(currentPrice);
                                             const flip = inverse > parseFloat(currentPrice);
-                                            const displayDecimals = TOKEN_DEFINITIONS[flip ? token0Symbol : token1Symbol]?.displayDecimals ?? 4;
+                                            const denomToken = flip ? token0Symbol : token1Symbol;
+                                            const isUsd = denomToken === 'aUSDT' || denomToken === 'aUSDC' || denomToken === 'USDT' || denomToken === 'USDC';
+                                            const displayDecimals = isUsd ? 2 : (TOKEN_DEFINITIONS[denomToken]?.displayDecimals ?? 4);
                                             const numeric = flip ? inverse : parseFloat(currentPrice);
                                             return isFinite(numeric) ? numeric.toFixed(displayDecimals) : '∞';
                                           })()}

@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { AppLayout } from "@/components/app-layout";
 import Image from "next/image";
 import { useMemo, useState, useEffect, useRef, useCallback, useLayoutEffect } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { formatUSD as formatUSDShared, formatUSDHeader as formatUSDHeaderShared, formatNumber, formatPercent, formatTokenAmount } from "@/lib/format";
 import JSBI from "jsbi";
 import { Token } from "@uniswap/sdk-core";
@@ -13,13 +14,14 @@ import { Pool as V4Pool, Position as V4Position } from "@uniswap/v4-sdk";
 import { publicClient } from "@/lib/viemClient";
 import { getAllPools, getToken, getPoolById, CHAIN_ID, getStateViewAddress, getPositionManagerAddress, getAllTokens, NATIVE_TOKEN_ADDRESS, getContracts } from "@/lib/pools-config";
 import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from "@/lib/abis/state_view_abi";
-import { position_manager_abi } from "@/lib/abis/PositionManager_abi";
+// position_manager_abi is no longer needed here; hooks encapsulate calldata
 import { parseAbi, type Abi, type Hex, getAddress } from "viem";
 import { ethers } from "ethers";
 import { X } from "lucide-react";
 import { Area, AreaChart, XAxis, YAxis } from "recharts";
 import { ChartContainer, type ChartConfig } from "@/components/ui/chart";
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract } from "wagmi";
+import { prefetchService } from "@/lib/prefetch-service";
 import { baseSepolia } from "@/lib/wagmiConfig";
 import { toast } from "sonner";
 import { FAUCET_CONTRACT_ADDRESS, faucetContractAbi } from "@/pages/api/misc/faucet";
@@ -39,6 +41,9 @@ import { formatUnits as viemFormatUnits } from "viem";
 import { useIncreaseLiquidity, type IncreasePositionData } from "@/components/liquidity/useIncreaseLiquidity";
 import { useDecreaseLiquidity, type DecreasePositionData } from "@/components/liquidity/useDecreaseLiquidity";
 import { useBalance } from "wagmi";
+import { Card, CardContent, CardFooter } from "@/components/ui/card";
+import { Info, Clock3, ChevronsLeftRight } from "lucide-react";
+import { PositionCard } from "@/components/liquidity/PositionCard";
 
 // Loading phases for skeleton system
 type LoadPhases = { phase: 0 | 1 | 2 | 3 | 4; startedAt: number };
@@ -111,20 +116,8 @@ const SkeletonBlock = ({ className = "", ...props }: React.HTMLAttributes<HTMLDi
   <div className={`bg-muted/60 rounded animate-pulse ${className}`} {...props} />
 );
 
-const SkeletonPill = ({ className = "", ...props }: React.HTMLAttributes<HTMLDivElement>) => (
-  <div className={`bg-muted/60 rounded-md animate-pulse h-6 w-16 ${className}`} {...props} />
-);
-
 const SkeletonLine = ({ className = "", ...props }: React.HTMLAttributes<HTMLDivElement>) => (
   <div className={`bg-muted/60 rounded animate-pulse h-4 w-20 ${className}`} {...props} />
-);
-
-const SkeletonDot = ({ className = "", ...props }: React.HTMLAttributes<HTMLDivElement>) => (
-  <div className={`inline-block h-3 w-3 bg-muted/60 rounded-full animate-pulse ${className}`} {...props} />
-);
-
-const SkeletonIcon = ({ className = "", ...props }: React.HTMLAttributes<HTMLDivElement>) => (
-  <div className={`w-7 h-7 rounded-full bg-muted/30 border border-sidebar-border ${className}`} {...props} />
 );
 
 // Token pair logo skeleton (single circle, matching bar style)
@@ -188,103 +181,11 @@ const PortfolioHeaderSkeleton = ({ isVerySmallScreen = false, viewportWidth = 14
   );
 };
 
-// Positions table skeleton
-const PositionsTableSkeleton = ({ isMobile = false }: { isMobile?: boolean }) => {
-  if (isMobile) {
-    return (
-      <div className="flex flex-col gap-3">
-        {[...Array(3)].map((_, idx) => (
-          <div key={idx} className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-3">
-            <div className="flex items-center gap-3 min-w-0">
-              <TokenPairLogoSkeleton size={24} offset={14} />
-              <div className="flex-1 space-y-2 min-w-0">
-                <SkeletonLine className="h-4 w-24 sm:w-32" />
-                <SkeletonLine className="h-3 w-32 sm:w-40" />
-              </div>
-              <div className="text-right space-y-1">
-                <SkeletonLine className="h-4 w-16" />
-                <SkeletonLine className="h-3 w-12" />
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-    );
-  }
+// Positions table skeleton removed (unused)
 
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full" style={{ tableLayout: 'fixed' }}>
-        <thead className="border-b border-sidebar-border/60 text-xs text-muted-foreground">
-          <tr>
-            <th className="px-2 pl-6 py-3 text-left tracking-wider font-mono font-bold">POOL</th>
-            <th className="pl-6 pr-2 py-3 text-left min-w-0 tracking-wider font-mono font-bold">AMOUNTS</th>
-            <th className="pl-6 pr-2 py-3 text-left min-w-0 tracking-wider font-mono font-bold">APR</th>
-            <th className="pl-6 pr-2 py-3 text-left min-w-0 tracking-wider font-mono font-bold">RANGE</th>
-            <th className="py-3 pr-3 text-right tracking-wider font-mono font-bold">VALUE</th>
-            <th className="py-3 pr-2 text-right w-[44px] sticky right-0 z-10 bg-background"></th>
-          </tr>
-        </thead>
-        <tbody>
-          {[...Array(4)].map((_, idx) => (
-            <tr key={idx} className="border-b border-sidebar-border/60 last:border-b-0">
-              <td className="py-4 px-2 pl-6 align-middle">
-                <div className="flex items-center gap-2 min-w-0">
-                  <TokenPairLogoSkeleton />
-                  <SkeletonLine className="h-4 w-20 sm:w-28" />
-                </div>
-              </td>
-              <td className="py-4 px-2">
-                <SkeletonLine className="h-3 w-24 sm:w-32" />
-              </td>
-              <td className="py-4 px-2">
-                <SkeletonLine className="h-3 w-16 sm:w-20" />
-              </td>
-              <td className="py-4 px-2">
-                <div className="h-8 overflow-hidden flex items-center">
-                  <TickRangePortfolio
-                    tickLower={0}
-                    tickUpper={100}
-                    currentTick={50}
-                    tickSpacing={1}
-                    bare
-                    bucketData={[]}
-                    isLoading
-                  />
-                </div>
-              </td>
-              <td className="py-4 px-2 text-right">
-                <SkeletonLine className="h-4 w-16 sm:w-20 ml-auto" />
-              </td>
-              <td className="py-4 px-2"></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-};
+// Deprecated skeleton removed
 
-// Deprecated: RangeChartSkeleton no longer used (replaced by TickRangePortfolio loading state)
-const RangeChartSkeleton = ({ className = "" }: { className?: string }) => null;
-
-// Token balance cards skeleton
-const TokenBalancesSkeleton = ({ isMobile = false }: { isMobile?: boolean }) => (
-  <div className={`grid gap-3 ${isMobile ? 'grid-cols-1' : 'grid-cols-2 sm:grid-cols-3'}`}>
-    {[...Array(isMobile ? 3 : 6)].map((_, idx) => (
-      <div key={idx} className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-3">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="w-7 h-7 rounded-full bg-muted/60 animate-pulse flex-shrink-0" />
-          <div className="flex-1 space-y-2 min-w-0">
-            <SkeletonLine className="h-3 w-24 sm:w-28" />
-            <SkeletonLine className="h-4 w-28 sm:w-32" />
-            <SkeletonLine className="h-3 w-20 sm:w-24" />
-          </div>
-        </div>
-      </div>
-    ))}
-  </div>
-);
+// Token balance cards skeleton removed (unused)
 
 // Balances list skeleton (matches integrated balances list layout)
 const BalancesListSkeleton = () => (
@@ -305,6 +206,48 @@ const BalancesListSkeleton = () => (
       </div>
     ))}
   </div>
+);
+
+const ActivePositionsSkeleton = () => (
+  <div className="flex flex-col gap-3 lg:gap-4">
+      {[...Array(3)].map((_, idx) => (
+      <div key={idx} className="rounded-lg bg-muted/30 border border-sidebar-border/60 animate-pulse">
+        <div className="p-3 sm:p-4">
+          <div className="grid" style={{ gridTemplateColumns: 'min-content max-content max-content max-content 1fr min-content', columnGap: '1.25rem' }}>
+            <div className="flex items-center min-w-0 flex-none gap-0">
+              <div className="relative" style={{ width: 40, height: 24 }}>
+                <div className="absolute rounded-full bg-muted/50" style={{ width: 24, height: 24, left: 0, top: 0 }} />
+                <div className="absolute rounded-full bg-muted/40" style={{ width: 24, height: 24, left: 12, top: 0 }} />
+            </div>
+            </div>
+            <div className="flex flex-col min-w-0 items-start truncate pr-2 gap-1">
+              <div className="h-3 w-24 bg-muted/40 rounded" />
+              <div className="h-3 w-20 bg-muted/30 rounded" />
+          </div>
+            <div className="flex items-start pr-2">
+              <div className="flex flex-col gap-1 items-start">
+                <div className="h-3 w-16 bg-muted/40 rounded" />
+                <div className="h-3 w-20 bg-muted/30 rounded" />
+        </div>
+    </div>
+            <div className="flex items-start pr-2">
+              <div className="flex flex-col gap-1 items-start">
+                <div className="h-3 w-10 bg-muted/40 rounded" />
+                <div className="h-3 w-24 bg-muted/30 rounded" />
+                </div>
+                </div>
+            <div />
+            <div className="hidden sm:flex items-center justify-end gap-2 flex-none">
+              <div className="h-7 w-20 bg-muted/30 rounded-md border border-sidebar-border/60" />
+    </div>
+    </div>
+  </div>
+        <div className="py-1.5 px-3 bg-muted/10 border-t border-sidebar-border/30">
+          <div className="h-3 w-full bg-transparent" />
+                </div>
+                  </div>
+    ))}
+        </div>
 );
 
 // Context for portfolio token filter, so inner components can toggle it
@@ -343,154 +286,26 @@ interface PortfolioData {
   priceChange24hPctMap: Record<string, number>;
 }
 
-// Subgraph + onchain composition loader (client-side)
-const SUBGRAPH_URL = "https://api.studio.thegraph.com/query/111443/alphix-test/version/latest";
-const GET_USER_POSITIONS_QUERY = `
-  query GetUserPositions($owner: Bytes!) {
-    hookPositions(first: 200, orderBy: liquidity, orderDirection: desc, where: { owner: $owner }) {
-      id
-      pool
-      owner
-      hook
-      currency0 { id symbol decimals }
-      currency1 { id symbol decimals }
-      tickLower
-      tickUpper
-      liquidity
-      blockTimestamp
-    }
-  }
-`;
+// Positions are now fetched via /api/liquidity/get-positions (subgraph only for discovery there)
 
-type GqlToken = { id: string; symbol: string; decimals: string };
-type GqlPosition = {
-  id: string;
-  pool: string;
-  owner: string;
-  hook: string;
-  currency0?: GqlToken;
-  currency1?: GqlToken;
-  tickLower: string;
-  tickUpper: string;
-  liquidity: string;
-  blockTimestamp?: string;
-};
+// Removed legacy GQL types (positions now come from API)
 
-function parseTokenIdFromCompositeId(compositeId: string): bigint | null {
+// Removed legacy composite id parsing
+
+async function getUserPositionsOnchain(ownerAddress: string, _opts?: { verifyLiquidity?: boolean }) {
   try {
-    const lastDash = compositeId.lastIndexOf('-');
-    if (lastDash === -1) return null;
-    const hex = compositeId.slice(lastDash + 1);
-    if (!hex.startsWith('0x')) return null;
-    return BigInt(hex);
+    const owner = getAddress(ownerAddress);
+    const res = await fetch(`/api/liquidity/get-positions?ownerAddress=${owner}&_=${Date.now()}` as any, {
+      // Ensure we bypass any HTTP cache to avoid 304 without body
+      cache: 'no-store',
+      headers: { 'cache-control': 'no-cache' } as any,
+    } as any);
+    if (!res.ok) return [] as any[];
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
   } catch {
-    return null;
+    return [] as any[];
   }
-}
-
-async function getUserPositionsOnchain(ownerAddress: string, opts?: { verifyLiquidity?: boolean }) {
-  const owner = getAddress(ownerAddress);
-  const verifyLiquidity = !!opts?.verifyLiquidity;
-
-  // Discover via subgraph
-  const resp = await fetch(SUBGRAPH_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query: GET_USER_POSITIONS_QUERY, variables: { owner: owner.toLowerCase() } }),
-  });
-  if (!resp.ok) return [] as any[];
-  const json = await resp.json() as { data?: { hookPositions: GqlPosition[] } };
-  const pools = getAllPools();
-  const allowed = new Set(pools.map(p => p.subgraphId.toLowerCase()));
-  const raw = (json?.data?.hookPositions ?? []).filter(p => allowed.has(String(p.pool || '').toLowerCase()));
-  if (raw.length === 0) return [] as any[];
-
-  // Slot0 per unique pool
-  const stateViewAbi: Abi = parseAbi(STATE_VIEW_HUMAN_READABLE_ABI);
-  const stateViewAddr = getStateViewAddress();
-  const uniquePools = Array.from(new Set(raw.map(r => r.pool.toLowerCase())));
-  const poolSlot0 = new Map<string, { sqrtPriceX96: string; tick: number }>();
-  await Promise.all(uniquePools.map(async (pid) => {
-    const res = await publicClient.readContract({
-      address: stateViewAddr,
-      abi: stateViewAbi,
-      functionName: 'getSlot0',
-      args: [pid as unknown as Hex],
-    }) as readonly [bigint, number, number, number];
-    poolSlot0.set(pid, { sqrtPriceX96: res[0].toString(), tick: Number(res[1]) });
-  }));
-
-  // Optional: onchain liquidity per tokenId
-  const pmAddr = getPositionManagerAddress();
-  const pmAbi: Abi = position_manager_abi as unknown as Abi;
-  const liqMap = new Map<string, bigint>();
-  if (verifyLiquidity) {
-    await Promise.all(raw.map(async (r) => {
-      const tokenId = parseTokenIdFromCompositeId(r.id);
-      if (tokenId === null) return;
-      try {
-        const liq = await publicClient.readContract({
-          address: pmAddr,
-          abi: pmAbi,
-          functionName: 'getPositionLiquidity',
-          args: [tokenId],
-        }) as bigint;
-        liqMap.set(r.id, liq);
-      } catch {}
-    }));
-  }
-
-  // Compute token amounts
-  const processed: any[] = [];
-  for (const r of raw) {
-    const cfg = pools.find(p => p.subgraphId.toLowerCase() === r.pool.toLowerCase());
-    if (!cfg) continue;
-    const slot0 = poolSlot0.get(r.pool.toLowerCase());
-    if (!slot0) continue;
-
-    const t0Addr = getAddress(cfg.currency0.address);
-    const t1Addr = getAddress(cfg.currency1.address);
-    const t0Dec = r.currency0?.decimals ? parseInt(r.currency0.decimals, 10) : (cfg as any).currency0.decimals ?? 18;
-    const t1Dec = r.currency1?.decimals ? parseInt(r.currency1.decimals, 10) : (cfg as any).currency1.decimals ?? 18;
-    const t0Sym = r.currency0?.symbol || (cfg as any).currency0.symbol || 'T0';
-    const t1Sym = r.currency1?.symbol || (cfg as any).currency1.symbol || 'T1';
-
-    const sdk0 = new Token(CHAIN_ID, t0Addr, t0Dec, t0Sym);
-    const sdk1 = new Token(CHAIN_ID, t1Addr, t1Dec, t1Sym);
-    const pool = new V4Pool(
-      sdk0,
-      sdk1,
-      cfg.fee,
-      cfg.tickSpacing,
-      cfg.hooks,
-      slot0.sqrtPriceX96,
-      JSBI.BigInt(0),
-      slot0.tick
-    );
-
-    const tickLower = Number(r.tickLower);
-    const tickUpper = Number(r.tickUpper);
-    const liquidityBigInt = verifyLiquidity && liqMap.has(r.id) ? liqMap.get(r.id)! : BigInt(r.liquidity);
-    const position = new V4Position({ pool, tickLower, tickUpper, liquidity: JSBI.BigInt(liquidityBigInt.toString()) });
-
-    const raw0 = position.amount0.quotient.toString();
-    const raw1 = position.amount1.quotient.toString();
-
-    processed.push({
-      positionId: r.id,
-      poolId: r.pool,
-      token0: { address: sdk0.address, symbol: sdk0.symbol || 'T0', amount: ethers.utils.formatUnits(raw0, sdk0.decimals), rawAmount: raw0 },
-      token1: { address: sdk1.address, symbol: sdk1.symbol || 'T1', amount: ethers.utils.formatUnits(raw1, sdk1.decimals), rawAmount: raw1 },
-      tickLower,
-      tickUpper,
-      liquidityRaw: liquidityBigInt.toString(),
-      isInRange: slot0.tick >= tickLower && slot0.tick < tickUpper,
-      ageSeconds: 0,
-      blockTimestamp: r.blockTimestamp || '0',
-    });
-  }
-
-  return processed;
 }
 
 function formatUSD(num: number) {
@@ -536,7 +351,27 @@ function usePortfolioData(refreshKey: number = 0): PortfolioData {
         setPortfolioData(prev => ({ ...prev, isLoading: true, error: undefined }));
 
         // 1. Fetch user positions (discover via subgraph, compute onchain)
-        const positions = await getUserPositionsOnchain(accountAddress, { verifyLiquidity: false });
+        const positionsRaw = await getUserPositionsOnchain(accountAddress, { verifyLiquidity: false });
+        // Filter to configured pools only
+        let positions = Array.isArray(positionsRaw) ? positionsRaw : [];
+        try {
+          const pools = getAllPools();
+          const allowedIds = new Set((pools || []).map((p: any) => String(p?.subgraphId || '').toLowerCase()));
+          const allowedPairs = new Set(
+            (pools || []).flatMap((p: any) => {
+              const a = `${(p?.currency0?.symbol || '').toUpperCase()}/${(p?.currency1?.symbol || '').toUpperCase()}`;
+              const b = `${(p?.currency1?.symbol || '').toUpperCase()}/${(p?.currency0?.symbol || '').toUpperCase()}`;
+              return [a, b];
+            })
+          );
+          positions = positions.filter((pos: any) => {
+            const pid = String(pos?.poolId || '').toLowerCase();
+            if (pid && allowedIds.has(pid)) return true;
+            const t0 = String(pos?.token0?.symbol || '').toUpperCase();
+            const t1 = String(pos?.token1?.symbol || '').toUpperCase();
+            return allowedPairs.has(`${t0}/${t1}`);
+          });
+        } catch {}
         // 2. Aggregate token balances from positions
         const tokenBalanceMap = new Map<string, number>();
         if (Array.isArray(positions)) {
@@ -551,41 +386,20 @@ function usePortfolioData(refreshKey: number = 0): PortfolioData {
         }
         
 
-        // 3. Fetch token prices from CoinGecko
+        // 3. Fetch token prices via server endpoint (shared cache)
         const tokenSymbols = Array.from(tokenBalanceMap.keys());
         const priceMap = new Map<string, number>();
-        
-        // Map our tokens to CoinGecko IDs
-        const coinGeckoIds: Record<string, string> = {
-          'aETH': 'ethereum',
-          'ETH': 'ethereum',
-          'aBTC': 'bitcoin',
-          'aUSDC': 'usd-coin',
-          'aUSDT': 'tether',
-        };
-
-        const uniqueCoinIds = [...new Set(tokenSymbols.map(symbol => coinGeckoIds[symbol]).filter(Boolean))];
-        
         let priceData: any = {};
-        if (uniqueCoinIds.length > 0) {
-          const priceRes = await fetch(
-            `https://api.coingecko.com/api/v3/simple/price?ids=${uniqueCoinIds.join(',')}&vs_currencies=usd&include_24hr_change=true`
-          );
-          if (priceRes.ok) {
-            priceData = await priceRes.json();
-            tokenSymbols.forEach(symbol => {
-              const coinId = coinGeckoIds[symbol];
-              if (coinId && priceData[coinId]?.usd) {
-                priceMap.set(symbol, priceData[coinId].usd);
-              } else {
-                // Fallback prices for stablecoins
-                if (symbol.includes('USDC') || symbol.includes('USDT')) {
-                  priceMap.set(symbol, 1.0);
-                }
-              }
-            });
-          }
-        }
+        try {
+          const res = await fetch('/api/prices/get-token-prices');
+          if (res.ok) priceData = await res.json();
+        } catch {}
+        tokenSymbols.forEach(symbol => {
+          const mapped = symbol.toUpperCase();
+          const px = priceData[mapped];
+          if (typeof px === 'number') priceMap.set(symbol, px);
+          else if (symbol.includes('USDC') || symbol.includes('USDT')) priceMap.set(symbol, 1.0);
+        });
 
         // 4. Create token balances with USD values and colors
         const tokenBalances: TokenBalance[] = Array.from(tokenBalanceMap.entries())
@@ -614,10 +428,9 @@ function usePortfolioData(refreshKey: number = 0): PortfolioData {
 
         // Compute portfolio 24h PnL % using per-token 24h change from CoinGecko
         let deltaNowUSD = 0;
-        if (uniqueCoinIds.length > 0 && totalValue > 0) {
+        if (totalValue > 0) {
           tokenBalances.forEach((tb) => {
-            const coinId = coinGeckoIds[tb.symbol];
-            const ch = coinId ? priceData[coinId]?.usd_24h_change : undefined; // percent
+            const ch = priceData?.[tb.symbol]?.usd_24h_change; // percent if server includes
             if (typeof ch === 'number' && isFinite(ch)) {
               // exact delta using current value and inverse of (1 + ch/100)
               const pastUsd = tb.usdValue / (1 + ch / 100);
@@ -630,8 +443,7 @@ function usePortfolioData(refreshKey: number = 0): PortfolioData {
 
         const priceChange24hPctMap: Record<string, number> = {};
         tokenSymbols.forEach(symbol => {
-          const coinId = coinGeckoIds[symbol];
-          const ch = coinId ? priceData[coinId]?.usd_24h_change : undefined;
+          const ch = priceData?.[symbol]?.usd_24h_change;
           if (typeof ch === 'number' && isFinite(ch)) priceChange24hPctMap[symbol] = ch;
         });
 
@@ -665,10 +477,426 @@ function usePortfolioData(refreshKey: number = 0): PortfolioData {
   return portfolioData;
 }
 
+function usePortfolio(refreshKey: number = 0) {
+  const { address: accountAddress, isConnected, chainId: currentChainId } = useAccount();
+
+  // All data states
+  const [portfolioData, setPortfolioData] = useState<PortfolioData>({
+    totalValue: 0,
+    tokenBalances: [],
+    isLoading: true,
+    error: undefined,
+    priceMap: {},
+    pnl24hPct: 0,
+    priceChange24hPctMap: {},
+  });
+  const [activePositions, setActivePositions] = useState<any[]>([]);
+  const [walletBalances, setWalletBalances] = useState<Array<{ symbol: string; balance: number; usdValue: number; color: string }>>([]);
+  const [aprByPoolId, setAprByPoolId] = useState<Record<string, string>>({});
+  const [poolDataByPoolId, setPoolDataByPoolId] = useState<Record<string, any>>({});
+  const [bucketDataCache, setBucketDataCache] = useState<Record<string, any>>({});
+  
+  // All loading states
+  const [isLoadingPositions, setIsLoadingPositions] = useState<boolean>(true);
+  const [isLoadingPoolStates, setIsLoadingPoolStates] = useState<boolean>(true);
+  const [isLoadingWalletBalances, setIsLoadingWalletBalances] = useState<boolean>(false);
+  const [loadingBuckets, setLoadingBuckets] = useState<Set<string>>(new Set());
+  
+  // Fetch positions and portfolio data (combined from usePortfolioData and the activePositions useEffect)
+  useEffect(() => {
+    if (!isConnected || !accountAddress) {
+      setPortfolioData({ totalValue: 0, tokenBalances: [], isLoading: false, error: undefined, priceMap: {}, pnl24hPct: 0, priceChange24hPctMap: {} });
+      setActivePositions([]);
+      setIsLoadingPositions(false);
+      return;
+    }
+
+    const fetchAllData = async () => {
+      setIsLoadingPositions(true);
+      setIsLoadingPoolStates(true);
+      setPortfolioData(prev => ({ ...prev, isLoading: true, error: undefined }));
+      
+      try {
+        const positionsRaw = await getUserPositionsOnchain(accountAddress, { verifyLiquidity: false });
+        let positions = Array.isArray(positionsRaw) ? positionsRaw : [];
+        // Filter to configured pools only (use pools-config)
+        try {
+          const pools = getAllPools();
+          const allowedIds = new Set((pools || []).map((p: any) => String(p?.subgraphId || '').toLowerCase()));
+          const allowedPairs = new Set(
+            (pools || []).flatMap((p: any) => {
+              const a = `${(p?.currency0?.symbol || '').toUpperCase()}/${(p?.currency1?.symbol || '').toUpperCase()}`;
+              const b = `${(p?.currency1?.symbol || '').toUpperCase()}/${(p?.currency0?.symbol || '').toUpperCase()}`;
+              return [a, b];
+            })
+          );
+          positions = positions.filter((pos: any) => {
+            const pid = String(pos?.poolId || '').toLowerCase();
+            if (pid && allowedIds.has(pid)) return true;
+            const t0 = String(pos?.token0?.symbol || '').toUpperCase();
+            const t1 = String(pos?.token1?.symbol || '').toUpperCase();
+            return allowedPairs.has(`${t0}/${t1}`);
+          });
+        } catch {}
+        setActivePositions(positions);
+        
+        const tokenBalanceMap = new Map<string, number>();
+        if (Array.isArray(positions)) {
+          positions.forEach((position: any) => {
+            const t0 = position.token0?.symbol;
+            const a0 = parseFloat(position.token0?.amount || '0');
+            if (t0 && a0 > 0) tokenBalanceMap.set(t0, (tokenBalanceMap.get(t0) || 0) + a0);
+            const t1 = position.token1?.symbol;
+            const a1 = parseFloat(position.token1?.amount || '0');
+            if (t1 && a1 > 0) tokenBalanceMap.set(t1, (tokenBalanceMap.get(t1) || 0) + a1);
+          });
+        }
+        
+        const tokenSymbols = Array.from(tokenBalanceMap.keys());
+        const priceMap = new Map<string, number>();
+        const coinGeckoIds: Record<string, string> = { 'aETH': 'ethereum', 'ETH': 'ethereum', 'aBTC': 'bitcoin', 'aUSDC': 'usd-coin', 'aUSDT': 'tether' };
+        const uniqueCoinIds = [...new Set(tokenSymbols.map(symbol => coinGeckoIds[symbol]).filter(Boolean))];
+        
+        let priceData: any = {};
+        if (uniqueCoinIds.length > 0) {
+          const priceRes = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${uniqueCoinIds.join(',')}&vs_currencies=usd&include_24hr_change=true`);
+          if (priceRes.ok) {
+            priceData = await priceRes.json();
+            tokenSymbols.forEach(symbol => {
+              const coinId = coinGeckoIds[symbol];
+              if (coinId && priceData[coinId]?.usd) {
+                priceMap.set(symbol, priceData[coinId].usd);
+              } else if (symbol.includes('USDC') || symbol.includes('USDT')) {
+                priceMap.set(symbol, 1.0);
+              }
+            });
+          }
+        }
+
+        const tokenBalances: TokenBalance[] = Array.from(tokenBalanceMap.entries())
+          .map(([symbol, balance]) => ({ symbol, balance, usdValue: balance * (priceMap.get(symbol) || 0), color: '' }))
+          .filter(token => token.usdValue > 0.01)
+          .sort((a, b) => b.usdValue - a.usdValue);
+
+        const colors = ["hsl(0 0% 30%)", "hsl(0 0% 40%)", "hsl(0 0% 60%)", "hsl(0 0% 80%)", "hsl(0 0% 95%)"];
+        tokenBalances.forEach((token, index) => { token.color = colors[index % colors.length]; });
+
+        const totalValue = tokenBalances.reduce((sum, token) => sum + token.usdValue, 0);
+
+        let deltaNowUSD = 0;
+        if (uniqueCoinIds.length > 0 && totalValue > 0) {
+          tokenBalances.forEach((tb) => {
+            const coinId = coinGeckoIds[tb.symbol];
+            const ch = coinId ? priceData[coinId]?.usd_24h_change : undefined;
+            if (typeof ch === 'number' && isFinite(ch)) {
+              const pastUsd = tb.usdValue / (1 + ch / 100);
+              deltaNowUSD += tb.usdValue - pastUsd;
+            }
+          });
+        }
+        const pnl24hPct = totalValue > 0 ? (deltaNowUSD / totalValue) * 100 : 0;
+
+        const priceChange24hPctMap: Record<string, number> = {};
+        tokenSymbols.forEach(symbol => {
+          const coinId = coinGeckoIds[symbol];
+          const ch = coinId ? priceData[coinId]?.usd_24h_change : undefined;
+          if (typeof ch === 'number' && isFinite(ch)) priceChange24hPctMap[symbol] = ch;
+        });
+
+        setPortfolioData({ totalValue, tokenBalances, isLoading: false, error: undefined, priceMap: Object.fromEntries(priceMap.entries()), pnl24hPct, priceChange24hPctMap });
+
+      } catch (error) {
+        console.error('Failed to fetch portfolio data:', error);
+        setPortfolioData({ totalValue: 0, tokenBalances: [], isLoading: false, error: error instanceof Error ? error.message : 'Unknown error', priceMap: {}, pnl24hPct: 0, priceChange24hPctMap: {} });
+        setActivePositions([]);
+      } finally {
+        setIsLoadingPositions(false);
+      }
+    };
+
+    fetchAllData();
+  }, [isConnected, accountAddress, refreshKey]);
+
+  // Fetch APRs
+  useEffect(() => {
+    // This can run independently
+    const fetchApr = async () => {
+      try {
+        const cacheKey = 'apr:get-pools-batch';
+        try {
+          const cached = localStorage.getItem(cacheKey);
+          if (cached) {
+            const parsed = JSON.parse(cached);
+            if (parsed?.ts && (Date.now() - parsed.ts) < 10 * 60 * 1000 && parsed?.map) {
+              setAprByPoolId(parsed.map);
+              return;
+            }
+          }
+        } catch {}
+        const response = await fetch('/api/liquidity/get-pools-batch');
+        if (!response.ok) return;
+        const data = await response.json();
+        if (!data?.success || !Array.isArray(data.pools)) return;
+        const map: Record<string, string> = {};
+        for (const p of data.pools as any[]) {
+          const fees24h = typeof p.fees24hUSD === 'number' ? p.fees24hUSD : 0;
+          const tvl = typeof p.tvlUSD === 'number' ? p.tvlUSD : 0;
+          let aprStr = 'N/A';
+          if (fees24h > 0 && tvl > 0) {
+            const yearlyFees = fees24h * 365;
+            const apr = (yearlyFees / tvl) * 100;
+            aprStr = apr.toFixed(2) + '%';
+          }
+          if (p.poolId) map[String(p.poolId).toLowerCase()] = aprStr;
+        }
+        setAprByPoolId(map);
+        try { localStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), map })); } catch {}
+      } catch {}
+    };
+    fetchApr();
+  }, []);
+
+  // Fetch Pool States
+  useEffect(() => {
+    if (isLoadingPositions) return;
+    if (activePositions.length === 0) {
+      setPoolDataByPoolId({});
+      setIsLoadingPoolStates(false);
+      return;
+    }
+    const fetchPoolData = async () => {
+      try {
+        const uniquePairs = new Map<string, { token0Symbol: string; token1Symbol: string; poolId: string }>();
+        activePositions.forEach(p => {
+          if (p?.poolId && p?.token0?.symbol && p?.token1?.symbol) {
+            const key = `${p.token0.symbol}-${p.token1.symbol}`;
+            if (!uniquePairs.has(key)) {
+              uniquePairs.set(key, { token0Symbol: p.token0.symbol, token1Symbol: p.token1.symbol, poolId: p.poolId });
+            }
+          }
+        });
+        
+        const poolDataMap: Record<string, any> = {};
+        for (const { token0Symbol, token1Symbol, poolId } of uniquePairs.values()) {
+          try {
+            const response = await fetch('/api/liquidity/get-pool-state', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ token0Symbol, token1Symbol, chainId: 84532 }),
+            });
+            if (response.ok) {
+              const poolState = await response.json();
+              if (poolState.currentPoolTick !== undefined) {
+                poolDataMap[String(poolId).toLowerCase()] = {
+                  tick: poolState.currentPoolTick,
+                  price: poolState.currentPrice,
+                  sqrtPriceX96: poolState.sqrtPriceX96,
+                  tickSpacing: getPoolById(poolId)?.tickSpacing || 60
+                };
+              }
+            }
+          } catch (error) {
+            console.error(`Failed to fetch pool state for ${token0Symbol}/${token1Symbol}:`, error);
+          }
+        }
+        setPoolDataByPoolId(poolDataMap);
+      } catch (error) {
+        console.error('Error fetching pool data:', error);
+      }
+      finally {
+        setIsLoadingPoolStates(false);
+      }
+    };
+    fetchPoolData();
+  }, [activePositions, isLoadingPositions]);
+
+  // Fetch Wallet Balances
+  useEffect(() => {
+    const run = async () => {
+      if (!isConnected || !accountAddress) {
+        setWalletBalances([]);
+        return;
+      }
+      setIsLoadingWalletBalances(true);
+      try {
+        const tokenMapOrArray = getAllTokens?.() as any;
+        const tokens = Array.isArray(tokenMapOrArray) ? tokenMapOrArray : Object.values(tokenMapOrArray || {});
+        const balances: Record<string, number> = {};
+        for (const t of tokens) {
+          const symbol = t?.symbol as string | undefined;
+          if (!symbol) continue;
+          const addr = (t as any)?.address as `0x${string}` | undefined;
+          try {
+            let raw: bigint = 0n;
+            if (!addr || addr.toLowerCase() === NATIVE_TOKEN_ADDRESS?.toLowerCase?.()) {
+              raw = await publicClient.getBalance({ address: accountAddress as `0x${string}` });
+            } else {
+              const bal = await publicClient.readContract({
+                address: addr,
+                abi: parseAbi(['function balanceOf(address) view returns (uint256)']) as unknown as Abi,
+                functionName: 'balanceOf',
+                args: [accountAddress as `0x${string}`],
+              });
+              raw = BigInt(bal as any);
+            }
+            const dec = (TOKEN_DEFINITIONS as any)?.[symbol]?.decimals ?? 18;
+            balances[symbol] = parseFloat(viemFormatUnits(raw, dec));
+          } catch {}
+        }
+
+        const coinGeckoIds: Record<string, string> = { aETH: 'ethereum', ETH: 'ethereum', aBTC: 'bitcoin', aUSDC: 'usd-coin', aUSDT: 'tether' };
+        const symbols = Object.keys(balances);
+        const priceMap = new Map<string, number>();
+        const uniqueCoinIds = [...new Set(symbols.map(s => coinGeckoIds[s]).filter(Boolean))];
+        let priceData: any = {};
+        if (uniqueCoinIds.length > 0) {
+          try {
+            const priceRes = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${uniqueCoinIds.join(',')}&vs_currencies=usd&include_24hr_change=true`);
+            if (priceRes.ok) priceData = await priceRes.json();
+          } catch (error) { console.warn('Failed to fetch prices for wallet from CoinGecko:', error); }
+        }
+        
+        symbols.forEach((symbol) => {
+          const coinId = coinGeckoIds[symbol];
+          const px = coinId && priceData[coinId]?.usd;
+          if (px) priceMap.set(symbol, px);
+          else if (symbol.includes('USDC') || symbol.includes('USDT')) priceMap.set(symbol, 1.0);
+        });
+
+        const entries = symbols
+          .map((symbol) => ({ symbol, balance: balances[symbol] || 0, usdValue: (balances[symbol] || 0) * (priceMap.get(symbol) || 0), color: '' }))
+          .filter((x) => x.usdValue > 0.01)
+          .sort((a, b) => b.usdValue - a.usdValue);
+        const colors = ['hsl(0 0% 30%)', 'hsl(0 0% 40%)', 'hsl(0 0% 60%)', 'hsl(0 0% 80%)', 'hsl(0 0% 95%)'];
+        entries.forEach((e, i) => { e.color = colors[i % colors.length]; });
+        setWalletBalances(entries);
+      } finally {
+        setIsLoadingWalletBalances(false);
+      }
+    };
+    run();
+    const onRefresh = () => { run(); };
+    window.addEventListener('walletBalancesRefresh', onRefresh as EventListener);
+    return () => { window.removeEventListener('walletBalancesRefresh', onRefresh as EventListener); };
+  }, [isConnected, accountAddress, currentChainId && false]);
+
+
+  const getCacheKey = useCallback((poolId: string, tickLower: number, tickUpper: number) => {
+    const positionRange = Math.abs(tickUpper - tickLower);
+    const maxRange = 5000;
+    const padding = Math.min(positionRange * 0.5, maxRange * 0.3);
+    const minTick = Math.floor(Math.min(tickLower, tickUpper) - padding);
+    const maxTick = Math.ceil(Math.max(tickLower, tickUpper) + padding);
+    return `${poolId}-${minTick}-${maxTick}`;
+  }, []);
+
+  // Fetch Bucket Data (managed inside hook now)
+  const fetchBucketData = useCallback(async (poolId: string, tickLower: number, tickUpper: number, tickSpacing: number) => {
+    const cacheKey = getCacheKey(poolId, tickLower, tickUpper);
+    if (bucketDataCache[cacheKey] || loadingBuckets.has(cacheKey)) return;
+
+    setLoadingBuckets(prev => new Set(prev).add(cacheKey));
+    try {
+      const positionRange = Math.abs(tickUpper - tickLower);
+      const maxRange = 5000;
+      const padding = Math.min(positionRange * 0.5, maxRange * 0.3);
+      const minTick = Math.floor(Math.min(tickLower, tickUpper) - padding);
+      const maxTick = Math.ceil(Math.max(tickLower, tickUpper) + padding);
+      
+      const response = await fetch('/api/liquidity/get-bucket-depths', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ poolId, tickLower: minTick, tickUpper: maxTick, tickSpacing: Number(tickSpacing), bucketCount: 25 }),
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        if (result.success && result.buckets) {
+          setBucketDataCache(prev => ({ ...prev, [cacheKey]: result.buckets }));
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching bucket data:', error);
+    } finally {
+      setLoadingBuckets(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(cacheKey);
+        return newSet;
+      });
+    }
+  }, [getCacheKey, bucketDataCache, loadingBuckets]);
+
+  useEffect(() => {
+    activePositions.forEach(p => {
+      // Disabled: do not fetch bucket depths to avoid spamming
+    });
+  }, [activePositions, poolDataByPoolId, fetchBucketData]);
+
+  // Calculate readiness object
+  const readiness: Readiness = useMemo(() => {
+    const buckets: Record<string, boolean> = {};
+    activePositions.forEach(position => {
+      if (position?.poolId) {
+        const tl = position.tickLower;
+        const tu = position.tickUpper;
+        const cacheKey = getCacheKey(position.poolId, tl, tu);
+        buckets[cacheKey] = !loadingBuckets.has(cacheKey);
+      }
+    });
+    const isEmptyPortfolio = !portfolioData.isLoading && !isLoadingPositions && !isLoadingPoolStates && activePositions.length === 0;
+    return {
+      core: !isLoadingPositions && !portfolioData.isLoading && !isLoadingPoolStates,
+      prices: isEmptyPortfolio || Object.keys(portfolioData.priceMap).length > 0,
+      apr: isEmptyPortfolio || Object.keys(aprByPoolId).length > 0,
+      buckets,
+    };
+  }, [portfolioData.isLoading, portfolioData.priceMap, aprByPoolId, activePositions, loadingBuckets, getCacheKey, isLoadingPositions, isLoadingPoolStates]);
+
+  return {
+    portfolioData,
+    activePositions,
+    walletBalances,
+    isLoadingWalletBalances,
+    aprByPoolId,
+    poolDataByPoolId,
+    bucketDataCache,
+    loadingBuckets,
+    readiness,
+    isLoadingPositions,
+    isLoadingPoolStates,
+    setActivePositions,
+    setIsLoadingPositions,
+    setWalletBalances,
+    setIsLoadingWalletBalances,
+    setAprByPoolId,
+  };
+}
+
 export default function PortfolioPage() {
   const router = useRouter();
   const [positionsRefresh, setPositionsRefresh] = useState(0);
-  const portfolioData = usePortfolioData(positionsRefresh);
+
+  const {
+    portfolioData,
+    activePositions,
+    walletBalances,
+    isLoadingWalletBalances,
+    aprByPoolId,
+    poolDataByPoolId,
+    bucketDataCache,
+    isLoadingPositions,
+    readiness,
+    isLoadingPoolStates,
+    setActivePositions,
+    setIsLoadingPositions,
+    setWalletBalances,
+    setIsLoadingWalletBalances,
+    setAprByPoolId,
+  } = usePortfolio(positionsRefresh);
+
+  const isLoading = !readiness.core;
+  const { phase, showSkeletonFor } = useLoadPhases(readiness);
+
   const [hoveredSegment, setHoveredSegment] = useState<number | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const netApyRef = useRef<HTMLDivElement>(null);
@@ -685,13 +913,10 @@ export default function PortfolioPage() {
   useLayoutEffect(() => {
     const onResize = () => setViewportWidth(window.innerWidth);
     if (typeof window !== 'undefined') {
-      // set immediately before first paint to avoid layout flicker
-      setViewportWidth(window.innerWidth);
+      onResize();
       window.addEventListener('resize', onResize);
+      return () => window.removeEventListener('resize', onResize);
     }
-    return () => {
-      if (typeof window !== 'undefined') window.removeEventListener('resize', onResize);
-    };
   }, []);
   const poolConfigBySubgraphId = useMemo(() => {
     try {
@@ -701,6 +926,49 @@ export default function PortfolioPage() {
     } catch {
       return new Map<string, any>();
     }
+  }, []);
+
+  // SDK tick bounds for full-range detection (match pool detail page)
+  const SDK_MIN_TICK = -887272;
+  const SDK_MAX_TICK = 887272;
+
+  // Price helpers (approximate; match semantics from pool page)
+  const determineBaseTokenForPriceDisplay = useCallback((token0: string, token1: string): string => {
+    if (!token0 || !token1) return token0;
+    const quotePriority: Record<string, number> = {
+      'aUSDC': 10, 'aUSDT': 9, 'USDC': 8, 'USDT': 7, 'aETH': 6, 'ETH': 5, 'YUSD': 4, 'mUSDT': 3,
+    };
+    const token0Priority = quotePriority[token0] || 0;
+    const token1Priority = quotePriority[token1] || 0;
+    return token1Priority > token0Priority ? token1 : token0;
+  }, []);
+
+  const convertTickToPrice = useCallback((tick: number, currentPoolTick: number | null, currentPrice: string | null, baseTokenForPriceDisplay: string, token0Symbol: string, token1Symbol: string): string => {
+    if (tick === SDK_MAX_TICK) return '∞';
+    if (tick === SDK_MIN_TICK) return '0.00';
+    
+    if (currentPoolTick === null || !currentPrice) return 'N/A';
+    const currentPriceNum = parseFloat(currentPrice);
+    if (isNaN(currentPriceNum) || currentPriceNum <= 0) return 'N/A';
+
+    let priceAtTick: number;
+    const priceDelta = Math.pow(1.0001, tick - currentPoolTick);
+
+    if (baseTokenForPriceDisplay === token0Symbol) {
+      priceAtTick = 1 / (currentPriceNum * priceDelta);
+    } else {
+      priceAtTick = currentPriceNum * priceDelta;
+    }
+
+    if (!isFinite(priceAtTick) || isNaN(priceAtTick)) return 'N/A';
+    if (priceAtTick < 1e-11 && priceAtTick > 0) return '0';
+    if (priceAtTick > 1e30) return '∞';
+    
+    const displayDecimals = (baseTokenForPriceDisplay === token0Symbol
+      ? (TOKEN_DEFINITIONS[token0Symbol as TokenSymbol]?.displayDecimals ?? 4)
+      : (TOKEN_DEFINITIONS[token1Symbol as TokenSymbol]?.displayDecimals ?? 4));
+
+    return priceAtTick.toFixed(displayDecimals);
   }, []);
 
   // Dynamic layout helpers
@@ -764,6 +1032,8 @@ export default function PortfolioPage() {
       localStorage.setItem(`faucetClaimLastSeenAt_${accountAddress}`, String(now));
       setFaucetLastClaimTs(now);
       setIsFaucetBusy(false);
+      // Success toast for faucet claim
+      toast.success('Faucet Claimed', { icon: <BadgeCheck className="h-4 w-4 text-sidebar-primary" /> });
       // Also trigger wallet balances refetch after a brief delay to allow chain state to settle
       setTimeout(() => {
         try {
@@ -810,9 +1080,7 @@ export default function PortfolioPage() {
       return new Set<string>();
     }
   }, []);
-  const [activePositions, setActivePositions] = useState<any[]>([]);
   const [activityItems, setActivityItems] = useState<any[]>([]);
-  const [isLoadingPositions, setIsLoadingPositions] = useState<boolean>(true);
   const [isLoadingActivity, setIsLoadingActivity] = useState<boolean>(false);
   const [positionsError, setPositionsError] = useState<string | undefined>(undefined);
   const [activityError, setActivityError] = useState<string | undefined>(undefined);
@@ -861,6 +1129,18 @@ export default function PortfolioPage() {
   const [isIncreaseAmountValid, setIsIncreaseAmountValid] = useState(true);
   const [withdrawPercentage, setWithdrawPercentage] = useState<number>(0);
   const [isFullWithdraw, setIsFullWithdraw] = useState(false);
+  const lastDecreaseWasFullRef = useRef<boolean>(false);
+
+  const withdrawProductiveSide = useMemo<null | 'amount0' | 'amount1'>(() => {
+    if (!positionToWithdraw || positionToWithdraw.isInRange) return null;
+    const poolKey = String(positionToWithdraw?.poolId || '').toLowerCase();
+    const tick = poolDataByPoolId[poolKey]?.tick;
+    const below = tick !== null ? tick < positionToWithdraw.tickLower : false;
+    const above = tick !== null ? tick > positionToWithdraw.tickUpper : false;
+    if (below) return 'amount0';
+    if (above) return 'amount1';
+    return null;
+  }, [positionToWithdraw, poolDataByPoolId]);
 
   // Helpers
   const formatTokenDisplayAmount = (amount: string) => {
@@ -897,17 +1177,44 @@ export default function PortfolioPage() {
   const displayToken0Balance = token0BalanceData?.formatted ? formatTokenDisplayAmount(token0BalanceData.formatted) : '~';
   const displayToken1Balance = token1BalanceData?.formatted ? formatTokenDisplayAmount(token1BalanceData.formatted) : '~';
 
+  // After-confirmation refresh using the same centralized prefetch hook as pool page
+  const bumpPositionsRefresh = useCallback(() => {
+    try {
+      if (accountAddress) prefetchService.requestPositionsRefresh({ owner: accountAddress });
+    } catch {}
+    setPositionsRefresh((k) => k + 1);
+  }, [accountAddress]);
+
+  useEffect(() => {
+    // subscribe to centralized refresh events like pool page
+    if (!accountAddress) return;
+    const unsubscribe = prefetchService.addPositionsListener(accountAddress, () => {
+      setPositionsRefresh((k) => k + 1);
+    });
+    return unsubscribe;
+  }, [accountAddress]);
+
   // Liquidity hooks
   const onLiquidityIncreased = useCallback(() => {
-    toast.success('Position increased successfully!');
-    setPositionsRefresh((k) => k + 1);
-  }, []);
+    toast.success('Position Increased', { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
+    bumpPositionsRefresh();
+    setShowIncreaseModal(false);
+  }, [bumpPositionsRefresh]);
   const onLiquidityDecreased = useCallback(() => {
-    toast.success('Position modified successfully!');
-    setPositionsRefresh((k) => k + 1);
-  }, []);
+    const wasFull = !!lastDecreaseWasFullRef.current;
+    toast.success(wasFull ? 'Position Closed' : 'Position Decreased', { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
+    lastDecreaseWasFullRef.current = false;
+    bumpPositionsRefresh();
+    setShowWithdrawModal(false);
+  }, [bumpPositionsRefresh]);
   const { increaseLiquidity, isLoading: isIncreasingLiquidity } = useIncreaseLiquidity({ onLiquidityIncreased });
-  const { decreaseLiquidity, isLoading: isDecreasingLiquidity } = useDecreaseLiquidity({ onLiquidityDecreased });
+  const onFeesCollected = useCallback(() => {
+    toast.success('Fees Collected', { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
+    bumpPositionsRefresh();
+  }, [bumpPositionsRefresh]);
+  const { decreaseLiquidity, compoundFees, claimFees, isLoading: isDecreasingLiquidity } = useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected });
+
+  const isCompoundInProgressRef = useRef(false);
 
   // Sticky slider stops helper (copied behavior)
   const snapToStickyStops = (value: number): number => {
@@ -921,16 +1228,23 @@ export default function PortfolioPage() {
 
   // Increase slider % and amount sync
   const handleIncreasePercentageChange = (newPercentage: number) => {
-    const snapped = snapToStickyStops(newPercentage);
-    setIncreasePercentage(snapped);
+    const next = newPercentage >= 99.9 ? 100 : snapToStickyStops(newPercentage);
+    setIncreasePercentage(next);
     if (positionToModify) {
-      const balance0 = parseFloat(token0BalanceData?.formatted || '0');
-      const percentage = snapped / 100;
-      const displayDecimals0 = TOKEN_DEFINITIONS[positionToModify.token0.symbol as TokenSymbol]?.displayDecimals ?? 4;
-      const calculatedAmount0 = (balance0 * percentage).toFixed(displayDecimals0);
-      setIncreaseAmount0(calculatedAmount0);
-      setIncreaseActiveInputSide('amount0');
-      if (parseFloat(calculatedAmount0) > 0) calculateIncreaseAmount(calculatedAmount0, 'amount0', positionToModify); else setIncreaseAmount1('');
+      if (next === 100) {
+        const full0 = token0BalanceData?.formatted || '0';
+        setIncreaseAmount0(full0);
+        setIncreaseActiveInputSide('amount0');
+        if (parseFloat(full0) > 0) calculateIncreaseAmount(full0, 'amount0', positionToModify); else setIncreaseAmount1('');
+      } else {
+        const balance0 = parseFloat(token0BalanceData?.formatted || '0');
+        const percentage = next / 100;
+        const displayDecimals0 = TOKEN_DEFINITIONS[positionToModify.token0.symbol as TokenSymbol]?.displayDecimals ?? 4;
+        const calculatedAmount0 = (balance0 * percentage).toFixed(displayDecimals0);
+        setIncreaseAmount0(calculatedAmount0);
+        setIncreaseActiveInputSide('amount0');
+        if (parseFloat(calculatedAmount0) > 0) calculateIncreaseAmount(calculatedAmount0, 'amount0', positionToModify); else setIncreaseAmount1('');
+      }
     }
   };
 
@@ -947,7 +1261,8 @@ export default function PortfolioPage() {
       const currentAmount = parseFloat(newAmount);
       if (maxAmount > 0 && !isNaN(currentAmount)) {
         const percentage = Math.min(100, Math.max(0, (currentAmount / maxAmount) * 100));
-        setIncreasePercentage(Math.round(percentage));
+        const pct = percentage >= 99.5 ? 100 : Math.round(percentage);
+        setIncreasePercentage(pct);
         setIsIncreaseAmountValid(currentAmount <= maxAmount);
       } else {
         setIsIncreaseAmountValid(true);
@@ -959,17 +1274,24 @@ export default function PortfolioPage() {
 
   // Withdraw slider % and amount sync
   const handleWithdrawPercentageChange = (newPercentage: number) => {
-    const snapped = snapToStickyStops(newPercentage);
-    setWithdrawPercentage(snapped);
+    const next = newPercentage >= 99.9 ? 100 : snapToStickyStops(newPercentage);
+    setWithdrawPercentage(next);
     if (positionToWithdraw) {
-      const amount0 = parseFloat(positionToWithdraw.token0.amount);
-      const percentage = snapped / 100;
-      const displayDecimals0 = TOKEN_DEFINITIONS[positionToWithdraw.token0.symbol as TokenSymbol]?.displayDecimals ?? 4;
-      const calculatedAmount0 = (amount0 * percentage).toFixed(displayDecimals0);
-      setWithdrawAmount0(calculatedAmount0);
-      setWithdrawActiveInputSide('amount0');
-      setIsFullWithdraw(snapped >= 99);
-      if (parseFloat(calculatedAmount0) > 0) calculateWithdrawAmount(calculatedAmount0, 'amount0', positionToWithdraw); else setWithdrawAmount1('');
+      if (next === 100) {
+        setWithdrawAmount0(positionToWithdraw.token0.amount);
+        setWithdrawAmount1(positionToWithdraw.token1.amount);
+        setWithdrawActiveInputSide('amount0');
+        setIsFullWithdraw(true);
+      } else {
+        const amount0 = parseFloat(positionToWithdraw.token0.amount);
+        const percentage = next / 100;
+        const displayDecimals0 = TOKEN_DEFINITIONS[positionToWithdraw.token0.symbol as TokenSymbol]?.displayDecimals ?? 4;
+        const calculatedAmount0 = (amount0 * percentage).toFixed(displayDecimals0);
+        setWithdrawAmount0(calculatedAmount0);
+        setWithdrawActiveInputSide('amount0');
+        setIsFullWithdraw(next === 100);
+        if (parseFloat(calculatedAmount0) > 0) calculateWithdrawAmount(calculatedAmount0, 'amount0', positionToWithdraw); else setWithdrawAmount1('');
+      }
     }
   };
 
@@ -980,8 +1302,9 @@ export default function PortfolioPage() {
       const currentAmount = parseFloat(newAmount);
       if (maxAmount > 0 && !isNaN(currentAmount)) {
         const percentage = Math.min(100, Math.max(0, (currentAmount / maxAmount) * 100));
-        setWithdrawPercentage(Math.round(percentage));
-        setIsFullWithdraw(percentage >= 99);
+        const pct = percentage >= 99.5 ? 100 : Math.round(percentage);
+        setWithdrawPercentage(pct);
+        setIsFullWithdraw(pct === 100);
       }
     }
   };
@@ -1041,15 +1364,40 @@ export default function PortfolioPage() {
   const [activeSort, setActiveSort] = useState<{ column: 'amounts' | 'value' | 'apr' | null; direction: 'asc' | 'desc' | null }>({ column: null, direction: null });
   const [expandedPools, setExpandedPools] = useState<Record<string, boolean>>({});
   const [openMenuKey, setOpenMenuKey] = useState<string | null>(null);
+  const [positionMenuOpenUp, setPositionMenuOpenUp] = useState(false);
   const [balancesSortDir, setBalancesSortDir] = useState<'asc' | 'desc'>('desc');
+  const [openPositionMenuKey, setOpenPositionMenuKey] = useState<string | null>(null);
+
+  // Close the group-row action menu when clicking anywhere outside it
+  useEffect(() => {
+    if (!openMenuKey) return;
+    const onDocPointerDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      // Keep open if the click is on the trigger or inside the menu content
+      if (target.closest('.position-menu-trigger') || target.closest('.position-menu-content')) return;
+      setOpenMenuKey(null);
+    };
+    document.addEventListener('pointerdown', onDocPointerDown);
+    return () => document.removeEventListener('pointerdown', onDocPointerDown);
+  }, [openMenuKey]);
+
+  useEffect(() => {
+    if (!openPositionMenuKey) return;
+    const onDocPointerDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      if (target.closest('.position-card-menu-trigger') || target.closest('.position-card-menu-content')) return;
+      setOpenPositionMenuKey(null);
+    };
+    document.addEventListener('pointerdown', onDocPointerDown);
+    return () => document.removeEventListener('pointerdown', onDocPointerDown);
+  }, [openPositionMenuKey]);
 
   // Activity filter state
   const [activityTokenFilter, setActivityTokenFilter] = useState<string | null>(null);
   const [activityTypeFilter, setActivityTypeFilter] = useState<'all' | 'Swap' | 'Liquidity'>('all');
-
   // Wallet balances (for Balances UI only; excluded from global portfolio worth)
-  const [walletBalances, setWalletBalances] = useState<Array<{ symbol: string; balance: number; usdValue: number; color: string }>>([]);
-  const [isLoadingWalletBalances, setIsLoadingWalletBalances] = useState<boolean>(false);
   const [walletPriceMap, setWalletPriceMap] = useState<Record<string, number>>({});
   const [walletPriceChange24hPctMap, setWalletPriceChange24hPctMap] = useState<Record<string, number>>({});
 
@@ -1183,7 +1531,7 @@ export default function PortfolioPage() {
       window.removeEventListener('walletBalancesRefresh', onRefresh as EventListener);
       window.removeEventListener('storage', onStorage);
     };
-  }, [isConnected, accountAddress, currentChainId]);
+  }, [isConnected, accountAddress, currentChainId && false]);
 
   const navigateToPoolBySubgraphId = useCallback((poolSubgraphId?: string) => {
     if (!poolSubgraphId) return;
@@ -1200,15 +1548,8 @@ export default function PortfolioPage() {
     const newExpanded: Record<string, boolean> = {};
     activePositions.forEach(p => {
       const poolKey = String(p?.poolId || '').toLowerCase();
-      if (!newExpanded[poolKey]) {
-        // Count positions in this pool
-        const poolPositions = activePositions.filter(pos => 
-          String(pos?.poolId || '').toLowerCase() === poolKey
-        );
-        if (poolPositions.length > 1) {
+      // Initialize all groups as collapsed by default
           newExpanded[poolKey] = false;
-        }
-      }
     });
     setExpandedPools(newExpanded);
   }, [activePositions]);
@@ -1226,16 +1567,6 @@ export default function PortfolioPage() {
     if (state === 'desc') return <ChevronDownIcon className="ml-1 h-4 w-4 text-muted-foreground group-hover:text-foreground" />;
     return <ChevronsUpDownIcon className="ml-1 h-4 w-4 text-muted-foreground group-hover:text-foreground" />;
   };
-
-  // Fetch APRs per pool using existing batch endpoint; cache in-memory
-  const [aprByPoolId, setAprByPoolId] = useState<Record<string, string>>({});
-  
-  // Pool data for tick information
-  const [poolDataByPoolId, setPoolDataByPoolId] = useState<Record<string, any>>({});
-  
-  // Bucket data cache for all pools to avoid repeated API calls
-  const [bucketDataCache, setBucketDataCache] = useState<Record<string, any[]>>({});
-  const [loadingBuckets, setLoadingBuckets] = useState<Set<string>>(new Set());
 
   const filteredPositions = useMemo(() => {
     if (!activeTokenFilter) return activePositions;
@@ -1303,6 +1634,12 @@ export default function PortfolioPage() {
     });
   }, [filteredPositions, activeSort, portfolioData.priceMap, aprByPoolId]);
 
+  const getUsdPriceForSymbol = useCallback((symbolRaw?: string): number => {
+    const symbol = (symbolRaw || '').toUpperCase();
+    if (!symbol) return 0;
+    return (portfolioData.priceMap[symbol] || 0)
+  }, [portfolioData.priceMap]);
+
   // Apply filters to Activity items (Swaps & Liquidity)
   const filteredActivityItems = useMemo(() => {
     let filtered = activityItems;
@@ -1368,7 +1705,6 @@ export default function PortfolioPage() {
     return filteredActivityItems.slice(start, start + ACTIVITY_PAGE_SIZE);
   }, [filteredActivityItems, activityPage]);
 
-  // Group positions by poolId for expandable rows
   const groupedByPool = useMemo(() => {
     const map = new Map<string, any[]>();
     for (const p of sortedActivePositions) {
@@ -1388,22 +1724,13 @@ export default function PortfolioPage() {
       }, 0);
       return { poolId, items, totalUSD };
     });
-    
-    // Apply sorting based on activeSort
+    // Sort groups by total value desc by default when no explicit value sort
     if (activeSort.column === 'value' && activeSort.direction) {
       const sign = activeSort.direction === 'asc' ? 1 : -1;
       groups.sort((a, b) => (a.totalUSD - b.totalUSD) * sign);
     } else {
-      // Default sort: single positions first, then by value ascending
-      groups.sort((a, b) => {
-        // Single positions first
-        if (a.items.length === 1 && b.items.length > 1) return -1;
-        if (a.items.length > 1 && b.items.length === 1) return 1;
-        // Then by value ascending
-        return a.totalUSD - b.totalUSD;
-      });
+      groups.sort((a, b) => b.totalUSD - a.totalUSD);
     }
-    
     return groups;
   }, [sortedActivePositions, portfolioData.priceMap, activeSort]);
 
@@ -1416,13 +1743,37 @@ export default function PortfolioPage() {
     setPositionToModify(pos);
     setIncreaseAmount0("");
     setIncreaseAmount1("");
+    setIncreasePercentage(0);
+    // OOR single-sided enforcement on open
+    try {
+      const poolKey = String(pos?.poolId || '').toLowerCase();
+      const ct = poolDataByPoolId[poolKey]?.tick;
+      if (typeof ct === 'number') {
+        const below = ct < pos.tickLower; // token0 productive
+        const above = ct > pos.tickUpper; // token1 productive
+        if (below) {
+          setIncreaseActiveInputSide('amount0');
+          setIncreaseAmount1('0');
+        } else if (above) {
+          setIncreaseActiveInputSide('amount1');
+          setIncreaseAmount0('0');
+        } else {
     setIncreaseActiveInputSide(null);
+        }
+      } else {
+        setIncreaseActiveInputSide(null);
+      }
+    } catch {
+      setIncreaseActiveInputSide(null);
+    }
     setShowIncreaseModal(true);
-  }, []);
+  }, [poolDataByPoolId]);
   const openWithdraw = useCallback((pos: any) => {
     setPositionToWithdraw(pos);
     setWithdrawAmount0("");
     setWithdrawAmount1("");
+    setWithdrawPercentage(0);
+    setIsFullWithdraw(false);
     setWithdrawActiveInputSide(null);
     setShowWithdrawModal(true);
   }, []);
@@ -1475,7 +1826,7 @@ export default function PortfolioPage() {
           setIncreaseAmount0(formatTokenDisplayAmount(viemFormatUnits(BigInt(data.amount0), dec)));
         }
       } catch (e: any) {
-        toast.error('Calculation Error', { description: e?.message || 'Could not calculate corresponding amount.' });
+        toast.error('Calculation Error', { description: e?.message || 'Could not calculate corresponding amount.', icon: <OctagonX className="h-4 w-4 text-red-500" /> });
         if (inputSide === 'amount0') setIncreaseAmount1(""); else setIncreaseAmount0("");
       } finally {
         setIsIncreaseCalculating(false);
@@ -1483,6 +1834,8 @@ export default function PortfolioPage() {
     }, 400),
     [currentChainId]
   );
+
+  // Claim Fees handled via useDecreaseLiquidity.onFeesCollected
 
   // Calculate other side for withdraw
   const calculateWithdrawAmount = useCallback(
@@ -1522,7 +1875,7 @@ export default function PortfolioPage() {
           setWithdrawAmount0(formatTokenDisplayAmount(viemFormatUnits(BigInt(data.amount0), dec)));
         }
       } catch (e: any) {
-        toast.error('Calculation Error', { description: e?.message || 'Could not calculate corresponding amount.' });
+        toast.error('Calculation Error', { description: e?.message || 'Could not calculate corresponding amount.', icon: <OctagonX className="h-4 w-4 text-red-500" /> });
         if (inputSide === 'amount0') setWithdrawAmount1(""); else setWithdrawAmount0("");
       } finally {
         setIsWithdrawCalculating(false);
@@ -1535,6 +1888,17 @@ export default function PortfolioPage() {
     let cancelled = false;
     const fetchApr = async () => {
       try {
+        const cacheKey = 'apr:get-pools-batch:secondary';
+        try {
+          const cached = localStorage.getItem(cacheKey);
+          if (cached) {
+            const parsed = JSON.parse(cached);
+            if (parsed?.ts && (Date.now() - parsed.ts) < 10 * 60 * 1000 && parsed?.map) {
+              if (!cancelled) setAprByPoolId(parsed.map);
+              return;
+            }
+          }
+        } catch {}
         const response = await fetch('/api/liquidity/get-pools-batch');
         if (!response.ok) return;
         const data = await response.json();
@@ -1552,168 +1916,13 @@ export default function PortfolioPage() {
           if (p.poolId) map[String(p.poolId).toLowerCase()] = aprStr;
         }
         if (!cancelled) setAprByPoolId(map);
+        try { localStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), map })); } catch {}
       } catch {}
     };
     fetchApr();
     return () => { cancelled = true; };
   }, []);
-
-  // Fetch pool state data for tick information
-  useEffect(() => {
-    let cancelled = false;
-    const fetchPoolData = async () => {
-      if (activePositions.length === 0) return;
-      
-      try {
-        const uniquePairs = new Map<string, { token0Symbol: string; token1Symbol: string; poolId: string }>();
-        
-        // Collect unique token pairs from positions
-        activePositions.forEach(p => {
-          if (p?.poolId && p?.token0?.symbol && p?.token1?.symbol) {
-            const key = `${p.token0.symbol}-${p.token1.symbol}`;
-            if (!uniquePairs.has(key)) {
-              uniquePairs.set(key, {
-                token0Symbol: p.token0.symbol,
-                token1Symbol: p.token1.symbol,
-                poolId: p.poolId
-              });
-            }
-          }
-        });
-        
-        const poolDataMap: Record<string, any> = {};
-        
-        // Fetch pool state for each unique token pair
-        for (const { token0Symbol, token1Symbol, poolId } of uniquePairs.values()) {
-          try {
-            const response = await fetch('/api/liquidity/get-pool-state', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                token0Symbol,
-                token1Symbol,
-                chainId: 84532 // Base Sepolia
-              }),
-            });
-            
-            if (response.ok) {
-              const poolState = await response.json();
-              if (poolState.currentPoolTick !== undefined) {
-                poolDataMap[String(poolId).toLowerCase()] = {
-                  tick: poolState.currentPoolTick,
-                  price: poolState.currentPrice,
-                  sqrtPriceX96: poolState.sqrtPriceX96,
-                  tickSpacing: getPoolById(poolId)?.tickSpacing || 60
-                };
-              }
-            }
-          } catch (error) {
-            console.error(`Failed to fetch pool state for ${token0Symbol}/${token1Symbol}:`, error);
-          }
-        }
-        
-        if (!cancelled) setPoolDataByPoolId(poolDataMap);
-      } catch (error) {
-        console.error('Error fetching pool data:', error);
-      }
-    };
-    
-    fetchPoolData();
-    return () => { cancelled = true; };
-  }, [activePositions]);
-
-  // Helper function to get cache key consistently
-  const getCacheKey = useCallback((poolId: string, tickLower: number, tickUpper: number) => {
-    const positionRange = Math.abs(tickUpper - tickLower);
-    const maxRange = 5000;
-    const padding = Math.min(positionRange * 0.5, maxRange * 0.3);
-    const minTick = Math.floor(Math.min(tickLower, tickUpper) - padding);
-    const maxTick = Math.ceil(Math.max(tickLower, tickUpper) + padding);
-    return `${poolId}-${minTick}-${maxTick}`;
-  }, []);
-
-  // Skeleton loading orchestration (placed after getCacheKey definition)
-  const readiness: Readiness = useMemo(() => {
-    const buckets: Record<string, boolean> = {};
-    // Build bucket readiness map for all current positions
-    activePositions.forEach(position => {
-      if (position?.poolId) {
-        const tl = position.tickLower;
-        const tu = position.tickUpper;
-        const cacheKey = getCacheKey(position.poolId, tl, tu);
-        buckets[cacheKey] = !loadingBuckets.has(cacheKey);
-      }
-    });
-
-    // Treat an empty portfolio (no tokens/positions) as "ready" so we render the empty state
-    const isEmptyPortfolio = !portfolioData.isLoading && (portfolioData.tokenBalances.length === 0) && activePositions.length === 0;
-
-    return {
-      core: !portfolioData.isLoading && activePositions.length >= 0, // core data ready
-      prices: isEmptyPortfolio || Object.keys(portfolioData.priceMap).length > 0, // prices available or nothing to price
-      apr: isEmptyPortfolio || Object.keys(aprByPoolId).length > 0, // APR ready or irrelevant for empty
-      buckets, // per-position bucket readiness
-    };
-  }, [portfolioData.isLoading, portfolioData.priceMap, aprByPoolId, activePositions, loadingBuckets, getCacheKey]);
-
-  const { phase, showSkeletonFor } = useLoadPhases(readiness);
-
-  // Centralized bucket data fetching
-  const fetchBucketData = useCallback(async (poolId: string, tickLower: number, tickUpper: number, tickSpacing: number) => {
-    const cacheKey = getCacheKey(poolId, tickLower, tickUpper);
-    if (bucketDataCache[cacheKey] || loadingBuckets.has(cacheKey)) return;
-
-    setLoadingBuckets(prev => new Set(prev).add(cacheKey));
-    
-    try {
-      const positionRange = Math.abs(tickUpper - tickLower);
-      const maxRange = 5000;
-      const padding = Math.min(positionRange * 0.5, maxRange * 0.3);
-      const minTick = Math.floor(Math.min(tickLower, tickUpper) - padding);
-      const maxTick = Math.ceil(Math.max(tickLower, tickUpper) + padding);
-      
-      const response = await fetch('/api/liquidity/get-bucket-depths', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          poolId,
-          tickLower: minTick,
-          tickUpper: maxTick,
-          tickSpacing: Number(tickSpacing),
-          bucketCount: 25
-        }),
-      });
-
-      if (response.ok) {
-        const result = await response.json();
-        if (result.success && result.buckets) {
-          setBucketDataCache(prev => ({ ...prev, [cacheKey]: result.buckets }));
-        }
-      }
-    } catch (error) {
-      console.error('Error fetching bucket data:', error);
-    } finally {
-      setLoadingBuckets(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(cacheKey);
-        return newSet;
-      });
-    }
-  }, [getCacheKey]);
-
-  // Trigger bucket data fetching for visible positions
-  useEffect(() => {
-    activePositions.forEach(p => {
-      if (p?.poolId && p?.tickLower !== undefined && p?.tickUpper !== undefined) {
-        const poolData = poolDataByPoolId[String(p.poolId).toLowerCase()];
-        if (poolData?.tickSpacing) {
-          fetchBucketData(p.poolId, p.tickLower, p.tickUpper, poolData.tickSpacing);
-        }
-      }
-    });
-  }, [activePositions, poolDataByPoolId, fetchBucketData]);
+  // (removed local pool state and bucket depth fetching; handled in usePortfolio)
 
   const formatAgeShort = (seconds: number | undefined) => {
     if (!seconds || !isFinite(seconds)) return '';
@@ -1744,7 +1953,28 @@ export default function PortfolioPage() {
 
       try {
         // Processed active positions (discover via subgraph, compute onchain)
-        const processedActive = await getUserPositionsOnchain(accountAddress, { verifyLiquidity: false });
+        const processedActiveRaw = await getUserPositionsOnchain(accountAddress, { verifyLiquidity: false });
+        let processedActive = Array.isArray(processedActiveRaw) ? processedActiveRaw : [];
+        // Filter to configured pools only (use allowedPoolIds set defined above)
+        try {
+          processedActive = processedActive.filter((p: any) => {
+            const pid = String(p?.poolId || '').toLowerCase();
+            if (pid && allowedPoolIds.has(pid)) return true;
+            const t0 = String(p?.token0?.symbol || '').toUpperCase();
+            const t1 = String(p?.token1?.symbol || '').toUpperCase();
+            // Build allowed pairs once
+            const pools = getAllPools();
+            const allowedPairs = new Set(
+              (pools || []).flatMap((pool: any) => {
+                const a = `${(pool?.currency0?.symbol || '').toUpperCase()}/${(pool?.currency1?.symbol || '').toUpperCase()}`;
+                const b = `${(pool?.currency1?.symbol || '').toUpperCase()}/${(pool?.currency0?.symbol || '').toUpperCase()}`;
+                return [a, b];
+              })
+            );
+            return allowedPairs.has(`${t0}/${t1}`);
+          });
+        } catch {}
+        try { console.log('[Portfolio] positions fetched:', processedActive.length, processedActive?.[0]); } catch {}
         if (!isCancelled) {
           setActivePositions(processedActive);
         }
@@ -1760,8 +1990,7 @@ export default function PortfolioPage() {
 
     fetchPositions();
     return () => { isCancelled = true; };
-  }, [isConnected, accountAddress]);
-
+  }, [isConnected, accountAddress && false]);
   // Load activity (best-effort): mints, burns, collects, swaps for owner
   useEffect(() => {
     let isCancelled = false;
@@ -1776,46 +2005,12 @@ export default function PortfolioPage() {
       setIsLoadingActivity(true);
       setActivityError(undefined);
       try {
-        const SUBGRAPH_URL = "https://api.studio.thegraph.com/query/111443/alphix-test/version/latest";
-        const ACTIVITY_QUERY = `
-          query GetUserActivity($owner: String!, $poolIds: [String!], $first: Int!) {
-            positionsCreated: hookPositions(
-              first: $first,
-              orderBy: blockTimestamp,
-              orderDirection: desc,
-              where: { owner: $owner, pool_in: $poolIds }
-            ) {
-              id
-              pool
-              owner
-              currency0 { id symbol decimals }
-              currency1 { id symbol decimals }
-              tickLower
-              tickUpper
-              liquidity
-              blockTimestamp
-              blockNumber
-              transactionHash
-            }
-            swapsRecent: swaps(first: $first, orderBy: timestamp, orderDirection: desc, where: { pool_in: $poolIds }) {
-              id
-              timestamp
-              sender
-              recipient
-              amount0
-              amount1
-              pool { id currency0 { id symbol decimals } currency1 { id symbol decimals } }
-            }
-          }
-        `;
-
         const variables = {
           owner: accountAddress?.toLowerCase(),
           poolIds: Array.from(allowedPoolIds),
           first: 300,
         } as const;
-
-        const cacheKey = `activity:${variables.owner}:${variables.first}:${variables.poolIds.join(",")}`;
+        const cacheKey = `activity:${variables.owner}:${variables.first}:${variables.poolIds.join(',')}`;
         try {
           const cached = localStorage.getItem(cacheKey);
           if (cached && !isCancelled) {
@@ -1823,182 +2018,17 @@ export default function PortfolioPage() {
             setActivityItems(parsed.items || []);
           }
         } catch {}
-
-        const res = await fetch(SUBGRAPH_URL, {
+        const res = await fetch('/api/portfolio/get-activity', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: ACTIVITY_QUERY, variables }),
+          body: JSON.stringify(variables),
         });
-        const text = await res.text();
-        let json: any = null;
-        try { json = JSON.parse(text); } catch {}
-        if (!res.ok) {
-          const message = `HTTP ${res.status} ${res.statusText}`;
-          throw new Error(message);
+        if (!res.ok) throw new Error(await res.text());
+        const rows = await res.json();
+        if (!isCancelled && Array.isArray(rows)) {
+          setActivityItems(rows);
+          try { localStorage.setItem(cacheKey, JSON.stringify({ items: rows, ts: Date.now() })); } catch {}
         }
-        if (json?.errors?.length) {
-          const msg = json.errors.map((e: any) => e.message).join('; ');
-          throw new Error(msg);
-        }
-        if (!json?.data) {
-          throw new Error('No data');
-        }
-
-        type Row = {
-          id?: string;
-          type: 'Swap' | 'Add' | 'Withdraw';
-          ts: number;
-          tx?: string;
-          poolId: string;
-          poolSymbols: string;
-          amount0?: string;
-          amount1?: string;
-          sender?: string;
-          recipient?: string;
-          tickLower?: string;
-          tickUpper?: string;
-          liquidity?: string;
-          blockNumber?: number;
-          token0Addr?: string;
-          token1Addr?: string;
-        };
-
-        const mkRow = (type: Row['type'], r: any): Row => {
-          const idStr = String(r?.id || '');
-          const hashFromId = type === 'Swap' ? (() => {
-            const h = idStr.split('-')[0];
-            return h && h.startsWith('0x') && h.length === 66 ? h : undefined;
-          })() : undefined;
-          return {
-            id: r?.id,
-            type,
-            ts: Number(r?.timestamp || r?.blockTimestamp || 0),
-            tx: r?.transactionHash || r?.transaction?.id || hashFromId,
-            poolId: String((r?.pool?.id ?? r?.pool) || '').toLowerCase(),
-            poolSymbols: r?.pool?.currency0?.symbol
-              ? `${r?.pool?.currency0?.symbol}/${r?.pool?.currency1?.symbol}`
-              : `${r?.currency0?.symbol}/${r?.currency1?.symbol}`,
-            amount0: r?.amount0,
-            amount1: r?.amount1,
-            sender: r?.sender,
-            recipient: r?.recipient,
-            tickLower: r?.tickLower,
-            tickUpper: r?.tickUpper,
-            liquidity: r?.liquidity,
-            blockNumber: r?.blockNumber ? Number(r.blockNumber) : undefined,
-            token0Addr: (r?.currency0?.id || r?.pool?.currency0?.id || '').toLowerCase() || undefined,
-            token1Addr: (r?.currency1?.id || r?.pool?.currency1?.id || '').toLowerCase() || undefined,
-          };
-        };
-
-        const userLc = (accountAddress || '').toLowerCase();
-        const swapsRaw = (json.data.swapsRecent || []) as any[];
-        // Attribute swaps primarily by tx.from (EOA). Fallback: sender/recipient match.
-        const parseTxHash = (id: string | undefined) => {
-          if (!id) return undefined;
-          const h = String(id).split('-')[0];
-          return h && h.startsWith('0x') && h.length === 66 ? (h as `0x${string}`) : undefined;
-        };
-        const txFromCache: Record<string, string> = (() => {
-          try { return JSON.parse(localStorage.getItem('txFromCache') || '{}') || {}; } catch { return {}; }
-        })();
-        const unknownTxHashes: (`0x${string}`)[] = [];
-        for (const r of swapsRaw) {
-          const txh = parseTxHash(r?.id);
-          if (txh && !txFromCache[txh.toLowerCase()]) unknownTxHashes.push(txh);
-          if (unknownTxHashes.length >= 60) break;
-        }
-        for (const txh of unknownTxHashes) {
-          try {
-            const tx = await publicClient.getTransaction({ hash: txh });
-            if (tx?.from) txFromCache[txh.toLowerCase()] = tx.from.toLowerCase();
-          } catch {}
-        }
-        try { localStorage.setItem('txFromCache', JSON.stringify(txFromCache)); } catch {}
-        const swapsFiltered = swapsRaw.filter((r: any) => {
-          const senderLc = String(r?.sender || '').toLowerCase();
-          const recipientLc = String(r?.recipient || '').toLowerCase();
-          const txh = parseTxHash(r?.id);
-          const fromLc = txh ? txFromCache[txh.toLowerCase()] : undefined;
-          return fromLc === userLc || senderLc === userLc || recipientLc === userLc;
-        });
-
-        // Map position creations as Add
-        const addRows: Row[] = (json.data.positionsCreated || []).map((r: any) => mkRow('Add', r));
-
-        const rows: Row[] = [
-          ...addRows,
-          ...swapsFiltered.map((r: any) => mkRow('Swap', r)),
-        ]
-        .filter((r) => allowedPoolIds.has(r.poolId))
-        .sort((a, b) => b.ts - a.ts);
-
-        const deduped = (() => {
-          const seen = new Set<string>();
-          const out: Row[] = [];
-          for (const r of rows) {
-            const k = `${r.type}:${r.tx || r.ts}:${r.poolId}:${r.amount0}:${r.amount1}`;
-            if (seen.has(k)) continue;
-            seen.add(k);
-            out.push(r);
-          }
-          return out.slice(0, 50);
-        })();
-
-        // Enrich Liquidity rows with simplified direct Transfer log matching
-        const enrichLiquidityRows = async (rowsIn: Row[]): Promise<Row[]> => {
-          const transferTopic = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
-          const userLower = String(accountAddress || '').toLowerCase();
-          const out: Row[] = [];
-          for (const row of rowsIn) {
-            if (row.type !== 'Add' && row.type !== 'Withdraw') { out.push(row); continue; }
-            if (!row.tx) { out.push(row); continue; }
-            
-            try {
-              const receipt = await publicClient.getTransactionReceipt({ hash: row.tx as `0x${string}` });
-              
-              let amount0 = '';
-              let amount1 = '';
-              for (const log of receipt?.logs || []) {
-                if (!log || !log.topics || log.topics[0] !== transferTopic) continue;
-                const logAddress = (log as any).address?.toLowerCase();
-                const topicsArr = (log as any).topics as string[] | undefined;
-                const fromRaw = topicsArr && topicsArr.length > 1 ? topicsArr[1] : undefined;
-                const toRaw = topicsArr && topicsArr.length > 2 ? topicsArr[2] : undefined;
-                const valueRaw = (log as any).data as string | undefined;
-                if (!fromRaw || !toRaw || !valueRaw || valueRaw === '0x') continue;
-                const from = `0x${fromRaw.slice(26)}`.toLowerCase();
-                const to = `0x${toRaw.slice(26)}`.toLowerCase();
-                let val: bigint;
-                try { val = BigInt(valueRaw); } catch { continue; }
-                
-                // Match against user -> anyone for outgoing amounts
-                if (from === userLower) {
-                  if (row.token0Addr && logAddress === row.token0Addr.toLowerCase()) {
-                    amount0 = val.toString();
-                    
-                  } else if (row.token1Addr && logAddress === row.token1Addr.toLowerCase()) {
-                    amount1 = val.toString();
-                    
-                  }
-                }
-              }
-              const next: Row = { ...row };
-              if (amount0) next.amount0 = amount0;
-              if (amount1) next.amount1 = amount1;
-              
-              out.push(next);
-            } catch (e) {
-              
-              out.push(row);
-            }
-          }
-          return out;
-        };
-
-        const enriched = await enrichLiquidityRows(deduped);
-        if (!isCancelled) setActivityItems(enriched);
-        try { localStorage.setItem(cacheKey, JSON.stringify({ items: enriched, ts: Date.now() })); } catch {}
       } catch (e: any) {
         if (!isCancelled) setActivityError(e?.message || 'Failed to load activity');
       } finally {
@@ -2007,7 +2037,7 @@ export default function PortfolioPage() {
     };
     fetchActivity();
     return () => { isCancelled = true; };
-  }, [isConnected, accountAddress, allowedPoolIds]);
+  }, [isConnected, accountAddress, allowedPoolIds && false]);
 
   // Set initial responsive states before paint to avoid layout flicker
   useLayoutEffect(() => {
@@ -2052,7 +2082,6 @@ export default function PortfolioPage() {
     }
     return allItems;
   }, [portfolioData.tokenBalances, portfolioData.totalValue]);
-
   // Compact composition - aggregate items beyond first 3 into Rest if more than 4 total (same counting as wide)
   const compactComposition = useMemo(() => {
     const total = portfolioData.totalValue;
@@ -2274,10 +2303,8 @@ export default function PortfolioPage() {
   const poolsCount = portfolioData.tokenBalances.length; // Simplified for now
   const isPositive = pnl24hPct >= 0;
   const forceHideLabels = (!isConnected || activePositions.length === 0) && portfolioData.tokenBalances.length === 0;
-
   // Labels visibility control: hide only when not connected OR no positions AND no token balances
   const hideCompositionLabelsFlag = (!isConnected || activePositions.length === 0) && portfolioData.tokenBalances.length === 0;
-
   // Show skeleton during loading, empty state only after data is loaded
   if (showSkeletonFor.header || showSkeletonFor.table) {
     return (
@@ -2435,77 +2462,7 @@ export default function PortfolioPage() {
                   ))}
                 </div>
               ) : (
-                <div className="rounded-lg bg-muted/30 border border-sidebar-border/60">
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm" style={{ tableLayout: 'fixed' }}>
-                      <colgroup>
-                        <col style={{ width: `${colWidths.pool}%` }} />
-                        <col style={{ width: `${colWidths.amounts}%` }} />
-                        <col style={{ width: `${colWidths.apr}%` }} />
-                        <col style={{ width: `${colWidths.range}%` }} />
-                        <col style={{ width: `${colWidths.value}%` }} />
-                        <col style={{ width: '44px' }} />
-                      </colgroup>
-                      <thead className="border-b border-sidebar-border/60 text-xs text-muted-foreground">
-                        <tr>
-                          <th className="px-2 pl-6 py-3 text-left tracking-wider font-mono font-bold">POOL</th>
-                          <th className="pl-6 pr-2 py-3 text-left min-w-0">
-                            <button type="button" onClick={() => handleActiveSortCycle('amounts')} className="group inline-flex items-center">
-                              <span className="uppercase tracking-wider font-mono font-bold group-hover:text-foreground">AMOUNTS</span>
-                              {renderSortIcon(activeSort.column === 'amounts' ? activeSort.direction : null)}
-                            </button>
-                          </th>
-                          <th className="pl-6 pr-2 py-3 text-left min-w-0">
-                            <button type="button" onClick={() => handleActiveSortCycle('apr')} className="group inline-flex items-center">
-                              <span className="uppercase tracking-wider font-mono font-bold group-hover:text-foreground">APR</span>
-                              {renderSortIcon(activeSort.column === 'apr' ? activeSort.direction : null)}
-                            </button>
-                          </th>
-                          <th className="pl-6 pr-2 py-3 text-left min-w-0">
-                            <span className="uppercase tracking-wider font-mono font-bold">RANGE</span>
-                          </th>
-                          <th className="py-3 pr-3 text-right tracking-wider font-mono font-bold">VALUE</th>
-                          <th className="py-3 pr-2 text-right w-[44px] sticky right-0 z-10 bg-background"></th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {[...Array(4)].map((_, idx) => (
-                          <tr key={idx} className="border-b border-sidebar-border/60 last:border-b-0">
-                            <td className="py-4 px-2 pl-6 align-middle">
-                              <div className="flex items-center gap-2 min-w-0">
-                                <TokenPairLogoSkeleton />
-                                <SkeletonLine className="h-4 w-20 sm:w-28" />
-                              </div>
-                            </td>
-                            <td className="py-4 px-2">
-                              <SkeletonLine className="h-3 w-24 sm:w-32" />
-                            </td>
-                            <td className="py-4 px-2">
-                              <SkeletonLine className="h-3 w-16 sm:w-20" />
-                            </td>
-                            <td className="py-4 px-2">
-                              <div className="h-8 overflow-hidden flex items-center">
-                                <TickRangePortfolio
-                                  tickLower={0}
-                                  tickUpper={100}
-                                  currentTick={50}
-                                  tickSpacing={1}
-                                  bare
-                                  bucketData={[]}
-                                  isLoading
-                                />
-                              </div>
-                            </td>
-                            <td className="py-4 px-2 text-right">
-                              <SkeletonLine className="h-4 w-16 sm:w-20 ml-auto" />
-                            </td>
-                            <td className="py-4 px-2"></td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
+                <ActivePositionsSkeleton />
               )
             )}
             </div>
@@ -2541,14 +2498,12 @@ export default function PortfolioPage() {
   }
 
   // Removed early empty-state return; render full structure with section-level messages instead
-
-
   return (
     <PortfolioFilterContext.Provider value={{ activeTokenFilter, setActiveTokenFilter, isStickyHover, setIsStickyHover, hoverTokenLabel: effectiveTokenLabel }}>
       <AppLayout>
       <div className="flex flex-1 flex-col p-3 sm:p-6 sm:px-10">
         {/* Portfolio header with skeleton gate */}
-        {showSkeletonFor.header ? (
+        {isLoading ? (
           <PortfolioHeaderSkeleton isVerySmallScreen={isVerySmallScreen} />
         ) : (
           <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-6">
@@ -2822,646 +2777,122 @@ export default function PortfolioPage() {
                   </DropdownMenuContent>
                 </DropdownMenu>
               )}
-              
-              {isIntegrateBalances && selectedSection === 'Balances' && (
-                (() => {
-                  const last = faucetLastClaimTs < 0 ? -1 : Number(faucetLastClaimTs || 0);
-                  const now = Math.floor(Date.now() / 1000);
-                  const onchainLast = faucetLastCalledOnchain ? Number(faucetLastCalledOnchain) : null;
-                  const effectiveLast = onchainLast && onchainLast > 0 ? onchainLast : (last >= 0 ? last : -1);
-                  const canClaim = isConnected && currentChainId === baseSepolia.id && effectiveLast >= 0 && (effectiveLast === 0 || now - effectiveLast >= 24 * 60 * 60);
-                  const handleClick = async () => {
-                    if (!canClaim) {
-                      toast.error('Can only claim once per day', { icon: <OctagonX className="h-4 w-4 text-red-500" /> });
-                      return;
-                    }
-                    try {
-                      setIsFaucetBusy(true);
-                      const res = await fetch('/api/misc/faucet', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userAddress: accountAddress, chainId: baseSepolia.id }) });
-                      const data = await res.json();
-                      if (!res.ok) {
-                        const msg = (data?.errorDetails || data?.message || '').toLowerCase();
-                        if (msg.includes('once per day')) {
-                          toast.error('Can only claim once per day', { icon: <OctagonX className="h-4 w-4 text-red-500" /> });
-                        } else {
-                          toast.error(data?.errorDetails || data?.message || 'API Error', { icon: <OctagonX className="h-4 w-4 text-red-500" /> });
-                        }
-                        setIsFaucetBusy(false);
-                        return;
-                      }
-                      toast.info('Sending faucet transaction to wallet...');
-                      writeContract({ address: data.to as `0x${string}`, abi: faucetAbi, functionName: 'faucet', args: [], chainId: data.chainId } as any, {
-                        onSuccess: (hash) => { setFaucetHash(hash); setTimeout(() => { try { refetchFaucetOnchain?.(); } catch {} }, 1000); }
-                      } as any);
-                    } catch (e: any) {
-                      toast.error(`Error during faucet action: ${e?.message || 'Unknown error'}`);
-                      setIsFaucetBusy(false);
-                    }
-                  };
-                  const disabled = Boolean(isFaucetBusy || isFaucetConfirming);
-                  const className = canClaim
-                    ? `px-2 py-1 text-xs rounded-md border border-sidebar-primary bg-[#3d271b] text-sidebar-primary transition-colors ${disabled ? 'opacity-70 cursor-not-allowed' : 'hover:bg-[#4a2f22]'}`
-                    : `px-2 py-1 text-xs rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-muted-foreground transition-colors ${disabled || last < 0 ? 'opacity-70 cursor-not-allowed' : 'hover:bg-muted/60'}`;
-                  const style = canClaim ? undefined : { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } as React.CSSProperties;
-                  return (
-                    <button type="button" onClick={handleClick} className={className} style={style} disabled={disabled || last < 0}>
-                      {disabled ? 'Processing…' : (last < 0 ? '—' : 'Claim Faucet')}
-                    </button>
-                  );
-                })()
-              )}
             </div>
           </div>
-
-          <div className={isMobile ? "" : ((selectedSection === 'Active Positions' && (!isConnected || activePositions.length === 0) && !isLoadingPositions && !showSkeletonFor.table) ? "" : (selectedSection === 'Active Positions' ? "rounded-lg bg-muted/30 border border-sidebar-border/60" : ""))}>
-            <div className={isMobile ? "" : ((selectedSection === 'Active Positions' && (!isConnected || activePositions.length === 0) && !isLoadingPositions && !showSkeletonFor.table) ? "" : (selectedSection === 'Active Positions' ? "p-0" : "")) }>
+          <div>
+            <div>
               {/* Active Positions */}
               {selectedSection === 'Active Positions' && (
-                <div className={isMobile ? "" : undefined}>
-                  <div className={isMobile ? "" : "p-0"}>
-                    {showSkeletonFor.table ? (
-                      isMobile ? (
-                        <div className="flex flex-col gap-3">
-                          {[...Array(3)].map((_, idx) => (
-                            <div key={idx} className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-3">
-                              <div className="flex items-center gap-3 min-w-0">
-                                <TokenPairLogoSkeleton size={24} offset={14} />
-                                <div className="flex-1 space-y-2 min-w-0">
-                                  <SkeletonLine className="h-4 w-24 sm:w-32" />
-                                  <SkeletonLine className="h-3 w-32 sm:w-40" />
-                                </div>
-                                <div className="text-right space-y-1">
-                                  <SkeletonLine className="h-4 w-16" />
-                                  <SkeletonLine className="h-3 w-12" />
-                                </div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="overflow-x-auto">
-                          <table className="w-full text-sm" style={{ tableLayout: 'fixed' }}>
-                            <colgroup>
-                              {/* Pool */}
-                              <col style={{ width: `${colWidths.pool}%` }} />
-                              {/* Amounts */}
-                              <col style={{ width: `${colWidths.amounts}%` }} />
-                              {/* APR */}
-                              <col style={{ width: `${colWidths.apr}%` }} />
-                              {/* Range */}
-                              <col style={{ width: `${colWidths.range}%` }} />
-                              {/* Value */}
-                              <col style={{ width: `${colWidths.value}%` }} />
-                              {/* Menu (fixed px to prevent overflow) */}
-                              <col style={{ width: '44px' }} />
-                            </colgroup>
-                            <thead className="border-b border-sidebar-border/60 text-xs text-muted-foreground">
-                              <tr>
-                                <th className="px-2 pl-6 py-3 text-left tracking-wider font-mono font-bold">POOL</th>
-                                <th className="pl-6 pr-2 py-3 text-left min-w-0">
-                                  <button type="button" onClick={() => handleActiveSortCycle('amounts')} className="group inline-flex items-center">
-                                    <span className="uppercase tracking-wider font-mono font-bold group-hover:text-foreground">AMOUNTS</span>
-                                    {renderSortIcon(activeSort.column === 'amounts' ? activeSort.direction : null)}
-                                  </button>
-                                </th>
-                                <th className="pl-6 pr-2 py-3 text-left min-w-0">
-                                  <button type="button" onClick={() => handleActiveSortCycle('apr')} className="group inline-flex items-center">
-                                    <span className="uppercase tracking-wider font-mono font-bold group-hover:text-foreground">APR</span>
-                                    {renderSortIcon(activeSort.column === 'apr' ? activeSort.direction : null)}
-                                  </button>
-                                </th>
-                                <th className="pl-6 pr-2 py-3 text-left min-w-0">
-                                  <span className="uppercase tracking-wider font-mono font-bold">RANGE</span>
-                                </th>
-                                <th className="py-3 pr-3 text-right">
-                                  <button type="button" onClick={() => handleActiveSortCycle('value')} className="group inline-flex items-center justify-end">
-                                    <span className="uppercase tracking-wider font-mono font-bold group-hover:text-foreground">VALUE</span>
-                                    {renderSortIcon(activeSort.column === 'value' ? activeSort.direction : null)}
-                                  </button>
-                                </th>
-                                <th className="py-3 pr-2 text-right w-[44px] sticky right-0 z-10 bg-background"></th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {[...Array(4)].map((_, idx) => (
-                                <tr key={idx} className="border-b border-sidebar-border/60 last:border-b-0">
-                                  <td className="py-4 px-2 pl-6 align-middle text-left">
-                                    <div className="flex items-center gap-2 min-w-0">
-                                      <TokenPairLogoSkeleton />
-                                      <SkeletonLine className="h-4 w-20 sm:w-28" />
-                                    </div>
-                                  </td>
-                                  <td className="py-4 px-2 text-left">
-                                    <SkeletonLine className="h-3 w-24 sm:w-32" />
-                                  </td>
-                                  <td className="py-4 px-2 text-left">
-                                    <SkeletonLine className="h-3 w-16 sm:w-20" />
-                                  </td>
-                                  <td className="py-4 px-2 text-left">
-                                    <div className="h-8 overflow-hidden flex items-center justify-start">
-                                      <TickRangePortfolio
-                                        tickLower={0}
-                                        tickUpper={100}
-                                        currentTick={50}
-                                        tickSpacing={1}
-                                        bare
-                                        bucketData={[]}
-                                        isLoading
-                                      />
-                                    </div>
-                                  </td>
-                                  <td className="py-4 px-2 text-right">
-                                    <SkeletonLine className="h-4 w-16 sm:w-20 ml-auto" />
-                                  </td>
-                                  <td className="py-4 px-2"></td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )
-                    ) : (!isConnected || activePositions.length === 0) && !isLoadingPositions ? (
+                <div>
+                  <div>
+                    {isLoading ? (
+                      <ActivePositionsSkeleton />
+                    ) : (!isConnected || activePositions.length === 0) ? (
                       <div className="border border-dashed rounded-lg bg-muted/10 p-8 w-full flex items-center justify-center">
                         <div className="text-sm text-white/75">
                           {!isConnected ? 'Connect Wallet to see Positions' : 'No active positions.'}
-                        </div>
-                      </div>
+                                  </div>
+                                    </div>
                     ) : (
-                      isMobile ? (
-                        <div className="flex flex-col gap-3">
-                          {activePositions.map((position, idx) => {
-                            const token0Icon = getToken(position?.token0?.symbol || '')?.icon || '/placeholder.svg';
-                            const token1Icon = getToken(position?.token1?.symbol || '')?.icon || '/placeholder.svg';
-                            const valueUSD = (() => {
-                              const sym0 = position?.token0?.symbol as string | undefined;
-                              const sym1 = position?.token1?.symbol as string | undefined;
-                              const amt0 = parseFloat(position?.token0?.amount || '0');
-                              const amt1 = parseFloat(position?.token1?.amount || '0');
-                              const price0 = (sym0 && portfolioData.priceMap[sym0]) || 0;
-                              const price1 = (sym1 && portfolioData.priceMap[sym1]) || 0;
-                              return amt0 * price0 + amt1 * price1;
-                            })();
-                            const inRange = !!position?.isInRange;
-                            return (
+                      <div className="flex flex-col gap-3 lg:gap-4">
+                        {groupedByPool.map(({ poolId, items, totalUSD }) => {
+                          const poolKey = String(poolId).toLowerCase();
+                          const first = items[0];
+                          const isExpanded = !!expandedPools[poolKey];
+                          const token0Icon = getToken(first?.token0?.symbol || '')?.icon || '/placeholder.svg';
+                          const token1Icon = getToken(first?.token1?.symbol || '')?.icon || '/placeholder.svg';
+                          return (
+                            <React.Fragment key={`pool-group-${poolKey}`}>
                               <div
-                                key={position.positionId || idx}
-                                className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-3 cursor-pointer"
-                                onClick={() => navigateToPoolBySubgraphId(position?.poolId)}
+                                className={`flex items-center justify-between px-4 py-3 rounded-lg border border-sidebar-border/60 bg-muted/30 hover:bg-muted/40 cursor-pointer`}
+                                onClick={() => togglePoolExpanded(poolKey)}
                               >
-                                <div className="flex items-center gap-3">
-                                  <div className="relative w-14 h-7">
-                                    <div className="absolute top-1/2 -translate-y-1/2 left-0 w-7 h-7 rounded-full overflow-hidden bg-background z-10">
-                                      <Image src={token0Icon} alt={position?.token0?.symbol || ''} width={28} height={28} className="w-full h-full object-cover" />
+                                <div className="flex items-center gap-3 min-w-0">
+                                  <div className="relative" style={{ width: '3.5rem', height: '1.75rem' }}>
+                                    <div className="absolute top-1/2 -translate-y-1/2 left-0 rounded-full overflow-hidden bg-background z-10" style={{ width: 28, height: 28 }}>
+                                      <Image src={token0Icon} alt={first?.token0?.symbol || ''} width={28} height={28} className="w-full h-full object-cover" />
                                     </div>
-                                    <div className="absolute top-1/2 -translate-y-1/2 left-4 w-7 h-7">
+                                    <div className="absolute top-1/2 -translate-y-1/2" style={{ left: '1rem', width: '1.75rem', height: '1.75rem' }}>
                                       <div className="absolute inset-0 rounded-full overflow-hidden bg-background z-30">
-                                        <Image src={token1Icon} alt={position?.token1?.symbol || ''} width={28} height={28} className="w-full h-full object-cover" />
+                                        <Image src={token1Icon} alt={first?.token1?.symbol || ''} width={28} height={28} className="w-full h-full object-cover" />
                                       </div>
-                                      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-[#111111] z-20"></div>
+                                      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#111111] z-20" style={{ width: 32, height: 32 }}></div>
                                     </div>
                                   </div>
-                                  <div className="flex-1 min-w-0">
-                                    <div className="font-medium text-sm truncate">{position?.token0?.symbol}/{position?.token1?.symbol}</div>
-                                    <div className="text-xs text-muted-foreground">
-                                      <span>{formatTokenAmount(Number(position?.token0?.amount || 0), 4)} {position?.token0?.symbol}</span>
-                                      <span className="mx-1">·</span>
-                                      <span>{formatTokenAmount(Number(position?.token1?.amount || 0), 4)} {position?.token1?.symbol}</span>
-                                    </div>
-                                  </div>
-                                  <div className="flex items-center gap-2">
-                                    {inRange ? (
-                                      <BadgeCheck className="h-4 w-4 text-green-500" />
-                                    ) : (
-                                      <OctagonX className="h-4 w-4 text-red-500" />
-                                    )}
-                                    <div className="text-xs text-muted-foreground whitespace-nowrap">{formatUSD(valueUSD)}</div>
-                                  </div>
+                                  <div className="truncate font-normal text-sm">{first?.token0?.symbol}/{first?.token1?.symbol}</div>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                  <TooltipProvider delayDuration={0}>
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <div className="text-xs text-muted-foreground whitespace-nowrap cursor-default">{formatUSD(totalUSD)}</div>
+                                      </TooltipTrigger>
+                                      <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
+                                        Total Value
+                                      </TooltipContent>
+                                    </Tooltip>
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <span className="ml-1 w-5 h-5 flex items-center justify-center text-[10px] rounded bg-[var(--sidebar-connect-button-bg)] text-muted-foreground cursor-default" style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}>
+                                          {items.length}
+                                        </span>
+                                      </TooltipTrigger>
+                                      <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
+                                        Position Count
+                                      </TooltipContent>
+                                    </Tooltip>
+                                  </TooltipProvider>
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`transition-transform ${isExpanded ? 'rotate-90' : ''}`}>
+                                    <path d="m9 18 6-6-6-6" />
+                                  </svg>
                                 </div>
                               </div>
-                            );
-                          })}
-                        </div>
-                      ) : (
-                        <div className="overflow-x-auto">
-                        <table className="w-full text-sm" style={{ tableLayout: 'fixed' }}>
-                          <colgroup>
-                            {/* Pool */}
-                            <col style={{ width: `${colWidths.pool}%` }} />
-                            {/* Amounts */}
-                            <col style={{ width: `${colWidths.amounts}%` }} />
-                            {/* APR */}
-                            <col style={{ width: `${colWidths.apr}%` }} />
-                            {/* Range */}
-                            <col style={{ width: `${colWidths.range}%` }} />
-                            {/* Value */}
-                            <col style={{ width: `${colWidths.value}%` }} />
-                            {/* Menu (fixed px to prevent overflow) */}
-                            <col style={{ width: '44px' }} />
-                          </colgroup>
-                          <thead className="border-b border-sidebar-border/60 text-xs text-muted-foreground">
-                            <tr>
-                              <th className="px-2 pl-6 py-3 text-left tracking-wider font-mono font-bold">POOL</th>
-                              <th className="pl-6 pr-2 py-3 text-left min-w-0">
-                                <button type="button" onClick={() => handleActiveSortCycle('amounts')} className="group inline-flex items-center">
-                                  <span className="uppercase tracking-wider font-mono font-bold group-hover:text-foreground">AMOUNTS</span>
-                                  {renderSortIcon(activeSort.column === 'amounts' ? activeSort.direction : null)}
-                                </button>
-                              </th>
-                              <th className="pl-6 pr-2 py-3 text-left min-w-0">
-                                <button type="button" onClick={() => handleActiveSortCycle('apr')} className="group inline-flex items-center">
-                                  <span className="uppercase tracking-wider font-mono font-bold group-hover:text-foreground">APR</span>
-                                  {renderSortIcon(activeSort.column === 'apr' ? activeSort.direction : null)}
-                                </button>
-                              </th>
-                              <th className="pl-6 pr-2 py-3 text-left min-w-0">
-                                <span className="uppercase tracking-wider font-mono font-bold">RANGE</span>
-                              </th>
-                              <th className="py-3 pr-3 text-right">
-                                <button type="button" onClick={() => handleActiveSortCycle('value')} className="group inline-flex items-center justify-end">
-                                  <span className="uppercase tracking-wider font-mono font-bold group-hover:text-foreground">VALUE</span>
-                                  {renderSortIcon(activeSort.column === 'value' ? activeSort.direction : null)}
-                                </button>
-                              </th>
-                              <th className="py-3 pr-2 text-right w-[44px] sticky right-0 z-10 bg-background"></th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {groupedByPool.map(({ poolId, items, totalUSD }, gIdx) => {
-                              const first = items[0];
-                              const poolKey = String(poolId).toLowerCase();
-                              const isExpanded = !!expandedPools[poolKey];
-                              const hiddenCount = Math.max(0, items.length - 1);
-                              const token0Icon = getToken(first?.token0?.symbol || '')?.icon || '/placeholder.svg';
-                              const token1Icon = getToken(first?.token1?.symbol || '')?.icon || '/placeholder.svg';
-                              const apr = aprByPoolId[poolKey] || '—';
-                                                              return (
-                                  <React.Fragment key={`group-wrap-${poolKey}`}>
-                                    <tr
-                                      key={`group-${poolKey}`}
-                                      className={`hover:bg-muted/20 ${items.length > 1 ? 'bg-muted/10' : ''} ${openMenuKey === poolKey ? 'bg-muted/20' : ''} border-t border-b border-sidebar-border/60 ${gIdx === 0 ? 'border-t-0' : ''} last:border-b-0 cursor-pointer`}
-                                      onClick={() => {
-                                        if (items.length > 1) {
-                                          togglePoolExpanded(poolKey)
-                                        } else {
-                                          navigateToPoolBySubgraphId(first?.poolId)
-                                        }
-                                      }}
-                                    >
-                                    <td className="py-4 px-2 pl-6 align-middle relative" colSpan={items.length > 1 ? 2 : 1}>
-                                      {items.length > 1 && (
-                                        <div className="absolute left-0 top-0 bottom-0 w-1" style={{ backgroundColor: 'hsl(var(--sidebar-primary))' }} />
-                                      )}
-                                      <div className="flex items-center gap-2">
-                                        {items.length > 1 && (
-                                          <button
-                                            type="button"
-                                            onClick={(e) => { e.stopPropagation(); togglePoolExpanded(poolKey); }}
-                                            className="text-muted-foreground hover:text-foreground transition-colors"
-                                            aria-label={isExpanded ? 'Collapse' : 'Expand'}
-                                          >
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`transition-transform ${isExpanded ? 'rotate-90' : ''}`}>
-                                              <path d="m9 18 6-6-6-6" />
-                                            </svg>
-                                          </button>
-                                        )}
-                                        <div className="relative cursor-pointer" onClick={() => navigateToPoolBySubgraphId(first?.poolId)} style={{ width: isIconOnlyRangeThreshold ? '2.5rem' : '3.5rem', height: isIconOnlyRangeThreshold ? '1.25rem' : '1.75rem' }}>
-                                          <div className="absolute top-1/2 -translate-y-1/2 left-0 rounded-full overflow-hidden bg-background z-10" style={{ width: isIconOnlyRangeThreshold ? 20 : 28, height: isIconOnlyRangeThreshold ? 20 : 28 }}>
-                                            <Image src={token0Icon} alt={first?.token0?.symbol || ''} width={isIconOnlyRangeThreshold ? 20 : 28} height={isIconOnlyRangeThreshold ? 20 : 28} className="w-full h-full object-cover" />
-                                          </div>
-                                          <div className="absolute top-1/2 -translate-y-1/2" style={{ left: isIconOnlyRangeThreshold ? '0.9rem' : '1rem', width: isIconOnlyRangeThreshold ? '1.25rem' : '1.75rem', height: isIconOnlyRangeThreshold ? '1.25rem' : '1.75rem' }}>
-                                            <div className="absolute inset-0 rounded-full overflow-hidden bg-background z-30">
-                                              <Image src={token1Icon} alt={first?.token1?.symbol || ''} width={isIconOnlyRangeThreshold ? 20 : 28} height={isIconOnlyRangeThreshold ? 20 : 28} className="w-full h-full object-cover" />
-                                            </div>
-                                            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#111111] z-20" style={{ width: isIconOnlyRangeThreshold ? 22 : 32, height: isIconOnlyRangeThreshold ? 22 : 32 }}></div>
-                                          </div>
-                                        </div>
-                                        <span className="font-medium cursor-pointer truncate max-w-[10rem] sm:max-w-[12rem]" onClick={() => navigateToPoolBySubgraphId(first?.poolId)}>{first?.token0?.symbol}/{first?.token1?.symbol}</span>
-                                        {items.length > 1 && (
-                                          <span className="ml-1 w-5 h-5 flex items-center justify-center text-[10px] rounded bg-[var(--sidebar-connect-button-bg)] text-muted-foreground" style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}>
-                                            {items.length}
-                                          </span>
-                                        )}
-                                      </div>
-                                    </td>
-                                    {!(items.length > 1) && (
-                                      <td className="py-4 pl-6 pr-2 align-middle min-w-0">
-                                        <div className="text-xs text-muted-foreground">
-                                          {(() => {
-                                            const sel = activeTokenFilter?.toUpperCase?.();
-                                            const hover = effectiveTokenLabel?.toUpperCase?.();
-                                            const s0 = first?.token0?.symbol?.toUpperCase?.();
-                                            const s1 = first?.token1?.symbol?.toUpperCase?.();
-                                            const amt0 = formatTokenAmount(Number.parseFloat(first?.token0?.amount || '0'), 4);
-                                            const amt1 = formatTokenAmount(Number.parseFloat(first?.token1?.amount || '0'), 4);
-                                            if (isStackThreshold) {
-                                              return (
-                                                <div className="flex flex-col gap-0.5">
-                                                  <span className={((sel && s0 && sel === s0) || (hover && s0 && hover === s0)) ? 'text-foreground font-medium text-xs' : undefined}>{amt0} {first?.token0?.symbol}</span>
-                                                  <span className={((sel && s1 && sel === s1) || (hover && s1 && hover === s1)) ? 'text-foreground font-medium text-xs' : undefined}>{amt1} {first?.token1?.symbol}</span>
-                                                </div>
-                                              );
-                                            }
-                                            return (
-                                              <>
-                                                <span className={((sel && s0 && sel === s0) || (hover && s0 && hover === s0)) ? 'text-foreground font-medium text-xs' : undefined}>{amt0} {first?.token0?.symbol}</span>
-                                                <span className="mx-1">·</span>
-                                                <span className={((sel && s1 && sel === s1) || (hover && s1 && hover === s1)) ? 'text-foreground font-medium text-xs' : undefined}>{amt1} {first?.token1?.symbol}</span>
-                                              </>
-                                            );
-                                          })()}
-                                        </div>
-                                      </td>
-                                    )}
-                                        <td className="py-4 pl-6 pr-2 align-middle min-w-0">
-                                      {items.length > 1 ? (
-                                        <span></span>
-                                      ) : (
-                                        (() => {
-                                          const aprNum = typeof apr === 'string' && apr.endsWith('%') ? parseFloat(apr.replace('%', '')) : NaN;
-                                          if (!isFinite(aprNum)) return <span className="text-xs cursor-pointer">{apr}</span>;
-                                          if (aprNum > 999) {
-                                            return (
-                                              <TooltipProvider>
-                                                <Tooltip>
-                                                  <TooltipTrigger asChild>
-                                                    <span className="text-xs cursor-default">&gt;999%</span>
-                                                  </TooltipTrigger>
-                                                   <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">{formatPercent(aprNum, { min: 2, max: 2 })}</TooltipContent>
-                                                </Tooltip>
-                                              </TooltipProvider>
-                                            );
-                                          }
-                                           return <span className="text-xs cursor-pointer">{formatPercent(aprNum, { min: 2, max: 2 })}</span>;
-                                        })()
-                                      )}
-                                    </td>
-                                        <td className="py-4 pl-6 pr-2 align-middle min-w-0">
-                                      {items.length > 1 ? (
-                                        <div></div>
-                                      ) : (
-                                        (() => {
-                                            const ct = poolDataByPoolId[poolKey]?.tick ?? 0;
-                                            const ts = poolDataByPoolId[poolKey]?.tickSpacing ?? 60;
-                                            const tl = first?.tickLower ?? 0;
-                                            const tu = first?.tickUpper ?? 0;
-                                          const widthTicks = Math.max(1, tu - tl);
-                                          const distToEdge = Math.min(
-                                            Math.max(0, ct - tl),
-                                            Math.max(0, tu - ct)
-                                          );
-                                          const edgeRatio = distToEdge / widthTicks;
-                                          const inRange = !!first?.isInRange;
-                                          const isNearEdge = false; // per spec: do not show near-edge icon
-                                            if (isIconOnlyRangeThreshold) {
-                                              return (
-                                                <div className="flex items-center justify-center gap-2">
-                                                  {inRange ? (
-                                                    <BadgeCheck className="h-4 w-4 text-green-500" />
-                                                  ) : (
-                                                    <OctagonX className="h-4 w-4 text-red-500" />
-                                                  )}
-                                                </div>
-                                              );
-                                            }
-                                            return (
-                                              <div className="flex items-center">
-                                                <div className="h-8 overflow-hidden">
-                                                  {showSkeletonFor.charts && loadingBuckets.has(getCacheKey(first?.poolId || '', tl, tu)) ? (
-                                                    <TickRangePortfolio
-                                                      tickLower={tl}
-                                                      tickUpper={tu}
-                                                      currentTick={ct}
-                                                      tickSpacing={ts}
-                                                      poolId={first?.poolId}
-                                                      token0Symbol={first?.token0?.symbol}
-                                                      token1Symbol={first?.token1?.symbol}
-                                                      currentPrice={poolDataByPoolId[poolKey]?.price ? String(poolDataByPoolId[poolKey]?.price) : null}
-                                                      bucketData={[]}
-                                                      isLoading
-                                                      bare
-                                                    />
-                                                  ) : (
-                                                    <TickRangePortfolio
-                                                      tickLower={tl}
-                                                      tickUpper={tu}
-                                                      currentTick={ct}
-                                                      tickSpacing={ts}
-                                                      poolId={first?.poolId}
-                                                      token0Symbol={first?.token0?.symbol}
-                                                      token1Symbol={first?.token1?.symbol}
-                                                      currentPrice={poolDataByPoolId[poolKey]?.price ? String(poolDataByPoolId[poolKey]?.price) : null}
-                                                      bucketData={bucketDataCache[getCacheKey(first?.poolId || '', tl, tu)] || []}
-                                                      isLoading={loadingBuckets.has(getCacheKey(first?.poolId || '', tl, tu))}
-                                                      bare
-                                                    />
-                                                  )}
-                                                </div>
-                                                {(!inRange) && (
-                                                  <div className="ml-2 shrink-0 flex items-center">
-                                                    <TooltipProvider>
-                                                      <Tooltip>
-                                                        <TooltipTrigger asChild>
-                                                          <OctagonX className="h-4 w-4 text-red-500 cursor-default" />
-                                                        </TooltipTrigger>
-                                                        <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">Out of range</TooltipContent>
-                                                      </Tooltip>
-                                                    </TooltipProvider>
-                                                  </div>
-                                                )}
-                                              </div>
-                                            );
-                                        })()
-                                      )}
-                                    </td>
-                                    <td className="py-4 px-2 pr-3 align-middle text-right whitespace-nowrap">{formatUSD(totalUSD)}</td>
-                                    <td className="py-4 px-1 align-middle text-center w-[44px] sticky right-0 z-10 bg-background group-hover:bg-muted/30 transition-colors" onClick={(e) => e.stopPropagation()}>
-                                      {items.length > 1 ? (
-                                        <div />
-                                      ) : (
-                                        <div className="relative">
-                                          <DropdownMenu>
-                                            <DropdownMenuTrigger asChild>
-                                              <Button variant="ghost" className="h-8 w-8 p-0">
-                                                <span className="sr-only">Open menu</span>
-                                                <EllipsisVertical className="h-4 w-4" />
-                                              </Button>
-                                            </DropdownMenuTrigger>
-                                             <DropdownMenuContent align="end" sideOffset={2} className="border border-sidebar-border" style={{ backgroundColor: '#0f0f0f' }}>
-                                              <DropdownMenuItem className="cursor-pointer" onClick={() => openAddLiquidity(first)}>Add Liquidity</DropdownMenuItem>
-                                              <DropdownMenuItem className="cursor-pointer" onClick={() => openWithdraw(first)}>Withdraw</DropdownMenuItem>
-                                            </DropdownMenuContent>
-                                          </DropdownMenu>
-                                        </div>
-                                      )}
-                                    </td>
-                                  </tr>
-                                  {isExpanded && items.map((p, idx) => {
+                              {isExpanded && (
+                                <div className="flex flex-col gap-3 lg:gap-4 pl-4 border-l border-dashed border-sidebar-border/60 ml-4">
+                                  {items.map((position) => {
                                     const valueUSD = (() => {
-                                      const sym0 = p?.token0?.symbol as string | undefined;
-                                      const sym1 = p?.token1?.symbol as string | undefined;
-                                      const amt0 = parseFloat(p?.token0?.amount || '0');
-                                      const amt1 = parseFloat(p?.token1?.amount || '0');
+                                      const sym0 = position?.token0?.symbol as string | undefined;
+                                      const sym1 = position?.token1?.symbol as string | undefined;
+                                      const amt0 = parseFloat(position?.token0?.amount || '0');
+                                      const amt1 = parseFloat(position?.token1?.amount || '0');
                                       const price0 = (sym0 && portfolioData.priceMap[sym0]) || 0;
                                       const price1 = (sym1 && portfolioData.priceMap[sym1]) || 0;
                                       return amt0 * price0 + amt1 * price1;
                                     })();
-                                    const token0Icon = getToken(p?.token0?.symbol || '')?.icon || '/placeholder.svg';
-                                    const token1Icon = getToken(p?.token1?.symbol || '')?.icon || '/placeholder.svg';
-                                    const apr = aprByPoolId[poolKey] || '—';
                                     return (
-                                      <tr key={`${poolKey}-child-${idx}`} className={`hover:bg-muted/10 ${isExpanded ? '' : 'border-b border-sidebar-border/60 last:border-0'} cursor-pointer`} onClick={() => navigateToPoolBySubgraphId(p?.poolId)}>
-                                        <td className="py-3 px-2 pl-[3.25rem] align-middle">
-                                          <div></div>
-                                        </td>
-                                        <td className="py-3 pl-6 pr-2 align-middle">
-                                        <div className="text-xs text-muted-foreground">
-                                            {(() => {
-                                              const sel = activeTokenFilter?.toUpperCase?.();
-                                              const hover = effectiveTokenLabel?.toUpperCase?.();
-                                              const s0 = p?.token0?.symbol?.toUpperCase?.();
-                                              const s1 = p?.token1?.symbol?.toUpperCase?.();
-                                              const amt0 = formatTokenAmount(Number.parseFloat(p?.token0?.amount || '0'), 4);
-                                              const amt1 = formatTokenAmount(Number.parseFloat(p?.token1?.amount || '0'), 4);
-                                              if (isStackThreshold) {
-                                                return (
-                                                  <div className="flex flex-col gap-0.5">
-                                                    <span className={((sel && s0 && sel === s0) || (hover && s0 && hover === s0)) ? 'text-foreground font-medium text-xs' : undefined}>{amt0} {p?.token0?.symbol}</span>
-                                                    <span className={((sel && s1 && sel === s1) || (hover && s1 && hover === s1)) ? 'text-foreground text-xs' : undefined}>{amt1} {p?.token1?.symbol}</span>
-                                                  </div>
-                                                );
-                                              }
-                                              return (
-                                                <>
-                                                  <span className={((sel && s0 && sel === s0) || (hover && s0 && hover === s0)) ? 'text-foreground font-medium text-xs' : undefined}>{amt0} {p?.token0?.symbol}</span>
-                                                  <span className="mx-1">·</span>
-                                                  <span className={((sel && s1 && sel === s1) || (hover && s1 && hover === s1)) ? 'text-foreground text-xs' : undefined}>{amt1} {p?.token1?.symbol}</span>
-                                                </>
-                                              );
-                                            })()}
-                                          </div>
-                                        </td>
-                                        <td className="py-3 pl-6 pr-2 align-middle">
-                                          {(() => {
-                                            const aprNum = typeof apr === 'string' && apr.endsWith('%') ? parseFloat(apr.replace('%', '')) : NaN;
-                                            if (!isFinite(aprNum)) return <span className="text-xs cursor-pointer">{apr}</span>;
-                                             if (aprNum > 999) {
-                                               return (
-                                                 <TooltipProvider>
-                                                   <Tooltip>
-                                                     <TooltipTrigger asChild>
-                                                       <span className="text-xs cursor-default">&gt;999%</span>
-                                                     </TooltipTrigger>
-                                                      <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">{`${aprNum.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`}</TooltipContent>
-                                                   </Tooltip>
-                                                 </TooltipProvider>
-                                               );
-                                             }
-                                             return <span className="text-xs cursor-pointer">{aprNum.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%</span>;
-                                          })()}
-                                        </td>
-                                    <td className="py-3 pl-6 pr-2 align-middle min-w-0">
-                                          {(() => {
-                                            const ct = poolDataByPoolId[poolKey]?.tick ?? 0;
-                                            const ts = poolDataByPoolId[poolKey]?.tickSpacing ?? 60;
-                                            const tl = p?.tickLower ?? 0;
-                                            const tu = p?.tickUpper ?? 0;
-                                            const widthTicks = Math.max(1, tu - tl);
-                                            const distToEdge = Math.min(
-                                              Math.max(0, ct - tl),
-                                              Math.max(0, tu - ct)
-                                            );
-                                            const edgeRatio = distToEdge / widthTicks;
-                                            const inRange = !!p?.isInRange;
-                                            const isNearEdge = false; // per spec: do not show near-edge icon
-                                            if (isIconOnlyRangeThreshold) {
-                                              return (
-                                                <div className="flex items-center justify-center gap-2">
-                                                  {inRange ? (
-                                                    <BadgeCheck className="h-4 w-4 text-green-500" />
-                                                  ) : (
-                                                    <OctagonX className="h-4 w-4 text-red-500" />
-                                                  )}
-                                                </div>
-                                              );
-                                            }
-                                            return (
-                                              <div className="flex items-center">
-                                                <div className="h-8 overflow-hidden">
-                                                  {showSkeletonFor.charts && loadingBuckets.has(getCacheKey(p?.poolId || '', tl, tu)) ? (
-                                                    <TickRangePortfolio
-                                                      tickLower={tl}
-                                                      tickUpper={tu}
-                                                      currentTick={ct}
-                                                      tickSpacing={ts}
-                                                      poolId={p?.poolId}
-                                                      token0Symbol={p?.token0?.symbol}
-                                                      token1Symbol={p?.token1?.symbol}
-                                                      currentPrice={poolDataByPoolId[poolKey]?.price ? String(poolDataByPoolId[poolKey]?.price) : null}
-                                                      bucketData={[]}
-                                                      isLoading
-                                                      bare
-                                                    />
-                                                  ) : (
-                                                    <TickRangePortfolio
-                                                      tickLower={tl}
-                                                      tickUpper={tu}
-                                                      currentTick={ct}
-                                                      tickSpacing={ts}
-                                                      poolId={p?.poolId}
-                                                      token0Symbol={p?.token0?.symbol}
-                                                      token1Symbol={p?.token1?.symbol}
-                                                      currentPrice={poolDataByPoolId[poolKey]?.price ? String(poolDataByPoolId[poolKey]?.price) : null}
-                                                      bucketData={bucketDataCache[getCacheKey(p?.poolId || '', tl, tu)] || []}
-                                                      isLoading={loadingBuckets.has(getCacheKey(p?.poolId || '', tl, tu))}
-                                                      bare
-                                                    />
-                                                  )}
-                                                </div>
-                                                {(!inRange) && (
-                                                  <div className="ml-2 shrink-0 flex items-center">
-                                                    <TooltipProvider>
-                                                      <Tooltip>
-                                                        <TooltipTrigger asChild>
-                                                          <OctagonX className="h-4 w-4 text-red-500 cursor-default" />
-                                                        </TooltipTrigger>
-                                                        <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">Out of range</TooltipContent>
-                                                      </Tooltip>
-                                                    </TooltipProvider>
-                                                  </div>
-                                                )}
-                                              </div>
-                                            );
-                                          })()}
-                                        </td>
-                                        <td className="py-3 px-2 pr-3 align-middle text-right whitespace-nowrap">
-                                          <span className="text-xs text-muted-foreground">{formatUSD(valueUSD)}</span>
-                                        </td>
-                                        <td className="py-3 px-1 align-middle text-center w-[44px] sticky right-0 z-10 bg-background group-hover:bg-muted/30 transition-colors" onClick={(e) => e.stopPropagation()}>
-                                          <div className="relative">
-                                            <DropdownMenu>
-                                              <DropdownMenuTrigger asChild>
-                                                <Button variant="ghost" className="h-8 w-8 p-0">
-                                                  <span className="sr-only">Open menu</span>
-                                                  <EllipsisVertical className="h-4 w-4" />
-                                                </Button>
-                                              </DropdownMenuTrigger>
-                                              <DropdownMenuContent align="end" sideOffset={2} className="border border-sidebar-border" style={{ backgroundColor: '#0f0f0f' }}>
-                                              <DropdownMenuItem className="cursor-pointer" onClick={() => openAddLiquidity(p)}>Add Liquidity</DropdownMenuItem>
-                                              <DropdownMenuItem className="cursor-pointer" onClick={() => openWithdraw(p)}>Withdraw</DropdownMenuItem>
-                                              </DropdownMenuContent>
-                                            </DropdownMenu>
-                                          </div>
-                                        </td>
-                                      </tr>
+                                      <PositionCard
+                                        key={position.positionId}
+                                        position={position as any}
+                                        valueUSD={valueUSD}
+                                        poolKey={poolKey}
+                                        getUsdPriceForSymbol={getUsdPriceForSymbol}
+                                        determineBaseTokenForPriceDisplay={determineBaseTokenForPriceDisplay}
+                                        convertTickToPrice={convertTickToPrice}
+                                        poolDataByPoolId={poolDataByPoolId}
+                                        formatTokenDisplayAmount={formatTokenDisplayAmount}
+                                        formatAgeShort={formatAgeShort}
+                                        openWithdraw={openWithdraw}
+                                        openAddLiquidity={openAddLiquidity}
+                                        claimFees={claimFees}
+                                        compoundFees={compoundFees}
+                                        toast={toast}
+                                        openPositionMenuKey={openPositionMenuKey}
+                                        setOpenPositionMenuKey={setOpenPositionMenuKey}
+                                        positionMenuOpenUp={positionMenuOpenUp}
+                                        setPositionMenuOpenUp={setPositionMenuOpenUp}
+                                        onClick={() => navigateToPoolBySubgraphId(position.poolId)}
+                                        isLoadingPrices={!readiness.prices}
+                                        isLoadingPoolStates={isLoadingPoolStates}
+                                      />
                                     );
                                   })}
-                                </React.Fragment>
-                              );
-                            })}
-                          </tbody>
-                        </table>
+                                </div>
+                              )}
+                            </React.Fragment>
+                          );
+                        })}
                       </div>
-                    ))}
+                    )}
                   </div>
                 </div>
               )}
@@ -3548,12 +2979,41 @@ export default function PortfolioPage() {
                                       const sym1 = (it.poolSymbols || '').split('/')[1] || '';
                                       const d0 = getTokenCfg(sym0);
                                       const d1 = getTokenCfg(sym1);
-                                      const dec0 = d0?.decimals ?? 18;
-                                      const dec1 = d1?.decimals ?? 18;
+                                      const inferDecimalsFromSymbol = (symbol: string) => {
+                                        const s = (symbol || '').toUpperCase();
+                                        if (s.includes('USDC') || s.includes('USDT')) return 6;
+                                        if (s.includes('BTC')) return 8;
+                                        return 18;
+                                      };
+                                      const getSafeDecimals = (symbol: string, dec?: number) => {
+                                        const n = Number(dec);
+                                        if (Number.isInteger(n) && n >= 1 && n <= 36) return n;
+                                        return inferDecimalsFromSymbol(symbol);
+                                      };
+                                      const dec0 = getSafeDecimals(sym0, d0?.decimals);
+                                      const dec1 = getSafeDecimals(sym1, d1?.decimals);
                                       const isNeg0 = String(it.amount0 || '').startsWith('-');
                                       const isNeg1 = String(it.amount1 || '').startsWith('-');
-                                      const amt0 = viemFormatUnits(BigInt(String(it.amount0 || '0').replace(/^-/, '')), dec0);
-                                      const amt1 = viemFormatUnits(BigInt(String(it.amount1 || '0').replace(/^-/, '')), dec1);
+                                      const asReadable = (raw: any, dec: number) => {
+                                        const sRaw = String(raw ?? '0');
+                                        const s = sRaw.replace(/,/g, '');
+                                        const neg = s.startsWith('-');
+                                        const abs = neg ? s.slice(1) : s;
+
+                                        if (abs.includes('.')) {
+                                          return s;
+                                        }
+
+                                        try {
+                                          const val = viemFormatUnits(BigInt(abs), dec);
+                                          return neg ? `-${val}` : val;
+                                        } catch (e) {
+                                          console.error(`Could not parse amount: ${sRaw}`, e);
+                                          return sRaw;
+                                        }
+                                      };
+                                      const amt0 = asReadable(it.amount0, dec0);
+                                      const amt1 = asReadable(it.amount1, dec1);
                                       const negPart = isNeg0
                                         ? `${formatNumber(Number(amt0), { max: d0?.displayDecimals ?? 4 })} ${sym0}`
                                         : `${formatNumber(Number(amt1), { max: d1?.displayDecimals ?? 4 })} ${sym1}`;
@@ -3574,14 +3034,43 @@ export default function PortfolioPage() {
                                       const sym1 = (it.poolSymbols || '').split('/')[1] || '';
                                       const d0 = getTokenCfg(sym0);
                                       const d1 = getTokenCfg(sym1);
-                                      const dec0 = d0?.decimals ?? 18;
-                                      const dec1 = d1?.decimals ?? 18;
+                                      const inferDecimalsFromSymbol = (symbol: string) => {
+                                        const s = (symbol || '').toUpperCase();
+                                        if (s.includes('USDC') || s.includes('USDT')) return 6;
+                                        if (s.includes('BTC')) return 8;
+                                        return 18;
+                                      };
+                                      const getSafeDecimals = (symbol: string, dec?: number) => {
+                                        const n = Number(dec);
+                                        if (Number.isInteger(n) && n >= 1 && n <= 36) return n;
+                                        return inferDecimalsFromSymbol(symbol);
+                                      };
+                                      const dec0 = getSafeDecimals(sym0, d0?.decimals);
+                                      const dec1 = getSafeDecimals(sym1, d1?.decimals);
+                                      const asReadable = (raw: any, dec: number) => {
+                                        const sRaw = String(raw ?? '0');
+                                        const s = sRaw.replace(/,/g, '');
+                                        const neg = s.startsWith('-');
+                                        const abs = neg ? s.slice(1) : s;
+
+                                        if (abs.includes('.')) {
+                                          return s;
+                                        }
+
+                                        try {
+                                          const val = viemFormatUnits(BigInt(abs), dec);
+                                          return neg ? `-${val}` : val;
+                                        } catch (e) {
+                                          console.error(`Could not parse amount: ${sRaw}`, e);
+                                          return sRaw;
+                                        }
+                                      };
                                       if (it.amount0) {
-                                        const a0 = viemFormatUnits(BigInt(String(it.amount0 || '0').replace(/^-/, '')), dec0);
+                                        const a0 = asReadable(it.amount0, dec0);
                                         parts.push(`${formatNumber(Number(a0), { max: d0?.displayDecimals ?? 4 })} ${sym0}`);
                                       }
                                       if (it.amount1) {
-                                        const a1 = viemFormatUnits(BigInt(String(it.amount1 || '0').replace(/^-/, '')), dec1);
+                                        const a1 = asReadable(it.amount1, dec1);
                                         parts.push(`${formatNumber(Number(a1), { max: d1?.displayDecimals ?? 4 })} ${sym1}`);
                                       }
                                       return parts.join(' + ');
@@ -3739,7 +3228,6 @@ export default function PortfolioPage() {
             </div>
           </div>
           </div>
-
           {/* Right-side: Balances (desktop only) */}
            {!isIntegrateBalances && (
              <aside className="lg:flex-none" style={{ width: viewportWidth >= 1024 ? '450px' : '100%' }}>
@@ -3798,7 +3286,7 @@ export default function PortfolioPage() {
                       }
                     } as any);
                   } catch (e: any) {
-                    toast.error(`Error during faucet action: ${e?.message || 'Unknown error'}`);
+                    toast.error(`Error during faucet action: ${e?.message || 'Unknown error'}`, { icon: <OctagonX className="h-4 w-4 text-red-500" /> });
                     setIsFaucetBusy(false);
                   }
                 };
@@ -3881,14 +3369,21 @@ export default function PortfolioPage() {
         {/* no third state below 1100px */}
       </div>
         {/* Add Liquidity Modal */}
-        <Dialog open={showIncreaseModal} onOpenChange={setShowIncreaseModal}>
+        <Dialog open={showIncreaseModal} onOpenChange={(open) => {
+          if (isIncreasingLiquidity || isIncreaseCalculating) return;
+          setShowIncreaseModal(open);
+        }}>
           <DialogContent className="w-[calc(100%-2rem)] sm:w-full max-w-lg border border-border shadow-lg [&>button]:hidden" style={{ backgroundColor: 'var(--modal-background)' }}>
+            <DialogHeader>
+              <DialogTitle className="sr-only">Add Liquidity</DialogTitle>
+              <DialogDescription className="sr-only">Add more liquidity to your existing position.</DialogDescription>
+            </DialogHeader>
             {positionToModify && (
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-medium">Current Position</span>
                   {!positionToModify.isInRange && (
-                    <div className="inline-flex items-center border px-2.5 py-0.5 text-xs bg-[#3d271b] text-sidebar-primary border-sidebar-primary rounded-md">
+                    <div className="flex items-center justify-center h-5 rounded-md px-2 text-xs leading-none bg-red-500/20 text-red-500">
                       Out of Range
                     </div>
                   )}
@@ -3940,8 +3435,13 @@ export default function PortfolioPage() {
                         const bal = token0BalanceData?.formatted || '0';
                         setIncreaseAmount0(bal);
                         setIncreaseActiveInputSide('amount0');
-                        if (parseFloat(bal) > 0) calculateIncreaseAmount(bal, 'amount0', positionToModify);
-                      }} disabled={isIncreasingLiquidity || isIncreaseCalculating}>
+                        if (parseFloat(bal) > 0) calculateIncreaseAmount(bal, 'amount0', positionToModify); else setIncreaseAmount1('');
+                      }} disabled={(function(){
+                        const poolKey = String(positionToModify?.poolId || '').toLowerCase();
+                        const ct = poolDataByPoolId[poolKey]?.tick;
+                        const above = typeof ct === 'number' ? ct > positionToModify.tickUpper : false;
+                        return isIncreasingLiquidity || isIncreaseCalculating || above;
+                      })()}>
                         Balance: {displayToken0Balance} {positionToModify.token0.symbol}
                       </Button>
                     </div>
@@ -3953,14 +3453,22 @@ export default function PortfolioPage() {
                         </div>
                         <div className="flex-1">
                           <Input id="increase-amount0" placeholder="0.0" value={increaseAmount0} onChange={(e) => {
+                            const poolKey = String(positionToModify?.poolId || '').toLowerCase();
+                            const ct = poolDataByPoolId[poolKey]?.tick;
+                            const above = typeof ct === 'number' ? ct > positionToModify.tickUpper : false; // token1 productive only
+                            if (above) return; // block non-productive manual input
                             const v = e.target.value;
                             handleIncreaseAmountChange(v, 'amount0');
                             if (v && parseFloat(v) > 0) calculateIncreaseAmount(v, 'amount0', positionToModify); else setIncreaseAmount1('');
-                          }} disabled={isIncreaseCalculating && increaseActiveInputSide === 'amount1'} className="border-0 bg-transparent text-right text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto" />
+                          }} disabled={(function(){
+                            const poolKey = String(positionToModify?.poolId || '').toLowerCase();
+                            const ct = poolDataByPoolId[poolKey]?.tick;
+                            const above = typeof ct === 'number' ? ct > positionToModify.tickUpper : false;
+                            return (isIncreaseCalculating && increaseActiveInputSide === 'amount1') || above;
+                          })()} className="border-0 bg-transparent text-right text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto" />
                         </div>
                       </div>
                     </div>
-                    {isIncreaseCalculating && increaseActiveInputSide === 'amount0' && (<div className="text-xs text-muted-foreground mt-1">Calculating...</div>)}
                   </div>
 
                   <div className="flex justify-center items-center my-2">
@@ -3977,7 +3485,12 @@ export default function PortfolioPage() {
                         setIncreaseAmount1(bal);
                         setIncreaseActiveInputSide('amount1');
                         if (parseFloat(bal) > 0) calculateIncreaseAmount(bal, 'amount1', positionToModify);
-                      }} disabled={isIncreasingLiquidity || isIncreaseCalculating}>
+                      }} disabled={(function(){
+                        const poolKey = String(positionToModify?.poolId || '').toLowerCase();
+                        const ct = poolDataByPoolId[poolKey]?.tick;
+                        const below = typeof ct === 'number' ? ct < positionToModify.tickLower : false;
+                        return isIncreasingLiquidity || isIncreaseCalculating || below;
+                      })()}>
                         Balance: {displayToken1Balance} {positionToModify.token1.symbol}
                       </Button>
                     </div>
@@ -3989,20 +3502,28 @@ export default function PortfolioPage() {
                         </div>
                         <div className="flex-1">
                           <Input id="increase-amount1" placeholder="0.0" value={increaseAmount1} onChange={(e) => {
+                            const poolKey = String(positionToModify?.poolId || '').toLowerCase();
+                            const ct = poolDataByPoolId[poolKey]?.tick;
+                            const below = typeof ct === 'number' ? ct < positionToModify.tickLower : false; // token0 productive only
+                            if (below) return; // block non-productive manual input
                             const v = e.target.value;
                             handleIncreaseAmountChange(v, 'amount1');
                             if (v && parseFloat(v) > 0) calculateIncreaseAmount(v, 'amount1', positionToModify); else setIncreaseAmount0('');
-                          }} disabled={isIncreaseCalculating && increaseActiveInputSide === 'amount0'} className="border-0 bg-transparent text-right text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto" />
+                          }} disabled={(function(){
+                            const poolKey = String(positionToModify?.poolId || '').toLowerCase();
+                            const ct = poolDataByPoolId[poolKey]?.tick;
+                            const below = typeof ct === 'number' ? ct < positionToModify.tickLower : false;
+                            return (isIncreaseCalculating && increaseActiveInputSide === 'amount0') || below;
+                          })()} className="border-0 bg-transparent text-right text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto" />
                         </div>
                       </div>
                     </div>
-                    {isIncreaseCalculating && increaseActiveInputSide === 'amount1' && (<div className="text-xs text-muted-foreground mt-1">Calculating...</div>)}
                   </div>
                 </div>
               </div>
             )}
             <DialogFooter className="grid grid-cols-2 gap-3">
-              <Button variant="outline" className="relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75 disabled:opacity-50" onClick={() => { setShowIncreaseModal(false); }} disabled={isIncreasingLiquidity} style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}>
+              <Button variant="outline" className="relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75 disabled:opacity-50" onClick={() => { if (isIncreasingLiquidity || isIncreaseCalculating) return; setShowIncreaseModal(false); }} disabled={isIncreasingLiquidity} style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}>
                 Cancel
               </Button>
               <Button className={isIncreasingLiquidity || isIncreaseCalculating ? "relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 !opacity-100 cursor-default text-white/75" : "text-sidebar-primary border border-sidebar-primary bg-[#3d271b] hover:bg-[#3d271b]/90"} onClick={() => {
@@ -4018,7 +3539,7 @@ export default function PortfolioPage() {
                   tickUpper: positionToModify.tickUpper,
                 };
                 increaseLiquidity(data);
-                setShowIncreaseModal(false);
+                // keep modal open; will close on success via onLiquidityIncreasedCallback
               }} disabled={isIncreasingLiquidity || isIncreaseCalculating || ((!increaseAmount0 || parseFloat(increaseAmount0) <= 0) && (!increaseAmount1 || parseFloat(increaseAmount1) <= 0))} style={(isIncreasingLiquidity || isIncreaseCalculating) ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}>
                 {isIncreasingLiquidity ? (<><RefreshCwIcon className="mr-2 h-4 w-4 animate-spin" /><span className="animate-pulse">Adding...</span></>) : ('Add Liquidity')}
               </Button>
@@ -4027,14 +3548,21 @@ export default function PortfolioPage() {
         </Dialog>
 
         {/* Withdraw Modal */}
-        <Dialog open={showWithdrawModal} onOpenChange={setShowWithdrawModal}>
+        <Dialog open={showWithdrawModal} onOpenChange={(open) => {
+          if (isDecreasingLiquidity) return;
+          setShowWithdrawModal(open);
+        }}>
           <DialogContent className="w-[calc(100%-2rem)] sm:w-full max-w-lg border border-border shadow-lg [&>button]:hidden" style={{ backgroundColor: 'var(--modal-background)' }}>
+            <DialogHeader>
+              <DialogTitle className="sr-only">Withdraw Liquidity</DialogTitle>
+              <DialogDescription className="sr-only">Withdraw liquidity from your existing position.</DialogDescription>
+            </DialogHeader>
             {positionToWithdraw && (
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-medium">Current Position</span>
                   {!positionToWithdraw.isInRange && (
-                    <div className="inline-flex items-center border px-2.5 py-0.5 text-xs bg-[#3d271b] text-sidebar-primary border-sidebar-primary rounded-md">
+                    <div className="flex items-center justify-center h-5 rounded-md px-2 text-xs leading-none bg-red-500/20 text-red-500">
                       Out of Range
                     </div>
                   )}
@@ -4088,7 +3616,7 @@ export default function PortfolioPage() {
                         setWithdrawAmount0(max0);
                         setWithdrawAmount1(max1);
                         setWithdrawActiveInputSide('amount0');
-                      }} disabled={isDecreasingLiquidity}>
+                      }} disabled={isDecreasingLiquidity || withdrawProductiveSide === 'amount1'}>
                         Balance: {formatTokenDisplayAmount(positionToWithdraw.token0.amount)}
                       </Button>
                     </div>
@@ -4105,11 +3633,10 @@ export default function PortfolioPage() {
                             if (parseFloat(v) > max) { handleWithdrawAmountChange(String(max), 'amount0'); return; }
                             handleWithdrawAmountChange(v, 'amount0');
                             if (v && parseFloat(v) > 0) calculateWithdrawAmount(v, 'amount0', positionToWithdraw); else setWithdrawAmount1('');
-                          }} disabled={isWithdrawCalculating && withdrawActiveInputSide === 'amount1'} className="border-0 bg-transparent text-right text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto" />
+                          }} disabled={(isWithdrawCalculating && withdrawActiveInputSide === 'amount1') || withdrawProductiveSide === 'amount1'} className="border-0 bg-transparent text-right text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto" />
                         </div>
                       </div>
                     </div>
-                    {isWithdrawCalculating && withdrawActiveInputSide === 'amount0' && (<div className="text-xs text-muted-foreground mt-1">Calculating...</div>)}
                   </div>
 
                   <div className="flex justify-center items-center my-2">
@@ -4127,7 +3654,7 @@ export default function PortfolioPage() {
                         setWithdrawAmount0(max0);
                         setWithdrawAmount1(max1);
                         setWithdrawActiveInputSide('amount1');
-                      }} disabled={isDecreasingLiquidity}>
+                      }} disabled={isDecreasingLiquidity || withdrawProductiveSide === 'amount0'}>
                         Balance: {formatTokenDisplayAmount(positionToWithdraw.token1.amount)}
                       </Button>
                     </div>
@@ -4144,17 +3671,16 @@ export default function PortfolioPage() {
                             if (parseFloat(v) > max) { handleWithdrawAmountChange(String(max), 'amount1'); return; }
                             handleWithdrawAmountChange(v, 'amount1');
                             if (v && parseFloat(v) > 0) calculateWithdrawAmount(v, 'amount1', positionToWithdraw); else setWithdrawAmount0('');
-                          }} disabled={isWithdrawCalculating && withdrawActiveInputSide === 'amount0'} className="border-0 bg-transparent text-right text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto" />
+                          }} disabled={(isWithdrawCalculating && withdrawActiveInputSide === 'amount0') || withdrawProductiveSide === 'amount0'} className="border-0 bg-transparent text-right text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto" />
                         </div>
                       </div>
                     </div>
-                    {isWithdrawCalculating && withdrawActiveInputSide === 'amount1' && (<div className="text-xs text-muted-foreground mt-1">Calculating...</div>)}
                   </div>
                 </div>
               </div>
             )}
             <DialogFooter className="grid grid-cols-2 gap-3">
-              <Button variant="outline" className="relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75 disabled:opacity-50" onClick={() => { setShowWithdrawModal(false); }} disabled={isDecreasingLiquidity} style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}>
+              <Button variant="outline" className="relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75 disabled:opacity-50" onClick={() => { if (isDecreasingLiquidity) return; setShowWithdrawModal(false); }} disabled={isDecreasingLiquidity} style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}>
                 Cancel
               </Button>
               <Button className="text-sidebar-primary border border-sidebar-primary bg-[#3d271b] hover:bg-[#3d271b]/90" onClick={() => {
@@ -4171,7 +3697,7 @@ export default function PortfolioPage() {
                   tickUpper: positionToWithdraw.tickUpper,
                 };
                 decreaseLiquidity(data, 0);
-                setShowWithdrawModal(false);
+                // keep modal open; will close on success via onLiquidityDecreasedCallback
               }} disabled={isDecreasingLiquidity || ((!withdrawAmount0 || parseFloat(withdrawAmount0) <= 0) && (!withdrawAmount1 || parseFloat(withdrawAmount1) <= 0))}>
                 Withdraw
               </Button>
@@ -4194,7 +3720,6 @@ interface CompactCompositionBarProps {
   initialWidth?: number; // width computed by parent for first paint
   forceHideLabels?: boolean;
 }
-
 function CompactCompositionBar({ composition, onHover, hoveredSegment, handleRestClick, setIsRestCycling, isRestCycling, restCycleIndex, initialWidth, forceHideLabels }: CompactCompositionBarProps) {
   //
   const SMALL_SEGMENT_THRESHOLD = 10; // tweakable (e.g., 5)
@@ -4469,7 +3994,7 @@ function CompactCompositionBar({ composition, onHover, hoveredSegment, handleRes
                   if (s.label === 'Rest') {
                     handleRestClick(s, i);
                   } else {
-                    setActiveTokenFilter((activeToken) => (activeToken?.toUpperCase?.() === s.label?.toUpperCase?.() ? null : s.label));
+                    setActiveTokenFilter((activeToken) => (activeToken?.toUpperCase?.() === (s as any).label?.toUpperCase?.() ? null : ((s as any).label as string)));
                     setIsRestCycling(false);
                   }
                 }}
@@ -4535,7 +4060,6 @@ interface PortfolioTickBarProps {
   restCycleIndex: number;
   forceHideLabels?: boolean;
 }
-
 function PortfolioTickBar({ composition, onHover, hoveredSegment, containerRef, netApyRef, layout = "inline", handleRestClick, setIsRestCycling, isRestCycling, restCycleIndex, forceHideLabels }: PortfolioTickBarProps) {
   const SMALL_SEGMENT_THRESHOLD = 10; // tweakable (e.g., 5)
   const { activeTokenFilter, setActiveTokenFilter } = React.useContext(PortfolioFilterContext);
@@ -5137,17 +4661,17 @@ function PortfolioTickBar({ composition, onHover, hoveredSegment, containerRef, 
                             const rt = restArr[restCycleIndex] as any;
                             const rp = Math.round(rt?.pct ?? 0);
                             return (
-                              <span className="font-medium" style={{ color: isHovered || isSelected ? hoverColor : ((isSelected || isRestSegmentHighlighted(i)) ? selectedColor : (s as any).color) }}>{''}</span>
+                              <span className="font-medium" style={{ color: isHovered || isSelected ? hoverColor : ((isSelected || isRestSegmentHighlighted(i)) ? selectedColor : (s as any).color) }}>{`${rp}%`}</span>
                             );
                           }
                           return (
-                            <span className="font-medium" style={{ color: isHovered || isSelected ? hoverColor : ((isSelected || isRestSegmentHighlighted(i)) ? selectedColor : (s as any).color), fontSize: 12 }}>{''}</span>
+                            <span className="font-medium" style={{ color: isHovered || isSelected ? hoverColor : ((isSelected || isRestSegmentHighlighted(i)) ? selectedColor : (s as any).color), fontSize: 12 }}>{`+${restArr.length}`}</span>
                           );
                         })()
                       : (
-                        <span className="font-medium" style={{ color: isHovered ? hoverColor : ((isSelected || isRestSegmentHighlighted(i)) ? selectedColor : (s as any).color) }}>{''}</span>
+                        <span className="font-medium" style={{ color: isHovered ? hoverColor : ((isSelected || isRestSegmentHighlighted(i)) ? selectedColor : (s as any).color) }}>{`${pctRounded}%`}</span>
                       )}
-                    {false && showName && (() => {
+                    {showName && (() => {
                       const isRest = (s as any).label === 'Rest';
                       const restArrTmp = ((s as any).restTokens as any[] | undefined) || [];
                       const hasRest = Array.isArray(restArrTmp) && restArrTmp.length > 0;
@@ -5192,4 +4716,3 @@ function PortfolioTickBar({ composition, onHover, hoveredSegment, containerRef, 
     </TooltipProvider>
   );
 }
-
