@@ -1,21 +1,18 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getPoolSubgraphId, getAllPools, getTokenDecimals, getStateViewAddress } from '../../../lib/pools-config';
-import { batchGetTokenPrices, calculateSwapVolumeUSD, calculateTotalUSD } from '../../../lib/price-service';
+import { batchGetTokenPrices, calculateTotalUSD } from '../../../lib/price-service';
 import { formatUnits } from 'viem';
 import { publicClient } from '../../../lib/viemClient';
 import { parseAbi, type Hex } from 'viem';
 import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from '../../../lib/abis/state_view_abi';
 
-// Use Satsuma by default; allow env override if provided
-const SUBGRAPH_URL = process.env.SUBGRAPH_URL as string;
-if (!SUBGRAPH_URL) {
-  throw new Error('SUBGRAPH_URL env var is required');
-}
+// Read inside handler to avoid import-time crashes in serverless
+const getSubgraphUrl = () => process.env.SUBGRAPH_URL as string | undefined;
 
-// Query a single pool's TVL (per ID)
-const GET_POOL_TVL_QUERY = `
-  query GetPoolTVL($poolId: Bytes!) {
-    pool(id: $poolId) {
+// Bulk TVL per pool
+const GET_POOLS_TVL_BULK = `
+  query GetPoolsTVL($poolIds: [String!]!) {
+    pools(where: { id_in: $poolIds }) {
       id
       totalValueLockedToken0
       totalValueLockedToken1
@@ -23,19 +20,18 @@ const GET_POOL_TVL_QUERY = `
   }
 `;
 
-// Enhanced query to get all swap data needed for UI
-const GET_POOL_HOURLY_VOLUME_QUERY = `
-  query GetPoolHourly($poolId: String!, $cutoff: Int!) {
-    pools(where: { id: $poolId }) {
-      poolHourData(
-        where: { periodStartUnix_gte: $cutoff }
-        orderBy: periodStartUnix
-        orderDirection: desc
-      ) {
-        periodStartUnix
-        volumeToken0
-        volumeToken1
-      }
+// Bulk hourly volume for pools
+const GET_POOLS_HOURLY_BULK = `
+  query GetPoolsHourly($poolIds: [String!]!, $cutoff: Int!) {
+    poolHourDatas(
+      where: { pool_in: $poolIds, periodStartUnix_gte: $cutoff }
+      orderBy: periodStartUnix
+      orderDirection: desc
+    ) {
+      pool { id }
+      periodStartUnix
+      volumeToken0
+      volumeToken1
     }
   }
 `;
@@ -57,6 +53,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
+    const SUBGRAPH_URL = getSubgraphUrl();
+    if (!SUBGRAPH_URL) {
+      return res.status(500).json({ success: false, message: 'SUBGRAPH_URL env var is required' });
+    }
+
+    // Reduce API pressure for consecutive requests on Vercel
+    res.setHeader('Cache-Control', 's-maxage=30, stale-while-revalidate=120');
+
     console.log('[Batch API] Starting simplified batch pool data fetch...');
     
     // Get all pool IDs
@@ -71,7 +75,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const cutoff48h = now - (2 * 24 * 60 * 60);
     const cutoff7d = now - (7 * 24 * 60 * 60);
 
-    // No more raw swaps; we will query hourly volume per pool below
+    // No more per-pool subgraph calls; use bulk queries below
 
     // Build a quick lookup for pool config (symbols/decimals from config)
     const poolIdToConfig = new Map<string, { symbol0: string; symbol1: string; dec0: number; dec1: number }>();
@@ -102,9 +106,37 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const tokenPrices = await batchGetTokenPrices(Array.from(tokenSymbols));
     console.log('[Batch API] Fetched token prices:', tokenPrices);
 
-    // Process data for each pool
-    const poolsStats: BatchPoolStats[] = [];
+    // ---- Bulk subgraph fetches ----
+    // TVL for all pools
+    const tvlResp = await fetch(SUBGRAPH_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: GET_POOLS_TVL_BULK, variables: { poolIds: targetPoolIds.map((id) => id.toLowerCase()) } })
+    });
+    const tvlJson = tvlResp.ok ? await tvlResp.json() : { data: { pools: [] } };
+    const tvlById = new Map<string, { tvl0: any; tvl1: any }>();
+    for (const p of (tvlJson?.data?.pools || [])) {
+      tvlById.set(String(p.id).toLowerCase(), { tvl0: p.totalValueLockedToken0, tvl1: p.totalValueLockedToken1 });
+    }
 
+    // Hourly volume for all pools in one go (last ~25h)
+    const cutoffHourly = now - (25 * 60 * 60);
+    const hourlyResp = await fetch(SUBGRAPH_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: GET_POOLS_HOURLY_BULK, variables: { poolIds: targetPoolIds.map((id) => id.toLowerCase()), cutoff: cutoffHourly } })
+    });
+    const hourlyJson = hourlyResp.ok ? await hourlyResp.json() : { data: { poolHourDatas: [] } };
+    const hourlyByPoolId = new Map<string, Array<any>>();
+    for (const h of (hourlyJson?.data?.poolHourDatas || [])) {
+      const id = String(h?.pool?.id || '').toLowerCase();
+      if (!id) continue;
+      if (!hourlyByPoolId.has(id)) hourlyByPoolId.set(id, []);
+      hourlyByPoolId.get(id)!.push(h);
+    }
+
+    // ---- Process data per pool ----
+    const poolsStats: BatchPoolStats[] = [];
     for (const pool of allPools) {
       try {
         const poolId = (getPoolSubgraphId(pool.id) || pool.id).toLowerCase();
@@ -113,43 +145,34 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const token0Price = tokenPrices[symbol0];
         const token1Price = tokenPrices[symbol1];
 
-        if (!token0Price || !token1Price) {
-          console.warn(`[Batch API] Missing prices for pool ${poolId}, skipping`);
-          continue;
-        }
+        // Prices service returns fallbacks; if still missing, treat as 0
+        const safeToken0Price = typeof token0Price === 'number' ? token0Price : 0;
+        const safeToken1Price = typeof token1Price === 'number' ? token1Price : 0;
 
-        // Fetch TVL for this pool via singular query
-        const tvlResp = await fetch(SUBGRAPH_URL, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: GET_POOL_TVL_QUERY, variables: { poolId } })
-        });
+        // TVL
+        const cfg = poolIdToConfig.get(poolId)!;
+        const tvlEntry = tvlById.get(poolId);
         let tvlUSD = 0;
-        if (tvlResp.ok) {
-          const tvlJson = await tvlResp.json();
-          const pData = tvlJson?.data?.pool;
-          if (pData) {
-            const cfg = poolIdToConfig.get(poolId)!;
-            // Satsuma may return raw units; try to scale via decimals first, else accept as human-readable
-            const toHuman = (val: any, decimals: number) => {
-              try {
-                // If val is an integer-like string, formatUnits works
-                const bi = BigInt(String(val));
-                return parseFloat(formatUnits(bi, decimals));
-              } catch {
-                // Already human-readable decimal
-                const n = parseFloat(String(val));
-                return Number.isFinite(n) ? n : 0;
-              }
-            };
-            const amt0 = toHuman(pData.totalValueLockedToken0 || '0', cfg.dec0);
-            const amt1 = toHuman(pData.totalValueLockedToken1 || '0', cfg.dec1);
-            tvlUSD = calculateTotalUSD(amt0, amt1, token0Price, token1Price);
-          }
+        if (tvlEntry) {
+          const toHuman = (val: any, decimals: number) => {
+            try {
+              const bi = BigInt(String(val));
+              return parseFloat(formatUnits(bi, decimals));
+            } catch {
+              const n = parseFloat(String(val));
+              return Number.isFinite(n) ? n : 0;
+            }
+          };
+          const amt0 = toHuman(tvlEntry.tvl0 || '0', cfg.dec0);
+          const amt1 = toHuman(tvlEntry.tvl1 || '0', cfg.dec1);
+          tvlUSD = calculateTotalUSD(amt0, amt1, safeToken0Price, safeToken1Price);
         }
 
-        // Fetch current LP fee from on-chain state (getSlot0)
+        // Fee rate (on-chain)
         let poolFeeRate = 0.003; // default 0.3%
         try {
+          const STATE_VIEW_ADDRESS = getStateViewAddress();
+          const stateViewAbi = parseAbi(STATE_VIEW_HUMAN_READABLE_ABI);
           const slot0 = await publicClient.readContract({
             address: STATE_VIEW_ADDRESS,
             abi: stateViewAbi,
@@ -157,42 +180,28 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             args: [poolId as Hex]
           }) as readonly [bigint, number, number, number];
           const lpFeeRaw = Number(slot0[3] ?? 3000);
-          // Align with SwapInputView: percent display uses lpFee/10,000 (%), but
-          // for arithmetic we need decimal fraction: lpFee / 1,000,000
           poolFeeRate = lpFeeRaw / 1_000_000;
-        } catch (e) {
-          // keep default
-        }
+        } catch {}
 
-        // Calculate volumes and fees
-        // Hourly volume for last 25h window (to capture rounding)
-        const cutoffHourly = now - (25 * 60 * 60);
-        const hourlyResp = await fetch(SUBGRAPH_URL, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: GET_POOL_HOURLY_VOLUME_QUERY, variables: { poolId, cutoff: cutoffHourly } })
-        });
+        // Volume 24h from hourly rollups
         let volume24hUSD = 0;
-        let volume48hUSD = 0; // not computed via hourly; derive approx from 7d if needed later
-        let volume7dUSD = 0;  // could compute via daily/hourly; for now keep 0 unless required
-        let fees24hUSD = 0;
-        let fees7dUSD = 0;
-        if (hourlyResp.ok) {
-          const hourlyJson = await hourlyResp.json();
-          const hours = hourlyJson?.data?.pools?.[0]?.poolHourData || [];
-          // Per Yanis: compute 24h volume from hourly rollups as sum(volumeToken0) * price0
-          const sumToken0 = hours.reduce((acc: number, h: any) => acc + (Number(h?.volumeToken0) || 0), 0);
-          volume24hUSD = sumToken0 * token0Price;
-          fees24hUSD = volume24hUSD * poolFeeRate;
+        const hours = hourlyByPoolId.get(poolId) || [];
+        if (hours.length > 0) {
+          const sumToken0 = hours.reduce((acc, h) => acc + (Number(h?.volumeToken0) || 0), 0);
+          volume24hUSD = sumToken0 * safeToken0Price;
         }
+        const fees24hUSD = volume24hUSD * poolFeeRate;
 
-        // Calculate volume change direction
-        const volumePrevious24h = volume48hUSD - volume24hUSD;
+        // Placeholders for now
+        const volume48hUSD = 0;
+        const volume7dUSD = 0;
+        const fees7dUSD = 0;
+
+        // Change direction heuristic
+        const volumePrevious24h = Math.max(0, volume48hUSD - volume24hUSD);
         let volumeChangeDirection: 'up' | 'down' | 'neutral' = 'neutral';
-        if (volume24hUSD > volumePrevious24h) {
-          volumeChangeDirection = 'up';
-        } else if (volume24hUSD < volumePrevious24h) {
-          volumeChangeDirection = 'down';
-        }
+        if (volume24hUSD > volumePrevious24h) volumeChangeDirection = 'up';
+        else if (volume24hUSD < volumePrevious24h) volumeChangeDirection = 'down';
 
         poolsStats.push({
           poolId,
@@ -206,10 +215,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         });
 
         console.log(`[Batch API] Processed pool ${poolId}: TVL=$${tvlUSD.toFixed(2)}, Vol24h=$${volume24hUSD.toFixed(2)}`);
-
       } catch (error) {
         console.error(`[Batch API] Error processing pool ${pool.id}:`, error);
-        // Continue processing other pools
       }
     }
 

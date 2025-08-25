@@ -74,12 +74,13 @@ export default async function handler(
   }
 
   try {
-    const { owner, poolIds, first = 300 } = (req.body || {}) as { owner?: string; poolIds?: string[]; first?: number };
+    const { owner, poolIds } = (req.body || {}) as { owner?: string; poolIds?: string[] };
     const ownerLc = String(owner || '').toLowerCase();
     const pools = Array.isArray(poolIds) ? poolIds.map((p) => String(p).toLowerCase()) : [];
-    const take = Number.isFinite(first) && first > 0 ? Math.min(1000, Number(first)) : 300;
+    const SUBGRAPH_FETCH_COUNT = 20;
+    const FINAL_EVENT_COUNT = 20;
 
-    const cacheKey = keyFor(ownerLc, pools, take);
+    const cacheKey = keyFor(ownerLc, pools, FINAL_EVENT_COUNT);
     const cached = CACHE.get(cacheKey);
     if (cached && (Date.now() - cached.ts) < TTL_MS) {
       return res.status(200).json(cached.data);
@@ -96,7 +97,7 @@ export default async function handler(
       const resp = await fetch(SUBGRAPH_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: ACTIVITY_QUERY, variables: { owner: ownerLc, poolIds: pools, first: take } }),
+        body: JSON.stringify({ query: ACTIVITY_QUERY, variables: { owner: ownerLc, poolIds: pools, first: SUBGRAPH_FETCH_COUNT } }),
       });
       const text = await resp.text();
       let json: any = null;
@@ -210,7 +211,7 @@ export default async function handler(
       }
 
       // Sort desc by ts and cap length
-      const out = rows.sort((a, b) => b.ts - a.ts).slice(0, take);
+      const out = rows.sort((a, b) => b.ts - a.ts).slice(0, FINAL_EVENT_COUNT);
       CACHE.set(cacheKey, { ts: Date.now(), data: out });
       return out;
     })();
