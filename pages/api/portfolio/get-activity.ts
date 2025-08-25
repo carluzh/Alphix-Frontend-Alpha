@@ -23,10 +23,13 @@ type Row = {
   token1Addr?: string;
 };
 
-const SUBGRAPH_URL = process.env.SUBGRAPH_URL as string;
-if (!SUBGRAPH_URL) {
-  throw new Error('SUBGRAPH_URL env var is required');
-}
+const getSubgraphUrl = () => process.env.SUBGRAPH_URL as string | undefined;
+const getGraphHeaders = (): Record<string, string> => {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const key = process.env.THEGRAPH_API_KEY || process.env.THE_GRAPH_API_KEY || process.env.GRAPH_API_KEY || process.env.SUBGRAPH_API_KEY;
+  if (key) headers.Authorization = `Bearer ${key}`;
+  return headers;
+};
 
 // 10-min in-memory cache + in-flight dedupe
 const TTL_MS = 10 * 60 * 1000;
@@ -94,9 +97,11 @@ export default async function handler(
 
     const promise = (async () => {
       // Fetch swaps and user modify liquidity events
-      const resp = await fetch(SUBGRAPH_URL, {
+      const subgraphUrl = getSubgraphUrl();
+      if (!subgraphUrl) throw new Error('SUBGRAPH_URL env var is required');
+      const resp = await fetch(subgraphUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getGraphHeaders(),
         body: JSON.stringify({ query: ACTIVITY_QUERY, variables: { owner: ownerLc, poolIds: pools, first: SUBGRAPH_FETCH_COUNT } }),
       });
       const text = await resp.text();
