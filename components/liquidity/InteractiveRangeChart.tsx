@@ -451,21 +451,23 @@ export function InteractiveRangeChart({
   // Calculate tick buckets and generate bucket data
   const calculateTickBuckets = useCallback((tickLower: number, tickUpper: number, tickSpacing: number, bucketCount: number = 25) => {
     const range = tickUpper - tickLower;
-    const bucketSize = Math.max(range / bucketCount, tickSpacing);
-    const alignedBucketSize = Math.ceil(bucketSize / tickSpacing) * tickSpacing;
-    
+    // Enforce a minimum visual bin width to avoid per-tick rendering for tiny spacings
+    const MIN_VISUAL_BIN = 30; // ticks
+    const minBin = Math.max(MIN_VISUAL_BIN, tickSpacing);
+
+    const rawBucketSize = Math.max(range / bucketCount, tickSpacing);
+    const targetBucketSize = Math.max(rawBucketSize, minBin);
+    const alignedBucketSize = Math.ceil(targetBucketSize / tickSpacing) * tickSpacing;
+
     const buckets: { tickLower: number; tickUpper: number }[] = [];
     let currentTick = tickLower;
-    
+
     while (currentTick < tickUpper) {
       const bucketUpper = Math.min(currentTick + alignedBucketSize, tickUpper);
-      buckets.push({
-        tickLower: currentTick,
-        tickUpper: bucketUpper
-      });
+      buckets.push({ tickLower: currentTick, tickUpper: bucketUpper });
       currentTick = bucketUpper;
     }
-    
+
     return buckets;
   }, []);
 
@@ -477,26 +479,50 @@ export function InteractiveRangeChart({
       // Build a stable liquidity profile across full positions span to avoid replot on pan/zoom
       const globalMin = Math.min(...processedPositions.map(p => p.tickLower));
       const globalMax = Math.max(...processedPositions.map(p => p.tickUpper));
-      // Generate one bucket per tickSpacing step to ensure bar width = 1 spacing
-      const totalSteps = Math.max(1, Math.ceil((globalMax - globalMin) / defaultTickSpacing));
-      const buckets = calculateTickBuckets(globalMin, globalMax, defaultTickSpacing, totalSteps);
-      
-      const bucketData: BucketData[] = [];
-      
-      for (const bucket of buckets) {
-        let bucketLiquidity = 0;
-        for (const position of processedPositions) {
-          if (position.tickLower < bucket.tickUpper && position.tickUpper > bucket.tickLower) {
-            bucketLiquidity += position.unifiedValueInToken0;
-          }
-        }
-        bucketData.push({
-          tickLower: bucket.tickLower,
-          tickUpper: bucket.tickUpper,
-          midTick: Math.floor((bucket.tickLower + bucket.tickUpper) / 2),
-          liquidityToken0: bucketLiquidity.toFixed(2)
-        });
+
+      // Adaptive bucket count: aim for ~200 buckets, clamp, and enforce min visual bin
+      const MIN_VISUAL_BIN = 30; // ticks
+      const approxBuckets = Math.ceil((globalMax - globalMin) / Math.max(defaultTickSpacing, MIN_VISUAL_BIN));
+      const targetBuckets = Math.max(60, Math.min(300, approxBuckets));
+      const buckets = calculateTickBuckets(globalMin, globalMax, defaultTickSpacing, targetBuckets);
+
+      // Fast aggregation using a difference-array over buckets (O(n + m))
+      const nb = buckets.length;
+      if (nb === 0) {
+        setBucketLiquidityData([]);
+        return;
       }
+      const alignedBucketSize = buckets[0].tickUpper - buckets[0].tickLower;
+      const diff = new Float64Array(nb + 1);
+
+      const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+
+      for (const position of processedPositions) {
+        // Map position span to bucket index range (inclusive)
+        const sTick = clamp(position.tickLower, globalMin, globalMax - 1);
+        const eTick = clamp(position.tickUpper - 1, globalMin, globalMax - 1);
+        if (eTick < sTick) continue;
+        const s = clamp(Math.floor((sTick - globalMin) / alignedBucketSize), 0, nb - 1);
+        const e = clamp(Math.floor((eTick - globalMin) / alignedBucketSize), 0, nb - 1);
+        if (s <= e) {
+          diff[s] += position.unifiedValueInToken0;
+          diff[e + 1] -= position.unifiedValueInToken0;
+        }
+      }
+
+      const bucketData: BucketData[] = new Array(nb);
+      let running = 0;
+      for (let i = 0; i < nb; i++) {
+        running += diff[i];
+        const b = buckets[i];
+        bucketData[i] = {
+          tickLower: b.tickLower,
+          tickUpper: b.tickUpper,
+          midTick: Math.floor((b.tickLower + b.tickUpper) / 2),
+          liquidityToken0: running.toFixed(2),
+        };
+      }
+
       setBucketLiquidityData(bucketData);
     } else {
       setBucketLiquidityData([]);

@@ -3,6 +3,18 @@ import type { NextRequest } from 'next/server';
 // import { cookies } from 'next/headers'; // Not used in Middleware for reading cookies
 
 export function middleware(request: NextRequest) {
+  // Handle CORS preflight universally to avoid 400s from OPTIONS
+  if (request.method === 'OPTIONS') {
+    const res = new NextResponse(null, { status: 204 });
+    const origin = request.headers.get('origin') || '*';
+    res.headers.set('Access-Control-Allow-Origin', origin);
+    res.headers.set('Vary', 'Origin');
+    res.headers.set('Access-Control-Allow-Credentials', 'true');
+    res.headers.set('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+    res.headers.set('Access-Control-Allow-Headers', request.headers.get('access-control-request-headers') || 'Content-Type, Authorization');
+    return res;
+  }
+
   const authToken = request.cookies.get('site_auth_token');
   const { pathname } = request.nextUrl;
   const maintenanceEnabled = process.env.NEXT_PUBLIC_MAINTENANCE === 'true' || process.env.MAINTENANCE === 'true';

@@ -121,27 +121,26 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
   // Handle click to navigate to pool page
   const handleClick = () => {
     if (!poolInfo) return;
-    
-    // Prefer canonical pool id if present to avoid aliasing issues
-    const canonicalId = (poolInfo as any).id || (poolInfo as any).poolId;
-    if (canonicalId) {
-      const url = `/liquidity/${canonicalId}`;
-      if (typeof window !== "undefined") {
-        window.open(url, "_blank", "noopener,noreferrer");
-      } else {
-        router.push(url);
-      }
-      return;
+
+    // Derive a friendly route id; avoid using raw subgraph id (0x...) in the URL
+    const maybeCanonical = (poolInfo as any).id || (poolInfo as any).poolId;
+    let targetId: string | undefined;
+
+    // If a provided id is a friendly slug (not 0x...), use it directly
+    if (maybeCanonical && !String(maybeCanonical).startsWith('0x')) {
+      targetId = String(maybeCanonical);
+    } else {
+      // Fallback: map from token symbols to configured pool
+      const poolConfig = getPoolByTokens(poolInfo.token0Symbol, poolInfo.token1Symbol);
+      if (poolConfig) targetId = poolConfig.id;
     }
 
-    // Fallback: map from token symbols to pool config (may choose a canonical mapping if defined)
-    const poolConfig = getPoolByTokens(poolInfo.token0Symbol, poolInfo.token1Symbol);
-    if (poolConfig) {
-      const url = `/liquidity/${poolConfig.id}`;
-      if (typeof window !== "undefined") {
-        window.open(url, "_blank", "noopener,noreferrer");
+    if (targetId) {
+      const href = `/liquidity/${targetId}`;
+      if (typeof window !== 'undefined') {
+        window.open(href, '_blank', 'noopener,noreferrer');
       } else {
-        router.push(url);
+        router.push(href);
       }
     } else {
       console.warn(`No pool configuration found for ${poolInfo.token0Symbol}/${poolInfo.token1Symbol}`);
