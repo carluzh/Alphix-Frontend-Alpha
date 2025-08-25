@@ -5,7 +5,7 @@ import { formatUnits } from 'viem';
 
 // Simple in-memory cache to minimize subgraph calls
 const HIST_CACHE = new Map<string, { ts: number; data: FeeHistoryPoint[] }>();
-const HIST_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const HIST_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 
 // Subgraph URL selection (Satsuma default with env/query overrides)
 const LEGACY_SUBGRAPH_URL = process.env.SUBGRAPH_URL || "";
@@ -13,21 +13,6 @@ function selectSubgraphUrl(_req: NextApiRequest): string {
   const envDefault = process.env.NEXT_PUBLIC_SUBGRAPH_URL || process.env.SUBGRAPH_URL;
   return envDefault || LEGACY_SUBGRAPH_URL;
 }
-
-// GraphQL query to fetch fee updates for a given pool within a time range (legacy schema)
-const GET_HISTORICAL_FEE_UPDATES_QUERY = `
-  query GetFeeUpdatesForPool($poolId: Bytes!, $cutoffTimestamp: BigInt!) {
-    feeUpdates(
-      where: { pool: $poolId, timestamp_gte: $cutoffTimestamp }
-      orderBy: timestamp
-      orderDirection: asc
-    ) {
-      timestamp
-      newFeeRateBps
-    }
-  }
-`;
-
 // Hook-based fee updates (new Satsuma schema)
 const GET_HOOK_FEE_UPDATES_QUERY = `
   query GetHookFeeUpdates($poolId: Bytes!, $cutoffTimestamp: BigInt!) {
@@ -35,47 +20,12 @@ const GET_HOOK_FEE_UPDATES_QUERY = `
       where: { pool: $poolId, timestamp_gte: $cutoffTimestamp }
       orderBy: timestamp
       orderDirection: asc
-      first: 1000
+      first: 60
     ) {
       timestamp
       newFeeBps
       currentTargetRatio
       newTargetRatio
-    }
-  }
-`;
-
-// Pool day data (trimmed for new schema compatibility)
-const GET_POOL_DAY_DATAS_QUERY = `
-  query GetPoolDayDatas($poolId: Bytes!, $startDateTimestamp: Int!, $endDateTimestamp: Int!) {
-    poolDayDatas(
-      orderBy: date
-      orderDirection: asc
-      where: { pool: $poolId, date_gte: $startDateTimestamp, date_lte: $endDateTimestamp }
-    ) {
-      date
-      volumeToken0
-      volumeToken1
-    }
-  }
-`;
-
-// Get the block number at or before a timestamp
-const GET_BLOCK_FOR_TIMESTAMP_QUERY = `
-  query GetBlockAtOrBefore($ts: Int!) {
-    transactions(first: 1, orderBy: timestamp, orderDirection: desc, where: { timestamp_lte: $ts }) {
-      timestamp
-      blockNumber
-    }
-  }
-`;
-
-// Get pool TVL (token balances across all ticks) at a specific block
-const GET_POOL_TVL_AT_BLOCK_QUERY = `
-  query GetPoolTvlAtBlock($poolId: Bytes!, $blockNumber: Int!) {
-    pool(id: $poolId, block: { number: $blockNumber }) {
-      totalValueLockedToken0
-      totalValueLockedToken1
     }
   }
 `;
@@ -160,6 +110,8 @@ export default async function handler(
     if (days <= 0) {
         return res.status(400).json({ message: 'Optional \'days\' query parameter must be a positive integer if provided.' });
     }
+    // CDN edge caching: cache per poolId+days for 6h, serve stale for 6h while revalidating
+    res.setHeader('Cache-Control', 'public, s-maxage=21600, stale-while-revalidate=21600');
 
     const nowInSeconds = Math.floor(Date.now() / 1000);
     const cutoffTimestampInSeconds = nowInSeconds - (days * 24 * 60 * 60);
@@ -191,7 +143,7 @@ export default async function handler(
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                query: preferHook ? GET_HOOK_FEE_UPDATES_QUERY : GET_HISTORICAL_FEE_UPDATES_QUERY,
+                query: GET_HOOK_FEE_UPDATES_QUERY,
                 variables: feeVariables,
             }),
         });

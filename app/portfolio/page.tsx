@@ -292,17 +292,14 @@ interface PortfolioData {
 
 // Removed legacy composite id parsing
 
+import { loadUserPositionIds, derivePositionsFromIds, getPoolFeeBps } from '@/lib/client-cache';
+
 async function getUserPositionsOnchain(ownerAddress: string, _opts?: { verifyLiquidity?: boolean }) {
   try {
     const owner = getAddress(ownerAddress);
-    const res = await fetch(`/api/liquidity/get-positions?ownerAddress=${owner}&_=${Date.now()}` as any, {
-      // Ensure we bypass any HTTP cache to avoid 304 without body
-      cache: 'no-store',
-      headers: { 'cache-control': 'no-cache' } as any,
-    } as any);
-    if (!res.ok) return [] as any[];
-    const data = await res.json();
-    return Array.isArray(data) ? data : [];
+    const ids = await loadUserPositionIds(owner);
+    const positions = await derivePositionsFromIds(owner, ids);
+    return positions;
   } catch {
     return [] as any[];
   }
@@ -639,14 +636,18 @@ function usePortfolio(refreshKey: number = 0) {
         if (!data?.success || !Array.isArray(data.pools)) return;
         const map: Record<string, string> = {};
         for (const p of data.pools as any[]) {
-          const fees24h = typeof p.fees24hUSD === 'number' ? p.fees24hUSD : 0;
           const tvl = typeof p.tvlUSD === 'number' ? p.tvlUSD : 0;
+          const vol24 = typeof p.volume24hUSD === 'number' ? p.volume24hUSD : 0;
           let aprStr = 'N/A';
-          if (fees24h > 0 && tvl > 0) {
-            const yearlyFees = fees24h * 365;
-            const apr = (yearlyFees / tvl) * 100;
-            aprStr = apr.toFixed(2) + '%';
-          }
+          try {
+            if (tvl > 0 && vol24 > 0 && p.poolId) {
+              const bps = await getPoolFeeBps(String(p.poolId));
+              const feeRate = Math.max(0, bps) / 10_000;
+              const fees24h = vol24 * feeRate;
+              const apr = (fees24h * 365 / tvl) * 100;
+              aprStr = `${apr.toFixed(2)}%`;
+            }
+          } catch {}
           if (p.poolId) map[String(p.poolId).toLowerCase()] = aprStr;
         }
         setAprByPoolId(map);
@@ -1203,8 +1204,11 @@ export default function PortfolioPage() {
   const onLiquidityDecreased = useCallback(() => {
     const wasFull = !!lastDecreaseWasFullRef.current;
     toast.success(wasFull ? 'Position Closed' : 'Position Decreased', { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
+    // Only bump refresh (and thus reload positions) when a full burn occurred
+    if (wasFull) {
+      bumpPositionsRefresh();
+    }
     lastDecreaseWasFullRef.current = false;
-    bumpPositionsRefresh();
     setShowWithdrawModal(false);
   }, [bumpPositionsRefresh]);
   const { increaseLiquidity, isLoading: isIncreasingLiquidity } = useIncreaseLiquidity({ onLiquidityIncreased });
@@ -1905,14 +1909,18 @@ export default function PortfolioPage() {
         if (!data?.success || !Array.isArray(data.pools)) return;
         const map: Record<string, string> = {};
         for (const p of data.pools as any[]) {
-          const fees24h = typeof p.fees24hUSD === 'number' ? p.fees24hUSD : 0;
           const tvl = typeof p.tvlUSD === 'number' ? p.tvlUSD : 0;
+          const vol24 = typeof p.volume24hUSD === 'number' ? p.volume24hUSD : 0;
           let aprStr = 'N/A';
-          if (fees24h > 0 && tvl > 0) {
-            const yearlyFees = fees24h * 365;
-            const apr = (yearlyFees / tvl) * 100;
-            aprStr = apr.toFixed(2) + '%';
-          }
+          try {
+            if (tvl > 0 && vol24 > 0 && p.poolId) {
+              const bps = await getPoolFeeBps(String(p.poolId));
+              const feeRate = Math.max(0, bps) / 10_000;
+              const fees24h = vol24 * feeRate;
+              const apr = (fees24h * 365 / tvl) * 100;
+              aprStr = `${apr.toFixed(2)}%`;
+            }
+          } catch {}
           if (p.poolId) map[String(p.poolId).toLowerCase()] = aprStr;
         }
         if (!cancelled) setAprByPoolId(map);
@@ -2279,12 +2287,15 @@ export default function PortfolioPage() {
     let weighted = 0;
     let totalUsd = 0;
     for (const p of relevant) {
+      // Only count in-range liquidity towards NET APY
+      if (!p?.isInRange) {
+        continue;
+      }
       const poolKey = String(p?.poolId || '').toLowerCase();
       const aprStr = aprByPoolId[poolKey];
       const aprNum = typeof aprStr === 'string' && aprStr.endsWith('%')
         ? parseFloat(aprStr.replace('%', ''))
-        : NaN;
-      if (!isFinite(aprNum)) continue;
+        : 0; // treat unknown APR as 0 instead of skipping
       const sym0 = p?.token0?.symbol as string | undefined;
       const sym1 = p?.token1?.symbol as string | undefined;
       const amt0 = parseFloat(p?.token0?.amount || '0');
@@ -2357,76 +2368,7 @@ export default function PortfolioPage() {
                 </button>
               )}
               
-              {/* Activity Filter Dropdown (hide when not connected or no activity) */}
-              {selectedSection === 'Activity' && isConnected && filteredActivityItems.length > 0 && !isLoadingActivity && (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <button className="flex items-center gap-2 px-3 py-1 rounded-md border border-sidebar-border/60 bg-[var(--sidebar-connect-button-bg)] text-xs text-muted-foreground hover:bg-muted/50 transition-colors">
-                      <Menu className="h-3 w-3" />
-                      <span className="font-medium">Filter</span>
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" sideOffset={4} className="border border-sidebar-border min-w-[300px]" style={{ backgroundColor: '#0f0f0f' }}>
-                    <div className="grid grid-cols-2 gap-0">
-                      {/* Left Column: Type Filter */}
-                      <div className="px-3 py-2 border-r border-sidebar-border/60">
-                        <div className="text-xs font-medium text-muted-foreground mb-2">Type</div>
-                        <div className="space-y-1">
-                          {(['all', 'Swap', 'Liquidity'] as const).map((type) => (
-                            <button
-                              key={type}
-                              onClick={() => setActivityTypeFilter(type)}
-                              className={`w-full text-left px-2 py-1.5 text-xs rounded border transition-colors ${
-                                activityTypeFilter === type
-                                  ? 'border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-foreground'
-                                  : 'border-sidebar-border/40 text-muted-foreground hover:border-sidebar-border/60'
-                              }`}
-                              style={activityTypeFilter === type ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
-                            >
-                              {type === 'all' ? 'All' : type}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                      
-                      {/* Right Column: Token Filter */}
-                      <div className="px-3 py-2">
-                        <div className="text-xs font-medium text-muted-foreground mb-2">Token</div>
-                        <div className="space-y-1 max-h-32 overflow-y-auto">
-                          <button
-                            onClick={() => setActivityTokenFilter(null)}
-                            className={`w-full text-left px-2 py-1.5 text-xs rounded border transition-colors ${
-                              !activityTokenFilter
-                                ? 'border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-foreground'
-                                : 'border-sidebar-border/40 text-muted-foreground hover:border-sidebar-border/60'
-                            }`}
-                            style={!activityTokenFilter ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
-                          >
-                            All
-                          </button>
-                          {Array.from(new Set(activityItems.map((it: any) => {
-                            const [sym0, sym1] = String(it?.poolSymbols || '').split('/');
-                            return [sym0?.trim(), sym1?.trim()].filter(Boolean);
-                          }).flat())).sort().map((symbol) => (
-                            <button
-                              key={symbol}
-                              onClick={() => setActivityTokenFilter(activityTokenFilter === symbol ? null : symbol)}
-                              className={`w-full text-left px-2 py-1.5 text-xs rounded border transition-colors ${
-                                activityTokenFilter === symbol
-                                  ? 'border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-foreground'
-                                  : 'border-sidebar-border/40 text-muted-foreground hover:border-sidebar-border/60'
-                              }`}
-                              style={activityTokenFilter === symbol ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
-                            >
-                              {symbol}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )}
+              {/* Filter removed */}
             </div>
             </div>
             {isIntegrateBalances && selectedSection === 'Balances' ? (
@@ -2707,76 +2649,7 @@ export default function PortfolioPage() {
                 </button>
               )}
               
-              {/* Activity Filter Dropdown (hide when not connected or no activity) */}
-              {selectedSection === 'Activity' && isConnected && filteredActivityItems.length > 0 && !isLoadingActivity && (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <button className="flex items-center gap-2 px-3 py-1 rounded-md border border-sidebar-border/60 bg-[var(--sidebar-connect-button-bg)] text-xs text-muted-foreground hover:bg-muted/50 transition-colors">
-                      <Menu className="h-3 w-3" />
-                      <span className="font-medium">Filter</span>
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" sideOffset={4} className="border border-sidebar-border min-w-[300px]" style={{ backgroundColor: '#0f0f0f' }}>
-                    <div className="grid grid-cols-2 gap-0">
-                      {/* Left Column: Type Filter */}
-                      <div className="px-3 py-2 border-r border-sidebar-border/60">
-                        <div className="text-xs font-medium text-muted-foreground mb-2">Type</div>
-                        <div className="space-y-1">
-                          {(['all', 'Swap', 'Liquidity'] as const).map((type) => (
-                            <button
-                              key={type}
-                              onClick={() => setActivityTypeFilter(type)}
-                              className={`w-full text-left px-2 py-1.5 text-xs rounded border transition-colors ${
-                                activityTypeFilter === type
-                                  ? 'border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-foreground'
-                                  : 'border-sidebar-border/40 text-muted-foreground hover:border-sidebar-border/60'
-                              }`}
-                              style={activityTypeFilter === type ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
-                            >
-                              {type === 'all' ? 'All' : type}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                      
-                      {/* Right Column: Token Filter */}
-                      <div className="px-3 py-2">
-                        <div className="text-xs font-medium text-muted-foreground mb-2">Token</div>
-                        <div className="space-y-1 max-h-32 overflow-y-auto">
-                          <button
-                            onClick={() => setActivityTokenFilter(null)}
-                            className={`w-full text-left px-2 py-1.5 text-xs rounded border transition-colors ${
-                              !activityTokenFilter
-                                ? 'border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-foreground'
-                                : 'border-sidebar-border/40 text-muted-foreground hover:border-sidebar-border/60'
-                            }`}
-                            style={!activityTokenFilter ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
-                          >
-                            All
-                          </button>
-                          {Array.from(new Set(activityItems.map((it: any) => {
-                            const [sym0, sym1] = String(it?.poolSymbols || '').split('/');
-                            return [sym0?.trim(), sym1?.trim()].filter(Boolean);
-                          }).flat())).sort().map((symbol) => (
-                            <button
-                              key={symbol}
-                              onClick={() => setActivityTokenFilter(activityTokenFilter === symbol ? null : symbol)}
-                              className={`w-full text-left px-2 py-1.5 text-xs rounded border transition-colors ${
-                                activityTokenFilter === symbol
-                                  ? 'border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-foreground'
-                                  : 'border-sidebar-border/40 text-muted-foreground hover:border-sidebar-border/60'
-                              }`}
-                              style={activityTokenFilter === symbol ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
-                            >
-                              {symbol}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )}
+              {/* Filter removed */}
             </div>
           </div>
           <div>

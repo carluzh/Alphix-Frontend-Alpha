@@ -1,10 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getPoolSubgraphId, getAllPools, getTokenDecimals, getStateViewAddress } from '../../../lib/pools-config';
+import { getPoolSubgraphId, getAllPools, getTokenDecimals } from '../../../lib/pools-config';
 import { batchGetTokenPrices, calculateTotalUSD } from '../../../lib/price-service';
 import { formatUnits } from 'viem';
-import { publicClient } from '../../../lib/viemClient';
-import { parseAbi, type Hex } from 'viem';
-import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from '../../../lib/abis/state_view_abi';
 
 // Read inside handler to avoid import-time crashes in serverless
 const getSubgraphUrl = () => process.env.SUBGRAPH_URL as string | undefined;
@@ -36,15 +33,33 @@ const GET_POOLS_HOURLY_BULK = `
   }
 `;
 
-interface BatchPoolStats {
+// Block lookup for a given timestamp (<= ts)
+const GET_BLOCK_FOR_TS = `
+  query BlockForTs($ts: Int!) {
+    transactions(first: 1, orderBy: timestamp, orderDirection: desc, where: { timestamp_lte: $ts }) {
+      timestamp
+      blockNumber
+    }
+  }
+`;
+
+// Bulk pools snapshot at a given block
+const GET_POOLS_AT_BLOCK_BULK = `
+  query PoolsAtBlock($poolIds: [String!]!, $block: Int!) {
+    pools(where: { id_in: $poolIds }, block: { number: $block }) {
+      id
+      totalValueLockedToken0
+      totalValueLockedToken1
+    }
+  }
+`;
+
+interface BatchPoolStatsMinimal {
   poolId: string;
   tvlUSD: number;
+  tvlYesterdayUSD?: number;
   volume24hUSD: number;
-  volume48hUSD: number;
-  volume7dUSD: number;
-  fees24hUSD: number;
-  fees7dUSD: number;
-  volumeChangeDirection: 'up' | 'down' | 'neutral';
+  volumePrev24hUSD?: number;
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -58,8 +73,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(500).json({ success: false, message: 'SUBGRAPH_URL env var is required' });
     }
 
-    // Reduce API pressure for consecutive requests on Vercel
-    res.setHeader('Cache-Control', 's-maxage=30, stale-while-revalidate=120');
+    // CDN cache: 10m TTL, allow 10m SWR (unless an internal revalidate hint is present)
+    const revalidateHint = req.headers['x-internal-revalidate'] === '1' || req.query.revalidate === '1';
+    if (revalidateHint) {
+      // For internal warm: avoid edge cache for this response
+      res.setHeader('Cache-Control', 'no-store');
+    } else {
+      res.setHeader('Cache-Control', 'public, s-maxage=600, stale-while-revalidate=600');
+    }
 
     console.log('[Batch API] Starting simplified batch pool data fetch...');
     
@@ -72,8 +93,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Calculate time cutoffs
     const now = Math.floor(Date.now() / 1000);
     const cutoff24h = now - (24 * 60 * 60);
-    const cutoff48h = now - (2 * 24 * 60 * 60);
-    const cutoff7d = now - (7 * 24 * 60 * 60);
+    const cutoff25h = now - (25 * 60 * 60);
+    const cutoff49h = now - (49 * 60 * 60);
+    const dayStart = Math.floor(now / 86400) * 86400; // UTC midnight today
+    const dayStartPrev = dayStart - 86400; // UTC midnight yesterday
+    const dayEndPrev = dayStartPrev + 86400 - 1; // end of yesterday
 
     // No more per-pool subgraph calls; use bulk queries below
 
@@ -90,8 +114,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         dec1: getTokenDecimals(symbol1) || 18,
       });
     }
-    const stateViewAbi = parseAbi(STATE_VIEW_HUMAN_READABLE_ABI);
-    const STATE_VIEW_ADDRESS = getStateViewAddress();
+    // Fee/APY computed client-side using StateView
 
     // Get all unique token symbols for price fetching
     const tokenSymbols = new Set<string>();
@@ -119,8 +142,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       tvlById.set(String(p.id).toLowerCase(), { tvl0: p.totalValueLockedToken0, tvl1: p.totalValueLockedToken1 });
     }
 
-    // Hourly volume for all pools in one go (last ~25h)
-    const cutoffHourly = now - (25 * 60 * 60);
+    // Hourly volume for all pools in one go (last ~49h)
+    const cutoffHourly = cutoff49h;
     const hourlyResp = await fetch(SUBGRAPH_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -135,8 +158,44 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       hourlyByPoolId.get(id)!.push(h);
     }
 
+    // Previous-day TVL snapshot using block-at-timestamp approach (consistent with chart-data)
+    let prevDayBlock = 0;
+    try {
+      const blkResp = await fetch(SUBGRAPH_URL, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: GET_BLOCK_FOR_TS, variables: { ts: dayEndPrev } })
+      });
+      if (blkResp.ok) {
+        const blkJson = await blkResp.json();
+        prevDayBlock = Number(blkJson?.data?.transactions?.[0]?.blockNumber) || 0;
+      }
+    } catch {}
+
+    const prevTvlByPoolId = new Map<string, { tvl0: number; tvl1: number }>();
+    if (prevDayBlock > 0) {
+      try {
+        const poolsAtBlockResp = await fetch(SUBGRAPH_URL, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: GET_POOLS_AT_BLOCK_BULK, variables: { poolIds: targetPoolIds.map(id => id.toLowerCase()), block: prevDayBlock } })
+        });
+        if (poolsAtBlockResp.ok) {
+          const poolsAtBlockJson = await poolsAtBlockResp.json();
+          const items = poolsAtBlockJson?.data?.pools || [];
+          for (const it of items) {
+            const id = String(it?.id || '').toLowerCase();
+            if (!id) continue;
+            const tvl0 = Number(it?.totalValueLockedToken0) || 0;
+            const tvl1 = Number(it?.totalValueLockedToken1) || 0;
+            prevTvlByPoolId.set(id, { tvl0, tvl1 });
+          }
+        }
+      } catch {}
+    }
+
+    // (no internal fallbacks; rely solely on block snapshot)
+
     // ---- Process data per pool ----
-    const poolsStats: BatchPoolStats[] = [];
+    const poolsStats: BatchPoolStatsMinimal[] = [];
     for (const pool of allPools) {
       try {
         const poolId = (getPoolSubgraphId(pool.id) || pool.id).toLowerCase();
@@ -168,53 +227,40 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           tvlUSD = calculateTotalUSD(amt0, amt1, safeToken0Price, safeToken1Price);
         }
 
-        // Fee rate (on-chain)
-        let poolFeeRate = 0.003; // default 0.3%
-        try {
-          const STATE_VIEW_ADDRESS = getStateViewAddress();
-          const stateViewAbi = parseAbi(STATE_VIEW_HUMAN_READABLE_ABI);
-          const slot0 = await publicClient.readContract({
-            address: STATE_VIEW_ADDRESS,
-            abi: stateViewAbi,
-            functionName: 'getSlot0',
-            args: [poolId as Hex]
-          }) as readonly [bigint, number, number, number];
-          const lpFeeRaw = Number(slot0[3] ?? 3000);
-          poolFeeRate = lpFeeRaw / 1_000_000;
-        } catch {}
-
-        // Volume 24h from hourly rollups
+        // Volume windows from hourly rollups (current: >= cutoff24h; previous: [cutoff49h, cutoff25h))
         let volume24hUSD = 0;
+        let volumePrev24hUSD = 0;
         const hours = hourlyByPoolId.get(poolId) || [];
         if (hours.length > 0) {
-          const sumToken0 = hours.reduce((acc, h) => acc + (Number(h?.volumeToken0) || 0), 0);
-          volume24hUSD = sumToken0 * safeToken0Price;
+          let sumCurr0 = 0;
+          let sumPrev0 = 0;
+          for (const h of hours) {
+            const ts = Number(h?.periodStartUnix) || 0;
+            const v0 = Number(h?.volumeToken0) || 0;
+            if (ts >= cutoff24h) sumCurr0 += v0;
+            else if (ts >= cutoff49h && ts < cutoff25h) sumPrev0 += v0;
+          }
+          volume24hUSD = sumCurr0 * safeToken0Price;
+          volumePrev24hUSD = sumPrev0 * safeToken0Price;
         }
-        const fees24hUSD = volume24hUSD * poolFeeRate;
 
-        // Placeholders for now
-        const volume48hUSD = 0;
-        const volume7dUSD = 0;
-        const fees7dUSD = 0;
-
-        // Change direction heuristic
-        const volumePrevious24h = Math.max(0, volume48hUSD - volume24hUSD);
-        let volumeChangeDirection: 'up' | 'down' | 'neutral' = 'neutral';
-        if (volume24hUSD > volumePrevious24h) volumeChangeDirection = 'up';
-        else if (volume24hUSD < volumePrevious24h) volumeChangeDirection = 'down';
-
+        // TVL yesterday from block snapshot (priced with current prices)
+        let tvlYesterdayUSD = 0;
+        const prevEntry = prevTvlByPoolId.get(poolId);
+        if (prevEntry) {
+          const amt0Prev = Number(prevEntry.tvl0) || 0;
+          const amt1Prev = Number(prevEntry.tvl1) || 0;
+          tvlYesterdayUSD = calculateTotalUSD(amt0Prev, amt1Prev, safeToken0Price, safeToken1Price);
+        }
         poolsStats.push({
           poolId,
           tvlUSD,
+          tvlYesterdayUSD,
           volume24hUSD,
-          volume48hUSD,
-          volume7dUSD,
-          fees24hUSD,
-          fees7dUSD,
-          volumeChangeDirection,
+          volumePrev24hUSD,
         });
 
-        console.log(`[Batch API] Processed pool ${poolId}: TVL=$${tvlUSD.toFixed(2)}, Vol24h=$${volume24hUSD.toFixed(2)}`);
+        console.log(`[Batch API] Processed pool ${poolId}: TVL=$${tvlUSD.toFixed(2)}, TVLprev=$${tvlYesterdayUSD.toFixed(2)}, Vol24h=$${volume24hUSD.toFixed(2)}, VolPrev24h=$${volumePrev24hUSD.toFixed(2)}`);
       } catch (error) {
         console.error(`[Batch API] Error processing pool ${pool.id}:`, error);
       }
@@ -222,11 +268,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     console.log(`[Batch API] Successfully processed ${poolsStats.length}/${allPools.length} pools`);
 
-    return res.status(200).json({
-      success: true,
-      pools: poolsStats,
-      timestamp: Date.now(),
-    });
+    return res.status(200).json({ success: true, pools: poolsStats, timestamp: Date.now() });
 
   } catch (error) {
     console.error('[Batch API] Error in batch pool data fetch:', error);

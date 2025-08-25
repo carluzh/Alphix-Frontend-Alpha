@@ -11,6 +11,7 @@ import { getAddress, type Hex, BaseError, parseUnits, encodeAbiParameters, kecca
 import { getPositionDetails, getPoolState, preparePermit2BatchForPosition } from '@/lib/liquidity-utils';
 import { publicClient } from '@/lib/viemClient';
 import { prefetchService } from '@/lib/prefetch-service';
+import { invalidateActivityCache } from '@/lib/client-cache';
 import { OctagonX } from 'lucide-react';
 
 // Helper function to safely parse amounts without precision loss
@@ -338,6 +339,8 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
       // Delegate the sole success toast to page-level logic
       onLiquidityIncreased();
       try { if (accountAddress) prefetchService.requestPositionsRefresh({ owner: accountAddress, reason: 'increase' }); } catch {}
+      try { if (accountAddress) invalidateActivityCache(accountAddress); } catch {}
+      try { fetch('/api/internal/revalidate-pools', { method: 'POST' } as any).catch(() => {}); } catch {}
       setIsIncreasing(false);
     } else if (increaseConfirmError) {
        const message = increaseConfirmError instanceof BaseError ? increaseConfirmError.shortMessage : increaseConfirmError.message;

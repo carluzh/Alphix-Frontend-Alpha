@@ -187,7 +187,7 @@ export default async function handler(
     return res.status(405).json({ message: `Method ${req.method} Not Allowed` });
   }
 
-  const { ownerAddress, countOnly } = req.query as { ownerAddress?: string; countOnly?: string };
+  const { ownerAddress, countOnly, idsOnly, withCreatedAt } = req.query as { ownerAddress?: string; countOnly?: string; idsOnly?: string; withCreatedAt?: string };
 
   if (!ownerAddress || typeof ownerAddress !== 'string' || !ethers.utils.isAddress(ownerAddress)) { // Keep ethers for isAddress for now, or switch to viem's isAddress
     return res.status(400).json({ message: 'Valid ownerAddress query parameter is required.' });
@@ -208,6 +208,37 @@ export default async function handler(
         return res.status(200).json({ message: 'ok', count: raw.length });
       } catch {
         return res.status(200).json({ message: 'ok', count: 0 });
+      }
+    }
+
+    if (idsOnly === '1') {
+      // Return only tokenIds (no on-chain processing)
+      try {
+        const resp = await fetch(SUBGRAPH_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: GET_USER_POSITIONS_QUERY, variables: { owner: ownerAddress.toLowerCase() } }),
+        });
+        if (!resp.ok) return res.status(200).json([] as any);
+        const json = await resp.json() as { data?: { positions: SubgraphPosition[] } };
+        const raw = json?.data?.positions ?? [];
+        if (withCreatedAt === '1') {
+          const list = raw.map(r => {
+            const parsed = r.tokenId ? BigInt(r.tokenId) : parseTokenIdFromCompositeId(r.id);
+            const idStr = parsed ? parsed.toString() : '';
+            return idStr ? { id: idStr, createdAt: Number(r.createdAtTimestamp || 0) } : null;
+          }).filter(Boolean) as Array<{ id: string; createdAt: number }>;
+          return res.status(200).json(list as any);
+        } else {
+          const ids = Array.from(new Set(raw.map(r => {
+            if (r.tokenId) return String(r.tokenId);
+            const parsed = parseTokenIdFromCompositeId(r.id);
+            return parsed ? parsed.toString() : '';
+          }).filter(Boolean)));
+          return res.status(200).json(ids as any);
+        }
+      } catch {
+        return res.status(200).json([] as any);
       }
     }
 

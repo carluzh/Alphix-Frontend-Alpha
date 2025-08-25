@@ -4,6 +4,7 @@ import React from "react";
 import { useAccount } from "wagmi";
 import { formatUnits } from "viem";
 import { TOKEN_DEFINITIONS } from "@/lib/pools-config";
+import { loadUncollectedFees } from "@/lib/client-cache";
 import {
   HoverCard,
   HoverCardContent,
@@ -40,18 +41,13 @@ export function FeesCell({
       try {
         setLoading(true);
         setLastError(null);
-        const resp = await fetch("/api/liquidity/get-uncollected-fees", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ positionId }),
-        });
-        const json = await resp.json();
-        if (!cancelled && json?.success) {
-          setRaw0(json.amount0 ?? null);
-          setRaw1(json.amount1 ?? null);
+        const data = await loadUncollectedFees(positionId, 60 * 1000);
+        if (!cancelled && data) {
+          setRaw0(data.amount0 ?? null);
+          setRaw1(data.amount1 ?? null);
         }
-        if (!json?.success && !cancelled) {
-          setLastError(String(json?.error || "unknown"));
+        if (!cancelled && !data) {
+          setLastError("unknown");
         }
       } catch (e: any) {
         if (!cancelled) setLastError(String(e?.message || "request failed"));

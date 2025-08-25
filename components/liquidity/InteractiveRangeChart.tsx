@@ -193,6 +193,11 @@ export function InteractiveRangeChart({
     if (!token0Symbol || !token1Symbol) return token0Symbol;
     return determineBaseTokenForPriceDisplay(token0Symbol, token1Symbol);
   }, [token0Symbol, token1Symbol, determineBaseTokenForPriceDisplay]);
+  const isStablePool = useMemo(() => {
+    if (!selectedPoolId) return false;
+    const pool = poolsConfig.pools.find(p => p.id === selectedPoolId);
+    return (pool?.type || '').toLowerCase() === 'stable';
+  }, [selectedPoolId]);
 
   // Determine if we need to flip the denomination to show higher prices
   const shouldFlipDenomination = useMemo(() => {
@@ -574,8 +579,9 @@ export function InteractiveRangeChart({
         const currentPriceNum = parseFloat(currentPrice);
         const displayDecimals = TOKEN_DEFINITIONS[optimalDenomination]?.displayDecimals || 4;
         
-        // For USD-denominated tokens, always use 2 decimals
-        const finalDisplayDecimals = (optimalDenomination === 'aUSDT' || optimalDenomination === 'aUSDC') ? 2 : displayDecimals;
+        // For USD-denominated tokens show more precision (6 decimals) only for Stable pools
+        const isUsd = (optimalDenomination === 'aUSDT' || optimalDenomination === 'aUSDC');
+        const finalDisplayDecimals = (isStablePool && isUsd) ? 6 : displayDecimals;
         
         // Calculate prices for left border, center (middle of visible range), and right border
         const middleTickDomain = (minTickDomain + maxTickDomain) / 2;

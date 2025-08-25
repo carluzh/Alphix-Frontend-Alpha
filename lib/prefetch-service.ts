@@ -73,32 +73,14 @@ class PrefetchService {
 
     const operation = async () => {
       try {
-        console.log(`[Prefetch] Loading pool data for ${poolId}`);
-        
-        // Fetch both 24h and 7d data in parallel
-        const [res24h, res7d, resTvl] = await Promise.all([
-          fetch(`/api/liquidity/get-rolling-volume-fees?poolId=${poolId}&days=1`),
-          fetch(`/api/liquidity/get-rolling-volume-fees?poolId=${poolId}&days=7`),
-          fetch(`/api/liquidity/get-pool-tvl?poolId=${poolId}`)
-        ]);
-
-        if (res24h.ok && res7d.ok && resTvl.ok) {
-          const [data24h, data7d, dataTvl] = await Promise.all([
-            res24h.json(),
-            res7d.json(),
-            resTvl.json()
-          ]);
-
-          const poolStats = {
-            volume24hUSD: parseFloat(data24h.volumeUSD),
-            fees24hUSD: parseFloat(data24h.feesUSD),
-            volume7dUSD: parseFloat(data7d.volumeUSD),
-            fees7dUSD: parseFloat(data7d.feesUSD),
-            tvlUSD: parseFloat(dataTvl.tvlUSD),
-          };
-
-          setToCache(getPoolStatsCacheKey(poolId), poolStats);
-          console.log(`[Prefetch] Cached pool data for ${poolId}`);
+        console.log(`[Prefetch] Loading pool ${poolId}`);
+        const resp = await fetch(`/api/liquidity/get-pools-batch`);
+        if (resp.ok) {
+          const json = await resp.json();
+          const match = Array.isArray(json?.pools) ? json.pools.find((p: any) => String(p?.poolId || '').toLowerCase() === String(poolId).toLowerCase()) : null;
+          if (match) {
+            setToCache(getPoolStatsCacheKey(poolId), { tvlUSD: Number(match.tvlUSD) || 0, volume24hUSD: Number(match.volume24hUSD) || 0 });
+          }
         }
       } catch (error) {
         console.warn(`[Prefetch] Failed to load pool data for ${poolId}:`, error);
@@ -127,26 +109,19 @@ class PrefetchService {
       try {
         console.log(`[Prefetch] Batch loading ${uncachedPools.length} pools`);
         
-        const response = await fetch(
-          `/api/liquidity/get-pool-batch-data?poolIds=${uncachedPools.join(',')}&days=7`
-        );
+        const response = await fetch(`/api/liquidity/get-pools-batch`);
 
         if (response.ok) {
           const data = await response.json();
           
-          for (const poolData of data.pools) {
-            const poolStats = {
-              volume24hUSD: parseFloat(poolData.volumeUSD_24h),
-              fees24hUSD: parseFloat(poolData.feesUSD_24h),
-              volume7dUSD: parseFloat(poolData.volumeUSD_7d),
-              fees7dUSD: parseFloat(poolData.feesUSD_7d),
-              tvlUSD: parseFloat(poolData.tvlUSD),
-            };
-
-            setToCache(getPoolStatsCacheKey(poolData.poolId), poolStats);
+          const map = new Map<string, any>();
+          for (const p of (data?.pools || [])) map.set(String(p.poolId).toLowerCase(), p);
+          for (const id of uncachedPools) {
+            const m = map.get(String(id).toLowerCase());
+            if (m) setToCache(getPoolStatsCacheKey(id), { tvlUSD: Number(m.tvlUSD) || 0, volume24hUSD: Number(m.volume24hUSD) || 0 });
           }
           
-          console.log(`[Prefetch] Batch cached ${data.pools.length} pools`);
+          console.log(`[Prefetch] Batch cached minimal stats`);
         }
       } catch (error) {
         console.warn(`[Prefetch] Failed to batch load pools:`, error);

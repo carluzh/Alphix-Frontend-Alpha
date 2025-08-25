@@ -20,6 +20,7 @@ import { formatUnits, type Hex } from "viem";
 import { Bar, BarChart, Line, LineChart, CartesianGrid, XAxis, YAxis, ResponsiveContainer, ComposedChart, Area, ReferenceLine, ReferenceArea } from "recharts";
 import { TickRangePreview } from "@/components/TickRangePreview";
 import { getPoolById, getPoolSubgraphId, getToken, getAllTokens } from "@/lib/pools-config";
+import { getPoolFeeBps, loadUncollectedFees } from "@/lib/client-cache";
 import {
   ChartConfig,
   ChartContainer,
@@ -47,7 +48,7 @@ import { useWriteContract, useWaitForTransactionReceipt, useSendTransaction } fr
 import { getPositionManagerAddress } from '@/lib/pools-config';
 import { position_manager_abi } from '@/lib/abis/PositionManager_abi';
 import { baseSepolia } from "../../../lib/wagmiConfig";
-import { getFromCache, setToCache, getFromCacheWithTtl, getUserPositionsCacheKey, getPoolStatsCacheKey, getPoolDynamicFeeCacheKey, getPoolChartDataCacheKey } from "../../../lib/client-cache";
+import { getFromCache, setToCache, getFromCacheWithTtl, getUserPositionsCacheKey, getPoolStatsCacheKey, getPoolDynamicFeeCacheKey, getPoolChartDataCacheKey, loadUserPositionIds, derivePositionsFromIds } from "../../../lib/client-cache";
 import type { Pool } from "../../../types";
 import { AddLiquidityForm } from "../../../components/liquidity/AddLiquidityForm";
 import React from "react";
@@ -383,20 +384,12 @@ function FeesCell({ positionId, sym0, sym1, price0, price1, refreshKey = 0 }: { 
       try {
         setLoading(true);
         setLastError(null);
-        const resp = await fetch('/api/liquidity/get-uncollected-fees', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ positionId }),
-        });
-        const json = await resp.json();
-        console.log('[FeesCell]', positionId, { ok: resp.ok, success: json?.success, error: json?.error, debug: json?.debug });
-        if (!cancelled && json?.success) {
-          // Store raw on-chain amounts for precise USD conversion client-side
-          setRaw0(json.amount0 ?? null);
-          setRaw1(json.amount1 ?? null);
-        }
-        if (!json?.success && !cancelled) {
-          setLastError(String(json?.error || 'unknown'));
+        const json = await loadUncollectedFees(positionId).catch((e:any)=>({ success:false, error:e?.message }));
+        if (!cancelled && (json as any)?.success !== false) {
+          setRaw0((json as any).amount0 ?? null);
+          setRaw1((json as any).amount1 ?? null);
+        } else if (!cancelled) {
+          setLastError(String((json as any)?.error || 'unknown'));
         }
       } catch (e: any) {
         console.log('[FeesCell:error]', positionId, e?.message || e);
@@ -585,10 +578,10 @@ export default function PoolDetailPage() {
     return 0; // Unknown
   }, [tokenPrices]);
 
-  // Unified Satsuma pool stats loader (25h volume window; 7d window for weekly)
+  // Unified batch pool stats loader (same as pools list): tvlUSD + volume24hUSD
   const loadPoolStatsFromSubgraph = useCallback(async (apiPoolIdToUse: string, basePoolInfo: ReturnType<typeof getPoolConfiguration>) => {
     try {
-      // Use existing server batch endpoint (keeps 25h volume logic and server-only SUBGRAPH_URL)
+      // Use existing server batch endpoint (server-only SUBGRAPH_URL; 10m CDN TTL)
       const resp = await fetch('/api/liquidity/get-pools-batch');
       if (!resp.ok) return null;
       const data = await resp.json();
@@ -599,10 +592,9 @@ export default function PoolDetailPage() {
       return {
         tvlUSD: Number(match.tvlUSD) || 0,
         volume24hUSD: Number(match.volume24hUSD) || 0,
-        volume7dUSD: Number(match.volume7dUSD) || 0,
-        fees24hUSD: Number(match.fees24hUSD) || 0,
-        fees7dUSD: Number(match.fees7dUSD) || 0,
-      } as Partial<Pool> & { tvlUSD: number; volume24hUSD: number; volume7dUSD: number };
+        tvlYesterdayUSD: Number(match.tvlYesterdayUSD) || 0,
+        volumePrev24hUSD: Number(match.volumePrev24hUSD) || 0,
+      } as Partial<Pool> & { tvlUSD: number; volume24hUSD: number };
     } catch (e) {
       console.error('[PoolDetail] Subgraph load failed:', e);
       return null;
@@ -877,9 +869,8 @@ export default function PoolDetailPage() {
       if (!poolId || !isConnected || !accountAddress) return;
       const basePoolInfo = getPoolConfiguration(poolId);
       if (!basePoolInfo) return;
-      const res = await fetch(`/api/liquidity/get-positions?ownerAddress=${accountAddress}`);
-      if (!res.ok) return;
-      const data = await res.json();
+      const ids = await loadUserPositionIds(accountAddress);
+      const data = await derivePositionsFromIds(accountAddress, ids);
       if (!Array.isArray(data)) return;
       const subgraphId = (basePoolInfo.subgraphId || '').toLowerCase();
       const [poolToken0Raw, poolToken1Raw] = basePoolInfo.pair.split(' / ');
@@ -910,6 +901,7 @@ export default function PoolDetailPage() {
     toast.success("Position Closed", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
     setShowBurnConfirmDialog(false);
     setPositionToBurn(null);
+    try { if (accountAddress) loadUserPositionIds(accountAddress).then((ids)=>derivePositionsFromIds(accountAddress, ids)); } catch {}
   }, []);
 
   const onLiquidityIncreasedCallback = useCallback(() => {
@@ -1188,19 +1180,14 @@ export default function PoolDetailPage() {
       }
     }
 
-    // 3. Calculate APR if data is available
-    let calculatedApr = basePoolInfo.apr; // Start with fallback/loading
-    if (poolStats?.volume24hUSD !== undefined && dynamicFeeBps !== null && poolStats?.tvlUSD !== undefined && poolStats.tvlUSD > 0) {
-       const feeRate = dynamicFeeBps / 10000 / 100;
-       const dailyFees = poolStats.volume24hUSD * feeRate;
-       const yearlyFees = dailyFees * 365;
-       const apr = (yearlyFees / poolStats.tvlUSD) * 100;
-       calculatedApr = apr.toFixed(2) + '%';
-       console.log(`Calculated APR for ${basePoolInfo.pair}: ${calculatedApr} (Vol24h: ${poolStats.volume24hUSD}, FeeBPS: ${dynamicFeeBps}, TVL: ${poolStats.tvlUSD})`);
-    } else {
-      console.warn(`Could not calculate APR for ${basePoolInfo.pair} due to missing data. Vol: ${poolStats?.volume24hUSD}, Fee: ${dynamicFeeBps}, TVL: ${poolStats?.tvlUSD}`);
-      calculatedApr = "N/A"; // Set to N/A if calculation not possible
-    }
+    // 3. Calculate Fees(24h) and APR if data is available (align with pools list logic)
+    const feeRate = (typeof dynamicFeeBps === 'number' && dynamicFeeBps >= 0) ? dynamicFeeBps / 10_000 : 0;
+    const vol24 = Number(poolStats?.volume24hUSD || 0);
+    const tvlNow = Number(poolStats?.tvlUSD || 0);
+    const fees24hUSD = vol24 * feeRate;
+    const calculatedApr = (tvlNow > 0 && fees24hUSD > 0)
+      ? (((fees24hUSD * 365) / tvlNow) * 100).toFixed(2) + '%'
+      : 'N/A';
 
     // Combine all fetched/calculated data, ensuring display strings use fetched numeric data
     const combinedPoolData = {
@@ -1210,11 +1197,9 @@ export default function PoolDetailPage() {
         dynamicFeeBps: dynamicFeeBps,
         tickSpacing: getPoolById(poolId)?.tickSpacing || DEFAULT_TICK_SPACING,
         // Ensure display strings use fetched numeric data if available
-        volume24h: poolStats?.volume24hUSD !== undefined ? formatUSD(poolStats.volume24hUSD) : basePoolInfo.volume24h,
-        volume7d: poolStats?.volume7dUSD !== undefined ? formatUSD(poolStats.volume7dUSD) : basePoolInfo.volume7d,
-        fees24h: poolStats?.fees24hUSD !== undefined ? formatUSD(poolStats.fees24hUSD) : basePoolInfo.fees24h,
-        fees7d: poolStats?.fees7dUSD !== undefined ? formatUSD(poolStats.fees7dUSD) : basePoolInfo.fees7d,
-        liquidity: poolStats?.tvlUSD !== undefined ? formatUSD(poolStats.tvlUSD) : basePoolInfo.liquidity,
+        volume24h: isFinite(vol24) ? formatUSD(vol24) : basePoolInfo.volume24h,
+        fees24h: isFinite(fees24hUSD) ? formatUSD(fees24hUSD) : basePoolInfo.fees24h,
+        liquidity: isFinite(tvlNow) ? formatUSD(tvlNow) : basePoolInfo.liquidity,
         // Ensure other fields from Pool type are satisfied if not in basePoolInfo or poolStats
         highlighted: false, // Example, set appropriately
     } as PoolDetailData;
@@ -1224,29 +1209,13 @@ export default function PoolDetailPage() {
     // 4. Fetch/Cache User Positions
     if (isConnected && accountAddress) {
       setIsLoadingPositions(true);
-      const userPositionsCacheKey = getUserPositionsCacheKey(accountAddress);
-      let allUserPositions = getFromCache<ProcessedPosition[]>(userPositionsCacheKey);
-
-      if (allUserPositions) {
-        console.log("[Cache HIT] Using cached user positions for filtering on detail page.");
-      } else {
-        console.log("[Cache MISS] Fetching all user positions for detail page.");
-        try {
-          const res = await fetch(`/api/liquidity/get-positions?ownerAddress=${accountAddress}`);
-          if (!res.ok) throw new Error(`Failed to fetch positions: ${res.statusText}`);
-          const data = await res.json();
-          if (Array.isArray(data)) {
-            allUserPositions = data;
-            setToCache(userPositionsCacheKey, allUserPositions);
-            console.log("[Cache SET] Cached all user positions on detail page.");
-          } else {
-            console.error("Invalid positions data format:", data);
-            allUserPositions = [];
-          }
-        } catch (error) {
-          console.error("Failed to fetch user positions:", error);
-          allUserPositions = [];
-        }
+      let allUserPositions: any[] = [];
+      try {
+        const ids = await loadUserPositionIds(accountAddress);
+        allUserPositions = await derivePositionsFromIds(accountAddress, ids);
+      } catch (error) {
+        console.error("Failed to derive user positions:", error);
+        allUserPositions = [];
       }
 
       // Filter positions for this specific pool
@@ -3369,8 +3338,8 @@ export default function PoolDetailPage() {
                                         })()}
                                       </span>
                                     </TooltipTrigger>
-                                                        <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
-                      <div className="font-medium text-foreground">Last Modification</div>
+                                    <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
+                      <div className="font-medium text-foreground">Position Age</div>
                     </TooltipContent>
                                   </Tooltip>
                                 </TooltipProvider>

@@ -10,6 +10,10 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { useAccount } from "wagmi";
+import { useEffect } from "react";
+import { invalidateActivityCache } from "@/lib/client-cache";
+import { baseSepolia } from "@/lib/wagmiConfig";
 import { Token, SwapTxInfo } from './swap-interface'; // Assuming types are exported
 
 interface SwapSuccessViewProps {
@@ -36,6 +40,16 @@ export function SwapSuccessView({
   handleChangeButton,
   formatTokenAmountDisplay
 }: SwapSuccessViewProps) {
+  const { address: accountAddress } = useAccount();
+  useEffect(() => {
+    try { if (accountAddress) invalidateActivityCache(accountAddress); } catch {}
+    // Trigger pool stats revalidate (best-effort)
+    (async () => {
+      try {
+        await fetch('/api/internal/revalidate-pools', { method: 'POST' } as any);
+      } catch {}
+    })();
+  }, [accountAddress, swapTxInfo?.hash]);
   return (
     <motion.div key="success" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
       <div 

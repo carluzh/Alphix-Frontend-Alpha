@@ -136,6 +136,14 @@ export function AddLiquidityForm({
   };
 
   const initialTokens = getInitialTokens();
+  const isStablePool = useMemo(() => {
+    if (!selectedPoolId) return false;
+    const poolCfg = getPoolById(selectedPoolId);
+    return (poolCfg?.type || '').toLowerCase() === 'stable';
+  }, [selectedPoolId]);
+  const presetOptions = useMemo(() => {
+    return isStablePool ? ["±1%", "±0.5%", "±0.1%", "Full Range"] : ["Full Range", "±15%", "±8%", "±3%"]; 
+  }, [isStablePool]);
   const [token0Symbol, setToken0Symbol] = useState<TokenSymbol>(initialTokens.token0);
   const [token1Symbol, setToken1Symbol] = useState<TokenSymbol>(initialTokens.token1);
   const [amount0, setAmount0] = useState<string>("");
@@ -381,14 +389,14 @@ export function AddLiquidityForm({
           setPriceAtTickLower(null);
           setPriceAtTickUpper(null);
           setInitialDefaultApplied(false);
-          setActivePreset("±15%"); // Reset preset on pool change
+          setActivePreset(isStablePool ? "±1%" : "±15%"); // Reset preset on pool change
           setBaseTokenForPriceDisplay(t0); // Reset base token for price display
           // Reset chart specific states too
           setCurrentPriceLine(null);
         }
       }
     }
-  }, [selectedPoolId, sdkMinTick, sdkMaxTick]);
+  }, [selectedPoolId, sdkMinTick, sdkMaxTick, isStablePool]);
 
   // Apply initial parameters from position copying
   useEffect(() => {
@@ -416,11 +424,11 @@ export function AddLiquidityForm({
     setPriceAtTickLower(null);
     setPriceAtTickUpper(null);
     setCurrentPrice(null);
-    setActivePreset("±15%"); // Reset preset on token/chain change
+    setActivePreset(isStablePool ? "±1%" : "±15%"); // Reset preset based on pool type
     setBaseTokenForPriceDisplay(token0Symbol); // Reset base token for price display
     // Reset chart specific states too
     setCurrentPriceLine(null);
-  }, [token0Symbol, token1Symbol, chainId, sdkMinTick, sdkMaxTick]);
+  }, [token0Symbol, token1Symbol, chainId, sdkMinTick, sdkMaxTick, isStablePool]);
 
   // Effect to fetch initial pool state (current price and tick)
   useEffect(() => {
@@ -988,29 +996,16 @@ export function AddLiquidityForm({
     return [constrainedMinTick, constrainedMaxTick];
   }, [defaultTickSpacing, currentPoolTick]);
 
-  // Reset chart viewbox to center the chosen range with 5% margins
-  const resetChartViewbox = useCallback((newTickLower: number, newTickUpper: number) => {
+  // Reset chart viewbox to fit the chosen range with configurable margins (fractions of selection width)
+  const resetChartViewbox = useCallback((newTickLower: number, newTickUpper: number, leftMarginFrac: number = 0.05, rightMarginFrac: number = 0.05) => {
     if (newTickLower === newTickUpper) return;
-    
-    // Center on current price when presets are applied
-    if (currentPoolTick !== null) {
-      const minDomainSize = defaultTickSpacing * 10;
-      const center = currentPoolTick;
-      // Keep the current zoom level if possible; otherwise ensure min domain
-      const currentSize = xDomain[1] - xDomain[0];
-      const targetSize = Math.max(minDomainSize, currentSize || minDomainSize);
-      let newMin = center - targetSize / 2;
-      let newMax = center + targetSize / 2;
-      const [cMin, cMax] = applyDomainConstraints(newMin, newMax);
-      setXDomain([cMin, cMax]);
-      return;
-    }
-    
-    // Fallback to simple margin around selection
+
+    // Always fit selection plus a small margin, then constrain
     const rangeWidth = newTickUpper - newTickLower;
-    const marginTicks = Math.round(rangeWidth * 0.05);
-    const newMinTick = newTickLower - marginTicks;
-    const newMaxTick = newTickUpper + marginTicks;
+    const leftMarginTicks = Math.round(rangeWidth * Math.max(0, leftMarginFrac));
+    const rightMarginTicks = Math.round(rangeWidth * Math.max(0, rightMarginFrac));
+    const newMinTick = newTickLower - leftMarginTicks;
+    const newMaxTick = newTickUpper + rightMarginTicks;
     const [constrainedMinTick, constrainedMaxTick] = applyDomainConstraints(newMinTick, newMaxTick);
     setXDomain([constrainedMinTick, constrainedMaxTick]);
   }, [applyDomainConstraints, currentPoolTick, defaultTickSpacing, xDomain]);
@@ -1071,11 +1066,14 @@ export function AddLiquidityForm({
   // Effect to auto-apply active percentage preset when currentPrice changes OR when activePreset changes
   useEffect(() => {
     // Ensure currentPrice is valid and we have a preset that requires calculation
-    if (activePreset && ["±3%", "±8%", "±15%"].includes(activePreset)) {
+    if (activePreset && ["±3%", "±8%", "±15%", "±1%", "±0.5%", "±0.1%"].includes(activePreset)) {
         let percentage = 0;
         if (activePreset === "±3%") percentage = 0.03;
         else if (activePreset === "±8%") percentage = 0.08;
         else if (activePreset === "±15%") percentage = 0.15;
+        else if (activePreset === "±1%") percentage = 0.01;
+        else if (activePreset === "±0.5%") percentage = 0.005;
+        else if (activePreset === "±0.1%") percentage = 0.001;
 
         let newTickLower: number;
         let newTickUpper: number;
@@ -1120,8 +1118,10 @@ export function AddLiquidityForm({
                 setTickLower(newTickLower.toString());
                 setTickUpper(newTickUpper.toString());
                 setInitialDefaultApplied(true); 
-                // Reset viewbox for percentage presets
-                resetChartViewbox(newTickLower, newTickUpper);
+                // Reset viewbox for percentage presets using a constant fraction of the selection width.
+                // Use ~33% of selection width as margin on each side for ALL non-Full Range presets.
+                // Full Range is handled in its own branch below.
+                resetChartViewbox(newTickLower, newTickUpper, 1/3, 1/3);
             }
         } else {
              toast.info("Preset Range Too Narrow");
@@ -1177,12 +1177,15 @@ export function AddLiquidityForm({
     if (activePreset === "Full Range" || (tl <= sdkMinTick && tu >= sdkMaxTick)) {
       M = 1;
       concentrationMethod = 'Full Range';
-    } else if (activePreset && ["±3%", "±8%", "±15%"].includes(activePreset)) {
+    } else if (activePreset && ["±3%", "±8%", "±15%", "±1%", "±0.5%", "±0.1%"].includes(activePreset)) {
         // Use the new simplified formula for percentage presets
         let percentage = 0;
         if (activePreset === "±3%") percentage = 0.03;
         else if (activePreset === "±8%") percentage = 0.08;
         else if (activePreset === "±15%") percentage = 0.15;
+        else if (activePreset === "±1%") percentage = 0.01;
+        else if (activePreset === "±0.5%") percentage = 0.005;
+        else if (activePreset === "±0.1%") percentage = 0.001;
 
         if (percentage > 0) {
              M = 1 / (2 * percentage);
@@ -1940,13 +1943,16 @@ export function AddLiquidityForm({
     }
     
     // Get display decimals for the optimal denomination
-    const displayDecimals = TOKEN_DEFINITIONS[optimalDenomination]?.displayDecimals || 4;
+    // Increase precision for Stable pools when USD denominated
+    let displayDecimals = TOKEN_DEFINITIONS[optimalDenomination]?.displayDecimals || 4;
+    const poolCfg = selectedPoolId ? getPoolById(selectedPoolId) : null;
+    const isStable = (poolCfg?.type || '').toLowerCase() === 'stable';
     
     // For USD-denominated tokens, always use 2 decimals
     // Also check if the prices are in USD range (100-10000) which indicates USD denomination
     const isUSDDenominated = (optimalDenomination === 'aUSDT' || optimalDenomination === 'aUSDC') || 
                             (priceAtLowerTick >= 100 && priceAtLowerTick <= 10000 && priceAtUpperTick >= 100 && priceAtUpperTick <= 10000);
-    const finalDisplayDecimals = isUSDDenominated ? 2 : displayDecimals;
+    const finalDisplayDecimals = isUSDDenominated ? (isStable ? 6 : 2) : displayDecimals;
     
     // Temporarily disable console logs during development to reduce spam
     // console.log("[AddLiquidityForm] Price range formatting:", {
@@ -2001,7 +2007,9 @@ export function AddLiquidityForm({
 
     const denomToken = isInverted ? token0Symbol : token1Symbol;
     const isUsd = denomToken === 'aUSDT' || denomToken === 'aUSDC' || denomToken === 'USDT' || denomToken === 'USDC';
-    const decimals = isUsd ? 2 : (TOKEN_DEFINITIONS[denomToken]?.displayDecimals ?? 4);
+    const poolCfg = selectedPoolId ? getPoolById(selectedPoolId) : null;
+    const isStablePoolType = (poolCfg?.type || '').toLowerCase() === 'stable';
+    const decimals = isUsd ? (isStablePoolType ? 6 : 2) : (TOKEN_DEFINITIONS[denomToken]?.displayDecimals ?? 4);
 
     const points = [
       { tick: lower, price: pLower },
@@ -2216,7 +2224,7 @@ export function AddLiquidityForm({
                               className="absolute z-20 mt-1 left-0 w-max min-w-[180px] rounded-md border border-sidebar-border bg-[var(--modal-background)] shadow-md overflow-hidden"
                             >
                               <div className="p-1 grid gap-1">
-                                {["Full Range", "±15%", "±8%", "±3%"].map((preset) => (
+                                {presetOptions.map((preset) => (
                                   <button
                                     type="button"
                                     key={preset}
@@ -2228,6 +2236,7 @@ export function AddLiquidityForm({
                                     )}
                                     onClick={() => {
                                       handleSelectPreset(preset);
+                                      // Viewbox reset will be applied in the preset effect after ticks are recomputed
                                       setShowPresetSelector(false);
                                     }}
                                   >
@@ -2478,7 +2487,8 @@ export function AddLiquidityForm({
                 <div className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30"
                   style={{ backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
                 >
-                  <span className="absolute inset-0 z-10 block h-full w-full cursor-pointer p-0 opacity-0" />
+                  {/* @ts-ignore */}
+                  <appkit-button className="absolute inset-0 z-10 block h-full w-full cursor-pointer p-0 opacity-0" />
                   <span className="relative z-0 pointer-events-none">Connect Wallet</span>
                 </div>
               ) : (
