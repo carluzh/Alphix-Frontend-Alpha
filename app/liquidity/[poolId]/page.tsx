@@ -139,8 +139,8 @@ const chartConfig = {
   tvl: { label: "TVL", color: "#404040" },
   volumeUSD: { label: "Volume", color: "#404040" },
   tvlUSD: { label: "TVL", color: "#404040" },
-  volumeTvlRatio: { label: "Vol/TVL Ratio", color: "hsl(var(--chart-3))" },
-  emaRatio: { label: "Target Ratio", color: "hsl(var(--chart-2))" },
+  volumeTvlRatio: { label: "Activity", color: "hsl(var(--chart-3))" },
+  emaRatio: { label: "Target", color: "hsl(var(--chart-2))" },
   dynamicFee: { label: "Dynamic Fee (%)", color: "#e85102" },
 } satisfies ChartConfig;
 
@@ -582,19 +582,28 @@ export default function PoolDetailPage() {
   const loadPoolStatsFromSubgraph = useCallback(async (apiPoolIdToUse: string, basePoolInfo: ReturnType<typeof getPoolConfiguration>) => {
     try {
       // Use existing server batch endpoint (server-only SUBGRAPH_URL; 10m CDN TTL)
-      const resp = await fetch('/api/liquidity/get-pools-batch');
-      if (!resp.ok) return null;
-      const data = await resp.json();
-      if (!data?.success || !Array.isArray(data?.pools)) return null;
-      const poolIdLc = String(apiPoolIdToUse || '').toLowerCase();
-      const match = data.pools.find((p: any) => String(p.poolId || '').toLowerCase() === poolIdLc);
-      if (!match) return null;
-      return {
-        tvlUSD: Number(match.tvlUSD) || 0,
-        volume24hUSD: Number(match.volume24hUSD) || 0,
-        tvlYesterdayUSD: Number(match.tvlYesterdayUSD) || 0,
-        volumePrev24hUSD: Number(match.volumePrev24hUSD) || 0,
-      } as Partial<Pool> & { tvlUSD: number; volume24hUSD: number };
+      const attempt = async () => {
+        const resp = await fetch('/api/liquidity/get-pools-batch');
+        if (!resp.ok) return null;
+        const data = await resp.json();
+        if (!data?.success || !Array.isArray(data?.pools)) return null;
+        const poolIdLc = String(apiPoolIdToUse || '').toLowerCase();
+        const match = data.pools.find((p: any) => String(p.poolId || '').toLowerCase() === poolIdLc);
+        if (!match) return null;
+        return {
+          tvlUSD: Number(match.tvlUSD) || 0,
+          volume24hUSD: Number(match.volume24hUSD) || 0,
+          tvlYesterdayUSD: Number(match.tvlYesterdayUSD) || 0,
+          volumePrev24hUSD: Number(match.volumePrev24hUSD) || 0,
+        } as Partial<Pool> & { tvlUSD: number; volume24hUSD: number };
+      };
+
+      let result = await attempt();
+      if (result) return result;
+      // brief retry to smooth transient misses
+      await new Promise(r => setTimeout(r, 250));
+      result = await attempt();
+      return result;
     } catch (e) {
       console.error('[PoolDetail] Subgraph load failed:', e);
       return null;
@@ -1031,56 +1040,163 @@ export default function PoolDetailPage() {
 
     // Start loading chart data
     setIsLoadingChartData(true);
-    // Load ratios/fee from historical endpoint and merge Volume/TVL from chart-data endpoint
+    // Load daily series for volume & TVL (excluding today), and fee/targets; then merge
     ;(async () => {
       try {
         const basePoolInfoTmp = getPoolConfiguration(poolId);
         const subgraphIdForHist = basePoolInfoTmp?.subgraphId || '';
         if (!subgraphIdForHist) throw new Error('Missing subgraph id for pool');
-        // 10-minute cached chart merge
+        const targetDays = 60;
+
+        // 10-minute local cache for merged chart
         const chartCacheKey = getPoolChartDataCacheKey(poolId);
         const cached = getFromCacheWithTtl<ChartDataPoint[]>(chartCacheKey, 10 * 60 * 1000);
         if (cached && cached.length) {
           setApiChartData(cached);
+          setIsLoadingChartData(false);
           return;
         }
-        // Reduce heavy volume/TVL window on smaller screens to speed up first paint
-        const targetDays = windowWidth < 1500 ? 30 : 60;
-        const [histRes, volTvlRes] = await Promise.all([
-          fetch(`/api/liquidity/get-historical-dynamic-fees?poolId=${encodeURIComponent(subgraphIdForHist)}&days=${targetDays}`),
-          fetch(`/api/liquidity/chart-data/${encodeURIComponent(poolId)}?days=${targetDays}`),
-        ]);
-        if (!histRes.ok) throw new Error(`Failed ratios: ${histRes.statusText}`);
-        if (!volTvlRes.ok) throw new Error(`Failed vol/tvl: ${volTvlRes.statusText}`);
-        const histJson = await histRes.json();
-        const volTvlJson = await volTvlRes.json();
-        if (!Array.isArray(histJson)) throw new Error('Unexpected historical response');
-        const volTvlMap = new Map<string, { volumeUSD: number; tvlUSD: number }>();
-        if (volTvlJson?.data && Array.isArray(volTvlJson.data)) {
-          for (const d of volTvlJson.data) {
-            if (d?.date) volTvlMap.set(d.date, { volumeUSD: Number(d.volumeUSD) || 0, tvlUSD: Number(d.tvlUSD) || 0 });
+
+        const todayKey = new Date().toISOString().split('T')[0];
+
+        // Minimal retry helper to avoid showing the chart until data is truly available
+        const fetchJsonWithRetry = async <T = any>(url: string, validate?: (json: any) => boolean, attempts = 4, delayMs = 700): Promise<T> => {
+          let last: any = null;
+          for (let i = 0; i < attempts; i++) {
+            const res = await fetch(url);
+            if (res.ok) {
+              const json = await res.json();
+              last = json;
+              if (!validate || validate(json)) return json as T;
+            }
+            if (i < attempts - 1) await new Promise(r => setTimeout(r, delayMs));
           }
+          // If validation fails after retries, throw to keep loading state
+          throw new Error(`Validation failed for ${url}`);
+        };
+
+        const [feeJson, tvlJson, volJson] = await Promise.all([
+          fetchJsonWithRetry(`/api/liquidity/get-historical-dynamic-fees?poolId=${encodeURIComponent(subgraphIdForHist)}&days=${targetDays}`,
+            (j) => Array.isArray(j) && j.length > 0
+          ),
+          fetchJsonWithRetry(`/api/liquidity/chart-tvl?poolId=${encodeURIComponent(poolId)}&days=${targetDays}`,
+            (j) => Array.isArray(j?.data)
+          ),
+          fetchJsonWithRetry(`/api/liquidity/chart-volume?poolId=${encodeURIComponent(poolId)}&days=${targetDays}`,
+            (j) => Array.isArray(j?.data) && j.data.some((d: any) => String(d?.date || '') === todayKey)
+          ),
+        ]);
+        // No ad-hoc quick retries; handled by fetchJsonWithRetry
+
+        // Base date set from separate series (both exclude today)
+        const tvlArr: Array<{ date: string; tvlUSD?: number }> = Array.isArray(tvlJson?.data) ? tvlJson.data : [];
+        const volArr: Array<{ date: string; volumeUSD?: number }> = Array.isArray(volJson?.data) ? volJson.data : [];
+        const todayKeyLocal = new Date().toISOString().split('T')[0];
+        const allDates = Array.from(new Set<string>([
+          ...tvlArr.map(d => String(d?.date || '')),
+          ...volArr.map(d => String(d?.date || '')),
+        ])).filter(Boolean).sort((a, b) => a.localeCompare(b));
+
+        const tvlByDate = new Map<string, number>();
+        for (const d of tvlArr) tvlByDate.set(String(d.date), Number(d?.tvlUSD) || 0);
+        const volByDate = new Map<string, number>();
+        for (const d of volArr) volByDate.set(String(d.date), Number(d?.volumeUSD) || 0);
+
+        // Map fee events to per-day overlays over the same date domain
+        const feeByDate = new Map<string, { ratio: number; ema: number; feePct: number }>();
+        const events: any[] = Array.isArray(feeJson) ? feeJson : [];
+        const evAsc = [...events].sort((a, b) => Number(a?.timestamp || 0) - Number(b?.timestamp || 0));
+        const scaleRatio = (val: any): number => {
+          const n = typeof val === 'string' ? Number(val) : (typeof val === 'number' ? val : 0);
+          if (!Number.isFinite(n)) return 0;
+          if (Math.abs(n) >= 1e12) return n / 1e18;
+          if (Math.abs(n) >= 1e6) return n / 1e6;
+          if (Math.abs(n) >= 1e4) return n / 1e4;
+          return n;
+        };
+        // Ensure we compute overlays for today as well
+        const datesForOverlay = Array.from(new Set<string>([...allDates, todayKeyLocal])).sort((a,b) => a.localeCompare(b));
+        let ei = 0, curFeePct = 0, curRatio = 0, curEma = 0;
+        for (const dateStr of datesForOverlay) {
+          const endTs = Math.floor(new Date(`${dateStr}T23:59:59Z`).getTime() / 1000);
+          while (ei < evAsc.length && Number(evAsc[ei]?.timestamp || 0) <= endTs) {
+            const e = evAsc[ei];
+            const bps = Number(e?.newFeeBps ?? e?.newFeeRateBps ?? 0);
+            curFeePct = Number.isFinite(bps) ? (bps / 10_000) : curFeePct;
+            curRatio = scaleRatio(e?.currentTargetRatio);
+            curEma = scaleRatio(e?.newTargetRatio);
+            ei++;
+          }
+          feeByDate.set(dateStr, { ratio: curRatio, ema: curEma, feePct: curFeePct });
         }
-        const mapped: ChartDataPoint[] = histJson.map((h: any) => {
-          const date = String(h?.timeLabel || '');
-          const volTvl = volTvlMap.get(date) || { volumeUSD: 0, tvlUSD: 0 };
+
+        // Build merged series from separate endpoints (no today entry here)
+        const merged: ChartDataPoint[] = allDates.map((k) => {
+          const v = volByDate.get(k) || 0;
+          const t = tvlByDate.get(k) || 0;
+          const f = feeByDate.get(k);
           return {
-            date,
-            volumeUSD: volTvl.volumeUSD,
-            tvlUSD: volTvl.tvlUSD,
-            volumeTvlRatio: Number(h?.volumeTvlRatio) || 0,
-            emaRatio: Number(h?.emaRatio) || 0,
-            dynamicFee: Number(h?.dynamicFee) || 0,
-          };
+            date: k,
+            volumeUSD: v,
+            tvlUSD: t,
+            volumeTvlRatio: f?.ratio ?? 0,
+            emaRatio: f?.ema ?? 0,
+            dynamicFee: f?.feePct ?? 0,
+          } as ChartDataPoint;
         });
-        setApiChartData(mapped);
-        setToCache(chartCacheKey, mapped);
-      } catch (error: any) {
-        console.error('Failed to fetch historical ratios for chart:', error);
-        toast.error('Could not load pool chart data.', { description: error?.message || String(error) });
-        setApiChartData([]);
-      } finally {
+
+        // Enforce today's data append from header stats before unsetting loading
+        // todayKeyLocal already computed above
+        // Get current stats from batch API to ensure today's point is present
+        let tvlFromHeader = 0;
+        try {
+          const resp = await fetch('/api/liquidity/get-pools-batch');
+          if (resp.ok) {
+            const data = await resp.json();
+            const poolIdLc = String(subgraphIdForHist || '').toLowerCase();
+            const match = Array.isArray(data?.pools) ? data.pools.find((p: any) => String(p.poolId || '').toLowerCase() === poolIdLc) : null;
+            if (match) {
+              tvlFromHeader = Number(match.tvlUSD) || 0;
+            }
+          }
+        } catch {}
+        let finalMerged = merged;
+        const hasToday = finalMerged.some(d => d.date === todayKeyLocal);
+        const overlayToday = feeByDate.get(todayKeyLocal);
+        if (hasToday) {
+          // Update existing today point with current TVL and overlay (keep existing volume)
+          finalMerged = finalMerged.map(d => 
+            d.date === todayKeyLocal 
+              ? { 
+                  ...d, 
+                  tvlUSD: Number.isFinite(tvlFromHeader) && tvlFromHeader > 0 ? tvlFromHeader : d.tvlUSD,
+                  volumeTvlRatio: overlayToday?.ratio ?? d.volumeTvlRatio ?? 0,
+                  emaRatio: overlayToday?.ema ?? d.emaRatio ?? 0,
+                  dynamicFee: overlayToday?.feePct ?? d.dynamicFee ?? 0,
+                } 
+              : d
+          );
+        } else {
+          // Add today point if missing; overlay from latest fee event
+          finalMerged = [...finalMerged, { 
+            date: todayKeyLocal, 
+            volumeUSD: 0,
+            tvlUSD: Number.isFinite(tvlFromHeader) && tvlFromHeader > 0 ? tvlFromHeader : 0, 
+            volumeTvlRatio: overlayToday?.ratio ?? 0, 
+            emaRatio: overlayToday?.ema ?? 0, 
+            dynamicFee: overlayToday?.feePct ?? 0, 
+          }];
+        }
+        setApiChartData(finalMerged);
+        // Only cache if we have any non-zero fee fields to avoid sticky flat lines
+        const hasFeeOverlay = finalMerged.some(d => (d.volumeTvlRatio || d.emaRatio || d.dynamicFee));
+        if (hasFeeOverlay) setToCache(chartCacheKey, finalMerged);
+        // Chart data loaded successfully; end loading state
         setIsLoadingChartData(false);
+      } catch (error: any) {
+        console.error('Failed to fetch daily chart series:', error);
+        toast.error('Could not load pool chart data.', { description: error?.message || String(error) });
+        // Keep loading state true to avoid showing incomplete/incorrect charts
       }
     })();
 
@@ -1137,47 +1253,13 @@ export default function PoolDetailPage() {
       }
     }
 
-    // 2. Fetch/Cache Dynamic Fee for APR Calculation
+    // 2. Fetch Dynamic LP fee in basis points using shared helper (aligns with pools list)
     let dynamicFeeBps: number | null = null;
-    const [token0SymbolStr, token1SymbolStr] = basePoolInfo.pair.split(' / ');
-    const fromTokenSymbolForFee = TOKEN_DEFINITIONS[token0SymbolStr?.trim() as TokenSymbol]?.symbol;
-    const toTokenSymbolForFee = TOKEN_DEFINITIONS[token1SymbolStr?.trim() as TokenSymbol]?.symbol;
-
-    if (fromTokenSymbolForFee && toTokenSymbolForFee && baseSepolia.id) {
-      const feeCacheKey = getPoolDynamicFeeCacheKey(fromTokenSymbolForFee, toTokenSymbolForFee, baseSepolia.id);
-      const cachedFee = getFromCache<{ dynamicFee: string }>(feeCacheKey);
-
-      if (cachedFee) {
-        console.log(`[Cache HIT] Using cached dynamic fee for APR calc (${basePoolInfo.pair}):`, cachedFee.dynamicFee);
-        dynamicFeeBps = Number(cachedFee.dynamicFee);
-      } else {
-        console.log(`[Cache MISS] Fetching dynamic fee from API for APR calc (${basePoolInfo.pair})`);
-        try {
-          const feeResponse = await fetch('/api/swap/get-dynamic-fee', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              fromTokenSymbol: fromTokenSymbolForFee,
-              toTokenSymbol: toTokenSymbolForFee,
-              chainId: baseSepolia.id,
-            }),
-          });
-          if (feeResponse.ok) {
-            const feeData = await feeResponse.json();
-            dynamicFeeBps = Number(feeData.dynamicFee);
-            if (!isNaN(dynamicFeeBps)) {
-               setToCache(feeCacheKey, { dynamicFee: feeData.dynamicFee });
-               console.log(`[Cache SET] Cached dynamic fee for APR calc (${basePoolInfo.pair}):`, feeData.dynamicFee);
-            } else {
-              dynamicFeeBps = null; // Invalid fee from API
-            }
-          } else {
-            console.error(`Failed to fetch dynamic fee for APR calc (${basePoolInfo.pair}):`, await feeResponse.text());
-          }
-        } catch (feeError) {
-           console.error(`Error fetching dynamic fee for APR calc (${basePoolInfo.pair}):`, feeError);
-        }
-      }
+    try {
+      dynamicFeeBps = await getPoolFeeBps(apiPoolIdToUse);
+    } catch (e) {
+      console.warn(`[Pool Detail] getPoolFeeBps failed for ${apiPoolIdToUse}`, e);
+      dynamicFeeBps = null;
     }
 
     // 3. Calculate Fees(24h) and APR if data is available (align with pools list logic)
@@ -1206,6 +1288,40 @@ export default function PoolDetailPage() {
 
     setCurrentPoolData(combinedPoolData);
 
+    // Ensure the chart series has today's TVL set to the header stats value (from get-pools-batch)
+    try {
+      const todayKey = new Date().toISOString().split('T')[0];
+      const tvlHeaderNow = tvlNow;
+      if (Number.isFinite(tvlHeaderNow) && tvlHeaderNow >= 0) {
+        setApiChartData(prev => {
+          const next = Array.isArray(prev) ? [...prev] : [];
+          const idx = next.findIndex((d) => d?.date === todayKey);
+          if (idx >= 0) {
+            next[idx] = {
+              ...next[idx],
+              tvlUSD: tvlHeaderNow,
+              // Do not synthesize fee overlay here; leave as-is if provided by fee series, else zero
+              volumeTvlRatio: typeof next[idx]?.volumeTvlRatio === 'number' ? next[idx].volumeTvlRatio : 0,
+              emaRatio: typeof next[idx]?.emaRatio === 'number' ? next[idx].emaRatio : 0,
+              dynamicFee: typeof next[idx]?.dynamicFee === 'number' ? next[idx].dynamicFee : 0,
+            };
+          } else {
+            next.push({
+              date: todayKey,
+              volumeUSD: 0,
+              tvlUSD: tvlHeaderNow,
+              volumeTvlRatio: 0,
+              emaRatio: 0,
+              dynamicFee: 0,
+            });
+          }
+          // Refresh local cache with adjusted series
+          try { setToCache(getPoolChartDataCacheKey(poolId), next); } catch {}
+          return next;
+        });
+      }
+    } catch {}
+
     // 4. Fetch/Cache User Positions
     if (isConnected && accountAddress) {
       setIsLoadingPositions(true);
@@ -1218,24 +1334,15 @@ export default function PoolDetailPage() {
         allUserPositions = [];
       }
 
-      // Filter positions for this specific pool
+      // Filter positions for this specific pool by poolId only (whitelist PoolId)
       if (allUserPositions && allUserPositions.length > 0) {
         const subgraphId = (basePoolInfo.subgraphId || '').toLowerCase();
-        const [poolToken0Raw, poolToken1Raw] = basePoolInfo.pair.split(' / ');
-        const poolToken0 = poolToken0Raw?.trim().toUpperCase();
-        const poolToken1 = poolToken1Raw?.trim().toUpperCase();
-        
         const filteredPositions = allUserPositions.filter(pos => {
-          const poolMatch = subgraphId && String(pos.poolId || '').toLowerCase() === subgraphId;
-          if (poolMatch) return true;
-          const posToken0 = pos.token0.symbol?.trim().toUpperCase();
-          const posToken1 = pos.token1.symbol?.trim().toUpperCase();
-          return (posToken0 === poolToken0 && posToken1 === poolToken1) ||
-                 (posToken0 === poolToken1 && posToken1 === poolToken0);
+          const pid = String(pos.poolId || '').toLowerCase();
+          return subgraphId && pid === subgraphId;
         });
-        
         setUserPositions(filteredPositions);
-        console.log(`[Pool Detail] Filtered ${filteredPositions.length} positions for pool ${basePoolInfo.pair} from ${allUserPositions.length} total positions.`);
+        console.log(`[Pool Detail] Filtered ${filteredPositions.length} positions for poolId ${subgraphId} from ${allUserPositions.length} total positions.`);
       } else {
         setUserPositions([]);
         console.log(`[Pool Detail] No positions found for pool ${basePoolInfo.pair}.`);
@@ -1258,37 +1365,37 @@ export default function PoolDetailPage() {
 
     // Only refresh pool stats and user positions, not chart data
     try {
-      // Refresh pool stats
-      const [res24h, res7d, resTvl] = await Promise.all([
+      // Refresh pool stats (volumes/fees only). TVL is handled via get-pools-batch elsewhere.
+      const [res24h, res7d] = await Promise.all([
         fetch(`/api/liquidity/get-rolling-volume-fees?poolId=${apiPoolIdToUse}&days=1`),
         fetch(`/api/liquidity/get-rolling-volume-fees?poolId=${apiPoolIdToUse}&days=7`),
-        fetch(`/api/liquidity/get-pool-tvl?poolId=${apiPoolIdToUse}`)
       ]);
 
-      if (res24h.ok && res7d.ok && resTvl.ok) {
+      if (res24h.ok && res7d.ok) {
         const data24h = await res24h.json();
         const data7d = await res7d.json();
-        const dataTvl = await resTvl.json();
-        const poolStats = {
+        const partialStats = {
           volume24hUSD: parseFloat(data24h.volumeUSD),
           fees24hUSD: parseFloat(data7d.feesUSD),
           volume7dUSD: parseFloat(data7d.volumeUSD),
           fees7dUSD: parseFloat(data7d.feesUSD),
-          tvlUSD: parseFloat(dataTvl.tvlUSD),
-        };
-        setToCache(getPoolStatsCacheKey(apiPoolIdToUse), poolStats);
+        } as const;
+        // cache just the updated parts
+        try {
+          const existing = getFromCache(getPoolStatsCacheKey(apiPoolIdToUse)) || {};
+          setToCache(getPoolStatsCacheKey(apiPoolIdToUse), { ...existing, ...partialStats });
+        } catch {}
 
-        // Update current pool data with new stats
+        // Update current pool data with new stats (do not touch liquidity/tvl here)
         setCurrentPoolData(prev => {
           if (!prev) return prev;
           return {
             ...prev,
-            ...poolStats,
-            volume24h: formatUSD(poolStats.volume24hUSD),
-            volume7d: formatUSD(poolStats.volume7dUSD),
-            fees24h: formatUSD(poolStats.fees24hUSD),
-            fees7d: formatUSD(poolStats.fees7dUSD),
-            liquidity: formatUSD(poolStats.tvlUSD),
+            ...partialStats,
+            volume24h: formatUSD(partialStats.volume24hUSD),
+            volume7d: formatUSD(partialStats.volume7dUSD),
+            fees24h: formatUSD(partialStats.fees24hUSD),
+            fees7d: formatUSD(partialStats.fees7dUSD),
           };
         });
       }
@@ -2268,7 +2375,8 @@ export default function PoolDetailPage() {
                       <span className="cursor-default">
                         {(() => {
                           if (currentPoolData.dynamicFeeBps === undefined) return "Loading...";
-                          const pct = currentPoolData.dynamicFeeBps / 10000;
+                          // dynamicFeeBps is basis points; percent = bps / 100
+                          const pct = (currentPoolData.dynamicFeeBps as number) / 100;
                           const formatted = pct < 0.1 ? pct.toFixed(3) : pct.toFixed(2);
                           return `${formatted}%`;
                         })()}
@@ -2583,7 +2691,7 @@ export default function PoolDetailPage() {
                                             })}
                                           </div>
                                           <div className="grid gap-1.5">
-                                            {/* Vol/TVL Ratio with line indicator */}
+                                            {/* Activity with line indicator */}
                                             <div className="flex w-full flex-wrap items-stretch gap-2">
                                               <div
                                                 className="shrink-0 rounded-[2px] w-[2px] h-4"
@@ -2592,14 +2700,14 @@ export default function PoolDetailPage() {
                                                 }}
                                               />
                                               <div className="flex flex-1 justify-between leading-none items-center">
-                                                <span className="text-muted-foreground">Vol/TVL</span>
+                                                <span className="text-muted-foreground">Activity</span>
                                                 <span className="font-mono font-medium tabular-nums text-foreground">
                                                   {typeof dataPoint.volumeTvlRatio === 'number' ? dataPoint.volumeTvlRatio.toFixed(3) : 'N/A'}
                                                 </span>
                                               </div>
                                             </div>
 
-                                            {/* EMA with line indicator */}
+                                            {/* Target with line indicator */}
                                             <div className="flex w-full flex-wrap items-stretch gap-2">
                                               <div
                                                 className="shrink-0 rounded-[2px] w-[2px] h-4"
@@ -2609,7 +2717,7 @@ export default function PoolDetailPage() {
                                                 }}
                                               />
                                               <div className="flex flex-1 justify-between leading-none items-center">
-                                                <span className="text-muted-foreground">EMA</span>
+                                                <span className="text-muted-foreground">Target</span>
                                                 <span className="font-mono font-medium tabular-nums text-foreground">
                                                   {typeof dataPoint.emaRatio === 'number' ? dataPoint.emaRatio.toFixed(3) : 'N/A'}
                                                 </span>
@@ -2882,7 +2990,7 @@ export default function PoolDetailPage() {
                                                 style={{ backgroundColor: 'hsl(var(--chart-3))' }}
                                               />
                                               <div className="flex flex-1 justify-between leading-none items-center">
-                                                <span className="text-muted-foreground">Vol/TVL</span>
+                                                <span className="text-muted-foreground">Activity</span>
                                                 <span className="font-mono font-medium tabular-nums text-foreground">
                                                   {typeof dataPoint.volumeTvlRatio === 'number' ? dataPoint.volumeTvlRatio.toFixed(3) : 'N/A'}
                                                 </span>
@@ -2897,7 +3005,7 @@ export default function PoolDetailPage() {
                                                 }}
                                               />
                                               <div className="flex flex-1 justify-between leading-none items-center">
-                                                <span className="text-muted-foreground">EMA</span>
+                                                <span className="text-muted-foreground">Target</span>
                                                 <span className="font-mono font-medium tabular-nums text-foreground">
                                                   {typeof dataPoint.emaRatio === 'number' ? dataPoint.emaRatio.toFixed(3) : 'N/A'}
                                                 </span>
@@ -3489,9 +3597,15 @@ export default function PoolDetailPage() {
                                               (async () => {
                                                 try {
                                                   // Build and submit collect calldata via v4 SDK
-                                                  const tokenIdHex = String(position.positionId || '').split('-').pop() as string;
-                                                  if (!tokenIdHex || !tokenIdHex.startsWith('0x')) { toast.error('Invalid tokenId'); return; }
-                                                  const tokenId = BigInt(tokenIdHex);
+                                                  const idRaw = String(position.positionId || '');
+                                                  const tokenIdStr = idRaw.includes('-') ? (idRaw.split('-').pop() as string) : idRaw;
+                                                  let tokenId: bigint;
+                                                  try {
+                                                    tokenId = BigInt(tokenIdStr);
+                                                  } catch {
+                                                    toast.error('Invalid tokenId');
+                                                    return;
+                                                  }
                                                   const { buildCollectFeesCall } = await import('@/lib/liquidity-utils');
                                                   const { calldata, value } = await buildCollectFeesCall({ tokenId, userAddress: accountAddress as `0x${string}` });
                                                   writeContract({

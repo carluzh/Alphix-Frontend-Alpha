@@ -1,7 +1,7 @@
 "use client";
 
 import React from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence, useAnimation } from 'framer-motion';
 import Image from 'next/image';
 import {
   ArrowDownIcon,
@@ -130,6 +130,8 @@ export function SwapInputView({
   const ignoreNextOutsideClickRef = React.useRef(false);
   const hoverPreviewActiveRef = React.useRef(false);
   const committedPoolIndexRef = React.useRef<number>(0);
+  const [balanceWiggleCount, setBalanceWiggleCount] = React.useState(0);
+  const wiggleControls = useAnimation();
 
   const formatPercentFromBps = React.useCallback((bps: number) => {
     const percent = bps / 10000; // convert bps to percent
@@ -183,6 +185,33 @@ export function SwapInputView({
     }
   };
 
+  React.useEffect(() => {
+    if (balanceWiggleCount > 0) {
+      wiggleControls.start({
+        x: [0, -3, 3, -2, 2, 0],
+        transition: { duration: 0.22, ease: 'easeOut' },
+      }).catch(() => {});
+    }
+  }, [balanceWiggleCount, wiggleControls]);
+
+  
+
+  // Allow any input; wiggle once when crossing from within-balance to over-balance
+  const handleFromAmountChangeWithWiggle = (e: React.ChangeEvent<HTMLInputElement>) => {
+    try {
+      const nextRaw = e.target.value;
+      const nextVal = parseFloat(nextRaw || "");
+      const bal = parseFloat(displayFromToken.balance || "0");
+      const prevVal = parseFloat(fromAmount || "");
+      const wasOver = Number.isFinite(prevVal) && Number.isFinite(bal) ? prevVal > bal : false;
+      const isOver = Number.isFinite(nextVal) && Number.isFinite(bal) ? nextVal > bal : false;
+      if (isOver && !wasOver) {
+        setBalanceWiggleCount((c) => c + 1);
+      }
+    } catch {}
+    handleFromAmountChange(e);
+  };
+
   // Keep the slippage editor open until the arrow is clicked again
   // Disable outside-click to close behavior
   React.useEffect(() => {
@@ -223,13 +252,14 @@ export function SwapInputView({
             </Button>
           </div>
         </div>
-        <div 
+        <motion.div 
           className={cn(
             "rounded-lg bg-[var(--token-container-background)] p-4 border transition-colors hover:border-[var(--token-container-border-hover)]",
             isSellInputFocused
               ? "border-[var(--token-container-border-hover)]"
               : "border-transparent"
           )}
+          animate={wiggleControls}
         >
           <div className="flex items-center gap-2">
             <TokenSelector
@@ -243,7 +273,7 @@ export function SwapInputView({
             <div className="flex-1">
               <Input
                 value={fromAmount}
-                onChange={handleFromAmountChange}
+                onChange={handleFromAmountChangeWithWiggle}
                 onFocus={() => setIsSellInputFocused(true)}
                 onBlur={() => setIsSellInputFocused(false)}
                 className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto input-enhanced focus-visible:rounded-none focus-visible:outline-none"
@@ -255,7 +285,7 @@ export function SwapInputView({
               </div>
             </div>
           </div>
-        </div>
+        </motion.div>
       </div>
 
       <div className="flex justify-center">

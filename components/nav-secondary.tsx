@@ -6,6 +6,7 @@ import type { LucideIcon } from "lucide-react"
 import { LaptopIcon, Trash2Icon, SettingsIcon, LogOutIcon, CheckIcon } from "lucide-react"
 import { toast } from "sonner"
 import { CustomLockIcon } from "./CustomLockIcon"
+import { clearCache } from "@/lib/client-cache"
 
 import {
   DropdownMenu,
@@ -87,7 +88,9 @@ export function NavSecondary({
                       style={{ backgroundColor: '#0f0f0f' }}
                     >
                       <DropdownMenuItem onClick={() => {
-                        localStorage.clear();
+                        try { clearCache(); } catch {}
+                        try { sessionStorage.clear(); } catch {}
+                        try { localStorage.clear(); } catch {}
                         toast(
                           <span className="flex items-center">
                             <Trash2Icon className="mr-2 h-4 w-4 flex-shrink-0" />

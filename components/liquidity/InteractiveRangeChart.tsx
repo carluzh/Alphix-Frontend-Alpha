@@ -277,69 +277,21 @@ export function InteractiveRangeChart({
       setIsChartDataLoading(true);
 
       try {
-        const graphqlQuery = {
-          query: `
-            query GetAllHookPositionsForDepth {
-              hookPositions(first: 1000, orderBy: liquidity, orderDirection: desc) {
-                pool
-                tickLower
-                tickUpper
-                liquidity
-              }
-            }
-          `,
-        };
-
-        const queryPayload = { query: graphqlQuery.query };
-
-        console.log("[InteractiveRangeChart] Fetching from subgraph...");
-        const response = await fetch(SUBGRAPH_URL, {
+        console.log("[InteractiveRangeChart] Fetching depth via server endpoint...");
+        const resp = await fetch('/api/liquidity/get-bucket-depths', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(queryPayload),
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ poolId: selectedPoolId, first: 2000 }),
         });
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(`Network response was not ok: ${response.status} ${response.statusText}. Details: ${errorText}`);
+        if (!resp.ok) {
+          const txt = await resp.text();
+          throw new Error(`Depth API failed: ${resp.status} ${resp.statusText}: ${txt}`);
         }
-
-        const result = await response.json();
-        console.log("[InteractiveRangeChart] Subgraph response:", result);
-
-        if (result.errors) {
-          console.error("[InteractiveRangeChart] GraphQL errors from subgraph:", result.errors);
-          throw new Error(`GraphQL error: ${result.errors.map((e: any) => e.message).join(', ')}`);
-        }
-
-        if (result.data && result.data.hookPositions) {
-          const allFetchedPositions = result.data.hookPositions as Array<HookPosition & { pool: string }>; 
-          console.log(`[InteractiveRangeChart] Subgraph returned ${allFetchedPositions.length} total hookPositions before client-side filtering.`);
-          
-          // Debug: Log a few sample positions to see the pool ID format
-          if (allFetchedPositions.length > 0) {
-            console.log("[InteractiveRangeChart] Sample positions from subgraph:", allFetchedPositions.slice(0, 3));
-            console.log("[InteractiveRangeChart] Looking for pool ID:", poolIdToSearch);
-            console.log("[InteractiveRangeChart] All pool IDs in subgraph:", allFetchedPositions.map(pos => pos.pool));
-          }
-          
-          // Filter for exact pool match only
-          const relevantPositions = allFetchedPositions.filter(
-            pos => pos.pool && pos.pool.toLowerCase().trim() === poolIdToSearch.trim()
-          );
-
-          console.log(`[InteractiveRangeChart] Filtered to ${relevantPositions.length} relevant positions for pool ${poolIdToSearch}`);
-          setRawHookPositions(relevantPositions);
-        } else {
-          setRawHookPositions([]);
-          console.warn("[InteractiveRangeChart] No hookPositions found in GraphQL response or unexpected data structure.");
-        }
-
+        const json = await resp.json();
+        const positions = Array.isArray(json?.positions) ? json.positions : [];
+        setRawHookPositions(positions);
       } catch (error: any) {
         console.error("[InteractiveRangeChart] Error fetching liquidity depth data:", error);
-        // Don't show toast error for network issues, just use fallback data
         setRawHookPositions(null);
       } finally {
         setIsFetchingLiquidityDepth(false);

@@ -354,19 +354,9 @@ function usePortfolioData(refreshKey: number = 0): PortfolioData {
         try {
           const pools = getAllPools();
           const allowedIds = new Set((pools || []).map((p: any) => String(p?.subgraphId || '').toLowerCase()));
-          const allowedPairs = new Set(
-            (pools || []).flatMap((p: any) => {
-              const a = `${(p?.currency0?.symbol || '').toUpperCase()}/${(p?.currency1?.symbol || '').toUpperCase()}`;
-              const b = `${(p?.currency1?.symbol || '').toUpperCase()}/${(p?.currency0?.symbol || '').toUpperCase()}`;
-              return [a, b];
-            })
-          );
           positions = positions.filter((pos: any) => {
             const pid = String(pos?.poolId || '').toLowerCase();
-            if (pid && allowedIds.has(pid)) return true;
-            const t0 = String(pos?.token0?.symbol || '').toUpperCase();
-            const t1 = String(pos?.token1?.symbol || '').toUpperCase();
-            return allowedPairs.has(`${t0}/${t1}`);
+            return pid && allowedIds.has(pid);
           });
         } catch {}
         // 2. Aggregate token balances from positions
@@ -520,19 +510,9 @@ function usePortfolio(refreshKey: number = 0) {
         try {
           const pools = getAllPools();
           const allowedIds = new Set((pools || []).map((p: any) => String(p?.subgraphId || '').toLowerCase()));
-          const allowedPairs = new Set(
-            (pools || []).flatMap((p: any) => {
-              const a = `${(p?.currency0?.symbol || '').toUpperCase()}/${(p?.currency1?.symbol || '').toUpperCase()}`;
-              const b = `${(p?.currency1?.symbol || '').toUpperCase()}/${(p?.currency0?.symbol || '').toUpperCase()}`;
-              return [a, b];
-            })
-          );
           positions = positions.filter((pos: any) => {
             const pid = String(pos?.poolId || '').toLowerCase();
-            if (pid && allowedIds.has(pid)) return true;
-            const t0 = String(pos?.token0?.symbol || '').toUpperCase();
-            const t1 = String(pos?.token1?.symbol || '').toUpperCase();
-            return allowedPairs.has(`${t0}/${t1}`);
+            return pid && allowedIds.has(pid);
           });
         } catch {}
         setActivePositions(positions);
