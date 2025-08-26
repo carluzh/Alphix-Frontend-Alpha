@@ -9,7 +9,7 @@ import { baseSepolia } from '@/lib/wagmiConfig';
 import { getAddress, type Hex, BaseError } from 'viem';
 import JSBI from 'jsbi';
 import { prefetchService } from '@/lib/prefetch-service';
-import { invalidateActivityCache } from '@/lib/client-cache';
+import { invalidateActivityCache, invalidateUserPositionsCache, invalidateUserPositionIdsCache } from '@/lib/client-cache';
 
 interface UseBurnLiquidityProps {
   onLiquidityBurned: () => void;
@@ -161,6 +161,7 @@ export function useBurnLiquidity({ onLiquidityBurned }: UseBurnLiquidityProps) {
       onLiquidityBurned();
       try { if (accountAddress) prefetchService.requestPositionsRefresh({ owner: accountAddress, reason: 'burn' }); } catch {}
       try { if (accountAddress) invalidateActivityCache(accountAddress); } catch {}
+      try { if (accountAddress) { invalidateUserPositionsCache(accountAddress); invalidateUserPositionIdsCache(accountAddress); } } catch {}
       try { fetch('/api/internal/revalidate-pools', { method: 'POST' } as any).catch(() => {}); } catch {}
       setIsBurning(false);
     } else if (burnConfirmError) {

@@ -18,7 +18,6 @@ import type { ProcessedPosition } from "../../../pages/api/liquidity/get-positio
 import { TOKEN_DEFINITIONS, TokenSymbol } from "@/lib/pools-config";
 import { formatUnits, type Hex } from "viem";
 import { Bar, BarChart, Line, LineChart, CartesianGrid, XAxis, YAxis, ResponsiveContainer, ComposedChart, Area, ReferenceLine, ReferenceArea } from "recharts";
-import { TickRangePreview } from "@/components/TickRangePreview";
 import { getPoolById, getPoolSubgraphId, getToken, getAllTokens } from "@/lib/pools-config";
 import { getPoolFeeBps, loadUncollectedFees } from "@/lib/client-cache";
 import {
@@ -74,7 +73,6 @@ import { shortenAddress } from "@/lib/utils";
 
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { motion, AnimatePresence } from "framer-motion";
-import TickRangePortfolio from "@/components/TickRangePortfolio";
 
 // Define the structure of the chart data points from the API
 interface ChartDataPoint {
@@ -3306,7 +3304,11 @@ export default function PoolDetailPage() {
                                     {isLoadingPrices ? (
                                       <span className="inline-block h-3 w-12 rounded bg-muted/40 animate-pulse align-middle" />
                                     ) : (
-                                      <div className="text-xs font-medium truncate">${calculatePositionUsd(position).toFixed(2)}</div>
+                                      <div className="text-xs font-medium truncate">
+                                        {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(
+                                          Number.isFinite(calculatePositionUsd(position)) ? calculatePositionUsd(position) : 0
+                                        )}
+                                      </div>
                                     )}
                                   </div>
                                 </div>

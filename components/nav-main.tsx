@@ -11,7 +11,8 @@ import { getAddress, parseUnits, type Address, type Hex } from "viem"
 import { publicClient } from "../lib/viemClient";
 import { FAUCET_CONTRACT_ADDRESS, FAUCET_FUNCTION_SIGNATURE, faucetContractAbi } from "../pages/api/misc/faucet"; // Import constants
 import { useRouter } from "next/navigation"; // Import useRouter
-import { /* WarningToastIcon, */ SuccessToastIcon } from "./swap/swap-interface"; // Adjusted import for toasts
+// Removed unused SuccessToastIcon import to satisfy linter
+import { BadgeCheck } from "lucide-react";
 import { parseAbi } from "viem"
 import { cn } from "@/lib/utils"; // Added import for cn
 
@@ -70,15 +71,15 @@ export function NavMain({
 
   // Helper function to format time left
   const formatTimeLeft = (seconds: number | null): string => {
-    if (seconds === null || seconds <= 0) return "Claim"; // Changed from "Ready" to "Claim"
+    if (seconds === null || (typeof seconds === 'number' && seconds <= 0)) return "Claim"; // Changed from "Ready" to "Claim"
 
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
 
-    let parts = [];
+    const parts: string[] = [];
     if (hours > 0) parts.push(`${hours}h`);
     // Always show minutes, with leading zero if single digit
-    parts.push(`${minutes.toString().padStart(2, '0')}m`);
+    parts.push(`${String(minutes).padStart(2, '0')}m`);
     
     return parts.join(" "); // No "left" suffix
   };

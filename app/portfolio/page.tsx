@@ -29,7 +29,6 @@ import poolsConfig from "@/config/pools.json";
 import { ChevronUpIcon, ChevronDownIcon, ChevronsUpDownIcon, ChevronRight, OctagonX, OctagonAlert, EllipsisVertical, PlusIcon, RefreshCwIcon, BadgeCheck, Menu } from "lucide-react";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import TickRangePortfolio from "../../components/TickRangePortfolio";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -1947,19 +1946,7 @@ export default function PortfolioPage() {
         try {
           processedActive = processedActive.filter((p: any) => {
             const pid = String(p?.poolId || '').toLowerCase();
-            if (pid && allowedPoolIds.has(pid)) return true;
-            const t0 = String(p?.token0?.symbol || '').toUpperCase();
-            const t1 = String(p?.token1?.symbol || '').toUpperCase();
-            // Build allowed pairs once
-            const pools = getAllPools();
-            const allowedPairs = new Set(
-              (pools || []).flatMap((pool: any) => {
-                const a = `${(pool?.currency0?.symbol || '').toUpperCase()}/${(pool?.currency1?.symbol || '').toUpperCase()}`;
-                const b = `${(pool?.currency1?.symbol || '').toUpperCase()}/${(pool?.currency0?.symbol || '').toUpperCase()}`;
-                return [a, b];
-              })
-            );
-            return allowedPairs.has(`${t0}/${t1}`);
+            return pid && allowedPoolIds.has(pid);
           });
         } catch {}
         try { console.log('[Portfolio] positions fetched:', processedActive.length, processedActive?.[0]); } catch {}
@@ -2003,7 +1990,12 @@ export default function PortfolioPage() {
           const cached = localStorage.getItem(cacheKey);
           if (cached && !isCancelled) {
             const parsed = JSON.parse(cached);
-            setActivityItems(parsed.items || []);
+            const cachedItems = Array.isArray(parsed?.items) ? parsed.items : [];
+            const gatedCached = cachedItems.filter((it: any) => {
+              const pid = String(it?.poolId || it?.pool_id || '').toLowerCase();
+              return pid && allowedPoolIds.has(pid);
+            });
+            setActivityItems(gatedCached);
           }
         } catch {}
         const res = await fetch('/api/portfolio/get-activity', {
@@ -2014,8 +2006,12 @@ export default function PortfolioPage() {
         if (!res.ok) throw new Error(await res.text());
         const rows = await res.json();
         if (!isCancelled && Array.isArray(rows)) {
-          setActivityItems(rows);
-          try { localStorage.setItem(cacheKey, JSON.stringify({ items: rows, ts: Date.now() })); } catch {}
+          const gated = rows.filter((it: any) => {
+            const pid = String(it?.poolId || it?.pool_id || '').toLowerCase();
+            return pid && allowedPoolIds.has(pid);
+          });
+          setActivityItems(gated);
+          try { localStorage.setItem(cacheKey, JSON.stringify({ items: gated, ts: Date.now() })); } catch {}
         }
       } catch (e: any) {
         if (!isCancelled) setActivityError(e?.message || 'Failed to load activity');
@@ -2673,8 +2669,24 @@ export default function PortfolioPage() {
                                     </div>
                                   </div>
                                   <div className="truncate font-normal text-sm">{first?.token0?.symbol}/{first?.token1?.symbol}</div>
+                                  {/* Position Count (moved to left bound) */}
+                                  <TooltipProvider delayDuration={0}>
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <span
+                                          className="ml-1 w-5 h-5 flex items-center justify-center text-[10px] rounded bg-[var(--sidebar-connect-button-bg)] text-muted-foreground cursor-default"
+                                        >
+                                          {items.length}
+                                        </span>
+                                      </TooltipTrigger>
+                                      <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
+                                        Position Count
+                                      </TooltipContent>
+                                    </Tooltip>
+                                  </TooltipProvider>
                                 </div>
                                 <div className="flex items-center gap-3">
+                                  {/* Position Value (right bound - first) */}
                                   <TooltipProvider delayDuration={0}>
                                     <Tooltip>
                                       <TooltipTrigger asChild>
@@ -2685,13 +2697,30 @@ export default function PortfolioPage() {
                                       </TooltipContent>
                                     </Tooltip>
                                     <Tooltip>
+                                      {/* APY badge (right bound - after value) */}
                                       <TooltipTrigger asChild>
-                                        <span className="ml-1 w-5 h-5 flex items-center justify-center text-[10px] rounded bg-[var(--sidebar-connect-button-bg)] text-muted-foreground cursor-default" style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}>
-                                          {items.length}
-                                        </span>
+                                        <div>
+                                          {(() => {
+                                            const aprStr = aprByPoolId[poolKey];
+                                            const showApr = typeof aprStr === 'string' && aprStr !== 'N/A' && aprStr !== 'Loading...';
+                                            const formatAprShort = (s: string): string => {
+                                              const n = parseFloat(String(s).replace('%', ''));
+                                              if (!Number.isFinite(n)) return '—';
+                                              if (n >= 1000) return `${(n / 1000).toFixed(1)}K%`;
+                                              if (n > 99.99) return `${Math.round(n)}%`;
+                                              if (n > 9.99) return `${n.toFixed(1)}%`;
+                                              return `${n.toFixed(2)}%`;
+                                            };
+                                            return showApr ? (
+                                              <span className="h-5 px-2 flex items-center justify-center text-[10px] rounded bg-green-500/20 text-green-500 font-medium">{formatAprShort(aprStr)}</span>
+                                            ) : (
+                                              <span className="text-xs text-muted-foreground">—</span>
+                                            );
+                                          })()}
+                                        </div>
                                       </TooltipTrigger>
                                       <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
-                                        Position Count
+                                        APY
                                       </TooltipContent>
                                     </Tooltip>
                                   </TooltipProvider>

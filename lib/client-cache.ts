@@ -107,7 +107,7 @@ export const getUserPositionIdsCacheKey = (ownerAddress: string) => `userPositio
 const IDS_TTL_MS = 60 * 60 * 1000; // 1h
 
 type StoredIds = { ids: string[]; ts: number };
-type StoredIdsWithMeta = { items: Array<{ id: string; createdAt?: number }>; ts: number };
+type StoredIdsWithMeta = { items: Array<{ id: string; createdAt?: number; lastTimestamp?: number }>; ts: number };
 
 function readIdsFromLocalStorage(key: string): string[] | null {
   if (typeof window === 'undefined') return null;
@@ -133,6 +133,20 @@ function writeIdsToLocalStorage(key: string, ids: string[]): void {
   try {
     window.localStorage.setItem(key, JSON.stringify({ ids, ts: Date.now() }));
   } catch {}
+}
+
+// Explicit invalidation helpers for user positions and ids
+export function invalidateUserPositionsCache(ownerAddress: string): void {
+  const key = getUserPositionsCacheKey(ownerAddress);
+  invalidateCacheEntry(key);
+}
+
+export function invalidateUserPositionIdsCache(ownerAddress: string): void {
+  const key = getUserPositionIdsCacheKey(ownerAddress);
+  invalidateCacheEntry(key);
+  if (typeof window !== 'undefined') {
+    try { window.localStorage.removeItem(key); } catch {}
+  }
 }
 
 // Function to generate a cache key for a specific pool's detailed stats
@@ -272,6 +286,7 @@ export async function loadUserPositionIds(ownerAddress: string): Promise<string[
       stored = legacy;
     }
   }
+  // Keep retained; harmless even if not used
   if (stored && stored.length > 0) {
     setToCache(key, stored);
     return stored;
@@ -286,21 +301,23 @@ export async function loadUserPositionIds(ownerAddress: string): Promise<string[
     if (!res.ok) return [] as string[];
     const data = await res.json();
     const ids: string[] = [];
+    const itemsPersist: Array<{ id: string; createdAt?: number; lastTimestamp?: number }> = [];
     if (Array.isArray(data)) {
       for (const item of data) {
         try {
           if (!item) continue;
           const idStr = typeof item.id === 'string' ? item.id : String((item as any).id || '');
-          if (idStr) ids.push(idStr);
+          if (idStr) {
+            ids.push(idStr);
+            itemsPersist.push({ id: idStr, createdAt: Number((item as any)?.createdAt || 0), lastTimestamp: Number((item as any)?.lastTimestamp || 0) });
+          }
         } catch {}
       }
     }
     setToCache(key, ids);
     try {
       if (typeof window !== 'undefined') {
-        const items = (Array.isArray(data) ? data : []).map((x: any) => ({ id: String(x?.id || ''), createdAt: Number(x?.createdAt || 0) }))
-          .filter((x: any) => x.id);
-        window.localStorage.setItem(key, JSON.stringify({ items, ts: Date.now() }));
+        window.localStorage.setItem(key, JSON.stringify({ items: itemsPersist, ts: Date.now() }));
       }
     } catch {}
     return ids;
@@ -315,6 +332,7 @@ export async function derivePositionsFromIds(ownerAddress: string, tokenIds: Arr
   const stateCache = new Map<string, { sqrtPriceX96: string; tick: number; poolLiquidity: string }>();
   // Read createdAt map if available
   const createdAtMap = new Map<string, number>();
+  const lastTsMap = new Map<string, number>();
   try {
     if (typeof window !== 'undefined') {
       const raw = window.localStorage.getItem(getUserPositionIdsCacheKey(ownerAddress));
@@ -322,7 +340,10 @@ export async function derivePositionsFromIds(ownerAddress: string, tokenIds: Arr
         const parsed = JSON.parse(raw) as StoredIdsWithMeta | null;
         if (parsed && Array.isArray(parsed.items)) {
           for (const it of parsed.items) {
-            if (it && it.id) createdAtMap.set(String(it.id), Number(it.createdAt || 0));
+            if (it && it.id) {
+              createdAtMap.set(String(it.id), Number(it.createdAt || 0));
+              lastTsMap.set(String(it.id), Number(it.lastTimestamp || 0));
+            }
           }
         }
       }
@@ -389,6 +410,7 @@ export async function derivePositionsFromIds(ownerAddress: string, tokenIds: Arr
       const raw0 = BigInt(v4Position.amount0.quotient.toString());
       const raw1 = BigInt(v4Position.amount1.quotient.toString());
 
+      const lastTs = lastTsMap.get(String(nftTokenId)) || 0;
       out.push({
         positionId: String(nftTokenId),
         poolId: poolIdStr,
@@ -405,6 +427,7 @@ export async function derivePositionsFromIds(ownerAddress: string, tokenIds: Arr
           const created = createdAtMap.get(String(nftTokenId)) || 0;
           return String(created || '0');
         })(),
+        // last modified removed from UI; keep internal maps harmlessly
         isInRange: state.tick >= details.tickLower && state.tick < details.tickUpper,
       });
     } catch (e) {

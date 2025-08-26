@@ -12,7 +12,7 @@ import { baseSepolia } from '@/lib/wagmiConfig';
 import { getAddress, type Hex, BaseError, parseUnits, encodeAbiParameters, keccak256 } from 'viem';
 import { getPositionDetails, getPoolState } from '@/lib/liquidity-utils';
 import { prefetchService } from '@/lib/prefetch-service';
-import { invalidateActivityCache } from '@/lib/client-cache';
+import { invalidateActivityCache, invalidateUserPositionsCache, invalidateUserPositionIdsCache } from '@/lib/client-cache';
 
 // Helper function to safely parse amounts without precision loss
 const safeParseUnits = (amount: string, decimals: number): bigint => {
@@ -587,6 +587,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
       }
       try { if (accountAddress) prefetchService.requestPositionsRefresh({ owner: accountAddress, reason: lastWasCollectOnly.current ? 'collect' : 'decrease' }); } catch {}
       try { if (accountAddress) invalidateActivityCache(accountAddress); } catch {}
+      try { if (accountAddress) { invalidateUserPositionsCache(accountAddress); invalidateUserPositionIdsCache(accountAddress); } } catch {}
       try { fetch('/api/internal/revalidate-pools', { method: 'POST' } as any).catch(() => {}); } catch {}
       setIsDecreasing(false);
     } else if (decreaseConfirmError) {

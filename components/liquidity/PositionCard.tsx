@@ -128,7 +128,11 @@ export function PositionCard({
                 <div className="flex flex-col gap-1 items-start">
                 <div className="text-xs text-muted-foreground">Position Value</div>
                 <div className="flex items-center gap-2 truncate">
-                    {isLoadingPrices ? <div className="h-4 w-16 bg-muted/60 rounded animate-pulse" /> : <div className="text-xs font-medium truncate">${valueUSD.toFixed(2)}</div>}
+                    {isLoadingPrices ? <div className="h-4 w-16 bg-muted/60 rounded animate-pulse" /> : (
+                      <div className="text-xs font-medium truncate">
+                        {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number.isFinite(valueUSD) ? valueUSD : 0)}
+                      </div>
+                    )}
                 </div>
                 </div>
             </div>

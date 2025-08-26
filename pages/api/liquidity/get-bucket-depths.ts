@@ -22,7 +22,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
-    const { poolId, first } = req.body ?? {};
+    const { poolId, first, tickLower, tickUpper, tickSpacing, bucketCount } = req.body ?? {};
     if (!poolId || typeof poolId !== 'string') {
       return res.status(400).json({ error: 'Missing poolId in body' });
     }
@@ -75,17 +75,69 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       skip += pageItems.length;
     }
 
-    const payload = {
-      success: true,
-      positions,
-      totalPositions: positions.length,
-      poolId: apiId,
-    };
+    // If bucket parameters are provided, compute aggregated bucket depths (server-side)
+    const hasBucketParams = [tickLower, tickUpper, tickSpacing].every((v) => v !== undefined && v !== null);
+    if (hasBucketParams) {
+      const lo = Math.floor(Number(tickLower));
+      const hi = Math.ceil(Number(tickUpper));
+      const spacing = Math.max(1, Math.floor(Number(tickSpacing)) || 1);
+      const desiredBuckets = Math.max(1, Math.min(1000, Math.floor(Number(bucketCount)) || 25));
 
-    memCache.set(key, { ts: Date.now(), data: payload });
-    // 12h CDN cache with 12h SWR
-    res.setHeader('Cache-Control', 'public, s-maxage=43200, stale-while-revalidate=43200');
-    return res.status(200).json(payload);
+      if (!isFinite(lo) || !isFinite(hi) || lo >= hi) {
+        return res.status(400).json({ error: 'Invalid tick range' });
+      }
+
+      // Compute aligned bucket size similar to client logic
+      const range = hi - lo;
+      const MIN_VISUAL_BIN = 30; // ticks
+      const minBin = Math.max(MIN_VISUAL_BIN, spacing);
+      const rawBucketSize = Math.max(range / desiredBuckets, spacing);
+      const targetBucketSize = Math.max(rawBucketSize, minBin);
+      const alignedBucketSize = Math.ceil(targetBucketSize / spacing) * spacing;
+
+      const buckets: Array<{ tickLower: number; tickUpper: number; midTick: number; liquidityToken0: string }> = [];
+      let cursor = lo;
+      while (cursor < hi) {
+        const upper = Math.min(cursor + alignedBucketSize, hi);
+        buckets.push({ tickLower: cursor, tickUpper: upper, midTick: Math.floor((cursor + upper) / 2), liquidityToken0: '0' });
+        cursor = upper;
+      }
+
+      // Aggregate by summing raw liquidity across overlapping buckets (as a depth proxy)
+      // This avoids requiring sqrtPrice/decimals on the server.
+      for (const pos of positions) {
+        const pLo = Number(pos.tickLower);
+        const pHi = Number(pos.tickUpper);
+        if (!isFinite(pLo) || !isFinite(pHi) || pLo >= pHi) continue;
+        const L = Number(pos.liquidity);
+        if (!isFinite(L) || L <= 0) continue;
+        for (let i = 0; i < buckets.length; i++) {
+          const b = buckets[i];
+          const overlap = !(pHi <= b.tickLower || pLo >= b.tickUpper);
+          if (overlap) {
+            const cur = Number(b.liquidityToken0) || 0;
+            b.liquidityToken0 = (cur + L).toString();
+          }
+        }
+      }
+
+      const bucketPayload = { success: true, buckets, poolId: apiId };
+      memCache.set(key, { ts: Date.now(), data: bucketPayload });
+      res.setHeader('Cache-Control', 'public, s-maxage=43200, stale-while-revalidate=43200');
+      return res.status(200).json(bucketPayload);
+    } else {
+      // Legacy: return raw positions
+      const payload = {
+        success: true,
+        positions,
+        totalPositions: positions.length,
+        poolId: apiId,
+      };
+      memCache.set(key, { ts: Date.now(), data: payload });
+      // 12h CDN cache with 12h SWR
+      res.setHeader('Cache-Control', 'public, s-maxage=43200, stale-while-revalidate=43200');
+      return res.status(200).json(payload);
+    }
   } catch (err: any) {
     return res.status(500).json({ error: 'Internal server error', details: err?.message || String(err) });
   }

@@ -11,6 +11,8 @@ import { toast } from "sonner";
 import { V4_POOL_FEE, V4_POOL_TICK_SPACING, V4_POOL_HOOKS } from "@/lib/swap-constants";
 import { TOKEN_DEFINITIONS } from "@/lib/pools-config";
 import { baseSepolia } from "@/lib/wagmiConfig";
+import { prefetchService } from "@/lib/prefetch-service";
+import { invalidateActivityCache, invalidateUserPositionsCache, invalidateUserPositionIdsCache } from "@/lib/client-cache";
 import { ERC20_ABI } from "@/lib/abis/erc20";
 import { type Hex, formatUnits, parseUnits, encodeFunctionData } from "viem";
 import { TokenSymbol } from "@/lib/pools-config";
@@ -608,6 +610,9 @@ export function useAddLiquidityTransaction({
     if (isMintConfirmed) {
       toast.success("Liquidity minted successfully!");
       onLiquidityAdded();
+      try { if (accountAddress) prefetchService.requestPositionsRefresh({ owner: accountAddress, reason: 'mint' }); } catch {}
+      try { if (accountAddress) invalidateActivityCache(accountAddress); } catch {}
+      try { if (accountAddress) { invalidateUserPositionsCache(accountAddress); invalidateUserPositionIdsCache(accountAddress); } } catch {}
       resetTransactionState();
       onOpenChange(false);
       resetSendTransaction();

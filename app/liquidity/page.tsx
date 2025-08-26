@@ -257,17 +257,8 @@ export default function LiquidityPage() {
 
   const poolsWithPositionCounts = useMemo(() => {
     return poolsData.map(pool => {
-      const [poolToken0Raw, poolToken1Raw] = pool.pair.split(' / ');
-      const poolToken0 = poolToken0Raw?.trim().toUpperCase();
-      const poolToken1 = poolToken1Raw?.trim().toUpperCase();
-      
-      const count = userPositions.filter(pos => {
-        const posToken0 = pos.token0.symbol?.trim().toUpperCase();
-        const posToken1 = pos.token1.symbol?.trim().toUpperCase();
-        return (posToken0 === poolToken0 && posToken1 === poolToken1) ||
-               (posToken0 === poolToken1 && posToken1 === poolToken0);
-      }).length;
-      
+      const apiPoolId = (getPoolSubgraphId(pool.id) || pool.id).toLowerCase();
+      const count = userPositions.filter((pos) => String(pos?.poolId || '').toLowerCase() === apiPoolId).length;
       return { ...pool, positionsCount: count };
     });
   }, [poolsData, userPositions]);
