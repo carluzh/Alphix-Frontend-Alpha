@@ -38,48 +38,56 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
   // Debug state for artificial loading delay
   const [showLoadingSkeleton, setShowLoadingSkeleton] = useState(false);
 
-  // Ref to store previous data for comparison
-  const previousDataRef = useRef<FeeHistoryPoint[] | null>(null);
-  const previousChartDataRef = useRef<any[] | null>(null);
-  
-  // Memoized data comparison to prevent unnecessary re-renders
-  const hasDataChanged = useMemo(() => {
-    if (!data || !previousDataRef.current) {
-      return true; // First render or no previous data
-    }
-    
-    // Quick length check
-    if (data.length !== previousDataRef.current.length) {
-      return true;
-    }
-    
-    // Deep comparison of data points
-    for (let i = 0; i < data.length; i++) {
-      const current = data[i];
-      const previous = previousDataRef.current[i];
-      
-      if (!previous) return true;
-      
-      // Compare key properties that affect the chart
-      if (
-        current.volumeTvlRatio !== previous.volumeTvlRatio ||
-        current.emaRatio !== previous.emaRatio ||
-        current.dynamicFee !== previous.dynamicFee ||
-        current.timeLabel !== previous.timeLabel
-      ) {
-        return true;
-      }
-    }
-    
-    return false; // Data is the same
-  }, [data]);
-  
-  // Update previous data ref when data actually changes
+  // Always fetch fee history for the given pool; endpoint handles caching
+  const [autoData, setAutoData] = useState<FeeHistoryPoint[] | null>(null);
   useEffect(() => {
-    if (hasDataChanged) {
-      previousDataRef.current = data;
-    }
-  }, [hasDataChanged, data]);
+    (async () => {
+      try {
+        if (!poolInfo) return;
+        const cfg = getPoolByTokens(poolInfo.token0Symbol, poolInfo.token1Symbol);
+        const subgraphId = (cfg as any)?.subgraphId || (cfg as any)?.id;
+        if (!subgraphId) return;
+        // Only call the API; it handles caching. Plot last 30 days of events.
+        setShowLoadingSkeleton(true);
+        const resp = await fetch(`/api/liquidity/get-historical-dynamic-fees?poolId=${encodeURIComponent(String(subgraphId))}&days=30`);
+        if (!resp.ok) return;
+        const events = await resp.json();
+        if (!Array.isArray(events)) return;
+        const nowSec = Math.floor(Date.now() / 1000);
+        const cutoff = nowSec - 30 * 24 * 60 * 60;
+        const evAsc = events
+          .map((e: any) => ({
+            ts: Number(e?.timestamp) || 0,
+            feeBps: Number(e?.newFeeBps ?? e?.newFeeRateBps ?? 0),
+            ratio: e?.currentTargetRatio,
+            ema: e?.newTargetRatio,
+          }))
+          .filter((e: any) => e.ts > cutoff)
+          .sort((a: any, b: any) => a.ts - b.ts);
+        const scaleRatio = (val: any): number => {
+          const n = typeof val === 'string' ? Number(val) : (typeof val === 'number' ? val : 0);
+          if (!Number.isFinite(n)) return 0;
+          if (Math.abs(n) >= 1e12) return n / 1e18;
+          if (Math.abs(n) >= 1e6) return n / 1e6;
+          if (Math.abs(n) >= 1e4) return n / 1e4;
+          return n;
+        };
+        const out: FeeHistoryPoint[] = evAsc.map((e: any) => ({
+          timeLabel: new Date(e.ts * 1000).toISOString().split('T')[0],
+          volumeTvlRatio: scaleRatio(e.ratio),
+          emaRatio: scaleRatio(e.ema),
+          dynamicFee: (Number.isFinite(e.feeBps) ? e.feeBps : 0) / 10000,
+        }));
+        setAutoData(out);
+      } catch {}
+      finally {
+        setShowLoadingSkeleton(false);
+      }
+    })();
+  }, [poolInfo]);
+
+
+  // No diffing. Keep this preview dead simple and render as soon as we have data
 
   // Effect to signal when content is stable
   useEffect(() => {
@@ -147,79 +155,31 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
     }
   };
 
-  // Memoized chart data calculation - only recalculate when data actually changes
+
+  // Build chart data from fetched series
+  const effectiveData = autoData || [];
+
   const chartData = useMemo(() => {
     // Return null if no data
-    if (!data || data.length === 0) {
+    if (!effectiveData || effectiveData.length === 0) {
       return null;
     }
     
-    // Return cached chart data if data hasn't changed
-    if (!hasDataChanged && previousChartDataRef.current) {
-      return previousChartDataRef.current;
-    }
-    
     // When data is available, render the full chart preview
-    const volumeTvlRatios = data.map(point => point.volumeTvlRatio);
-    const emaRatios = data.map(point => point.emaRatio);
-    const dynamicFees = data.map(point => point.dynamicFee);
-
-    // Check if data has variation
-    const nonZeroVolume = volumeTvlRatios.filter(v => v > 0);
-    const nonZeroEma = emaRatios.filter(v => v > 0);
-    const hasVariation = nonZeroVolume.length > 0 || nonZeroEma.length > 0;
-
-    // Find the max values for better scaling
-    const maxVolume = Math.max(...volumeTvlRatios);
-    const maxEma = Math.max(...emaRatios);
-    const maxFee = Math.max(...dynamicFees);
-    const minFee = Math.min(...dynamicFees);
-
-    // Smart normalization for sparse data with better spike visibility
-    const newChartData = data.map((point, index) => {
-      // Volume normalization: make spikes more visible in preview
-      let normalizedVolume = 40; // Lower baseline to make spikes more prominent
-      if (point.volumeTvlRatio > 0 && nonZeroVolume.length > 0) {
-        const minNonZeroVolume = Math.min(...volumeTvlRatios.filter(v => v > 0));
-        // Use a more aggressive scaling to make spikes visible
-        const volumeScale = Math.min(point.volumeTvlRatio / maxVolume, 1); // Cap at 100%
-        normalizedVolume = 40 + (volumeScale * 140); // Scale from 40 to 180
-      }
-
-      // EMA normalization: similar approach but more conservative
-      let normalizedEma = 45;
-      if (point.emaRatio > 0 && nonZeroEma.length > 0) {
-        const minNonZeroEma = Math.min(...emaRatios.filter(v => v > 0));
-        const emaScale = Math.min(point.emaRatio / maxEma, 1);
-        normalizedEma = 45 + (emaScale * 100); // Scale from 45 to 145
-      }
-
-      // Fee normalization: use a larger band so small bps changes look like visible steps
-      // Map fee to ~60-180 (fills most of chart height). Guard for flat series.
-      let normalizedFee = 120;
-      if (maxFee > minFee) {
-        const feeScale = (point.dynamicFee - minFee) / (maxFee - minFee);
-        normalizedFee = 60 + (feeScale * 120); // 60..180 band
-      }
-
-      return {
-        name: index,
-        volume: normalizedVolume,
-        ema: normalizedEma,
-        fee: normalizedFee,
-        // keep original for change-point dots
-        _origFee: point.dynamicFee,
-      };
-    });
+    // Straight mapping: no normalization, 30-day window already applied
+    const newChartData = effectiveData.map((point, index) => ({
+      name: point.timeLabel,
+      activity: Number(point.volumeTvlRatio) || 0,
+      target: Number(point.emaRatio) || 0,
+      fee: Number(point.dynamicFee) || 0,
+    }));
     
-    // Cache the new chart data
-    previousChartDataRef.current = newChartData;
     return newChartData;
-  }, [data, hasDataChanged]);
+  }, [effectiveData]);
 
   // Removed change-point dots per design preference; keep normalization only
 
-  const hasData = Array.isArray(data) && data.length > 0;
+  const hasData = Array.isArray(effectiveData) && effectiveData.length > 0;
 
   // Render different Card structures based on data availability
   if (alwaysShowSkeleton) {
@@ -330,8 +290,8 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
   } else {
 
     // Expand Y-axis domain to ensure all data is visible
-    const effectiveMinValue = 20;
-    const effectiveMaxValue = 200;
+    const effectiveMinValue: any = 'auto';
+    const effectiveMaxValue: any = 'auto';
 
     return (
       <div
@@ -379,7 +339,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
         </div>
         <div className="px-2 pb-2 pt-0 h-[100px]">
           <div className="w-full h-full cursor-pointer [&_.recharts-wrapper]:outline-none [&_.recharts-wrapper]:focus:outline-none [&_.recharts-surface]:outline-none">
-            {showLoadingSkeleton ? (
+            {showLoadingSkeleton && !hasData ? (
               <div className="w-full h-[92px] bg-muted/40 rounded animate-pulse mt-2"></div>
             ) : (
               <ResponsiveContainer width="100%" height="100%">
@@ -389,21 +349,30 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
                   style={{ cursor: 'pointer' }}
                 >
                   <XAxis dataKey="name" hide={true} />
-                  <YAxis 
-                    hide={true} 
+                  <YAxis
+                    yAxisId="left"
+                    hide={true}
                     domain={[effectiveMinValue, effectiveMaxValue]}
                   />
+                  <YAxis
+                    yAxisId="right"
+                    orientation="right"
+                    hide={true}
+                    domain={["auto", "auto"]}
+                  />
                   <Line
+                    yAxisId="left"
                     type="monotone"
-                    dataKey="volume"
+                    dataKey="activity"
                     stroke={"hsl(var(--chart-3))"}
                     strokeWidth={1.5}
                     dot={false}
                     activeDot={false}
                   />
                   <Line
+                    yAxisId="left"
                     type="monotone"
-                    dataKey="ema"
+                    dataKey="target"
                     stroke={"hsl(var(--chart-2))"}
                     strokeWidth={1}
                     strokeDasharray="3 3"
@@ -411,6 +380,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
                     activeDot={false}
                   />
                   <Line
+                    yAxisId="right"
                     type="stepAfter"
                     dataKey="fee"
                     stroke={"#e85102"}

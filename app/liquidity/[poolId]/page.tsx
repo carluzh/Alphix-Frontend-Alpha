@@ -1063,7 +1063,7 @@ export default function PoolDetailPage() {
         const fetchJsonWithRetry = async <T = any>(url: string, validate?: (json: any) => boolean, attempts = 4, delayMs = 700): Promise<T> => {
           let last: any = null;
           for (let i = 0; i < attempts; i++) {
-            const res = await fetch(url);
+            const res = await fetch(url, { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } as any } as any);
             if (res.ok) {
               const json = await res.json();
               last = json;
@@ -1124,7 +1124,7 @@ export default function PoolDetailPage() {
             const bps = Number(e?.newFeeBps ?? e?.newFeeRateBps ?? 0);
             curFeePct = Number.isFinite(bps) ? (bps / 10_000) : curFeePct;
             curRatio = scaleRatio(e?.currentTargetRatio);
-            curEma = scaleRatio(e?.newTargetRatio);
+            curEma = scaleRatio(e?.oldTargetRatio);
             ei++;
           }
           feeByDate.set(dateStr, { ratio: curRatio, ema: curEma, feePct: curFeePct });
