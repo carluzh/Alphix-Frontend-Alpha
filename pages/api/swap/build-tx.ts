@@ -190,11 +190,7 @@ async function prepareV4ExactOutSwapData(
     const v4PoolKey: PoolKey = createPoolKeyFromConfig(poolConfig.pool);
     // Build plan per guide (trimmed logs)
 
-
-
     const v4Planner = new V4Planner();
-    // Always add settle action for both native ETH and ERC-20 tokens
-    v4Planner.addSettle(inputToken, true, BigNumber.from(maxAmountInSmallestUnits.toString()));
     
     // Calculate price limit if provided
     let sqrtPriceLimitX96 = 0n; // 0 means no limit
@@ -215,7 +211,18 @@ async function prepareV4ExactOutSwapData(
         }
     ]);
 
-    v4Planner.addAction(Actions.TAKE_ALL, [outputToken.address, BigNumber.from("0")]);
+    // After swap, settle input currency up to max
+    const zeroForOne = getAddress(inputToken.address!) === v4PoolKey.currency0;
+    v4Planner.addAction(Actions.SETTLE_ALL, [
+        zeroForOne ? v4PoolKey.currency0 : v4PoolKey.currency1,
+        BigNumber.from(maxAmountInSmallestUnits.toString()),
+    ]);
+
+    // Take all of the output currency (amountOut owed to caller)
+    v4Planner.addAction(Actions.TAKE_ALL, [
+        zeroForOne ? v4PoolKey.currency1 : v4PoolKey.currency0,
+        BigNumber.from(amountOutSmallestUnits.toString()),
+    ]);
 
     const encodedActions = v4Planner.finalize() as Hex;
     return { encodedActions, actions: (v4Planner as any).actions, params: (v4Planner as any).params };
@@ -289,8 +296,6 @@ async function prepareV4MultiHopExactOutSwapData(
 
     // Create V4Planner for multi-hop
     const v4Planner = new V4Planner();
-    // Always add settle action for both native ETH and ERC-20 tokens
-    v4Planner.addSettle(inputToken, true, BigNumber.from(maxAmountInSmallestUnits.toString()));
     
     // Build the encoded path for multi-hop
     const pools: Pool[] = [];
@@ -339,13 +344,13 @@ async function prepareV4MultiHopExactOutSwapData(
         }
     ]);
 
-    // SETTLE_ALL and TAKE_ALL per guide shape
+    // SETTLE_ALL on true input currency and TAKE_ALL on true output currency
     v4Planner.addAction(Actions.SETTLE_ALL, [
-        poolKeys[0].currency0,
+        getAddress(inputToken.address!),
         BigNumber.from(maxAmountInSmallestUnits.toString()),
     ]);
     v4Planner.addAction(Actions.TAKE_ALL, [
-        poolKeys[poolKeys.length - 1].currency1,
+        getAddress(outputToken.address!),
         BigNumber.from(amountOutSmallestUnits.toString()),
     ]);
 
@@ -514,12 +519,22 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
         }
 
         // 2. Prepare V4 Swap Data and add V4_SWAP command
-        // Use the actual swap amount (parsedPermitAmount or amountDecimalsStr) for swap logic
-        const actualSwapAmount = safeParseUnits(amountDecimalsStr, INPUT_TOKEN.decimals); 
-        const actualLimitAmount = safeParseUnits(limitAmountDecimalsStr, OUTPUT_TOKEN.decimals); // Assuming ExactIn for limit parsing
+        // Parse amounts according to swap type
+        let actualSwapAmount: bigint; // ExactIn: amountIn; ExactOut: amountOut
+        let actualLimitAmount: bigint; // ExactIn: minOut; ExactOut: maxIn
+        if (swapType === 'ExactIn') {
+            actualSwapAmount = safeParseUnits(amountDecimalsStr, INPUT_TOKEN.decimals);
+            actualLimitAmount = safeParseUnits(limitAmountDecimalsStr, OUTPUT_TOKEN.decimals);
+        } else {
+            // ExactOut: amount is in OUTPUT token units; limit is max INPUT
+            actualSwapAmount = safeParseUnits(amountDecimalsStr, OUTPUT_TOKEN.decimals);
+            actualLimitAmount = safeParseUnits(limitAmountDecimalsStr, INPUT_TOKEN.decimals);
+        }
 
-        // Determine the value to send with the transaction
-        const txValue = fromTokenSymbol === 'ETH' ? actualSwapAmount : 0n;
+        // Determine the value to send with the transaction (ETH input only)
+        const txValue = fromTokenSymbol === 'ETH'
+          ? (swapType === 'ExactIn' ? actualSwapAmount : actualLimitAmount)
+          : 0n;
 
         if (swapType === 'ExactIn') {
             amountInSmallestUnits = actualSwapAmount; // Use the actual amount for the swap
@@ -544,8 +559,8 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
                 );
             }
         } else { // ExactOut
-            amountOutSmallestUnits = actualSwapAmount; // Use the actual amount for the swap output
-            const maxAmountInSmallestUnits = actualLimitAmount; // Limit is max input here
+            amountOutSmallestUnits = actualSwapAmount; // amountOut in OUTPUT token units
+            const maxAmountInSmallestUnits = actualLimitAmount; // max INPUT limit
             
             if (route.isDirectRoute) {
                 // Single-hop swap using existing logic

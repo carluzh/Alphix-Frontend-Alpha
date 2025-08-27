@@ -43,7 +43,6 @@ import {
 } from "@/lib/pools-config"
 import {
   PERMIT2_ADDRESS,
-  UNIVERSAL_ROUTER_ADDRESS,
   UniversalRouterAbi,
   Erc20AbiDefinition,
   PERMIT_TYPES,
@@ -964,16 +963,15 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   const fetchQuote = useCallback(async (amountStr: string) => {
     if (!fromToken || !toToken || !isConnected || currentChainId !== TARGET_CHAIN_ID) {
       setToAmount("");
-      setRouteInfo(null);
       setQuoteLoading(false);
       setQuoteError(null);
       return;
     }
 
-    const fromValue = parseFloat(amountStr);
-    if (isNaN(fromValue) || fromValue <= 0) {
-      setToAmount("0"); // Display 0 if input is invalid or zero
-      setRouteInfo(null);
+    const parsed = parseFloat(amountStr);
+    const isZeroOrInvalid = isNaN(parsed) || parsed <= 0;
+    if (isZeroOrInvalid) {
+      setToAmount("0");
       setQuoteLoading(false);
       setQuoteError(null);
       return;
@@ -990,6 +988,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
           fromTokenSymbol: fromToken.symbol,
           toTokenSymbol: toToken.symbol,
           amountDecimalsStr: amountStr,
+          swapType: lastEditedSideRef.current === 'to' ? 'ExactOut' : 'ExactIn',
           chainId: currentChainId,
           debug: true
         }),
@@ -998,47 +997,62 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       const data = await response.json();
 
       if (response.ok && data.success) {
-        setToAmount(data.toAmount);
+        if (data.swapType === 'ExactOut') {
+          // When editing Buy, backfill Sell only;
+          // never mutate Buy to preserve user typing (incl. trailing dot)
+          setFromAmount(String(data.fromAmount ?? ""));
+        } else {
+          // ExactIn flow: update Buy value from quote
+          setToAmount(data.toAmount);
+        }
         setRouteInfo(data.route || null);
         setQuoteError(null);
       } else {
         console.error('❌ V4 Quoter Error:', data.error);
         toast.error(`Quote Error: ${data.error || 'Failed to get quote'}`);
         setQuoteError(data.error || 'Failed to get quote');
-        setRouteInfo(null);
-        // Fallback to client-side calculation if API fails
-        const calculatedTo = (fromValue * fromToken.usdPrice) / toToken.usdPrice;
-        setToAmount(calculatedTo.toFixed(toToken.decimals));
+        // Do not infer on error; clear the side we tried to compute
+        // Leave the user's actively edited field untouched on error
       }
     } catch (error: any) {
       console.error('❌ V4 Quoter Exception:', error);
       toast.error(`Quote Error: ${error.message || 'Failed to fetch quote'}`);
       setQuoteError('Failed to fetch quote');
-      setRouteInfo(null);
-      // Fallback to client-side calculation on exception
-      const calculatedTo = (fromValue * fromToken.usdPrice) / toToken.usdPrice;
-      setToAmount(calculatedTo.toFixed(toToken.decimals));
+      // Leave the user's actively edited field untouched on exception
     } finally {
       setQuoteLoading(false);
     }
   }, [fromToken?.symbol, toToken?.symbol, currentChainId, isConnected, fromToken?.usdPrice, toToken?.usdPrice, fromToken?.decimals, toToken?.decimals, TARGET_CHAIN_ID]);
 
-  // NEW: Effect to trigger quote fetching
+  // Debounced auto-quote for Sell edits (ExactIn)
+  const lastEditedSideRef = useRef<'from' | 'to'>('from');
   useEffect(() => {
+    if (lastEditedSideRef.current !== 'from') return;
     const handler = setTimeout(() => {
       if (fromAmount === "" || parseFloat(fromAmount) === 0) {
-        setToAmount("0"); // Display "0" instead of empty string for better UX
+        setToAmount(""); // Keep Buy empty when no Sell amount
         setQuoteLoading(false);
         setQuoteError(null);
-      } else {
-        fetchQuote(fromAmount); // Fetch quote for the user's entered amount
+        return;
       }
-    }, 300); // Debounce for 300ms
-
-    return () => {
-      clearTimeout(handler);
-    };
+      fetchQuote(fromAmount);
+    }, 300);
+    return () => clearTimeout(handler);
   }, [fromAmount, fromToken, toToken, isConnected, currentChainId, fetchQuote]);
+
+  // Debounced auto-quote for Buy edits (ExactOut)
+  useEffect(() => {
+    if (lastEditedSideRef.current !== 'to') return;
+    const handler = setTimeout(() => {
+      if (toAmount === "" || parseFloat(toAmount) === 0) {
+        setQuoteLoading(false);
+        setQuoteError(null);
+        return;
+      }
+      fetchQuote(toAmount);
+    }, 300);
+    return () => clearTimeout(handler);
+  }, [toAmount, fromToken, toToken, isConnected, currentChainId, fetchQuote]);
 
   // Update calculatedValues for UI display
   useEffect(() => {
@@ -1046,6 +1060,21 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     const fromTokenUsdPrice = fromToken.usdPrice || 0; // Ensure usdPrice is a number
 
     const updatedFeesArray: FeeDetail[] = [];
+
+    // If we have a quote error, skip fee/slippage calcs and show placeholders
+    if (quoteError) {
+      setCalculatedValues(prev => ({
+        ...prev,
+        fromTokenAmount: formatTokenAmountDisplay(fromAmount, fromToken),
+        fromTokenValue: formatCurrency(((!isNaN(fromValueNum) && fromValueNum >= 0 && fromTokenUsdPrice) ? (fromValueNum * fromTokenUsdPrice) : 0).toString()),
+        toTokenAmount: formatTokenAmountDisplay(toAmount, toToken),
+        toTokenValue: formatCurrency("0"),
+        fees: [{ name: "Fee", value: "-", type: "percentage" }],
+        slippage: "-",
+        minimumReceived: "-",
+      }));
+      return;
+    }
 
     // Multi-hop Fee Display
     if (isConnected && currentChainId === TARGET_CHAIN_ID) {
@@ -1145,9 +1174,23 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     if (/^\d*\.?\d*$/.test(value)) {
         setFromAmount(value);
         setSelectedPercentageIndex(-1);
+        lastEditedSideRef.current = 'from';
     } else if (value === "") {
         setFromAmount("");
         setSelectedPercentageIndex(-1);
+        lastEditedSideRef.current = 'from';
+    }
+  };
+
+  // Allow editing Buy (toAmount) directly for ExactOut flow
+  const handleToAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    if (/^\d*\.?\d*$/.test(value)) {
+      setToAmount(value);
+      lastEditedSideRef.current = 'to';
+    } else if (value === "") {
+      setToAmount("");
+      lastEditedSideRef.current = 'to';
     }
   };
 
@@ -1614,22 +1657,26 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 const effectiveTimestamp = BigInt(Math.floor(Date.now() / 1000));
                 const effectiveFallbackSigDeadline = effectiveTimestamp + BigInt(30 * 60); // 30 min fallback
 
-                // Calculate minimum received amount using quote-based calculation (same as UI display)
-                // Compute min received using the latest quote, preserving token decimals precisely
+                // Prepare limits based on swap type
+                const isExactOut = lastEditedSideRef.current === 'to';
                 const toDecimals = toToken.decimals;
-                const quotedAmountNum = parseFloat(toAmount || "0");
-                const minOutNum = quotedAmountNum > 0 ? quotedAmountNum * (1 - slippage / 100) : 0;
-                // Format string with exact token decimals to avoid rounding too high and tripping minOut
+                const fromDecimals = fromToken.decimals;
+                // ExactIn: compute minOut; ExactOut: compute maxIn
+                const quotedOutNum = parseFloat(toAmount || "0");
+                const quotedInNum = parseFloat(fromAmount || "0");
+                const minOutNum = quotedOutNum > 0 ? quotedOutNum * (1 - slippage / 100) : 0;
+                const maxInNum = quotedInNum > 0 ? quotedInNum * (1 + slippage / 100) : 0;
                 const minimumReceivedStr = minOutNum.toFixed(toDecimals);
+                const maximumInputStr = maxInNum.toFixed(fromDecimals);
 
                 // Use dummy permit data for native ETH
                 const bodyForSwapTx = {
                      userAddress: accountAddress,
                      fromTokenSymbol: fromToken.symbol,
                      toTokenSymbol: toToken.symbol,
-                     swapType: 'ExactIn',
-                     amountDecimalsStr: fromAmount,
-                     limitAmountDecimalsStr: minimumReceivedStr, // Pass the slippage-adjusted minimum amount
+                     swapType: isExactOut ? 'ExactOut' : 'ExactIn',
+                     amountDecimalsStr: isExactOut ? toAmount : fromAmount,
+                     limitAmountDecimalsStr: isExactOut ? maximumInputStr : minimumReceivedStr,
                      
                      permitSignature: "0x", // No permit signature needed for ETH
                      permitTokenAddress: fromToken.address,
@@ -1796,11 +1843,16 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
             const effectiveTimestamp = BigInt(Math.floor(Date.now() / 1000));
             const effectiveFallbackSigDeadline = effectiveTimestamp + BigInt(30 * 60); // 30 min fallback
 
-            // Calculate minimum received amount using quote-based calculation (same as UI display)
+            // Prepare limits based on swap type
+            const isExactOut2 = lastEditedSideRef.current === 'to';
             const toDecimals2 = toToken.decimals;
-            const quotedAmountNum2 = parseFloat(toAmount || "0");
-            const minOutNum2 = quotedAmountNum2 > 0 ? quotedAmountNum2 * (1 - slippage / 100) : 0;
+            const fromDecimals2 = fromToken.decimals;
+            const quotedOutNum2 = parseFloat(toAmount || "0");
+            const quotedInNum2 = parseFloat(fromAmount || "0");
+            const minOutNum2 = quotedOutNum2 > 0 ? quotedOutNum2 * (1 - slippage / 100) : 0;
+            const maxInNum2 = quotedInNum2 > 0 ? quotedInNum2 * (1 + slippage / 100) : 0;
             const minimumReceivedStr = minOutNum2.toFixed(toDecimals2);
+            const maximumInputStr = maxInNum2.toFixed(fromDecimals2);
 
             // Extract permit information based on the new API structure
             let permitNonce, permitExpiration, permitSigDeadline;
@@ -1822,9 +1874,9 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                  userAddress: accountAddress,
                  fromTokenSymbol: fromToken.symbol,
                  toTokenSymbol: toToken.symbol,
-                 swapType: 'ExactIn', // Assuming ExactIn, adjust if dynamic
-                 amountDecimalsStr: fromAmount, // The actual amount user wants to swap
-                 limitAmountDecimalsStr: minimumReceivedStr, // Pass the slippage-adjusted minimum amount
+                 swapType: isExactOut2 ? 'ExactOut' : 'ExactIn',
+                 amountDecimalsStr: isExactOut2 ? toAmount : fromAmount,
+                 limitAmountDecimalsStr: isExactOut2 ? maximumInputStr : minimumReceivedStr,
                  
                  permitSignature: signatureToUse || "0x", 
                  permitTokenAddress: fromToken.address, // Token that was permitted (fromToken)
@@ -2154,6 +2206,17 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       poolName: selectedPool.poolName
     };
   }, [currentRoute, selectedPoolIndexForChart]);
+
+  // Stable fallback pool info when no route/connection (e.g., default chart on load)
+  const fallbackPoolInfo = useMemo(() => {
+    const fallback = getPoolByTokens('aUSDC', 'aUSDT');
+    if (!fallback) return undefined;
+    return {
+      token0Symbol: fallback.currency0.symbol,
+      token1Symbol: fallback.currency1.symbol,
+      poolName: fallback.name,
+    };
+  }, []);
 
   // Create a stable key for fee history to prevent unnecessary reloads
   const feeHistoryKey = useMemo(() => {
@@ -2485,6 +2548,8 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 fromAmount={fromAmount}
                 toAmount={toAmount}
                 handleFromAmountChange={handleFromAmountChange}
+                onToAmountChange={handleToAmountChange}
+                activelyEditedSide={lastEditedSideRef.current}
                 handleSwapTokens={handleSwapTokens}
                 handleUseFullBalance={handleUseFullBalance}
                 availableTokens={tokenList}
@@ -2576,11 +2641,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
               <DynamicFeeChartPreview 
                 data={isFeeHistoryLoading ? [] : feeHistoryData} 
                 onClick={handlePreviewChartClick}
-                poolInfo={poolInfo || (getPoolByTokens('aUSDC', 'aUSDT') ? {
-                  token0Symbol: getPoolByTokens('aUSDC', 'aUSDT')!.currency0.symbol,
-                  token1Symbol: getPoolByTokens('aUSDC', 'aUSDT')!.currency1.symbol,
-                  poolName: getPoolByTokens('aUSDC', 'aUSDT')!.name,
-                } : undefined)}
+                poolInfo={poolInfo || fallbackPoolInfo}
                 isLoading={isFeeHistoryLoading}
                 alwaysShowSkeleton={false}
                 totalPools={currentRoute?.pools?.length}

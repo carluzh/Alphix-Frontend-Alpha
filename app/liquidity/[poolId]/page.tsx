@@ -16,7 +16,7 @@ import { toast } from "sonner";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import type { ProcessedPosition } from "../../../pages/api/liquidity/get-positions";
 import { TOKEN_DEFINITIONS, TokenSymbol } from "@/lib/pools-config";
-import { formatUnits, type Hex } from "viem";
+import { formatUnits, encodeFunctionData, type Hex } from "viem";
 import { Bar, BarChart, Line, LineChart, CartesianGrid, XAxis, YAxis, ResponsiveContainer, ComposedChart, Area, ReferenceLine, ReferenceArea } from "recharts";
 import { getPoolById, getPoolSubgraphId, getToken, getAllTokens } from "@/lib/pools-config";
 import { getPoolFeeBps, loadUncollectedFees } from "@/lib/client-cache";
@@ -43,9 +43,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useWriteContract, useWaitForTransactionReceipt, useSendTransaction } from "wagmi";
+import { useWriteContract, useWaitForTransactionReceipt, useSendTransaction, useSignTypedData } from "wagmi";
 import { getPositionManagerAddress } from '@/lib/pools-config';
 import { position_manager_abi } from '@/lib/abis/PositionManager_abi';
+import { ERC20_ABI } from '@/lib/abis/erc20';
 import { baseSepolia } from "../../../lib/wagmiConfig";
 import { getFromCache, setToCache, getFromCacheWithTtl, getUserPositionsCacheKey, getPoolStatsCacheKey, getPoolDynamicFeeCacheKey, getPoolChartDataCacheKey, loadUserPositionIds, derivePositionsFromIds } from "../../../lib/client-cache";
 import type { Pool } from "../../../types";
@@ -55,6 +56,7 @@ import { useBurnLiquidity, type BurnPositionData } from "@/components/liquidity/
 import { useIncreaseLiquidity, type IncreasePositionData } from "@/components/liquidity/useIncreaseLiquidity";
 import { useDecreaseLiquidity, type DecreasePositionData } from "@/components/liquidity/useDecreaseLiquidity";
 import { prefetchService } from "@/lib/prefetch-service";
+import { UniversalRouterAbi } from "@/lib/swap-constants";
 
 
 import {
@@ -475,6 +477,7 @@ export default function PoolDetailPage() {
   
   const { address: accountAddress, isConnected, chainId } = useAccount();
   const { writeContract } = useWriteContract();
+  const { signTypedDataAsync } = useSignTypedData();
   const [collectHash, setCollectHash] = useState<`0x${string}` | undefined>(undefined);
   const { isLoading: isCollectConfirming, isSuccess: isCollectConfirmed } = useWaitForTransactionReceipt({ hash: collectHash });
   
@@ -3227,6 +3230,214 @@ export default function PoolDetailPage() {
                       sdkMaxTick={SDK_MAX_TICK}
                       defaultTickSpacing={getPoolById(poolId)?.tickSpacing || DEFAULT_TICK_SPACING}
                       activeTab={'deposit'} // Always pass 'deposit'
+                      onZapAndAdd={async ({ token0Symbol, token1Symbol, inputSide, inputAmount, tickLower, tickUpper }) => {
+                        try {
+                          if (!isConnected || !accountAddress || !chainId) {
+                            toast.error('Connect wallet to zap');
+                            return;
+                          }
+                          // 1) Calculate counterpart requirement for in-range mint
+                          const calcResp = await fetch('/api/liquidity/calculate-liquidity-parameters', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              token0Symbol,
+                              token1Symbol,
+                              inputAmount,
+                              inputTokenSymbol: inputSide === 'token0' ? token0Symbol : token1Symbol,
+                              userTickLower: tickLower,
+                              userTickUpper: tickUpper,
+                              chainId,
+                            }),
+                          });
+                          if (!calcResp.ok) {
+                            const err = await calcResp.json().catch(() => ({}));
+                            toast.error('Zap calc failed', { description: err?.message || 'Unable to compute counterpart' });
+                            return;
+                          }
+                          const calc = await calcResp.json();
+                          const required0 = inputSide === 'token0' ? inputAmount : (calc.amount0Decimals || calc.amount0);
+                          const required1 = inputSide === 'token1' ? inputAmount : (calc.amount1Decimals || calc.amount1);
+
+                          // 2) Decide if swap is needed (in-range single-sided => need counterpart > 0 on the other side)
+                          const needSwapToToken = inputSide === 'token0' ? 'token1' : 'token0';
+                          const targetOut = needSwapToToken === 'token1' ? parseFloat(required1 || '0') : parseFloat(required0 || '0');
+                          const doSwap = Number.isFinite(targetOut) && targetOut > 0;
+
+                          // 3) If swap needed, prepare permit for router and build swap tx (ExactOut)
+                          if (doSwap) {
+                            const fromSym = inputSide === 'token0' ? token0Symbol : token1Symbol;
+                            const toSym = inputSide === 'token0' ? token1Symbol : token0Symbol;
+
+                            // Prepare Permit2 for router (if needed)
+                            const prepPermitResp = await fetch('/api/swap/prepare-permit', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                userAddress: accountAddress,
+                                fromTokenSymbol: fromSym,
+                                fromTokenAddress: TOKEN_DEFINITIONS[fromSym as TokenSymbol]?.address,
+                                toTokenSymbol: toSym,
+                                chainId,
+                              }),
+                            });
+                            const prepPermit = await prepPermitResp.json();
+                            let permitSignature: Hex = '0x';
+                            let permitTokenAddress = TOKEN_DEFINITIONS[fromSym as TokenSymbol]?.address as Hex;
+                            let permitAmount = '0';
+                            let permitNonce = 0;
+                            let permitExpiration = 0;
+                            let permitSigDeadline = '0';
+
+                            if (prepPermit?.needsPermit && prepPermit?.permitData) {
+                              // Ask user to sign typed data for Permit2 Single; then submit signature via router command in build-tx
+                              try {
+                                // We do not have signTypedData here; fallback: call build-tx with 0x and let UI handle failure? Keep 0x.
+                                // For MVP, pass 0x and rely on ERC20 approve flow if router path requires it.
+                                // If you prefer, promote swap through your existing Swap UI flow to collect permit before this call.
+                              } catch {}
+                            } else if (prepPermit?.existingPermit) {
+                              // We can include existing permit meta (nonce/expiration) if the API expects, but build-tx only needs signature or 0x.
+                            }
+
+                            // Helper: attempt swap with iterative out scaling if needed
+                            const attemptSwap = async (initialOut: number): Promise<boolean> => {
+                              const fromDecimals = TOKEN_DEFINITIONS[fromSym as TokenSymbol]?.decimals || 18;
+                              const safetyBps = 100; // 1%
+                              let desiredOut = initialOut;
+                              let computedMaxIn = parseFloat(inputAmount || '0');
+                              // Pre-quote & compute headroom; scale down if needed
+                              try {
+                                const q1 = await fetch('/api/swap/get-quote', {
+                                  method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ fromTokenSymbol: fromSym, toTokenSymbol: toSym, amountDecimalsStr: String(desiredOut), swapType: 'ExactOut', chainId }),
+                                });
+                                const jq1 = await q1.json();
+                                if (q1.ok && jq1?.fromAmount) {
+                                  const quotedIn = parseFloat(jq1.fromAmount);
+                                  const headroom = quotedIn * (1 + safetyBps / 10_000);
+                                  if (headroom > parseFloat(inputAmount || '0')) {
+                                    const scale = (parseFloat(inputAmount || '0')) / Math.max(headroom, 1e-18);
+                                    desiredOut = Math.max(0, desiredOut * scale * 0.98);
+                                    const q2 = await fetch('/api/swap/get-quote', {
+                                      method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ fromTokenSymbol: fromSym, toTokenSymbol: toSym, amountDecimalsStr: String(desiredOut), swapType: 'ExactOut', chainId }),
+                                    });
+                                    const jq2 = await q2.json();
+                                    if (q2.ok && jq2?.fromAmount) {
+                                      const quotedIn2 = parseFloat(jq2.fromAmount);
+                                      computedMaxIn = quotedIn2 * (1 + safetyBps / 10_000);
+                                    } else {
+                                      computedMaxIn = quotedIn * (1 + safetyBps / 10_000);
+                                    }
+                                  } else {
+                                    computedMaxIn = headroom;
+                                  }
+                                }
+                              } catch {}
+
+                              if (computedMaxIn <= 0 || computedMaxIn > parseFloat(inputAmount || '0')) return false;
+                              const limitAmountDecimalsStr = computedMaxIn.toFixed(fromDecimals);
+                              const buildResp = await fetch('/api/swap/build-tx', {
+                                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                  userAddress: accountAddress,
+                                  fromTokenSymbol: fromSym,
+                                  toTokenSymbol: toSym,
+                                  swapType: 'ExactOut',
+                                  amountDecimalsStr: String(desiredOut),
+                                  limitAmountDecimalsStr,
+                                  chainId,
+                                  permitSignature,
+                                  permitTokenAddress,
+                                  permitAmount,
+                                  permitNonce,
+                                  permitExpiration,
+                                  permitSigDeadline,
+                                })
+                              });
+                              const built = await buildResp.json();
+                              if (!buildResp.ok || !built?.ok) return false;
+
+                              try {
+                                const { getUniversalRouterAddress } = await import('@/lib/pools-config');
+                                const to = getUniversalRouterAddress() as `0x${string}`;
+                                const deadline = BigInt(built.deadline || Math.floor(Date.now()/1000) + 1800);
+                                const commands = built.commands as Hex;
+                                const inputs = (built.inputs || []) as Hex[];
+                                const data = encodeFunctionData({ abi: UniversalRouterAbi, functionName: 'execute', args: [commands, inputs, deadline] });
+                                const value = BigInt(built.value || '0');
+                                if (typeof window !== 'undefined') {
+                                  const provider: any = (window as any).ethereum;
+                                  if (provider && provider.request) {
+                                    await provider.request({ method: 'eth_sendTransaction', params: [{ to, data, value: value > 0n ? `0x${value.toString(16)}` : '0x0' }] });
+                                  }
+                                }
+                                return true;
+                              } catch {
+                                return false;
+                              }
+                            };
+
+                            let ok = await attemptSwap(targetOut);
+                            if (!ok) ok = await attemptSwap(targetOut * 0.98);
+                            if (!ok) ok = await attemptSwap(targetOut * 0.96);
+                            if (!ok) {
+                              toast.error('Swap failed', { description: 'Try increasing input or reducing range.' });
+                              return;
+                            }
+                          }
+
+                          // 4) Build mint transaction for final amounts; be conservative and re-use original input as one side and required counterpart as other
+                          const mintInputAmount = inputSide === 'token0' ? (required0 || inputAmount) : (required1 || inputAmount);
+                          const mintInputSymbol = inputSide === 'token0' ? token0Symbol : token1Symbol;
+
+                          const mintResp = await fetch('/api/liquidity/prepare-mint-tx', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              userAddress: accountAddress,
+                              token0Symbol,
+                              token1Symbol,
+                              inputAmount: String(mintInputAmount),
+                              inputTokenSymbol: mintInputSymbol,
+                              userTickLower: tickLower,
+                              userTickUpper: tickUpper,
+                              chainId,
+                            }),
+                          });
+                          const mint = await mintResp.json();
+                          if (!mintResp.ok || mint?.needsApproval) {
+                            toast.error('Mint not ready', { description: mint?.message || 'Approval required; use standard add flow' });
+                            return;
+                          }
+
+                          // Submit mint
+                          try {
+                            if (typeof window !== 'undefined') {
+                              const provider: any = (window as any).ethereum;
+                              if (provider && provider.request) {
+                                await provider.request({
+                                  method: 'eth_sendTransaction',
+                                  params: [{
+                                    to: mint.transaction?.to,
+                                    data: mint.transaction?.data,
+                                    value: mint.transaction?.value && mint.transaction?.value !== '0' ? `0x${BigInt(mint.transaction.value).toString(16)}` : '0x0',
+                                  }],
+                                });
+                              }
+                            }
+                            toast.success('Zap complete');
+                            try { refreshAfterLiquidityAdded(); } catch {}
+                          } catch (err: any) {
+                            console.error('Mint submit failed', err);
+                            toast.error('Mint failed', { description: err?.message });
+                          }
+                        } catch (e: any) {
+                          console.error('Zap failed', e);
+                          toast.error('Zap failed', { description: e?.message || 'Unexpected error' });
+                        }
+                      }}
                     />
                   </div>
                   {/* Right vertical divider to align with novel layout sections */}

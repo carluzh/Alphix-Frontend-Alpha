@@ -42,6 +42,7 @@ interface GetQuoteRequest extends NextApiRequest {
     fromTokenSymbol: TokenSymbol;
     toTokenSymbol: TokenSymbol;
     amountDecimalsStr: string;
+    swapType?: 'ExactIn' | 'ExactOut';
     chainId: number;
     debug?: boolean;
   };
@@ -156,6 +157,41 @@ async function getV4QuoteExactInputSingle(
   }
 }
 
+// Helper function to call V4Quoter for single-hop exact output
+async function getV4QuoteExactOutputSingle(
+  fromToken: Token,
+  toToken: Token,
+  amountOutSmallestUnits: bigint,
+  poolConfig: any
+): Promise<{ amountIn: bigint; gasEstimate: bigint }> {
+  const { poolKey, zeroForOne } = createPoolKeyAndDirection(fromToken, toToken, poolConfig);
+
+  const quoteParams = [
+    [poolKey.currency0, poolKey.currency1, poolKey.fee, poolKey.tickSpacing, poolKey.hooks], // poolKey struct
+    zeroForOne,
+    amountOutSmallestUnits,
+    EMPTY_BYTES
+  ] as const;
+
+  try {
+    const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL || process.env.RPC_URL || 'https://sepolia.base.org';
+    const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
+    const quoter = new ethers.Contract(getQuoterAddress(), V4QuoterAbi as any, provider);
+
+    const poolId = ethers.utils.solidityKeccak256(
+      ['address','address','uint24','int24','address'],
+      [poolKey.currency0, poolKey.currency1, poolKey.fee, poolKey.tickSpacing, poolKey.hooks]
+    );
+    const stateView = new ethers.Contract(getStateViewAddress(), STATE_VIEW_ABI as any, provider);
+    await stateView.callStatic.getSlot0(poolId);
+
+    const [amountIn, gasEstimate] = await quoter.callStatic.quoteExactOutputSingle(quoteParams);
+    return { amountIn, gasEstimate };
+  } catch (error: any) {
+    throw error;
+  }
+}
+
 // Helper function to call V4Quoter for multi-hop exact input
 async function getV4QuoteExactInputMultiHop(
   fromToken: Token,
@@ -245,6 +281,58 @@ async function getV4QuoteExactInputMultiHop(
   }
 }
 
+// Helper function to call V4Quoter for multi-hop exact output
+async function getV4QuoteExactOutputMultiHop(
+  toToken: Token,
+  route: SwapRoute,
+  amountOutSmallestUnits: bigint,
+  chainId: number
+): Promise<{ amountIn: bigint; gasEstimate: bigint }> {
+  // Encode the multi-hop path (same builder works; currencyOut differs at call site)
+  const pathKeys = encodeMultihopPath(route, chainId);
+
+  const validatedCurrencyOut = getAddress(toToken.address!);
+  const pathTuplesForward = pathKeys.map(pk => [
+    pk.intermediateCurrency,
+    pk.fee,
+    pk.tickSpacing,
+    pk.hooks,
+    pk.hookData
+  ] as const);
+  // For exact output, quoter expects the path in reverse hop order
+  const pathTuples = [...pathTuplesForward].reverse();
+
+  try {
+    const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL || process.env.RPC_URL || 'https://sepolia.base.org';
+    const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
+
+    // Preflight pools exist
+    const stateView = new ethers.Contract(getStateViewAddress(), STATE_VIEW_ABI as any, provider);
+    for (let i = 0; i < route.pools.length; i++) {
+      const hop = route.pools[i];
+      const poolCfg = getPoolById(hop.poolId);
+      if (!poolCfg) throw new Error(`Missing pool config for hop ${i}: ${hop.poolId}`);
+      const poolId = ethers.utils.solidityKeccak256(
+        ['address','address','uint24','int24','address'],
+        [poolCfg.currency0.address, poolCfg.currency1.address, poolCfg.fee, poolCfg.tickSpacing, poolCfg.hooks]
+      );
+      await stateView.callStatic.getSlot0(poolId);
+    }
+
+    const quoter = new ethers.Contract(getQuoterAddress(), V4QuoterAbi as any, provider);
+    // Pass as struct tuple for consistency with input variant
+    const quoteParams = [
+      validatedCurrencyOut,
+      pathTuples,
+      amountOutSmallestUnits
+    ] as const;
+    const [amountIn, gasEstimate] = await quoter.callStatic.quoteExactOutput(quoteParams);
+    return { amountIn, gasEstimate };
+  } catch (error: any) {
+    throw error;
+  }
+}
+
 export default async function handler(req: GetQuoteRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', ['POST']);
@@ -252,7 +340,7 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
   }
 
   try {
-    const { fromTokenSymbol, toTokenSymbol, amountDecimalsStr } = req.body;
+    const { fromTokenSymbol, toTokenSymbol, amountDecimalsStr, swapType = 'ExactIn' } = req.body;
 
     // Validate required fields
     if (!fromTokenSymbol || !toTokenSymbol || !amountDecimalsStr) {
@@ -299,8 +387,13 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
       return res.status(400).json({ message: 'Failed to create token instances' });
     }
     
-    // Parse the input amount to smallest units
-    const amountInSmallestUnits = safeParseUnits(amountDecimalsStr, fromToken.decimals);
+    // Parse amount according to swap type
+    const amountInSmallestUnits = swapType === 'ExactIn'
+      ? safeParseUnits(amountDecimalsStr, fromToken.decimals)
+      : 0n;
+    const amountOutSmallestUnits = swapType === 'ExactOut'
+      ? safeParseUnits(amountDecimalsStr, toToken.decimals)
+      : 0n;
     
     // Find the best route using the routing engine
     const routeResult = findBestRoute(fromTokenSymbol, toTokenSymbol);
@@ -315,33 +408,48 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
     const route = routeResult.bestRoute;
     console.log(`[V4 Quoter] Using route: ${routeToString(route)}`);
     
-    let amountOut: bigint;
+    let amountOut: bigint = 0n;
+    let amountIn: bigint = 0n;
     let gasEstimate: bigint;
     
-    if (route.isDirectRoute) {
-      // Single-hop swap using existing logic
-      const poolConfig = getPoolConfigForTokens(fromTokenSymbol, toTokenSymbol);
-      
-      if (!poolConfig) {
-        return res.status(400).json({ message: `Pool configuration not found for direct route: ${fromTokenSymbol} → ${toTokenSymbol}` });
+    if (swapType === 'ExactIn') {
+      if (route.isDirectRoute) {
+        const poolConfig = getPoolConfigForTokens(fromTokenSymbol, toTokenSymbol);
+        if (!poolConfig) {
+          return res.status(400).json({ message: `Pool configuration not found for direct route: ${fromTokenSymbol} → ${toTokenSymbol}` });
+        }
+        const result = await getV4QuoteExactInputSingle(fromToken, toToken, amountInSmallestUnits, poolConfig);
+        amountOut = result.amountOut;
+        gasEstimate = result.gasEstimate;
+      } else {
+        const result = await getV4QuoteExactInputMultiHop(fromToken, route, amountInSmallestUnits, req.body.chainId);
+        amountOut = result.amountOut;
+        gasEstimate = result.gasEstimate;
       }
-      
-      const result = await getV4QuoteExactInputSingle(fromToken, toToken, amountInSmallestUnits, poolConfig);
-      amountOut = result.amountOut;
-      gasEstimate = result.gasEstimate;
-    } else {
-      // Multi-hop swap using new logic
-      const result = await getV4QuoteExactInputMultiHop(fromToken, route, amountInSmallestUnits, req.body.chainId);
-      amountOut = result.amountOut;
-      gasEstimate = result.gasEstimate;
+    } else { // ExactOut
+      if (route.isDirectRoute) {
+        const poolConfig = getPoolConfigForTokens(fromTokenSymbol, toTokenSymbol);
+        if (!poolConfig) {
+          return res.status(400).json({ message: `Pool configuration not found for direct route: ${fromTokenSymbol} → ${toTokenSymbol}` });
+        }
+        const result = await getV4QuoteExactOutputSingle(fromToken, toToken, amountOutSmallestUnits, poolConfig);
+        amountIn = result.amountIn;
+        gasEstimate = result.gasEstimate;
+      } else {
+        const result = await getV4QuoteExactOutputMultiHop(toToken, route, amountOutSmallestUnits, req.body.chainId);
+        amountIn = result.amountIn;
+        gasEstimate = result.gasEstimate;
+      }
     }
     
     // Format using ethers like the guide
-    const toAmountDecimals = ethers.utils.formatUnits(amountOut, toToken.decimals);
-    
+    const toAmountDecimals = swapType === 'ExactIn' ? ethers.utils.formatUnits(amountOut, toToken.decimals) : amountDecimalsStr;
+    const fromAmountDecimals = swapType === 'ExactOut' ? ethers.utils.formatUnits(amountIn, fromToken.decimals) : amountDecimalsStr;
+
     return res.status(200).json({
       success: true,
-      fromAmount: amountDecimalsStr,
+      swapType,
+      fromAmount: fromAmountDecimals,
       fromToken: fromTokenSymbol,
       toAmount: toAmountDecimals.toString(),
       toToken: toTokenSymbol,

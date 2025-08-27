@@ -38,16 +38,28 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
   // Debug state for artificial loading delay
   const [showLoadingSkeleton, setShowLoadingSkeleton] = useState(false);
 
-  // Always fetch fee history for the given pool; endpoint handles caching
+  // Detect if parent data matches expected shape
+  const isParentDataUsable = useMemo(() => {
+    if (!Array.isArray(data) || data.length === 0) return false;
+    const first: any = data[0];
+    return (
+      typeof first?.timeLabel === 'string' &&
+      typeof first?.volumeTvlRatio !== 'undefined' &&
+      typeof first?.emaRatio !== 'undefined' &&
+      typeof first?.dynamicFee !== 'undefined'
+    );
+  }, [Array.isArray(data) ? data.length : 0, (data as any)?.[0]?.timeLabel, (data as any)?.[0]?.volumeTvlRatio, (data as any)?.[0]?.emaRatio, (data as any)?.[0]?.dynamicFee]);
+
+  // Auto-fetch only when no usable parent data is provided; endpoint handles caching
   const [autoData, setAutoData] = useState<FeeHistoryPoint[] | null>(null);
   useEffect(() => {
     (async () => {
       try {
-        if (!poolInfo) return;
+        if (isParentDataUsable) return;
+        if (!poolInfo?.token0Symbol || !poolInfo?.token1Symbol) return;
         const cfg = getPoolByTokens(poolInfo.token0Symbol, poolInfo.token1Symbol);
         const subgraphId = (cfg as any)?.subgraphId || (cfg as any)?.id;
         if (!subgraphId) return;
-        // Only call the API; it handles caching. Plot last 30 days of events.
         setShowLoadingSkeleton(true);
         const resp = await fetch(`/api/liquidity/get-historical-dynamic-fees?poolId=${encodeURIComponent(String(subgraphId))}&days=30`);
         if (!resp.ok) return;
@@ -60,7 +72,8 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
             ts: Number(e?.timestamp) || 0,
             feeBps: Number(e?.newFeeBps ?? e?.newFeeRateBps ?? 0),
             ratio: e?.currentTargetRatio,
-            ema: e?.newTargetRatio,
+            // API returns oldTargetRatio (not newTargetRatio). Use oldTargetRatio; fallback to currentTargetRatio.
+            ema: e?.oldTargetRatio ?? e?.currentTargetRatio,
           }))
           .filter((e: any) => e.ts > cutoff)
           .sort((a: any, b: any) => a.ts - b.ts);
@@ -84,7 +97,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
         setShowLoadingSkeleton(false);
       }
     })();
-  }, [poolInfo]);
+  }, [poolInfo?.token0Symbol, poolInfo?.token1Symbol, isParentDataUsable]);
 
 
   // No diffing. Keep this preview dead simple and render as soon as we have data
@@ -156,8 +169,8 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
   };
 
 
-  // Build chart data from fetched series
-  const effectiveData = autoData || [];
+  // Build chart data from supplied series (preferred only if usable) or fetched fallback
+  const effectiveData = isParentDataUsable ? data : (autoData || []);
 
   const chartData = useMemo(() => {
     // Return null if no data

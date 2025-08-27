@@ -26,6 +26,8 @@ interface SwapInputViewProps {
   fromAmount: string;
   toAmount: string;
   handleFromAmountChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onToAmountChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  activelyEditedSide: 'from' | 'to';
   handleSwapTokens: () => void;
   handleUseFullBalance: (token: Token, isFrom: boolean) => void;
   availableTokens: Token[];
@@ -81,6 +83,8 @@ export function SwapInputView({
   fromAmount,
   toAmount,
   handleFromAmountChange,
+  onToAmountChange,
+  activelyEditedSide,
   handleSwapTokens,
   handleUseFullBalance,
   availableTokens,
@@ -316,47 +320,26 @@ export function SwapInputView({
               swapContainerRect={swapContainerRect} // Pass the new prop
             />
             <div className="flex-1">
-              {quoteError ? (
-                <Input
-                  value="0"
-                  readOnly
-                  disabled={!isConnected || isAttemptingSwitch}
-                  className="text-right text-xl md:text-xl font-medium h-auto p-0 focus-visible:ring-0 focus-visible:ring-offset-0 border-0 bg-transparent text-muted-foreground"
-                  placeholder="0.00"
-                />
-              ) : (
-                <>
-                  <Input
-                    value={(() => {
-                      const amount = parseFloat(toAmount || "0");
-                      // Show placeholder "0" for true zero values or when there's no meaningful amount
-                      if (amount === 0 || isNaN(amount)) {
-                        return "";
-                      }
-                      return amount.toFixed(displayToToken.displayDecimals);
-                    })()}
-                    readOnly
-                    disabled={!isConnected || isAttemptingSwitch}
-                    className={cn(
-                      "text-right text-xl md:text-xl font-medium h-auto p-0 focus-visible:ring-0 focus-visible:ring-offset-0 border-0 bg-transparent",
-                      { "text-muted-foreground animate-pulse": quoteLoading }
-                    )}
-                    placeholder="0"
-                  />
-                  <div className={cn(
-                    "text-right text-xs text-muted-foreground",
-                    { "animate-pulse": quoteLoading }
-                  )}>
-                    {(() => {
-                      const amount = parseFloat(toAmount || "0");
-                      if (amount === 0 || isNaN(amount)) {
-                        return formatCurrency("0");
-                      }
-                      return formatCurrency((amount * displayToToken.usdPrice).toString());
-                    })()}
-                  </div>
-                </>
-              )}
+              <Input
+                value={toAmount}
+                onChange={onToAmountChange}
+                disabled={!isConnected || isAttemptingSwitch}
+                className={cn(
+                  "text-right text-xl md:text-xl font-medium h-auto p-0 focus-visible:ring-0 focus-visible:ring-offset-0 border-0 bg-transparent",
+                  { "text-muted-foreground animate-pulse": quoteLoading && activelyEditedSide === 'from' }
+                )}
+                placeholder="0"
+              />
+              <div className={cn(
+                "text-right text-xs text-muted-foreground",
+                { "animate-pulse": quoteLoading && activelyEditedSide === 'from' }
+              )}>
+                {(() => {
+                  const amount = parseFloat(toAmount || "");
+                  if (!toAmount || isNaN(amount)) return "";
+                  return formatCurrency((amount * displayToToken.usdPrice).toString());
+                })()}
+              </div>
             </div>
           </div>
         </div>
@@ -386,7 +369,9 @@ export function SwapInputView({
                 {clickedTokenIndex !== null && routeFees?.[selectedPoolIndexForChart] && (
                   <div className="flex items-center gap-1.5">
                     <span className="text-muted-foreground text-xs">
-                      {routeFeesLoading ? (
+                      {quoteError ? (
+                        "-"
+                      ) : routeFeesLoading ? (
                         <div className="h-3 w-8 bg-muted/60 rounded animate-pulse"></div>
                       ) : (
                         formatPercentFromBps(routeFees[selectedPoolIndexForChart].fee)
@@ -610,6 +595,11 @@ export function SwapInputView({
                   <span>Fee:</span>
                   <div className="flex items-center gap-1.5">
                     {(() => {
+                      if (quoteError) {
+                        return (
+                          <span className="text-foreground/80 font-medium">-</span>
+                        );
+                      }
                       if (routeFeesLoading) {
                         return <div className="h-3 w-16 bg-muted/60 rounded animate-pulse"></div>;
                       }
@@ -648,23 +638,27 @@ export function SwapInputView({
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
                   <div className="flex items-center gap-1.5" ref={slippageRef}>
                     <span>Max Slippage:</span>
-                    <button
-                      type="button"
-                      className="flex items-center gap-0.5 text-foreground/80 font-medium"
-                      onClick={() => {
-                        ignoreNextOutsideClickRef.current = true;
-                        setIsSlippageEditing((v) => !v);
-                        setCustomSlippage(slippage.toString());
-                      }}
-                    >
-                      <span>{slippage}%</span>
-                      <motion.span
-                        animate={{ rotate: isSlippageEditing ? 180 : 0 }}
-                        transition={{ type: "tween", duration: 0.18 }}
+                    {quoteError ? (
+                      <span className="text-foreground/80 font-medium">-</span>
+                    ) : (
+                      <button
+                        type="button"
+                        className="flex items-center gap-0.5 text-foreground/80 font-medium"
+                        onClick={() => {
+                          ignoreNextOutsideClickRef.current = true;
+                          setIsSlippageEditing((v) => !v);
+                          setCustomSlippage(slippage.toString());
+                        }}
                       >
-                        <ChevronDownIcon className="h-3 w-3 text-muted-foreground/60 hover:text-muted-foreground" />
-                      </motion.span>
-                    </button>
+                        <span>{slippage}%</span>
+                        <motion.span
+                          animate={{ rotate: isSlippageEditing ? 180 : 0 }}
+                          transition={{ type: "tween", duration: 0.18 }}
+                        >
+                          <ChevronDownIcon className="h-3 w-3 text-muted-foreground/60 hover:text-muted-foreground" />
+                        </motion.span>
+                      </button>
+                    )}
                   </div>
                   <div className="flex items-center gap-1.5">
                     <span>Min Received:</span>
@@ -674,7 +668,7 @@ export function SwapInputView({
                   </div>
                 </div>
                 <AnimatePresence initial={false}>
-                  {isSlippageEditing && (
+                  {!quoteError && isSlippageEditing && (
                     <motion.div
                       key="slippage-row"
                       className="flex flex-wrap items-center gap-1.5 pt-1"

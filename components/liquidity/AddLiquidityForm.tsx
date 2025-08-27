@@ -106,6 +106,15 @@ export interface AddLiquidityFormProps {
   initialTickLower?: number;
   initialTickUpper?: number;
   initialToken0Amount?: string;
+  // Optional zap-in handler (swap single-sided into counterpart, then mint)
+  onZapAndAdd?: (args: {
+    token0Symbol: TokenSymbol;
+    token1Symbol: TokenSymbol;
+    inputSide: 'token0' | 'token1';
+    inputAmount: string;
+    tickLower: number;
+    tickUpper: number;
+  }) => void;
 }
 
 export function AddLiquidityForm({ 
@@ -119,6 +128,7 @@ export function AddLiquidityForm({
   initialTickLower,
   initialTickUpper,
   initialToken0Amount,
+  onZapAndAdd,
 }: AddLiquidityFormProps) {
   // Basic state management - initialize tokens based on selected pool
   const getInitialTokens = () => {
@@ -152,6 +162,15 @@ export function AddLiquidityForm({
   const [tickUpper, setTickUpper] = useState<string>(sdkMaxTick.toString());
   const [currentPoolTick, setCurrentPoolTick] = useState<number | null>(null);
   const [activeInputSide, setActiveInputSide] = useState<'amount0' | 'amount1' | null>(null);
+  // Zap toggle (enable single-token zap-in: swap then mint)
+  const [zapEnabled, setZapEnabled] = useState<boolean>(false);
+  useEffect(() => {
+    if (zapEnabled) {
+      setAmount1("");
+      setActiveInputSide('amount0');
+      setCalculatedData(null);
+    }
+  }, [zapEnabled]);
   const [isAmount0Focused, setIsAmount0Focused] = useState(false);
   const [isAmount1Focused, setIsAmount1Focused] = useState(false);
   const [isCalculating, setIsCalculating] = useState(false);
@@ -1032,6 +1051,25 @@ export function AddLiquidityForm({
 
   // Handle preparation and submission
   const handlePrepareAndSubmit = async () => {
+    // If zap is enabled and we have a single-sided input, delegate to zap orchestrator (regardless of in-range)
+    const numTickLower = parseInt(tickLower);
+    const numTickUpper = parseInt(tickUpper);
+    const amt0 = parseFloat(amount0 || "0");
+    const amt1 = parseFloat(amount1 || "0");
+    const isSingleSided = (amt0 > 0 && (!amt1 || amt1 <= 0)) || (amt1 > 0 && (!amt0 || amt0 <= 0));
+    if (onZapAndAdd && zapEnabled && isSingleSided) {
+      const inputSide: 'token0' | 'token1' = amt0 > 0 ? 'token0' : 'token1';
+      onZapAndAdd({
+        token0Symbol,
+        token1Symbol,
+        inputSide,
+        inputAmount: inputSide === 'token0' ? amount0 : amount1,
+        tickLower: numTickLower,
+        tickUpper: numTickUpper,
+      });
+      return;
+    }
+
     if (isInsufficientBalance) {
       toast.error("Insufficient balance");
       return;
@@ -1629,7 +1667,9 @@ export function AddLiquidityForm({
           try {
             const rawFormattedAmount = viemFormatUnits(BigInt(result.amount1), TOKEN_DEFINITIONS[secondaryTokenSymbol]?.decimals || 18);
             const displayAmount = formatTokenDisplayAmount(rawFormattedAmount);
-            setAmount1(displayAmount);
+            if (!zapEnabled) {
+              setAmount1(displayAmount);
+            }
           } catch (e) {
             console.error('Error formatting amount1:', e);
             setAmount1("Error");
@@ -1640,7 +1680,9 @@ export function AddLiquidityForm({
           try {
             const rawFormattedAmount = viemFormatUnits(BigInt(result.amount0), TOKEN_DEFINITIONS[secondaryTokenSymbol]?.decimals || 18);
             const displayAmount = formatTokenDisplayAmount(rawFormattedAmount);
-            setAmount0(displayAmount);
+            if (!zapEnabled) {
+              setAmount0(displayAmount);
+            }
           } catch (e) {
             console.error('Error formatting amount0:', e);
             setAmount0("Error");
@@ -1711,7 +1753,7 @@ export function AddLiquidityForm({
             const tuNum = parseInt(tickUpper);
             const ticksAreValid = !isNaN(tlNum) && !isNaN(tuNum) && tlNum < tuNum;
 
-            if (parseFloat(primaryAmount || "0") > 0 && ticksAreValid) {
+            if (!zapEnabled && parseFloat(primaryAmount || "0") > 0 && ticksAreValid) {
                 debouncedCalculateAmountAndCheckApprovals(amount0, amount1, tickLower, tickUpper, inputSideForCalc);
             }
             // If primary amount is zero/invalid but was the active side, or ticks invalid, clear the other amount & calculated data.
@@ -2128,6 +2170,9 @@ export function AddLiquidityForm({
                 </div>
               </div>
 
+              {/* Token 1 UI hidden in zap mode */}
+              {!zapEnabled && (
+              <>
               {/* Plus Icon */}
               <div className="flex justify-center items-center my-2">
                 <div className="flex items-center justify-center h-8 w-8 rounded-full bg-muted/20">
@@ -2184,6 +2229,8 @@ export function AddLiquidityForm({
                   </div>
                 </div>
               </div>
+              </>
+              )}
 
               {/* Price Range Label (outside container, matching Amount style) */}
               <div className="flex items-center justify-between mb-2">
@@ -2492,7 +2539,20 @@ export function AddLiquidityForm({
                   <span className="relative z-0 pointer-events-none">Connect Wallet</span>
                 </div>
               ) : (
-                <Button
+                <>
+                  {/* Zap toggle (single token swap -> mint) */}
+                  <div className="mb-2 flex items-center justify-between">
+                    <label className="text-xs text-muted-foreground flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={zapEnabled}
+                        onChange={(e) => setZapEnabled(e.target.checked)}
+                      />
+                      Single token (zap)
+                    </label>
+                  </div>
+
+                  <Button
                   className={cn(
                     "w-full",
                     (isWorking || isCalculating || isPoolStateLoading || isApproveWritePending || isMintSendPending ||
@@ -2536,6 +2596,7 @@ export function AddLiquidityForm({
                     }
                   </span>
                 </Button>
+                </>
               )}
             </>
         </>
