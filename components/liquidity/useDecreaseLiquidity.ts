@@ -466,24 +466,31 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
         // Choose min-outs strictly from the side the user actually provided (>0). If both provided, prefer entered side only.
         let minPool0Raw: bigint = 0n;
         let minPool1Raw: bigint = 0n;
+        // Tolerance helper: subtract max(0.01% of desired, 3 wei) to avoid MinimumAmountInsufficient from rounding
+        const applyTolerance = (desired: bigint): bigint => {
+          if (desired <= 0n) return 0n;
+          const pct01bp = desired / 10000n; // 0.01%
+          const cushion = pct01bp > 3n ? pct01bp : 3n;
+          return desired > cushion ? desired - cushion : 0n;
+        };
         if (outOfRangeBelow) {
           // OOR below: only pool0 productive
-          minPool0Raw = desiredPool0Raw > 0n ? desiredPool0Raw - 1n : 0n;
+          minPool0Raw = applyTolerance(desiredPool0Raw);
           minPool1Raw = 0n;
         } else if (outOfRangeAbove) {
           // OOR above: only pool1 productive
           minPool0Raw = 0n;
-          minPool1Raw = desiredPool1Raw > 0n ? desiredPool1Raw - 1n : 0n;
+          minPool1Raw = applyTolerance(desiredPool1Raw);
         } else {
           // In-range: enforce only the user-entered side if provided
           if (positionData.enteredSide === 'token0') {
             const enteredDesired = uiT0Addr === poolC0 ? desiredPool0Raw : desiredPool1Raw;
             if (enteredDesired > 0n) {
               if (uiT0Addr === poolC0) {
-                minPool0Raw = enteredDesired - 1n;
+                minPool0Raw = applyTolerance(enteredDesired);
                 minPool1Raw = 0n;
               } else {
-                minPool1Raw = enteredDesired - 1n;
+                minPool1Raw = applyTolerance(enteredDesired);
                 minPool0Raw = 0n;
               }
             }
@@ -491,10 +498,10 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
             const enteredDesired = uiT0Addr === poolC0 ? desiredPool1Raw : desiredPool0Raw;
             if (enteredDesired > 0n) {
               if (uiT0Addr === poolC0) {
-                minPool1Raw = enteredDesired - 1n;
+                minPool1Raw = applyTolerance(enteredDesired);
                 minPool0Raw = 0n;
               } else {
-                minPool0Raw = enteredDesired - 1n;
+                minPool0Raw = applyTolerance(enteredDesired);
                 minPool1Raw = 0n;
               }
             }

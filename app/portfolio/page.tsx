@@ -1345,6 +1345,7 @@ export default function PortfolioPage() {
 
   // Sorting state for Active Positions
   const [activeSort, setActiveSort] = useState<{ column: 'amounts' | 'value' | 'apr' | null; direction: 'asc' | 'desc' | null }>({ column: null, direction: null });
+  const [hoveredTokenLabel, setHoveredTokenLabel] = useState<string | null>(null);
   const [expandedPools, setExpandedPools] = useState<Record<string, boolean>>({});
   const [openMenuKey, setOpenMenuKey] = useState<string | null>(null);
   const [positionMenuOpenUp, setPositionMenuOpenUp] = useState(false);
@@ -1585,7 +1586,11 @@ export default function PortfolioPage() {
 
   const sortedActivePositions = useMemo(() => {
     const base = filteredPositions;
-    if (!activeSort.column || !activeSort.direction) return base;
+    // Hover preview: if no committed sort, preview token-priority based on hovered segment
+    const effectiveSort = ((typeof activeTokenFilter === 'string' && activeTokenFilter) || (hoveredTokenLabel && hoveredTokenLabel !== 'Rest'))
+      ? { column: 'token' as const, direction: 'desc' as const }
+      : (activeSort.column && activeSort.direction ? activeSort : { column: null, direction: null });
+    if (!effectiveSort.column || !effectiveSort.direction) return base;
 
     const getAmountsKey = (p: any) => {
       const amt0 = Number.parseFloat(p?.token0?.amount || '0');
@@ -1606,16 +1611,23 @@ export default function PortfolioPage() {
       const num = typeof aprStr === 'string' && aprStr.endsWith('%') ? parseFloat(aprStr.replace('%', '')) : 0;
       return isFinite(num) ? num : 0;
     };
-
-    const keyFn = activeSort.column === 'amounts' ? getAmountsKey : activeSort.column === 'value' ? getValueKey : getAprKey;
-    const sign = activeSort.direction === 'asc' ? 1 : -1;
+    // Token-hover preview: strictly filter to hovered token, otherwise use committed filter normal flow
+    if (hoveredTokenLabel && hoveredTokenLabel !== 'Rest') {
+      const token = String(hoveredTokenLabel).toUpperCase();
+      const onlyHovered = base.filter((p) => (
+        p?.token0?.symbol?.toUpperCase?.() === token || p?.token1?.symbol?.toUpperCase?.() === token
+      ));
+      return onlyHovered.sort((a, b) => getValueKey(b) - getValueKey(a));
+    }
+    const keyFn = effectiveSort.column === 'amounts' ? getAmountsKey : effectiveSort.column === 'value' ? getValueKey : getAprKey;
+    const sign = effectiveSort.direction === 'asc' ? 1 : -1;
     return [...base].sort((a, b) => {
       const ka = keyFn(a);
       const kb = keyFn(b);
       if (ka === kb) return 0;
       return ka < kb ? -1 * sign : 1 * sign;
     });
-  }, [filteredPositions, activeSort, portfolioData.priceMap, aprByPoolId]);
+  }, [filteredPositions, activeSort, activeTokenFilter, hoveredTokenLabel, portfolioData.priceMap, aprByPoolId]);
 
   const getUsdPriceForSymbol = useCallback((symbolRaw?: string): number => {
     const symbol = (symbolRaw || '').toUpperCase();
@@ -1707,15 +1719,33 @@ export default function PortfolioPage() {
       }, 0);
       return { poolId, items, totalUSD };
     });
-    // Sort groups by total value desc by default when no explicit value sort
-    if (activeSort.column === 'value' && activeSort.direction) {
-      const sign = activeSort.direction === 'asc' ? 1 : -1;
+    // Sort groups by total value desc by default; if previewing sort (hover) or explicit sort exists, honor it
+    const effectiveSort = ((typeof activeTokenFilter === 'string' && activeTokenFilter) || (hoveredTokenLabel && hoveredTokenLabel !== 'Rest'))
+      ? { column: 'token' as const, direction: 'desc' as const }
+      : (activeSort.column && activeSort.direction ? activeSort : { column: null, direction: null });
+    // Token-hover preview: if hovering, hide groups without token; if not hovering but filtered, also gate groups
+    if (effectiveSort.column === 'token' && effectiveSort.direction) {
+      const token = (hoveredTokenLabel && hoveredTokenLabel !== 'Rest') ? String(hoveredTokenLabel).toUpperCase()
+        : ((typeof activeTokenFilter === 'string' && activeTokenFilter) ? String(activeTokenFilter).toUpperCase() : null);
+      if (token) {
+        groups.sort((a, b) => {
+          const aHas = a.items.some((p) => p?.token0?.symbol?.toUpperCase?.() === token || p?.token1?.symbol?.toUpperCase?.() === token);
+          const bHas = b.items.some((p) => p?.token0?.symbol?.toUpperCase?.() === token || p?.token1?.symbol?.toUpperCase?.() === token);
+          if (aHas !== bHas) return aHas ? -1 : 1;
+          // fallback by value desc
+          return b.totalUSD - a.totalUSD;
+        });
+        return groups.filter((g) => g.items.some((p) => p?.token0?.symbol?.toUpperCase?.() === token || p?.token1?.symbol?.toUpperCase?.() === token));
+      }
+    }
+    if (effectiveSort.column === 'value' && effectiveSort.direction) {
+      const sign = effectiveSort.direction === 'asc' ? 1 : -1;
       groups.sort((a, b) => (a.totalUSD - b.totalUSD) * sign);
     } else {
       groups.sort((a, b) => b.totalUSD - a.totalUSD);
     }
     return groups;
-  }, [sortedActivePositions, portfolioData.priceMap, activeSort]);
+  }, [sortedActivePositions, portfolioData.priceMap, activeSort, activeTokenFilter, hoveredTokenLabel]);
 
   const togglePoolExpanded = (poolId: string) => {
     setExpandedPools(prev => ({ ...prev, [poolId]: !prev[poolId] }));
@@ -2199,9 +2229,36 @@ export default function PortfolioPage() {
       : (activeTokenFilter ? selectedSegmentIndex : (hoveredSegment !== null ? hoveredSegment : null));
   })();
 
-  const displayValue = effectiveSegmentIndex !== null && composition[effectiveSegmentIndex]
-    ? (portfolioData.totalValue * composition[effectiveSegmentIndex].pct) / 100
-    : portfolioData.totalValue;
+  // Clicked + Hover combined logic for header USD
+  const displayValue = (() => {
+    const clicked = (activeTokenFilter && activeTokenFilter !== 'Rest') ? activeTokenFilter.toUpperCase() : null;
+    const hovered = (hoveredTokenLabel && hoveredTokenLabel !== 'Rest') ? hoveredTokenLabel.toUpperCase() : null;
+    if (!clicked && !hovered) {
+      return effectiveSegmentIndex !== null && composition[effectiveSegmentIndex]
+        ? (portfolioData.totalValue * composition[effectiveSegmentIndex].pct) / 100
+        : portfolioData.totalValue;
+    }
+    // Sum USD over positions matching (clicked) AND if hovered present, also positions matching hovered
+    const matches = (p: any, token: string | null) => {
+      if (!token) return true;
+      const s0 = p?.token0?.symbol?.toUpperCase?.();
+      const s1 = p?.token1?.symbol?.toUpperCase?.();
+      return s0 === token || s1 === token;
+    };
+    let sum = 0;
+    for (const p of activePositions) {
+      if (!matches(p, clicked)) continue;
+      if (hovered && !matches(p, hovered)) continue;
+      const s0 = p?.token0?.symbol as string | undefined;
+      const s1 = p?.token1?.symbol as string | undefined;
+      const a0 = parseFloat(p?.token0?.amount || '0');
+      const a1 = parseFloat(p?.token1?.amount || '0');
+      const px0 = (s0 && portfolioData.priceMap[s0]) || 0;
+      const px1 = (s1 && portfolioData.priceMap[s1]) || 0;
+      sum += (isFinite(a0) ? a0 : 0) * px0 + (isFinite(a1) ? a1 : 0) * px1;
+    }
+    return sum;
+  })();
 
   // Effective token label for hover/selection
   const effectiveTokenLabel = (() => {
@@ -2243,26 +2300,33 @@ export default function PortfolioPage() {
 
   // Compute simple annualized net fees (APR) weighted by USD value
   const effectiveAprPct = (() => {
-    const relevant = activePositions.filter((p) => {
-      if (!effectiveTokenLabel) return true;
-      
-      if (effectiveTokenLabel === 'Rest') {
-        // For Rest, include positions with tokens that are in the rest group
-        const segment = composition[effectiveSegmentIndex!];
-        const restTokens = (segment as any)?.restTokens || [];
-        const restTokenSymbols = restTokens.map((t: any) => t.label.toUpperCase());
-        const s0 = p?.token0?.symbol?.toUpperCase();
-        const s1 = p?.token1?.symbol?.toUpperCase();
+    // Clicked + Hover combined selection for APR weighting
+    const clicked = (activeTokenFilter && activeTokenFilter !== 'Rest') ? activeTokenFilter.toUpperCase() : null;
+    const hovered = (hoveredTokenLabel && hoveredTokenLabel !== 'Rest') ? hoveredTokenLabel.toUpperCase() : null;
+
+    let candidates = activePositions as any[];
+    if (clicked || hovered) {
+      candidates = candidates.filter((p) => {
+        const s0u = p?.token0?.symbol?.toUpperCase?.();
+        const s1u = p?.token1?.symbol?.toUpperCase?.();
+        if (clicked && !(s0u === clicked || s1u === clicked)) return false;
+        if (hovered && !(s0u === hovered || s1u === hovered)) return false;
+        return true;
+      });
+    } else if (effectiveTokenLabel === 'Rest' && effectiveSegmentIndex !== null && composition[effectiveSegmentIndex]) {
+      const segment = composition[effectiveSegmentIndex];
+      const restTokens = (segment as any)?.restTokens || [];
+      const restTokenSymbols = restTokens.map((t: any) => String(t.label || '').toUpperCase());
+      candidates = candidates.filter((p) => {
+        const s0 = p?.token0?.symbol?.toUpperCase?.();
+        const s1 = p?.token1?.symbol?.toUpperCase?.();
         return (s0 && restTokenSymbols.includes(s0)) || (s1 && restTokenSymbols.includes(s1));
-      }
-      
-      const s0 = p?.token0?.symbol;
-      const s1 = p?.token1?.symbol;
-      return s0 === effectiveTokenLabel || s1 === effectiveTokenLabel;
-    });
+      });
+    }
+
     let weighted = 0;
     let totalUsd = 0;
-    for (const p of relevant) {
+    for (const p of candidates) {
       // Only count in-range liquidity towards NET APY
       if (!p?.isInRange) {
         continue;
@@ -2529,6 +2593,8 @@ export default function PortfolioPage() {
                       return Math.max(0, Math.round(wrapperRect.width - leftOffset));
                     })()}
                     forceHideLabels={forceHideLabels}
+                    onApplySort={undefined}
+                    onHoverToken={setHoveredTokenLabel}
                   />
                 ) : (
                   <PortfolioTickBar
@@ -2542,6 +2608,8 @@ export default function PortfolioPage() {
                     isRestCycling={isRestCycling}
                     restCycleIndex={restCycleIndex}
                     forceHideLabels={forceHideLabels}
+                    onApplySort={undefined}
+                    onHoverToken={setHoveredTokenLabel}
                   />
                 )}
               </div>
@@ -3601,8 +3669,10 @@ interface CompactCompositionBarProps {
   restCycleIndex: number;
   initialWidth?: number; // width computed by parent for first paint
   forceHideLabels?: boolean;
+  onApplySort?: () => void;
+  onHoverToken?: (label: string | null) => void;
 }
-function CompactCompositionBar({ composition, onHover, hoveredSegment, handleRestClick, setIsRestCycling, isRestCycling, restCycleIndex, initialWidth, forceHideLabels }: CompactCompositionBarProps) {
+function CompactCompositionBar({ composition, onHover, hoveredSegment, handleRestClick, setIsRestCycling, isRestCycling, restCycleIndex, initialWidth, forceHideLabels, onApplySort, onHoverToken }: CompactCompositionBarProps) {
   //
   const SMALL_SEGMENT_THRESHOLD = 10; // tweakable (e.g., 5)
   const { activeTokenFilter, setActiveTokenFilter } = React.useContext(PortfolioFilterContext);
@@ -3613,6 +3683,10 @@ function CompactCompositionBar({ composition, onHover, hoveredSegment, handleRes
       })()
     : null;
   const hoverIdx = hoveredSegment;
+  const hideAllInlineLabels = React.useMemo(() => {
+    if (forceHideLabels) return true;
+    return composition.length === 1 && (composition[0] as any)?.label === 'All' && Math.round((composition[0] as any)?.pct || 0) === 100;
+  }, [composition, forceHideLabels]);
   const hoverColor = '#f45502';
   const selectedColor = hoverColor;
   
@@ -3732,14 +3806,15 @@ function CompactCompositionBar({ composition, onHover, hoveredSegment, handleRes
               backgroundColor: hideAllLabels ? s.color : (hoverIdx === i ? hoverColor : (selectedIdx === i ? selectedColor : (isRestSegmentHighlighted(i) ? selectedColor : s.color))), 
               opacity: 0.95 
             }}
-            onMouseEnter={() => (!hideAllLabels) && onHover(i)}
-            onMouseLeave={() => (!hideAllLabels) && onHover(null)}
+            onMouseEnter={() => { if (!hideAllLabels) { onHover(i); try { onHoverToken?.((s as any)?.label === 'Rest' ? null : (s as any)?.label); } catch {} } }}
+            onMouseLeave={() => { if (!hideAllLabels) { onHover(null); try { onHoverToken?.(null); } catch {} } }}
             onClick={() => {
               if (s.label === 'Rest') {
                 handleRestClick(s, i);
               } else {
                 setActiveTokenFilter((activeToken) => (activeToken?.toUpperCase?.() === s.label?.toUpperCase?.() ? null : s.label));
                 setIsRestCycling(false);
+                try { onApplySort?.(); } catch {}
               }
             }}
           />
@@ -3788,14 +3863,15 @@ function CompactCompositionBar({ composition, onHover, hoveredSegment, handleRes
               key={`hover-zone-${i}`}
               className="absolute h-full"
               style={{ left: `${segmentLeftOffsets[i] || 0}px`, width: `${segmentPixelWidths[i] || 0}px`, cursor: 'pointer' }}
-              onMouseEnter={() => (!hideAllLabels) && onHover(i)}
-              onMouseLeave={() => (!hideAllLabels) && onHover(null)}
+              onMouseEnter={() => { if (!hideAllLabels) { onHover(i); try { onHoverToken?.((s as any)?.label === 'Rest' ? null : (s as any)?.label); } catch {} } }}
+              onMouseLeave={() => { if (!hideAllLabels) { onHover(null); try { onHoverToken?.(null); } catch {} } }}
               onClick={() => {
                 if (s.label === 'Rest') {
                   handleRestClick(s, i);
                 } else {
                   setActiveTokenFilter((activeToken) => (activeToken?.toUpperCase?.() === s.label?.toUpperCase?.() ? null : s.label));
                   setIsRestCycling(false);
+                  try { onApplySort?.(); } catch {}
                 }
               }}
             />
@@ -3941,8 +4017,10 @@ interface PortfolioTickBarProps {
   isRestCycling: boolean;
   restCycleIndex: number;
   forceHideLabels?: boolean;
+  onApplySort?: () => void;
+  onHoverToken?: (label: string | null) => void;
 }
-function PortfolioTickBar({ composition, onHover, hoveredSegment, containerRef, netApyRef, layout = "inline", handleRestClick, setIsRestCycling, isRestCycling, restCycleIndex, forceHideLabels }: PortfolioTickBarProps) {
+function PortfolioTickBar({ composition, onHover, hoveredSegment, containerRef, netApyRef, layout = "inline", handleRestClick, setIsRestCycling, isRestCycling, restCycleIndex, forceHideLabels, onApplySort, onHoverToken }: PortfolioTickBarProps) {
   const SMALL_SEGMENT_THRESHOLD = 10; // tweakable (e.g., 5)
   const { activeTokenFilter, setActiveTokenFilter } = React.useContext(PortfolioFilterContext);
   const selectedIdx = activeTokenFilter
@@ -3952,6 +4030,11 @@ function PortfolioTickBar({ composition, onHover, hoveredSegment, containerRef, 
       })()
     : null;
   const hoverIdx = hoveredSegment;
+  // Hide inline labels entirely for placeholder/empty states (no wallet, 0 positions)
+  const hideAllInlineLabels = React.useMemo(() => {
+    if (forceHideLabels) return true;
+    return composition.length === 1 && (composition[0] as any)?.label === 'All' && Math.round((composition[0] as any)?.pct || 0) === 100;
+  }, [composition, forceHideLabels]);
   
   // Check if Rest segment should be highlighted when cycling
   const isRestSegmentHighlighted = (segmentIdx: number) => {
@@ -4256,20 +4339,21 @@ function PortfolioTickBar({ composition, onHover, hoveredSegment, containerRef, 
                   height: "calc(100% + 16px)",
                   cursor: 'pointer'
                 }}
-                onMouseEnter={() => { if (!(segments.length === 1 && (segments[0] as any)?.label === 'All')) onHover(segmentIndex); }}
-                onMouseLeave={() => { if (!(segments.length === 1 && (segments[0] as any)?.label === 'All')) onHover(null); }}
+                onMouseEnter={() => { if (!(segments.length === 1 && (segments[0] as any)?.label === 'All')) { onHover(segmentIndex); try { onHoverToken?.(segment.label === 'Rest' ? null : segment.label); } catch {} } }}
+                onMouseLeave={() => { if (!(segments.length === 1 && (segments[0] as any)?.label === 'All')) { onHover(null); try { onHoverToken?.(null); } catch {} } }}
                 onClick={() => {
                   if (segment.label === 'Rest') {
                     handleRestClick(segment, segmentIndex);
                   } else {
                     setActiveTokenFilter((activeToken) => (activeToken?.toUpperCase?.() === segment.label?.toUpperCase?.() ? null : segment.label));
                     setIsRestCycling(false);
+                    try { onApplySort?.(); } catch {}
                   }
                 }}
               />
             );
-            // For wide (inline) tick visual: show tooltip when name is hidden or for REST
-            if (layout !== 'block' && (isRest || nameHiddenInline)) {
+            // For wide (inline) tick visual: show tooltip when name is hidden or for REST (but not in forced-hide state)
+            if (layout !== 'block' && !hideAllInlineLabels && (isRest || nameHiddenInline)) {
               return (
                 <Tooltip key={`hover-zone-wrap-${segmentIndex}`} open={hoverIdx === segmentIndex}>
                   <TooltipTrigger asChild>{zone}</TooltipTrigger>
@@ -4304,8 +4388,8 @@ function PortfolioTickBar({ composition, onHover, hoveredSegment, containerRef, 
                   backgroundColor: (segments.length === 1 && (segments[0] as any)?.label === 'All') ? tickColors[i] : (isHovered ? hoverColor : (isSelected ? selectedColor : (isRestSegmentHighlighted(segmentIndex) ? selectedColor : tickColors[i]))),
                   opacity: 0.9,
                 }}
-                onMouseEnter={() => { if (!(segments.length === 1 && (segments[0] as any)?.label === 'All')) onHover(segmentIndex); }}
-                onMouseLeave={() => { if (!(segments.length === 1 && (segments[0] as any)?.label === 'All')) onHover(null); }}
+                onMouseEnter={() => { if (!(segments.length === 1 && (segments[0] as any)?.label === 'All')) { onHover(segmentIndex); try { onHoverToken?.(composition[segmentIndex]?.label === 'Rest' ? null : composition[segmentIndex]?.label || null); } catch {} } }}
+                onMouseLeave={() => { if (!(segments.length === 1 && (segments[0] as any)?.label === 'All')) { onHover(null); try { onHoverToken?.(null); } catch {} } }}
                 onClick={() => {
                   const segment = composition[segmentIndex];
                   if (!segment) return;
@@ -4495,14 +4579,14 @@ function PortfolioTickBar({ composition, onHover, hoveredSegment, containerRef, 
                 const estPctWidth = (`${pctRounded}%`).length * estChar;
                 const minGap = 6;
                 const barSafetyEarly = 4; // hide a touch earlier to avoid visible overlap
-                let showName = (s.pct >= 10);
+                let showName = !hideAllInlineLabels && (s.pct >= 10);
                 if (hideNamesFromIndex !== null && i >= hideNamesFromIndex) showName = false;
                 if (showName && availableLabelWidth < Math.max(0, estPctWidth + minGap + estNameWidth - barSafetyEarly)) {
                   hideNamesFromIndex = i;
                   showName = false;
                 }
                 // Wide inline: force show name on hover/selected and let it overflow
-                if (isHovered || isSelected) showName = true;
+                if (!hideAllInlineLabels && (isHovered || isSelected)) showName = true;
             {
               const isRest = (s as any).label === 'Rest';
               const content = isRest
@@ -4534,25 +4618,27 @@ function PortfolioTickBar({ composition, onHover, hoveredSegment, containerRef, 
                   onMouseLeave={() => onHover(null)}
                 >
                   <div className="flex items-baseline gap-1" style={{ overflow: (isHovered || isSelected) ? 'visible' : 'hidden' }}>
-                    {(s as any).label === 'Rest'
-                      ? (() => {
-                          const restArr = (s as any).restTokens as any[] | undefined;
-                          if (!Array.isArray(restArr) || restArr.length === 0) return null;
-                          const isCycling = !!isRestCycling;
-                          if (isCycling) {
-                            const rt = restArr[restCycleIndex] as any;
-                            const rp = Math.round(rt?.pct ?? 0);
+                    {hideAllInlineLabels ? null : (
+                      (s as any).label === 'Rest'
+                        ? (() => {
+                            const restArr = (s as any).restTokens as any[] | undefined;
+                            if (!Array.isArray(restArr) || restArr.length === 0) return null;
+                            const isCycling = !!isRestCycling;
+                            if (isCycling) {
+                              const rt = restArr[restCycleIndex] as any;
+                              const rp = Math.round(rt?.pct ?? 0);
+                              return (
+                                <span className="font-medium" style={{ color: isHovered || isSelected ? hoverColor : ((isSelected || isRestSegmentHighlighted(i)) ? selectedColor : (s as any).color) }}>{`${rp}%`}</span>
+                              );
+                            }
                             return (
-                              <span className="font-medium" style={{ color: isHovered || isSelected ? hoverColor : ((isSelected || isRestSegmentHighlighted(i)) ? selectedColor : (s as any).color) }}>{`${rp}%`}</span>
+                              <span className="font-medium" style={{ color: isHovered || isSelected ? hoverColor : ((isSelected || isRestSegmentHighlighted(i)) ? selectedColor : (s as any).color), fontSize: 12 }}>{`+${restArr.length}`}</span>
                             );
-                          }
-                          return (
-                            <span className="font-medium" style={{ color: isHovered || isSelected ? hoverColor : ((isSelected || isRestSegmentHighlighted(i)) ? selectedColor : (s as any).color), fontSize: 12 }}>{`+${restArr.length}`}</span>
-                          );
-                        })()
-                      : (
-                        <span className="font-medium" style={{ color: isHovered ? hoverColor : ((isSelected || isRestSegmentHighlighted(i)) ? selectedColor : (s as any).color) }}>{`${pctRounded}%`}</span>
-                      )}
+                          })()
+                        : (
+                          <span className="font-medium" style={{ color: isHovered ? hoverColor : ((isSelected || isRestSegmentHighlighted(i)) ? selectedColor : (s as any).color) }}>{`${pctRounded}%`}</span>
+                        )
+                    )}
                     {showName && (() => {
                       const isRest = (s as any).label === 'Rest';
                       const restArrTmp = ((s as any).restTokens as any[] | undefined) || [];

@@ -58,8 +58,8 @@ export function BetaNotification() {
           className="fixed bottom-4 right-4 z-50 max-w-sm w-full"
           onClick={(e) => e.stopPropagation()}
         >
-      <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 overflow-hidden">
-        <div className="flex items-center justify-between px-3 py-1 border-b border-sidebar-border/60">
+      <div className="rounded-lg border border-[#2a2a2a] overflow-hidden bg-[var(--modal-background)]">
+        <div className="flex items-center justify-between px-3 py-1 border-b border-[#2a2a2a]">
           <span className="text-xs tracking-wider font-mono font-bold text-muted-foreground">NOTICE</span>
           <Button
             variant="ghost"
@@ -67,12 +67,12 @@ export function BetaNotification() {
             aria-label="Close notification"
             onClick={handleDismiss}
           >
-            <X size={16} strokeWidth={2} className="opacity-60 transition-opacity group-hover:opacity-100" />
+            <X size={16} strokeWidth={2} className="opacity-100" />
           </Button>
         </div>
         <div className="p-4">
           <h3 className="text-md font-semibold mb-1 text-foreground">Closed Beta now Live!</h3>
-          <p className="text-sm text-foreground/70">This is an experimental version of Alphix. We'd love to know about your experience and any feedback. Join us below!</p>
+          <p className="text-sm text-foreground/70">This is an experimental version of Alphix. We'd love to know about your experience.<br />Join us below!</p>
           <div className="mt-3 flex gap-2">
             <Button
               variant="outline"
