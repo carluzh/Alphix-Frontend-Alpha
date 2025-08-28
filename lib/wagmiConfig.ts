@@ -1,6 +1,5 @@
 // Adapted from example/frontend/config/index.tsx
-import { http } from 'wagmi'
-// import { cookieStorage, createStorage } from 'wagmi/storage' // Removed storage for now
+import { http, createStorage, cookieStorage } from 'wagmi'
 import { WagmiAdapter } from '@reown/appkit-adapter-wagmi'
 import { mainnet, arbitrum, sepolia, polygon } from 'wagmi/chains' // Import chains from wagmi
 import { defineChain } from 'viem'
@@ -22,11 +21,25 @@ export const baseSepolia = defineChain({
   name: 'Base Sepolia',
   nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
   rpcUrls: {
-    default: { http: ['https://sepolia.base.org', 'https://base-sepolia.drpc.org'] },
-    public: { http: ['https://sepolia.base.org', 'https://base-sepolia.drpc.org'] },
+    default: { 
+      http: [
+        'https://sepolia.base.org',
+        'https://base-sepolia.drpc.org',
+        'https://base-sepolia.publicnode.com',
+        'https://1rpc.io/base-sepolia'
+      ] 
+    },
+    public: { 
+      http: [
+        'https://sepolia.base.org',
+        'https://base-sepolia.drpc.org',
+        'https://base-sepolia.publicnode.com',
+        'https://1rpc.io/base-sepolia'
+      ] 
+    },
   },
   blockExplorers: {
-    default: { name: 'Basescan Sepolia', url: 'https://sepolia.basescan.org' }, // Added Basescan
+    default: { name: 'Basescan Sepolia', url: 'https://sepolia.basescan.org' },
   },
   testnet: true,
 });
@@ -39,8 +52,8 @@ export const wagmiAdapter = new WagmiAdapter({
   networks, // Use wagmi chains
   projectId: projectId || '',
   // ssr and storage might be handled internally or need different config
-  // storage: createStorage({ storage: cookieStorage }), 
-  // ssr: true,
+  storage: createStorage({ storage: cookieStorage }), 
+  ssr: true,
 })
 
 // Export the wagmi config property from the adapter instance

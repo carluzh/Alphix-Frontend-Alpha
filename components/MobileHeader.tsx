@@ -20,7 +20,7 @@ export function MobileHeader() {
 
   return (
     <header
-      className={`fixed top-0 left-0 right-0 z-40 flex items-center ${HEADER_HEIGHT} border-b bg-background px-4 shadow-sm md:hidden`}
+      className={`fixed top-0 left-0 right-0 z-40 flex items-center ${HEADER_HEIGHT} border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/75 px-4 shadow-sm md:hidden`}
     >
       <div className="flex-1 flex justify-start">
         <Button
@@ -35,7 +35,7 @@ export function MobileHeader() {
 
       <div className="flex-1 flex justify-center">
         <ReactSVG 
-          src="/Logo Icon.svg" 
+          src="/Logo Icon (white).svg" 
           className="h-6 w-6"
           beforeInjection={(svg) => {
             const paths = svg.querySelectorAll('path');

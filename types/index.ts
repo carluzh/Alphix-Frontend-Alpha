@@ -3,6 +3,7 @@ export interface Pool {
   tokens: {
     symbol: string;
     icon: string;
+    address?: string; // Add optional address property
   }[];
   pair: string;
   volume24h: string;
@@ -23,4 +24,5 @@ export interface Pool {
   volumeChangeDirection?: 'up' | 'down' | 'neutral' | 'loading';
   tvlYesterdayUSD?: number;
   tvlChangeDirection?: 'up' | 'down' | 'neutral' | 'loading';
+  type?: string;
 } 

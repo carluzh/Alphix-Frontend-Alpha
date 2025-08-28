@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ChevronRight, Menu, X } from "lucide-react";
+import { Menu, X } from "lucide-react";
 import { RequestAccessButton } from "@/components/RequestAccessButton";
 import DisplayCards from "@/components/ui/display-cards";
 import { toast } from "sonner";
@@ -12,40 +12,37 @@ import { PulsatingDot } from "@/components/pulsating-dot";
 import { MockSwapComponent } from "@/components/swap/MockSwapComponent";
 import { useRouter } from 'next/navigation';
 
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+
 
 
 
 export default function Home() {
   const router = useRouter();
   const textContainerRef = useRef<HTMLDivElement>(null);
+  const throttleTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [rightMargin, setRightMargin] = useState(0);
   const [showNavbar, setShowNavbar] = useState(true);
-  const [currentWord, setCurrentWord] = useState('');
-  const [wordIndex, setWordIndex] = useState(0);
-  const [isDeleting, setIsDeleting] = useState(false);
-  const [isAnimationComplete, setIsAnimationComplete] = useState(false);
-  const [showFinalDot, setShowFinalDot] = useState(false);
+
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
   const [isHovering, setIsHovering] = useState(false);
   const [animationFinished, setAnimationFinished] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isPoolsImageHovered, setIsPoolsImageHovered] = useState(false);
 
-  const words = ['dynamic', 'composable', 'efficient', 'unified', 'here'];
-
   const imageStyle = {
     transform: `perspective(1000px) rotateY(-12deg) rotateX(4deg) ${isPoolsImageHovered ? 'translateY(-8px)' : ''}`,
     transition: 'transform 0.3s ease-in-out',
   };
 
-  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     if (!animationFinished) return;
+    
+    // Throttle the mouse move to prevent too many updates
+    if (throttleTimerRef.current) return;
+    
+    throttleTimerRef.current = setTimeout(() => {
+      throttleTimerRef.current = null;
+    }, 16); // ~60fps
     
     const rect = e.currentTarget.getBoundingClientRect();
     const centerX = rect.left + rect.width / 2;
@@ -54,7 +51,7 @@ export default function Home() {
     const mouseY = e.clientY - centerY;
     
     setMousePosition({ x: mouseX * 0.02, y: mouseY * -0.01 });
-  };
+  }, [animationFinished]);
 
   const handleMouseEnter = () => {
     if (!animationFinished) return;
@@ -68,10 +65,6 @@ export default function Home() {
 
   const handleAnimationEnd = () => {
     setAnimationFinished(true);
-  };
-
-  const handleNavigateToSwap = () => {
-    window.location.href = '/swap';
   };
 
   const handleCopyEmail = async () => {
@@ -94,40 +87,6 @@ export default function Home() {
       document.body.removeChild(textArea);
     }
   };
-
-  useEffect(() => {
-    const typeSpeed = isDeleting ? 50 : 100;
-    const word = words[wordIndex];
-    
-    const timer = setTimeout(() => {
-      if (!isDeleting && currentWord === word) {
-        // If it's the last word ("here"), don't delete it and add a dot
-        if (wordIndex === words.length - 1) {
-          if (!showFinalDot) {
-            setTimeout(() => {
-              setShowFinalDot(true);
-              setIsAnimationComplete(true);
-            }, 500);
-          }
-          return;
-        }
-        // Word is complete, wait then start deleting
-        setTimeout(() => setIsDeleting(true), 1500);
-      } else if (isDeleting && currentWord === '') {
-        // Finished deleting, move to next word
-        setIsDeleting(false);
-        setWordIndex((prev) => (prev + 1) % words.length);
-      } else if (isDeleting) {
-        // Continue deleting
-        setCurrentWord(word.substring(0, currentWord.length - 1));
-      } else {
-        // Continue typing
-        setCurrentWord(word.substring(0, currentWord.length + 1));
-      }
-    }, typeSpeed);
-
-    return () => clearTimeout(timer);
-  }, [currentWord, wordIndex, isDeleting, words, showFinalDot]);
 
   useEffect(() => {
     const calculateMargin = () => {
@@ -303,7 +262,7 @@ export default function Home() {
                   variant="alphix"
                   className="text-base flex items-center px-4 py-4 h-11 rounded-md cursor-pointer" 
                   style={{ fontFamily: 'Inter, sans-serif' }}
-                  onClick={handleNavigateToSwap}
+                  onClick={() => router.push('/swap')}
                 >
                   <div className="flex items-center justify-center">
                     Open App
@@ -338,7 +297,7 @@ export default function Home() {
                 style={{ 
                   filter: 'drop-shadow(0 4px 20px rgba(0, 0, 0, 0.25))'
                 }}
-                onClick={handleNavigateToSwap}
+                onClick={() => router.push('/swap')}
               >
                 <MockSwapComponent zoom={1.2} />
               </div>
@@ -365,7 +324,7 @@ export default function Home() {
                 style={{ 
                   filter: 'drop-shadow(0 4px 20px rgba(0, 0, 0, 0.25))'
                 }}
-                onClick={handleNavigateToSwap}
+                onClick={() => router.push('/swap')}
               >
                 <MockSwapComponent zoom={0.9} />
               </div>
@@ -730,6 +689,16 @@ function Navbar({
                 <path d="M16.9947 2H20.1115L13.5007 9.5L21.2209 20H15.2302L10.5 13.7L5.07938 20H1.96154L9.00025 12L1.60059 2H7.74871L11.9502 7.7L16.9947 2ZM16.0947 18.2L18.0947 18.2L6.89474 3.8L4.79474 3.8L16.0947 18.2Z" fill="#a5a5a5" className="group-hover:fill-white transition-colors"/>
               </svg>
             </a>
+            <a 
+              href="https://discord.gg/NTXRarFbTr" 
+              target="_blank" 
+              rel="noopener noreferrer" 
+              className="ml-2 flex items-center justify-center w-8 h-8 rounded-full hover:bg-[#1e1d1b] transition-colors cursor-pointer group"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M20.317 4.3698a19.7913 19.7913 0 00-4.8851-1.5152.0741.0741 0 00-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 00-.0785-.037 19.7363 19.7363 0 00-4.8852 1.515.0699.0699 0 00-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 00.0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 00.0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 00-.0416-.1057c-.6528-.2476-1.2743-.5499-1.8722-.8923a.077.077 0 01-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 01.0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 01.0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 01-.0066.1276 12.2986 12.2986 0 01-1.873.8914.0766.0766 0 00-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 00.0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 00.0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 00-.0312-.0286zM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419-.019 1.3332-.9555 2.4189-2.1569 2.4189zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1568 2.4189Z" fill="#a5a5a5" className="group-hover:fill-white transition-colors"/>
+              </svg>
+            </a>
           </div>
 
           {/* Mobile Hamburger Menu Button */}
@@ -817,6 +786,8 @@ function Navbar({
 function WebGLCanvas({ rightMargin }: { rightMargin: number }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const marginRef = useRef(rightMargin);
+  const rafIdRef = useRef<number | null>(null);
+  const resizeObserverRef = useRef<ResizeObserver | null>(null);
 
   useEffect(() => {
     marginRef.current = rightMargin;
@@ -826,11 +797,29 @@ function WebGLCanvas({ rightMargin }: { rightMargin: number }) {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+    // Ensure opaque canvas to avoid white flash on route transitions
+    const gl =
+      (canvas.getContext('webgl2', {
+        alpha: false,
+        antialias: true,
+        powerPreference: 'high-performance',
+        desynchronized: true,
+        preserveDrawingBuffer: false,
+      }) as WebGL2RenderingContext | null) ||
+      (canvas.getContext('webgl', {
+        alpha: false,
+        antialias: true,
+        powerPreference: 'high-performance',
+        desynchronized: true,
+        preserveDrawingBuffer: false,
+      }) as WebGLRenderingContext | null);
     if (!gl) {
       console.error('WebGL not supported');
       return;
     }
+
+    // Match page background to avoid any white flash
+    canvas.style.backgroundColor = '#0a0908';
 
     // Vertex shader source (from their code)
     const vertexShaderSource = `
@@ -1113,9 +1102,6 @@ function WebGLCanvas({ rightMargin }: { rightMargin: number }) {
     const texCoords = [0, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 1];
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(texCoords), gl.STATIC_DRAW);
     
-    let startTime = Date.now();
-    let lastScrollY = window.scrollY;
-    
     function resizeCanvas() {
         if (!canvas || !gl || !canvas.parentElement) return false;
         const { width, height } = canvas.parentElement.getBoundingClientRect();
@@ -1130,7 +1116,8 @@ function WebGLCanvas({ rightMargin }: { rightMargin: number }) {
     }
 
     const observer = new ResizeObserver(resizeCanvas);
-    if(canvas?.parentElement) {
+    resizeObserverRef.current = observer;
+    if (canvas?.parentElement) {
       observer.observe(canvas.parentElement, { box: 'content-box' });
     }
     
@@ -1163,15 +1150,35 @@ function WebGLCanvas({ rightMargin }: { rightMargin: number }) {
       // Draw
       gl.drawArrays(gl.TRIANGLES, 0, 6);
 
-      requestAnimationFrame(render);
+      rafIdRef.current = requestAnimationFrame(render);
     }
 
-    startTime = Date.now();
-    lastScrollY = window.scrollY;
-    requestAnimationFrame(render);
+    rafIdRef.current = requestAnimationFrame(render);
+
+    // Prevent context loss (which can cause white canvas)
+    const onContextLost = (e: Event) => {
+      e.preventDefault();
+    };
+    const onContextRestored = () => {
+      resizeCanvas();
+    };
+    canvas.addEventListener('webglcontextlost', onContextLost, false);
+    canvas.addEventListener('webglcontextrestored', onContextRestored, false);
 
     return () => {
-      window.removeEventListener('resize', resizeCanvas);
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current);
+      }
+      if (resizeObserverRef.current) {
+        try { resizeObserverRef.current.disconnect(); } catch {}
+        resizeObserverRef.current = null;
+      }
+      try {
+        canvas.removeEventListener('webglcontextlost', onContextLost);
+        canvas.removeEventListener('webglcontextrestored', onContextRestored);
+      } catch {}
+      // Keep canvas visually dark during unmount
+      canvas.style.backgroundColor = '#0a0908';
     };
   }, []);
 

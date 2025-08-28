@@ -6,40 +6,61 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { cn } from "@/lib/utils";
 import Image from "next/image";
 import { useAccount, useBalance } from "wagmi";
 import { toast } from "sonner";
-import { TOKEN_DEFINITIONS, TokenSymbol, V4_POOL_FEE, V4_POOL_TICK_SPACING, V4_POOL_HOOKS } from "@/lib/swap-constants";
+import { V4_POOL_FEE, V4_POOL_TICK_SPACING, V4_POOL_HOOKS } from "@/lib/swap-constants";
+import { TOKEN_DEFINITIONS, TokenSymbol } from "@/lib/pools-config";
 import { baseSepolia } from "@/lib/wagmiConfig";
+import { getPoolById, getToken } from "@/lib/pools-config";
 import { formatUnits as viemFormatUnits, parseUnits as viemParseUnits, getAddress, type Hex } from "viem";
+
+// Helper function to safely parse amounts and prevent scientific notation errors
+const safeParseUnits = (amount: string, decimals: number): bigint => {
+  // Convert scientific notation to decimal format
+  const numericAmount = parseFloat(amount);
+  if (isNaN(numericAmount)) {
+    throw new Error("Invalid number format");
+  }
+  
+  // Convert to string with full decimal representation (no scientific notation)
+  const fullDecimalString = numericAmount.toFixed(decimals);
+  
+  // Remove trailing zeros after decimal point
+  const trimmedString = fullDecimalString.replace(/\.?0+$/, '');
+  
+  // If the result is just a decimal point, return "0"
+  const finalString = trimmedString === '.' ? '0' : trimmedString;
+  
+  return viemParseUnits(finalString, decimals);
+};
 import { useAddLiquidityTransaction } from "./useAddLiquidityTransaction";
+import { motion, AnimatePresence } from "framer-motion";
+import { InteractiveRangeChart } from "./InteractiveRangeChart";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { 
-  ResponsiveContainer, 
-  ComposedChart, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip as RechartsTooltip, 
-  ReferenceArea, 
-  ReferenceLine, 
-  Area,
-  Line
-} from 'recharts';
+// import { useWeb3Modal } from '@web3modal/wagmi/react';
+
+// Chart data interfaces
+interface CustomAxisLabel {
+  tickValue: number;    
+  displayLabel: string; 
+}
 import { Token } from '@uniswap/sdk-core';
 import { Pool as V4PoolSDK, Position as V4PositionSDK } from "@uniswap/v4-sdk";
 import JSBI from "jsbi";
+import poolsConfig from "../../config/pools.json";
 
 // Utility functions
 const getTokenIcon = (symbol?: string) => {
-  if (symbol?.toUpperCase().includes("YUSD")) return "/YUSD.png";
-  if (symbol?.toUpperCase().includes("BTCRL")) return "/BTCRL.png";
-  return "/default-token.png";
+  if (!symbol) return "/placeholder-logo.svg";
+  const tokenConfig = getToken(symbol);
+  return tokenConfig?.icon || "/placeholder-logo.svg";
 };
 
 const formatTokenDisplayAmount = (amount: string) => {
@@ -71,61 +92,7 @@ function debounce<F extends (...args: any[]) => any>(func: F, waitFor: number) {
 }
 
 // Chart data interfaces
-interface CustomAxisLabel {
-  tickValue: number;    
-  displayLabel: string; 
-}
-
-interface HookPosition {
-  tickLower: number;
-  tickUpper: number;
-  liquidity: string;
-}
-
-interface Token0DepthDeltaEvent {
-  tick: number;
-  change: bigint; 
-}
-
-interface LiquidityDepthData {
-  ticks: number[];
-  token0Depths: string[];
-  currentPoolTick?: number;
-  currentSqrtPriceX96?: string;
-  positions?: HookPosition[];
-  lastUpdated?: number;
-}
-
-interface ProcessedPositionDetail {
-  tickLower: number;
-  tickUpper: number;
-  liquidity: string;
-  amount0: string;
-  amount1: string;
-  numericAmount0: number;
-  numericAmount1: number;
-  unifiedValueInToken0: number; 
-}
-
-interface UnifiedValueDeltaEvent {
-  tick: number;
-  changeInUnifiedValue: number;
-}
-
-// Formatted chart data point
-interface DepthChartDataPoint {
-  tick: number;
-  token0Depth: number;
-  normToken0Depth?: number;
-  token1Depth?: number;
-  unifiedValue?: number;
-  normUnifiedValue?: number;
-  isUserPosition?: boolean;
-  price?: number;
-  value?: number;
-  cumulativeUnifiedValue?: number; // Added to fix linter error
-  displayCumulativeValue?: number; // Added to fix linter error
-}
+// Chart data interfaces - now handled in InteractiveRangeChart
 
 export interface AddLiquidityFormProps {
   onLiquidityAdded: () => void; 
@@ -135,6 +102,10 @@ export interface AddLiquidityFormProps {
   defaultTickSpacing: number;
   poolApr?: string;
   activeTab: 'deposit' | 'withdraw' | 'swap'; // Added activeTab prop
+  // Props for copying position parameters
+  initialTickLower?: number;
+  initialTickUpper?: number;
+  initialToken0Amount?: string;
 }
 
 export function AddLiquidityForm({ 
@@ -144,17 +115,45 @@ export function AddLiquidityForm({
   sdkMaxTick,
   defaultTickSpacing,
   poolApr,
-  activeTab // Accept activeTab from props
+  activeTab, // Accept activeTab from props
+  initialTickLower,
+  initialTickUpper,
+  initialToken0Amount,
 }: AddLiquidityFormProps) {
-  // Basic state management
-  const [token0Symbol, setToken0Symbol] = useState<TokenSymbol>('YUSDC');
-  const [token1Symbol, setToken1Symbol] = useState<TokenSymbol>('BTCRL');
+  // Basic state management - initialize tokens based on selected pool
+  const getInitialTokens = () => {
+    if (selectedPoolId) {
+      const poolConfig = getPoolById(selectedPoolId);
+      if (poolConfig) {
+        return {
+          token0: poolConfig.currency0.symbol as TokenSymbol,
+          token1: poolConfig.currency1.symbol as TokenSymbol
+        };
+      }
+    }
+    // Default fallback
+    return { token0: 'aUSDC' as TokenSymbol, token1: 'aUSDT' as TokenSymbol };
+  };
+
+  const initialTokens = getInitialTokens();
+  const isStablePool = useMemo(() => {
+    if (!selectedPoolId) return false;
+    const poolCfg = getPoolById(selectedPoolId);
+    return (poolCfg?.type || '').toLowerCase() === 'stable';
+  }, [selectedPoolId]);
+  const presetOptions = useMemo(() => {
+    return isStablePool ? ["±1%", "±0.5%", "±0.1%", "Full Range"] : ["Full Range", "±15%", "±8%", "±3%"]; 
+  }, [isStablePool]);
+  const [token0Symbol, setToken0Symbol] = useState<TokenSymbol>(initialTokens.token0);
+  const [token1Symbol, setToken1Symbol] = useState<TokenSymbol>(initialTokens.token1);
   const [amount0, setAmount0] = useState<string>("");
   const [amount1, setAmount1] = useState<string>("");
   const [tickLower, setTickLower] = useState<string>(sdkMinTick.toString());
   const [tickUpper, setTickUpper] = useState<string>(sdkMaxTick.toString());
   const [currentPoolTick, setCurrentPoolTick] = useState<number | null>(null);
   const [activeInputSide, setActiveInputSide] = useState<'amount0' | 'amount1' | null>(null);
+  const [isAmount0Focused, setIsAmount0Focused] = useState(false);
+  const [isAmount1Focused, setIsAmount1Focused] = useState(false);
   const [isCalculating, setIsCalculating] = useState(false);
 
   // API response data
@@ -178,15 +177,15 @@ export function AddLiquidityForm({
   
   // UI state
   const [isInsufficientBalance, setIsInsufficientBalance] = useState(false);
-  const [activePreset, setActivePreset] = useState<string | null>("±15%");
+  const [activePreset, setActivePreset] = useState<string | null>("Full Range");
   const [isPoolStateLoading, setIsPoolStateLoading] = useState<boolean>(false);
   const [enhancedAprDisplay, setEnhancedAprDisplay] = useState<string>(poolApr || "Yield N/A");
   const [capitalEfficiencyFactor, setCapitalEfficiencyFactor] = useState<number>(1);
   const [initialDefaultApplied, setInitialDefaultApplied] = useState(false);
-  const [baseTokenForPriceDisplay, setBaseTokenForPriceDisplay] = useState<TokenSymbol>('YUSDC');
+  const [baseTokenForPriceDisplay, setBaseTokenForPriceDisplay] = useState<TokenSymbol>('aUSDC');
   
   // UI flow management
-  const [depositStep, setDepositStep] = useState<'range' | 'amount'>('range');
+  const [depositStep, setDepositStep] = useState<'range' | 'amount'>('amount');
   
   // Chart state
   const [xDomain, setXDomain] = useState<[number, number]>([-120000, 120000]);
@@ -196,12 +195,21 @@ export function AddLiquidityForm({
   const panStartDomainRef = useRef<[number, number] | null>(null);
   const chartContainerRef = useRef<HTMLDivElement>(null);
   
-  // Custom X-Axis tick state
-  const [customXAxisTicks, setCustomXAxisTicks] = useState<CustomAxisLabel[]>([]);
+  // Range drag state (for coloring X/Y while dragging)
+  const [isDraggingRange, setIsDraggingRange] = useState<'left' | 'right' | 'center' | null>(null);
+  const [dragStartX, setDragStartX] = useState<number | null>(null);
+  const [dragStartTickLower, setDragStartTickLower] = useState<number | null>(null);
+  const [dragStartTickUpper, setDragStartTickUpper] = useState<number | null>(null);
+  const [dragSide, setDragSide] = useState<'left' | 'right' | 'center' | null>(null);
+  // Track which side is being edited in the inline price editor
+  const [editingSide, setEditingSide] = useState<'min' | 'max' | null>(null);
   
   // Min/Max price input strings
   const [minPriceInputString, setMinPriceInputString] = useState<string>("");
   const [maxPriceInputString, setMaxPriceInputString] = useState<string>("");
+  
+  // Custom X-axis ticks for chart
+  const [customXAxisTicks, setCustomXAxisTicks] = useState<CustomAxisLabel[]>([]);
   
   const { address: accountAddress, chainId, isConnected } = useAccount();
   
@@ -227,6 +235,7 @@ export function AddLiquidityForm({
     isApproving,
     isMintSendPending,
     isMintConfirming,
+    isMintSuccess,
     
     handlePrepareMint,
     handleApprove,
@@ -249,28 +258,32 @@ export function AddLiquidityForm({
   // Balance hooks
   const { data: token0BalanceData, isLoading: isLoadingToken0Balance } = useBalance({
     address: accountAddress,
-    token: TOKEN_DEFINITIONS[token0Symbol]?.addressRaw as `0x${string}` | undefined,
+    token: TOKEN_DEFINITIONS[token0Symbol]?.address === "0x0000000000000000000000000000000000000000" 
+      ? undefined 
+      : TOKEN_DEFINITIONS[token0Symbol]?.address as `0x${string}` | undefined,
     chainId,
-    query: { enabled: !!accountAddress && !!chainId && !!TOKEN_DEFINITIONS[token0Symbol]?.addressRaw },
+    query: { enabled: !!accountAddress && !!chainId && !!TOKEN_DEFINITIONS[token0Symbol] },
   });
 
   const { data: token1BalanceData, isLoading: isLoadingToken1Balance } = useBalance({
     address: accountAddress,
-    token: TOKEN_DEFINITIONS[token1Symbol]?.addressRaw as `0x${string}` | undefined,
+    token: TOKEN_DEFINITIONS[token1Symbol]?.address === "0x0000000000000000000000000000000000000000" 
+      ? undefined 
+      : TOKEN_DEFINITIONS[token1Symbol]?.address as `0x${string}` | undefined,
     chainId,
-    query: { enabled: !!accountAddress && !!chainId && !!TOKEN_DEFINITIONS[token1Symbol]?.addressRaw },
+    query: { enabled: !!accountAddress && !!chainId && !!TOKEN_DEFINITIONS[token1Symbol] },
   });
   
   // Derived pool tokens (for labels/formatting)
   const { poolToken0, poolToken1 } = useMemo(() => {
     if (!token0Symbol || !token1Symbol || !chainId) return { poolToken0: null, poolToken1: null };
-    const currentToken0Def = TOKEN_DEFINITIONS[token0Symbol]; 
-    const currentToken1Def = TOKEN_DEFINITIONS[token1Symbol]; 
+      const currentToken0Def = TOKEN_DEFINITIONS[token0Symbol];
+  const currentToken1Def = TOKEN_DEFINITIONS[token1Symbol]; 
     if (!currentToken0Def || !currentToken1Def) return { poolToken0: null, poolToken1: null };
 
     // Create SDK Token instances using the modal's currently selected token0Symbol and token1Symbol
-    const sdkBaseToken0 = new Token(chainId, getAddress(currentToken0Def.addressRaw), currentToken0Def.decimals, currentToken0Def.symbol);
-    const sdkBaseToken1 = new Token(chainId, getAddress(currentToken1Def.addressRaw), currentToken1Def.decimals, currentToken1Def.symbol);
+    const sdkBaseToken0 = new Token(chainId, getAddress(currentToken0Def.address), currentToken0Def.decimals, currentToken0Def.symbol);
+    const sdkBaseToken1 = new Token(chainId, getAddress(currentToken1Def.address), currentToken1Def.decimals, currentToken1Def.symbol);
 
     // Sort them to get the canonical poolToken0 and poolToken1
     const [pt0, pt1] = sdkBaseToken0.sortsBefore(sdkBaseToken1)
@@ -304,14 +317,65 @@ export function AddLiquidityForm({
     setBaseTokenForPriceDisplay(token0Symbol);
   }, [token0Symbol]);
 
+  // Auto flip denomination to match InteractiveRangeChart axis when beneficial
+  const shouldFlipDenomination = useMemo(() => {
+    if (!currentPrice) return false;
+    const currentPriceNum = parseFloat(currentPrice);
+    if (!isFinite(currentPriceNum) || currentPriceNum <= 0) return false;
+    const inverse = 1 / currentPriceNum;
+    return inverse > currentPriceNum;
+  }, [currentPrice]);
+
+  // Inversion state based on current price
+  const isInverted = useMemo(() => {
+    if (!currentPrice) return false;
+    const v = parseFloat(currentPrice);
+    if (!isFinite(v) || v <= 0) return false;
+    return 1 / v > v;
+  }, [currentPrice]);
+
+  // Keep denomination aligned with inversion (but freeze while editing)
+  useEffect(() => {
+    if (editingSide) return;
+    const desiredBase = isInverted ? token0Symbol : token1Symbol;
+    if (desiredBase && desiredBase !== baseTokenForPriceDisplay) {
+      setBaseTokenForPriceDisplay(desiredBase);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isInverted, token0Symbol, token1Symbol, editingSide]);
+
+  // Determine optimal denomination for display decimals (match chart priority)
+  const optimalDenominationForDecimals = useMemo(() => {
+    const quotePriority: Record<string, number> = {
+      'aUSDC': 10,
+      'aUSDT': 9,
+      'USDC': 8,
+      'USDT': 7,
+      'aETH': 6,
+      'ETH': 5,
+      'YUSD': 4,
+      'mUSDT': 3,
+    };
+    const t0 = token0Symbol;
+    const t1 = token1Symbol;
+    const p0 = quotePriority[t0] || 0;
+    const p1 = quotePriority[t1] || 0;
+    return p1 > p0 ? t1 : t0;
+  }, [token0Symbol, token1Symbol]);
+
   // Setup tokens based on selectedPoolId
   useEffect(() => {
     if (selectedPoolId) {
-      const parts = selectedPoolId.split('-');
-      if (parts.length === 2) {
-        const t0 = parts[0].toUpperCase() as TokenSymbol;
-        const t1 = parts[1].toUpperCase() as TokenSymbol;
-        if (TOKEN_DEFINITIONS[t0] && TOKEN_DEFINITIONS[t1]) {
+      // Get pool configuration from pools.json
+      const poolConfig = getPoolById(selectedPoolId);
+      if (poolConfig) {
+        const token0Config = getToken(poolConfig.currency0.symbol);
+        const token1Config = getToken(poolConfig.currency1.symbol);
+        
+        if (token0Config && token1Config) {
+          const t0 = token0Config.symbol as TokenSymbol;
+          const t1 = token1Config.symbol as TokenSymbol;
+          
           setToken0Symbol(t0);
           setToken1Symbol(t1);
           setAmount0("");
@@ -325,15 +389,28 @@ export function AddLiquidityForm({
           setPriceAtTickLower(null);
           setPriceAtTickUpper(null);
           setInitialDefaultApplied(false);
-          setActivePreset("±15%"); // Reset preset on pool change
+          setActivePreset(isStablePool ? "±1%" : "±15%"); // Reset preset on pool change
           setBaseTokenForPriceDisplay(t0); // Reset base token for price display
           // Reset chart specific states too
-          setXDomain([-120000, 120000]);
           setCurrentPriceLine(null);
         }
       }
     }
-  }, [selectedPoolId, sdkMinTick, sdkMaxTick]);
+  }, [selectedPoolId, sdkMinTick, sdkMaxTick, isStablePool]);
+
+  // Apply initial parameters from position copying
+  useEffect(() => {
+    if (initialTickLower !== undefined && initialTickUpper !== undefined) {
+      setTickLower(initialTickLower.toString());
+      setTickUpper(initialTickUpper.toString());
+      setActivePreset(null); // Clear preset when copying parameters
+      setInitialDefaultApplied(true);
+    }
+    if (initialToken0Amount !== undefined) {
+      setAmount0(initialToken0Amount);
+      setActiveInputSide('amount0');
+    }
+  }, [initialTickLower, initialTickUpper, initialToken0Amount]);
 
   // Reset state when tokens change
   useEffect(() => {
@@ -347,12 +424,11 @@ export function AddLiquidityForm({
     setPriceAtTickLower(null);
     setPriceAtTickUpper(null);
     setCurrentPrice(null);
-    setActivePreset("±15%"); // Reset preset on token/chain change
+    setActivePreset(isStablePool ? "±1%" : "±15%"); // Reset preset based on pool type
     setBaseTokenForPriceDisplay(token0Symbol); // Reset base token for price display
     // Reset chart specific states too
-    setXDomain([-120000, 120000]);
     setCurrentPriceLine(null);
-  }, [token0Symbol, token1Symbol, chainId, sdkMinTick, sdkMaxTick]);
+  }, [token0Symbol, token1Symbol, chainId, sdkMinTick, sdkMaxTick, isStablePool]);
 
   // Effect to fetch initial pool state (current price and tick)
   useEffect(() => {
@@ -390,20 +466,30 @@ export function AddLiquidityForm({
           const numericCurrentPrice = parseFloat(poolState.currentPrice);
           if (!isNaN(numericCurrentPrice)) {
             setCurrentPriceLine(numericCurrentPrice);
-            if (typeof poolState.currentPoolTick === 'number') {
-              const centerTick = poolState.currentPoolTick;
-              const percentage = 0.30;
-              const tickDeltaUpper = Math.log(1 + percentage) / Math.log(1.0001);
-              const tickDeltaLower = Math.log(1 - percentage) / Math.log(1.0001);
-              const domainTickLower = Math.round(centerTick + tickDeltaLower);
-              const domainTickUpper = Math.round(centerTick + tickDeltaUpper);
-              setXDomain([domainTickLower, domainTickUpper]);
-            } else {
-              setXDomain([numericCurrentPrice * 0.5, numericCurrentPrice * 1.5]); 
-            }
+            
+            // Set a fixed 20% zoom level around the current tick
+            const centerTick = poolState.currentPoolTick;
+            const percentage = 0.20; // 20% zoom
+            
+            const priceRatioUpper = 1 + percentage;
+            const priceRatioLower = 1 - percentage;
+
+            // This calculation is now correct for price of T0 in T1
+            const tickDeltaForT0T1Upper = Math.round(Math.log(priceRatioUpper) / Math.log(1.0001));
+            const tickDeltaForT0T1Lower = Math.round(Math.log(priceRatioLower) / Math.log(1.0001));
+
+            // The prices are symmetrical around the current tick in price space, but not in tick space.
+            // We use the larger of the two deltas (in absolute terms) to create a symmetrical zoom in tick space.
+            const largestDelta = Math.max(Math.abs(tickDeltaForT0T1Upper), Math.abs(tickDeltaForT0T1Lower));
+            
+            const domainTickLower = centerTick - largestDelta;
+            const domainTickUpper = centerTick + largestDelta;
+
+            const [constrainedMinTick, constrainedMaxTick] = applyDomainConstraints(domainTickLower, domainTickUpper);
+            setXDomain([constrainedMinTick, constrainedMaxTick]);
+
           } else {
             setCurrentPriceLine(null);
-            setXDomain([-120000, 120000]); 
           }
         } else {
           setCurrentPriceLine(null);
@@ -411,7 +497,7 @@ export function AddLiquidityForm({
           throw new Error("Pool state data is incomplete.");
         }
       } catch (error: any) {
-        toast.error("Pool Data Error", { description: error.message });
+        toast.error(`Pool Data Error: ${error.message}`);
         setCurrentPriceLine(null);
         setCurrentPoolSqrtPriceX96(null);
       } finally {
@@ -422,7 +508,7 @@ export function AddLiquidityForm({
     if (selectedPoolId) {
       fetchPoolState();
     }
-  }, [token0Symbol, token1Symbol, chainId, selectedPoolId]);
+  }, [selectedPoolId, chainId, token0Symbol, token1Symbol]);
 
   // Effect to update custom X-axis ticks when domain changes
   useEffect(() => {
@@ -434,23 +520,25 @@ export function AddLiquidityForm({
       const token0Def = TOKEN_DEFINITIONS[token0Symbol];
       const token1Def = TOKEN_DEFINITIONS[token1Symbol];
       const displayDecimals = baseTokenForPriceDisplay === token0Symbol 
-        ? (token0Def?.displayDecimals ?? (token0Symbol === 'BTCRL' ? 8 : 4)) 
-        : (token1Def?.displayDecimals ?? (token1Symbol === 'BTCRL' ? 8 : 4));
+        ? (token0Def?.displayDecimals ?? 4) 
+        : (token1Def?.displayDecimals ?? 4);
 
       if (minTickDomain === maxTickDomain) {
         // Simplified: just show one label if domain is a single point
         // Price calculation for a single tick
         let priceAtTick = NaN;
-        if (token0Def?.decimals !== undefined && token1Def?.decimals !== undefined) {
-          const decimalAdjFactor = baseTokenForPriceDisplay === token0Symbol 
-            ? Math.pow(10, token1Def.decimals - token0Def.decimals)
-            : Math.pow(10, token0Def.decimals - token1Def.decimals);
-          const rawPrice = Math.pow(1.0001, minTickDomain);
-          priceAtTick = baseTokenForPriceDisplay === token0Symbol ? rawPrice * decimalAdjFactor : (1 / rawPrice) * decimalAdjFactor;
-        }
+                  if (token0Def?.decimals !== undefined && token1Def?.decimals !== undefined) {
+            const decimalAdjFactor = baseTokenForPriceDisplay === token0Symbol 
+              ? Math.pow(10, token1Def.decimals - token0Def.decimals)
+              : Math.pow(10, token0Def.decimals - token1Def.decimals);
+            const rawPrice = baseTokenForPriceDisplay === token0Symbol 
+              ? Math.pow(1.0001, -minTickDomain)
+              : Math.pow(1.0001, minTickDomain);
+            priceAtTick = rawPrice * decimalAdjFactor;
+          }
         newLabels.push({ 
           tickValue: minTickDomain, 
-          displayLabel: isNaN(priceAtTick) ? minTickDomain.toString() : priceAtTick.toLocaleString(undefined, { maximumFractionDigits: displayDecimals, minimumFractionDigits: 2 })
+          displayLabel: isNaN(priceAtTick) ? minTickDomain.toString() : priceAtTick.toLocaleString('en-US', { maximumFractionDigits: displayDecimals, minimumFractionDigits: 2 })
         });
       } else if (isFinite(minTickDomain) && isFinite(maxTickDomain)) {
         const range = maxTickDomain - minTickDomain;
@@ -460,22 +548,20 @@ export function AddLiquidityForm({
           const tickVal = Math.round(minTickDomain + (i * step));
           let priceAtTick = NaN;
 
-          if (token0Def?.decimals !== undefined && token1Def?.decimals !== undefined) {
-            // Price of token1 in terms of token0: P_t1_t0 = (1.0001)^tick * 10^(t1_decimals - t0_decimals)
-            // Price of token0 in terms of token1: P_t0_t1 = (1.0001)^(-tick) * 10^(t0_decimals - t1_decimals)
-            const rawPriceFactor = Math.pow(1.0001, tickVal);
-
-            if (baseTokenForPriceDisplay === token0Symbol) { // Display price of T1 in T0
-              const decimalAdj = Math.pow(10, token1Def.decimals - token0Def.decimals);
-              priceAtTick = rawPriceFactor * decimalAdj;
-            } else { // Display price of T0 in T1
-              const decimalAdj = Math.pow(10, token0Def.decimals - token1Def.decimals);
-              priceAtTick = (1 / rawPriceFactor) * decimalAdj; 
+          if (currentPrice && currentPoolTick !== null) {
+            // Use currentPrice as reference (same approach as min/max prices)
+            const currentPriceNum = parseFloat(currentPrice);
+            const priceDelta = Math.pow(1.0001, tickVal - currentPoolTick);
+            
+            if (baseTokenForPriceDisplay === token0Symbol) {
+              priceAtTick = 1 / (currentPriceNum * priceDelta); // Invert for token0 denomination
+            } else {
+              priceAtTick = currentPriceNum * priceDelta; // Direct for token1 denomination
             }
           }
           newLabels.push({ 
             tickValue: tickVal, 
-            displayLabel: isNaN(priceAtTick) ? tickVal.toString() : priceAtTick.toLocaleString(undefined, { maximumFractionDigits: displayDecimals, minimumFractionDigits: Math.min(2, displayDecimals) }) 
+            displayLabel: isNaN(priceAtTick) ? tickVal.toString() : priceAtTick.toLocaleString('en-US', { maximumFractionDigits: displayDecimals, minimumFractionDigits: Math.min(2, displayDecimals) }) 
           });
         }
       } 
@@ -492,11 +578,34 @@ export function AddLiquidityForm({
     const numTickLower = parseInt(tickLower);
     const numTickUpper = parseInt(tickUpper);
 
+    // Don't calculate prices if we're still using extreme initial values before pool data loads
+    // or if we don't have current pool price data yet
+    if (currentPoolTick === null || currentPrice === null) {
+      setMinPriceInputString("");
+      setMaxPriceInputString("");
+      return;
+    }
+    
+    // Also skip if using extreme tick values that haven't been preset-adjusted yet
+    const tickRange = Math.abs(numTickUpper - numTickLower);
+    if (tickRange > 1000000 && activePreset !== "Full Range") { // Extremely wide range suggests initial values
+      setMinPriceInputString("");
+      setMaxPriceInputString("");
+      return;
+    }
+    
+    // Additional safety check: if we haven't applied a preset yet and we're using extreme values, wait
+    if (!initialDefaultApplied && (numTickLower === sdkMinTick || numTickUpper === sdkMaxTick)) {
+      setMinPriceInputString("");
+      setMaxPriceInputString("");
+      return;
+    }
+
     let valForMinInput: number | null = null;
     let valForMaxInput: number | null = null;
 
-    const decimalsForToken0Display = TOKEN_DEFINITIONS[token0Symbol]?.displayDecimals ?? (token0Symbol === 'BTCRL' ? 8 : 4);
-    const decimalsForToken1Display = TOKEN_DEFINITIONS[token1Symbol]?.displayDecimals ?? (token1Symbol === 'BTCRL' ? 8 : 4);
+    const decimalsForToken0Display = TOKEN_DEFINITIONS[token0Symbol]?.displayDecimals ?? 4;
+    const decimalsForToken1Display = TOKEN_DEFINITIONS[token1Symbol]?.displayDecimals ?? 4;
 
     const rawApiPriceAtTickLower = calculatedData?.priceAtTickLower ? parseFloat(calculatedData.priceAtTickLower) : null;
     const rawApiPriceAtTickUpper = calculatedData?.priceAtTickUpper ? parseFloat(calculatedData.priceAtTickUpper) : null;
@@ -505,79 +614,57 @@ export function AddLiquidityForm({
     const token0Dec = TOKEN_DEFINITIONS[token0Symbol]?.decimals;
     const token1Dec = TOKEN_DEFINITIONS[token1Symbol]?.decimals;
 
+    // Use API prices when available, fallback to tick calculation with same logic as currentPrice
     if (baseTokenForPriceDisplay === token0Symbol) {
-        // UI Displays: Price of Token1 in terms of Token0 (e.g., BTCRL per YUSDC)
-        if (token0Dec !== undefined && token1Dec !== undefined) {
-            const decimalAdjFactor = Math.pow(10, token1Dec - token0Dec);
-
-            // Min Price (T1 in T0) at numTickLower
-            if (rawApiPriceAtTickLower !== null) { // rawApiPriceAtTickLower is Price(T0 per T1)
-                if (rawApiPriceAtTickLower === 0) valForMinInput = Infinity;
-                else valForMinInput = 1 / rawApiPriceAtTickLower;
-            } else if (!isNaN(numTickLower)) {
-                if (numTickLower === sdkMinTick) valForMinInput = 0;
-                else valForMinInput = Math.pow(1.0001, numTickLower) * decimalAdjFactor;
-            } else {
-                valForMinInput = NaN;
-            }
-
-            // Max Price (T1 in T0) at numTickUpper
-            if (rawApiPriceAtTickUpper !== null) { // rawApiPriceAtTickUpper is Price(T0 per T1)
-                if (rawApiPriceAtTickUpper === 0) valForMaxInput = Infinity;
-                else valForMaxInput = 1 / rawApiPriceAtTickUpper;
-            } else if (!isNaN(numTickUpper)) {
-                if (numTickUpper === sdkMaxTick) valForMaxInput = Infinity;
-                else valForMaxInput = Math.pow(1.0001, numTickUpper) * decimalAdjFactor;
-            } else {
-                valForMaxInput = NaN;
-            }
-        } else {
-            valForMinInput = NaN;
-            valForMaxInput = NaN;
+        // Show prices denominated in token0 - need to invert API prices
+        if (rawApiPriceAtTickLower !== null) {
+            valForMinInput = 1 / rawApiPriceAtTickLower; // Invert API price
+        } else if (!isNaN(numTickLower) && currentPrice) {
+            // Fallback: use currentPrice as reference
+            const currentPriceNum = parseFloat(currentPrice);
+            const priceDelta = Math.pow(1.0001, numTickLower - (currentPoolTick || 0));
+            valForMinInput = 1 / (currentPriceNum * priceDelta);
         }
-    } else { // baseTokenForPriceDisplay === token1Symbol
-        // UI Displays: Price of Token0 in terms of Token1 (e.g., YUSDC per BTCRL)
-        if (token0Dec !== undefined && token1Dec !== undefined) {
-            const decimalAdjFactor = Math.pow(10, token0Dec - token1Dec);
-
-            // Min Price (T0 in T1) at numTickUpper
-            if (rawApiPriceAtTickUpper !== null) { // rawApiPriceAtTickUpper is Price(T0 per T1)
-                if (rawApiPriceAtTickUpper === 0) valForMinInput = Infinity;
-                else valForMinInput = 1 / (1 / rawApiPriceAtTickUpper);
-            } else if (!isNaN(numTickUpper)) { // Upper tick corresponds to the MIN T0/T1 price
-                if (numTickUpper === sdkMaxTick) valForMinInput = 0;
-                else valForMinInput = Math.pow(1.0001, -numTickUpper) * decimalAdjFactor;
-            } else {
-                valForMinInput = NaN;
-            }
-
-            // Max Price (T0 in T1) at numTickLower
-            if (rawApiPriceAtTickLower !== null) { // rawApiPriceAtTickLower is Price(T0 per T1)
-                 if (rawApiPriceAtTickLower === 0) valForMaxInput = Infinity;
-                 else valForMaxInput = 1 / (1 / rawApiPriceAtTickLower);
-            } else if (!isNaN(numTickLower)) { // Lower tick corresponds to the MAX T0/T1 price
-                if (numTickLower === sdkMinTick) valForMaxInput = Infinity;
-                else valForMaxInput = Math.pow(1.0001, -numTickLower) * decimalAdjFactor;
-            } else {
-                valForMaxInput = NaN;
-            }
-        } else {
-            valForMinInput = NaN;
-            valForMaxInput = NaN;
+        
+        if (rawApiPriceAtTickUpper !== null) {
+            valForMaxInput = 1 / rawApiPriceAtTickUpper; // Invert API price
+        } else if (!isNaN(numTickUpper) && currentPrice) {
+            // Fallback: use currentPrice as reference
+            const currentPriceNum = parseFloat(currentPrice);
+            const priceDelta = Math.pow(1.0001, numTickUpper - (currentPoolTick || 0));
+            valForMaxInput = 1 / (currentPriceNum * priceDelta);
         }
-    }
-
-    // Ensure min < max after all calculations, only if both are finite numbers
-    if (baseTokenForPriceDisplay === token0Symbol && valForMinInput !== null && valForMaxInput !== null && isFinite(valForMinInput) && isFinite(valForMaxInput) && valForMinInput > valForMaxInput) {
-        [valForMinInput, valForMaxInput] = [valForMaxInput, valForMinInput];
+    } else {
+        // Show prices denominated in token1 - use API prices directly
+        if (rawApiPriceAtTickLower !== null) {
+            valForMaxInput = rawApiPriceAtTickLower; // API already handles decimals
+        } else if (!isNaN(numTickLower) && currentPrice) {
+            // Fallback: use currentPrice as reference for decimal handling
+            const currentPriceNum = parseFloat(currentPrice);
+            const priceDelta = Math.pow(1.0001, numTickLower - (currentPoolTick || 0));
+            valForMaxInput = currentPriceNum * priceDelta;
+        }
+        
+        if (rawApiPriceAtTickUpper !== null) {
+            valForMinInput = rawApiPriceAtTickUpper; // API already handles decimals
+        } else if (!isNaN(numTickUpper) && currentPrice) {
+            // Fallback: use currentPrice as reference for decimal handling
+            const currentPriceNum = parseFloat(currentPrice);
+            const priceDelta = Math.pow(1.0001, numTickUpper - (currentPoolTick || 0));
+            valForMinInput = currentPriceNum * priceDelta;
+        }
     }
 
     let finalMinPriceString = "";
     let finalMaxPriceString = "";
-    const displayDecimals = baseTokenForPriceDisplay === token0Symbol ? decimalsForToken0Display : decimalsForToken1Display;
+    // Use optimal denomination for decimals like the chart; force 2 for USD-denominated
+    const baseDisplayToken = optimalDenominationForDecimals;
+    const baseDisplayDefault = TOKEN_DEFINITIONS[baseDisplayToken]?.displayDecimals ?? 4;
+    const isUSDDenom = baseDisplayToken === 'aUSDT' || baseDisplayToken === 'aUSDC' || baseDisplayToken === 'USDT' || baseDisplayToken === 'USDC';
+    const displayDecimals = isUSDDenom ? 2 : baseDisplayDefault;
 
     // Formatting for Min Price String
-    if (valForMinInput !== null) {
+    if (valForMinInput !== null && !isNaN(valForMinInput)) {
         if (valForMinInput >= 0 && valForMinInput < 1e-11) {
             finalMinPriceString = "0";
         } else if (!isFinite(valForMinInput) || valForMinInput > 1e30) {
@@ -585,10 +672,12 @@ export function AddLiquidityForm({
         } else {
             finalMinPriceString = valForMinInput.toFixed(displayDecimals);
         }
+    } else {
+        finalMinPriceString = ""; // Show empty for null/NaN values
     }
 
     // Formatting for Max Price String
-    if (valForMaxInput !== null) {
+    if (valForMaxInput !== null && !isNaN(valForMaxInput)) {
         if (valForMaxInput >= 0 && valForMaxInput < 1e-11) {
             finalMaxPriceString = "0";
         } else if (!isFinite(valForMaxInput) || valForMaxInput > 1e30) {
@@ -596,12 +685,14 @@ export function AddLiquidityForm({
         } else {
             finalMaxPriceString = valForMaxInput.toFixed(displayDecimals);
         }
+    } else {
+        finalMaxPriceString = ""; // Show empty for null/NaN values
     }
 
     setMinPriceInputString(finalMinPriceString);
     setMaxPriceInputString(finalMaxPriceString);
 
-  }, [tickLower, tickUpper, baseTokenForPriceDisplay, token0Symbol, token1Symbol, sdkMinTick, sdkMaxTick, calculatedData]);
+  }, [tickLower, tickUpper, baseTokenForPriceDisplay, token0Symbol, token1Symbol, sdkMinTick, sdkMaxTick, calculatedData, optimalDenominationForDecimals]);
 
   // Helper function to get formatted display balance
   const getFormattedDisplayBalance = (numericBalance: number | undefined, tokenSymbolForDecimals: TokenSymbol): string => {
@@ -613,7 +704,7 @@ export function AddLiquidityForm({
     } else if (numericBalance > 0 && numericBalance < 0.001) {
       return "< 0.001";
     } else {
-      const displayDecimals = tokenSymbolForDecimals === 'BTCRL' ? 8 : 2;
+      const displayDecimals = TOKEN_DEFINITIONS[tokenSymbolForDecimals]?.displayDecimals ?? 4;
       return numericBalance.toFixed(displayDecimals);
     }
   };
@@ -627,36 +718,298 @@ export function AddLiquidityForm({
     ? "Loading..." 
     : (token1BalanceData ? getFormattedDisplayBalance(parseFloat(token1BalanceData.formatted), token1Symbol) : "~");
 
-  // Handle setting full range
-  const handleSetFullRange = () => {
+  // Handle selecting a preset from dropdown
+  const handleSelectPreset = (preset: string) => {
     if (preparedTxData) resetTransactionState();
-    setTickLower(sdkMinTick.toString());
-    setTickUpper(sdkMaxTick.toString());
-    setInitialDefaultApplied(true);
-    setActivePreset("Full Range");
     
-    // Explicitly trigger recalculation of price inputs to update display
-    setPriceAtTickLower(null);
-    setPriceAtTickUpper(null);
+    setActivePreset(preset);
+    setShowPresetSelector(false); // Close the selector
     
-    // Don't change the chart view when selecting full range
-    // Keep the current view as is - users can manually zoom if needed
-  };
-
-  // Handle transition from range selection to amount input
-  const handleContinueToAmount = () => {
-    // Validation can go here if needed
-    setDepositStep('amount');
-  };
-
-  // Handle back button to return to range selection
-  const handleBackToRange = () => {
-    setDepositStep('range');
-    if (preparedTxData) {
-      resetTransactionState();
+    // Apply the selected preset
+    if (preset === "Full Range") {
+      setTickLower(sdkMinTick.toString());
+      setTickUpper(sdkMaxTick.toString());
+      setInitialDefaultApplied(true);
+      setPriceAtTickLower(null);
+      setPriceAtTickUpper(null);
+      // Reset viewbox to the ±15% centered style for consistency
+      resetChartViewbox(sdkMinTick, sdkMaxTick);
+    } else {
+      // The percentage presets will be applied by the useEffect that watches activePreset
+      setInitialDefaultApplied(true);
     }
   };
+
+  // State for showing inline preset selector
+  const [showPresetSelector, setShowPresetSelector] = useState(false);
   
+  // State for editing price range
+  const [editingMinPrice, setEditingMinPrice] = useState<string>("");
+  const [editingMaxPrice, setEditingMaxPrice] = useState<string>("");
+
+  // Click outside handler to close preset selector
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (showPresetSelector) {
+        const target = event.target as Element;
+        if (!target.closest('.preset-selector')) {
+          setShowPresetSelector(false);
+        }
+      }
+      if (editingSide) {
+        const target = event.target as Element;
+        if (!target.closest('.price-range-editor')) {
+          handleCancelPriceRangeEdit();
+        }
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showPresetSelector, editingSide]);
+
+  // Handle price input change with immediate updates
+  const handlePriceInputChange = (side: 'min' | 'max', value: string) => {
+    if (side === 'min') {
+      setEditingMinPrice(value);
+    } else {
+      setEditingMaxPrice(value);
+    }
+
+    // Process the input immediately for better UX
+    const newTick = convertPriceToValidTick(value, side === 'max');
+    if (newTick !== null) {
+      if (side === 'min') {
+        if (baseTokenForPriceDisplay === token0Symbol) {
+          // Min price sets tickLower for token0 denomination
+          if (newTick < parseInt(tickUpper)) {
+            setTickLower(newTick.toString());
+            setInitialDefaultApplied(true);
+            setActivePreset(null); // Clear preset when manually editing
+          }
+        } else {
+          // Min price sets tickUpper for token1 denomination
+          if (newTick > parseInt(tickLower)) {
+            setTickUpper(newTick.toString());
+            setInitialDefaultApplied(true);
+            setActivePreset(null); // Clear preset when manually editing
+          }
+        }
+      } else {
+        if (baseTokenForPriceDisplay === token0Symbol) {
+          // Max price sets tickUpper for token0 denomination
+          if (newTick > parseInt(tickLower)) {
+            setTickUpper(newTick.toString());
+            setInitialDefaultApplied(true);
+            setActivePreset(null); // Clear preset when manually editing
+          }
+        } else {
+          // Max price sets tickLower for token1 denomination
+          if (newTick < parseInt(tickUpper)) {
+            setTickLower(newTick.toString());
+            setInitialDefaultApplied(true);
+            setActivePreset(null); // Clear preset when manually editing
+          }
+        }
+      }
+    }
+  };
+
+  // Helper function to convert price to nearest valid tick
+  const convertPriceToValidTick = useCallback((priceStr: string, isMaxPrice: boolean): number | null => {
+    const numericPrice = parseFloat(priceStr);
+    const isInfinityInput = priceStr.trim().toLowerCase() === "∞" || priceStr.trim().toLowerCase() === "infinity" || priceStr.trim().toLowerCase() === "infinite";
+
+    // Handle empty or invalid input
+    if (!priceStr.trim() || (isNaN(numericPrice) && !isInfinityInput)) {
+      return null;
+    }
+
+    // Handle infinity input
+    if (isInfinityInput) {
+      return isMaxPrice ? sdkMaxTick : sdkMinTick;
+    }
+
+    // Handle valid numeric input
+    if (isNaN(numericPrice) || numericPrice <= 0) {
+      return null;
+    }
+
+    // Need current price and pool tick as reference points to match display calculation
+    if (!currentPrice || currentPoolTick === null) {
+      return null;
+    }
+
+    const currentPriceNum = parseFloat(currentPrice);
+    if (isNaN(currentPriceNum) || currentPriceNum <= 0) {
+      return null;
+    }
+
+    let newTick: number;
+    
+    if (baseTokenForPriceDisplay === token0Symbol) {
+      // Price is denominated in token0 - we need to invert to match display logic
+      // Display calculation: 1 / (currentPrice * Math.pow(1.0001, tick - currentPoolTick))
+      // So: price = 1 / (currentPrice * Math.pow(1.0001, tick - currentPoolTick))
+      // Solving for tick: Math.pow(1.0001, tick - currentPoolTick) = 1 / (price * currentPrice)
+      // tick - currentPoolTick = log(1 / (price * currentPrice)) / log(1.0001)
+      // tick = currentPoolTick + log(1 / (price * currentPrice)) / log(1.0001)
+      newTick = currentPoolTick + Math.log(1 / (numericPrice * currentPriceNum)) / Math.log(1.0001);
+    } else {
+      // Price is denominated in token1 - direct calculation to match display logic
+      // Display calculation: currentPrice * Math.pow(1.0001, tick - currentPoolTick)
+      // So: price = currentPrice * Math.pow(1.0001, tick - currentPoolTick)
+      // Solving for tick: Math.pow(1.0001, tick - currentPoolTick) = price / currentPrice
+      // tick - currentPoolTick = log(price / currentPrice) / log(1.0001)
+      // tick = currentPoolTick + log(price / currentPrice) / log(1.0001)
+      newTick = currentPoolTick + Math.log(numericPrice / currentPriceNum) / Math.log(1.0001);
+    }
+
+    // Check for invalid results
+    if (!isFinite(newTick) || isNaN(newTick)) {
+      return null;
+    }
+
+    // Round to nearest valid tick spacing
+    newTick = Math.round(newTick / defaultTickSpacing) * defaultTickSpacing;
+
+    // Clamp to valid range
+    newTick = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTick));
+
+    return Math.round(newTick); // Ensure integer result
+  }, [baseTokenForPriceDisplay, token0Symbol, defaultTickSpacing, sdkMinTick, sdkMaxTick, currentPrice, currentPoolTick]);
+
+  // Handle applying edited prices
+  const handleApplyPriceRange = () => {
+    setEditingSide(null);
+    
+    let hasChanges = false;
+    let newTickLower = parseInt(tickLower);
+    let newTickUpper = parseInt(tickUpper);
+    
+    // Map editing sides to actual ticks based on displayed left/right (inversion-aware)
+    // Under inversion, left should update upper and right should update lower
+    const editingMinMapsTo = isInverted ? 'upper' : 'lower';
+    const editingMaxMapsTo = isInverted ? 'lower' : 'upper';
+
+    // Process min price input for the correct underlying tick
+    if (editingMinPrice !== minPriceInputString) {
+      const newTick = convertPriceToValidTick(editingMinPrice, false);
+      if (newTick !== null) {
+        if (editingMinMapsTo === 'lower') newTickLower = newTick; else newTickUpper = newTick;
+        hasChanges = true;
+      }
+    }
+    
+    // Process max price input for the correct underlying tick
+    if (editingMaxPrice !== maxPriceInputString) {
+      const newTick = convertPriceToValidTick(editingMaxPrice, true);
+      if (newTick !== null) {
+        if (editingMaxMapsTo === 'upper') newTickUpper = newTick; else newTickLower = newTick;
+        hasChanges = true;
+      }
+    }
+    
+    // Apply only if resulting ticks form a valid range; avoid error toast on manual input
+    if (hasChanges && newTickLower < newTickUpper) {
+      // Apply the changes
+      if (newTickLower !== parseInt(tickLower)) {
+        setTickLower(newTickLower.toString());
+        setInitialDefaultApplied(true);
+      }
+      if (newTickUpper !== parseInt(tickUpper)) {
+        setTickUpper(newTickUpper.toString());
+        setInitialDefaultApplied(true);
+      }
+    }
+    
+    // Reset editing state
+    setEditingMinPrice("");
+    setEditingMaxPrice("");
+  };
+
+  // Handle canceling price range edit
+  const handleCancelPriceRangeEdit = () => {
+    setEditingSide(null);
+    setEditingMinPrice("");
+    setEditingMaxPrice("");
+  };
+
+  // Handle direct click to edit price
+  const handleClickToEditPrice = (side: 'min' | 'max') => {
+    setShowPresetSelector(false);
+    setEditingSide(side);
+    if (side === 'min') {
+      setEditingMinPrice(minPriceInputString);
+    } else {
+      setEditingMaxPrice(maxPriceInputString);
+    }
+  };
+
+  // Removed left/right remapping: left always edits "min" and right edits "max".
+
+  // Helper function to apply domain constraints
+  const applyDomainConstraints = useCallback((minTick: number, maxTick: number): [number, number] => {
+    // Apply minimum domain size constraint: ensure at least 10 tick spacings visible
+    const minDomainSize = defaultTickSpacing * 10;
+    let constrainedMinTick = minTick;
+    let constrainedMaxTick = maxTick;
+    
+    const domainSize = constrainedMaxTick - constrainedMinTick;
+    if (domainSize < minDomainSize) {
+      const centerTick = (constrainedMinTick + constrainedMaxTick) / 2;
+      constrainedMinTick = centerTick - minDomainSize / 2;
+      constrainedMaxTick = centerTick + minDomainSize / 2;
+    }
+    
+    // Apply maximum view range constraint: 500% above and 95% below current price
+    if (currentPoolTick !== null) {
+      const maxUpperDelta = Math.round(Math.log(6) / Math.log(1.0001)); // 500% above = 6x price
+      const maxLowerDelta = Math.round(Math.log(0.05) / Math.log(1.0001)); // 95% below = 0.05x price
+      
+      const maxUpperTick = currentPoolTick + maxUpperDelta;
+      const maxLowerTick = currentPoolTick + maxLowerDelta;
+      
+      // Clamp the domain to the maximum view range
+      constrainedMinTick = Math.max(constrainedMinTick, maxLowerTick);
+      constrainedMaxTick = Math.min(constrainedMaxTick, maxUpperTick);
+    }
+    
+    // Ensure the domain is properly aligned to tick spacing
+    constrainedMinTick = Math.floor(constrainedMinTick / defaultTickSpacing) * defaultTickSpacing;
+    constrainedMaxTick = Math.ceil(constrainedMaxTick / defaultTickSpacing) * defaultTickSpacing;
+    
+    // Ensure minimum domain size is maintained after constraints
+    const finalDomainSize = constrainedMaxTick - constrainedMinTick;
+    if (finalDomainSize < minDomainSize) {
+      const centerTick = (constrainedMinTick + constrainedMaxTick) / 2;
+      constrainedMinTick = centerTick - minDomainSize / 2;
+      constrainedMaxTick = centerTick + minDomainSize / 2;
+      
+      // Re-align to tick spacing
+      constrainedMinTick = Math.floor(constrainedMinTick / defaultTickSpacing) * defaultTickSpacing;
+      constrainedMaxTick = Math.ceil(constrainedMaxTick / defaultTickSpacing) * defaultTickSpacing;
+    }
+    
+    return [constrainedMinTick, constrainedMaxTick];
+  }, [defaultTickSpacing, currentPoolTick]);
+
+  // Reset chart viewbox to fit the chosen range with configurable margins (fractions of selection width)
+  const resetChartViewbox = useCallback((newTickLower: number, newTickUpper: number, leftMarginFrac: number = 0.05, rightMarginFrac: number = 0.05) => {
+    if (newTickLower === newTickUpper) return;
+
+    // Always fit selection plus a small margin, then constrain
+    const rangeWidth = newTickUpper - newTickLower;
+    const leftMarginTicks = Math.round(rangeWidth * Math.max(0, leftMarginFrac));
+    const rightMarginTicks = Math.round(rangeWidth * Math.max(0, rightMarginFrac));
+    const newMinTick = newTickLower - leftMarginTicks;
+    const newMaxTick = newTickUpper + rightMarginTicks;
+    const [constrainedMinTick, constrainedMaxTick] = applyDomainConstraints(newMinTick, newMaxTick);
+    setXDomain([constrainedMinTick, constrainedMaxTick]);
+  }, [applyDomainConstraints, currentPoolTick, defaultTickSpacing, xDomain]);
+
   // Handle use full balance
   const handleUseFullBalance = (balanceString: string, tokenSymbolForDecimals: TokenSymbol, isToken0: boolean) => { 
     try {
@@ -678,7 +1031,7 @@ export function AddLiquidityForm({
   };
 
   // Handle preparation and submission
-  const handlePrepareAndSubmit = () => {
+  const handlePrepareAndSubmit = async () => {
     if (isInsufficientBalance) {
       toast.error("Insufficient balance");
       return;
@@ -689,17 +1042,38 @@ export function AddLiquidityForm({
       return;
     }
     
-    handlePrepareMint();
+    if (preparedTxData) {
+      if (step === 'approve') handleApprove();
+      else if (step === 'permit2Sign') handleSignAndSubmitPermit2();
+      else if (step === 'mint') handleMint();
+    } else {
+      // Check if all involved tokens have been approved
+      const allTokensCompleted = completedTokensCount === involvedTokensCount && involvedTokensCount > 0;
+      
+      if (allTokensCompleted) {
+        // All approvals complete, go straight to mint
+        const preparedData = await handlePrepareMint();
+        if (preparedData && !preparedData.needsApproval) {
+          handleMint();
+        }
+      } else {
+        // Start the approval process
+        await handlePrepareMint();
+      }
+    }
   };
 
   // Effect to auto-apply active percentage preset when currentPrice changes OR when activePreset changes
   useEffect(() => {
     // Ensure currentPrice is valid and we have a preset that requires calculation
-    if (activePreset && ["±3%", "±8%", "±15%"].includes(activePreset)) {
+    if (activePreset && ["±3%", "±8%", "±15%", "±1%", "±0.5%", "±0.1%"].includes(activePreset)) {
         let percentage = 0;
         if (activePreset === "±3%") percentage = 0.03;
         else if (activePreset === "±8%") percentage = 0.08;
         else if (activePreset === "±15%") percentage = 0.15;
+        else if (activePreset === "±1%") percentage = 0.01;
+        else if (activePreset === "±0.5%") percentage = 0.005;
+        else if (activePreset === "±0.1%") percentage = 0.001;
 
         let newTickLower: number;
         let newTickUpper: number;
@@ -718,7 +1092,7 @@ export function AddLiquidityForm({
             // Fallback to currentPrice if currentPoolTick is not yet available
             const numericCurrentPrice = parseFloat(currentPrice);
             if (isNaN(numericCurrentPrice)) {
-                toast.error("Preset Error", { description: "Cannot apply preset: current price is invalid and pool tick unavailable." });
+                toast.error("Cannot apply preset: current price is invalid");
                 return;
             }
             const priceLowerTarget = numericCurrentPrice * (1 - percentage);
@@ -744,9 +1118,13 @@ export function AddLiquidityForm({
                 setTickLower(newTickLower.toString());
                 setTickUpper(newTickUpper.toString());
                 setInitialDefaultApplied(true); 
+                // Reset viewbox for percentage presets using a constant fraction of the selection width.
+                // Use ~33% of selection width as margin on each side for ALL non-Full Range presets.
+                // Full Range is handled in its own branch below.
+                resetChartViewbox(newTickLower, newTickUpper, 1/3, 1/3);
             }
         } else {
-             toast.info("Preset Range Too Narrow", { description: "Selected preset results in an invalid range after tick alignment. Try a wider preset or manual range."});
+             toast.info("Preset Range Too Narrow");
         }
     } else if (activePreset === "Full Range") {
         if (tickLower !== sdkMinTick.toString() || tickUpper !== sdkMaxTick.toString()) {
@@ -754,6 +1132,8 @@ export function AddLiquidityForm({
             setTickLower(sdkMinTick.toString());
             setTickUpper(sdkMaxTick.toString());
             setInitialDefaultApplied(true); 
+            // Reset viewbox for full range
+            resetChartViewbox(sdkMinTick, sdkMaxTick);
         }
     }
   }, [currentPrice, currentPoolTick, activePreset, defaultTickSpacing, sdkMinTick, sdkMaxTick, tickLower, tickUpper, preparedTxData, resetTransactionState]);
@@ -797,12 +1177,15 @@ export function AddLiquidityForm({
     if (activePreset === "Full Range" || (tl <= sdkMinTick && tu >= sdkMaxTick)) {
       M = 1;
       concentrationMethod = 'Full Range';
-    } else if (activePreset && ["±3%", "±8%", "±15%"].includes(activePreset)) {
+    } else if (activePreset && ["±3%", "±8%", "±15%", "±1%", "±0.5%", "±0.1%"].includes(activePreset)) {
         // Use the new simplified formula for percentage presets
         let percentage = 0;
         if (activePreset === "±3%") percentage = 0.03;
         else if (activePreset === "±8%") percentage = 0.08;
         else if (activePreset === "±15%") percentage = 0.15;
+        else if (activePreset === "±1%") percentage = 0.01;
+        else if (activePreset === "±0.5%") percentage = 0.005;
+        else if (activePreset === "±0.1%") percentage = 0.001;
 
         if (percentage > 0) {
              M = 1 / (2 * percentage);
@@ -881,7 +1264,8 @@ export function AddLiquidityForm({
         newMax = newMin + safetyGap;
       }
 
-      setXDomain([newMin, newMax]);
+      const [constrainedMinTick, constrainedMaxTick] = applyDomainConstraints(newMin, newMax);
+      setXDomain([constrainedMinTick, constrainedMaxTick]);
     }
   };
 
@@ -894,19 +1278,133 @@ export function AddLiquidityForm({
     }
   };
 
+  // Range drag handlers
+  const handleRangeDragStart = (e: any) => {
+    if (!e || !e.chartX) return;
+    
+    const currentTickLower = parseInt(tickLower);
+    const currentTickUpper = parseInt(tickUpper);
+    const chartX = e.chartX;
+    
+    // Determine which side of the range is being dragged
+    const chartWidth = chartContainerRef.current?.clientWidth || 400;
+    const [minTick, maxTick] = xDomain;
+    const tickRange = maxTick - minTick;
+    const pixelsPerTick = chartWidth / tickRange;
+    
+    const leftBoundaryX = ((currentTickLower - minTick) / tickRange) * chartWidth;
+    const rightBoundaryX = ((currentTickUpper - minTick) / tickRange) * chartWidth;
+    
+    const dragThreshold = 20; // pixels from boundary to consider it a drag
+    
+    if (Math.abs(chartX - leftBoundaryX) < dragThreshold) {
+      setDragSide('left');
+    } else if (Math.abs(chartX - rightBoundaryX) < dragThreshold) {
+      setDragSide('right');
+    } else if (chartX > leftBoundaryX && chartX < rightBoundaryX) {
+      setDragSide('center');
+    } else {
+      return; // Not dragging range
+    }
+    
+    setIsDraggingRange(dragSide);
+    setDragStartX(chartX);
+    setDragStartTickLower(currentTickLower);
+    setDragStartTickUpper(currentTickUpper);
+    
+    if (chartContainerRef.current) {
+      chartContainerRef.current.style.cursor = 'grabbing';
+    }
+  };
+
+  const handleRangeDragMove = (e: any) => {
+    if (!isDraggingRange || !e || !e.chartX || dragStartX === null || 
+        dragStartTickLower === null || dragStartTickUpper === null || !dragSide) return;
+    
+    const chartWidth = chartContainerRef.current?.clientWidth || 400;
+    const [minTick, maxTick] = xDomain;
+    const tickRange = maxTick - minTick;
+    const pixelsPerTick = chartWidth / tickRange;
+    
+    const deltaX = e.chartX - dragStartX;
+    const deltaTicks = deltaX / pixelsPerTick;
+    
+    let newTickLower = dragStartTickLower;
+    let newTickUpper = dragStartTickUpper;
+    
+    if (dragSide === 'left') {
+      newTickLower = Math.max(sdkMinTick, Math.min(sdkMaxTick, dragStartTickLower + deltaTicks));
+      newTickLower = Math.ceil(newTickLower / defaultTickSpacing) * defaultTickSpacing;
+      if (newTickLower >= newTickUpper - defaultTickSpacing) {
+        newTickLower = newTickUpper - defaultTickSpacing;
+      }
+    } else if (dragSide === 'right') {
+      newTickUpper = Math.max(sdkMinTick, Math.min(sdkMaxTick, dragStartTickUpper + deltaTicks));
+      newTickUpper = Math.floor(newTickUpper / defaultTickSpacing) * defaultTickSpacing;
+      if (newTickUpper <= newTickLower + defaultTickSpacing) {
+        newTickUpper = newTickLower + defaultTickSpacing;
+      }
+    } else if (dragSide === 'center') {
+      const rangeWidth = dragStartTickUpper - dragStartTickLower;
+      const centerTick = (dragStartTickLower + dragStartTickUpper) / 2;
+      const newCenterTick = centerTick + deltaTicks;
+      
+      newTickLower = Math.max(sdkMinTick, Math.min(sdkMaxTick - rangeWidth, newCenterTick - rangeWidth / 2));
+      newTickUpper = Math.max(sdkMinTick + rangeWidth, Math.min(sdkMaxTick, newCenterTick + rangeWidth / 2));
+      
+      // Align to tick spacing
+      newTickLower = Math.ceil(newTickLower / defaultTickSpacing) * defaultTickSpacing;
+      newTickUpper = Math.floor(newTickUpper / defaultTickSpacing) * defaultTickSpacing;
+    }
+    
+    if (newTickLower !== parseInt(tickLower) || newTickUpper !== parseInt(tickUpper)) {
+      if (preparedTxData) resetTransactionState();
+      setTickLower(newTickLower.toString());
+      setTickUpper(newTickUpper.toString());
+      setInitialDefaultApplied(true);
+      // Auto-zoom: ensure selected range is at least 20% of current viewport
+      const [viewMin, viewMax] = xDomain;
+      const viewSize = viewMax - viewMin;
+      const selSize = newTickUpper - newTickLower;
+      const minSelRatio = 0.2;
+      if (viewSize > 0 && selSize / viewSize < minSelRatio) {
+        const targetSize = Math.max(defaultTickSpacing * 10, viewSize * minSelRatio);
+        const center = (newTickLower + newTickUpper) / 2;
+        const newMin = center - targetSize / 2;
+        const newMax = center + targetSize / 2;
+        const [cMin, cMax] = applyDomainConstraints(newMin, newMax);
+        setXDomain([cMin, cMax]);
+      }
+    }
+  };
+
+  const handleRangeDragEnd = () => {
+    setIsDraggingRange(null);
+    setDragStartX(null);
+    setDragStartTickLower(null);
+    setDragStartTickUpper(null);
+    setDragSide(null);
+    
+    if (chartContainerRef.current) {
+      chartContainerRef.current.style.cursor = 'grab';
+    }
+  };
+
   // Debounced function to update tickLower from minPriceInputString
   const debouncedUpdateTickLower = useCallback(
     debounce((priceStr: string) => {
       const numericPrice = parseFloat(priceStr);
 
-      if (baseTokenForPriceDisplay === token0Symbol) {
+      if (!isInverted) {
         if (priceStr.trim() === "0") {
           const newTick = sdkMinTick;
           if (newTick < parseInt(tickUpper)) {
             setTickLower(newTick.toString());
             setInitialDefaultApplied(true);
+            // Reset viewbox for manual range change
+            resetChartViewbox(newTick, parseInt(tickUpper));
           } else {
-            toast.error("Invalid Range", { description: "Min price results in a range where min tick >= max tick." });
+            toast.error("Invalid Range: Min price results in a range where min tick >= max tick.");
           }
           return;
         }
@@ -914,26 +1412,36 @@ export function AddLiquidityForm({
 
         const priceToConvert = numericPrice;
         if (priceToConvert <= 0) {
-          toast.info("Price results in invalid tick", { description: "The entered price must be positive for tick calculation." });
+          toast.info("Price results in invalid tick");
           return;
         }
         let newTick = Math.log(priceToConvert) / Math.log(1.0001);
         newTick = Math.ceil(newTick / defaultTickSpacing) * defaultTickSpacing;
         newTick = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTick));
-        if (newTick < parseInt(tickUpper)) {
+        if (activePreset === "Full Range") {
+          // When in Full Range, keep the other bound pinned to its extreme
+          const pairedUpper = sdkMaxTick;
+          setTickLower(newTick.toString());
+          setTickUpper(pairedUpper.toString());
+          setInitialDefaultApplied(true);
+          resetChartViewbox(newTick, pairedUpper);
+        } else if (newTick < parseInt(tickUpper)) {
           setTickLower(newTick.toString());
           setInitialDefaultApplied(true);
+          resetChartViewbox(newTick, parseInt(tickUpper));
         } else {
-          toast.error("Invalid Range", { description: "Min price must be less than max price." });
+          toast.error("Invalid Range: Min price must be less than max price.");
         }
-      } else { // baseTokenForPriceDisplay === token1Symbol (Min Price input sets actual tickUpper)
+      } else { // inverted: left edits upper tick (visual flip)
         if (priceStr.trim() === "0") {
           const newTick = sdkMaxTick;
           if (newTick > parseInt(tickLower)) {
             setTickUpper(newTick.toString());
             setInitialDefaultApplied(true);
+            // Reset viewbox for manual range change
+            resetChartViewbox(parseInt(tickLower), newTick);
           } else {
-            toast.error("Invalid Range", { description: "Min price results in a range where max tick <= min tick." });
+            toast.error("Invalid Range: Min price results in a range where max tick <= min tick.");
           }
           return;
         }
@@ -942,37 +1450,44 @@ export function AddLiquidityForm({
 
         const priceToConvert = 1 / numericPrice;
         if (priceToConvert <= 0) {
-          toast.info("Price results in invalid tick", { description: "Converted price is non-positive." });
+          toast.info("Price results in invalid tick");
           return;
         }
         let newTick = Math.log(priceToConvert) / Math.log(1.0001);
         newTick = Math.floor(newTick / defaultTickSpacing) * defaultTickSpacing;
         newTick = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTick));
-        if (newTick > parseInt(tickLower)) {
+        if (activePreset === "Full Range") {
+          const pairedLower = sdkMinTick;
+          setTickUpper(newTick.toString());
+          setTickLower(pairedLower.toString());
+          setInitialDefaultApplied(true);
+          resetChartViewbox(pairedLower, newTick);
+        } else if (newTick > parseInt(tickLower)) {
           setTickUpper(newTick.toString());
           setInitialDefaultApplied(true);
+          resetChartViewbox(parseInt(tickLower), newTick);
         } else {
-          toast.error("Invalid Range", { description: "Min price (when quoted in other token) must result in a max tick greater than min tick." });
+          toast.error("Invalid Range: Min price must result in a max tick greater than min tick.");
         }
       }
     }, 750), 
-    [baseTokenForPriceDisplay, token0Symbol, defaultTickSpacing, sdkMinTick, sdkMaxTick, tickLower, tickUpper]
+    [isInverted, token0Symbol, defaultTickSpacing, sdkMinTick, sdkMaxTick, tickLower, tickUpper, resetChartViewbox]
   );
 
   // Debounced function to update tickUpper from maxPriceInputString
   const debouncedUpdateTickUpper = useCallback(
     debounce((priceStr: string) => {
       const numericPrice = parseFloat(priceStr);
-      const isInfinityInput = priceStr.trim().toLowerCase() === "∞" || priceStr.trim().toLowerCase() === "infinity";
+      const isInfinityInput = priceStr.trim().toLowerCase() === "∞" || priceStr.trim().toLowerCase() === "infinity" || priceStr.trim().toLowerCase() === "infinite";
 
-      if (baseTokenForPriceDisplay === token0Symbol) {
+      if (!isInverted) {
         if (isInfinityInput) {
           const newTick = sdkMaxTick;
           if (newTick > parseInt(tickLower)) {
             setTickUpper(newTick.toString());
             setInitialDefaultApplied(true);
           } else {
-            toast.error("Invalid Range", { description: "Max price results in a range where max tick <= min tick." });
+            toast.error("Invalid Range: Max price results in a range where max tick <= min tick.");
           }
           return;
         }
@@ -986,16 +1501,18 @@ export function AddLiquidityForm({
           setTickUpper(newTick.toString());
           setInitialDefaultApplied(true);
         } else {
-          toast.error("Invalid Range", { description: "Max price must be greater than min price." });
+          toast.error("Invalid Range: Max price must be greater than min price.");
         }
-      } else { // baseTokenForPriceDisplay === token1Symbol (Max Price input sets actual tickLower)
+      } else { // inverted: right edits lower tick (visual flip)
         if (isInfinityInput) {
           const newTick = sdkMinTick;
           if (newTick < parseInt(tickUpper)) {
             setTickLower(newTick.toString());
             setInitialDefaultApplied(true);
+            // Reset viewbox for manual range change
+            resetChartViewbox(newTick, parseInt(tickUpper));
           } else {
-            toast.error("Invalid Range", { description: "Max price results in a range where min tick >= max tick." });
+            toast.error("Invalid Range: Max price results in a range where min tick >= max tick.");
           }
           return;
         }
@@ -1003,7 +1520,7 @@ export function AddLiquidityForm({
         
         const priceToConvert = 1 / numericPrice;
         if (priceToConvert <= 0) {
-          toast.info("Price results in invalid tick", { description: "Converted price is non-positive." });
+          toast.info("Price results in invalid tick");
           return;
         }
         let newTick = Math.log(priceToConvert) / Math.log(1.0001);
@@ -1012,12 +1529,14 @@ export function AddLiquidityForm({
         if (newTick < parseInt(tickUpper)) {
           setTickLower(newTick.toString());
           setInitialDefaultApplied(true);
+          // Reset viewbox for manual range change
+          resetChartViewbox(newTick, parseInt(tickUpper));
         } else {
-          toast.error("Invalid Range", { description: "Max price (when quoted in other token) must result in a min tick less than max tick." });
+          toast.error("Invalid Range: Max price must result in a min tick less than max tick.");
         }
       }
     }, 750),
-    [baseTokenForPriceDisplay, token0Symbol, defaultTickSpacing, sdkMinTick, sdkMaxTick, tickLower, tickUpper]
+    [isInverted, token0Symbol, defaultTickSpacing, sdkMinTick, sdkMaxTick, tickLower, tickUpper, resetChartViewbox]
   );
 
   // Calculate amount based on input and check approvals
@@ -1031,7 +1550,7 @@ export function AddLiquidityForm({
       if (isNaN(tl) || isNaN(tu) || tl >= tu) {
         setCalculatedData(null);
         if (inputSide === 'amount0') setAmount1(""); else setAmount0("");
-        toast.info("Invalid Range", { description: "Min tick must be less than max tick." });
+        toast.info("Invalid Range: Min tick must be less than max tick.");
         return;
       }
 
@@ -1114,7 +1633,7 @@ export function AddLiquidityForm({
           } catch (e) {
             console.error('Error formatting amount1:', e);
             setAmount1("Error");
-            toast.error("Calculation Error", { description: "Could not parse calculated amount for the other token. The amount might be too large or invalid." });
+            toast.error("Calculation Error: Could not parse calculated amount for the other token.");
             setCalculatedData(null);
           }
         } else {
@@ -1125,12 +1644,12 @@ export function AddLiquidityForm({
           } catch (e) {
             console.error('Error formatting amount0:', e);
             setAmount0("Error");
-            toast.error("Calculation Error", { description: "Could not parse calculated amount for the other token. The amount might be too large or invalid." });
+            toast.error("Calculation Error: Could not parse calculated amount for the other token.");
             setCalculatedData(null);
           }
         }
       } catch (error: any) {
-        toast.error("Calculation Error", { description: error.message || "Could not estimate amounts." });
+        toast.error(`Calculation Error: ${error.message || "Could not estimate amounts."}`);
         setCalculatedData(null);
         setCurrentPrice(null);      
         setCurrentPoolTick(null);   
@@ -1200,7 +1719,7 @@ export function AddLiquidityForm({
                 if (inputSideForCalc === 'amount0') setAmount1(""); else setAmount0("");
                 setCalculatedData(null);
                 if (!ticksAreValid && (parseFloat(amount0) > 0 || parseFloat(amount1) > 0)){
-                    toast.info("Invalid Range", { description: "Min tick must be less than max tick." });
+                    toast.info("Invalid Range: Min tick must be less than max tick.");
                 }
             }
         } else {
@@ -1249,14 +1768,14 @@ export function AddLiquidityForm({
 
     let valueToCheck0AsWei: bigint | null = null;
     if (isAmount0InputPositive) {
-      try { valueToCheck0AsWei = viemParseUnits(amount0, t0Def.decimals); } catch { /* ignore error if not a valid number */ }
+      try { valueToCheck0AsWei = safeParseUnits(amount0, t0Def.decimals); } catch { /* ignore error if not a valid number */ }
     } else if (calculatedData && BigInt(calculatedData.amount0) > 0n && isAmount1InputPositive) {
       valueToCheck0AsWei = BigInt(calculatedData.amount0);
     }
 
     let valueToCheck1AsWei: bigint | null = null;
     if (isAmount1InputPositive) {
-      try { valueToCheck1AsWei = viemParseUnits(amount1, t1Def.decimals); } catch { /* ignore error if not a valid number */ }
+      try { valueToCheck1AsWei = safeParseUnits(amount1, t1Def.decimals); } catch { /* ignore error if not a valid number */ }
     } else if (calculatedData && BigInt(calculatedData.amount1) > 0n && isAmount0InputPositive) {
       valueToCheck1AsWei = BigInt(calculatedData.amount1);
     }
@@ -1293,7 +1812,18 @@ export function AddLiquidityForm({
   // Custom shape for ReferenceArea with rounded top corners
   const RoundedTopReferenceArea = (props: any) => {
     const { x, y, width, height, fill, fillOpacity, strokeOpacity } = props;
-    if (width <= 0 || height <= 0) return null;
+    
+    // Validate all required numeric props
+    if (
+      typeof x !== 'number' || isNaN(x) ||
+      typeof y !== 'number' || isNaN(y) ||
+      typeof width !== 'number' || isNaN(width) ||
+      typeof height !== 'number' || isNaN(height) ||
+      width <= 0 || height <= 0
+    ) {
+      console.warn("[RoundedTopReferenceArea] Invalid props received:", { x, y, width, height });
+      return null;
+    }
 
     const r = 6;
 
@@ -1319,8 +1849,8 @@ export function AddLiquidityForm({
   const CustomTooltip = ({ active, payload, label, poolToken0Symbol, token0, token1, baseTokenForPrice }: any) => { 
     if (active && payload && payload.length && token0 && token1) {
       const tooltipData = payload[0].payload; 
-      const currentTick = tooltipData.tick || label;
-      const formattedTickLabel = currentTick ? currentTick.toLocaleString() : 'N/A'; 
+      const currentTick = tooltipData.tick ?? label;
+      const formattedTickLabel = typeof currentTick === 'number' ? currentTick.toLocaleString() : 'N/A'; 
       const displayPoolTokenSymbol = poolToken0Symbol || '';
 
       let priceAtTickDisplay = "Price N/A";
@@ -1334,29 +1864,27 @@ export function AddLiquidityForm({
         let quoteTokenSymbol = "";
         let priceOfTokenSymbol = "";
 
-        // Logic for calculating price at tick
-        const isPoolToken0MatchingModalToken0 = TOKEN_DEFINITIONS[poolToken0Symbol as TokenSymbol]?.addressRaw.toLowerCase() === token0Def.addressRaw.toLowerCase();
+        const sdkToken0 = new Token(baseSepolia.id, getAddress(token0Def.address), t0Dec, token0);
+        const sdkToken1 = new Token(baseSepolia.id, getAddress(token1Def.address), t1Dec, token1);
 
-        let actualTickForCalc = currentTick;
+        const formToken0IsPoolToken0 = sdkToken0.sortsBefore(sdkToken1);
 
-        if (baseTokenForPrice === token0) {
-          quoteTokenSymbol = token0;
-          priceOfTokenSymbol = token1;
-          const decimalAdjFactor = Math.pow(10, t1Dec - t0Dec);
-          if (isPoolToken0MatchingModalToken0) {
-            price = Math.pow(1.0001, actualTickForCalc) * decimalAdjFactor;
-          } else {
-            price = Math.pow(1.0001, actualTickForCalc) * Math.pow(10, t0Dec - t1Dec);
-          }
-        } else {
-          quoteTokenSymbol = token1;
-          priceOfTokenSymbol = token0;
-          const decimalAdjFactor = Math.pow(10, t0Dec - t1Dec);
-          if (isPoolToken0MatchingModalToken0) {
-            price = (1 / Math.pow(1.0001, actualTickForCalc)) * decimalAdjFactor;
-          } else {
-            price = Math.pow(1.0001, actualTickForCalc) * Math.pow(10, t1Dec - t0Dec);
-          }
+        if (baseTokenForPrice === token0) { // Show price denominated in token0
+            quoteTokenSymbol = token0;
+            priceOfTokenSymbol = token1;
+            const decimalAdjFactor = Math.pow(10, t1Dec - t0Dec);
+            const rawPrice = formToken0IsPoolToken0 
+                ? Math.pow(1.0001, -currentTick) 
+                : Math.pow(1.0001, currentTick);
+            price = rawPrice * decimalAdjFactor;
+        } else { // Show price denominated in token1
+            quoteTokenSymbol = token1;
+            priceOfTokenSymbol = token0;
+            const decimalAdjFactor = Math.pow(10, t0Dec - t1Dec);
+            const rawPrice = formToken0IsPoolToken0 
+                ? Math.pow(1.0001, currentTick)
+                : Math.pow(1.0001, -currentTick);
+            price = rawPrice * decimalAdjFactor;
         }
 
         if (!isNaN(price)) {
@@ -1364,7 +1892,7 @@ export function AddLiquidityForm({
           if (price === Infinity) priceAtTickDisplay = "∞";
           else if (price < 1e-8 && price > 0) priceAtTickDisplay = "<0.00000001";
           else if (price === 0) priceAtTickDisplay = "0";
-          else priceAtTickDisplay = price.toLocaleString(undefined, { maximumFractionDigits: displayDecimals, minimumFractionDigits: Math.min(2, displayDecimals) });
+          else priceAtTickDisplay = price.toLocaleString('en-US', { maximumFractionDigits: displayDecimals, minimumFractionDigits: Math.min(2, displayDecimals) });
           priceAtTickDisplay += ` ${priceOfTokenSymbol}/${quoteTokenSymbol}`;
         } else {
             priceAtTickDisplay = "Price Calc Error";
@@ -1383,511 +1911,127 @@ export function AddLiquidityForm({
     return null;
   };
 
-  const [chartData, setChartData] = useState<DepthChartDataPoint[]>([]);
-  const [isChartDataLoading, setIsChartDataLoading] = useState(false);
-  const [liquidityDepthData, setLiquidityDepthData] = useState<LiquidityDepthData | null>(null);
-  
-  // Define Subgraph URL - same as in AddLiquidityModal.tsx
-  const SUBGRAPH_URL = "https://api.studio.thegraph.com/query/111443/alphix-v-4/version/latest";
+  // Chart data state - now handled in InteractiveRangeChart
 
-  // Add required states for liquidity depth handling
-  const [rawHookPositions, setRawHookPositions] = useState<HookPosition[] | null>(null);
-  const [isFetchingLiquidityDepth, setIsFetchingLiquidityDepth] = useState<boolean>(false);
-  const [token0DepthDeltaEvents, setToken0DepthDeltaEvents] = useState<Token0DepthDeltaEvent[] | null>(null);
-  const [aggregatedToken0ChangesByTick, setAggregatedToken0ChangesByTick] = useState<Map<number, bigint> | null>(null);
-  const [sortedUniqueTicksWithToken0Changes, setSortedUniqueTicksWithToken0Changes] = useState<number[] | null>(null);
-  const [simplifiedChartPlotData, setSimplifiedChartPlotData] = useState<Array<{ tick: number; cumulativeUnifiedValue: number, displayCumulativeValue?: number }> | null>(null);
-  const [processedPositions, setProcessedPositions] = useState<ProcessedPositionDetail[] | null>(null);
-  const [unifiedValueDeltaEvents, setUnifiedValueDeltaEvents] = useState<UnifiedValueDeltaEvent[] | null>(null);
-  const [aggregatedUnifiedValueChangesByTick, setAggregatedUnifiedValueChangesByTick] = useState<Map<number, number> | null>(null);
-  const [sortedNetUnifiedValueChanges, setSortedNetUnifiedValueChanges] = useState<Array<{ tick: number; netUnifiedToken0Change: number }> | null>(null);
-
-  // Helper function to get the canonical on-chain pool ID (Bytes! string)
-  const getDerivedOnChainPoolId = useCallback((): string | null => {
-    if (!token0Symbol || !token1Symbol || !chainId) return null;
-
-    const token0Def = TOKEN_DEFINITIONS[token0Symbol];
-    const token1Def = TOKEN_DEFINITIONS[token1Symbol];
-
-    if (!token0Def || !token1Def) return null;
-
-    try {
-      const sdkToken0 = new Token(chainId, getAddress(token0Def.addressRaw), token0Def.decimals);
-      const sdkToken1 = new Token(chainId, getAddress(token1Def.addressRaw), token1Def.decimals);
-
-      const [sortedSdkToken0, sortedSdkToken1] = sdkToken0.sortsBefore(sdkToken1)
-        ? [sdkToken0, sdkToken1]
-        : [sdkToken1, sdkToken0];
-      
-      // Ensure V4_POOL_HOOKS is defined and is a valid Address type if needed by V4PoolSDK.getPoolId
-      const poolIdBytes32 = V4PoolSDK.getPoolId(
-        sortedSdkToken0,
-        sortedSdkToken1,
-        V4_POOL_FEE, 
-        V4_POOL_TICK_SPACING, 
-        V4_POOL_HOOKS as Hex 
-      );
-      return poolIdBytes32.toLowerCase();
-    } catch (error) {
-      console.error("[AddLiquidityForm] Error deriving on-chain pool ID:", error);
+  // Calculate price range in optimal denomination for display
+  const getPriceRangeDisplay = useCallback(() => {
+    if (currentPoolTick === null || !currentPrice || !tickLower || !tickUpper) {
       return null;
     }
-  }, [token0Symbol, token1Symbol, chainId]);
 
-  // Fetch liquidity depth data using the EXACT implementation from AddLiquidityModal
-  useEffect(() => {
-    const fetchLiquidityDepthData = async () => {
-      console.log("[DEBUG] Fetching liquidity depth data with params:", { selectedPoolId, chainId, currentPoolTick });
-      if (!selectedPoolId || !chainId || currentPoolTick === null) {
-        // Clear previous data if conditions are not met
-        console.log("[DEBUG] Missing required params for liquidity depth fetch");
-        setRawHookPositions(null);
-        return;
-      }
+    const currentPriceNum = parseFloat(currentPrice);
+    const lowerTick = parseInt(tickLower);
+    const upperTick = parseInt(tickUpper);
+    
+    // Calculate prices at tick boundaries
+    const lowerPriceDelta = Math.pow(1.0001, lowerTick - currentPoolTick);
+    const upperPriceDelta = Math.pow(1.0001, upperTick - currentPoolTick);
+    
+    // Determine optimal denomination (same logic as InteractiveRangeChart)
+    // Follow inversion: denominate token0 when inverted, token1 otherwise
+    const optimalDenomination = isInverted ? token0Symbol : token1Symbol;
+    
+    let priceAtLowerTick, priceAtUpperTick;
+    
+    if (isInverted) {
+      // When inverted, swap the displayed order and invert values
+      priceAtLowerTick = 1 / (currentPriceNum * lowerPriceDelta);
+      priceAtUpperTick = 1 / (currentPriceNum * upperPriceDelta);
+    } else {
+      priceAtLowerTick = currentPriceNum * lowerPriceDelta;
+      priceAtUpperTick = currentPriceNum * upperPriceDelta;
+    }
+    
+    // Get display decimals for the optimal denomination
+    // Increase precision for Stable pools when USD denominated
+    let displayDecimals = TOKEN_DEFINITIONS[optimalDenomination]?.displayDecimals || 4;
+    const poolCfg = selectedPoolId ? getPoolById(selectedPoolId) : null;
+    const isStable = (poolCfg?.type || '').toLowerCase() === 'stable';
+    
+    // For USD-denominated tokens, always use 2 decimals
+    // Also check if the prices are in USD range (100-10000) which indicates USD denomination
+    const isUSDDenominated = (optimalDenomination === 'aUSDT' || optimalDenomination === 'aUSDC') || 
+                            (priceAtLowerTick >= 100 && priceAtLowerTick <= 10000 && priceAtUpperTick >= 100 && priceAtUpperTick <= 10000);
+    const finalDisplayDecimals = isUSDDenominated ? (isStable ? 6 : 2) : displayDecimals;
+    
+    // Temporarily disable console logs during development to reduce spam
+    // console.log("[AddLiquidityForm] Price range formatting:", {
+    //   optimalDenomination,
+    //   displayDecimals,
+    //   finalDisplayDecimals,
+    //   priceAtLowerTick,
+    //   priceAtUpperTick,
+    //   isUSDDenominated
+    // });
+    
+    // Format prices with proper decimals
+    const formattedLower = priceAtLowerTick.toLocaleString('en-US', { 
+      maximumFractionDigits: finalDisplayDecimals, 
+      minimumFractionDigits: finalDisplayDecimals 
+    });
+    const formattedUpper = priceAtUpperTick.toLocaleString('en-US', { 
+      maximumFractionDigits: finalDisplayDecimals, 
+      minimumFractionDigits: finalDisplayDecimals 
+    });
+    
+    if (tickLower === sdkMinTick.toString() && tickUpper === sdkMaxTick.toString()) {
+      return isInverted ? `∞ - 0.00` : `0.00 - ∞`;
+    }
 
-      const derivedOnChainPoolId = getDerivedOnChainPoolId();
-      console.log("[DEBUG] Derived on-chain pool ID:", derivedOnChainPoolId);
-      if (!derivedOnChainPoolId) {
-        console.warn("[AddLiquidityForm] Could not derive on-chain pool ID. Skipping liquidity depth fetch.");
-        setRawHookPositions(null);
-        return;
-      }
+    // When inverted, flip the order visually: right is lower, left is upper
+    return isInverted ? `${formattedUpper} - ${formattedLower}` : `${formattedLower} - ${formattedUpper}`;
+  }, [currentPoolTick, currentPrice, tickLower, tickUpper, sdkMinTick, sdkMaxTick, token0Symbol, token1Symbol]);
 
-      setIsFetchingLiquidityDepth(true);
-      setIsChartDataLoading(true);
+  // Compute precise left/right labels to mirror chart axis (ascending by price)
+  const computeRangeLabels = useCallback((): { left: string; right: string } | null => {
+    if (currentPoolTick === null || !currentPrice || !tickLower || !tickUpper) return null;
+    const currentNum = parseFloat(currentPrice);
+    if (!isFinite(currentNum) || currentNum <= 0) return null;
+    const lower = parseInt(tickLower);
+    const upper = parseInt(tickUpper);
+    if (isNaN(lower) || isNaN(upper)) return null;
 
-      try {
-        const graphqlQuery = {
-          query: `
-            query GetAllHookPositionsForDepth {
-              hookPositions(first: 1000, orderBy: liquidity, orderDirection: desc) { # Fetches top 1000 by liquidity
-                pool # Fetch pool ID string directly
-                tickLower
-                tickUpper
-                liquidity
-              }
-            }
-          `,
-          // No variables needed for this broad query
-        };
-
-        const queryPayload = { query: graphqlQuery.query };
-
-        const response = await fetch(SUBGRAPH_URL, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(queryPayload),
-        });
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(`Network response was not ok: ${response.status} ${response.statusText}. Details: ${errorText}`);
-        }
-
-        const result = await response.json();
-
-        if (result.errors) {
-          console.error("[AddLiquidityForm] GraphQL errors from subgraph:", result.errors);
-          throw new Error(`GraphQL error: ${result.errors.map((e: any) => e.message).join(', ')}`);
-        }
-
-        if (result.data && result.data.hookPositions) {
-          // Adjust type hint for allFetchedPositions
-          const allFetchedPositions = result.data.hookPositions as Array<HookPosition & { pool: string }>; 
-          console.log(`[AddLiquidityForm] Subgraph returned ${allFetchedPositions.length} total hookPositions before client-side filtering.`);
-          
-          // Filter client-side using pos.pool directly
-          const relevantPositions = allFetchedPositions.filter(
-            pos => pos.pool && pos.pool.toLowerCase().trim() === derivedOnChainPoolId.trim()
-          );
-
-          setRawHookPositions(relevantPositions);
-        } else {
-          setRawHookPositions([]);
-          console.warn("[AddLiquidityForm] No hookPositions found in GraphQL response or unexpected data structure.");
-          toast.info("No liquidity depth data found.");
-        }
-
-      } catch (error: any) {
-        console.error("[AddLiquidityForm] Error fetching liquidity depth data:", error);
-        toast.error("Liquidity Depth Error", { description: error.message });
-        setRawHookPositions(null); // Clear data on error
-        // Use fallback chart data
-        generateFallbackChartData();
-      } finally {
-        setIsFetchingLiquidityDepth(false);
-        setIsChartDataLoading(false);
-      }
+    // Respect inversion: denominated switching and value inversion
+    const priceAt = (tickVal: number) => {
+      const priceDelta = Math.pow(1.0001, tickVal - currentPoolTick);
+      return isInverted ? 1 / (currentNum * priceDelta) : currentNum * priceDelta;
     };
 
-    fetchLiquidityDepthData();
-  }, [selectedPoolId, chainId, currentPoolTick, token0Symbol, token1Symbol, getDerivedOnChainPoolId]);
-
-  // Process raw positions into processed positions with amounts
-  useEffect(() => {
-    if (
-      rawHookPositions && rawHookPositions.length > 0 &&
-      currentPoolTick !== null &&
-      currentPoolSqrtPriceX96 !== null && 
-      token0Symbol && token1Symbol && chainId &&
-      poolToken0 && poolToken1 
-    ) {
-      const newProcessedPositions: ProcessedPositionDetail[] = [];
-
-      const token0Def = TOKEN_DEFINITIONS[token0Symbol];
-      const token1Def = TOKEN_DEFINITIONS[token1Symbol];
-
-      if (!token0Def || !token1Def) {
-        setProcessedPositions(null);
-        return;
-      }
-
-      try {
-        const sdkBaseToken0 = new Token(chainId, getAddress(token0Def.addressRaw), token0Def.decimals);
-        const sdkBaseToken1 = new Token(chainId, getAddress(token1Def.addressRaw), token1Def.decimals);
-        const [sdkSortedToken0, sdkSortedToken1] = sdkBaseToken0.sortsBefore(sdkBaseToken1) 
-            ? [sdkBaseToken0, sdkBaseToken1] 
-            : [sdkBaseToken1, sdkBaseToken0];
-
-        // Convert currentPoolSqrtPriceX96 string to JSBI for the SDK
-        const poolSqrtPriceX96JSBI = JSBI.BigInt(currentPoolSqrtPriceX96);
-
-        const poolForCalculations = new V4PoolSDK(
-          sdkSortedToken0,
-          sdkSortedToken1,
-          V4_POOL_FEE,
-          V4_POOL_TICK_SPACING,
-          V4_POOL_HOOKS as Hex,
-          poolSqrtPriceX96JSBI, 
-          JSBI.BigInt(0), // Placeholder liquidity for the pool object
-          currentPoolTick
-        );
-
-        // Loop through positions to determine amounts/value
-        for (const position of rawHookPositions) {
-          if (position.tickLower !== undefined && position.tickUpper !== undefined && position.liquidity !== undefined) {
-            // Parse the liquidity string to a JSBI
-            const liquidityJSBI = JSBI.BigInt(position.liquidity);
-            
-            // Try to create an equivalent position object
-            const positionInfo = new V4PositionSDK({
-              pool: poolForCalculations,
-              tickLower: Number(position.tickLower),
-              tickUpper: Number(position.tickUpper),
-              liquidity: liquidityJSBI
-            });
-            
-            // Extract amounts from position
-            const {amount0, amount1} = positionInfo.mintAmounts;
-            
-            // Format amounts with proper decimals
-            const formattedAmount0 = amount0.toString();
-            const formattedAmount1 = amount1.toString();
-            
-            // Convert to numeric amounts for display/calculations
-            const numericAmount0 = Number(viemFormatUnits(BigInt(formattedAmount0), token0Def.decimals));
-            const numericAmount1 = Number(viemFormatUnits(BigInt(formattedAmount1), token1Def.decimals));
-            
-            // Convert both tokens to a unified value - simple calculation
-            let unifiedValue = 0;
-            
-            if (currentPrice && !isNaN(parseFloat(currentPrice))) {
-              // If token0 is the primary token being displayed
-              if (baseTokenForPriceDisplay === token0Symbol) {
-                // When token0 is the base, token1 amount is converted using price directly
-                unifiedValue = numericAmount0 + (numericAmount1 * parseFloat(currentPrice));
-              } else {
-                // When token1 is the base, token0 amount is converted using 1/price
-                unifiedValue = (numericAmount0 / parseFloat(currentPrice)) + numericAmount1;
-              }
-            }
-
-            newProcessedPositions.push({
-              tickLower: Number(position.tickLower),
-              tickUpper: Number(position.tickUpper),
-              liquidity: position.liquidity,
-              amount0: formattedAmount0,
-              amount1: formattedAmount1,
-              numericAmount0: numericAmount0,
-              numericAmount1: numericAmount1,
-              unifiedValueInToken0: unifiedValue,
-            });
-          } else {
-            console.warn("[AddLiquidityForm] Skipping position due to undefined tickLower, tickUpper, or liquidity:", position);
-          }
-        }
-        setProcessedPositions(newProcessedPositions);
-      } catch (error) {
-        console.error("[AddLiquidityForm] Error processing positions into ProcessedPositionDetail:", error);
-        setProcessedPositions(null);
-      }
-    } else if (rawHookPositions === null) {
-      setProcessedPositions(null); 
-    } else if (rawHookPositions && rawHookPositions.length === 0) {
-        setProcessedPositions([]);
-        console.log("[AddLiquidityForm] No raw positions to process into ProcessedPositionDetail.");
+    // Full range special
+    if (tickLower === sdkMinTick.toString() && tickUpper === sdkMaxTick.toString()) {
+      return { left: '0.00', right: '∞' };
     }
-  }, [rawHookPositions, currentPoolTick, currentPoolSqrtPriceX96, token0Symbol, token1Symbol, chainId, poolToken0, poolToken1, currentPrice, baseTokenForPriceDisplay]);
 
-  // Create delta events and aggregate them
-  useEffect(() => {
-    if (processedPositions && processedPositions.length > 0) {
-      const newDeltaEvents: UnifiedValueDeltaEvent[] = [];
-      for (const pos of processedPositions) {
-        if (pos.unifiedValueInToken0 !== 0) { // Only create events if there's a non-zero change
-          newDeltaEvents.push({ tick: pos.tickLower, changeInUnifiedValue: pos.unifiedValueInToken0 });
-          newDeltaEvents.push({ tick: pos.tickUpper, changeInUnifiedValue: -pos.unifiedValueInToken0 });
-        }
-      }
-      setUnifiedValueDeltaEvents(newDeltaEvents);
+    const pLower = priceAt(lower);
+    const pUpper = priceAt(upper);
 
-      // Step 2: Aggregate Unified Value Changes per Tick
-      const newAggregatedChanges = new Map<number, number>();
-      for (const event of newDeltaEvents) {
-        const currentChangeForTick = newAggregatedChanges.get(event.tick) || 0;
-        newAggregatedChanges.set(event.tick, currentChangeForTick + event.changeInUnifiedValue);
-      }
-      setAggregatedUnifiedValueChangesByTick(newAggregatedChanges);
+    const denomToken = isInverted ? token0Symbol : token1Symbol;
+    const isUsd = denomToken === 'aUSDT' || denomToken === 'aUSDC' || denomToken === 'USDT' || denomToken === 'USDC';
+    const poolCfg = selectedPoolId ? getPoolById(selectedPoolId) : null;
+    const isStablePoolType = (poolCfg?.type || '').toLowerCase() === 'stable';
+    const decimals = isUsd ? (isStablePoolType ? 6 : 2) : (TOKEN_DEFINITIONS[denomToken]?.displayDecimals ?? 4);
 
-      // Step 3: Sort Unique Ticks with Aggregated Changes
-      const sortedTicks = Array.from(newAggregatedChanges.keys()).sort((a, b) => a - b);
-      const newSortedNetChanges: Array<{ tick: number; netUnifiedToken0Change: number }> = sortedTicks.map(tick => ({
-        tick: tick,
-        netUnifiedToken0Change: newAggregatedChanges.get(tick) || 0
-      }));
-      setSortedNetUnifiedValueChanges(newSortedNetChanges);
-    } else if (processedPositions === null) {
-      setUnifiedValueDeltaEvents(null);
-      setAggregatedUnifiedValueChangesByTick(null);
-      setSortedNetUnifiedValueChanges(null);
-    } else { // processedPositions is an empty array
-      setUnifiedValueDeltaEvents([]);
-      setAggregatedUnifiedValueChangesByTick(new Map());
-      setSortedNetUnifiedValueChanges([]);
-    }
-  }, [processedPositions]);
+    const points = [
+      { tick: lower, price: pLower },
+      { tick: upper, price: pUpper },
+    ].filter(p => isFinite(p.price) && !isNaN(p.price));
 
-  // Create simplified plot data from sorted net changes
-  useEffect(() => {
-    if (sortedNetUnifiedValueChanges && sortedNetUnifiedValueChanges.length > 0 && poolToken0) {
-      
-      let newData: DepthChartDataPoint[] = [];
-      let currentCumulativeValue = 0;
-      
-      // Step through each sorted tick and accumulate changes
-      for (const { tick, netUnifiedToken0Change } of sortedNetUnifiedValueChanges) {
-        // Add the net change to running total
-        currentCumulativeValue += netUnifiedToken0Change;
-        
-        // Ensure non-negative values (floating point errors can cause small negative values)
-        const normalizedCumulativeValue = Math.max(0, currentCumulativeValue);
+    if (points.length < 2) return null;
 
-        // Format for display 
-        const displayValue = normalizedCumulativeValue > 0 
-          ? normalizedCumulativeValue 
-          : undefined; // Skip zero values for display
-        
-        newData.push({
-          tick,
-          token0Depth: normalizedCumulativeValue, // Add token0Depth for compatibility
-          normToken0Depth: normalizedCumulativeValue > 0 ? 1 : 0, // Normalized to 0-1 range
-          cumulativeUnifiedValue: normalizedCumulativeValue,
-          displayCumulativeValue: displayValue,
-          value: normalizedCumulativeValue // For backward compatibility
-        });
-      }
-      
-      setSimplifiedChartPlotData(newData as any);
-      setChartData(newData);
-      console.log("[DEBUG] Updated chart data with", newData.length, "points");
-    } else if (sortedNetUnifiedValueChanges === null) {
-      setSimplifiedChartPlotData(null);
-      // Don't clear chart data here, let the fallback mechanism work
-    } else {
-      // Empty array case, generate simple fallback
-      setSimplifiedChartPlotData([]);
-      generateFallbackChartData(); // Use the fallback
-    }
-  }, [sortedNetUnifiedValueChanges, poolToken0, tickLower, tickUpper, currentPoolTick]);
+    points.sort((a, b) => a.price - b.price);
 
-  // Generate simplified fallback chart data when API fails
-  const generateFallbackChartData = () => {
-    if (currentPoolTick === null) return;
-    
-    console.log("[DEBUG] Generating fallback chart data");
-    
-    // Use very simple fallback data - this is used only when all other methods fail
-    const simpleData: DepthChartDataPoint[] = [];
-    const centerTick = currentPoolTick;
-    
-    // Create a simple bell curve with 5 points
-    simpleData.push({ tick: centerTick - 20000, token0Depth: 0, normToken0Depth: 0, value: 0 });
-    simpleData.push({ tick: centerTick - 10000, token0Depth: 50, normToken0Depth: 0.5, value: 0.5 });
-    simpleData.push({ tick: centerTick, token0Depth: 100, normToken0Depth: 1, value: 1 });
-    simpleData.push({ tick: centerTick + 10000, token0Depth: 50, normToken0Depth: 0.5, value: 0.5 });
-    simpleData.push({ tick: centerTick + 20000, token0Depth: 0, normToken0Depth: 0, value: 0 });
-    
-    // Add the lower and upper ticks of the selected range
-    const lowerTickNum = parseInt(tickLower);
-    const upperTickNum = parseInt(tickUpper);
-    
-    if (!isNaN(lowerTickNum) && !isNaN(upperTickNum)) {
-      // Add markers at ticks if not already present
-      if (!simpleData.some(d => d.tick === lowerTickNum)) {
-        const distFromCenter = Math.abs(lowerTickNum - centerTick) / 20000;
-        const depth = Math.max(0, 1 - distFromCenter);
-        simpleData.push({
-          tick: lowerTickNum,
-          token0Depth: depth * 100,
-          normToken0Depth: depth,
-          value: depth
-        });
-      }
-      
-      if (!simpleData.some(d => d.tick === upperTickNum)) {
-        const distFromCenter = Math.abs(upperTickNum - centerTick) / 20000;
-        const depth = Math.max(0, 1 - distFromCenter);
-        simpleData.push({
-          tick: upperTickNum,
-          token0Depth: depth * 100,
-          normToken0Depth: depth,
-          value: depth
-        });
-      }
-      
-      // Sort by tick for proper rendering
-      simpleData.sort((a, b) => a.tick - b.tick);
-    }
-    
-    setChartData(simpleData);
-  };
+    const formatVal = (v: number) => {
+      if (!isFinite(v)) return '∞';
+      return v.toLocaleString('en-US', { maximumFractionDigits: decimals, minimumFractionDigits: Math.min(2, decimals) });
+    };
 
-  // Chart container & data
-  <div 
-    className="w-full h-52 relative rounded-md border bg-muted/30" 
-    ref={chartContainerRef}
-    style={{ cursor: isPanning ? 'grabbing' : 'grab' }}
-  >
-    {isPoolStateLoading || isChartDataLoading ? (
-      <div className="absolute inset-0 flex items-center justify-center bg-muted/50 z-20">
-        <Image 
-          src="/logo_icon_white.svg" 
-          alt="Loading..." 
-          width={32}
-          height={32}
-          className="animate-pulse opacity-75"
-        />
-      </div>
-    ) : !isPoolStateLoading && currentPriceLine === null ? (
-      <div className="absolute inset-0 flex items-center justify-center bg-muted/50 z-20">
-        <span className="text-muted-foreground text-sm px-4 text-center">
-          {"Pool data unavailable for chart."}
-        </span>
-      </div>
-    ) : (
-      <ResponsiveContainer width="100%" height="100%">
-        <ComposedChart 
-          data={simplifiedChartPlotData || (chartData.length > 0 ? chartData : [
-            // Fallback data points if no chart data available
-            { tick: parseInt(tickLower) - 10000, token0Depth: 0, normToken0Depth: 0, cumulativeUnifiedValue: 0, value: 0 },
-            { tick: parseInt(tickLower), token0Depth: 50, normToken0Depth: 0.5, cumulativeUnifiedValue: 50, value: 0.5 },
-            { tick: Math.floor((parseInt(tickLower) + parseInt(tickUpper)) / 2), token0Depth: 100, normToken0Depth: 1, cumulativeUnifiedValue: 100, value: 1 },
-            { tick: parseInt(tickUpper), token0Depth: 50, normToken0Depth: 0.5, cumulativeUnifiedValue: 50, value: 0.5 },
-            { tick: parseInt(tickUpper) + 10000, token0Depth: 0, normToken0Depth: 0, cumulativeUnifiedValue: 0, value: 0 }
-          ])} 
-          margin={{ top: 2, right: 5, bottom: 5, left: 5 }}
-          onMouseDown={handlePanMouseDown}
-          onMouseMove={handlePanMouseMove}
-          onMouseUp={handlePanMouseUpOrLeave}
-          onMouseLeave={handlePanMouseUpOrLeave}
-        >
-          <XAxis 
-            dataKey="tick" 
-            type="number" 
-            domain={xDomain} 
-            allowDataOverflow 
-            tick={false}
-            axisLine={false}
-            height={1}
-            tickMargin={0} 
-          />
-          <YAxis 
-            hide={true}
-            yAxisId="leftAxis" 
-            orientation="left"
-            dataKey={simplifiedChartPlotData ? "cumulativeUnifiedValue" : "normToken0Depth"} 
-            type="number"
-            domain={[0, 'auto']}
-            allowDecimals={true}
-            tick={{ fontSize: 10 }}
-            axisLine={{ stroke: "#a1a1aa", strokeOpacity: 0.5 }}
-            tickLine={{ stroke: "#a1a1aa", strokeOpacity: 0.5 }}
-          />
-          
-          {/* Use the same chart visualizations as AddLiquidityModal */}
-          {simplifiedChartPlotData ? (
-            <Area 
-              type="stepBefore" 
-              dataKey="displayCumulativeValue"
-              yAxisId="leftAxis"
-              name={poolToken0 ? `Cumulative Liquidity (in ${poolToken0.symbol})` : "Cumulative Unified Liquidity"}
-              stroke="hsl(var(--chart-2, #a1a1aa))" 
-              fill="hsl(var(--chart-2, #a1a1aa))"    
-              fillOpacity={0.2}
-              strokeWidth={1.5}
-            />
-          ) : (
-            <Area
-              type="monotone"
-              dataKey="normToken0Depth"
-              stroke="#a1a1aa"
-              fill="#a1a1aa"
-              fillOpacity={0.2}
-              strokeWidth={1.5}
-              strokeOpacity={0.4}
-              yAxisId="leftAxis"
-            />
-          )}
-          
-          {currentPoolTick !== null && (
-            <ReferenceLine 
-              x={currentPoolTick} 
-              stroke="#e85102"
-              strokeWidth={1.5} 
-              ifOverflow="extendDomain"
-              yAxisId="leftAxis"
-            />
-          )}
-          
-          {!isPoolStateLoading && parseInt(tickLower) < parseInt(tickUpper) && isFinite(parseInt(tickLower)) && isFinite(parseInt(tickUpper)) && (
-            <ReferenceArea 
-              x1={parseInt(tickLower)} 
-              x2={parseInt(tickUpper)} 
-              yAxisId="leftAxis"
-              strokeOpacity={0} 
-              fill="#e85102" 
-              fillOpacity={0.25} 
-              ifOverflow="extendDomain"
-              shape={<RoundedTopReferenceArea />}
-            />
-          )}
-          
-          <RechartsTooltip
-            content={
-              <CustomTooltip 
-                poolToken0Symbol={poolToken0?.symbol}
-                token0={token0Symbol}
-                token1={token1Symbol}
-                baseTokenForPrice={baseTokenForPriceDisplay}
-              />
-            }
-          />
-        </ComposedChart>
-      </ResponsiveContainer>
-    )}
-  </div>
+    // When inverted, flip the visual order
+    return isInverted
+      ? { left: formatVal(points[1].price), right: formatVal(points[0].price) }
+      : { left: formatVal(points[0].price), right: formatVal(points[1].price) };
+  }, [currentPoolTick, currentPrice, tickLower, tickUpper, token0Symbol, token1Symbol, sdkMinTick, sdkMaxTick, isInverted]);
+
+  // const { open } = useWeb3Modal();
 
   return (
     <div className="space-y-4">
@@ -1930,314 +2074,19 @@ export function AddLiquidityForm({
       {/* Deposit Tab Content */}
       {activeTab === 'deposit' && (
         <>
-          {/* Range Selection Step */}
-          {depositStep === 'range' && (
-            <>
-              {/* Price Range Selection */}
-              <div className="flex items-center gap-2 mb-4">
-                <Button
-                  variant={activePreset === "Full Range" ? "secondary" : "outline"}
-                  size="sm"
-                  className="h-8 px-2 text-xs rounded-md"
-                  onClick={handleSetFullRange}
-                >
-                  Full Range
-                </Button>
-                <div className="h-5 w-px bg-border mx-1" />
-                {["±3%", "±8%", "±15%"].map((preset) => (
-                  <Button
-                    key={preset}
-                    variant={activePreset === preset ? "secondary" : "outline"}
-                    size="sm"
-                    className="h-8 px-2 text-xs rounded-md"
-                    onClick={() => {
-                      if (preparedTxData) resetTransactionState();
-                      setActivePreset(preset);
-                    }}
-                  >
-                    {preset}
-                  </Button>
-                ))}
-                <TooltipProvider delayDuration={100}>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span className="h-8 flex items-center bg-green-500/20 text-green-500 px-2 py-0.5 rounded-sm text-xs font-medium cursor-help ml-auto">
-                        {enhancedAprDisplay}
-                      </span>
-                    </TooltipTrigger>
-                    <TooltipContent side="top" className="max-w-xs">
-                      <p className="text-sm font-medium mb-1">Predicted APR</p>
-                      <p className="text-xs text-muted-foreground">
-                        Calculated using current volume and adjusted by a capital efficiency factor of 
-                        <span className="font-semibold text-foreground"> {capitalEfficiencyFactor.toLocaleString(undefined, {minimumFractionDigits: 1, maximumFractionDigits: 2})}x</span>. Actual returns might deviate.
-                      </p>
-                      {poolApr && !["Loading APR...", "APR N/A", "APR Error", "Yield N/A", "Fees N/A"].includes(poolApr) && enhancedAprDisplay !== poolApr && enhancedAprDisplay !== "0.00% (Out of Range)" &&
-                        <p className="text-xs text-muted-foreground mt-1.5">
-                          Base Pool APR: <span className="font-semibold text-foreground">{poolApr}</span>
-                        </p>
-                      }
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              </div>
-
-              {/* Chart Container */}
-              <div 
-                className="w-full h-52 relative rounded-md border bg-muted/30" 
-                ref={chartContainerRef}
-                style={{ cursor: isPanning ? 'grabbing' : 'grab' }}
-              >
-                {isPoolStateLoading || isChartDataLoading ? (
-                  <div className="absolute inset-0 flex items-center justify-center bg-muted/50 z-20">
-                    <Image 
-                      src="/logo_icon_white.svg" 
-                      alt="Loading..." 
-                      width={32}
-                      height={32}
-                      className="animate-pulse opacity-75"
-                    />
-                  </div>
-                ) : !isPoolStateLoading && currentPriceLine === null ? (
-                  <div className="absolute inset-0 flex items-center justify-center bg-muted/50 z-20">
-                    <span className="text-muted-foreground text-sm px-4 text-center">
-                      {"Pool data unavailable for chart."}
-                    </span>
-                  </div>
-                ) : (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <ComposedChart 
-                      data={simplifiedChartPlotData || (chartData.length > 0 ? chartData : [
-                        // Fallback data points if no chart data available
-                        { tick: parseInt(tickLower) - 10000, token0Depth: 0, normToken0Depth: 0, cumulativeUnifiedValue: 0, value: 0 },
-                        { tick: parseInt(tickLower), token0Depth: 50, normToken0Depth: 0.5, cumulativeUnifiedValue: 50, value: 0.5 },
-                        { tick: Math.floor((parseInt(tickLower) + parseInt(tickUpper)) / 2), token0Depth: 100, normToken0Depth: 1, cumulativeUnifiedValue: 100, value: 1 },
-                        { tick: parseInt(tickUpper), token0Depth: 50, normToken0Depth: 0.5, cumulativeUnifiedValue: 50, value: 0.5 },
-                        { tick: parseInt(tickUpper) + 10000, token0Depth: 0, normToken0Depth: 0, cumulativeUnifiedValue: 0, value: 0 }
-                      ])} 
-                      margin={{ top: 2, right: 5, bottom: 5, left: 5 }}
-                      onMouseDown={handlePanMouseDown}
-                      onMouseMove={handlePanMouseMove}
-                      onMouseUp={handlePanMouseUpOrLeave}
-                      onMouseLeave={handlePanMouseUpOrLeave}
-                    >
-                      <XAxis 
-                        dataKey="tick" 
-                        type="number" 
-                        domain={xDomain} 
-                        allowDataOverflow 
-                        tick={false}
-                        axisLine={false}
-                        height={1}
-                        tickMargin={0} 
-                      />
-                      <YAxis 
-                        hide={true}
-                        yAxisId="leftAxis" 
-                        orientation="left"
-                        dataKey={simplifiedChartPlotData ? "cumulativeUnifiedValue" : "normToken0Depth"} 
-                        type="number"
-                        domain={[0, 'auto']}
-                        allowDecimals={true}
-                        tick={{ fontSize: 10 }}
-                        axisLine={{ stroke: "#a1a1aa", strokeOpacity: 0.5 }}
-                        tickLine={{ stroke: "#a1a1aa", strokeOpacity: 0.5 }}
-                      />
-                      
-                      {/* Use the same chart visualizations as AddLiquidityModal */}
-                      {simplifiedChartPlotData ? (
-                        <Area 
-                          type="stepAfter" 
-                          dataKey="displayCumulativeValue"
-                          yAxisId="leftAxis"
-                          name={poolToken0 ? `Cumulative Liquidity (in ${poolToken0.symbol})` : "Cumulative Unified Liquidity"}
-                          stroke="hsl(var(--chart-2, #a1a1aa))" 
-                          fill="hsl(var(--chart-2, #a1a1aa))"    
-                          fillOpacity={0.2}
-                          strokeWidth={1.5}
-                        />
-                      ) : (
-                        <Area
-                          type="monotone"
-                          dataKey="normToken0Depth"
-                          stroke="#a1a1aa"
-                          fill="#a1a1aa"
-                          fillOpacity={0.2}
-                          strokeWidth={1.5}
-                          strokeOpacity={0.4}
-                          yAxisId="leftAxis"
-                        />
-                      )}
-                      
-                      {currentPoolTick !== null && (
-                        <ReferenceLine 
-                          x={currentPoolTick} 
-                          stroke="#e85102"
-                          strokeWidth={1.5} 
-                          ifOverflow="extendDomain"
-                          yAxisId="leftAxis"
-                        />
-                      )}
-                      
-                      {!isPoolStateLoading && parseInt(tickLower) < parseInt(tickUpper) && isFinite(parseInt(tickLower)) && isFinite(parseInt(tickUpper)) && (
-                        <ReferenceArea 
-                          x1={parseInt(tickLower)} 
-                          x2={parseInt(tickUpper)} 
-                          yAxisId="leftAxis"
-                          strokeOpacity={0} 
-                          fill="#e85102" 
-                          fillOpacity={0.25} 
-                          ifOverflow="extendDomain"
-                          shape={<RoundedTopReferenceArea />}
-                        />
-                      )}
-                      
-                      <RechartsTooltip
-                        content={
-                          <CustomTooltip 
-                            poolToken0Symbol={poolToken0?.symbol}
-                            token0={token0Symbol}
-                            token1={token1Symbol}
-                            baseTokenForPrice={baseTokenForPriceDisplay}
-                          />
-                        }
-                      />
-                    </ComposedChart>
-                  </ResponsiveContainer>
-                )}
-              </div>
-
-              {/* Custom X-Axis Labels */}
-              <div className="flex justify-between w-full px-[5px] box-border mt-1 mb-4">
-                {customXAxisTicks.map((labelItem, index) => (
-                  <span key={index} className="text-xs text-muted-foreground">
-                    {labelItem.displayLabel}
-                  </span>
-                ))}
-              </div>
-
-              {/* Min/Max Price Inputs */}
-              <TooltipProvider delayDuration={100}>
-                <div className="space-y-1 mb-4">
-                  <div className="flex justify-between items-center">
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <span className="text-xs text-muted-foreground cursor-default hover:underline">Min Price</span>
-                      </TooltipTrigger>
-                      <TooltipContent side="top" className="max-w-xs">
-                        <p className="text-xs text-muted-foreground">The minimum price at which your position earns fees. Below this point, your position converts fully to {token1Symbol}.</p>
-                      </TooltipContent>
-                    </Tooltip>
-                    {isPoolStateLoading ? (
-                      <div className="h-5 w-24 bg-muted/40 rounded-md animate-pulse ml-auto"></div>
-                    ) : (
-                      <span className="w-28 border-0 bg-transparent text-right text-sm leading-5 font-medium text-foreground shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto cursor-default">
-                        {minPriceInputString || "0.00"}
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <span className="text-xs text-muted-foreground cursor-default hover:underline">Max Price</span>
-                      </TooltipTrigger>
-                      <TooltipContent side="bottom" className="max-w-xs">
-                        <p className="text-xs text-muted-foreground">The maximum price at which your position earns fees. Beyond this point, your position converts fully to {token0Symbol}.</p>
-                      </TooltipContent>
-                    </Tooltip>
-                    {isPoolStateLoading ? (
-                      <div className="h-5 w-24 bg-muted/40 rounded-md animate-pulse ml-auto"></div>
-                    ) : (
-                      <span className="w-28 border-0 bg-transparent text-right text-sm leading-5 font-medium text-foreground shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto cursor-default">
-                        {maxPriceInputString || "0.00"}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </TooltipProvider>
-
-              {/* Current Price Display */}
-              <div className="pt-2 mb-4">
-                <div className="border-t border-border/70 my-2" />
-                <div className="flex justify-between items-center space-x-2">
-                  <span className="text-xs text-muted-foreground">
-                    {isPoolStateLoading ? (
-                      <div className="h-4 w-40 bg-muted/40 rounded animate-pulse"></div>
-                    ) : currentPrice && !isCalculating ? (
-                      baseTokenForPriceDisplay === token0Symbol ? (
-                        `1 ${token1Symbol} = ${(1 / parseFloat(currentPrice)).toLocaleString(undefined, { 
-                          minimumFractionDigits: TOKEN_DEFINITIONS[token0Symbol]?.displayDecimals || 2, 
-                          maximumFractionDigits: TOKEN_DEFINITIONS[token0Symbol]?.displayDecimals || (token0Symbol === 'BTCRL' ? 8 : 4)
-                        })} ${token0Symbol}`
-                      ) : (
-                        `1 ${token0Symbol} = ${parseFloat(currentPrice).toLocaleString(undefined, { 
-                          minimumFractionDigits: TOKEN_DEFINITIONS[token1Symbol]?.displayDecimals || 2,
-                          maximumFractionDigits: TOKEN_DEFINITIONS[token1Symbol]?.displayDecimals || (token1Symbol === 'BTCRL' ? 8 : 4)
-                        })} ${token1Symbol}`
-                      )
-                    ) : isCalculating ? (
-                      "Calculating price..."
-                    ) : (
-                      "Price unavailable"
-                    )}
-                  </span>
-                  <div className="flex space-x-1">
-                    <Button
-                      variant={baseTokenForPriceDisplay === token0Symbol ? "secondary" : "outline"}
-                      size="sm"
-                      className="h-7 px-2 text-xs rounded-md"
-                      onClick={() => setBaseTokenForPriceDisplay(token0Symbol)}
-                    >
-                      {token0Symbol}
-                    </Button>
-                    <Button
-                      variant={baseTokenForPriceDisplay === token1Symbol ? "secondary" : "outline"}
-                      size="sm"
-                      className="h-7 px-2 text-xs rounded-md"
-                      onClick={() => setBaseTokenForPriceDisplay(token1Symbol)}
-                    >
-                      {token1Symbol}
-                    </Button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Continue Button */}
-              {!isConnected ? (
-                <div className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md bg-accent text-accent-foreground px-3 text-sm font-medium transition-colors hover:bg-accent/90 shadow-md">
-                  <span className="relative z-0">Connect Wallet</span>
-                </div>
-              ) : (
-                <Button
-                  className="w-full"
-                  onClick={handleContinueToAmount}
-                  disabled={isPoolStateLoading}
-                >
-                  {isPoolStateLoading ? 'Loading Pool...' : 'Continue'}
-                </Button>
-              )}
-            </>
-          )}
-
           {/* Amount Input Step */}
-          {depositStep === 'amount' && (
             <>
-              {/* Header with back button */}
-              <div className="flex items-center mb-4">
-                <Button 
-                  variant="ghost"
-                  size="sm"
-                  className="p-0 h-8 w-8"
-                  onClick={handleBackToRange}
-                >
-                  <ArrowLeftIcon className="h-4 w-4" />
-                </Button>
-                <span className="ml-2 text-sm font-medium">Specify Amount</span>
-              </div>
+            {/* Header removed; now provided by parent container */}
               
               {/* Input for Token 0 */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between mb-2">
-                  <Label htmlFor="amount0" className="text-sm font-medium">Amount</Label>
+                  <Button 
+                    variant="ghost" 
+                    className="h-auto p-0 text-sm font-medium text-foreground hover:bg-transparent hover:text-muted-foreground transition-colors" 
+                  >
+                    Amount
+                  </Button>
                   <div className="flex items-center gap-1">
                     <Button 
                       variant="ghost" 
@@ -2249,7 +2098,7 @@ export function AddLiquidityForm({
                     </Button>
                   </div>
                 </div>
-                <div className="rounded-lg bg-muted/30 p-4">
+                <div className={cn("rounded-lg bg-muted/30 p-4", { "outline outline-1 outline-muted": isAmount0Focused })}>
                   <div className="flex items-center gap-2">
                     <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
                       <Image src={getTokenIcon(token0Symbol)} alt={token0Symbol} width={20} height={20} className="rounded-full"/>
@@ -2261,12 +2110,16 @@ export function AddLiquidityForm({
                         placeholder="0.0"
                         value={amount0}
                         onChange={(e) => { 
-                          const newValue = e.target.value; 
+                          const newValue = e.target.value.replace(',', '.'); // Ensure decimal separator is always period
                           if (preparedTxData) { resetTransactionState(); } 
                           setAmount0(newValue); 
                           setActiveInputSide('amount0'); 
                         }} 
-                        type={amount0.startsWith('<') ? "text" : "number"}
+                        onFocus={() => setIsAmount0Focused(true)}
+                        onBlur={() => setIsAmount0Focused(false)}
+                        type="text"
+                        pattern="[0-9]*\.?[0-9]*"
+                        inputMode="decimal"
                         disabled={isWorking || (isCalculating && activeInputSide === 'amount1')}
                         className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
                       />
@@ -2285,7 +2138,12 @@ export function AddLiquidityForm({
               {/* Input for Token 1 */}
               <div className="space-y-2 mb-4">
                 <div className="flex items-center justify-between mb-2">
-                  <Label htmlFor="amount1" className="text-sm font-medium">Amount</Label>
+                  <Button 
+                    variant="ghost" 
+                    className="h-auto p-0 text-sm font-medium text-foreground hover:bg-transparent hover:text-muted-foreground transition-colors" 
+                  >
+                    Amount
+                  </Button>
                   <div className="flex items-center gap-1">
                     <Button 
                       variant="ghost" 
@@ -2297,7 +2155,7 @@ export function AddLiquidityForm({
                     </Button>
                   </div>
                 </div>
-                <div className="rounded-lg bg-muted/30 p-4">
+                <div className={cn("rounded-lg bg-muted/30 p-4", { "outline outline-1 outline-muted": isAmount1Focused })}>
                   <div className="flex items-center gap-2">
                     <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
                       <Image src={getTokenIcon(token1Symbol)} alt={token1Symbol} width={20} height={20} className="rounded-full"/>
@@ -2309,12 +2167,16 @@ export function AddLiquidityForm({
                         placeholder="0.0"
                         value={amount1}
                         onChange={(e) => { 
-                          const newValue = e.target.value; 
+                          const newValue = e.target.value.replace(',', '.'); // Ensure decimal separator is always period
                           if (preparedTxData) { resetTransactionState(); } 
                           setAmount1(newValue); 
                           setActiveInputSide('amount1'); 
                         }} 
-                        type={amount1.startsWith('<') ? "text" : "number"}
+                        onFocus={() => setIsAmount1Focused(true)}
+                        onBlur={() => setIsAmount1Focused(false)}
+                        type="text"
+                        pattern="[0-9]*\.?[0-9]*"
+                        inputMode="decimal"
                         disabled={isWorking || (isCalculating && activeInputSide === 'amount0')}
                         className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
                       />
@@ -2323,52 +2185,323 @@ export function AddLiquidityForm({
                 </div>
               </div>
 
-              {/* Transaction Steps Re-added for 'amount' step */}
-              <div className="p-3 border border-dashed rounded-md bg-muted/10 mb-4">
-                <p className="text-sm font-medium mb-2 text-foreground/80">Transaction Steps</p>
-                <div className="space-y-1.5 text-xs text-muted-foreground">
-                  <div className="flex items-center justify-between">
-                    <span>Select Price Range</span>
-                    <CheckIcon className="h-4 w-4 text-green-500" />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span>Specify Amount</span>
-                    <CheckIcon className="h-4 w-4 text-green-500" />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span>Token Approvals</span>
-                    <span>
-                      { (step === 'approve' && (isApproveWritePending || isApproving)) || 
-                        (step === 'permit2Sign' && isWorking) 
-                        ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
-                        : (
-                          <span className={`text-xs font-mono ${completedTokensCount === involvedTokensCount && involvedTokensCount > 0 ? 'text-green-500' : ''}`}>
-                            {`${completedTokensCount}/${involvedTokensCount > 0 ? involvedTokensCount : '-'}`}
-                          </span>
-                        )
-                      }
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span>Send Mint Transaction</span> 
-                    <span>
-                      {isMintConfirming || isMintSendPending ? 
-                        <ActivityIcon className="h-4 w-4 animate-pulse text-muted-foreground" />
-                      : isMintConfirming ? <CheckIcon className="h-4 w-4 text-green-500" />
-                      : <MinusIcon className="h-4 w-4" />}
-                    </span>
-                  </div>
+              {/* Price Range Label (outside container, matching Amount style) */}
+              <div className="flex items-center justify-between mb-2">
+                <Label className="text-sm font-medium">Price Range</Label>
+                <div className="flex items-center gap-2">
+                  {!currentPrice || !minPriceInputString || !maxPriceInputString ? (
+                    // Loading skeletons
+                    <>
+                      <div className="h-4 w-12 bg-muted/50 rounded animate-pulse" />
+                      <div className="w-px h-4 bg-border" />
+                      <div className="h-4 w-20 bg-muted/50 rounded animate-pulse" />
+                    </>
+                  ) : (
+                    <>
+                      {/* Animated preset dropdown like Swap Slippage */}
+                      <div className="relative preset-selector">
+                        <button
+                          type="button"
+                          className="px-1.5 py-0.5 text-xs font-normal rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-muted-foreground hover:brightness-110 hover:border-white/30 inline-flex items-center gap-1"
+                          onClick={() => setShowPresetSelector((v) => !v)}
+                          aria-haspopup="listbox"
+                          aria-expanded={showPresetSelector}
+                          title="Change preset range"
+                        >
+                          <span>{activePreset || "Custom"}</span>
+                          <svg width="10" height="10" viewBox="0 0 20 20" aria-hidden="true" className="opacity-80">
+                            <path d="M5 7l5 5 5-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        </button>
+                        <AnimatePresence initial={false}>
+                          {showPresetSelector && (
+                            <motion.div
+                              key="range-preset-menu"
+                              initial={{ height: 0, opacity: 0 }}
+                              animate={{ height: 'auto', opacity: 1 }}
+                              exit={{ height: 0, opacity: 0 }}
+                              transition={{ duration: 0.18, ease: 'easeOut' }}
+                              className="absolute z-20 mt-1 left-0 w-max min-w-[180px] rounded-md border border-sidebar-border bg-[var(--modal-background)] shadow-md overflow-hidden"
+                            >
+                              <div className="p-1 grid gap-1">
+                                {presetOptions.map((preset) => (
+                                  <button
+                                    type="button"
+                                    key={preset}
+                                    className={cn(
+                                      "px-2 py-1 text-xs rounded text-left transition-colors",
+                                      activePreset === preset
+                                        ? "bg-muted text-foreground"
+                                        : "text-muted-foreground hover:bg-muted/30"
+                                    )}
+                                    onClick={() => {
+                                      handleSelectPreset(preset);
+                                      // Viewbox reset will be applied in the preset effect after ticks are recomputed
+                                      setShowPresetSelector(false);
+                                    }}
+                                  >
+                                    {preset}
+                                  </button>
+                                ))}
+                              </div>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
+                      {getPriceRangeDisplay() && (
+                        <>
+                          <div className="w-px h-4 bg-border" />
+                          {editingSide ? (
+                            // Editing: show inputs AND keep the current price pill visible
+                            <div className="flex items-center gap-1 text-xs price-range-editor">
+                              {editingSide === 'min' ? (
+                                <input
+                                  value={editingMinPrice}
+                                  onChange={(e) => handlePriceInputChange('min', e.target.value)}
+                                  onBlur={handleApplyPriceRange}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') handleApplyPriceRange();
+                                    if (e.key === 'Escape') handleCancelPriceRangeEdit();
+                                  }}
+                                  className={cn(
+                                    "w-16 h-auto p-0 text-xs text-center bg-transparent border-0 appearance-none focus:outline-none focus:ring-0 focus-visible:ring-offset-0 focus-visible:ring-0 font-sans transition-colors",
+                                    convertPriceToValidTick(editingMinPrice, false) !== null 
+                                      ? "text-white" 
+                                      : "text-muted-foreground"
+                                  )}
+                                  autoFocus
+                                />
+                              ) : (
+                                <div
+                                  className="text-muted-foreground hover:text-white cursor-pointer px-1 py-1 transition-colors font-sans"
+                                  onClick={() => handleClickToEditPrice('min')}
+                                >
+                                  {(() => {
+                                    const labels = computeRangeLabels();
+                                    return labels ? labels.left : (minPriceInputString || "0.00");
+                                  })()}
+                                </div>
+                              )}
+                              <span className="text-muted-foreground font-sans">-</span>
+                              {editingSide === 'max' ? (
+                                <input
+                                  value={editingMaxPrice}
+                                  onChange={(e) => handlePriceInputChange('max', e.target.value)}
+                                  onBlur={handleApplyPriceRange}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') handleApplyPriceRange();
+                                    if (e.key === 'Escape') handleCancelPriceRangeEdit();
+                                  }}
+                                  className={cn(
+                                    "w-16 h-auto p-0 text-xs text-center bg-transparent border-0 appearance-none focus:outline-none focus:ring-0 focus-visible:ring-offset-0 focus-visible:ring-0 font-sans transition-colors",
+                                    convertPriceToValidTick(editingMaxPrice, true) !== null 
+                                      ? "text-white" 
+                                      : "text-muted-foreground"
+                                  )}
+                                  autoFocus
+                                />
+                              ) : (
+                                <div
+                                  className="text-muted-foreground hover:text-white cursor-pointer px-1 py-1 transition-colors font-sans"
+                                  onClick={() => handleClickToEditPrice('max')}
+                                >
+                                  {(() => {
+                                    const labels = computeRangeLabels();
+                                    return labels ? labels.right : (maxPriceInputString || "∞");
+                                  })()}
+                                </div>
+                              )}
+                              {currentPrice && (
+                                <TooltipProvider delayDuration={0}>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <span className="ml-2 inline-flex items-center gap-1 text-[10px] px-1 py-0.5 rounded border border-sidebar-border text-muted-foreground">
+                                        <span className="inline-block w-[2px] h-2" style={{ background: '#e85102' }} />
+                                        <span className="select-none">
+                                          {(() => {
+                                            const inverse = 1 / parseFloat(currentPrice);
+                                            const flip = inverse > parseFloat(currentPrice);
+                                            const denomToken = flip ? token0Symbol : token1Symbol;
+                                            const isUsd = denomToken === 'aUSDT' || denomToken === 'aUSDC' || denomToken === 'USDT' || denomToken === 'USDC';
+                                            const displayDecimals = isUsd ? 2 : (TOKEN_DEFINITIONS[denomToken]?.displayDecimals ?? 4);
+                                            const numeric = flip ? inverse : parseFloat(currentPrice);
+                                            return isFinite(numeric) ? numeric.toFixed(displayDecimals) : '∞';
+                                          })()}
+                                        </span>
+                                      </span>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
+                                      Current Price
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              )}
+                            </div>
+                          ) : (
+                            // Clickable price range display with hover effects and a small "Now" badge
+                            <div className="flex items-center gap-1 text-xs">
+                              <div 
+                                className={`${(isDraggingRange === 'left' || isDraggingRange === 'center') ? 'text-white' : 'text-muted-foreground'} hover:text-white cursor-pointer px-1 py-1 transition-colors min-price-display`}
+                                onClick={() => handleClickToEditPrice('min')}
+                              >
+                                {(() => {
+                                  const labels = computeRangeLabels();
+                                  return labels ? labels.left : (minPriceInputString || "0.00");
+                                })()}
+                              </div>
+                              <span className="text-muted-foreground">-</span>
+                              <div 
+                                className={`${(isDraggingRange === 'right' || isDraggingRange === 'center') ? 'text-white' : 'text-muted-foreground'} hover:text-white cursor-pointer px-1 py-1 transition-colors max-price-display`}
+                                onClick={() => handleClickToEditPrice('max')}
+                              >
+                                {(() => {
+                                  const labels = computeRangeLabels();
+                                  return labels ? labels.right : (maxPriceInputString || "∞");
+                                })()}
+                              </div>
+                              {currentPrice && (
+                                <TooltipProvider delayDuration={0}>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <span className="ml-2 inline-flex items-center gap-1 text-[10px] px-1 py-0.5 rounded border border-sidebar-border text-muted-foreground">
+                                        <span className="inline-block w-[2px] h-2" style={{ background: '#e85102' }} />
+                                        <span className="select-none">
+                                          {(() => {
+                                            const inverse = 1 / parseFloat(currentPrice);
+                                            const flip = inverse > parseFloat(currentPrice);
+                                            const denomToken = flip ? token0Symbol : token1Symbol;
+                                            const isUsd = denomToken === 'aUSDT' || denomToken === 'aUSDC' || denomToken === 'USDT' || denomToken === 'USDC';
+                                            const displayDecimals = isUsd ? 2 : (TOKEN_DEFINITIONS[denomToken]?.displayDecimals ?? 4);
+                                            const numeric = flip ? inverse : parseFloat(currentPrice);
+                                            return isFinite(numeric) ? numeric.toFixed(displayDecimals) : '∞';
+                                          })()}
+                                        </span>
+                                      </span>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
+                                      Current Price
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              )}
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </>
+                  )}
                 </div>
               </div>
 
+              {/* Range Preview Chart with Interactive Controls */}
+              {step === 'input' ? (
+                <div 
+                  className="p-3 border border-dashed rounded-md bg-muted/10 mb-4"
+                >
+                  {isPoolStateLoading || !isConnected ? (
+                    <div className="w-full h-[80px] relative overflow-hidden flex flex-col items-center justify-center bg-muted/50 rounded-md"
+                      // style={{ backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+                    >
+                      <Image 
+                        src="/LogoIconWhite.svg" 
+                        alt="Alphix Logo" 
+                        width={32}
+                        height={32}
+                        className="animate-pulse opacity-75"
+                      />
+                    </div>
+                  ) : (
+                    <>
+                      <InteractiveRangeChart
+                        selectedPoolId={selectedPoolId}
+                        chainId={chainId}
+                        token0Symbol={token0Symbol}
+                        token1Symbol={token1Symbol}
+                        currentPoolTick={currentPoolTick}
+                        currentPrice={currentPrice}
+                        currentPoolSqrtPriceX96={currentPoolSqrtPriceX96}
+                        tickLower={tickLower}
+                        tickUpper={tickUpper}
+                        xDomain={xDomain}
+                        onRangeChange={(newLower, newUpper) => {
+                          setTickLower(newLower);
+                          setTickUpper(newUpper);
+                          if (preparedTxData) resetTransactionState();
+                          setInitialDefaultApplied(true);
+                          setActivePreset(null); // Clear preset when manually dragging
+                        }}
+                        onXDomainChange={(newDomain) => {
+                          // Update the domain
+                          setXDomain(newDomain);
+                          
+                          // Don't reset the range position - let it stay where the user dragged it
+                          // The InteractiveRangeChart will maintain the correct position
+                        }}
+                        sdkMinTick={sdkMinTick}
+                        sdkMaxTick={sdkMaxTick}
+                        defaultTickSpacing={defaultTickSpacing}
+                        poolToken0={poolToken0}
+                        poolToken1={poolToken1}
+                        onDragStateChange={(state) => setIsDraggingRange(state)}
+                      />
+                      
+                      {/* Chart labels are now handled internally by InteractiveRangeChart */}
+                    </>
+                  )}
+                </div>
+              ) : (
+                <div className="p-3 border border-dashed rounded-md bg-muted/10 mb-4">
+                  <p className="text-sm font-medium mb-2 text-foreground/80">Transaction Steps</p>
+                  <div className="space-y-1.5 text-xs text-muted-foreground">
+                      <div className="flex items-center justify-between">
+                          <span>Token Approvals</span>
+                          <span>
+                            { (step === 'approve' && (isApproveWritePending || isApproving)) || 
+                              (step === 'permit2Sign' && isWorking) 
+                              ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
+                              : (
+                                <span className={`text-xs font-mono ${completedTokensCount === involvedTokensCount && involvedTokensCount > 0 ? 'text-green-500' : ''}`}>
+                                  {`${completedTokensCount}/${involvedTokensCount > 0 ? involvedTokensCount : '-'}`}
+                                </span>
+                              )
+                            }
+                          </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                          <span>Send Mint Transaction</span> 
+                          <span>
+                              {isMintConfirming || isMintSendPending ? 
+                                <ActivityIcon className="h-4 w-4 animate-pulse text-muted-foreground" />
+                               : isMintSuccess ? <CheckIcon className="h-4 w-4 text-green-500" />
+                               : <MinusIcon className="h-4 w-4" />}
+                          </span>
+                      </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Current Price Display removed per updated UI */}
+
               {/* Continue Button */}
               {!isConnected ? (
-                <div className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md bg-accent text-accent-foreground px-3 text-sm font-medium transition-colors hover:bg-accent/90 shadow-md">
-                  <span className="relative z-0">Connect Wallet</span>
+                <div className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30"
+                  style={{ backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+                >
+                  {/* @ts-ignore */}
+                  <appkit-button className="absolute inset-0 z-10 block h-full w-full cursor-pointer p-0 opacity-0" />
+                  <span className="relative z-0 pointer-events-none">Connect Wallet</span>
                 </div>
               ) : (
                 <Button
-                  className="w-full"
+                  className={cn(
+                    "w-full",
+                    (isWorking || isCalculating || isPoolStateLoading || isApproveWritePending || isMintSendPending ||
+                    (step === 'input' && (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0")) && !preparedTxData) ||
+                    (step === 'input' && isInsufficientBalance)) ?
+                      "relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 !opacity-100 cursor-default text-white/75"
+                      :
+                      "text-sidebar-primary border border-sidebar-primary bg-[#3d271b] hover:bg-[#3d271b]/90"
+                  )}
                   onClick={() => {
                     if (step === 'input') handlePrepareAndSubmit();
                     else if (step === 'approve') handleApprove();
@@ -2383,18 +2516,28 @@ export function AddLiquidityForm({
                     (step === 'input' && (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0")) && !preparedTxData) ||
                     (step === 'input' && isInsufficientBalance)
                   }
+                  style={(isWorking || isCalculating || isPoolStateLoading || isApproveWritePending || isMintSendPending ||
+                    (step === 'input' && (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0")) && !preparedTxData) ||
+                    (step === 'input' && isInsufficientBalance)) ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
                 >
-                  {isPoolStateLoading ? 'Loading Pool...' 
-                    : step === 'input' ? (preparedTxData && (parseFloat(amount0 || "0") > 0 || parseFloat(amount1 || "0") > 0) ? 'Proceed' : 'Prepare Deposit') 
-                    : step === 'approve' ? `Approve ${preparedTxData?.approvalTokenSymbol || 'Token'}` 
-                                              : step === 'permit2Sign' ? 'Sign Permission'
-                    : step === 'mint' ? 'Confirm Mint' 
-                    : 'Processing...' 
-                  }
+                                    <span className={cn(
+                    (step === 'approve' && (isApproveWritePending || isApproving)) ||
+                    (step === 'permit2Sign' && isWorking) ||
+                    (step === 'mint' && (isMintSendPending || isMintConfirming)) ||
+                    (step === 'input' && isWorking) ||
+                    isPoolStateLoading
+                      ? "animate-pulse"
+                      : ""
+                  )}>
+                    {step === 'approve' ? `Approve ${preparedTxData?.approvalTokenSymbol || 'Tokens'}`
+                      : step === 'permit2Sign' ? 'Sign'
+                      : step === 'mint' ? 'Deposit'
+                      : 'Deposit'
+                    }
+                  </span>
                 </Button>
               )}
             </>
-          )}
         </>
       )}
 

@@ -1,68 +1,34 @@
 "use client";
 
 import React, { useState } from 'react';
-import Image from 'next/image';
-import { ArrowDownIcon } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { cn } from "@/lib/utils";
+import { SwapInputView } from './SwapInputView';
+import { Token, FeeDetail } from './swap-interface';
 
-// Mock token interfaces
-interface MockToken {
-  symbol: string;
-  name: string;
-  balance: string;
-  icon: string;
-  usdPrice: number;
-}
-
-// Mock token data
-const mockTokens = {
-  USDC: {
+// Mock token data that matches the Token interface
+const mockTokens: Record<string, Token> = {
+  aUSDC: {
+    address: "0x24429b8f2C8ebA374Dd75C0a72BCf4dF4C545BeD" as `0x${string}`,
     symbol: "USDC",
-    name: "USD Coin",
+    name: "USDC",
+    decimals: 6,
+    displayDecimals: 2,
     balance: "100",
-    icon: "/YUSD.png",
+    value: "$100.00",
+    icon: "/tokens/aUSDC.png",
     usdPrice: 1
-  } as MockToken,
-  BTC: {
+  },
+  aBTC: {
+    address: "0x9d5F910c91E69ADDDB06919825305eFEa5c9c604" as `0x${string}`,
     symbol: "BTC",
     name: "Bitcoin",
+    decimals: 8,
+    displayDecimals: 2,
     balance: "0",
-    icon: "/BTCRL.png", 
+    value: "$0.00",
+    icon: "/tokens/aBTC.png",
     usdPrice: 77000
-  } as MockToken
+  }
 };
-
-// Exact original OutlineArcIcon
-function MockOutlineArcIcon() {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 16 16"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      <circle
-        cx="8"
-        cy="8"
-        r="6"
-        stroke="currentColor"
-        strokeWidth="2"
-        fill="none"
-      />
-      <path
-        d="M 8,2 L 8,14"
-        stroke="currentColor"
-        fill="none"
-        strokeWidth="2"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
 
 interface MockSwapComponentProps {
   className?: string;
@@ -70,137 +36,132 @@ interface MockSwapComponentProps {
 }
 
 export function MockSwapComponent({ className, zoom = 1.5 }: MockSwapComponentProps) {
-  const fromToken = mockTokens.USDC;
-  const toToken = mockTokens.BTC;
-  const fromAmount = "0";
-  const toAmount = "0";
+  const [fromAmount] = useState("0");
+  const [toAmount] = useState("0.00");
+  const [isSellInputFocused] = useState(false);
+  const [slippage] = useState(0.5);
+  const [hoveredArcPercentage, setHoveredArcPercentage] = useState<number | null>(null);
+
+  const displayFromToken = mockTokens.aUSDC;
+  const displayToToken = mockTokens.aBTC;
+  const availableTokens = Object.values(mockTokens);
+
+  // Mock handlers that do nothing on click but allow hover effects
+  const handleFromAmountChange = () => {};
+  const handleSwapTokens = () => {};
+  const handleUseFullBalance = () => {};
+  const onFromTokenSelect = () => {};
+  const onToTokenSelect = () => {};
+  const handleCyclePercentage = () => {};
+  const handleMouseEnterArc = () => {
+    setHoveredArcPercentage(25);
+  };
+  const handleMouseLeaveArc = () => {
+    setHoveredArcPercentage(null);
+  };
+  const handleSwap = () => {
+    window.location.href = '/swap';
+  };
+  const onSlippageChange = () => {};
 
   const formatCurrency = (value: string) => {
     const num = parseFloat(value || "0");
     return `$${num.toFixed(2)}`;
   };
 
+  const calculatedValues: {
+    fees: FeeDetail[];
+    minimumReceived: string;
+  } = {
+    fees: [],
+    minimumReceived: "0.00"
+  };
+
+  const swapContainerRect = { top: 0, left: 0, width: 400, height: 600 };
+
+  // Mock route info
+  const routeInfo = {
+    path: ["USDC", "BTC"],
+    hops: 1,
+    isDirectRoute: true,
+    pools: ["USDC-BTC"]
+  };
+
+  // Mock route fees
+  const routeFees = [
+    { poolName: "USDC-BTC", fee: 1000 }
+  ];
+
   return (
-    // Original clean design
     <div 
-      className={cn("w-full bg-card rounded-xl border border-[#2f2f2f] p-6 shadow-lg backdrop-blur-sm", className)} 
+      className={`bg-[#131313] rounded-xl border border-[#2f2f2f] p-6 shadow-lg backdrop-blur-sm [&_button[class*="w-full"][disabled]:hover]:brightness-110 [&_button[class*="w-full"][disabled]:hover]:border-white/30 [&_input]:!pointer-events-none [&_[role="button"]]:!pointer-events-none [&_[data-radix-collection-item]]:!pointer-events-none [&_[data-radix-portal]]:!hidden [&_[data-state="open"]]:!hidden [&_.fixed]:!hidden [&_[class*="fixed"]]:!hidden [&_[class*="z-50"]]:!hidden [&_[class*="z-[50]"]]:!hidden [&_[class*="AnimatePresence"]]:!hidden [&_[class*="motion"]]:!hidden [&_[class*="modal"]]:!hidden [&_[class*="Modal"]]:!hidden [&_button[class*="bg-muted/30"]]:!cursor-pointer [&_svg[class*="rotate-180"]]:!rotate-0 [&_svg[class*="transition-transform"]]:!rotate-0 [&_button[disabled]]:!cursor-pointer [&_button[class*="w-full"]]:!pointer-events-auto [&_button[class*="w-full"]]:!border [&_button[class*="w-full"]]:!border-sidebar-border [&_button[class*="w-full"]]:!bg-[var(--sidebar-connect-button-bg)] [&_button[class*="w-full"]]:!text-white/75 [&_button[class*="w-full"]]:![background-image:url(/pattern_wide.svg)] [&_button[class*="w-full"]]:![background-size:cover] [&_button[class*="w-full"]]:![background-position:center] [&_button[class*="w-full"]:hover]:!border-sidebar-primary [&_button[class*="w-full"]:hover]:!bg-[#3d271b]/90 [&_button[class*="w-full"]:hover]:!text-sidebar-primary [&_button[class*="w-full"]:hover]:![background-image:none] [&_button[class*="w-full"]:hover]:![background-size:auto] [&_button[class*="w-full"]:hover]:![background-position:auto] ${className || ''}`}
       style={{ 
-        width: '400px',
-        zoom: zoom // CSS zoom re-renders at higher resolution
+        zoom: zoom,
+        maxWidth: '400px',
+        width: '100%'
+      }}
+      onClick={(e) => {
+        // Only prevent the dropdown from opening, allow other clicks to bubble up
+        const target = e.target as HTMLElement;
+        const button = target.closest('button[class*="bg-muted/30"]');
+        if (button) {
+          // Check if this is specifically a TokenSelector button with dropdown functionality
+          const chevronIcon = button.querySelector('svg[class*="h-4 w-4"][class*="text-muted-foreground"]');
+          if (chevronIcon) {
+            // Only prevent the dropdown opening, don't stop propagation for navigation
+            e.preventDefault();
+            // Don't call stopPropagation() to allow parent navigation to work
+          }
+        }
+
+        // Always navigate to /swap on any click inside the mock (demo behavior)
+        window.location.href = '/swap';
       }}
     >
-      {/* Sell Section */}
-      <div className="mb-6">
-        <div className="flex items-center justify-between mb-2">
-          <Label className="text-sm font-medium">Sell</Label>
-          <div className="flex items-center gap-1">
-            <Button 
-              variant="ghost" 
-              className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent"
-            >
-              Balance: {fromToken.balance} {fromToken.symbol}
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-5 w-5 rounded-full hover:bg-muted/40"
-            >
-              <MockOutlineArcIcon />
-            </Button>
-          </div>
-        </div>
-        <div className="rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted">
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2 mr-2">
-              <Image 
-                src={fromToken.icon} 
-                alt={fromToken.symbol} 
-                width={20} 
-                height={20} 
-                className="rounded-full"
-              />
-              <span className="text-sm">{fromToken.symbol}</span>
-            </div>
-            <div className="flex-1">
-              <Input
-                value={fromAmount}
-                readOnly
-                className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto cursor-default pointer-events-none"
-                placeholder="0"
-              />
-              <div className="text-right text-xs text-muted-foreground">
-                {formatCurrency((parseFloat(fromAmount || "0") * fromToken.usdPrice).toString())}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Swap Button */}
-      <div className="flex justify-center">
-        <Button 
-          variant="ghost" 
-          size="icon" 
-          className="rounded-full bg-muted/30 z-10 h-8 w-8" 
-        >
-          <ArrowDownIcon className="h-4 w-4" />
-          <span className="sr-only">Swap tokens</span>
-        </Button>
-      </div>
-
-      {/* Buy Section */}
-      <div className="mb-6 mt-2">
-        <div className="flex items-center justify-between mb-2">
-          <Label className="text-sm font-medium">Buy</Label>
-          <span className="text-xs text-muted-foreground">
-            Balance: {toToken.balance} {toToken.symbol}
-          </span>
-        </div>
-        <div className="rounded-lg bg-muted/30 p-4">
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2 min-w-[80px] mr-2">
-              <Image 
-                src={toToken.icon} 
-                alt={toToken.symbol} 
-                width={20} 
-                height={20} 
-                className="rounded-full" 
-              />
-              <span className="text-sm font-medium">{toToken.symbol}</span>
-            </div>
-            <div className="flex-1">
-              <Input
-                value={parseFloat(toAmount || "0") === 0 ? "0" : parseFloat(toAmount || "0").toFixed(toToken.symbol === 'BTC' ? 8 : 2)}
-                readOnly
-                className="text-right text-xl md:text-xl font-medium h-auto p-0 focus-visible:ring-0 focus-visible:ring-offset-0 border-0 bg-transparent text-muted-foreground cursor-default pointer-events-none"
-                placeholder="0.00"
-              />
-              <div className="text-right text-xs text-muted-foreground">
-                {formatCurrency((parseFloat(toAmount || "0") * toToken.usdPrice).toString())}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Fee Information */}
-      <div className="space-y-1 text-sm mt-3">
-        <div className="flex items-center justify-between">
-          <span className="text-xs text-muted-foreground">Fee</span>
-          <span className="text-xs text-foreground">0.10%</span>
-        </div>
-        <div className="flex items-center justify-between">
-          <span className="text-xs text-muted-foreground">Fee Value (USD)</span>
-          <span className="text-xs text-muted-foreground">$0.00</span>
-        </div>
-      </div>
-
-      {/* Swap Button */}
-      <div className="mt-4 h-10">
-        <Button className="w-full bg-accent text-accent-foreground shadow-md transition-all duration-300 hover:bg-white hover:text-black active:scale-[0.98]">
-          Swap
-        </Button>
-      </div>
+      <SwapInputView
+        displayFromToken={displayFromToken}
+        displayToToken={displayToToken}
+        fromAmount={fromAmount}
+        toAmount={toAmount}
+        handleFromAmountChange={handleFromAmountChange}
+        handleSwapTokens={handleSwapTokens}
+        handleUseFullBalance={handleUseFullBalance}
+        availableTokens={availableTokens}
+        onFromTokenSelect={onFromTokenSelect}
+        onToTokenSelect={onToTokenSelect}
+        handleCyclePercentage={handleCyclePercentage}
+        handleMouseEnterArc={handleMouseEnterArc}
+        handleMouseLeaveArc={handleMouseLeaveArc}
+        actualNumericPercentage={0}
+        currentSteppedPercentage={0}
+        hoveredArcPercentage={hoveredArcPercentage}
+        isSellInputFocused={isSellInputFocused}
+        setIsSellInputFocused={() => {}}
+        formatCurrency={formatCurrency}
+        isConnected={true}
+        isAttemptingSwitch={false}
+        isLoadingCurrentFromTokenBalance={false}
+        isLoadingCurrentToTokenBalance={false}
+        calculatedValues={calculatedValues}
+        dynamicFeeLoading={false}
+        quoteLoading={false}
+        quoteError={null}
+         actionButtonText="Swap"
+         actionButtonDisabled={false}
+         handleSwap={handleSwap}
+        isMounted={true}
+        currentChainId={1}
+        TARGET_CHAIN_ID={1}
+        routeInfo={routeInfo}
+        routeFees={routeFees}
+        routeFeesLoading={false}
+        showRoute={false}
+        selectedPoolIndexForChart={0}
+        onSelectPoolForChart={() => {}}
+        swapContainerRect={swapContainerRect}
+        slippage={slippage}
+        onSlippageChange={onSlippageChange}
+      />
     </div>
   );
 } 

@@ -4,14 +4,26 @@ import { NextResponse } from 'next/server';
 export async function POST(request: Request) {
   try {
     const { password } = await request.json();
-    const sitePassword = process.env.SITE_PASSWORD;
+    if (!password) {
+      return NextResponse.json({ message: 'Password required.' }, { status: 400 });
+    }
 
-    if (!sitePassword) {
-      console.error('SITE_PASSWORD environment variable is not set.');
+    const allowedPasswords = [
+      process.env.SITE_PASSWORD,
+      process.env.ADMIN_PASSWORD,
+      process.env.MISC_PASSWORD_1,
+      process.env.MISC_PASSWORD_2,
+      process.env.MISC_PASSWORD_3,
+    ].filter(Boolean) as string[];
+
+    if (allowedPasswords.length === 0) {
+      console.error('No login passwords configured via env.');
       return NextResponse.json({ message: 'Server configuration error.' }, { status: 500 });
     }
 
-    if (password === sitePassword) {
+    const isValid = allowedPasswords.some((p) => p === password);
+
+    if (isValid) {
       const response = NextResponse.json({ message: 'Login successful' }, { status: 200 });
       
       // Calculate expiry for end of current day (UTC)

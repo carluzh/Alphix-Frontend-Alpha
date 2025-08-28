@@ -4,25 +4,32 @@ import React from 'react';
 import { motion } from 'framer-motion';
 import Image from 'next/image';
 import {
-  ArrowRightIcon,
-  CheckIcon,
-  ExternalLinkIcon
+  ChevronRightIcon,
+  WalletIcon,
+  CircleCheck
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { useAccount } from "wagmi";
+import { useEffect } from "react";
+import { invalidateActivityCache } from "@/lib/client-cache";
+import { baseSepolia } from "@/lib/wagmiConfig";
 import { Token, SwapTxInfo } from './swap-interface'; // Assuming types are exported
 
 interface SwapSuccessViewProps {
   displayFromToken: Token;
   displayToToken: Token;
   calculatedValues: {
-    fromTokenValue: string; // Only fromTokenValue and toTokenValue seem directly used from calculatedValues here
+    fromTokenAmount: string;
+    fromTokenValue: string;
+    toTokenAmount: string;
     toTokenValue: string;
-    // fromTokenAmount and toTokenAmount will come from swapTxInfo for display
+    fees: Array<{ name: string; value: string; type: string }>;
+    slippage: string;
   };
   swapTxInfo: SwapTxInfo | null;
-  handleChangeButton: () => void; // For the "Swap again" button
-  formatTokenAmountDisplay: (amount: string, symbol: string) => string; // For displaying amounts from swapTxInfo
+  handleChangeButton: () => void;
+  formatTokenAmountDisplay: (amount: string, token: Token) => string; // Updated to use Token objects
 }
 
 export function SwapSuccessView({ 
@@ -33,67 +40,85 @@ export function SwapSuccessView({
   handleChangeButton,
   formatTokenAmountDisplay
 }: SwapSuccessViewProps) {
+  const { address: accountAddress } = useAccount();
+  useEffect(() => {
+    try { if (accountAddress) invalidateActivityCache(accountAddress); } catch {}
+    // Trigger pool stats revalidate (best-effort)
+    (async () => {
+      try {
+        await fetch('/api/internal/revalidate-pools', { method: 'POST' } as any);
+      } catch {}
+    })();
+  }, [accountAddress, swapTxInfo?.hash]);
   return (
     <motion.div key="success" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
-      <div className="mb-6 flex items-center justify-between bg-muted/10 rounded-lg p-4 hover:bg-muted/20 transition-colors">
-        <Button variant="ghost" className="flex items-center gap-3 p-0 h-auto hover:bg-transparent" onClick={handleChangeButton}>
-          <Image src={displayFromToken.icon} alt={displayFromToken.symbol} width={40} height={40} className="rounded-full"/>
+      <div 
+        className="mb-6 flex items-center justify-between rounded-lg border border-[var(--swap-border)] p-4 hover:bg-muted/30 transition-colors cursor-pointer" 
+        onClick={handleChangeButton}
+      >
+        <div className="flex items-center gap-3">
+          <Image src={displayFromToken.icon} alt={displayFromToken.symbol} width={32} height={32} className="rounded-full"/>
           <div className="text-left flex flex-col">
             <div className="font-medium flex items-baseline">
-              {(swapTxInfo?.fromAmount ? formatTokenAmountDisplay(swapTxInfo.fromAmount, displayFromToken.symbol) : "0") === "< 0.001" ? (
-                  <span className="text-sm text-muted-foreground">{swapTxInfo?.fromAmount ? formatTokenAmountDisplay(swapTxInfo.fromAmount, displayFromToken.symbol) : "0"}</span>
+              {(swapTxInfo?.fromAmount ? formatTokenAmountDisplay(swapTxInfo.fromAmount, displayFromToken) : "0") === "< 0.001" ? (
+                <span className="text-xs text-muted-foreground">{swapTxInfo?.fromAmount ? formatTokenAmountDisplay(swapTxInfo.fromAmount, displayFromToken) : "0"}</span>
               ) : (
-                  <span>{swapTxInfo?.fromAmount ? formatTokenAmountDisplay(swapTxInfo.fromAmount, displayFromToken.symbol) : "0"}</span>
+                <span className="text-sm">{swapTxInfo?.fromAmount ? formatTokenAmountDisplay(swapTxInfo.fromAmount, displayFromToken) : "0"}</span>
               )}
-              <span className="ml-1 text-sm text-muted-foreground">{swapTxInfo?.fromSymbol || displayFromToken.symbol}</span>
+              <span className="ml-1 text-xs text-muted-foreground">{swapTxInfo?.fromSymbol || displayFromToken.symbol}</span>
             </div>
             <div className="text-xs text-muted-foreground">{calculatedValues.fromTokenValue}</div>
           </div>
-        </Button>
-        <ArrowRightIcon className="h-5 w-5 text-muted-foreground mx-2" />
-        <Button variant="ghost" className="flex items-center gap-3 p-0 h-auto hover:bg-transparent" onClick={handleChangeButton}>
+        </div>
+        <ChevronRightIcon className="h-4 w-4 text-muted-foreground mx-2" />
+        <div className="flex items-center gap-3">
           <div className="text-right flex flex-col">
             <div className="font-medium flex items-baseline">
-              {(swapTxInfo?.toAmount ? formatTokenAmountDisplay(swapTxInfo.toAmount, displayToToken.symbol) : "0") === "< 0.001" ? (
-                <span className="text-sm text-muted-foreground">{swapTxInfo?.toAmount ? formatTokenAmountDisplay(swapTxInfo.toAmount, displayToToken.symbol) : "0"}</span>
+              {(swapTxInfo?.toAmount ? formatTokenAmountDisplay(swapTxInfo.toAmount, displayToToken) : "0") === "< 0.001" ? (
+                <span className="text-xs text-muted-foreground">{swapTxInfo?.toAmount ? formatTokenAmountDisplay(swapTxInfo.toAmount, displayToToken) : "0"}</span>
               ) : (
-                <span>{swapTxInfo?.toAmount ? formatTokenAmountDisplay(swapTxInfo.toAmount, displayToToken.symbol) : "0"}</span>
+                <span className="text-sm">{swapTxInfo?.toAmount ? formatTokenAmountDisplay(swapTxInfo.toAmount, displayToToken) : "0"}</span>
               )}
-              <span className="ml-1 text-sm text-muted-foreground">{swapTxInfo?.toSymbol || displayToToken.symbol}</span>
+              <span className="ml-1 text-xs text-muted-foreground">{swapTxInfo?.toSymbol || displayToToken.symbol}</span>
             </div>
             <div className="text-xs text-muted-foreground">{calculatedValues.toTokenValue}</div>
           </div>
-          <Image src={displayToToken.icon} alt={displayToToken.symbol} width={40} height={40} className="rounded-full"/>
-        </Button>
+          <Image src={displayToToken.icon} alt={displayToToken.symbol} width={32} height={32} className="rounded-full"/>
+        </div>
       </div>
       <div className="my-8 flex flex-col items-center justify-center">
         <motion.div
-          className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-slate-900 dark:bg-white"
+          className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-[var(--sidebar-connect-button-bg)] border border-sidebar-border overflow-hidden"
           initial={{ scale: 0.8 }}
           animate={{ scale: 1 }}
           transition={{ type: "spring", stiffness: 300, damping: 20 }}
+          style={{
+            backgroundImage: 'url(/pattern_wide.svg)',
+            backgroundSize: 'cover',
+            backgroundPosition: 'center'
+          }}
         >
-          <CheckIcon className="h-8 w-8 text-slate-50 dark:text-black" />
+          <CircleCheck className="h-8 w-8 text-sidebar-primary" />
         </motion.div>
         <div className="text-center">
           <h3 className="text-lg font-medium">Swapped</h3>
           <p className="text-muted-foreground mt-1">{swapTxInfo?.fromSymbol || displayFromToken.symbol} for {swapTxInfo?.toSymbol || displayToToken.symbol}</p>
         </div>
       </div>
-      <div className="mb-6 flex items-center justify-center">
+      <div className="mb-2 flex items-center justify-center">
         <Button
           variant="link"
-          className="text-primary dark:text-white hover:text-primary/80 dark:hover:text-white/80"
+          className="text-xs font-normal text-muted-foreground hover:text-muted-foreground/80"
           onClick={() => window.open(swapTxInfo?.explorerUrl || `https://base-sepolia.blockscout.com/`, "_blank")}
         >
           View on Explorer
-          <ExternalLinkIcon className="h-3 w-3 ml-1" />
         </Button>
       </div>
       <Button
-        className="w-full bg-slate-900 text-slate-50 hover:bg-slate-900/80 
-                           dark:bg-white dark:text-black dark:hover:bg-white/90"
-        onClick={handleChangeButton} // Changed from handleSwapAgain to handleChangeButton as per prop name
+        variant="outline"
+        className="w-full relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 text-white/75"
+        onClick={handleChangeButton}
+        style={{ backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
       >
         Swap again
       </Button>

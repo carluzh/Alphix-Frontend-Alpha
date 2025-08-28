@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getTokenPrice, getFallbackPrice } from '../../../lib/price-service';
+import { getAllTokenPrices } from '../../../lib/price-service';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET') {
@@ -8,17 +8,29 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
-    // Get BTC price
-    const btcPrice = await getTokenPrice('BTC') || getFallbackPrice('BTC');
+    console.log('[TokenPrices API] Fetching all prices in one call...');
     
-    // Get USDC price
-    const usdcPrice = await getTokenPrice('USDC') || getFallbackPrice('USDC');
+    // Get all prices in one API call - much more efficient!
+    const allPrices = await getAllTokenPrices();
     
-    return res.status(200).json({
-      BTC: btcPrice,
-      USDC: usdcPrice,
-      timestamp: Date.now()
-    });
+    console.log('[TokenPrices API] Successfully got all prices:', allPrices);
+    
+    // Provide aliases expected by UI
+    const response = {
+      BTC: allPrices.BTC,
+      aBTC: allPrices.BTC,
+      ETH: allPrices.ETH,
+      aETH: allPrices.ETH,
+      USDC: allPrices.USDC,
+      aUSDC: 1.0,
+      USDT: 1.0,
+      aUSDT: 1.0,
+      timestamp: allPrices.lastUpdated
+    };
+
+    // Edge cache hint
+    res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate=300');
+    return res.status(200).json(response);
   } catch (error: any) {
     console.error('[TokenPrices API] Error:', error);
     return res.status(500).json({

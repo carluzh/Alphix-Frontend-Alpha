@@ -125,6 +125,15 @@ export function DynamicFeeChart({ data }: DynamicFeeChartProps) {
     );
   }
 
+  // Debug: Log the data received by the chart
+  console.log('[DynamicFeeChart] Data received:', data);
+  console.log('[DynamicFeeChart] Sample points:', {
+    first: data[0],
+    last: data[data.length - 1],
+    nonZeroVolume: data.filter(d => d.volumeTvlRatio > 0),
+    nonZeroEma: data.filter(d => d.emaRatio > 0)
+  });
+
   return (
     <Card className="w-full max-w-3xl shadow-xl rounded-lg">
       <CardHeader className="w-full pt-4 pb-2">

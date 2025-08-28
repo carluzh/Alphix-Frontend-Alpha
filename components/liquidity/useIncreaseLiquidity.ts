@@ -1,11 +1,25 @@
-import { useState, useCallback, useEffect } from 'react';
-import { useAccount, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
+import React, { useState, useCallback, useEffect } from 'react';
+import { useAccount, useWriteContract, useWaitForTransactionReceipt, useSignTypedData } from 'wagmi';
 import { toast } from 'sonner';
-import { V4PositionPlanner } from '@uniswap/v4-sdk';
-import { Token } from '@uniswap/sdk-core';
-import { TOKEN_DEFINITIONS, TokenSymbol, V4_POSITION_MANAGER_ADDRESS, EMPTY_BYTES, V4_POSITION_MANAGER_ABI } from '@/lib/swap-constants';
+import { V4PositionPlanner, V4PositionManager, Pool as V4Pool, Position as V4Position } from '@uniswap/v4-sdk';
+import { TickMath } from '@uniswap/v3-sdk';
+import { Token, Ether, CurrencyAmount, Percent } from '@uniswap/sdk-core';
+import { V4_POSITION_MANAGER_ADDRESS, EMPTY_BYTES, V4_POSITION_MANAGER_ABI, PERMIT2_ADDRESS, Permit2Abi_allowance } from '@/lib/swap-constants';
+import { getToken, TokenSymbol, getTokenSymbolByAddress } from '@/lib/pools-config';
 import { baseSepolia } from '@/lib/wagmiConfig';
-import { getAddress, type Hex, BaseError, parseUnits } from 'viem';
+import { getAddress, type Hex, BaseError, parseUnits, encodeAbiParameters, keccak256 } from 'viem';
+import { getPositionDetails, getPoolState, preparePermit2BatchForPosition } from '@/lib/liquidity-utils';
+import { publicClient } from '@/lib/viemClient';
+import { prefetchService } from '@/lib/prefetch-service';
+import { invalidateActivityCache, invalidateUserPositionsCache, invalidateUserPositionIdsCache } from '@/lib/client-cache';
+import { OctagonX } from 'lucide-react';
+
+// Helper function to safely parse amounts without precision loss
+const safeParseUnits = (amount: string, decimals: number): bigint => {
+  const cleaned = (amount || '').toString().replace(/,/g, '').trim();
+  if (!cleaned || cleaned === '.' || cleaned === '< 0.0001') return 0n;
+  return parseUnits(cleaned, decimals);
+};
 import JSBI from 'jsbi';
 
 interface UseIncreaseLiquidityProps {
@@ -25,10 +39,18 @@ export interface IncreasePositionData {
   salt?: string;
 }
 
+type IncreaseOptions = { slippageBps?: number; deadlineSeconds?: number };
+
 export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquidityProps) {
   const { address: accountAddress, chainId } = useAccount();
   const { data: hash, writeContract, isPending: isIncreaseSendPending, error: increaseSendError, reset: resetWriteContract } = useWriteContract();
   const { isLoading: isIncreaseConfirming, isSuccess: isIncreaseConfirmed, error: increaseConfirmError, status: waitForTxStatus } = useWaitForTransactionReceipt({ hash });
+  const { signTypedDataAsync } = useSignTypedData();
+
+  // Log minimal useAccount details for debugging
+  useEffect(() => {
+    console.log("useAccount:", { accountAddress, chainId });
+  }, [accountAddress, chainId]);
 
   const [isIncreasing, setIsIncreasing] = useState(false);
 
@@ -59,7 +81,7 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
     throw new Error('Unable to determine NFT token ID from position data. Please contact support.');
   }, []);
 
-  const increaseLiquidity = useCallback(async (positionData: IncreasePositionData) => {
+  const increaseLiquidity = useCallback(async (positionData: IncreasePositionData, opts?: IncreaseOptions) => {
     if (!accountAddress || !chainId) {
       toast.error("Wallet not connected. Please connect your wallet and try again.");
       return;
@@ -70,164 +92,260 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
     }
 
     setIsIncreasing(true);
-    const toastId = toast.loading("Preparing increase transaction...");
 
     try {
-      const token0Def = TOKEN_DEFINITIONS[positionData.token0Symbol];
-      const token1Def = TOKEN_DEFINITIONS[positionData.token1Symbol];
+      const token0Def = getToken(positionData.token0Symbol);
+      const token1Def = getToken(positionData.token1Symbol);
 
       if (!token0Def || !token1Def) {
         throw new Error("Token definitions not found for one or both tokens in the position.");
       }
-      if (!token0Def.addressRaw || !token1Def.addressRaw) {
+      if (!token0Def.address || !token1Def.address) {
         throw new Error("Token addresses are missing in definitions.");
       }
 
-      const sdkToken0 = new Token(chainId, getAddress(token0Def.addressRaw), token0Def.decimals, token0Def.symbol);
-      const sdkToken1 = new Token(chainId, getAddress(token1Def.addressRaw), token1Def.decimals, token1Def.symbol);
+      // (planner path vars removed; using v4 addCallParameters path)
 
-      const planner = new V4PositionPlanner();
-      
-      // Get the actual NFT token ID
+      // Preferred v4 SDK path: addCallParameters with batchPermit/useNative
       const nftTokenId = await getTokenIdFromPosition(positionData);
-      const tokenIdJSBI = JSBI.BigInt(nftTokenId.toString());
-      
-      // Convert additional amounts to proper units using parseUnits, then to JSBI
-      const amount0Raw = parseUnits(positionData.additionalAmount0, token0Def.decimals);
-      const amount1Raw = parseUnits(positionData.additionalAmount1, token1Def.decimals);
-      
-      // Convert to JSBI BigInt
-      const amount0MaxJSBI = JSBI.BigInt(amount0Raw.toString());
-      const amount1MaxJSBI = JSBI.BigInt(amount1Raw.toString());
-      
-      // For liquidity calculation, we need to determine which token has a non-zero amount
-      let liquidityJSBI: JSBI;
-      let inputAmount: string;
-      let inputTokenSymbol: string;
-      
-      // Determine which token is being added (for out-of-range positions, one will be 0)
-      if (parseFloat(positionData.additionalAmount0) > 0 && parseFloat(positionData.additionalAmount1) > 0) {
-        // Both tokens - use token0 for calculation
-        inputAmount = positionData.additionalAmount0;
-        inputTokenSymbol = positionData.token0Symbol;
-      } else if (parseFloat(positionData.additionalAmount0) > 0) {
-        // Only token0
-        inputAmount = positionData.additionalAmount0;
-        inputTokenSymbol = positionData.token0Symbol;
-      } else if (parseFloat(positionData.additionalAmount1) > 0) {
-        // Only token1
-        inputAmount = positionData.additionalAmount1;
-        inputTokenSymbol = positionData.token1Symbol;
-      } else {
-        throw new Error("No valid token amounts provided");
-      }
 
+      // Fetch on-chain position details and pool state
+      const details = await getPositionDetails(nftTokenId);
+      // Build currencies strictly in poolKey order to avoid side mixups
+      const symC0 = getTokenSymbolByAddress(getAddress(details.poolKey.currency0));
+      const symC1 = getTokenSymbolByAddress(getAddress(details.poolKey.currency1));
+      if (!symC0 || !symC1) throw new Error('Token symbols not found for pool currencies');
+      const defC0 = getToken(symC0)!;
+      const defC1 = getToken(symC1)!;
+      const isNativeC0 = getAddress(details.poolKey.currency0) === '0x0000000000000000000000000000000000000000';
+      const currency0 = isNativeC0 ? Ether.onChain(chainId) : new Token(chainId, getAddress(defC0.address), defC0.decimals, defC0.symbol);
+      const currency1 = new Token(chainId, getAddress(defC1.address), defC1.decimals, defC1.symbol);
+
+      const keyTuple = [{
+        currency0: getAddress(details.poolKey.currency0),
+        currency1: getAddress(details.poolKey.currency1),
+        fee: Number(details.poolKey.fee),
+        tickSpacing: Number(details.poolKey.tickSpacing),
+        hooks: getAddress(details.poolKey.hooks),
+      }];
+      const encoded = encodeAbiParameters([
+        { type: 'tuple', components: [
+          { name: 'currency0', type: 'address' },
+          { name: 'currency1', type: 'address' },
+          { name: 'fee', type: 'uint24' },
+          { name: 'tickSpacing', type: 'int24' },
+          { name: 'hooks', type: 'address' },
+        ]}
+      ], keyTuple as any);
+      const poolId = keccak256(encoded) as Hex;
+      const state = await getPoolState(poolId);
+
+      const pool = new V4Pool(
+        currency0 as any,
+        currency1,
+        details.poolKey.fee,
+        details.poolKey.tickSpacing,
+        details.poolKey.hooks,
+        JSBI.BigInt(state.sqrtPriceX96.toString()),
+        JSBI.BigInt(state.liquidity.toString()),
+        state.tick,
+      );
+
+      let amount0RawUser = safeParseUnits(positionData.additionalAmount0 || '0', token0Def.decimals);
+      let amount1RawUser = safeParseUnits(positionData.additionalAmount1 || '0', token1Def.decimals);
+      const outOfRangeBelow = state.tick < details.tickLower;
+      const outOfRangeAbove = state.tick > details.tickUpper;
+      if (outOfRangeBelow) {
+        // below range -> only token0 contributes
+        amount1RawUser = 0n;
+      } else if (outOfRangeAbove) {
+        // above range -> only token1 contributes
+        amount0RawUser = 0n;
+      }
+      if (amount0RawUser === 0n && amount1RawUser === 0n) {
+        toast.error('Please enter a valid amount to add');
+        setIsIncreasing(false);
+        return;
+      }
+      // Map user-entered amounts to poolKey order
+      let amountC0Raw = positionData.token0Symbol === symC0 ? amount0RawUser : amount1RawUser;
+      let amountC1Raw = positionData.token1Symbol === symC1 ? amount1RawUser : amount0RawUser;
+
+      // Ensure the non-active side cannot be the binding constraint in-range by bumping it to the required minimum
       try {
-        const calcResponse = await fetch('/api/liquidity/calculate-liquidity-parameters', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            token0Symbol: positionData.token0Symbol,
-            token1Symbol: positionData.token1Symbol,
-            inputAmount: inputAmount,
-            inputTokenSymbol: inputTokenSymbol,
-            userTickLower: positionData.tickLower,
-            userTickUpper: positionData.tickUpper,
-            chainId: chainId,
-          }),
-        });
+        const sqrtA = TickMath.getSqrtRatioAtTick(details.tickLower);
+        const sqrtB = TickMath.getSqrtRatioAtTick(details.tickUpper);
+        const sqrtP = JSBI.BigInt(state.sqrtPriceX96.toString());
 
-        if (calcResponse.ok) {
-          const result = await calcResponse.json();
-          liquidityJSBI = JSBI.BigInt(result.liquidity);
-          console.log("Calculated liquidity for increase:", result.liquidity, "from", inputAmount, inputTokenSymbol);
-        } else {
-          console.warn("Failed to calculate liquidity, using estimated value");
-          // For fallback, use a more reasonable estimate based on the actual input amount
-          const inputAmountRaw = inputTokenSymbol === positionData.token0Symbol ? amount0Raw : amount1Raw;
-          const inputAmountJSBI = JSBI.BigInt(inputAmountRaw.toString());
-          const estimatedLiquidity = JSBI.divide(inputAmountJSBI, JSBI.BigInt(1000)); // Simple estimation
-          liquidityJSBI = JSBI.greaterThan(estimatedLiquidity, JSBI.BigInt(0)) ? estimatedLiquidity : JSBI.BigInt(1000000);
+        const ZERO = JSBI.BigInt(0);
+        const mul = (a: JSBI, b: JSBI) => JSBI.multiply(a, b);
+        const add = (a: JSBI, b: JSBI) => JSBI.add(a, b);
+        const sub = (a: JSBI, b: JSBI) => JSBI.subtract(a, b);
+        const div = (a: JSBI, b: JSBI) => JSBI.divide(a, b);
+        const ceilDiv = (a: JSBI, b: JSBI) => div(add(a, sub(b, JSBI.BigInt(1))), b);
+
+        const inRange = JSBI.greaterThan(sqrtP, sqrtA) && JSBI.lessThan(sqrtP, sqrtB);
+        if (inRange) {
+          // L_from0 = amt0 * (sqrtP*sqrtB)/(sqrtB - sqrtP)
+          const amt0JSBI = JSBI.BigInt(amountC0Raw.toString());
+          const amt1JSBI = JSBI.BigInt(amountC1Raw.toString());
+          const num0 = mul(amt0JSBI, mul(sqrtP, sqrtB));
+          const den0 = sub(sqrtB, sqrtP);
+          const L0 = den0 === ZERO ? ZERO : div(num0, den0);
+          // L_from1 = amt1 / (sqrtP - sqrtA)
+          const den1 = sub(sqrtP, sqrtA);
+          const L1 = den1 === ZERO ? ZERO : div(amt1JSBI, den1);
+
+          // If token1 is binding (L1 < L0) while user provided token0, bump amt1 to required
+          if (JSBI.greaterThan(L0, L1) && amountC0Raw > 0n) {
+            // required1 = ceil(L0 * (sqrtP - sqrtA))
+            const req1 = ceilDiv(mul(L0, den1), JSBI.BigInt(1));
+            const req1Big = BigInt(JSBI.toNumber(req1));
+            if (req1Big > amountC1Raw) {
+              amountC1Raw = req1Big;
+            }
+          }
+          // If token0 is binding while user provided token1, bump amt0 to required
+          if (JSBI.greaterThan(L1, L0) && amountC1Raw > 0n) {
+            // required0 = ceil(L1 * (sqrtB - sqrtP) / (sqrtP*sqrtB))
+            const num = mul(L1, sub(sqrtB, sqrtP));
+            const den = mul(sqrtP, sqrtB);
+            const req0 = ceilDiv(num, den);
+            const req0Big = BigInt(JSBI.toNumber(req0));
+            if (req0Big > amountC0Raw) {
+              amountC0Raw = req0Big;
+            }
+          }
         }
-      } catch (error) {
-        console.warn("Error calculating liquidity, using fallback:", error);
-        // For fallback, use a more reasonable estimate
-        const inputAmountRaw = inputTokenSymbol === positionData.token0Symbol ? amount0Raw : amount1Raw;
-        const inputAmountJSBI = JSBI.BigInt(inputAmountRaw.toString());
-        const estimatedLiquidity = JSBI.divide(inputAmountJSBI, JSBI.BigInt(1000)); // Simple estimation
-        liquidityJSBI = JSBI.greaterThan(estimatedLiquidity, JSBI.BigInt(0)) ? estimatedLiquidity : JSBI.BigInt(1000000);
+      } catch {}
+      const amt0 = CurrencyAmount.fromRawAmount(currency0, amountC0Raw.toString());
+      const amt1 = CurrencyAmount.fromRawAmount(currency1, amountC1Raw.toString());
+
+      const position = V4Position.fromAmounts({
+        pool,
+        tickLower: details.tickLower,
+        tickUpper: details.tickUpper,
+        amount0: amt0.quotient,
+        amount1: amt1.quotient,
+        useFullPrecision: true,
+      });
+
+      // Guard ZERO_LIQUIDITY early for nicer UX
+      if (JSBI.equal(position.liquidity, JSBI.BigInt(0))) {
+        const err: any = new Error('ZERO_LIQUIDITY');
+        err.__zero = true;
+        throw err;
       }
 
-      // Increase the position - this adds liquidity to existing position
-      planner.addIncrease(tokenIdJSBI, liquidityJSBI, amount0MaxJSBI, amount1MaxJSBI, EMPTY_BYTES || '0x');
-      
-      // Settle the tokens from the user's wallet
-      planner.addSettlePair(sdkToken0.wrapped, sdkToken1.wrapped);
+      // Enforce exact adds: zero slippage
+      const slippage = new Percent(0);
+      const deadline = (opts?.deadlineSeconds && opts.deadlineSeconds > 0)
+        ? Math.floor(Date.now() / 1000) + opts.deadlineSeconds
+        : Math.floor(Date.now() / 1000) + 20 * 60;
 
-      resetWriteContract(); 
-      
-      // Calculate deadline (60 seconds from now)
-      const deadline = Math.floor(Date.now() / 1000) + 60;
-      
-      // Encode actions and params into single bytes for modifyLiquidities
-      const unlockData = planner.finalize();
-      
-      console.log("Increase transaction debug:", {
-        unlockData,
-        deadline,
+      // Check existing Permit2 allowances; only sign batch if needed (poolKey order)
+      let addOptionsBatch: any = {};
+      try {
+        const now = Math.floor(Date.now() / 1000);
+        let needPermit = false;
+        // token0 ERC20 check
+        if (!isNativeC0 && amountC0Raw > 0n) {
+          const [amt, exp] = (await publicClient.readContract({
+            address: PERMIT2_ADDRESS,
+            abi: Permit2Abi_allowance,
+            functionName: 'allowance',
+            args: [accountAddress as `0x${string}`, getAddress(defC0.address), V4_POSITION_MANAGER_ADDRESS as `0x${string}`],
+          }) as readonly [bigint, bigint, bigint]).slice(0,2) as unknown as [bigint, bigint];
+          if (!(amt >= amountC0Raw && Number(exp) > now)) needPermit = true;
+        }
+        // token1 ERC20 check
+        if (amountC1Raw > 0n) {
+          const [amt, exp] = (await publicClient.readContract({
+            address: PERMIT2_ADDRESS,
+            abi: Permit2Abi_allowance,
+            functionName: 'allowance',
+            args: [accountAddress as `0x${string}`, getAddress(defC1.address), V4_POSITION_MANAGER_ADDRESS as `0x${string}`],
+          }) as readonly [bigint, bigint, bigint]).slice(0,2) as unknown as [bigint, bigint];
+          if (!(amt >= amountC1Raw && Number(exp) > now)) needPermit = true;
+        }
+        if (needPermit) {
+          const prepared = await preparePermit2BatchForPosition(nftTokenId, accountAddress as `0x${string}`, chainId, deadline);
+          if (prepared?.message?.details && prepared.message.details.length > 0) {
+            const signature = await signTypedDataAsync({
+              domain: prepared.domain as any,
+              types: prepared.types as any,
+              primaryType: prepared.primaryType,
+              message: prepared.message as any,
+            });
+            addOptionsBatch = {
+              batchPermit: {
+                owner: accountAddress,
+                permitBatch: prepared.message,
+                signature,
+              },
+            };
+          }
+        }
+      } catch (e) {
+        // continue without batch permit
+      }
+      const addOptions: any = {
+        slippageTolerance: slippage,
+        deadline: String(deadline),
+        hookData: '0x',
         tokenId: nftTokenId.toString(),
-        positionManager: V4_POSITION_MANAGER_ADDRESS
-      });
-      
+        ...addOptionsBatch,
+        ...(isNativeC0 ? { useNative: Ether.onChain(chainId) } : {}),
+      };
+
+      const { calldata, value } = V4PositionManager.addCallParameters(position, addOptions) as { calldata: Hex; value: string | number | bigint };
+
+      resetWriteContract();
       writeContract({
         address: V4_POSITION_MANAGER_ADDRESS as Hex,
         abi: V4_POSITION_MANAGER_ABI,
-        functionName: 'modifyLiquidities',
-        args: [unlockData as Hex, deadline],
-        chainId: chainId,
-      });
+        functionName: 'multicall',
+        args: [[calldata] as Hex[]],
+        value: BigInt(value || 0),
+        chainId,
+      } as any);
 
-      // Dismiss the preparation toast since transaction is now being submitted
-      toast.dismiss(toastId);
+      // No intermediate toasts
 
     } catch (error: any) {
       console.error("Error preparing increase transaction:", error);
-      toast.error("Increase Preparation Failed", { id: toastId, description: error.message || "Could not prepare the transaction." });
+      const msg = (error?.message || '').toString();
+      if ((error as any)?.__zero || msg.includes('ZERO_LIQUIDITY')) {
+        toast.error("Try a larger Amount", { icon: React.createElement(OctagonX, { className: 'h-4 w-4 text-red-500' }) });
+      } else {
+        toast.error("Increase Failed", { description: msg || "Could not prepare the transaction." });
+      }
       setIsIncreasing(false);
     }
   }, [accountAddress, chainId, writeContract, resetWriteContract, getTokenIdFromPosition]);
 
   useEffect(() => {
-    if (isIncreaseSendPending) {
-      // toast.loading is already shown by increaseLiquidity
-    } else if (increaseSendError) {
-      toast.dismiss();
+    if (increaseSendError) {
       const message = increaseSendError instanceof BaseError ? increaseSendError.shortMessage : increaseSendError.message;
-      toast.error("Transaction Submission Failed", { description: message });
+      toast.error("Increase Failed", { description: message });
       setIsIncreasing(false);
-    } else if (hash && waitForTxStatus === 'pending' && !isIncreaseConfirming) {
-       toast.loading("Transaction submitted. Waiting for confirmation...", { id: hash });
     }
-  }, [isIncreaseSendPending, increaseSendError, hash, waitForTxStatus, isIncreaseConfirming]);
+  }, [increaseSendError]);
 
   useEffect(() => {
     if (!hash) return;
 
-    if (isIncreaseConfirming) {
-      toast.loading("Confirming transaction...", { id: hash });
-    } else if (isIncreaseConfirmed) {
-      toast.success("Liquidity Increased!", {
-        id: hash,
-        description: "Your position has been successfully increased.",
-        action: baseSepolia?.blockExplorers?.default?.url 
-          ? { label: "View Tx", onClick: () => window.open(`${baseSepolia.blockExplorers.default.url}/tx/${hash}`, '_blank') }
-          : undefined,
-      });
+    if (isIncreaseConfirmed) {
+      // Delegate the sole success toast to page-level logic
       onLiquidityIncreased();
+      try { if (accountAddress) prefetchService.requestPositionsRefresh({ owner: accountAddress, reason: 'increase' }); } catch {}
+      try { if (accountAddress) invalidateActivityCache(accountAddress); } catch {}
+      try { if (accountAddress) { invalidateUserPositionsCache(accountAddress); invalidateUserPositionIdsCache(accountAddress); } } catch {}
+      try { fetch('/api/internal/revalidate-pools', { method: 'POST' } as any).catch(() => {}); } catch {}
       setIsIncreasing(false);
     } else if (increaseConfirmError) {
        const message = increaseConfirmError instanceof BaseError ? increaseConfirmError.shortMessage : increaseConfirmError.message;
-      toast.error("Increase Confirmation Failed", {
+      toast.error("Increase Failed", {
         id: hash,
         description: message,
         action: baseSepolia?.blockExplorers?.default?.url 
@@ -236,7 +354,7 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
       });
       setIsIncreasing(false);
     }
-  }, [isIncreaseConfirming, isIncreaseConfirmed, increaseConfirmError, hash, onLiquidityIncreased, baseSepolia?.blockExplorers?.default?.url]);
+  }, [isIncreaseConfirmed, increaseConfirmError, hash, onLiquidityIncreased, baseSepolia?.blockExplorers?.default?.url]);
 
   return {
     increaseLiquidity,

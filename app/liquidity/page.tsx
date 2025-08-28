@@ -1,23 +1,8 @@
 "use client";
 
 import { AppLayout } from "@/components/app-layout";
+import { formatUSD as formatUSDShared } from "@/lib/format";
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { ArrowRightLeftIcon, PlusIcon, MinusIcon, ArrowLeftIcon, MoreHorizontal, ArrowUpDown, ExternalLinkIcon, RefreshCwIcon, Settings2Icon, XIcon, TrendingUpIcon, ChevronUpIcon } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { 
-  Dialog, 
-  DialogContent, 
-  DialogHeader, 
-  DialogDescription, 
-  DialogFooter,
-  DialogTrigger,
-  DialogClose
-} from "@/components/ui/dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { TabsList, TabsTrigger, Tabs, TabsContent } from "@/components/ui/tabs";
 import {
   Table,
   TableBody,
@@ -26,8 +11,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
 import Image from "next/image";
+
 import * as React from "react";
 import { 
   ColumnDef,
@@ -36,105 +21,103 @@ import {
   getSortedRowModel,
   SortingState,
   useReactTable,
-  RowData
+  RowData,
+  ColumnSizingState
 } from "@tanstack/react-table";
-import { Bar, BarChart, CartesianGrid, XAxis } from "recharts";
-import {
-  ChartConfig,
-  ChartContainer,
-  ChartTooltip,
-  ChartTooltipContent,
-} from "@/components/ui/chart";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { MobileLiquidityList } from "@/components/MobileLiquidityList";
-import { MobilePoolDetails } from "@/components/MobilePoolDetails";
 import type { ProcessedPosition } from "../../pages/api/liquidity/get-positions";
 import { 
     useAccount, 
-    useWriteContract, 
-    useSendTransaction, 
-    useWaitForTransactionReceipt,
-    useBalance
 } from "wagmi";
 import { toast } from "sonner";
-import Link from "next/link";
-import { TOKEN_DEFINITIONS, TokenSymbol } from "../../lib/swap-constants";
-import { baseSepolia } from "../../lib/wagmiConfig";
-import { ethers } from "ethers";
-import { ERC20_ABI } from "../../lib/abis/erc20";
-import { type Hex, formatUnits as viemFormatUnits, parseUnits, type Abi } from "viem";
-import { position_manager_abi } from "../../lib/abis/PositionManager_abi";
-import { getFromCache, setToCache, getUserPositionsCacheKey, getPoolStatsCacheKey, getPoolDynamicFeeCacheKey } from "../../lib/client-cache"; // Import cache functions
-import { TickRangeControl } from "@/components/TickRangeControl";
-import { Pool } from "../../types"; // Import Pool interface from types
+import { getEnabledPools, getToken, getPoolSubgraphId, getPoolById } from "../../lib/pools-config";
+import { getFromCache, getFromCacheWithTtl, setToCache, getUserPositionsCacheKey, getPoolStatsCacheKey, loadUserPositionIds, derivePositionsFromIds, getPoolFeeBps } from "../../lib/client-cache";
+import { Pool } from "../../types";
 import { AddLiquidityModal } from "@liquidity/AddLiquidityModal";
 import { useRouter } from "next/navigation";
-// import { DEFAULT_TICK_SPACING } from "@/components/TickRangeControl"; // Assuming DEFAULT_TICK_SPACING is exported or accessible
+import { ChevronUpIcon, ChevronDownIcon, ChevronsUpDownIcon, PlusIcon } from "lucide-react";
+import { ArrowUpRight, ArrowDownRight } from "lucide-react";
+import { TOKEN_DEFINITIONS, type TokenSymbol } from "@/lib/pools-config";
+import { useIncreaseLiquidity, type IncreasePositionData } from "@/components/liquidity/useIncreaseLiquidity";
+import { useDecreaseLiquidity, type DecreasePositionData } from "@/components/liquidity/useDecreaseLiquidity";
+import { toast as sonnerToast } from "sonner";
 
 const SDK_MIN_TICK = -887272;
 const SDK_MAX_TICK = 887272;
-const DEFAULT_TICK_SPACING = 60; // Define it locally
-const TICK_BARS_COUNT = 31; // More bars for finer visualization
-const TICKS_PER_BAR = 10 * DEFAULT_TICK_SPACING; // Each bar represents 10× tickspacing
+const DEFAULT_TICK_SPACING = 60;
 
-const mockPools: Pool[] = [
-  {
-    id: "yusdc-btcrl",
-    tokens: [
-      { symbol: "YUSDC", icon: "/YUSD.png" },
-      { symbol: "BTCRL", icon: "/BTCRL.png" }
-    ],
-    pair: "YUSDC / BTCRL",
-    volume24h: "Loading...",
-    volume7d: "Loading...",
-    fees24h: "Loading...",
-    fees7d: "Loading...",
-    liquidity: "Loading...",
-    apr: "Loading...",
-    highlighted: true,
-    volumeChangeDirection: 'loading',
-    tvlChangeDirection: 'loading',
-  }
-];
+const generatePoolsFromConfig = (): Pool[] => {
+  const enabledPools = getEnabledPools();
+  
+  return enabledPools.map(poolConfig => {
+    const token0 = getToken(poolConfig.currency0.symbol);
+    const token1 = getToken(poolConfig.currency1.symbol);
+    
+    if (!token0 || !token1) {
+      console.warn(`Missing token configuration for pool ${poolConfig.id}`);
+      return null;
+    }
+    
+    // Debugging: Log the poolConfig to see if 'type' is present
+    console.log(`[generatePoolsFromConfig] Processing pool: ${poolConfig.id}, Type: ${poolConfig.type}`);
+
+    return {
+      id: poolConfig.id,
+      tokens: [
+        { symbol: token0.symbol, icon: token0.icon },
+        { symbol: token1.symbol, icon: token1.icon }
+      ],
+      pair: `${token0.symbol} / ${token1.symbol}`,
+      volume24h: "Loading...",
+      volume7d: "Loading...",
+      fees24h: "Loading...",
+      fees7d: "Loading...",
+      liquidity: "Loading...",
+      apr: "Loading...",
+      highlighted: poolConfig.featured,
+      volumeChangeDirection: 'loading',
+      tvlChangeDirection: 'loading',
+      type: poolConfig.type, // Include the type from poolConfig
+    } as Pool;
+  }).filter(Boolean) as Pool[];
+};
+
+const dynamicPools = generatePoolsFromConfig();
+// Debugging: Log the final Pool object created for each pool
+console.log("[generatePoolsFromConfig] Final generated pools:", dynamicPools);
 
 declare module '@tanstack/react-table' {
-  interface TableMeta<TData extends RowData> {
-    explorerBaseUrl?: string;
+  interface ColumnMeta<TData extends RowData, TValue> {
+    hidePriority?: number;
   }
 }
 
-const chartData = Array.from({ length: 60 }, (_, i) => {
-  const date = new Date();
-  date.setDate(date.getDate() - i);
-  return {
-    date: date.toISOString().split('T')[0],
-    volume: Math.floor(Math.random() * 200000) + 100000,
-    tvl: Math.floor(Math.random() * 100000) + 1000000,
-  };
-}).reverse();
-
-const chartConfig = {
-  views: { label: "Daily Values" },
-  volume: { label: "Volume", color: "hsl(var(--chart-1))" },
-  tvl: { label: "TVL", color: "hsl(var(--chart-2))" },
-} satisfies ChartConfig;
-
-// Format USD value
 const formatUSD = (value: number) => {
-  if (value < 0.01) return "< $0.01";
-  if (value < 1000) return `$${value.toFixed(2)}`;
-  return `$${(value).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+  if (!isFinite(value)) return "$0.00";
+  if (value >= 1_000_000) return formatUSDShared(value);
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value);
+};
+
+const formatAPR = (aprValue: number) => {
+  if (!isFinite(aprValue)) return '—';
+  if (aprValue < 1000) return `${aprValue.toFixed(2)}%`;
+  // large APRs: compact to K with two decimals
+  return `${(aprValue / 1000).toFixed(2)}K%`;
 };
 
 export default function LiquidityPage() {
-  const [isLoadingPositions, setIsLoadingPositions] = useState(false);
-  const [userPositions, setUserPositions] = useState<ProcessedPosition[]>([]); // Added state for all user positions
-  const [activeChart, setActiveChart] = React.useState<keyof typeof chartConfig>("volume");
+  const [userPositions, setUserPositions] = useState<ProcessedPosition[]>([]);
   const [sorting, setSorting] = React.useState<SortingState>([]);
-
-  const [poolsData, setPoolsData] = useState<Pool[]>(mockPools); // State for dynamic pool data
+  const [columnSizing, setColumnSizing] = useState<ColumnSizingState>({});
+  const [poolsData, setPoolsData] = useState<Pool[]>(dynamicPools);
   const isMobile = useIsMobile();
-  const { address: accountAddress, isConnected, chain } = useAccount();
+  const { address: accountAddress, isConnected } = useAccount();
   const [selectedPoolId, setSelectedPoolId] = useState<string>("");
   const [windowWidth, setWindowWidth] = useState<number>(
     typeof window !== 'undefined' ? window.innerWidth : 1200
@@ -142,8 +125,85 @@ export default function LiquidityPage() {
   const [addLiquidityOpen, setAddLiquidityOpen] = useState(false);
   const [selectedPoolApr, setSelectedPoolApr] = useState<string | undefined>(undefined);
   const router = useRouter();
+  const [selectedCategory, setSelectedCategory] = useState<string>('All');
+  // Removed expanded row behavior
+  const [poolDataByPoolId, setPoolDataByPoolId] = useState<Record<string, any>>({});
+  const [priceMap, setPriceMap] = useState<Record<string, number>>({});
+  const [isLoadingPoolStates, setIsLoadingPoolStates] = useState(true);
 
-  // Add resize listener
+  const determineBaseTokenForPriceDisplay = useCallback((token0: string, token1: string): string => {
+    if (!token0 || !token1) return token0;
+    const quotePriority: Record<string, number> = {
+      'aUSDC': 10, 'aUSDT': 9, 'USDC': 8, 'USDT': 7, 'aETH': 6, 'ETH': 5, 'YUSD': 4, 'mUSDT': 3,
+    };
+    const token0Priority = quotePriority[token0] || 0;
+    const token1Priority = quotePriority[token1] || 0;
+    return token1Priority > token0Priority ? token1 : token0;
+  }, []);
+
+  const convertTickToPrice = useCallback((tick: number, currentPoolTick: number | null, currentPrice: string | null, baseTokenForPriceDisplay: string, token0Symbol: string, token1Symbol: string): string => {
+    if (tick === SDK_MAX_TICK) return '∞';
+    if (tick === SDK_MIN_TICK) return '0.00';
+    if (currentPoolTick === null || !currentPrice) return 'N/A';
+    const currentPriceNum = parseFloat(currentPrice);
+    if (isNaN(currentPriceNum) || currentPriceNum <= 0) return 'N/A';
+    let priceAtTick: number;
+    const priceDelta = Math.pow(1.0001, tick - currentPoolTick);
+    if (baseTokenForPriceDisplay === token0Symbol) {
+      priceAtTick = 1 / (currentPriceNum * priceDelta);
+    } else {
+      priceAtTick = currentPriceNum * priceDelta;
+    }
+    if (!isFinite(priceAtTick) || isNaN(priceAtTick)) return 'N/A';
+    if (priceAtTick < 1e-11 && priceAtTick > 0) return '0';
+    if (priceAtTick > 1e30) return '∞';
+    const displayDecimals = (baseTokenForPriceDisplay === token0Symbol
+      ? (TOKEN_DEFINITIONS[token0Symbol as TokenSymbol]?.displayDecimals ?? 4)
+      : (TOKEN_DEFINITIONS[token1Symbol as TokenSymbol]?.displayDecimals ?? 4));
+    return priceAtTick.toFixed(displayDecimals);
+  }, []);
+
+  const formatTokenDisplayAmount = (amount: string) => {
+    const num = parseFloat(amount);
+    if (isNaN(num)) return amount;
+    if (num === 0) return "0.00";
+    if (num > 0 && num < 0.0001) return "< 0.0001";
+    return num.toFixed(4);
+  };
+
+  const formatAgeShort = (seconds: number | undefined) => {
+    if (!seconds || !isFinite(seconds)) return '';
+    const d = Math.floor(seconds / 86400);
+    if (d >= 1) return `${d}d`;
+    const h = Math.floor(seconds / 3600);
+    if (h >= 1) return `${h}h`;
+    const m = Math.floor(seconds / 60);
+    return `${m}m`;
+  };
+
+  const { increaseLiquidity } = useIncreaseLiquidity({
+    onLiquidityIncreased: () => {
+      sonnerToast.success("Liquidity Increased");
+      // Consider a targeted position refresh here
+    },
+  });
+
+  const { decreaseLiquidity, compoundFees, claimFees } = useDecreaseLiquidity({
+    onLiquidityDecreased: () => {
+      sonnerToast.success("Liquidity Decreased");
+      // Consider a targeted position refresh here
+    },
+    onFeesCollected: () => {
+      sonnerToast.success("Fees Collected");
+      // Consider a targeted position refresh here
+    },
+  });
+
+  const categories = useMemo(() => {
+    const types = Array.from(new Set((poolsData || []).map(p => p.type).filter(Boolean))) as string[];
+    return ['All', ...types];
+  }, [poolsData]);
+
   useEffect(() => {
     const handleResize = () => {
       setWindowWidth(window.innerWidth);
@@ -157,309 +217,201 @@ export default function LiquidityPage() {
     }
   }, []);
 
-  // Fetch all user positions
   useEffect(() => {
     if (isConnected && accountAddress) {
-      const cacheKey = getUserPositionsCacheKey(accountAddress);
-      const cachedPositions = getFromCache<ProcessedPosition[]>(cacheKey);
-
-      if (cachedPositions) {
-        console.log("[Cache HIT] Using cached user positions for", accountAddress);
-        setUserPositions(cachedPositions);
-        setIsLoadingPositions(false);
-        return;
-      }
-
-      console.log("[Cache MISS] Fetching user positions from API for", accountAddress);
-      setIsLoadingPositions(true);
-      fetch(`/api/liquidity/get-positions?ownerAddress=${accountAddress}`)
-        .then(res => {
-          if (!res.ok) { throw new Error(`Failed to fetch positions: ${res.statusText}`); }
-          return res.json();
-        })
-        .then((data: ProcessedPosition[] | { message: string }) => {
-          if (Array.isArray(data)) {
-            setUserPositions(data);
-            setToCache(cacheKey, data); // Cache the fetched positions
-            console.log("[Cache SET] Cached user positions for", accountAddress);
-          } else {
-            console.error("Error fetching positions on main page:", data.message);
-            toast.error("Could not load your positions for counts", { description: data.message });
-            setUserPositions([]);
-          }
-        })
-        .catch(error => {
-          console.error("Failed to fetch user positions for counts:", error);
-          toast.error("Failed to load your positions for counts.", { description: error.message });
+      (async () => {
+        try {
+          const ids = await loadUserPositionIds(accountAddress);
+          const positions = await derivePositionsFromIds(accountAddress, ids);
+          setUserPositions(positions as any);
+        } catch (error) {
+          console.error("Failed to load derived positions:", error);
           setUserPositions([]);
-        })
-        .finally(() => {
-          setIsLoadingPositions(false);
-        });
+        }
+      })();
     } else {
-      setUserPositions([]); // Clear positions if not connected
+      setUserPositions([]);
     }
   }, [isConnected, accountAddress]);
 
-  // useEffect to fetch rolling volume and fees for each pool
   useEffect(() => {
-    const fetchPoolStats = async (pool: Pool): Promise<Partial<Pool>> => {
-      const apiPoolId = pool.id === 'yusdc-btcrl' ? "0xbcc20db9b797e211e508500469e553111c6fa8d80f7896e6db60167bcf18ce13" : pool.id;
-      const statsCacheKey = getPoolStatsCacheKey(apiPoolId);
-      let cachedStats = getFromCache<Partial<Pool>>(statsCacheKey);
-
-      // If we have cached stats, we might still need to fetch/recalculate APR if it's not there or uses a separate fee cache
-      // For simplicity, if basic stats are cached, we'll try to use them and then fetch fee separately if needed for APR.
-
-      if (cachedStats && cachedStats.apr && cachedStats.volume24hUSD !== undefined && cachedStats.tvlUSD !== undefined) {
-        console.log(`[Cache HIT] Using fully cached stats (incl. APR) for pool: ${pool.pair}, API ID: ${apiPoolId}`);
-        return cachedStats; 
-      }
-      
-      console.log(`[Cache MISS or APR missing] Fetching/Recomputing stats for pool: ${pool.pair}, using API ID: ${apiPoolId}`);
-
-      let volume24hUSD: number | undefined = cachedStats?.volume24hUSD;
-      let fees24hUSD: number | undefined = cachedStats?.fees24hUSD; // Assuming fees are part of this cache if available
-      let volume7dUSD: number | undefined = cachedStats?.volume7dUSD;
-      let fees7dUSD: number | undefined = cachedStats?.fees7dUSD;
-      let tvlUSD: number | undefined = cachedStats?.tvlUSD;
-      let calculatedApr = cachedStats?.apr || "Loading...";
-      let volume48hUSD: number | undefined = cachedStats?.volume48hUSD; // Added for 48h volume
-      let volumeChangeDirection: 'up' | 'down' | 'neutral' | 'loading' = cachedStats?.volumeChangeDirection || 'loading'; // Added for volume change
-      let tvlYesterdayUSD: number = cachedStats?.tvlYesterdayUSD ?? 0; // Added for TVL from yesterday, initialized to 0
-      let tvlChangeDirection: 'up' | 'down' | 'neutral' | 'loading' = cachedStats?.tvlChangeDirection || 'loading'; // Added for TVL change
-
+    const fetchPrices = async () => {
       try {
-        // Fetch data only if we don't have all the required data cached or if a direction is still loading
-        if (volume24hUSD === undefined || tvlUSD === undefined || fees24hUSD === undefined || volume48hUSD === undefined || tvlYesterdayUSD === undefined || volumeChangeDirection === 'loading' || tvlChangeDirection === 'loading') { // Added checks for loading states
-          console.log(`Fetching core stats (vol/tvl/fees), 48h volume, and chart data for ${apiPoolId}`);
-          const [res24h, res7d, resTvl, res48h, resChartData] = await Promise.all([
-            fetch(`/api/liquidity/get-rolling-volume-fees?poolId=${apiPoolId}&days=1`),
-            fetch(`/api/liquidity/get-rolling-volume-fees?poolId=${apiPoolId}&days=7`),
-            fetch(`/api/liquidity/get-pool-tvl?poolId=${apiPoolId}`),
-            fetch(`/api/liquidity/get-rolling-volume-fees?poolId=${apiPoolId}&days=2`), // Fetch 48h volume
-            fetch(`/api/liquidity/chart-data/${apiPoolId}?numDays=2`), // Fetch last 2 days of chart data for TVL comparison
-          ]);
-
-          if (!res24h.ok || !res7d.ok || !resTvl.ok || !res48h.ok || !resChartData.ok) { // Added resChartData.ok
-            console.error(`Failed to fetch some core stats, 48h volume, or chart data for ${apiPoolId}.`);
-            // On fetch failure, set change directions to neutral
-            volumeChangeDirection = 'neutral';
-            tvlChangeDirection = 'neutral';
-            // Don't return here, allow partial updates if some data was cached
-          } else {
-            const data24h = await res24h.json();
-            const data7d = await res7d.json();
-            const dataTvl = await resTvl.json();
-            const data48h = await res48h.json(); // Process 48h data
-            const chartData = await resChartData.json(); // Process chart data
-
-            console.log(`[LiquidityPage] Raw TVL data for ${apiPoolId}:`, dataTvl);
-            console.log(`[LiquidityPage] Raw chart data for ${apiPoolId}:`, chartData);
-
-            volume24hUSD = parseFloat(data24h.volumeUSD);
-            fees24hUSD = parseFloat(data24h.feesUSD);
-            volume7dUSD = parseFloat(data7d.volumeUSD);
-            fees7dUSD = parseFloat(data7d.feesUSD);
-            tvlUSD = parseFloat(dataTvl.tvlUSD);
-            volume48hUSD = parseFloat(data48h.volumeUSD); // Store 48h volume
-
-            // Calculate volume change direction if both 24h and 48h volumes are available and valid
-            if (volume24hUSD !== undefined && volume48hUSD !== undefined && !isNaN(volume24hUSD) && !isNaN(volume48hUSD)) { // Added isNaN checks
-                const volumePrevious24h = volume48hUSD - volume24hUSD; // Volume from 24h to 48h ago
-                if (volume24hUSD > volumePrevious24h) {
-                    volumeChangeDirection = 'up';
-                } else if (volume24hUSD < volumePrevious24h) {
-                    volumeChangeDirection = 'down';
-                } else {
-                    volumeChangeDirection = 'neutral';
-                }
-            } else {
-                 volumeChangeDirection = 'neutral'; // Cannot determine change
-            }
-
-            // Calculate TVL change direction if current TVL and yesterday's TVL are available and valid
-            if (tvlUSD !== undefined && chartData && chartData.length >= 2 && !isNaN(tvlUSD)) { // Added isNaN check for tvlUSD
-                // Find yesterday's data more robustly
-                const yesterday = new Date();
-                yesterday.setDate(yesterday.getDate() - 1);
-                const yesterdayDateString = yesterday.toISOString().split('T')[0];
-
-                const yesterdayData = chartData.find((d: { date: string, tvlUSD: number }) => d.date === yesterdayDateString && typeof d.tvlUSD === 'number');
-
-                if (yesterdayData && typeof yesterdayData.tvlUSD === 'number') {
-                    // Now that we found yesterdayData with valid tvlUSD, assign it
-                    tvlYesterdayUSD = yesterdayData.tvlUSD;
-                    // Perform comparison using the guaranteed number type
-                    if (tvlUSD > tvlYesterdayUSD) {
-                        tvlChangeDirection = 'up';
-                    } else if (tvlUSD < tvlYesterdayUSD) {
-                        tvlChangeDirection = 'down';
-                    } else {
-                        tvlChangeDirection = 'neutral';
-                    }
-                } else {
-                    // If yesterday's data isn't found, or its tvlUSD is invalid
-                    tvlChangeDirection = 'neutral'; // Assume neutral if no reliable historical data for comparison
-                }
-            } else if (tvlUSD !== undefined && !isNaN(tvlUSD)) { // If we have current TVL but not enough historical data (less than 2 days)
-                tvlChangeDirection = 'neutral'; // Assume neutral if not enough data
-            } else {
-                // If current TVL is not available or is invalid
-                tvlChangeDirection = 'neutral'; // Cannot determine change without current TVL
-            }
-          }
+        const response = await fetch('/api/prices/get-token-prices');
+        if (response.ok) {
+          const data = await response.json();
+          const prices: Record<string, number> = {};
+          if (data.ETH) prices['ETH'] = data.ETH;
+          if (data.aETH) prices['aETH'] = data.aETH;
+          if (data.BTC) prices['BTC'] = data.BTC;
+          if (data.aBTC) prices['aBTC'] = data.aBTC;
+          prices['USDC'] = prices['aUSDC'] = prices['USDT'] = prices['aUSDT'] = 1.0;
+          setPriceMap(prices);
         }
-
-        // Fetch dynamic fee for APR calculation
-        const [token0SymbolStr, token1SymbolStr] = pool.pair.split(' / ');
-        const fromTokenSymbolForFee = TOKEN_DEFINITIONS[token0SymbolStr?.trim() as TokenSymbol]?.symbol;
-        const toTokenSymbolForFee = TOKEN_DEFINITIONS[token1SymbolStr?.trim() as TokenSymbol]?.symbol;
-
-        let dynamicFeeBps: number | null = null;
-        if (fromTokenSymbolForFee && toTokenSymbolForFee && baseSepolia.id) {
-          const feeCacheKey = getPoolDynamicFeeCacheKey(fromTokenSymbolForFee, toTokenSymbolForFee, baseSepolia.id);
-          const cachedFee = getFromCache<{ dynamicFee: string }>(feeCacheKey);
-
-          if (cachedFee) {
-            console.log(`[Cache HIT] Using cached dynamic fee for APR calc (${pool.pair}):`, cachedFee.dynamicFee);
-            dynamicFeeBps = Number(cachedFee.dynamicFee);
-          } else {
-            console.log(`[Cache MISS] Fetching dynamic fee from API for APR calc (${pool.pair})`);
-            const feeResponse = await fetch('/api/swap/get-dynamic-fee', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                fromTokenSymbol: fromTokenSymbolForFee,
-                toTokenSymbol: toTokenSymbolForFee,
-                chainId: baseSepolia.id,
-              }),
-            });
-            if (feeResponse.ok) {
-              const feeData = await feeResponse.json();
-              dynamicFeeBps = Number(feeData.dynamicFee);
-              if (!isNaN(dynamicFeeBps)) {
-                 setToCache(feeCacheKey, { dynamicFee: feeData.dynamicFee });
-                 console.log(`[Cache SET] Cached dynamic fee for APR calc (${pool.pair}):`, feeData.dynamicFee);
-              } else {
-                dynamicFeeBps = null; // Invalid fee from API
-              }
-            } else {
-              console.error(`Failed to fetch dynamic fee for APR calc (${pool.pair}):`, await feeResponse.text());
-            }
-          }
-        }
-
-        // Calculate APR if all parts are available
-        if (volume24hUSD !== undefined && dynamicFeeBps !== null && tvlUSD !== undefined && tvlUSD > 0) {
-          const feeRate = dynamicFeeBps / 10000 / 100;
-          const dailyFees = volume24hUSD * feeRate;
-          const yearlyFees = dailyFees * 365;
-          const apr = (yearlyFees / tvlUSD) * 100;
-          calculatedApr = apr.toFixed(2) + '%';
-          console.log(`Calculated APR for ${pool.pair}: ${calculatedApr} (Vol24h: ${volume24hUSD}, FeeBPS: ${dynamicFeeBps}, TVL: ${tvlUSD})`);
-        } else {
-          console.warn(`Could not calculate APR for ${pool.pair} due to missing data. Vol: ${volume24hUSD}, Fee: ${dynamicFeeBps}, TVL: ${tvlUSD}`);
-          calculatedApr = "N/A"; // Set to N/A if calculation not possible
-        }
-        
-        const completeFetchedStats: Partial<Pool> = {
-          volume24hUSD,
-          fees24hUSD,
-          volume7dUSD,
-          fees7dUSD,
-          tvlUSD,
-          apr: calculatedApr,
-          volume48hUSD, // Include 48h volume in cached stats
-          volumeChangeDirection, // Include volume change direction
-          tvlYesterdayUSD, // Include yesterday's TVL in cached stats
-          tvlChangeDirection, // Include TVL change direction
-        };
-        // Cache the combined stats including the newly calculated APR and volume change
-        setToCache(statsCacheKey, completeFetchedStats);
-        console.log(`[Cache SET] Cached combined stats for pool: ${pool.pair}, API ID: ${apiPoolId}`);
-        return completeFetchedStats;
-
-      } catch (error: any) { // Catch any errors during the fetch or processing
-        console.error(`Error fetching or processing stats for ${pool.pair}:`, error);
-        // Keep existing cached data if available, otherwise set to undefined/neutral
-        const errorStats: Partial<Pool> = {
-            volume24hUSD: cachedStats?.volume24hUSD,
-            fees24hUSD: cachedStats?.fees24hUSD,
-            volume7dUSD: cachedStats?.volume7dUSD,
-            fees7dUSD: cachedStats?.fees7dUSD,
-            tvlUSD: cachedStats?.tvlUSD,
-            apr: cachedStats?.apr || "N/A", // Keep cached APR or set to N/A
-            volume48hUSD: cachedStats?.volume48hUSD,
-            volumeChangeDirection: cachedStats?.volumeChangeDirection || 'neutral',
-            tvlYesterdayUSD: cachedStats?.tvlYesterdayUSD,
-            tvlChangeDirection: cachedStats?.tvlChangeDirection || 'neutral'
-        };
-         return errorStats; // Return the partial stats with neutral/cached values on error
+      } catch (error) {
+        console.error("Failed to fetch token prices for liquidity page:", error);
       }
     };
+    fetchPrices();
+  }, []);
 
-    const updateAllPoolStats = async () => {
-      console.log("Starting to fetch/update stats for all pools...");
-      const updatedPoolsPromises = poolsData.map(pool => 
-        fetchPoolStats(pool).then(stats => ({ ...pool, ...stats }))
-      );
-      const updatedPools = await Promise.all(updatedPoolsPromises);
-      console.log("Fetched stats, updating poolsData state:", updatedPools);
-      setPoolsData(updatedPools);
-    };
-
-    if (poolsData.length > 0) { // Only run if there are pools to update
-        updateAllPoolStats(); // Initial fetch
-    }
-
-    // Set up interval for periodic updates
-    const intervalId = setInterval(() => {
-      console.log("[LiquidityPage] Interval: Refreshing pool stats...");
-      updateAllPoolStats();
-    }, 60000); // Refresh every 60 seconds
-
-    // Cleanup interval on component unmount
-    return () => {
-      clearInterval(intervalId);
-    };
-  }, []); // Run once on component mount to set up initial fetch and interval
-
-  // Calculate pools with their position counts
   const poolsWithPositionCounts = useMemo(() => {
-    return poolsData.map(pool => { // Use poolsData state here
-      const [poolToken0Raw, poolToken1Raw] = pool.pair.split(' / ');
-      const poolToken0 = poolToken0Raw?.trim().toUpperCase();
-      const poolToken1 = poolToken1Raw?.trim().toUpperCase();
-      
-      const count = userPositions.filter(pos => {
-        const posToken0 = pos.token0.symbol?.trim().toUpperCase();
-        const posToken1 = pos.token1.symbol?.trim().toUpperCase();
-        return (posToken0 === poolToken0 && posToken1 === poolToken1) ||
-               (posToken0 === poolToken1 && posToken1 === poolToken0);
-      }).length;
-      
+    return poolsData.map(pool => {
+      const apiPoolId = (getPoolSubgraphId(pool.id) || pool.id).toLowerCase();
+      const count = userPositions.filter((pos) => String(pos?.poolId || '').toLowerCase() === apiPoolId).length;
       return { ...pool, positionsCount: count };
     });
-  }, [poolsData, userPositions]); // Depend on poolsData and userPositions
+  }, [poolsData, userPositions]);
 
-  // Calculate totals for stats
-  const totals = React.useMemo(() => ({
-    volume: chartData.reduce((acc, curr) => acc + curr.volume, 0),
-    tvl: chartData.reduce((acc, curr) => acc + curr.tvl, 0),
-  }), []);
+  // Removed expanded row pool-state prefetch; keep placeholder states for helpers
 
-  // Define the columns for the table
-  const columns: ColumnDef<Pool>[] = [
+  useEffect(() => {
+    const fetchAllPoolStatsBatch = async () => {
+      console.log("[LiquidityPage] Starting batch fetch for all pools...");
+      
+      try {
+        // Always fetch; rely on CDN/server cache for freshness and throttling
+        const response = await fetch('/api/liquidity/get-pools-batch');
+        
+        if (!response.ok) {
+          throw new Error(`Batch API failed: ${response.status}`);
+        }
+
+        const batchData = await response.json();
+        
+        if (!batchData.success) {
+          throw new Error(`Batch API error: ${batchData.message}`);
+        }
+
+        console.log(`[LiquidityPage] Batch API returned data for ${batchData.pools.length} pools`);
+
+        // Compute fees (24h) and APR client-side using StateView fee per pool
+        const updatedPools = await Promise.all(poolsData.map(async (pool) => {
+          const apiPoolId = getPoolSubgraphId(pool.id) || pool.id;
+          const batchPoolData = batchData.pools.find((p: any) => p.poolId.toLowerCase() === apiPoolId.toLowerCase());
+
+          if (batchPoolData) {
+            const tvlUSD: number | undefined = typeof batchPoolData.tvlUSD === 'number' ? batchPoolData.tvlUSD : undefined;
+            const tvlYesterdayUSD: number | undefined = typeof batchPoolData.tvlYesterdayUSD === 'number' ? batchPoolData.tvlYesterdayUSD : undefined;
+            const volume24hUSD: number | undefined = typeof batchPoolData.volume24hUSD === 'number' ? batchPoolData.volume24hUSD : undefined;
+            const volumePrev24hUSD: number | undefined = typeof batchPoolData.volumePrev24hUSD === 'number' ? batchPoolData.volumePrev24hUSD : undefined;
+            let fees24hUSD: number | undefined = undefined;
+            let feesPrev24hUSD: number | undefined = undefined;
+            let aprStr: string = 'N/A';
+            let tvlChangeDirection: 'up' | 'down' | 'neutral' = 'neutral';
+            let volumeChangeDirection: 'up' | 'down' | 'loading' | 'neutral' = 'neutral';
+
+            try {
+              if (typeof volume24hUSD === 'number') {
+                const bps = await getPoolFeeBps(apiPoolId);
+                const feeRate = Math.max(0, bps) / 10_000; // convert bps to fraction
+                fees24hUSD = volume24hUSD * feeRate;
+                if (typeof volumePrev24hUSD === 'number') {
+                  feesPrev24hUSD = volumePrev24hUSD * feeRate;
+                }
+              }
+            } catch {}
+
+            if (typeof fees24hUSD === 'number' && typeof tvlUSD === 'number' && tvlUSD > 0) {
+              const apr = (fees24hUSD * 365 / tvlUSD) * 100;
+              aprStr = `${apr.toFixed(2)}%`;
+            }
+
+            if (typeof tvlUSD === 'number' && typeof tvlYesterdayUSD === 'number') {
+              if (tvlUSD > tvlYesterdayUSD) tvlChangeDirection = 'up';
+              else if (tvlUSD < tvlYesterdayUSD) tvlChangeDirection = 'down';
+              else tvlChangeDirection = 'neutral';
+            }
+            if (typeof volume24hUSD === 'number' && typeof volumePrev24hUSD === 'number') {
+              if (volume24hUSD > volumePrev24hUSD) volumeChangeDirection = 'up';
+              else if (volume24hUSD < volumePrev24hUSD) volumeChangeDirection = 'down';
+              else volumeChangeDirection = 'neutral';
+            }
+
+            const updatedStats = {
+              volume24hUSD,
+              fees24hUSD,
+              tvlUSD,
+              tvlYesterdayUSD,
+              volumePrev24hUSD,
+              feesPrev24hUSD,
+              volumeChangeDirection: volumeChangeDirection,
+              tvlChangeDirection: tvlChangeDirection,
+              apr: aprStr,
+            };
+
+            return { ...pool, ...updatedStats };
+          } else {
+            return {
+              ...pool,
+              volume24hUSD: undefined,
+              fees24hUSD: undefined,
+              volumePrev24hUSD: undefined,
+              tvlUSD: undefined,
+              tvlYesterdayUSD: undefined,
+              volumeChangeDirection: 'loading' as const,
+              tvlChangeDirection: 'loading' as const,
+              apr: 'Loading...',
+            };
+          }
+        }));
+
+        console.log("[LiquidityPage] Updated pools with batch data:", updatedPools);
+        setPoolsData(updatedPools);
+
+      } catch (error) {
+        console.error("[LiquidityPage] Error in batch fetch:", error);
+        
+        const fallbackPools = poolsData.map(pool => {
+          const apiPoolId = getPoolSubgraphId(pool.id) || pool.id;
+          const statsCacheKey = getPoolStatsCacheKey(apiPoolId);
+          const cachedStats = getFromCacheWithTtl<Partial<Pool>>(statsCacheKey, 10 * 60 * 1000);
+          
+          if (cachedStats) {
+            return { ...pool, ...cachedStats };
+          } else {
+            return {
+              ...pool,
+              volume24hUSD: undefined,
+              fees24hUSD: undefined,
+              volumePrev24hUSD: undefined,
+              tvlUSD: undefined,
+              tvlYesterdayUSD: undefined,
+              volumeChangeDirection: 'neutral' as const,
+              tvlChangeDirection: 'neutral' as const,
+              apr: "N/A",
+            };
+          }
+        });
+        
+        setPoolsData(fallbackPools);
+      }
+    };
+
+    if (poolsData.length > 0) {
+      fetchAllPoolStatsBatch();
+    }
+
+    // No client polling; rely on CDN 10m TTL + SWR
+    return () => {};
+  }, []);
+
+  const filteredPools = useMemo(() => {
+    if (selectedCategory === 'All') return poolsWithPositionCounts;
+    return poolsWithPositionCounts.filter(p => (p.type || '') === selectedCategory);
+  }, [poolsWithPositionCounts, selectedCategory]);
+
+  const columns: ColumnDef<Pool>[] = useMemo(() => [
     {
       accessorKey: "pair",
       header: "Pool",
+      size: 300, // 3/7 of total width (will be converted to percentage)
       cell: ({ row }) => {
         const pool = row.original;
         return (
           <div className="flex items-center gap-2">
             <div className="relative w-14 h-7">
-              <div className="absolute top-0 left-0 w-7 h-7 rounded-full overflow-hidden bg-background border border-border/50">
+              <div className="absolute top-0 left-0 w-7 h-7 rounded-full overflow-hidden bg-background z-10">
                 <Image
                   src={pool.tokens[0].icon}
                   alt={pool.tokens[0].symbol}
@@ -468,29 +420,40 @@ export default function LiquidityPage() {
                   className="w-full h-full object-cover"
                 />
               </div>
-              <div className="absolute top-0 left-4 w-7 h-7 rounded-full overflow-hidden bg-background border border-border/50">
-                <Image
-                  src={pool.tokens[1].icon}
-                  alt={pool.tokens[1].symbol}
-                  width={28}
-                  height={28}
-                  className="w-full h-full object-cover"
-                />
+              {/* New relative container for second icon and cut-out */}
+              <div className="absolute top-0 left-4 w-7 h-7">
+                <div className="absolute inset-0 rounded-full overflow-hidden bg-background z-30">
+                  <Image
+                    src={pool.tokens[1].icon}
+                    alt={pool.tokens[1].symbol}
+                    width={28}
+                    height={28}
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+                {/* Background circle for cut-out effect in table */}
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-[#111111] z-20"></div>
               </div>
             </div>
             <div className="flex flex-col">
-              <span className="font-medium">{pool.pair}</span>
-              <div className="text-xs h-4 text-muted-foreground flex items-center">
-                {isLoadingPositions ? (
-                  <div className="h-3 w-16 bg-muted/60 rounded loading-skeleton"></div>
-                ) : pool.positionsCount !== undefined && pool.positionsCount > 0 ? (
-                    <span>
+              <span className="font-medium mb-1">{pool.pair}</span>
+              <div className="flex items-center gap-3">
+                {pool.type && (
+                  <span
+                    className="px-1.5 py-0.5 text-xs font-normal rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-muted-foreground"
+                    style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+                  >
+                    {pool.type}
+                  </span>
+                )}
+                {pool.positionsCount !== undefined && pool.positionsCount > 0 && (
+                  <>
+                    {/* <div className="h-3 w-0.5 bg-border/50 mx-1" /> */}
+                    <div className="text-xs text-muted-foreground">
                       {pool.positionsCount} {pool.positionsCount === 1 ? 'position' : 'positions'}
-                    </span>
-                  ) : (
-                    <span className="invisible">0 positions</span>
-                  )
-                }
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -499,209 +462,326 @@ export default function LiquidityPage() {
     },
     {
       accessorKey: "volume24h",
-      header: () => <div className="text-right w-full">Volume (24h)</div>,
+      header: ({ column }) => (
+        <div
+          className="flex items-center justify-start gap-1 cursor-pointer group"
+          onClick={() => {
+            const state = column.getIsSorted();
+            if (!state) column.toggleSorting(false); // asc
+            else if (state === "asc") column.toggleSorting(true); // desc
+            else setSorting([]); // default (clear)
+          }}
+        >
+          Volume (24h)
+          {column.getIsSorted() === "asc" ? (
+            <ChevronUpIcon className="ml-1 h-4 w-4 text-foreground group-hover:text-foreground" />
+          ) : column.getIsSorted() === "desc" ? (
+            <ChevronDownIcon className="ml-1 h-4 w-4 text-foreground group-hover:text-foreground" />
+          ) : (
+            <ChevronsUpDownIcon className="ml-1 h-4 w-4 text-muted-foreground group-hover:text-foreground" />
+          )}
+        </div>
+      ),
+      size: 100, // 1/7 of total width
+      sortingFn: (rowA, rowB) => {
+        const a = typeof rowA.original.volume24hUSD === 'number' ? rowA.original.volume24hUSD : 0;
+        const b = typeof rowB.original.volume24hUSD === 'number' ? rowB.original.volume24hUSD : 0;
+        return a - b;
+      },
+      sortDescFirst: true,
       cell: ({ row }) => (
-        <div className="text-right flex items-center justify-end gap-1">
+        <div className="flex items-center justify-start gap-1">
           {typeof row.original.volume24hUSD === 'number' ? (
             <>
-              {formatUSD(row.original.volume24hUSD)}
-              {/* Conditionally render arrow based on volumeChangeDirection */}
+              <span className="mr-1">{formatUSD(row.original.volume24hUSD)}</span>
               {row.original.volumeChangeDirection === 'up' && (
-                <Image
-                  src="/arrow_up.svg"
-                  alt="Volume Increase Icon"
-                  width={8}
-                  height={8}
-                  className="text-green-500"
-                />
+                <ArrowUpRight className="h-3 w-3 text-green-500" />
               )}
               {row.original.volumeChangeDirection === 'down' && (
-                <Image
-                  src="/arrow_down.svg"
-                  alt="Volume Decrease Icon"
-                  width={8}
-                  height={8}
-                  className="text-red-500"
-                />
+                <ArrowDownRight className="h-3 w-3 text-red-500" />
               )}
-              {/* Neutral or loading state can render nothing or a placeholder */}
-               {row.original.volumeChangeDirection === 'loading' && (
-                 <div className="inline-block h-3 w-3 bg-muted/60 rounded-full loading-skeleton"></div> // Optional loading indicator
+              {row.original.volumeChangeDirection === 'loading' && (
+                <div className="inline-block h-3 w-3 bg-muted/60 rounded-full animate-pulse"></div>
               )}
             </>
           ) : (
-            <div className="inline-block h-4 w-16 bg-muted/60 rounded loading-skeleton"></div>
+            <div className="inline-block h-4 w-16 bg-muted/60 rounded animate-pulse"></div>
           )}
         </div>
       ),
       meta: {
-        hideOnMobile: true,
         hidePriority: 3,
-      }
-    },
-    {
-      accessorKey: "volume7d",
-      header: () => <div className="text-right w-full">Volume (7d)</div>,
-      cell: ({ row }) => (
-        <div className="text-right flex items-center justify-end">
-          {typeof row.original.volume7dUSD === 'number' ? (
-            formatUSD(row.original.volume7dUSD)
-          ) : (
-            <div className="inline-block h-4 w-16 bg-muted/60 rounded loading-skeleton"></div>
-          )}
-        </div>
-      ),
-      meta: {
-        hideOnMobile: true,
-        hidePriority: 2,
-      }
+      },
     },
     {
       accessorKey: "fees24h",
-      header: () => <div className="text-right w-full">Fees (24h)</div>,
+      header: ({ column }) => (
+        <div
+          className="flex items-center justify-start gap-1 cursor-pointer group"
+          onClick={() => {
+            const state = column.getIsSorted();
+            if (!state) column.toggleSorting(false); // asc
+            else if (state === "asc") column.toggleSorting(true); // desc
+            else setSorting([]); // default (clear)
+          }}
+        >
+          Fees (24h)
+          {column.getIsSorted() === "asc" ? (
+            <ChevronUpIcon className="ml-1 h-4 w-4 text-foreground group-hover:text-foreground" />
+          ) : column.getIsSorted() === "desc" ? (
+            <ChevronDownIcon className="ml-1 h-4 w-4 text-foreground group-hover:text-foreground" />
+          ) : (
+            <ChevronsUpDownIcon className="ml-1 h-4 w-4 text-muted-foreground group-hover:text-foreground" />
+          )}
+        </div>
+      ),
+      size: 100, // 1/7 of total width
+      sortingFn: (rowA, rowB) => {
+        const a = typeof rowA.original.fees24hUSD === 'number' ? rowA.original.fees24hUSD : 0;
+        const b = typeof rowB.original.fees24hUSD === 'number' ? rowB.original.fees24hUSD : 0;
+        return a - b;
+      },
+      sortDescFirst: true,
       cell: ({ row }) => (
-         <div className="text-right flex items-center justify-end">
+         <div className="flex items-center justify-start">
           {typeof row.original.fees24hUSD === 'number' ? (
             formatUSD(row.original.fees24hUSD)
           ) : (
-            <div className="inline-block h-4 w-12 bg-muted/60 rounded loading-skeleton"></div>
+            <div className="inline-block h-4 w-12 bg-muted/60 rounded animate-pulse"></div>
           )}
         </div>
       ),
       meta: {
-        hideOnMobile: true,
-        hidePriority: 2,
-      }
-    },
-    {
-      accessorKey: "fees7d",
-      header: () => <div className="text-right w-full">Fees (7d)</div>,
-      cell: ({ row }) => (
-        <div className="text-right flex items-center justify-end">
-          {typeof row.original.fees7dUSD === 'number' ? (
-            formatUSD(row.original.fees7dUSD)
-          ) : (
-            <div className="inline-block h-4 w-12 bg-muted/60 rounded loading-skeleton"></div>
-          )}
-        </div>
-      ),
+        hidePriority: 1,
+      },
     },
     {
       accessorKey: "liquidity",
-      header: () => <div className="text-right w-full">Liquidity</div>,
-      cell: ({ row }) => (
-         <div className="text-right flex items-center justify-end gap-1">
-          {typeof row.original.tvlUSD === 'number' ? (
-            <>
-              {formatUSD(row.original.tvlUSD)}
-              {/* Conditionally render arrow based on tvlChangeDirection */}
-              {(row.original.tvlChangeDirection === 'up' || row.original.tvlChangeDirection === 'neutral') && (
-                <Image
-                  src="/arrow_up.svg"
-                  alt="Liquidity Increase Icon"
-                  width={8}
-                  height={8}
-                  className="text-green-500"
-                />
-              )}
-              {row.original.tvlChangeDirection === 'down' && (
-                <Image
-                  src="/arrow_down.svg"
-                  alt="Liquidity Decrease Icon"
-                  width={8}
-                  height={8}
-                  className="text-red-500"
-                />
-              )}
-               {/* Loading state */}
-               {row.original.tvlChangeDirection === 'loading' && (
-                 <div className="inline-block h-3 w-3 bg-muted/60 rounded-full loading-skeleton"></div> // Optional loading indicator
-              )}
-            </>
+      header: ({ column }) => (
+        <div 
+          className="flex items-center justify-start gap-1 cursor-pointer group"
+          onClick={() => {
+            const state = column.getIsSorted();
+            if (!state) column.toggleSorting(false); // asc
+            else if (state === "asc") column.toggleSorting(true); // desc
+            else setSorting([]); // default (clear)
+          }}
+        >
+          Liquidity
+          {column.getIsSorted() === "asc" ? (
+            <ChevronUpIcon className="ml-1 h-4 w-4 text-foreground group-hover:text-foreground" />
+          ) : column.getIsSorted() === "desc" ? (
+            <ChevronDownIcon className="ml-1 h-4 w-4 text-foreground group-hover:text-foreground" />
           ) : (
-            <div className="inline-block h-4 w-20 bg-muted/60 rounded loading-skeleton"></div>
+            <ChevronsUpDownIcon className="ml-1 h-4 w-4 text-muted-foreground group-hover:text-foreground" />
           )}
         </div>
       ),
+      size: 100, // 1/7 of total width
+      sortingFn: (rowA, rowB) => {
+        const a = rowA.original.tvlUSD || 0;
+        const b = rowB.original.tvlUSD || 0;
+        return a - b;
+      },
+      sortDescFirst: true,
+      cell: ({ row }) => (
+         <div className="flex items-center justify-start gap-1">
+          {typeof row.original.tvlUSD === 'number' ? (
+            <>
+              <span className="mr-1">{formatUSD(row.original.tvlUSD)}</span>
+              {(row.original.tvlChangeDirection === 'up' || row.original.tvlChangeDirection === 'neutral') && (
+                <ArrowUpRight className="h-3 w-3 text-green-500" />
+              )}
+              {row.original.tvlChangeDirection === 'down' && (
+                <ArrowDownRight className="h-3 w-3 text-red-500" />
+              )}
+               {row.original.tvlChangeDirection === 'loading' && (
+                 <div className="inline-block h-3 w-3 bg-muted/60 rounded-full animate-pulse"></div>
+              )}
+            </>
+          ) : (
+            <div className="inline-block h-4 w-20 bg-muted/60 rounded animate-pulse"></div>
+          )}
+        </div>
+      ),
+      meta: {
+        hidePriority: 2,
+      },
     },
     {
       accessorKey: "apr",
-      header: () => <div className="text-right w-full flex items-center justify-end">Yield</div>,
+      header: ({ column }) => (
+        <div 
+          className="flex items-center justify-end cursor-pointer group"
+          onClick={() => {
+            const state = column.getIsSorted();
+            if (!state) column.toggleSorting(false); // asc
+            else if (state === "asc") column.toggleSorting(true); // desc
+            else setSorting([]); // default (clear)
+          }}
+        >
+          Yield
+          {column.getIsSorted() === "asc" ? (
+            <ChevronUpIcon className="ml-1 h-4 w-4 text-foreground group-hover:text-foreground" />
+          ) : column.getIsSorted() === "desc" ? (
+            <ChevronDownIcon className="ml-1 h-4 w-4 text-foreground group-hover:text-foreground" />
+          ) : (
+            <ChevronsUpDownIcon className="ml-1 h-4 w-4 text-muted-foreground group-hover:text-foreground" />
+          )}
+        </div>
+      ),
+      size: 80, // 1/14 of total width (half of other metric columns)
+      sortingFn: (rowA, rowB) => {
+        const a = rowA.original.apr ? parseFloat(rowA.original.apr.replace('%', '')) : 0;
+        const b = rowB.original.apr ? parseFloat(rowB.original.apr.replace('%', '')) : 0;
+        return a - b;
+      },
+      sortDescFirst: true,
       cell: ({ row }) => {
         const isAprCalculated = row.original.apr !== undefined && row.original.apr !== "Loading..." && row.original.apr !== "N/A";
-        const formattedAPR = isAprCalculated ? parseFloat(row.original.apr.replace('%', '')).toFixed(2) + '%' : undefined;
-
-        const initialWidthClass = 'w-16';
-        const initialHeightClass = 'h-6';
-
+        const formattedAPR = isAprCalculated ? formatAPR(parseFloat(row.original.apr.replace('%', ''))) : undefined;
+        
         return (
-          <div 
-            onClick={(e) => handleAddLiquidity(e, row.original.id)}
-            className={`relative flex items-center ${initialWidthClass} ${initialHeightClass} rounded-md ${isAprCalculated ? 'bg-green-500/20 text-green-500' : 'bg-muted/60'} overflow-hidden ml-auto
-                        group-hover:w-32 group-hover:h-8
-                        group-hover:bg-transparent group-hover:text-foreground group-hover:border group-hover:border-border
-                        group-hover:hover:bg-accent group-hover:hover:text-accent-foreground
-                        transition-all duration-300 ease-in-out cursor-pointer`}
-          >
+          <div className="relative flex items-center justify-end w-full h-full">
+            {/* APR Badge / Loading Skeleton */}
             {isAprCalculated ? (
-              <>
-                 <span className="absolute inset-0 flex items-center justify-center opacity-100 group-hover:opacity-0 transition-opacity duration-300 ease-in-out">
-                  {formattedAPR}
-                </span>
-                <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 ease-in-out px-2 whitespace-nowrap">
-                    <PlusIcon className="w-4 h-4 mr-2" />
-                    Add Liquidity
-                </div>
-              </>
+              <div className="flex items-center justify-center h-6 px-2.5 rounded-md bg-green-500/20 text-green-500 text-[12px] font-semibold overflow-hidden transition-opacity duration-200 group-hover:opacity-0">
+                {formattedAPR}
+              </div>
             ) : (
-             <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 ease-in-out px-2 whitespace-nowrap">
-                 <PlusIcon className="w-4 h-4 mr-2" />
-                 Add Liquidity
-             </div>
+              <div className="inline-block h-4 w-16 bg-muted/60 rounded animate-pulse"></div>
             )}
+            
+            {/* Add Liquidity Button (on row hover) */}
+            <a
+              onClick={(e) => {
+                e.stopPropagation();
+                handlePoolClick(row.original.id);
+              }}
+              className="absolute right-0 top-1/2 -translate-y-1/2 flex h-10 cursor-pointer items-center justify-end gap-2 rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto hover:brightness-110 hover:border-white/30"
+              style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+            >
+              <PlusIcon className="h-4 w-4 relative z-0" />
+              <span className="relative z-0 whitespace-nowrap">Add Liquidity</span>
+            </a>
           </div>
         );
       },
+      meta: {
+        hidePriority: 4,
+      },
     },
-  ];
+  ], [setSorting]);
 
-  // Filter columns based on screen size and priority
   const visibleColumns = useMemo(() => {
     if (isMobile) {
-       return columns;
+      return columns;
+    }
+
+    let hideLevel = 0;
+    if (windowWidth < 900) {
+      hideLevel = 3;
+    } else if (windowWidth < 1100) {
+      hideLevel = 2;
+    } else if (windowWidth < 1300) {
+      hideLevel = 1;
     }
     
-    if (windowWidth < 900) { 
-       return columns.filter(column => (column.meta as any)?.hidePriority === undefined || 
-                                       (column.meta as any)?.hidePriority > 3);
-    } else if (windowWidth < 1100) { 
-       return columns.filter(column => (column.meta as any)?.hidePriority === undefined || 
-                                       (column.meta as any)?.hidePriority > 2);
-    } else if (windowWidth < 1280) { 
-       return columns.filter(column => (column.meta as any)?.hidePriority === undefined || 
-                                       (column.meta as any)?.hidePriority > 1);
-    }
-    
-    return columns;
-  }, [columns, isMobile, windowWidth]);
-  
-  // Initialize the table with filtered columns
+    // Filter columns based on hidePriority - proportional distribution happens automatically
+    const filteredColumns = columns.filter(
+      (column) => column.meta?.hidePriority === undefined || column.meta.hidePriority > hideLevel
+    );
+
+    // Adjust Yield column size based on screen size
+    return filteredColumns.map((col) => {
+      if ('accessorKey' in col && col.accessorKey === 'apr') {
+        return { ...col, size: windowWidth >= 1800 ? 40 : 80 }; // Reverted width to original
+      }
+      if ('accessorKey' in col && col.accessorKey === 'pair') {
+        return { ...col, size: windowWidth >= 2200 ? 400 : 300 };
+      }
+      return col;
+    });
+  }, [isMobile, windowWidth, columns]);
+
   const table = useReactTable({
-    data: poolsWithPositionCounts,
+    data: filteredPools,
     columns: visibleColumns,
     getCoreRowModel: getCoreRowModel(),
     onSortingChange: setSorting,
     getSortedRowModel: getSortedRowModel(),
+    onColumnSizingChange: setColumnSizing,
+    enableColumnResizing: true,
+    enableSorting: true,
+    columnResizeMode: 'onChange',
     state: {
       sorting,
+      columnSizing,
     },
   });
 
+  // Derive current visible column sizes to align the top category header exactly with the table columns
+  const columnSizes = React.useMemo(() => {
+    const pairCol = table.getColumn('pair' as any);
+    const volCol = table.getColumn('volume24h' as any);
+    const feesCol = table.getColumn('fees24h' as any);
+    const liqCol = table.getColumn('liquidity' as any);
+    const aprCol = table.getColumn('apr' as any);
+    return {
+      pair: pairCol ? pairCol.getSize() : 300,
+      volume24h: volCol ? volCol.getSize() : 100,
+      fees24h: feesCol ? feesCol.getSize() : 100,
+      liquidity: liqCol ? liqCol.getSize() : 100,
+      apr: aprCol ? aprCol.getSize() : (windowWidth >= 1800 ? 40 : 80),
+    };
+  }, [table, columnSizing, windowWidth, visibleColumns]);
+
+  const poolAggregates = React.useMemo(() => {
+    let totalTVL = 0;
+    let totalVol24h = 0;
+    let totalFees24h = 0;
+    let totalVolPrev24h = 0;
+    let totalTVLYesterday = 0;
+    let totalFeesPrev24h = 0;
+    let counted = 0;
+    for (const p of poolsData || []) {
+      const tvl = (p as any).tvlUSD;
+      const vol = (p as any).volume24hUSD;
+      const fees = (p as any).fees24hUSD;
+      const volPrev24 = (p as any).volumePrev24hUSD;
+      const tvlYesterday = (p as any).tvlYesterdayUSD;
+      // Prefer precise previous 24h fees if present; fallback to rough 7d/7 approximation
+      const feesPrev24Exact = (p as any).feesPrev24hUSD;
+      const fees7d = (p as any).fees7dUSD;
+      const feesPrev24 = (typeof feesPrev24Exact === 'number' && isFinite(feesPrev24Exact))
+        ? feesPrev24Exact
+        : (typeof fees7d === 'number' && isFinite(fees7d))
+          ? Math.max(0, fees7d / 7)
+          : 0;
+      if (typeof tvl === 'number' && isFinite(tvl)) totalTVL += tvl;
+      if (typeof vol === 'number' && isFinite(vol)) totalVol24h += vol;
+      if (typeof fees === 'number' && isFinite(fees)) totalFees24h += fees;
+      if (typeof volPrev24 === 'number' && isFinite(volPrev24)) totalVolPrev24h += volPrev24;
+      if (typeof tvlYesterday === 'number' && isFinite(tvlYesterday)) totalTVLYesterday += tvlYesterday;
+      totalFeesPrev24h += feesPrev24;
+      if (typeof tvl === 'number' || typeof vol === 'number' || typeof fees === 'number') counted++;
+    }
+    const isLoading = counted === 0;
+    const pct = (cur: number, prev: number) => {
+      if (!isFinite(cur) || !isFinite(prev) || prev <= 0) return 0;
+      return ((cur - prev) / prev) * 100;
+    };
+    const tvlDeltaPct = pct(totalTVL, totalTVLYesterday);
+    const volDeltaPct = pct(totalVol24h, totalVolPrev24h);
+    const feesDeltaPct = pct(totalFees24h, totalFeesPrev24h);
+    return { totalTVL, totalVol24h, totalFees24h, tvlDeltaPct, volDeltaPct, feesDeltaPct, isLoading };
+  }, [poolsData]);
+
   const handleAddLiquidity = (e: React.MouseEvent, poolId: string) => {
-    e.stopPropagation(); // Prevent row click if APR cell itself is handling it
+    e.stopPropagation();
     setSelectedPoolId(poolId); 
     const pool = poolsWithPositionCounts.find(p => p.id === poolId);
-    setSelectedPoolApr(pool?.apr); // Store the APR for the selected pool
+    setSelectedPoolApr(pool?.apr);
     setAddLiquidityOpen(true);
   };
 
@@ -709,113 +789,330 @@ export default function LiquidityPage() {
     router.push(`/liquidity/${poolId}`);
   };
 
+  const handleSortCycle = (columnId: string) => {
+    const col = table.getColumn(columnId as any);
+    if (!col) return;
+    const state = col.getIsSorted();
+    if (!state) col.toggleSorting(false); // asc
+    else if (state === 'asc') col.toggleSorting(true); // desc
+    else setSorting([]); // default
+  };
+
+  const renderSortIcon = (state: false | 'asc' | 'desc') => {
+    if (state === 'asc') return <ChevronUpIcon className="ml-1 h-4 w-4" />;
+    if (state === 'desc') return <ChevronDownIcon className="ml-1 h-4 w-4" />;
+    return <ChevronsUpDownIcon className="ml-1 h-4 w-4 text-muted-foreground" />;
+  };
+
   return (
     <AppLayout>
       <div className="flex flex-1 flex-col">
         <div className="flex flex-1 flex-col p-6 px-10">
-          <div className="mb-6 mt-6">
-            {!isMobile && (
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <h2 className="text-xl font-semibold">Liquidity Pools</h2>
-                  <p className="text-sm text-muted-foreground">
-                    Explore and manage your liquidity positions.
-                  </p>
+          <div className="hidden">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-semibold">Liquidity Pools</h2>
+                <p className="text-sm text-muted-foreground">Explore and manage your liquidity positions.</p>
+                <div className="mt-3 flex items-center gap-2 flex-wrap">
+                  {categories.map((cat) => (
+                    <button
+                      key={cat}
+                      onClick={() => setSelectedCategory(cat)}
+                      className={`px-2 py-1 text-xs rounded-md transition-all duration-200 cursor-pointer ${
+                        selectedCategory === cat
+                          ? 'border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-foreground brightness-110'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                      style={selectedCategory === cat ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
+                    >
+                      {cat}
+                    </button>
+                  ))}
                 </div>
               </div>
-            )}
-            
-            {isMobile ? (
-              <MobileLiquidityList 
-                pools={poolsWithPositionCounts}
-                onSelectPool={handlePoolClick}
-              />
-            ) : (
-              <div className="rounded-md border">
-                <Table>
-                  <TableHeader>
-                    {table.getHeaderGroups().map((headerGroup) => (
-                      <TableRow key={headerGroup.id}>
-                        {headerGroup.headers.map((header) => (
-                          <TableHead 
-                            key={header.id} 
-                            className={`${header.column.id !== 'pair' ? 'text-right' : ''}`}>
-                            {header.isPlaceholder
-                              ? null
-                              : flexRender(
-                                  header.column.columnDef.header,
-                                  header.getContext()
-                                )}
-                          </TableHead>
-                        ))}
-                      </TableRow>
+              <div className="flex items-stretch gap-2 sm:gap-3">
+                  <div className="w-[220px] sm:w-[260px] rounded-lg bg-muted/30 border border-sidebar-border/60 p-4">
+                    <div className="flex items-start justify-between">
+                      <div className="text-xs tracking-wider text-muted-foreground font-mono font-bold">TVL</div>
+                      <div className="flex items-center gap-1">
+                        {poolAggregates.isLoading ? (
+                          <span className="inline-block h-3 w-8 bg-muted/60 rounded animate-pulse" />
+                        ) : (() => {
+                          const deltaPct = poolAggregates.tvlDeltaPct || 0;
+                          const isPos = deltaPct >= 0;
+                          return (
+                            <>
+                              {isPos ? <ArrowUpRight className="h-3 w-3 text-green-500" /> : <ArrowDownRight className="h-3 w-3 text-red-500" />}
+                              <span className={`text-[11px] font-medium ${isPos ? 'text-green-500' : 'text-red-500'}`}>{Math.abs(deltaPct).toFixed(2)}%</span>
+                            </>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                    <div className="mt-2 font-medium tracking-tight text-2xl sm:text-3xl">
+                      {poolAggregates.isLoading ? <span className="inline-block h-6 w-20 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalTVL)}
+                    </div>
+                  </div>
+                  <div className="w-[220px] sm:w-[260px] rounded-lg bg-muted/30 border border-sidebar-border/60 p-4">
+                    <div className="flex items-start justify-between">
+                      <div className="text-xs tracking-wider text-muted-foreground font-mono font-bold">VOLUME (24H)</div>
+                      <div className="flex items-center gap-1">
+                        {poolAggregates.isLoading ? (
+                          <span className="inline-block h-3 w-8 bg-muted/60 rounded animate-pulse" />
+                        ) : (() => {
+                          const deltaPct = poolAggregates.volDeltaPct || 0;
+                          const isPos = deltaPct >= 0;
+                          return (
+                            <>
+                              {isPos ? <ArrowUpRight className="h-3 w-3 text-green-500" /> : <ArrowDownRight className="h-3 w-3 text-red-500" />}
+                              <span className={`text-[11px] font-medium ${isPos ? 'text-green-500' : 'text-red-500'}`}>{Math.abs(deltaPct).toFixed(2)}%</span>
+                            </>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                    <div className="mt-2 font-medium tracking-tight text-2xl sm:text-3xl">
+                      {poolAggregates.isLoading ? <span className="inline-block h-6 w-24 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalVol24h)}
+                    </div>
+                  </div>
+                  <div className="w-[220px] sm:w-[260px] rounded-lg bg-muted/30 border border-sidebar-border/60 p-4">
+                    <div className="flex items-start justify-between">
+                      <div className="text-xs tracking-wider text-muted-foreground font-mono font-bold">FEES (24H)</div>
+                      <div className="flex items-center gap-1">
+                        {poolAggregates.isLoading ? (
+                          <span className="inline-block h-3 w-8 bg-muted/60 rounded animate-pulse" />
+                        ) : (() => {
+                          const deltaPct = poolAggregates.feesDeltaPct || 0;
+                          const isPos = deltaPct >= 0;
+                          return (
+                            <>
+                              {isPos ? <ArrowUpRight className="h-3 w-3 text-green-500" /> : <ArrowDownRight className="h-3 w-3 text-red-500" />}
+                              <span className={`text-[11px] font-medium ${isPos ? 'text-green-500' : 'text-red-500'}`}>{Math.abs(deltaPct).toFixed(2)}%</span>
+                            </>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                    <div className="mt-2 font-medium tracking-tight text-2xl sm:text-3xl">
+                      {poolAggregates.isLoading ? <span className="inline-block h-6 w-20 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalFees24h)}
+                    </div>
+                  </div>
+                </div>
+            </div>
+          </div>
+
+            <div className="mb-4">
+              <div className="flex items-stretch justify-between gap-4">
+                <div className="flex flex-col">
+                  <h2 className="text-xl font-semibold">Liquidity Pools</h2>
+                  <p className="text-sm text-muted-foreground">Explore and manage your liquidity positions.</p>
+                  <div className="mt-4">
+                    <div className="rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 p-3 sm:p-4">
+                      <div className="flex items-stretch gap-2 sm:gap-3">
+                        <div className="w-[220px] sm:w-[260px] rounded-lg bg-muted/30 border border-sidebar-border/60">
+                          <div className="flex items-center justify-between px-4 h-9">
+                            <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">TVL</h2>
+                            <div className="flex items-center gap-1">
+                              {poolAggregates.isLoading ? (
+                                <span className="inline-block h-3 w-8 bg-muted/60 rounded animate-pulse" />
+                              ) : (() => {
+                                const deltaPct = poolAggregates.tvlDeltaPct || 0;
+                                const isPos = deltaPct >= 0;
+                                return (
+                                  <>
+                                    {isPos ? <ArrowUpRight className="h-3 w-3 text-green-500" /> : <ArrowDownRight className="h-3 w-3 text-red-500" />}
+                                    <span className={`${isPos ? 'text-green-500' : 'text-red-500'} text-[11px] font-medium`}>{Math.abs(deltaPct).toFixed(2)}%</span>
+                                  </>
+                                );
+                              })()}
+                            </div>
+                          </div>
+                          <div className="px-4 py-1">
+                            <div className="text-lg font-medium">
+                              {poolAggregates.isLoading ? <span className="inline-block h-6 w-20 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalTVL)}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="w-[220px] sm:w-[260px] rounded-lg bg-muted/30 border border-sidebar-border/60">
+                          <div className="flex items-center justify-between px-4 h-9">
+                            <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">VOLUME (24H)</h2>
+                            <div className="flex items-center gap-1">
+                              {poolAggregates.isLoading ? (
+                                <span className="inline-block h-3 w-8 bg-muted/60 rounded animate-pulse" />
+                              ) : (() => {
+                                const deltaPct = poolAggregates.volDeltaPct || 0;
+                                const isPos = deltaPct >= 0;
+                                return (
+                                  <>
+                                    {isPos ? <ArrowUpRight className="h-3 w-3 text-green-500" /> : <ArrowDownRight className="h-3 w-3 text-red-500" />}
+                                    <span className={`${isPos ? 'text-green-500' : 'text-red-500'} text-[11px] font-medium`}>{Math.abs(deltaPct).toFixed(2)}%</span>
+                                  </>
+                                );
+                              })()}
+                            </div>
+                          </div>
+                          <div className="px-4 py-1">
+                            <div className="text-lg font-medium">
+                              {poolAggregates.isLoading ? <span className="inline-block h-6 w-24 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalVol24h)}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="w-[220px] sm:w-[260px] rounded-lg bg-muted/30 border border-sidebar-border/60">
+                          <div className="flex items-center justify-between px-4 h-9">
+                            <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">FEES (24H)</h2>
+                            <div className="flex items-center gap-1">
+                              {poolAggregates.isLoading ? (
+                                <span className="inline-block h-3 w-8 bg-muted/60 rounded animate-pulse" />
+                              ) : (() => {
+                                const deltaPct = poolAggregates.feesDeltaPct || 0;
+                                const isPos = deltaPct >= 0;
+                                return (
+                                  <>
+                                    {isPos ? <ArrowUpRight className="h-3 w-3 text-green-500" /> : <ArrowDownRight className="h-3 w-3 text-red-500" />}
+                                    <span className={`${isPos ? 'text-green-500' : 'text-red-500'} text-[11px] font-medium`}>{Math.abs(deltaPct).toFixed(2)}%</span>
+                                  </>
+                                );
+                              })()}
+                            </div>
+                          </div>
+                          <div className="px-4 py-1">
+                            <div className="text-lg font-medium">
+                              {poolAggregates.isLoading ? <span className="inline-block h-6 w-20 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalFees24h)}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-end">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {categories.map((cat) => (
+                      <button
+                        key={cat}
+                        onClick={() => setSelectedCategory(cat)}
+                        className={`px-2 py-1 text-xs rounded-md transition-all duration-200 cursor-pointer ${
+                          selectedCategory === cat
+                            ? 'border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-foreground brightness-110'
+                            : 'text-muted-foreground hover:text-foreground'
+                        }`}
+                        style={selectedCategory === cat ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
+                      >
+                        {cat}
+                      </button>
                     ))}
-                  </TableHeader>
-                  <TableBody>
-                    {table.getRowModel().rows?.length ? (
-                      table.getRowModel().rows.map((row) => (
-                        <TableRow
-                          key={row.id}
-                          className={`group cursor-pointer transition-colors ${
-                            row.original.highlighted ? 'bg-accent/10 hover:bg-accent/15' : 'hover:bg-muted/10'
-                          }`}
-                        >
-                          {row.getVisibleCells().map((cell) => (
-                            <TableCell 
-                              key={cell.id} 
-                              onClick={() => handlePoolClick(row.original.id)}
-                              className={`${cell.column.id !== 'pair' ? 'text-right' : ''} relative`}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-lg bg-muted/30 border border-sidebar-border/60">
+              <div className="p-0">
+                {isMobile ? (
+                  <MobileLiquidityList 
+                    pools={filteredPools}
+                    onSelectPool={handlePoolClick}
+                  />
+                ) : (
+                  <div className="overflow-x-auto isolate">
+                    <Table className="w-full" style={{ tableLayout: 'fixed' }}>
+                      <TableHeader>
+                        {/* New category header row inside the table for perfect alignment */}
+                        <TableRow className="hover:bg-transparent">
+                          {table.getVisibleLeafColumns().map((col, index, arr) => (
+                            <TableHead
+                              key={`cat-${col.id}`}
+                              className={`px-2 relative text-xs text-muted-foreground ${index === 0 ? 'pl-6' : ''} ${index === arr.length - 1 ? 'pr-6' : ''}`}
+                              style={{ width: `${col.getSize()}px` }}
                             >
-                              {flexRender(
-                                cell.column.columnDef.cell,
-                                cell.getContext()
+                              {col.id === 'pair' ? (
+                                <span className="tracking-wider font-mono font-bold">POOLS</span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => handleSortCycle(col.id)}
+                                  className={`flex w-full items-center ${col.id === 'apr' ? 'justify-end text-right' : 'justify-start text-left'} cursor-pointer select-none`}
+                                >
+                                  <span>
+                                    {col.id === 'volume24h' && 'Volume (24h)'}
+                                    {col.id === 'fees24h' && 'Fees (24h)'}
+                                    {col.id === 'liquidity' && 'Liquidity'}
+                                    {col.id === 'apr' && 'Yield'}
+                                  </span>
+                                  {renderSortIcon(table.getColumn(col.id as any)?.getIsSorted?.() as any)}
+                                </button>
                               )}
-                            </TableCell>
+                              {/* no resizer in category row */}
+                            </TableHead>
                           ))}
                         </TableRow>
-                      ))
-                    ) : (
-                      <TableRow>
-                        <TableCell
-                          colSpan={columns.length}
-                          className="h-24 text-center"
-                        >
-                          No pools available.
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
+                      </TableHeader>
+                      <TableBody>
+                        {table.getRowModel().rows?.length ? (
+                          table.getRowModel().rows.map((row) => {
+                            const pool = row.original;
+                            const isExpanded = false;
+
+                            return (
+                              <React.Fragment key={row.id}>
+                                <TableRow
+                                  className="group cursor-pointer transition-colors hover:bg-muted/30"
+                                  onClick={() => handlePoolClick(pool.id)}
+                                >
+                                  {row.getVisibleCells().map((cell, index) => (
+                                    <TableCell 
+                                      key={cell.id}
+                                      className={`relative py-4 px-2 ${index === 0 ? 'pl-6' : ''} ${index === row.getVisibleCells().length - 1 ? 'pr-6' : ''}`}
+                                      style={{ width: `${cell.column.getSize()}px` }}
+                                    >
+                                      {flexRender(
+                                        cell.column.columnDef.cell,
+                                        cell.getContext()
+                                      )}
+                                    </TableCell>
+                                  ))}
+                                </TableRow>
+                                {/* Expanded positions removed */}
+                              </React.Fragment>
+                            );
+                          })
+                        ) : (
+                          <TableRow>
+                            <TableCell
+                              colSpan={columns.length}
+                              className="h-24 text-center"
+                            >
+                              No pools available.
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
               </div>
-            )}
+            </div>
           </div>
         </div>
-      </div>
-      {/* Add Liquidity Modal */}
-      <AddLiquidityModal
-        isOpen={addLiquidityOpen}
-        onOpenChange={setAddLiquidityOpen}
-        selectedPoolId={selectedPoolId}
-        poolApr={selectedPoolApr}
-        onLiquidityAdded={() => {
-          // Fetch all user positions again after adding liquidity
-          if (isConnected && accountAddress) {
-            fetch(`/api/liquidity/get-positions?ownerAddress=${accountAddress}`)
-              .then(res => res.json())
-              .then((data: ProcessedPosition[] | { message: string }) => {
-                if (Array.isArray(data)) {
-                  setUserPositions(data);
-                }
-              })
-              .catch(error => {
-                console.error("Failed to refresh positions:", error);
-              });
-          }
-        }}
-        sdkMinTick={SDK_MIN_TICK}
-        sdkMaxTick={SDK_MAX_TICK}
-        defaultTickSpacing={DEFAULT_TICK_SPACING}
-      />
-    </AppLayout>
-  );
-} 
+        <AddLiquidityModal
+          isOpen={addLiquidityOpen}
+          onOpenChange={setAddLiquidityOpen}
+          selectedPoolId={selectedPoolId}
+          poolApr={selectedPoolApr}
+          onLiquidityAdded={() => {
+            if (isConnected && accountAddress) {
+              // Mint happened -> invalidate only for mint/burn, not for simple adds.
+              // Mint creates a new tokenId, so refresh the global positions cache now.
+              loadUserPositionIds(accountAddress)
+                .then((ids) => derivePositionsFromIds(accountAddress, ids))
+                .then((positions) => setUserPositions(Array.isArray(positions) ? positions : []))
+                .catch((error) => console.error("Failed to refresh positions:", error));
+            }
+          }}
+          sdkMinTick={SDK_MIN_TICK}
+          sdkMaxTick={SDK_MAX_TICK}
+          defaultTickSpacing={getPoolById(selectedPoolId)?.tickSpacing || DEFAULT_TICK_SPACING}
+        />
+      </AppLayout>
+    );
+  } 

@@ -1,10 +1,15 @@
-import type { NextApiRequest, NextApiResponse } from 'next';
-import { getAddress, encodeFunctionData, type Address, type Hex } from 'viem';
-import { publicClient } from '../../../lib/viemClient'; // Adjusted path
+import { NextApiRequest, NextApiResponse } from 'next';
+import { getAddress, parseAbi, Hex, Address } from 'viem';
+import { publicClient } from '../../../lib/viemClient';
 
-// Contract details
-const FAUCET_CONTRACT_ADDRESS: Address = '0x0e99563bC3412bF64B0d0913E0777e8d97ee8756';
-const FAUCET_FUNCTION_SIGNATURE: Hex = '0xde5f72fd'; // faucet()
+export const FAUCET_CONTRACT_ADDRESS: Address = '0x5634bA278a0655F88432C6dFAC22338361bBaC00'; // NEW ADDRESS
+export const FAUCET_FUNCTION_SIGNATURE: Hex = '0xde5f72fd'; // faucet()
+
+// ABI for the faucet function (minimal for simulation)
+export const faucetContractAbi = parseAbi([
+  "function faucet() external",
+  "function lastCalled(address) external view returns (uint256)", // Added for read contract
+]);
 
 interface FaucetRequest extends NextApiRequest {
     body: {
@@ -28,8 +33,42 @@ export default async function handler(req: FaucetRequest, res: NextApiResponse) 
 
         const validatedUserAddress = getAddress(userAddress);
 
-        // Encode the function call
-        // Since faucet() takes no arguments, the data is just the function signature.
+        // --- SIMULATION LOGIC START ---
+        try {
+            await publicClient.simulateContract({
+                address: FAUCET_CONTRACT_ADDRESS,
+                abi: faucetContractAbi, // Use the defined ABI
+                functionName: 'faucet',
+                account: validatedUserAddress, // Simulate from the user's address
+                // No args for faucet()
+            });
+            console.log("Faucet simulation successful for user:", validatedUserAddress);
+        } catch (simulateError: any) {
+            console.error("Faucet simulation failed:", simulateError);
+            let errorMessage = "Transaction simulation failed.";
+            if (simulateError.cause && typeof simulateError.cause === 'object' && 'reason' in simulateError.cause && simulateError.cause.reason) {
+                // Prioritize the direct revert reason from the cause object
+                errorMessage = simulateError.cause.reason;
+            } else if (simulateError.shortMessage) {
+                // Fallback to shortMessage if reason is not directly available in cause
+                errorMessage = simulateError.shortMessage;
+            } else if (simulateError.message) {
+                errorMessage = simulateError.message;
+            }
+
+            // Specific adjustment for the daily limit message
+            if (errorMessage.includes("Can only use the faucet once per day")) {
+                errorMessage = "Can only claim once per day"; // User's desired exact text
+            }
+
+            return res.status(400).json({ // Use 400 for client-side issues like simulation failure
+                message: 'Faucet claim not possible', // This message will be overridden by errorDetails on frontend
+                errorDetails: errorMessage, // Pass the refined message as errorDetails
+            });
+        }
+        // --- SIMULATION LOGIC END ---
+
+        // Encode the function call (remains the same as faucet() takes no args)
         const callData = FAUCET_FUNCTION_SIGNATURE;
 
         // We are not simulating here as it's a state-changing call that likely doesn't return useful data for simulation

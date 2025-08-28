@@ -1,8 +1,11 @@
 "use client"
 
 import { LineChart, Line, ResponsiveContainer, XAxis, YAxis } from "recharts";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { ArrowRightIcon } from "lucide-react";
+import { getToken, getPoolByTokens } from "@/lib/pools-config";
+import React, { useState, useEffect, useMemo, useRef } from "react";
+import { useRouter } from "next/navigation";
+import Image from "next/image";
+import { ArrowUpRight } from "lucide-react";
 
 interface FeeHistoryPoint {
   timeLabel: string;
@@ -14,112 +17,400 @@ interface FeeHistoryPoint {
 interface DynamicFeeChartPreviewProps {
   data: FeeHistoryPoint[];
   onClick?: () => void; // To handle click for opening the modal
+  poolInfo?: {
+    token0Symbol: string;
+    token1Symbol: string;
+    poolName: string;
+  };
+  isLoading?: boolean; // Show loading state during pool switches
+  onContentStableChange?: (stable: boolean) => void; // New callback prop
+  alwaysShowSkeleton?: boolean; // Force skeleton even with no data (e.g., homepage preview)
+  totalPools?: number; // multihop: number of pools (kept for compatibility, not rendered here)
+  activePoolIndex?: number; // which pool is currently selected (kept for compatibility)
 }
 
-export function DynamicFeeChartPreview({ data, onClick }: DynamicFeeChartPreviewProps) {
-  if (!data || data.length === 0) {
-    return null; // Don't render if no data
-  }
+function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = false, onContentStableChange, alwaysShowSkeleton = false }: DynamicFeeChartPreviewProps) {
+  const router = useRouter();
+  
+  // State to track if the content is stable and rendered
+  const [isContentStable, setIsContentStable] = useState(false);
+  
+  // Debug state for artificial loading delay
+  const [showLoadingSkeleton, setShowLoadingSkeleton] = useState(false);
 
-  // Prepare data for the preview chart (dynamicFee and EMA), normalized
-  const initialFee = data[0].dynamicFee;
-  const initialEma = data[0].emaRatio;
+  // Detect if parent data matches expected shape
+  const isParentDataUsable = useMemo(() => {
+    if (!Array.isArray(data) || data.length === 0) return false;
+    const first: any = data[0];
+    return (
+      typeof first?.timeLabel === 'string' &&
+      typeof first?.volumeTvlRatio !== 'undefined' &&
+      typeof first?.emaRatio !== 'undefined' &&
+      typeof first?.dynamicFee !== 'undefined'
+    );
+  }, [Array.isArray(data) ? data.length : 0, (data as any)?.[0]?.timeLabel, (data as any)?.[0]?.volumeTvlRatio, (data as any)?.[0]?.emaRatio, (data as any)?.[0]?.dynamicFee]);
 
-  // Calculate max absolute EMA ratio in the dataset if initialEma is 0
-  let maxAbsEmaRatio = 0;
-  if (initialEma === 0) {
-    data.forEach(point => {
-      if (Math.abs(point.emaRatio) > maxAbsEmaRatio) {
-        maxAbsEmaRatio = Math.abs(point.emaRatio);
+  // Auto-fetch only when no usable parent data is provided; endpoint handles caching
+  const [autoData, setAutoData] = useState<FeeHistoryPoint[] | null>(null);
+  useEffect(() => {
+    (async () => {
+      try {
+        if (isParentDataUsable) return;
+        if (!poolInfo?.token0Symbol || !poolInfo?.token1Symbol) return;
+        const cfg = getPoolByTokens(poolInfo.token0Symbol, poolInfo.token1Symbol);
+        const subgraphId = (cfg as any)?.subgraphId || (cfg as any)?.id;
+        if (!subgraphId) return;
+        setShowLoadingSkeleton(true);
+        const resp = await fetch(`/api/liquidity/get-historical-dynamic-fees?poolId=${encodeURIComponent(String(subgraphId))}&days=30`);
+        if (!resp.ok) return;
+        const events = await resp.json();
+        if (!Array.isArray(events)) return;
+        const nowSec = Math.floor(Date.now() / 1000);
+        const cutoff = nowSec - 30 * 24 * 60 * 60;
+        const evAsc = events
+          .map((e: any) => ({
+            ts: Number(e?.timestamp) || 0,
+            feeBps: Number(e?.newFeeBps ?? e?.newFeeRateBps ?? 0),
+            ratio: e?.currentTargetRatio,
+            // API returns oldTargetRatio (not newTargetRatio). Use oldTargetRatio; fallback to currentTargetRatio.
+            ema: e?.oldTargetRatio ?? e?.currentTargetRatio,
+          }))
+          .filter((e: any) => e.ts > cutoff)
+          .sort((a: any, b: any) => a.ts - b.ts);
+        const scaleRatio = (val: any): number => {
+          const n = typeof val === 'string' ? Number(val) : (typeof val === 'number' ? val : 0);
+          if (!Number.isFinite(n)) return 0;
+          if (Math.abs(n) >= 1e12) return n / 1e18;
+          if (Math.abs(n) >= 1e6) return n / 1e6;
+          if (Math.abs(n) >= 1e4) return n / 1e4;
+          return n;
+        };
+        const out: FeeHistoryPoint[] = evAsc.map((e: any) => ({
+          timeLabel: new Date(e.ts * 1000).toISOString().split('T')[0],
+          volumeTvlRatio: scaleRatio(e.ratio),
+          emaRatio: scaleRatio(e.ema),
+          dynamicFee: (Number.isFinite(e.feeBps) ? e.feeBps : 0) / 10000,
+        }));
+        setAutoData(out);
+      } catch {}
+      finally {
+        setShowLoadingSkeleton(false);
       }
-    });
-  }
+    })();
+  }, [poolInfo?.token0Symbol, poolInfo?.token1Symbol, isParentDataUsable]);
 
-  const chartData = data.map((point, index) => {
-    let normalizedEma;
-    if (initialEma !== 0) {
-      normalizedEma = (point.emaRatio / initialEma) * 100;
+
+  // No diffing. Keep this preview dead simple and render as soon as we have data
+
+  // Effect to signal when content is stable
+  useEffect(() => {
+    if (!isLoading && data && data.length > 0) {
+      // Allow a small delay for any internal animations to settle
+      const timer = setTimeout(() => {
+        setIsContentStable(true);
+        onContentStableChange?.(true);
+      }, 50); // Small delay to ensure render
+
+      return () => clearTimeout(timer);
     } else {
-      // initialEma is 0
-      if (maxAbsEmaRatio !== 0) {
-        // If there's variation later, normalize against the max absolute value in the series
-        // This scales the line to show its shape, with its peak (or trough) scaled towards 100 or -100
-        normalizedEma = (point.emaRatio / maxAbsEmaRatio) * 100;
-      } else {
-        // All emaRatios are 0 (or initialEma was 0 and no other variation)
-        normalizedEma = 100; // Flat line at 100 as a baseline if no variation from 0
+      // Reset if data is loading or not available
+      if (isContentStable) {
+        setIsContentStable(false);
+        onContentStableChange?.(false);
       }
     }
+  }, [isLoading, data, onContentStableChange, isContentStable]);
 
-    return {
-      name: index, // Simple index for X-axis
-      fee: initialFee !== 0 ? (point.dynamicFee / initialFee) * 100 : 100,
-      ema: normalizedEma,
-    };
-  });
+  // Debug/UX effect for loading skeleton visibility
+  useEffect(() => {
+    if (alwaysShowSkeleton) {
+      setShowLoadingSkeleton(true);
+      return;
+    }
+    if (isLoading) {
+      setShowLoadingSkeleton(true);
+      const timer = setTimeout(() => {
+        setShowLoadingSkeleton(false);
+      }, 1000); // 1 second delay for debugging
+      return () => clearTimeout(timer);
+    } else {
+      // Immediately hide skeleton when not loading
+      setShowLoadingSkeleton(false);
+    }
+  }, [isLoading, alwaysShowSkeleton]);
 
-  // Re-calculate min/max for the Y-axis domain based on normalized data
-  const yDomainPadding = 0.01; // 1% padding to prevent touching edges
-  const allNormalizedValues = chartData.flatMap(d => [d.fee, d.ema]);
-  const minValue = Math.min(...allNormalizedValues);
-  const maxValue = Math.max(...allNormalizedValues);
+  // Handle click to navigate to pool page
+  const handleClick = () => {
+    if (!poolInfo) return;
 
-  // Ensure a minimum range if all values are the same (e.g., all 100)
-  const dataRange = maxValue - minValue;
-  const effectiveMinValue = dataRange < 1 ? minValue - 5 : minValue; // Ensure at least a 10-point range if flat
-  const effectiveMaxValue = dataRange < 1 ? maxValue + 5 : maxValue;
+    // Derive a friendly route id; avoid using raw subgraph id (0x...) in the URL
+    const maybeCanonical = (poolInfo as any).id || (poolInfo as any).poolId;
+    let targetId: string | undefined;
 
-  return (
-    <Card 
-      className="w-full max-w-md shadow-md rounded-lg cursor-pointer hover:shadow-lg transition-shadow bg-muted/30 group"
-      onClick={onClick}
-    >
-      <CardHeader className="flex flex-row items-start justify-between pb-2 pt-3 px-4">
-        <div className="space-y-0.5">
-            <CardTitle className="text-sm font-medium">Dynamic Fee Trend</CardTitle>
-            <CardDescription className="text-xs text-muted-foreground">
-                30-Day Fee Snapshot
-            </CardDescription>
+    // If a provided id is a friendly slug (not 0x...), use it directly
+    if (maybeCanonical && !String(maybeCanonical).startsWith('0x')) {
+      targetId = String(maybeCanonical);
+    } else {
+      // Fallback: map from token symbols to configured pool
+      const poolConfig = getPoolByTokens(poolInfo.token0Symbol, poolInfo.token1Symbol);
+      if (poolConfig) targetId = poolConfig.id;
+    }
+
+    if (targetId) {
+      const href = `/liquidity/${targetId}`;
+      if (typeof window !== 'undefined') {
+        window.open(href, '_blank', 'noopener,noreferrer');
+      } else {
+        router.push(href);
+      }
+    } else {
+      console.warn(`No pool configuration found for ${poolInfo.token0Symbol}/${poolInfo.token1Symbol}`);
+    }
+  };
+
+
+  // Build chart data from supplied series (preferred only if usable) or fetched fallback
+  const effectiveData = isParentDataUsable ? data : (autoData || []);
+
+  const chartData = useMemo(() => {
+    // Return null if no data
+    if (!effectiveData || effectiveData.length === 0) {
+      return null;
+    }
+    
+    // When data is available, render the full chart preview
+    // Straight mapping: no normalization, 30-day window already applied
+    const newChartData = effectiveData.map((point, index) => ({
+      name: point.timeLabel,
+      activity: Number(point.volumeTvlRatio) || 0,
+      target: Number(point.emaRatio) || 0,
+      fee: Number(point.dynamicFee) || 0,
+    }));
+    
+    return newChartData;
+  }, [effectiveData]);
+
+  // Removed change-point dots per design preference; keep normalization only
+
+  const hasData = Array.isArray(effectiveData) && effectiveData.length > 0;
+
+  // Render different Card structures based on data availability
+  if (alwaysShowSkeleton) {
+    return (
+      <div
+        className="w-full rounded-lg bg-muted/30 border border-sidebar-border/60 transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow"
+        onClick={handleClick}
+        onMouseEnter={(e) => {
+          const arrow = e.currentTarget.querySelector('[data-arrow]') as HTMLElement;
+          if (arrow) arrow.style.color = 'white';
+        }}
+        onMouseLeave={(e) => {
+          const arrow = e.currentTarget.querySelector('[data-arrow]') as HTMLElement;
+          if (arrow) arrow.style.color = '';
+        }}
+      >
+        <div className="flex items-center justify-between px-4 py-2 border-b border-sidebar-border/60">
+          <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">DYNAMIC FEE TREND</h2>
+                     <div className="flex items-center gap-3">
+             {poolInfo && (
+               <div className="flex items-center">
+                 <div className="relative w-8 h-4">
+                   <div className="absolute top-0 left-0 w-4 h-4 rounded-full overflow-hidden bg-background border border-border/50">
+                     <Image 
+                       src={getToken(poolInfo.token0Symbol)?.icon || "/placeholder-logo.svg"} 
+                       alt={poolInfo.token0Symbol} 
+                       width={16} 
+                       height={16} 
+                       className="w-full h-full object-cover" 
+                     />
+                   </div>
+                   <div className="absolute top-0 left-2.5 w-4 h-4 rounded-full overflow-hidden bg-background border border-border/50">
+                     <Image 
+                       src={getToken(poolInfo.token1Symbol)?.icon || "/placeholder-logo.svg"} 
+                       alt={poolInfo.token1Symbol} 
+                       width={16} 
+                       height={16} 
+                       className="w-full h-full object-cover" 
+                     />
+                   </div>
+                 </div>
+                 <span className="text-xs text-muted-foreground">{poolInfo.token0Symbol}/{poolInfo.token1Symbol}</span>
+               </div>
+             )}
+             <ArrowUpRight aria-hidden="true" data-arrow className="h-4 w-4 text-muted-foreground transition-colors duration-150" />
+          </div>
         </div>
-        <ArrowRightIcon className="h-4 w-4 text-muted-foreground group-hover:text-white transition-colors duration-150" />
-      </CardHeader>
-      <CardContent className="px-2 pb-2 pt-0 h-[80px]">
-        <div className="w-full h-full cursor-pointer [&_.recharts-wrapper]:outline-none [&_.recharts-wrapper]:focus:outline-none [&_.recharts-surface]:outline-none">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart 
-              data={chartData}
-              margin={{ top: 5, right: 8, bottom: 5, left: 8 }}
-              style={{ cursor: 'pointer' }}
-            >
-              <XAxis dataKey="name" hide={true} />
-              <YAxis 
-                hide={true} 
-                domain={[
-                  effectiveMinValue * (1 - yDomainPadding),
-                  effectiveMaxValue * (1 + yDomainPadding)
-                ]}
-              />
-              <Line
-                type="stepAfter"
-                dataKey="fee"
-                stroke={"#e85102"} // Same color as main chart's dynamic fee
-                strokeWidth={1.5}
-                dot={false}
-                activeDot={false}
-              />
-              <Line // New line for EMA
-                type="monotone"
-                dataKey="ema"
-                stroke={"hsl(var(--chart-2))"} // Using a color from the main chart's scheme (muted blue/grey)
-                strokeWidth={1}
-                strokeDasharray="3 3" // Dashed line for EMA
-                dot={false}
-                activeDot={false}
-              />
-            </LineChart>
-          </ResponsiveContainer>
+        <div className="px-2 pb-2 pt-2 h-[100px]">
+          <div className="w-full h-full bg-muted/40 rounded animate-pulse" />
         </div>
-      </CardContent>
-    </Card>
-  );
-} 
+        
+      </div>
+    );
+  }
+
+  // If no data and not loading, show the empty state. If loading, fall through to the chart card (it shows a skeleton inside).
+  if (!hasData && !isLoading) {
+    return (
+      <div
+        className="w-full rounded-lg bg-muted/30 border border-sidebar-border/60 transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow"
+        onClick={handleClick}
+        onMouseEnter={(e) => {
+          const arrow = e.currentTarget.querySelector('[data-arrow]') as HTMLElement;
+          if (arrow) arrow.style.color = 'white';
+        }}
+        onMouseLeave={(e) => {
+          const arrow = e.currentTarget.querySelector('[data-arrow]') as HTMLElement;
+          if (arrow) arrow.style.color = '';
+        }}
+      >
+        <div className="flex items-center justify-between px-4 py-2 border-b border-sidebar-border/60">
+          <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">DYNAMIC FEE TREND</h2>
+                     <div className="flex items-center gap-3">
+             {poolInfo && (
+               <div className="flex items-center">
+                 <div className="relative w-8 h-4">
+                   <div className="absolute top-0 left-0 w-4 h-4 rounded-full overflow-hidden bg-background border border-border/50">
+                     <Image 
+                       src={getToken(poolInfo.token0Symbol)?.icon || "/placeholder-logo.svg"} 
+                       alt={poolInfo.token0Symbol} 
+                       width={16} 
+                       height={16} 
+                       className="w-full h-full object-cover" 
+                     />
+                   </div>
+                   <div className="absolute top-0 left-2.5 w-4 h-4 rounded-full overflow-hidden bg-background border border-border/50">
+                     <Image 
+                       src={getToken(poolInfo.token1Symbol)?.icon || "/placeholder-logo.svg"} 
+                       alt={poolInfo.token1Symbol} 
+                       width={16} 
+                       height={16} 
+                       className="w-full h-full object-cover" 
+                     />
+                   </div>
+                 </div>
+                 <span className="text-xs text-muted-foreground">{poolInfo.token0Symbol}/{poolInfo.token1Symbol}</span>
+               </div>
+             )}
+             <ArrowUpRight aria-hidden="true" data-arrow className="h-4 w-4 text-muted-foreground transition-colors duration-150" />
+          </div>
+        </div>
+        <div className="px-2 pb-2 pt-0 h-[120px]">
+          <div className="w-full h-full flex items-center justify-center" />
+        </div>
+        
+      </div>
+    );
+  } else {
+
+    // Expand Y-axis domain to ensure all data is visible
+    const effectiveMinValue: any = 'auto';
+    const effectiveMaxValue: any = 'auto';
+
+    return (
+      <div
+        className="w-full rounded-lg bg-muted/30 border border-sidebar-border/60 transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow"
+        onClick={handleClick}
+        onMouseEnter={(e) => {
+          const arrow = e.currentTarget.querySelector('[data-arrow]') as HTMLElement;
+          if (arrow) arrow.style.color = 'white';
+        }}
+        onMouseLeave={(e) => {
+          const arrow = e.currentTarget.querySelector('[data-arrow]') as HTMLElement;
+          if (arrow) arrow.style.color = '';
+        }}
+      >
+        <div className="flex items-center justify-between px-4 py-2 border-b border-sidebar-border/60">
+          <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">DYNAMIC FEE TREND</h2>
+                     <div className="flex items-center gap-3">
+             {poolInfo && (
+               <div className="flex items-center">
+                 <div className="relative w-8 h-4">
+                   <div className="absolute top-0 left-0 w-4 h-4 rounded-full overflow-hidden bg-background border border-border/50">
+                     <Image 
+                       src={getToken(poolInfo.token0Symbol)?.icon || "/placeholder-logo.svg"} 
+                       alt={poolInfo.token0Symbol} 
+                       width={16} 
+                       height={16} 
+                       className="w-full h-full object-cover" 
+                     />
+                   </div>
+                   <div className="absolute top-0 left-2.5 w-4 h-4 rounded-full overflow-hidden bg-background border border-border/50">
+                     <Image 
+                       src={getToken(poolInfo.token1Symbol)?.icon || "/placeholder-logo.svg"} 
+                       alt={poolInfo.token1Symbol} 
+                       width={16} 
+                       height={16} 
+                       className="w-full h-full object-cover" 
+                     />
+                   </div>
+                 </div>
+                 <span className="text-xs text-muted-foreground">{poolInfo.token0Symbol}/{poolInfo.token1Symbol}</span>
+               </div>
+             )}
+             <ArrowUpRight aria-hidden="true" data-arrow className="h-4 w-4 text-muted-foreground transition-colors duration-150" />
+          </div>
+        </div>
+        <div className="px-2 pb-2 pt-0 h-[100px]">
+          <div className="w-full h-full cursor-pointer [&_.recharts-wrapper]:outline-none [&_.recharts-wrapper]:focus:outline-none [&_.recharts-surface]:outline-none">
+            {showLoadingSkeleton && !hasData ? (
+              <div className="w-full h-[92px] bg-muted/40 rounded animate-pulse mt-2"></div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart 
+                  data={chartData || []}
+                  margin={{ top: 5, right: 8, bottom: 5, left: 8 }}
+                  style={{ cursor: 'pointer' }}
+                >
+                  <XAxis dataKey="name" hide={true} />
+                  <YAxis
+                    yAxisId="left"
+                    hide={true}
+                    domain={[effectiveMinValue, effectiveMaxValue]}
+                  />
+                  <YAxis
+                    yAxisId="right"
+                    orientation="right"
+                    hide={true}
+                    domain={["auto", "auto"]}
+                  />
+                  <Line
+                    yAxisId="left"
+                    type="monotone"
+                    dataKey="activity"
+                    stroke={"hsl(var(--chart-3))"}
+                    strokeWidth={1.5}
+                    dot={false}
+                    activeDot={false}
+                  />
+                  <Line
+                    yAxisId="left"
+                    type="monotone"
+                    dataKey="target"
+                    stroke={"hsl(var(--chart-2))"}
+                    strokeWidth={1}
+                    strokeDasharray="3 3"
+                    dot={false}
+                    activeDot={false}
+                  />
+                  <Line
+                    yAxisId="right"
+                    type="stepAfter"
+                    dataKey="fee"
+                    stroke={"#e85102"}
+                    strokeWidth={1.5}
+                    dot={false}
+                    activeDot={false}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </div>
+        
+      </div>
+    );
+  }
+}
+
+// Memoized export to prevent unnecessary re-renders
+export const DynamicFeeChartPreview = React.memo(DynamicFeeChartPreviewComponent);

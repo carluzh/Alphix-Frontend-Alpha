@@ -4,7 +4,7 @@
 
 @layer base {
   :root {
-    /* Using original lightness values, saturation set to 0% */
+    /* Light theme - original values */
     --background: 0 0% 100%; /* white */
     --foreground: 0 0% 3.9%; /* very dark grey */
     --card: 0 0% 100%; /* white */
@@ -31,20 +31,25 @@
     --chart-3: 0 0% 60%;
     --chart-4: 0 0% 80%;
     --chart-5: 0 0% 95%;
-    /* Sidebar light theme adjustments */
-    --sidebar-background: 0 0% 100%; /* white (was 0 0% 95.9%) */
-    --sidebar-foreground: 0 0% 3.9%; /* very dark grey (was 0 0% 98%) */
-    --sidebar-primary: 0 0% 3.9%; /* very dark grey (was 0 0% 98%) - for active/primary button text */
-    --sidebar-primary-foreground: 0 0% 98%; /* light grey (was 0 0% 10%) - for active/primary button background */
-    --sidebar-accent: 0 0% 90%; /* light grey (was 0 0% 20%) - for hover background */
-    --sidebar-accent-foreground: 0 0% 3.9%; /* very dark grey (was 0 0% 98%) - for hover text */
-    --sidebar-border: 0 0% 85%; /* slightly darker grey for border (was 0 0% 20%) */
-    --sidebar-ring: 0 0% 10%; /* dark grey for focus rings (was 0 0% 83.9%) */
+    /* Sidebar light theme - original values */
+    --sidebar-background: 0 0% 100%; /* #ffffff - Background (light) */
+    --sidebar-foreground: 0 0% 0%; /* #000000 - Text on light background */
+    --sidebar-primary: 16 100% 48%; /* #f45502 - Brand Color */
+    --sidebar-primary-foreground: 0 0% 100%; /* #ffffff - Text on brand color */
+    --sidebar-accent: 0 0% 96%; /* #f5f5f5 - Highlight 2 (light) */
+    --sidebar-accent-foreground: 0 0% 0%; /* #000000 - Text on accent */
+    --sidebar-border: 0 0% 89%; /* #e4e4e4 - Outline (light) */
+    --sidebar-ring: 16 100% 48%; /* #f45502 - Brand Color for focus rings */
+    --sidebar-logo: 0 0% 0%; /* #000000 - Logo color (light) */
+    --sidebar-connect-button-bg: #1f1f1f; /* Connect button background */
+    /* Swap interface light theme */
+    --swap-background: #ffffff; /* Same as sidebar background */
+    --swap-border: #e4e4e4; /* Same as sidebar border */
   }
 
   .dark {
-    /* Using original dark lightness values, saturation set to 0% */
-    --background: 0 0% 3.9%; /* very dark grey */
+    /* Dark theme - using #0f0f0f for background */
+    --background: #0f0f0f; /* #0f0f0f - dark gray for main background */
     --foreground: 0 0% 98%; /* light grey (almost white) */
     --card: 0 0% 3.9%; /* very dark grey */
     --card-foreground: 0 0% 98%; /* light grey (almost white) */
@@ -63,21 +68,35 @@
     --border: 0 0% 15.9%; /* dark grey */
     --input: 0 0% 15.9%; /* dark grey */
     --ring: 0 0% 83.9%; /* light grey */
+    --border-icons-overlap: #0f0f0f;
     /* Greyscale charts */
     --chart-1: 0 0% 60%;
     --chart-2: 0 0% 48%;
     --chart-3: 0 0% 40%; 
     --chart-4: 0 0% 30%;
     --chart-5: 0 0% 20%; 
-    /* Sidebar grey */
-    --sidebar-background: 0 0% 3.9%;
-    --sidebar-foreground: 0 0% 98%;
-    --sidebar-primary: 0 0% 98%;
-    --sidebar-primary-foreground: 0 0% 10%;
-    --sidebar-accent: 0 0% 15.9%;
-    --sidebar-accent-foreground: 0 0% 98%;
-    --sidebar-border: 0 0% 15.9%;
-    --sidebar-ring: 0 0% 83.9%;
+    /* Sidebar dark theme - keep original sidebar colors */
+    --sidebar-background: #131313;
+    --sidebar-background-popover: #0f0f0f;
+    --sidebar-foreground: #ffffff;
+    /* Modal background */
+    --modal-background: #161616;
+    --sidebar-primary: #f45502;
+    --sidebar-primary-foreground: #ffffff;
+    --sidebar-accent: #282828;
+    --sidebar-accent-foreground: #ffffff; /* #ffffff - Text on accent */
+    --sidebar-border: #323232; /* #28272a - Outline (dark) */
+    --sidebar-ring: #f45502; /* #f45502 - Brand Color for focus rings */
+    --sidebar-logo: #ffffff; /* #ffffff - Logo color (dark) */
+    --sidebar-connect-button-bg: #1f1f1f; /* Connect button background */
+    /* Swap interface dark theme */
+    --swap-background: #131313; /* Same as sidebar background */
+    --swap-border: #323232; /* Same as sidebar border */
+
+    /* Custom Swap Interface Colors */
+    --token-container-background: #181818;
+    --token-container-border-hover: #2d2d2d;
+    --token-selector-background: #1b1b1b;
   }
 }
 
@@ -88,6 +107,15 @@
   body {
     @apply bg-background text-foreground;
     font-feature-settings: "rlig" 1, "calt" 1;
+  }
+  
+  /* Force dark theme background */
+  .dark body {
+    background-color: #0f0f0f !important;
+  }
+  
+  .dark {
+    --background: #0f0f0f !important;
   }
 }
 
@@ -130,4 +158,117 @@ appkit-button:hover {
 }
 
 /* Removed marker CSS rule */
+
+.recharts-surface:focus {
+  outline: none;
+  border: none; /* In case it's a border, though usually it's outline */
+}
+
+/* Ensure chart tooltips have solid backgrounds */
+.recharts-tooltip-wrapper .recharts-default-tooltip {
+  background-color: hsl(var(--card)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+  color: hsl(var(--card-foreground)) !important;
+}
+
+  /* Sidebar ring colors */
+  .sidebar-ring-track { color: #303030; }
+  .sidebar-ring-progress { color: #c7c7c7; }
+
+/* Ensure toast notifications have solid backgrounds */
+[data-sonner-toaster] [data-sonner-toast] {
+  background-color: hsl(var(--card)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+  color: hsl(var(--card-foreground)) !important;
+}
+
+/* Hide Fees column below 1500px */
+@media (max-width: 1499px) {
+  .hide-fees-col {
+    display: none !important;
+  }
+}
+
+/* More specific selector to override Tailwind */
+@media (max-width: 1499px) {
+  div.hide-fees-col {
+    display: none !important;
+    visibility: hidden !important;
+  }
+}
+
+/* Even more aggressive approach */
+@media screen and (max-width: 1499px) {
+  .hide-fees-col,
+  div.hide-fees-col,
+  .grid .hide-fees-col {
+    display: none !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
+    width: 0 !important;
+    height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+}
+
+/* Slider styles */
+.slider {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 16px;
+  width: 16px;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  border: 2px solid transparent;
+  box-shadow: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.slider:hover::-webkit-slider-thumb {
+  opacity: 1;
+  background: #1f1f1f;
+  border: 2px solid #323232;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.slider::-moz-range-thumb {
+  height: 16px;
+  width: 16px;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  border: 2px solid transparent;
+  box-shadow: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.slider:hover::-moz-range-thumb {
+  opacity: 1;
+  background: #1f1f1f;
+  border: 2px solid #323232;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* Responsive grid for positions */
+.responsive-grid {
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 1400px) {
+  .responsive-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+  }
+}
 

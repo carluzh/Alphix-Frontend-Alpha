@@ -1,8 +1,9 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { createPublicClient, http, getAddress, parseAbi } from 'viem';
 import { baseSepolia } from 'viem/chains';
-import { PERMIT2_ADDRESS, TOKEN_DEFINITIONS } from '@/lib/swap-constants';
-import { TokenSymbol } from '@/lib/swap-constants';
+import { PERMIT2_ADDRESS } from '@/lib/swap-constants';
+import { TOKEN_DEFINITIONS, TokenSymbol } from '@/lib/pools-config';
+import { getToken } from '@/lib/pools-config';
 
 // Define constants from other files
 const POSITION_MANAGER_ADDRESS = getAddress("0x4b2c77d209d3405f41a037ec6c77f7f5b8e2ca80");
@@ -57,7 +58,10 @@ export default async function handler(
       });
     }
 
-    if (!TOKEN_DEFINITIONS[token0Symbol] || !TOKEN_DEFINITIONS[token1Symbol]) {
+    const token0Config = getToken(token0Symbol);
+    const token1Config = getToken(token1Symbol);
+
+    if (!token0Config || !token1Config) {
       return res.status(400).json({ 
         needsToken0Approval: true, 
         needsToken1Approval: true,
@@ -77,42 +81,47 @@ export default async function handler(
 
     // Check Token0 if needed
     if (parseFloat(amount0) > 0) {
-      const token0Address = TOKEN_DEFINITIONS[token0Symbol].addressRaw;
+      const token0Address = token0Config.address;
       
-      // Step 1: Check ERC20 allowance from User to Permit2
-      const eoaToPermit2Erc20Allowance = await publicClient.readContract({
-        address: getAddress(token0Address),
-        abi: parseAbi(['function allowance(address owner, address spender) external view returns (uint256)']),
-        functionName: 'allowance',
-        args: [getAddress(userAddress), PERMIT2_ADDRESS]
-      }) as bigint;
-
-      const requiredAmount = parseFloat(amount0) * Math.pow(10, TOKEN_DEFINITIONS[token0Symbol].decimals);
-      const requiredAmountBigInt = BigInt(Math.floor(requiredAmount));
-
-      if (eoaToPermit2Erc20Allowance >= requiredAmountBigInt) {
-        // Step 2: Check Permit2 allowance for PositionManager
-        const permit2AllowanceTuple = await publicClient.readContract({
-          address: PERMIT2_ADDRESS,
-          abi: parseAbi(['function allowance(address owner, address token, address spender) external view returns (uint160 amount, uint48 expiration, uint48 nonce)']),
+      // Skip approval check for native ETH
+      if (token0Address === "0x0000000000000000000000000000000000000000") {
+        needsToken0Approval = false;
+      } else {
+        // Step 1: Check ERC20 allowance from User to Permit2
+        const eoaToPermit2Erc20Allowance = await publicClient.readContract({
+          address: getAddress(token0Address),
+          abi: parseAbi(['function allowance(address owner, address spender) external view returns (uint256)']),
           functionName: 'allowance',
-          args: [getAddress(userAddress), getAddress(token0Address), POSITION_MANAGER_ADDRESS]
-        }) as readonly [amount: bigint, expiration: number, nonce: number];
-        
-        const permit2SpenderAmount = permit2AllowanceTuple[0];
-        const permit2SpenderExpiration = permit2AllowanceTuple[1];
-        const currentTimestamp = Math.floor(Date.now() / 1000);
-        
-        // Check if the permit amount is sufficient and not expired
-        const sufficientAmount = requiredAmountBigInt > MAX_UINT_160 
-          ? permit2SpenderAmount >= MAX_UINT_160
-          : permit2SpenderAmount >= requiredAmountBigInt;
+          args: [getAddress(userAddress), PERMIT2_ADDRESS]
+        }) as bigint;
+
+        const requiredAmount = parseFloat(amount0) * Math.pow(10, token0Config.decimals);
+        const requiredAmountBigInt = BigInt(Math.floor(requiredAmount));
+
+        if (eoaToPermit2Erc20Allowance >= requiredAmountBigInt) {
+          // Step 2: Check Permit2 allowance for PositionManager
+          const permit2AllowanceTuple = await publicClient.readContract({
+            address: PERMIT2_ADDRESS,
+            abi: parseAbi(['function allowance(address owner, address token, address spender) external view returns (uint160 amount, uint48 expiration, uint48 nonce)']),
+            functionName: 'allowance',
+            args: [getAddress(userAddress), getAddress(token0Address), POSITION_MANAGER_ADDRESS]
+          }) as readonly [amount: bigint, expiration: number, nonce: number];
           
-        const notExpired = permit2SpenderExpiration === 0 || permit2SpenderExpiration > currentTimestamp;
-        
-        // Only set to false if both conditions are met
-        if (sufficientAmount && notExpired) {
-          needsToken0Approval = false;
+          const permit2SpenderAmount = permit2AllowanceTuple[0];
+          const permit2SpenderExpiration = permit2AllowanceTuple[1];
+          const currentTimestamp = Math.floor(Date.now() / 1000);
+          
+          // Check if the permit amount is sufficient and not expired
+          const sufficientAmount = requiredAmountBigInt > MAX_UINT_160 
+            ? permit2SpenderAmount >= MAX_UINT_160
+            : permit2SpenderAmount >= requiredAmountBigInt;
+            
+          const notExpired = permit2SpenderExpiration === 0 || permit2SpenderExpiration > currentTimestamp;
+          
+          // Only set to false if both conditions are met
+          if (sufficientAmount && notExpired) {
+            needsToken0Approval = false;
+          }
         }
       }
     } else {
@@ -122,42 +131,47 @@ export default async function handler(
 
     // Check Token1 if needed
     if (parseFloat(amount1) > 0) {
-      const token1Address = TOKEN_DEFINITIONS[token1Symbol].addressRaw;
+      const token1Address = token1Config.address;
       
-      // Step 1: Check ERC20 allowance from User to Permit2
-      const eoaToPermit2Erc20Allowance = await publicClient.readContract({
-        address: getAddress(token1Address),
-        abi: parseAbi(['function allowance(address owner, address spender) external view returns (uint256)']),
-        functionName: 'allowance',
-        args: [getAddress(userAddress), PERMIT2_ADDRESS]
-      }) as bigint;
-
-      const requiredAmount = parseFloat(amount1) * Math.pow(10, TOKEN_DEFINITIONS[token1Symbol].decimals);
-      const requiredAmountBigInt = BigInt(Math.floor(requiredAmount));
-
-      if (eoaToPermit2Erc20Allowance >= requiredAmountBigInt) {
-        // Step 2: Check Permit2 allowance for PositionManager
-        const permit2AllowanceTuple = await publicClient.readContract({
-          address: PERMIT2_ADDRESS,
-          abi: parseAbi(['function allowance(address owner, address token, address spender) external view returns (uint160 amount, uint48 expiration, uint48 nonce)']),
+      // Skip approval check for native ETH
+      if (token1Address === "0x0000000000000000000000000000000000000000") {
+        needsToken1Approval = false;
+      } else {
+        // Step 1: Check ERC20 allowance from User to Permit2
+        const eoaToPermit2Erc20Allowance = await publicClient.readContract({
+          address: getAddress(token1Address),
+          abi: parseAbi(['function allowance(address owner, address spender) external view returns (uint256)']),
           functionName: 'allowance',
-          args: [getAddress(userAddress), getAddress(token1Address), POSITION_MANAGER_ADDRESS]
-        }) as readonly [amount: bigint, expiration: number, nonce: number];
-        
-        const permit2SpenderAmount = permit2AllowanceTuple[0];
-        const permit2SpenderExpiration = permit2AllowanceTuple[1];
-        const currentTimestamp = Math.floor(Date.now() / 1000);
-        
-        // Check if the permit amount is sufficient and not expired
-        const sufficientAmount = requiredAmountBigInt > MAX_UINT_160 
-          ? permit2SpenderAmount >= MAX_UINT_160
-          : permit2SpenderAmount >= requiredAmountBigInt;
+          args: [getAddress(userAddress), PERMIT2_ADDRESS]
+        }) as bigint;
+
+        const requiredAmount = parseFloat(amount1) * Math.pow(10, token1Config.decimals);
+        const requiredAmountBigInt = BigInt(Math.floor(requiredAmount));
+
+        if (eoaToPermit2Erc20Allowance >= requiredAmountBigInt) {
+          // Step 2: Check Permit2 allowance for PositionManager
+          const permit2AllowanceTuple = await publicClient.readContract({
+            address: PERMIT2_ADDRESS,
+            abi: parseAbi(['function allowance(address owner, address token, address spender) external view returns (uint160 amount, uint48 expiration, uint48 nonce)']),
+            functionName: 'allowance',
+            args: [getAddress(userAddress), getAddress(token1Address), POSITION_MANAGER_ADDRESS]
+          }) as readonly [amount: bigint, expiration: number, nonce: number];
           
-        const notExpired = permit2SpenderExpiration === 0 || permit2SpenderExpiration > currentTimestamp;
-        
-        // Only set to false if both conditions are met
-        if (sufficientAmount && notExpired) {
-          needsToken1Approval = false;
+          const permit2SpenderAmount = permit2AllowanceTuple[0];
+          const permit2SpenderExpiration = permit2AllowanceTuple[1];
+          const currentTimestamp = Math.floor(Date.now() / 1000);
+          
+          // Check if the permit amount is sufficient and not expired
+          const sufficientAmount = requiredAmountBigInt > MAX_UINT_160 
+            ? permit2SpenderAmount >= MAX_UINT_160
+            : permit2SpenderAmount >= requiredAmountBigInt;
+            
+          const notExpired = permit2SpenderExpiration === 0 || permit2SpenderExpiration > currentTimestamp;
+          
+          // Only set to false if both conditions are met
+          if (sufficientAmount && notExpired) {
+            needsToken1Approval = false;
+          }
         }
       }
     } else {

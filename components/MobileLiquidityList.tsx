@@ -16,7 +16,7 @@ const formatUSD = (value: number) => {
   if (value === 0) return "$0.00";
   if (Math.abs(value) < 0.01) return "< $0.01"; // For small negative values if they ever occur
   if (Math.abs(value) < 1000) return `$${value.toFixed(2)}`;
-  return `$${(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return `$${(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
 export function MobileLiquidityList({ pools, onSelectPool }: MobileLiquidityListProps) {

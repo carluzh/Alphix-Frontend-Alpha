@@ -3,10 +3,10 @@
 import { useState, useRef, useEffect } from "react"
 import type * as React from "react"
 import type { LucideIcon } from "lucide-react"
-import { SunIcon, MoonIcon, LaptopIcon, Trash2Icon, SettingsIcon, LogOutIcon, CheckIcon } from "lucide-react"
-import { useTheme } from "next-themes"
+import { LaptopIcon, Trash2Icon, SettingsIcon, LogOutIcon, CheckIcon } from "lucide-react"
 import { toast } from "sonner"
 import { CustomLockIcon } from "./CustomLockIcon"
+import { clearCache } from "@/lib/client-cache"
 
 import {
   DropdownMenu,
@@ -42,7 +42,7 @@ export function NavSecondary({
 }: {
   items: NavSecondaryItem[]
 } & React.ComponentPropsWithoutRef<typeof SidebarGroup>) {
-  const { setTheme } = useTheme()
+  
 
   const [lockedItem, setLockedItem] = useState<string | null>(null)
   const timeoutRef = useRef<NodeJS.Timeout | null>(null)
@@ -68,13 +68,13 @@ export function NavSecondary({
   return (
     <SidebarGroup {...props}>
       <SidebarGroupContent>
-        <SidebarMenu className="flex flex-col gap-1">
+        <SidebarMenu className="flex flex-col gap-1 px-3">
           {items.map((item) => (
             <SidebarMenuItem key={item.title} className="list-none">
               {item.title === "Settings" ? (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <SidebarMenuButton>
+                    <SidebarMenuButton className="focus-visible:ring-0">
                       <item.icon />
                       <span>{item.title}</span>
                     </SidebarMenuButton>
@@ -84,34 +84,13 @@ export function NavSecondary({
                       side="top" 
                       align="center"
                       sideOffset={4}
-                      className="w-56 rounded-lg"
+                      className="w-56 rounded-lg border-sidebar-border"
+                      style={{ backgroundColor: '#0f0f0f' }}
                     >
-                      <DropdownMenuSub>
-                        <DropdownMenuSubTrigger>
-                          <SunIcon className="mr-2 h-4 w-4" />
-                          <span>Theme</span>
-                        </DropdownMenuSubTrigger>
-                        <DropdownMenuPortal>
-                          <DropdownMenuSubContent>
-                            <DropdownMenuItem onClick={() => setTheme("light")} className="cursor-pointer">
-                              <SunIcon className="mr-2 h-4 w-4" />
-                              <span>Light</span>
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => setTheme("dark")} className="cursor-pointer">
-                              <MoonIcon className="mr-2 h-4 w-4" />
-                              <span>Dark</span>
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => setTheme("system")} className="cursor-pointer">
-                              <LaptopIcon className="mr-2 h-4 w-4" />
-                              <span>System</span>
-                            </DropdownMenuItem>
-                          </DropdownMenuSubContent>
-                        </DropdownMenuPortal>
-                      </DropdownMenuSub>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuLabel>Debug</DropdownMenuLabel>
                       <DropdownMenuItem onClick={() => {
-                        localStorage.clear();
+                        try { clearCache(); } catch {}
+                        try { sessionStorage.clear(); } catch {}
+                        try { localStorage.clear(); } catch {}
                         toast(
                           <span className="flex items-center">
                             <Trash2Icon className="mr-2 h-4 w-4 flex-shrink-0" />
@@ -128,7 +107,7 @@ export function NavSecondary({
               ) : item.disabled ? (
                 <SidebarMenuButton
                   onClick={() => handleLockedClick(item.title)}
-                  className="opacity-75 hover:bg-transparent w-full flex items-center"
+                  className="opacity-75 w-full flex items-center"
                   tooltip={item.title}
                 >
                   {item.icon && <item.icon />}

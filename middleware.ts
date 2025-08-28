@@ -3,8 +3,21 @@ import type { NextRequest } from 'next/server';
 // import { cookies } from 'next/headers'; // Not used in Middleware for reading cookies
 
 export function middleware(request: NextRequest) {
+  // Handle CORS preflight universally to avoid 400s from OPTIONS
+  if (request.method === 'OPTIONS') {
+    const res = new NextResponse(null, { status: 204 });
+    const origin = request.headers.get('origin') || '*';
+    res.headers.set('Access-Control-Allow-Origin', origin);
+    res.headers.set('Vary', 'Origin');
+    res.headers.set('Access-Control-Allow-Credentials', 'true');
+    res.headers.set('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+    res.headers.set('Access-Control-Allow-Headers', request.headers.get('access-control-request-headers') || 'Content-Type, Authorization');
+    return res;
+  }
+
   const authToken = request.cookies.get('site_auth_token');
   const { pathname } = request.nextUrl;
+  const maintenanceEnabled = process.env.NEXT_PUBLIC_MAINTENANCE === 'true' || process.env.MAINTENANCE === 'true';
 
   console.log(`[MIDDLEWARE] Path: ${pathname}, Auth Token: ${authToken?.value || 'none'}`);
 
@@ -14,10 +27,39 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Allow login page, APIs, and static assets without auth check
+  // Maintenance mode: Only '/' and '/login' (and static) are freely accessible.
+  if (maintenanceEnabled) {
+    // Allow login page and Next internal/static assets
+    if (
+      pathname.startsWith('/login') ||
+      pathname.startsWith('/_next') ||
+      pathname.includes('.')
+    ) {
+      return NextResponse.next();
+    }
+
+    // All other paths require auth during maintenance
+    if (!authToken || authToken.value !== 'valid') {
+      console.log(`[MIDDLEWARE] (Maintenance) Redirecting ${pathname} to login - no valid auth`);
+      const loginUrl = new URL('/login', request.url);
+      return NextResponse.redirect(loginUrl);
+    }
+
+    // If already on /maintenance, allow
+    if (pathname.startsWith('/maintenance')) {
+      return NextResponse.next();
+    }
+
+    // Redirect any other path to /maintenance
+    console.log(`[MIDDLEWARE] (Maintenance) Redirecting ${pathname} to /maintenance`);
+    const maintenanceUrl = new URL('/maintenance', request.url);
+    return NextResponse.redirect(maintenanceUrl);
+  }
+
+  // Normal mode: Allow login page, APIs, and static assets without auth check
   if (
-    pathname.startsWith('/login') || 
-    pathname.startsWith('/api') || 
+    pathname.startsWith('/login') ||
+    pathname.startsWith('/api') ||
     pathname.startsWith('/_next') || // Next.js internal assets
     pathname.includes('.') // Static assets (e.g., /Tab.png, /logo.svg)
   ) {
@@ -45,6 +87,6 @@ export const config = {
      * - _next/image (image optimization files)
      * - favicon.ico (favicon file)
      */
-    '/((?!_next/static|_next/image|favicon.ico|api).*)',
+    '/((?!_next/static|_next/image|favicon.ico).*)',
   ],
 }; 

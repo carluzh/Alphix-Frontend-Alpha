@@ -2,51 +2,58 @@ import { ethers } from "ethers";
 import { Token } from '@uniswap/sdk-core';
 import { Pool as V4Pool, Position as V4Position } from "@uniswap/v4-sdk";
 import JSBI from 'jsbi';
-// import dotenv from "dotenv"; // Removed
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from "../../../lib/abis/state_view_abi"; // Adjusted path
-import { publicClient } from "../../../lib/viemClient"; // Import publicClient
-import { getAddress, parseAbi, type Address, type Abi } from "viem"; // Import getAddress and parseAbi, and added Abi for type cast
+import { getAddress, type Address, type Hex, encodeAbiParameters, keccak256 } from "viem";
+import { getTokenSymbolByAddress, getToken as getTokenConfig, CHAIN_ID } from "../../../lib/pools-config";
+import { getPositionDetails, getPoolState } from "../../../lib/liquidity-utils";
 
 // Load environment variables - ensure .env is at the root or configure path
 // dotenv.config({ path: '.env.local' }); // Removed: Next.js handles .env.local automatically
 
 // Constants
-const SUBGRAPH_URL = "https://api.studio.thegraph.com/query/111443/alphix-v-4/version/latest";
-// const RPC_URL = process.env.RPC_URL; // No longer directly used here
-const STATE_VIEW_ADDRESS = getAddress("0x571291b572ed32ce6751a2cb2486ebee8defb9b4"); // Use getAddress for checksum
-const DEFAULT_FEE = 8388608;
-const DEFAULT_TICK_SPACING = 60;
-const DEFAULT_HOOK_ADDRESS = "0x94ba380a340E020Dc29D7883f01628caBC975000";
-const DEFAULT_CHAIN_ID = 84532; // Base Sepolia
-
-// --- Interfaces for Subgraph Response ---
-interface SubgraphToken {
-    id: string;
-    symbol: string;
-    decimals: string;
+const DEFAULT_CHAIN_ID = CHAIN_ID;
+const SUBGRAPH_URL = process.env.SUBGRAPH_URL as string;
+if (!SUBGRAPH_URL) {
+  throw new Error('SUBGRAPH_URL env var is required');
 }
 
-interface SubgraphHookPosition {
-    id: string;
-    pool: string;
+// Minimal subgraph types and query
+interface SubgraphPosition {
+    id: string; // bytes32 salt (tokenId)
     owner: string;
-    hook: string;
-    currency0: SubgraphToken;
-    currency1: SubgraphToken;
     tickLower: string;
     tickUpper: string;
     liquidity: string;
-    blockNumber: string;
-    blockTimestamp: string;
+    creationTimestamp: string;
+    lastTimestamp: string;
+    pool: { id: string };
 }
+const GET_USER_HOOK_POSITIONS_QUERY = `
+  query GetUserPositions($owner: Bytes!) {
+    hookPositions(first: 200, orderBy: id, orderDirection: desc, where: { owner: $owner }) {
+      id
+      owner
+      tickLower
+      tickUpper
+      liquidity
+      creationTimestamp
+      lastTimestamp
+      pool { id }
+    }
+  }
+`;
 
-interface SubgraphResponse {
-    data?: { // Make data optional to handle potential subgraph errors better
-        hookPositions: SubgraphHookPosition[];
-    };
-    errors?: any[]; // To capture subgraph errors
-}
+const GET_USER_LEGACY_POSITIONS_QUERY = `
+  query GetUserPositions($owner: Bytes!) {
+    positions(first: 200, orderBy: tokenId, orderDirection: desc, where: { owner: $owner }) {
+      id
+      tokenId
+      owner
+      createdAtTimestamp
+    }
+  }
+`;
+// duplicate removed
 
 // --- Interface for Processed Position Data ---
 interface ProcessedPositionToken {
@@ -69,208 +76,237 @@ export interface ProcessedPosition { // Export for frontend type usage
     isInRange: boolean;
 }
 
-const GET_USER_POSITIONS_QUERY = `
-  query GetUserPositions($owner: Bytes!) {
-    hookPositions(first: 100, orderBy: liquidity, orderDirection: desc, where: { owner: $owner }) {
-      id
-      pool
-      owner
-      hook
-      currency0 {
-        id
-        symbol
-        decimals
-      }
-      currency1 {
-        id
-        symbol
-        decimals
-      }
-      tickLower
-      tickUpper
-      liquidity
-      blockNumber
-      blockTimestamp
-    }
-  }
-`;
+// duplicate types/query removed
+
+// Helper to parse tokenId from composite subgraph id (last dash component hex)
+function parseTokenIdFromHexId(idHex: string): bigint | null {
+    try {
+        if (!idHex || !idHex.startsWith('0x')) return null;
+        return BigInt(idHex);
+    } catch { return null; }
+}
+
+// Removed tokenURI parsing fallback (subgraph-only discovery now; details are on-chain)
 
 async function fetchAndProcessUserPositionsForApi(ownerAddress: string): Promise<ProcessedPosition[]> {
-    // Removed the explicit RPC_URL check here, as publicClient handles its own RPC configuration, including defaults.
-    // if (!process.env.RPC_URL && !process.env.NEXT_PUBLIC_RPC_URL) { 
-    //     console.error("Missing environment variable: RPC_URL or NEXT_PUBLIC_RPC_URL for get-positions API (used by publicClient)");
-    //     throw new Error("Server configuration error: RPC_URL is not set for publicClient.");
-    // }
-
-    const stateViewAbiViem = parseAbi(STATE_VIEW_HUMAN_READABLE_ABI);
-
-    console.log(`API: Fetching positions for owner: ${ownerAddress}`);
-
-    const response = await fetch(SUBGRAPH_URL, {
+    // Minimal logging only; no timers/withTimeout
+    const owner = getAddress(ownerAddress);
+    // Subgraph-only path
+    try {
+        const resp = await fetch(SUBGRAPH_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            query: GET_USER_POSITIONS_QUERY,
-            variables: { owner: ownerAddress.toLowerCase() },
-        }),
-    });
-
-    if (!response.ok) {
-        const errorBody = await response.text();
-        console.error(`API: Subgraph query failed with status ${response.status}: ${errorBody}`);
-        throw new Error(`Subgraph query failed: ${errorBody}`);
-    }
-
-    const result = (await response.json()) as SubgraphResponse;
-
-    if (result.errors) {
-        console.error("API: Subgraph returned errors:", result.errors);
-        throw new Error(`Subgraph error(s): ${JSON.stringify(result.errors)}`);
-    }
-    
-    if (!result.data || !result.data.hookPositions) {
-        console.warn("API: Subgraph response is missing data.hookPositions field or it's null.", result);
-        return []; // No positions found or error in query structure
-    }
-    const rawPositions = result.data.hookPositions;
-
-    if (rawPositions.length === 0) {
-        console.log("API: No positions found for this owner.");
-        return [];
-    }
-
-    console.log(`API: Found ${rawPositions.length} raw positions. Processing...`);
-
-    const processedPositions: ProcessedPosition[] = [];
-    const poolStatesCache = new Map<string, { sqrtPriceX96: string; tick: number }>();
-
-    for (const rawPos of rawPositions) {
-        try {
-            const poolId = rawPos.pool;
-            const token0Data = rawPos.currency0;
-            const token1Data = rawPos.currency1;
-
-            if (!poolId) {
-                console.error(`API: Error processing position ID ${rawPos.id}: 'pool' ID string is missing. Skipping.`, rawPos);
-                continue;
-            }
-            if (!token0Data || typeof token0Data.decimals === 'undefined' || typeof token0Data.symbol === 'undefined' || typeof token0Data.id === 'undefined') {
-                console.error(`API: Error processing position ID ${rawPos.id}: currency0 or its fields (id, symbol, decimals) are missing. Skipping. Currency0 data:`, token0Data);
-                continue; 
-            }
-            if (!token1Data || typeof token1Data.decimals === 'undefined' || typeof token1Data.symbol === 'undefined' || typeof token1Data.id === 'undefined') {
-                console.error(`API: Error processing position ID ${rawPos.id}: currency1 or its fields (id, symbol, decimals) are missing. Skipping. Currency1 data:`, token1Data);
-                continue;
-            }
-
-            const token0Decimals = parseInt(token0Data.decimals, 10);
-            const token1Decimals = parseInt(token1Data.decimals, 10);
-            
-            const sdkToken0 = new Token(DEFAULT_CHAIN_ID, token0Data.id, token0Decimals, token0Data.symbol);
-            const sdkToken1 = new Token(DEFAULT_CHAIN_ID, token1Data.id, token1Decimals, token1Data.symbol);
-
-            let slot0;
-            if (poolStatesCache.has(poolId)) {
-                slot0 = poolStatesCache.get(poolId)!;
-            } else {
+            body: JSON.stringify({ query: GET_USER_HOOK_POSITIONS_QUERY, variables: { owner: owner.toLowerCase() } }),
+        });
+        if (resp.ok) {
+            const json = await resp.json() as { data?: { positions: SubgraphPosition[] } };
+            let raw = (json as any)?.data?.hookPositions ?? [] as SubgraphPosition[];
+            // Fallback to legacy positions if hookPositions empty
+            if (!Array.isArray(raw) || raw.length === 0) {
                 try {
-                    // const slot0Data = await stateViewContract.getSlot0(poolId); // Old ethers call
-                    const slot0Data = await publicClient.readContract({
-                        address: STATE_VIEW_ADDRESS,
-                        abi: stateViewAbiViem,
-                        functionName: 'getSlot0',
-                        args: [poolId as `0x${string}`] // poolId should be bytes32, ensure it's correctly formatted hex
-                    }) as readonly [bigint, number, number, number]; // Explicit type assertion for the result
-                    // Viem returns an array/tuple for multiple return values or an object if named
-                    // Based on ABI: "returns (uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 lpFee)"
-                    // It will be an array: [sqrtPriceX96, tick, protocolFee, lpFee]
-                    slot0 = {
-                        sqrtPriceX96: slot0Data[0].toString(),
-                        tick: Number(slot0Data[1]),
-                        // protocolFee: Number(slot0Data[2]), // if needed
-                        // lpFee: Number(slot0Data[3]), // if needed
-                    };
-                    poolStatesCache.set(poolId, slot0);
-                } catch (err) {
-                    console.error(`API: Error fetching slot0 for pool ${poolId}:`, err);
-                    continue; 
-                }
+                    const respLegacy = await fetch(SUBGRAPH_URL, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ query: GET_USER_LEGACY_POSITIONS_QUERY, variables: { owner: owner.toLowerCase() } }),
+                    });
+                    if (respLegacy.ok) {
+                        const jsonLegacy = await respLegacy.json() as any;
+                        const legacy = (jsonLegacy?.data?.positions || []) as Array<{ id: string; tokenId?: string; owner: string; createdAtTimestamp?: string }>;
+                        raw = legacy.map((p) => ({
+                            id: p.id,
+                            owner: p.owner,
+                            tickLower: '0',
+                            tickUpper: '0',
+                            liquidity: '0',
+                            creationTimestamp: p.createdAtTimestamp || '0',
+                            lastTimestamp: undefined as any,
+                            pool: { id: '' },
+                        }));
+                    }
+                } catch {}
             }
-
-            const v4Pool = new V4Pool(
-                sdkToken0,
-                sdkToken1,
-                DEFAULT_FEE, // Assuming fee is constant from PoolKey, might need to fetch if dynamic
-                DEFAULT_TICK_SPACING, // Assuming tickSpacing is constant
-                rawPos.hook || DEFAULT_HOOK_ADDRESS, // Use hook from position or default
-                slot0.sqrtPriceX96,
-                JSBI.BigInt(0), // Liquidity (not strictly needed for position.amount0/1 calc from existing liquidity)
-                slot0.tick
-            );
-
-            const v4Position = new V4Position({
-                pool: v4Pool,
-                tickLower: Number(rawPos.tickLower),
-                tickUpper: Number(rawPos.tickUpper),
-                liquidity: JSBI.BigInt(rawPos.liquidity)
-            });
-
-            const rawAmount0 = v4Position.amount0.quotient.toString();
-            const rawAmount1 = v4Position.amount1.quotient.toString();
-            
-            const formattedAmount0 = ethers.utils.formatUnits(rawAmount0, sdkToken0.decimals);
-            const formattedAmount1 = ethers.utils.formatUnits(rawAmount1, sdkToken1.decimals);
-
-            const ageSeconds = Math.floor(Date.now() / 1000) - Number(rawPos.blockTimestamp);
-            const isInRange = slot0.tick >= Number(rawPos.tickLower) && slot0.tick < Number(rawPos.tickUpper);
-
-            processedPositions.push({
-                positionId: rawPos.id,
-                poolId: poolId,
-                token0: {
-                    address: sdkToken0.address,
-                    symbol: sdkToken0.symbol || 'N/A',
-                    amount: formattedAmount0,
-                    rawAmount: rawAmount0,
-                },
-                token1: {
-                    address: sdkToken1.address,
-                    symbol: sdkToken1.symbol || 'N/A',
-                    amount: formattedAmount1,
-                    rawAmount: rawAmount1,
-                },
-                tickLower: Number(rawPos.tickLower),
-                tickUpper: Number(rawPos.tickUpper),
-                liquidityRaw: rawPos.liquidity,
-                ageSeconds,
-                blockTimestamp: rawPos.blockTimestamp,
-                isInRange,
-            });
-        } catch (error) {
-            console.error(`API: Error processing position ID ${rawPos.id} (outer try-catch):`, error);
+            // (debug logging removed)
+            // Also return processed results using live slot0 for balances
+            if (raw.length > 0) {
+                const processed: ProcessedPosition[] = [];
+                const stateCache = new Map<string, { sqrtPriceX96: string; tick: number; poolLiquidity: string }>();
+                for (const r of raw) {
+                    try {
+                        const tokenId = parseTokenIdFromHexId(r.id);
+                        if (tokenId === null) continue;
+                        // On-chain position details (poolKey, ticks, liquidity)
+                        const details = await getPositionDetails(tokenId);
+                        // Use subgraph-provided pool id (bytes32) directly
+                        let poolIdHex = (r.pool?.id || '') as Hex;
+                        if (!poolIdHex || !poolIdHex.startsWith('0x')) {
+                          // Legacy path: compute poolId from poolKey
+                          const encodedPoolKey = encodeAbiParameters([
+                            { type: 'tuple', components: [
+                              { name: 'currency0', type: 'address' },
+                              { name: 'currency1', type: 'address' },
+                              { name: 'fee', type: 'uint24' },
+                              { name: 'tickSpacing', type: 'int24' },
+                              { name: 'hooks', type: 'address' },
+                            ]}
+                          ], [{
+                            currency0: details.poolKey.currency0 as `0x${string}`,
+                            currency1: details.poolKey.currency1 as `0x${string}`,
+                            fee: Number(details.poolKey.fee),
+                            tickSpacing: Number(details.poolKey.tickSpacing),
+                            hooks: details.poolKey.hooks as `0x${string}`,
+                          }]);
+                          poolIdHex = keccak256(encodedPoolKey) as Hex;
+                        }
+                        const poolIdStr = poolIdHex;
+                        let state = stateCache.get(poolIdStr);
+                        if (!state) {
+                            const ps = await getPoolState(poolIdHex);
+                            state = { sqrtPriceX96: ps.sqrtPriceX96.toString(), tick: Number(ps.tick), poolLiquidity: ps.liquidity.toString() };
+                            stateCache.set(poolIdStr, state);
+                        }
+                        // Token metadata
+                        const t0Addr = details.poolKey.currency0 as Address;
+                        const t1Addr = details.poolKey.currency1 as Address;
+                        const sym0 = getTokenSymbolByAddress(t0Addr) || 'T0';
+                        const sym1 = getTokenSymbolByAddress(t1Addr) || 'T1';
+                        const cfg0 = sym0 ? getTokenConfig(sym0) : undefined;
+                        const cfg1 = sym1 ? getTokenConfig(sym1) : undefined;
+                        const dec0 = cfg0?.decimals ?? 18;
+                        const dec1 = cfg1?.decimals ?? 18;
+                        const t0 = new Token(DEFAULT_CHAIN_ID, t0Addr, dec0, sym0);
+                        const t1 = new Token(DEFAULT_CHAIN_ID, t1Addr, dec1, sym1);
+                        // Build pool and position from on-chain data
+                        const v4Pool = new V4Pool(
+                            t0,
+                            t1,
+                            details.poolKey.fee,
+                            details.poolKey.tickSpacing,
+                            details.poolKey.hooks,
+                            state.sqrtPriceX96,
+                            JSBI.BigInt(state.poolLiquidity),
+                            state.tick
+                        );
+                        const v4Position = new V4Position({
+                            pool: v4Pool,
+                            tickLower: details.tickLower,
+                            tickUpper: details.tickUpper,
+                            liquidity: JSBI.BigInt(details.liquidity.toString()),
+                        });
+                        const raw0 = v4Position.amount0.quotient.toString();
+                        const raw1 = v4Position.amount1.quotient.toString();
+                        const createdTs = Number(r.creationTimestamp || (r as any).createdAtTimestamp || 0);
+                        const lastTs = Number(r.lastTimestamp || 0);
+                        processed.push({
+                            positionId: r.id || '',
+                            poolId: poolIdStr,
+                            token0: { address: t0.address, symbol: t0.symbol || 'T0', amount: ethers.utils.formatUnits(raw0, t0.decimals), rawAmount: raw0 },
+                            token1: { address: t1.address, symbol: t1.symbol || 'T1', amount: ethers.utils.formatUnits(raw1, t1.decimals), rawAmount: raw1 },
+                            tickLower: Number((r as any).tickLower ?? details.tickLower),
+                            tickUpper: Number((r as any).tickUpper ?? details.tickUpper),
+                            liquidityRaw: ((r as any).liquidity ?? details.liquidity.toString()).toString(),
+                            ageSeconds: Math.max(0, Math.floor(Date.now()/1000) - createdTs),
+                            blockTimestamp: String(createdTs || '0'),
+                            isInRange: state.tick >= details.tickLower && state.tick < details.tickUpper,
+                        });
+                    } catch (e: any) {
+                        try { console.error('get-positions: failed for id', r?.id, 'error:', e?.message || e); } catch {}
+                    }
+                }
+                // (debug logging removed)
+                return processed;
+            }
         }
-    }
-
-    console.log(`API: Successfully processed ${processedPositions.length} of ${rawPositions.length} positions.`);
-    return processedPositions;
+    } catch {}
+    // If the subgraph returns nothing or fails, return empty list (no on-chain fallback)
+    return [];
 }
 
 export default async function handler(
   req: NextApiRequest,
-  res: NextApiResponse<ProcessedPosition[] | { message: string; error?: any }>
+  res: NextApiResponse<ProcessedPosition[] | { message: string; count?: number; error?: any }>
 ) {
   if (req.method !== 'GET') {
     res.setHeader('Allow', ['GET']);
     return res.status(405).json({ message: `Method ${req.method} Not Allowed` });
   }
 
-  const { ownerAddress } = req.query;
+  const { ownerAddress, countOnly, idsOnly, withCreatedAt } = req.query as { ownerAddress?: string; countOnly?: string; idsOnly?: string; withCreatedAt?: string };
 
   if (!ownerAddress || typeof ownerAddress !== 'string' || !ethers.utils.isAddress(ownerAddress)) { // Keep ethers for isAddress for now, or switch to viem's isAddress
     return res.status(400).json({ message: 'Valid ownerAddress query parameter is required.' });
   }
 
   try {
+    if (countOnly === '1') {
+      // Count via subgraph only
+      try {
+        const resp = await fetch(SUBGRAPH_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: GET_USER_HOOK_POSITIONS_QUERY, variables: { owner: ownerAddress.toLowerCase() } }),
+        });
+        if (!resp.ok) return res.status(200).json({ message: 'ok', count: 0 });
+        const json = await resp.json() as any;
+        const raw = (json?.data?.hookPositions || []) as SubgraphPosition[];
+        return res.status(200).json({ message: 'ok', count: raw.length });
+      } catch {
+        return res.status(200).json({ message: 'ok', count: 0 });
+      }
+    }
+
+    if (idsOnly === '1') {
+      // Return only tokenIds (no on-chain processing)
+      try {
+        const resp = await fetch(SUBGRAPH_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: GET_USER_HOOK_POSITIONS_QUERY, variables: { owner: ownerAddress.toLowerCase() } }),
+        });
+        if (!resp.ok) return res.status(200).json([] as any);
+        const json = await resp.json() as any;
+        let raw = (json?.data?.hookPositions || []) as SubgraphPosition[];
+        if ((!Array.isArray(raw) || raw.length === 0)) {
+          try {
+            const respLegacy = await fetch(SUBGRAPH_URL, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ query: GET_USER_LEGACY_POSITIONS_QUERY, variables: { owner: ownerAddress.toLowerCase() } }),
+            });
+            if (respLegacy.ok) {
+              const jsonLegacy = await respLegacy.json() as any;
+              const legacy = (jsonLegacy?.data?.positions || []) as Array<{ id: string; tokenId?: string; owner: string; createdAtTimestamp?: string }>;
+              raw = legacy.map((p) => ({
+                id: p.id,
+                owner: p.owner,
+                tickLower: '0',
+                tickUpper: '0',
+                liquidity: '0',
+                creationTimestamp: p.createdAtTimestamp || '0',
+                lastTimestamp: '0',
+                pool: { id: '' },
+              })) as any;
+            }
+          } catch {}
+        }
+        if (withCreatedAt === '1') {
+          const list = raw.map(r => {
+            const parsed = parseTokenIdFromHexId(r.id);
+            const idStr = parsed ? parsed.toString() : '';
+            return idStr ? { id: idStr, createdAt: Number(r.creationTimestamp || 0), lastTimestamp: Number(r.lastTimestamp || 0) } : null;
+          }).filter(Boolean) as Array<{ id: string; createdAt: number; lastTimestamp?: number }>;
+          return res.status(200).json(list as any);
+        } else {
+          const ids = Array.from(new Set(raw.map(r => {
+            const parsed = parseTokenIdFromHexId(r.id);
+            return parsed ? parsed.toString() : '';
+          }).filter(Boolean)));
+          return res.status(200).json(ids as any);
+        }
+      } catch {
+        return res.status(200).json([] as any);
+      }
+    }
+
     const positions = await fetchAndProcessUserPositionsForApi(ownerAddress);
     return res.status(200).json(positions);
   } catch (error: any) {

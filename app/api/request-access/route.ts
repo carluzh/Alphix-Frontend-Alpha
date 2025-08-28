@@ -1,74 +1,43 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { supabaseAdmin } from '@/lib/supabase';
+import { createClient } from '@supabase/supabase-js';
+import { NextResponse } from 'next/server';
 
-export async function POST(request: NextRequest) {
+export async function POST(request: Request) {
+  const { email } = await request.json();
+
+  if (!email) {
+    return NextResponse.json({ error: 'Email is required' }, { status: 400 });
+  }
+
+  // Initialize Supabase client
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    console.error('Supabase environment variables are not set');
+    return NextResponse.json({ error: 'Server configuration error' }, { status: 500 });
+  }
+
+  const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
   try {
-    const body = await request.json();
-    const { email } = body;
+    const { error } = await supabase
+      .from('beta_users')
+      .insert([{ email: email }]);
 
-    // Basic email validation
-    if (!email || typeof email !== 'string') {
-      return NextResponse.json({ error: 'Email is required' }, { status: 400 });
+    if (error) {
+      // Handle unique constraint violation (email already exists) gracefully
+      if (error.code === '23505') {
+        // Still return a success response to prevent email enumeration
+        return NextResponse.json({ message: 'Access request submitted successfully' }, { status: 200 });
+      }
+      console.error('Supabase insert error:', error);
+      return NextResponse.json({ error: 'Failed to request access' }, { status: 500 });
     }
 
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      return NextResponse.json({ error: 'Invalid email format' }, { status: 400 });
-    }
+    return NextResponse.json({ message: 'Access request submitted successfully' }, { status: 200 });
 
-    try {
-      // Check if email already exists
-      const { data: existingEmail, error: checkError } = await supabaseAdmin
-        .from('access_requests')
-        .select('email')
-        .eq('email', email)
-        .single();
-
-      if (checkError && checkError.code !== 'PGRST116') {
-        // PGRST116 means no rows returned, which is what we want for new emails
-        console.error('Error checking existing email:', checkError);
-        return NextResponse.json({ 
-          error: 'Database error' 
-        }, { status: 500 });
-      }
-
-      if (existingEmail) {
-        return NextResponse.json({ 
-          success: true, 
-          message: 'Email already registered for access' 
-        });
-      }
-
-      // Insert the email into the database
-      const { error: insertError } = await supabaseAdmin
-        .from('access_requests')
-        .insert([{ email }]);
-
-      if (insertError) {
-        console.error('Error inserting email:', insertError);
-        return NextResponse.json({ 
-          error: 'Failed to save email request' 
-        }, { status: 500 });
-      }
-
-      console.log('Access request saved:', email);
-
-      return NextResponse.json({ 
-        success: true, 
-        message: 'Access request submitted successfully' 
-      });
-
-    } catch (dbError: any) {
-      console.error('Database error:', dbError);
-      return NextResponse.json({ 
-        error: 'Database error' 
-      }, { status: 500 });
-    }
-    
   } catch (error) {
-    console.error('Error processing access request:', error);
-    return NextResponse.json({ 
-      error: 'Internal server error' 
-    }, { status: 500 });
+    console.error('Request access API error:', error);
+    return NextResponse.json({ error: 'An unexpected error occurred' }, { status: 500 });
   }
 } 
