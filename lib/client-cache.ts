@@ -227,6 +227,55 @@ export async function loadUncollectedFees(positionId: string, ttlMs: number = 60
   return setOngoingRequest(key, promise);
 }
 
+// --- Batched uncollected fees (centralized) ---
+export type UncollectedFeesItem = {
+  positionId: string;
+  amount0: string; // raw smallest units as string
+  amount1: string; // raw smallest units as string
+  token0Symbol: string;
+  token1Symbol: string;
+  formattedAmount0?: string; // human readable
+  formattedAmount1?: string; // human readable
+};
+
+const getUncollectedFeesBatchCacheKey = (positionIds: string[]) => `uncollectedFeesBatch_${positionIds.slice().sort().join(',')}`;
+
+export async function loadUncollectedFeesBatch(positionIds: string[], ttlMs: number = 60 * 1000): Promise<UncollectedFeesItem[]> {
+  const ids = (positionIds || []).map(String).filter(Boolean);
+  if (ids.length === 0) return [];
+  const key = getUncollectedFeesBatchCacheKey(ids);
+  const cached = getFromCacheWithTtl<UncollectedFeesItem[]>(key, ttlMs);
+  if (cached) return cached;
+  const ongoing = getOngoingRequest<UncollectedFeesItem[]>(key);
+  if (ongoing) return ongoing;
+
+  const promise = (async () => {
+    try {
+      const resp = await fetch('/api/liquidity/get-uncollected-fees', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ positionIds: ids }),
+      } as any);
+      const json = await resp.json();
+      if (!resp.ok || !json?.success || !Array.isArray(json?.items)) return [] as UncollectedFeesItem[];
+      const items = json.items as UncollectedFeesItem[];
+      // Also warm individual per-id caches
+      try {
+        for (const it of items) {
+          const singleKey = getUncollectedFeesCacheKey(it.positionId);
+          setToCache(singleKey, { amount0: String(it.amount0 ?? '0'), amount1: String(it.amount1 ?? '0') });
+        }
+      } catch {}
+      setToCache(key, items);
+      return items;
+    } catch {
+      return [] as UncollectedFeesItem[];
+    }
+  })();
+
+  return setOngoingRequest(key, promise);
+}
+
 // --- Portfolio activity cache helpers (client-side localStorage) ---
 export function invalidateActivityCache(ownerAddress: string, first: number = 20): void {
   if (typeof window === 'undefined') return;

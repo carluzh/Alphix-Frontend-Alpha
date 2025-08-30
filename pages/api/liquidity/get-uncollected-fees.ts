@@ -13,6 +13,7 @@ export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse<
     | { success: true; amount0: string; amount1: string; debug?: any }
+    | { success: true; items: Array<{ positionId: string; amount0: string; amount1: string; token0Symbol: string; token1Symbol: string; formattedAmount0?: string; formattedAmount1?: string }> }
     | { success: false; error: string; debug?: any }
   >
 ) {
@@ -22,9 +23,156 @@ export default async function handler(
   }
 
   try {
-    const { positionId } = (typeof req.body === 'string' ? JSON.parse(req.body) : req.body) as { positionId?: string };
+    const body = (typeof req.body === 'string' ? JSON.parse(req.body) : req.body) as { positionId?: string; positionIds?: string[] };
+    const { positionId, positionIds } = body || {};
+
+    // Helper to compute unclaimed fees for a single positionId (existing logic moved inside)
+    const computeFor = async (singlePositionId: string) => {
+      // tokenId may be embedded like "...-<tokenId>" → normalize
+      const tokenIdStr = singlePositionId.includes('-') ? (singlePositionId.split('-').pop() as string) : singlePositionId;
+      const tokenId = BigInt(tokenIdStr);
+
+      const pmAddress = getPositionManagerAddress();
+      const stateView = getStateViewAddress();
+
+      // 1) Read poolKey + packed info from PositionManager
+      const pmRead = await publicClient.readContract({
+        address: pmAddress as `0x${string}`,
+        abi: PM_ABI,
+        functionName: 'getPoolAndPositionInfo',
+        args: [tokenId],
+      } as const) as readonly [
+        {
+          currency0: `0x${string}`;
+          currency1: `0x${string}`;
+          fee: number;
+          tickSpacing: number;
+          hooks: `0x${string}`;
+        },
+        bigint
+      ];
+
+      const poolKey = pmRead[0];
+      const infoPacked = pmRead[1];
+
+      // Prefer parsing from positionId (subgraph-style id):
+      let parsedOwner: `0x${string}` | null = null;
+      let parsedTickLower: number | null = null;
+      let parsedTickUpper: number | null = null;
+      let parsedSalt: `0x${string}` | null = null;
+      const idMatch = singlePositionId.match(/^(0x[0-9a-fA-F]{64})-(0x[0-9a-fA-F]{40})-(-?\d+)-(-?\d+)-(0x[0-9a-fA-F]{64})$/);
+      let poolIdBytes32: `0x${string}` | null = null;
+      if (idMatch) {
+        poolIdBytes32 = idMatch[1] as `0x${string}`;
+        parsedOwner = idMatch[2] as `0x${string}`;
+        parsedTickLower = Number(idMatch[3]);
+        parsedTickUpper = Number(idMatch[4]);
+        parsedSalt = idMatch[5] as `0x${string}`;
+      }
+
+      // 2) Compute poolId bytes32 via keccak256(abi.encode(PoolKey))
+      const encodedPoolKey = encodeAbiParameters([
+        {
+          type: 'tuple',
+          components: [
+            { name: 'currency0', type: 'address' },
+            { name: 'currency1', type: 'address' },
+            { name: 'fee', type: 'uint24' },
+            { name: 'tickSpacing', type: 'int24' },
+            { name: 'hooks', type: 'address' },
+          ],
+        },
+      ], [
+        {
+          currency0: getAddress(poolKey.currency0),
+          currency1: getAddress(poolKey.currency1),
+          fee: Number(poolKey.fee),
+          tickSpacing: Number(poolKey.tickSpacing),
+          hooks: getAddress(poolKey.hooks),
+        },
+      ]);
+      const computedPoolId = keccak256(encodedPoolKey);
+      if (!poolIdBytes32) poolIdBytes32 = computedPoolId as `0x${string}`;
+
+      // Resolve effective owner & ticks (prefer parsed; else decode packed)
+      const decoded = decodePositionInfo(infoPacked);
+      const effTickLower = parsedTickLower ?? decoded.tickLower;
+      const effTickUpper = parsedTickUpper ?? decoded.tickUpper;
+      const effOwner = getPositionManagerAddress() as `0x${string}`;
+      const salt = (parsedSalt ?? (`0x${tokenId.toString(16).padStart(64, '0')}`)) as `0x${string}`;
+
+      // 3) Read stored position info (liquidity and last fee growth inside)
+      const stateViewAbiParsed = parseAbi(STATE_VIEW_ABI);
+      const posInfo = await publicClient.readContract({
+        address: stateView as `0x${string}`,
+        abi: stateViewAbiParsed,
+        functionName: 'getPositionInfo',
+        args: [poolIdBytes32 as `0x${string}`, effOwner, effTickLower as any, effTickUpper as any, salt],
+      } as const) as readonly [bigint, bigint, bigint];
+
+      const liquidity = posInfo[0];
+      const feeGrowthInside0LastX128 = posInfo[1];
+      const feeGrowthInside1LastX128 = posInfo[2];
+
+      // 4) Read current fee growth inside
+      const feeInside = await publicClient.readContract({
+        address: stateView as `0x${string}`,
+        abi: stateViewAbiParsed,
+        functionName: 'getFeeGrowthInside',
+        args: [poolIdBytes32 as `0x${string}`, effTickLower as any, effTickUpper as any],
+      } as const) as readonly [bigint, bigint];
+
+      const feeGrowthInside0X128 = feeInside[0];
+      const feeGrowthInside1X128 = feeInside[1];
+
+      // 5) Compute unclaimed fees
+      const { token0Fees: rawAmount0, token1Fees: rawAmount1 } = calculateUnclaimedFeesV4(
+        liquidity,
+        feeGrowthInside0X128,
+        feeGrowthInside1X128,
+        feeGrowthInside0LastX128,
+        feeGrowthInside1LastX128,
+      );
+
+      // 6) Get token symbols
+      const token0Symbol = getTokenSymbolByAddress(poolKey.currency0);
+      const token1Symbol = getTokenSymbolByAddress(poolKey.currency1);
+
+      // 7) Optional formatted (display)
+      const { getToken } = await import('@/lib/pools-config');
+      const token0Config = getToken(token0Symbol);
+      const token1Config = getToken(token1Symbol);
+      const formattedAmount0 = formatUnits(rawAmount0, token0Config.decimals);
+      const formattedAmount1 = formatUnits(rawAmount1, token1Config.decimals);
+
+      return {
+        positionId: singlePositionId,
+        amount0: rawAmount0.toString(),
+        amount1: rawAmount1.toString(),
+        token0Symbol,
+        token1Symbol,
+        formattedAmount0,
+        formattedAmount1,
+      } as const;
+    };
+
+    // Batch path
+    if (Array.isArray(positionIds) && positionIds.length > 0) {
+      const items: Array<{ positionId: string; amount0: string; amount1: string; token0Symbol: string; token1Symbol: string; formattedAmount0?: string; formattedAmount1?: string }> = [];
+      for (const pid of positionIds) {
+        try {
+          const item = await computeFor(pid);
+          items.push({ ...item });
+        } catch (e: any) {
+          // Skip failures per-position to return partial data
+        }
+      }
+      return res.status(200).json({ success: true, items });
+    }
+
+    // Single path (backward-compat)
     if (!positionId) {
-      return res.status(400).json({ success: false, error: 'positionId is required' });
+      return res.status(400).json({ success: false, error: 'positionId or positionIds is required' });
     }
 
     // tokenId may be embedded like "...-<tokenId>" → normalize

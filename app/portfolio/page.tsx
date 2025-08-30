@@ -26,9 +26,10 @@ import { baseSepolia } from "@/lib/wagmiConfig";
 import { toast } from "sonner";
 import { FAUCET_CONTRACT_ADDRESS, faucetContractAbi } from "@/pages/api/misc/faucet";
 import poolsConfig from "@/config/pools.json";
-import { ChevronUpIcon, ChevronDownIcon, ChevronsUpDownIcon, ChevronRight, OctagonX, OctagonAlert, EllipsisVertical, PlusIcon, RefreshCwIcon, BadgeCheck, Menu } from "lucide-react";
+import { ChevronUpIcon, ChevronDownIcon, ChevronsUpDownIcon, ChevronRight, OctagonX, OctagonAlert, EllipsisVertical, PlusIcon, RefreshCwIcon, BadgeCheck, Menu, ArrowUpRight, ArrowDownRight } from "lucide-react";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { PortfolioTickBar } from "@/components/portfolio/PortfolioTickBar";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -40,7 +41,7 @@ import { formatUnits as viemFormatUnits } from "viem";
 import { useIncreaseLiquidity, type IncreasePositionData } from "@/components/liquidity/useIncreaseLiquidity";
 import { useDecreaseLiquidity, type DecreasePositionData } from "@/components/liquidity/useDecreaseLiquidity";
 import { useBalance } from "wagmi";
-import { Card, CardContent, CardFooter } from "@/components/ui/card";
+import { CardFooter } from "@/components/ui/card";
 import { Info, Clock3, ChevronsLeftRight } from "lucide-react";
 import { PositionCard } from "@/components/liquidity/PositionCard";
 
@@ -291,7 +292,7 @@ interface PortfolioData {
 
 // Removed legacy composite id parsing
 
-import { loadUserPositionIds, derivePositionsFromIds, getPoolFeeBps } from '@/lib/client-cache';
+import { loadUserPositionIds, derivePositionsFromIds, getPoolFeeBps, loadUncollectedFeesBatch, loadUncollectedFees } from '@/lib/client-cache';
 
 async function getUserPositionsOnchain(ownerAddress: string, _opts?: { verifyLiquidity?: boolean }) {
   try {
@@ -1064,6 +1065,31 @@ export default function PortfolioPage() {
   const [isLoadingActivity, setIsLoadingActivity] = useState<boolean>(false);
   const [positionsError, setPositionsError] = useState<string | undefined>(undefined);
   const [activityError, setActivityError] = useState<string | undefined>(undefined);
+  const [unclaimedFeesMap, setUnclaimedFeesMap] = useState<Record<string, { amount0: string; amount1: string }>>({});
+  const [isLoadingUnclaimedFees, setIsLoadingUnclaimedFees] = useState<boolean>(false);
+
+
+  const totalUnclaimedUsd = useMemo(() => {
+    try {
+      let usd = 0;
+      for (const pos of activePositions) {
+        const rec = unclaimedFeesMap[String(pos.positionId)];
+        if (!rec) continue;
+        const sym0 = pos?.token0?.symbol as string | undefined;
+        const sym1 = pos?.token1?.symbol as string | undefined;
+        const px0 = (sym0 && portfolioData.priceMap[sym0]) || 0;
+        const px1 = (sym1 && portfolioData.priceMap[sym1]) || 0;
+        const d0 = TOKEN_DEFINITIONS[sym0 as TokenSymbol]?.decimals ?? 18;
+        const d1 = TOKEN_DEFINITIONS[sym1 as TokenSymbol]?.decimals ?? 18;
+        const a0 = Number(rec?.amount0 ? viemFormatUnits(BigInt(rec.amount0), d0) : 0);
+        const a1 = Number(rec?.amount1 ? viemFormatUnits(BigInt(rec.amount1), d1) : 0);
+        usd += a0 * px0 + a1 * px1;
+      }
+      return usd;
+    } catch { return 0; }
+  }, [unclaimedFeesMap, activePositions, portfolioData.priceMap]);
+
+
   
   const ACTIVITY_PAGE_SIZE = 10;
   const [activityPage, setActivityPage] = useState<number>(0);
@@ -1346,6 +1372,10 @@ export default function PortfolioPage() {
   // Sorting state for Active Positions
   const [activeSort, setActiveSort] = useState<{ column: 'amounts' | 'value' | 'apr' | null; direction: 'asc' | 'desc' | null }>({ column: null, direction: null });
   const [hoveredTokenLabel, setHoveredTokenLabel] = useState<string | null>(null);
+
+
+
+
   const [expandedPools, setExpandedPools] = useState<Record<string, boolean>>({});
   const [openMenuKey, setOpenMenuKey] = useState<string | null>(null);
   const [positionMenuOpenUp, setPositionMenuOpenUp] = useState(false);
@@ -1584,50 +1614,7 @@ export default function PortfolioPage() {
     ));
   }, [activePositions, activeTokenFilter, portfolioData.tokenBalances, portfolioData.totalValue]);
 
-  const sortedActivePositions = useMemo(() => {
-    const base = filteredPositions;
-    // Hover preview: if no committed sort, preview token-priority based on hovered segment
-    const effectiveSort = ((typeof activeTokenFilter === 'string' && activeTokenFilter) || (hoveredTokenLabel && hoveredTokenLabel !== 'Rest'))
-      ? { column: 'token' as const, direction: 'desc' as const }
-      : (activeSort.column && activeSort.direction ? activeSort : { column: null, direction: null });
-    if (!effectiveSort.column || !effectiveSort.direction) return base;
 
-    const getAmountsKey = (p: any) => {
-      const amt0 = Number.parseFloat(p?.token0?.amount || '0');
-      const amt1 = Number.parseFloat(p?.token1?.amount || '0');
-      return (isFinite(amt0) ? amt0 : 0) + (isFinite(amt1) ? amt1 : 0);
-    };
-    const getValueKey = (p: any) => {
-      const sym0 = p?.token0?.symbol as string | undefined;
-      const sym1 = p?.token1?.symbol as string | undefined;
-      const amt0 = Number.parseFloat(p?.token0?.amount || '0');
-      const amt1 = Number.parseFloat(p?.token1?.amount || '0');
-      const px0 = (sym0 && portfolioData.priceMap[sym0]) || 0;
-      const px1 = (sym1 && portfolioData.priceMap[sym1]) || 0;
-      return (isFinite(amt0) ? amt0 : 0) * px0 + (isFinite(amt1) ? amt1 : 0) * px1;
-    };
-    const getAprKey = (p: any) => {
-      const aprStr = aprByPoolId[String(p?.poolId || '').toLowerCase()] || '';
-      const num = typeof aprStr === 'string' && aprStr.endsWith('%') ? parseFloat(aprStr.replace('%', '')) : 0;
-      return isFinite(num) ? num : 0;
-    };
-    // Token-hover preview: strictly filter to hovered token, otherwise use committed filter normal flow
-    if (hoveredTokenLabel && hoveredTokenLabel !== 'Rest') {
-      const token = String(hoveredTokenLabel).toUpperCase();
-      const onlyHovered = base.filter((p) => (
-        p?.token0?.symbol?.toUpperCase?.() === token || p?.token1?.symbol?.toUpperCase?.() === token
-      ));
-      return onlyHovered.sort((a, b) => getValueKey(b) - getValueKey(a));
-    }
-    const keyFn = effectiveSort.column === 'amounts' ? getAmountsKey : effectiveSort.column === 'value' ? getValueKey : getAprKey;
-    const sign = effectiveSort.direction === 'asc' ? 1 : -1;
-    return [...base].sort((a, b) => {
-      const ka = keyFn(a);
-      const kb = keyFn(b);
-      if (ka === kb) return 0;
-      return ka < kb ? -1 * sign : 1 * sign;
-    });
-  }, [filteredPositions, activeSort, activeTokenFilter, hoveredTokenLabel, portfolioData.priceMap, aprByPoolId]);
 
   const getUsdPriceForSymbol = useCallback((symbolRaw?: string): number => {
     const symbol = (symbolRaw || '').toUpperCase();
@@ -1700,52 +1687,7 @@ export default function PortfolioPage() {
     return filteredActivityItems.slice(start, start + ACTIVITY_PAGE_SIZE);
   }, [filteredActivityItems, activityPage]);
 
-  const groupedByPool = useMemo(() => {
-    const map = new Map<string, any[]>();
-    for (const p of sortedActivePositions) {
-      const key = String(p?.poolId || '').toLowerCase();
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(p);
-    }
-    const groups = Array.from(map.entries()).map(([poolId, items]) => {
-      const totalUSD = items.reduce((sum, p) => {
-        const sym0 = p?.token0?.symbol as string | undefined;
-        const sym1 = p?.token1?.symbol as string | undefined;
-        const amt0 = parseFloat(p?.token0?.amount || '0');
-        const amt1 = parseFloat(p?.token1?.amount || '0');
-        const price0 = (sym0 && portfolioData.priceMap[sym0]) || 0;
-        const price1 = (sym1 && portfolioData.priceMap[sym1]) || 0;
-        return sum + amt0 * price0 + amt1 * price1;
-      }, 0);
-      return { poolId, items, totalUSD };
-    });
-    // Sort groups by total value desc by default; if previewing sort (hover) or explicit sort exists, honor it
-    const effectiveSort = ((typeof activeTokenFilter === 'string' && activeTokenFilter) || (hoveredTokenLabel && hoveredTokenLabel !== 'Rest'))
-      ? { column: 'token' as const, direction: 'desc' as const }
-      : (activeSort.column && activeSort.direction ? activeSort : { column: null, direction: null });
-    // Token-hover preview: if hovering, hide groups without token; if not hovering but filtered, also gate groups
-    if (effectiveSort.column === 'token' && effectiveSort.direction) {
-      const token = (hoveredTokenLabel && hoveredTokenLabel !== 'Rest') ? String(hoveredTokenLabel).toUpperCase()
-        : ((typeof activeTokenFilter === 'string' && activeTokenFilter) ? String(activeTokenFilter).toUpperCase() : null);
-      if (token) {
-        groups.sort((a, b) => {
-          const aHas = a.items.some((p) => p?.token0?.symbol?.toUpperCase?.() === token || p?.token1?.symbol?.toUpperCase?.() === token);
-          const bHas = b.items.some((p) => p?.token0?.symbol?.toUpperCase?.() === token || p?.token1?.symbol?.toUpperCase?.() === token);
-          if (aHas !== bHas) return aHas ? -1 : 1;
-          // fallback by value desc
-          return b.totalUSD - a.totalUSD;
-        });
-        return groups.filter((g) => g.items.some((p) => p?.token0?.symbol?.toUpperCase?.() === token || p?.token1?.symbol?.toUpperCase?.() === token));
-      }
-    }
-    if (effectiveSort.column === 'value' && effectiveSort.direction) {
-      const sign = effectiveSort.direction === 'asc' ? 1 : -1;
-      groups.sort((a, b) => (a.totalUSD - b.totalUSD) * sign);
-    } else {
-      groups.sort((a, b) => b.totalUSD - a.totalUSD);
-    }
-    return groups;
-  }, [sortedActivePositions, portfolioData.priceMap, activeSort, activeTokenFilter, hoveredTokenLabel]);
+
 
   const togglePoolExpanded = (poolId: string) => {
     setExpandedPools(prev => ({ ...prev, [poolId]: !prev[poolId] }));
@@ -1983,6 +1925,28 @@ export default function PortfolioPage() {
         if (!isCancelled) {
           setActivePositions(processedActive);
         }
+
+        // Batched unclaimed fees fetch (centralized) — run after positions are known
+        try {
+          const ids: string[] = (processedActive || []).map((p: any) => String(p?.positionId || p?.tokenId || '')).filter(Boolean);
+          if (ids.length > 0) {
+            if (!isCancelled) setIsLoadingUnclaimedFees(true);
+            const items = await loadUncollectedFeesBatch(ids, 60 * 1000);
+            if (!isCancelled && Array.isArray(items)) {
+              const map: Record<string, { amount0: string; amount1: string }> = {};
+              for (const it of items) {
+                map[String(it.positionId)] = { amount0: String(it.amount0 ?? '0'), amount1: String(it.amount1 ?? '0') };
+              }
+              setUnclaimedFeesMap(map);
+              setIsLoadingUnclaimedFees(false);
+            }
+          } else if (!isCancelled) {
+            setUnclaimedFeesMap({});
+            setIsLoadingUnclaimedFees(false);
+          }
+        } catch {
+          if (!isCancelled) setIsLoadingUnclaimedFees(false);
+        }
       } catch (e: any) {
         if (!isCancelled) {
           setPositionsError(e?.message || 'Failed to load positions');
@@ -2057,8 +2021,8 @@ export default function PortfolioPage() {
   useLayoutEffect(() => {
     const setInitialStates = () => {
       const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
-      setIsCompactVis(viewportWidth <= 1400);
-      setIsHiddenVis(viewportWidth <= 1100);
+      setIsCompactVis(viewportWidth <= 1000);
+      setIsHiddenVis(viewportWidth <= 1000);
       setIsVerySmallScreen(viewportWidth < 695);
     };
     
@@ -2141,8 +2105,8 @@ export default function PortfolioPage() {
       const netApyRect = netApyRef.current.getBoundingClientRect();
       // Compute left offset so inline visualization starts closer to NET APY at smaller viewports
       const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
-      setIsCompactVis(viewportWidth <= 1400);
-      setIsHiddenVis(viewportWidth <= 1100); // Changed to <= to be more consistent
+      setIsCompactVis(viewportWidth <= 1000);
+      setIsHiddenVis(viewportWidth <= 1000);
       setIsVerySmallScreen(viewportWidth < 695);
       // Aggressively shrink the LEFT margin at/below 1500px
       const desiredGapPx = viewportWidth <= 1500 ? -18 : 18;
@@ -2229,6 +2193,235 @@ export default function PortfolioPage() {
       : (activeTokenFilter ? selectedSegmentIndex : (hoveredSegment !== null ? hoveredSegment : null));
   })();
 
+  // Get current filter (active or hover preview) - synchronized with effectiveSegmentIndex
+  const currentFilter = (() => {
+    if (activeTokenFilter) return activeTokenFilter;
+    if (effectiveSegmentIndex !== null && composition[effectiveSegmentIndex]) {
+      const segment = composition[effectiveSegmentIndex];
+      return segment.label === 'Rest' ? 'Rest' : segment.label;
+    }
+    return null;
+  })();
+
+  // Sorted active positions with hover preview support
+  const sortedActivePositions = useMemo(() => {
+    const base = filteredPositions;
+    // Hover preview: if no committed sort, preview token-priority based on hovered segment
+    const effectiveSort = ((typeof activeTokenFilter === 'string' && activeTokenFilter) || (currentFilter && currentFilter !== 'Rest'))
+      ? { column: 'token' as const, direction: 'desc' as const }
+      : (activeSort.column && activeSort.direction ? activeSort : { column: null, direction: null });
+    if (!effectiveSort.column || !effectiveSort.direction) return base;
+
+    const getAmountsKey = (p: any) => {
+      const amt0 = Number.parseFloat(p?.token0?.amount || '0');
+      const amt1 = Number.parseFloat(p?.token1?.amount || '0');
+      return (isFinite(amt0) ? amt0 : 0) + (isFinite(amt1) ? amt1 : 0);
+    };
+    const getValueKey = (p: any) => {
+      const sym0 = p?.token0?.symbol as string | undefined;
+      const sym1 = p?.token1?.symbol as string | undefined;
+      const amt0 = Number.parseFloat(p?.token0?.amount || '0');
+      const amt1 = Number.parseFloat(p?.token1?.amount || '0');
+      const px0 = (sym0 && portfolioData.priceMap[sym0]) || 0;
+      const px1 = (sym1 && portfolioData.priceMap[sym1]) || 0;
+      return (isFinite(amt0) ? amt0 : 0) * px0 + (isFinite(amt1) ? amt1 : 0) * px1;
+    };
+    const getAprKey = (p: any) => {
+      const aprStr = aprByPoolId[String(p?.poolId || '').toLowerCase()] || '';
+      const num = typeof aprStr === 'string' && aprStr.endsWith('%') ? parseFloat(aprStr.replace('%', '')) : 0;
+      return isFinite(num) ? num : 0;
+    };
+    // Token-hover preview: strictly filter to hovered token, otherwise use committed filter normal flow
+    if (currentFilter && currentFilter !== 'Rest') {
+      const token = String(currentFilter).toUpperCase();
+      const onlyHovered = base.filter((p) => (
+        p?.token0?.symbol?.toUpperCase?.() === token || p?.token1?.symbol?.toUpperCase?.() === token
+      ));
+      return onlyHovered.sort((a, b) => getValueKey(b) - getValueKey(a));
+    }
+    // Handle Rest segment: show only positions with tokens NOT in top 3
+    if (currentFilter === 'Rest') {
+      const total = portfolioData.totalValue;
+      const topThreeTokens = portfolioData.tokenBalances
+        .map(tb => ({
+          symbol: tb.symbol,
+          pct: total > 0 ? (tb.usdValue / total) * 100 : 0,
+        }))
+        .sort((a, b) => b.pct - a.pct)
+        .slice(0, 3)
+        .map(item => item.symbol.toUpperCase());
+
+      const restPositions = base.filter(p => {
+        const sym0 = p?.token0?.symbol?.toUpperCase();
+        const sym1 = p?.token1?.symbol?.toUpperCase();
+        return (sym0 && !topThreeTokens.includes(sym0)) || (sym1 && !topThreeTokens.includes(sym1));
+      });
+      return restPositions.sort((a, b) => getValueKey(b) - getValueKey(a));
+    }
+    const keyFn = effectiveSort.column === 'amounts' ? getAmountsKey : effectiveSort.column === 'value' ? getValueKey : getAprKey;
+    const sign = effectiveSort.direction === 'asc' ? 1 : -1;
+    return [...base].sort((a, b) => {
+      const ka = keyFn(a);
+      const kb = keyFn(b);
+      if (ka === kb) return 0;
+      return ka < kb ? -1 * sign : 1 * sign;
+    });
+  }, [filteredPositions, activeSort, activeTokenFilter, currentFilter, portfolioData.priceMap, aprByPoolId]);
+
+  // Group positions by pool with sorting support
+  const groupedByPool = useMemo(() => {
+    const map = new Map<string, any[]>();
+    for (const p of sortedActivePositions) {
+      const key = String(p?.poolId || '').toLowerCase();
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(p);
+    }
+    const groups = Array.from(map.entries()).map(([poolId, items]) => {
+      const totalUSD = items.reduce((sum, p) => {
+        const sym0 = p?.token0?.symbol as string | undefined;
+        const sym1 = p?.token1?.symbol as string | undefined;
+        const amt0 = parseFloat(p?.token0?.amount || '0');
+        const amt1 = parseFloat(p?.token1?.amount || '0');
+        const price0 = (sym0 && portfolioData.priceMap[sym0]) || 0;
+        const price1 = (sym1 && portfolioData.priceMap[sym1]) || 0;
+        return sum + amt0 * price0 + amt1 * price1;
+      }, 0);
+      return { poolId, items, totalUSD };
+    });
+    // Sort groups by total value desc by default; if previewing sort (hover) or explicit sort exists, honor it
+    const effectiveSort = ((typeof activeTokenFilter === 'string' && activeTokenFilter) || (currentFilter && currentFilter !== 'Rest'))
+      ? { column: 'token' as const, direction: 'desc' as const }
+      : (activeSort.column && activeSort.direction ? activeSort : { column: null, direction: null });
+
+    // Handle Rest segment: filter to show only groups with tokens NOT in top 3
+    if (currentFilter === 'Rest') {
+      const total = portfolioData.totalValue;
+      const topThreeTokens = portfolioData.tokenBalances
+        .map(tb => ({
+          symbol: tb.symbol,
+          pct: total > 0 ? (tb.usdValue / total) * 100 : 0,
+        }))
+        .sort((a, b) => b.pct - a.pct)
+        .slice(0, 3)
+        .map(item => item.symbol.toUpperCase());
+
+      const restGroups = groups.filter(g =>
+        g.items.some(p => {
+          const sym0 = p?.token0?.symbol?.toUpperCase();
+          const sym1 = p?.token1?.symbol?.toUpperCase();
+          return (sym0 && !topThreeTokens.includes(sym0)) || (sym1 && !topThreeTokens.includes(sym1));
+        })
+      );
+
+      // Sort rest groups by value
+      return restGroups.sort((a, b) => b.totalUSD - a.totalUSD);
+    }
+
+    // Token-hover preview: if hovering, hide groups without token; if not hovering but filtered, also gate groups
+    if (effectiveSort.column === 'token' && effectiveSort.direction) {
+      const token = (currentFilter && currentFilter !== 'Rest') ? String(currentFilter).toUpperCase()
+        : ((typeof activeTokenFilter === 'string' && activeTokenFilter) ? String(activeTokenFilter).toUpperCase() : null);
+      if (token) {
+        groups.sort((a, b) => {
+          const aHas = a.items.some((p) => p?.token0?.symbol?.toUpperCase?.() === token || p?.token1?.symbol?.toUpperCase?.() === token);
+          const bHas = b.items.some((p) => p?.token0?.symbol?.toUpperCase?.() === token || p?.token1?.symbol?.toUpperCase?.() === token);
+          if (aHas !== bHas) return aHas ? -1 : 1;
+          // fallback by value desc
+          return b.totalUSD - a.totalUSD;
+        });
+        return groups.filter((g) => g.items.some((p) => p?.token0?.symbol?.toUpperCase?.() === token || p?.token1?.symbol?.toUpperCase?.() === token));
+      }
+    }
+    if (effectiveSort.column === 'value' && effectiveSort.direction) {
+      const sign = effectiveSort.direction === 'asc' ? 1 : -1;
+      groups.sort((a, b) => (a.totalUSD - b.totalUSD) * sign);
+    } else {
+      groups.sort((a, b) => b.totalUSD - a.totalUSD);
+    }
+    return groups;
+  }, [sortedActivePositions, portfolioData.priceMap, activeSort, activeTokenFilter, currentFilter]);
+
+  // Filtered position count for metrics display
+  const filteredPositionCount = useMemo(() => {
+    if (!currentFilter) return activePositions.length;
+
+    const token = String(currentFilter).toUpperCase();
+    if (token === 'OTHERS' || token === 'Rest') {
+      const total = portfolioData.totalValue;
+      const topThreeTokens = portfolioData.tokenBalances
+        .map(tb => ({
+          symbol: tb.symbol,
+          pct: total > 0 ? (tb.usdValue / total) * 100 : 0,
+        }))
+        .sort((a, b) => b.pct - a.pct)
+        .slice(0, 3)
+        .map(item => item.symbol.toUpperCase());
+
+      return activePositions.filter(p => {
+        const sym0 = p?.token0?.symbol?.toUpperCase();
+        const sym1 = p?.token1?.symbol?.toUpperCase();
+        return (sym0 && !topThreeTokens.includes(sym0)) || (sym1 && !topThreeTokens.includes(sym1));
+      }).length;
+    }
+
+    return activePositions.filter(p => {
+      const sym0 = p?.token0?.symbol?.toUpperCase();
+      const sym1 = p?.token1?.symbol?.toUpperCase();
+      return sym0 === token || sym1 === token;
+    }).length;
+  }, [currentFilter, activePositions, portfolioData.tokenBalances, portfolioData.totalValue, composition, effectiveSegmentIndex]);
+
+  // Filtered total fees for metrics display
+  const filteredTotalUnclaimedUsd = useMemo(() => {
+    if (!currentFilter) return totalUnclaimedUsd;
+
+    try {
+      let usd = 0;
+      const token = String(currentFilter).toUpperCase();
+
+      for (const pos of activePositions) {
+        const sym0 = pos?.token0?.symbol;
+        const sym1 = pos?.token1?.symbol;
+
+        // Check if this position matches the current filter
+        const matchesFilter = (() => {
+          if (token === 'Rest' || token === 'OTHERS') {
+            const total = portfolioData.totalValue;
+            const topThreeTokens = portfolioData.tokenBalances
+              .map(tb => ({
+                symbol: tb.symbol,
+                pct: total > 0 ? (tb.usdValue / total) * 100 : 0,
+              }))
+              .sort((a, b) => b.pct - a.pct)
+              .slice(0, 3)
+              .map(item => item.symbol.toUpperCase());
+
+            return (sym0 && !topThreeTokens.includes(sym0.toUpperCase())) ||
+                   (sym1 && !topThreeTokens.includes(sym1.toUpperCase()));
+          } else {
+            return sym0?.toUpperCase() === token || sym1?.toUpperCase() === token;
+          }
+        })();
+
+        if (matchesFilter) {
+          const rec = unclaimedFeesMap[String(pos.positionId)];
+          if (!rec) continue;
+
+          // Use the same price lookup as the original totalUnclaimedUsd calculation
+          const px0 = (sym0 && portfolioData.priceMap[sym0]) || 0;
+          const px1 = (sym1 && portfolioData.priceMap[sym1]) || 0;
+          const d0 = TOKEN_DEFINITIONS[sym0 as TokenSymbol]?.decimals ?? 18;
+          const d1 = TOKEN_DEFINITIONS[sym1 as TokenSymbol]?.decimals ?? 18;
+          const a0 = Number(rec?.amount0 ? viemFormatUnits(BigInt(rec.amount0), d0) : 0);
+          const a1 = Number(rec?.amount1 ? viemFormatUnits(BigInt(rec.amount1), d1) : 0);
+          usd += a0 * px0 + a1 * px1;
+        }
+      }
+
+      return usd;
+    } catch { return 0; }
+  }, [currentFilter, totalUnclaimedUsd, activePositions, unclaimedFeesMap, portfolioData.priceMap, portfolioData.tokenBalances, portfolioData.totalValue, composition, effectiveSegmentIndex]);
+
   // Clicked + Hover combined logic for header USD
   const displayValue = (() => {
     const clicked = (activeTokenFilter && activeTokenFilter !== 'Rest') ? activeTokenFilter.toUpperCase() : null;
@@ -2253,8 +2446,8 @@ export default function PortfolioPage() {
       const s1 = p?.token1?.symbol as string | undefined;
       const a0 = parseFloat(p?.token0?.amount || '0');
       const a1 = parseFloat(p?.token1?.amount || '0');
-      const px0 = (s0 && portfolioData.priceMap[s0]) || 0;
-      const px1 = (s1 && portfolioData.priceMap[s1]) || 0;
+      const px0 = (s0 && portfolioData.priceMap[s0.toUpperCase()]) || (s0 && portfolioData.priceMap[s0]) || 0;
+      const px1 = (s1 && portfolioData.priceMap[s1.toUpperCase()]) || (s1 && portfolioData.priceMap[s1]) || 0;
       sum += (isFinite(a0) ? a0 : 0) * px0 + (isFinite(a1) ? a1 : 0) * px1;
     }
     return sum;
@@ -2300,9 +2493,9 @@ export default function PortfolioPage() {
 
   // Compute simple annualized net fees (APR) weighted by USD value
   const effectiveAprPct = (() => {
-    // Clicked + Hover combined selection for APR weighting
+    // Clicked + Hover combined selection for APR weighting - synchronized with effectiveSegmentIndex
     const clicked = (activeTokenFilter && activeTokenFilter !== 'Rest') ? activeTokenFilter.toUpperCase() : null;
-    const hovered = (hoveredTokenLabel && hoveredTokenLabel !== 'Rest') ? hoveredTokenLabel.toUpperCase() : null;
+    const hovered = (currentFilter && currentFilter !== 'Rest') ? currentFilter.toUpperCase() : null;
 
     let candidates = activePositions as any[];
     if (clicked || hovered) {
@@ -2340,8 +2533,8 @@ export default function PortfolioPage() {
       const sym1 = p?.token1?.symbol as string | undefined;
       const amt0 = parseFloat(p?.token0?.amount || '0');
       const amt1 = parseFloat(p?.token1?.amount || '0');
-      const px0 = (sym0 && portfolioData.priceMap[sym0]) || 0;
-      const px1 = (sym1 && portfolioData.priceMap[sym1]) || 0;
+      const px0 = (sym0 && portfolioData.priceMap[sym0.toUpperCase()]) || (sym0 && portfolioData.priceMap[sym0]) || 0;
+      const px1 = (sym1 && portfolioData.priceMap[sym1.toUpperCase()]) || (sym1 && portfolioData.priceMap[sym1]) || 0;
       const usd = (isFinite(amt0) ? amt0 : 0) * px0 + (isFinite(amt1) ? amt1 : 0) * px1;
       if (usd <= 0) continue;
       weighted += usd * aprNum;
@@ -2488,45 +2681,75 @@ export default function PortfolioPage() {
         {isLoading ? (
           <PortfolioHeaderSkeleton isVerySmallScreen={isVerySmallScreen} />
         ) : (
-          <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-6">
-            {/* Inline header grid (original) */}
+          <div>
+            {viewportWidth > 1000 ? (
             <div
               ref={containerRef}
-              className={`grid items-start relative ${isHiddenVis ? 'group cursor-pointer hover:bg-muted/10 rounded-lg transition-colors duration-200 -m-2 p-2' : ''}`}
+                className={`grid items-start relative`}
               style={{
-                gridTemplateColumns: isVerySmallScreen 
-                  ? "minmax(100px, max-content) minmax(100px, max-content) 1fr"
-                  : "minmax(200px, max-content) minmax(200px, max-content) 1fr",
+                  gridTemplateColumns: viewportWidth > 1400
+                    ? "minmax(240px, max-content) minmax(240px, max-content) 1fr"
+                    : "minmax(240px, max-content) 1fr",
                 gridTemplateRows: "auto auto",
-                columnGap: "4rem",
+                columnGap: "1rem",
               }}
-              onClick={isHiddenVis ? () => setIsMobileVisOpen(v => !v) : undefined}
             >
-            {/* Row 1, Col 1: PORTFOLIO header with percentage */}
-            <div className="col-[1] row-[1] grid grid-cols-[auto_max-content] items-center gap-x-2">
-              <h1 className="text-xs tracking-wider text-muted-foreground font-mono font-bold">
-                PORTFOLIO
-              </h1>
-              <div className="flex items-center gap-1 justify-self-end">
-                <span className={`text-xs font-medium ${isPositive ? 'text-green-500' : 'text-red-500'}`}>
-                  {formatPercent(Math.abs(pnl24hPct), { min: 2, max: 2 })}
+            {/* Container 1: CURRENT VALUE */}
+            <div className="col-[1] row-[1/3] rounded-lg bg-muted/30 border border-sidebar-border/60 p-4 h-full flex flex-col justify-between">
+              <div>
+                <h1 className="text-xs tracking-wider text-muted-foreground font-mono font-bold mb-3">CURRENT VALUE</h1>
+                <div className={`${isVerySmallScreen ? 'text-2xl' : 'text-3xl sm:text-4xl'}`}>
+                  {isPlaceholderComposition ? (
+                    <span className="text-muted-foreground">-</span>
+                  ) : (
+                    <div className="flex flex-col gap-1">
+                      <span className="font-medium tracking-tight">{formatUSDHeader(displayValue)}</span>
+                      {(() => {
+                        const deltaUsd = (() => {
+                          try {
+                            const total = Number(displayValue) || 0;
+                            if (!Number.isFinite(pnl24hPct) || !isFinite(total)) return 0;
+                            return (total * pnl24hPct) / 100;
+                          } catch { return 0; }
+                        })();
+                        const isPos = (pnl24hPct || 0) >= 0;
+                        const absDelta = Math.abs(deltaUsd);
+                        return (
+                          <div className="flex items-center gap-2 text-xs">
+                            <span className="text-muted-foreground font-medium">
+                              {isPos ? '+' : '-'}{formatUSDShared(absDelta)}
+                            </span>
+                            <div className="flex items-center gap-1">
+                              {isPos ? (
+                                <ArrowUpRight className="h-3 w-3 text-green-500" />
+                              ) : (
+                                <ArrowDownRight className="h-3 w-3 text-red-500" />
+                              )}
+                              <span className={`${isPos ? 'text-green-500' : 'text-red-500'} font-medium`}>
+                                {formatPercent(Math.abs(pnl24hPct || 0), { min: 2, max: 2 })}
                 </span>
               </div>
             </div>
-            {/* Row 1, Col 2: NET APY header */}
-            <div className="col-[2] row-[1]">
-              <h1 className="text-xs tracking-wider text-muted-foreground font-mono font-bold">
-                NET APY
-              </h1>
+                        );
+                      })()}
             </div>
-            {/* Row 2, Col 1: Portfolio amount */}
-            <div className={`col-[1] row-[2] mt-2 font-medium tracking-tight ${isVerySmallScreen ? 'text-2xl' : 'text-3xl sm:text-4xl'}`}>
-              {isPlaceholderComposition ? (<span className="text-muted-foreground">-</span>) : formatUSDHeader(displayValue)}
+                  )}
             </div>
-            {/* Row 2, Col 2: NET APY percentage */}
-            <div ref={netApyRef} className={`col-[2] row-[2] mt-2 font-medium tracking-tight ${isVerySmallScreen ? 'text-2xl' : 'text-3xl sm:text-4xl'}`}>
+              </div>
+            </div>
+
+                {/* Container 2: Single card with dividers */}
+                <div ref={netApyRef} className={`col-[2] row-[1/3] rounded-lg bg-muted/30 border border-sidebar-border/60 py-1.5 px-4 h-full flex flex-col justify-center ${viewportWidth <= 1400 ? 'hidden' : ''}`}>
+                  <div className="w-full divide-y divide-sidebar-border/40">
+                  <div className="flex justify-between items-center py-1.5">
+                      <span className="text-[11px] tracking-wider text-muted-foreground font-mono font-bold uppercase">Positions</span>
+                      <span className="text-[11px] font-medium">{filteredPositionCount}</span>
+                  </div>
+                  <div className="flex justify-between items-center py-1.5">
+                      <span className="text-[11px] tracking-wider text-muted-foreground font-mono font-bold uppercase">Net APY</span>
+                      <span className="text-[11px] font-medium">
               {isPlaceholderComposition ? (
-                <span className="text-muted-foreground">-</span>
+                         '-'
               ) : (
                 effectiveAprPct !== null ? (
                   effectiveAprPct > 999 ? (
@@ -2541,12 +2764,145 @@ export default function PortfolioPage() {
                   ) : (
                     formatPercent(effectiveAprPct, { min: 1, max: 1 })
                   )
-                ) : '—')}
+                         ) : '—'
+                       )}
+                     </span>
             </div>
-            {/* Row 2, Col 3: mobile toggler when visualization is hidden inline */}
-            <div className="col-[3] row-[1/3] flex items-center justify-end self-center">
-              {isHiddenVis && (
-                <div className="p-2 rounded-md text-muted-foreground group-hover:text-foreground transition-all duration-200 pointer-events-none">
+                    <div className="flex justify-between items-center py-1.5">
+                      <span className="text-[11px] tracking-wider text-muted-foreground font-mono font-bold uppercase">Fees</span>
+                      {isLoadingUnclaimedFees ? (
+                        <span className="inline-block h-3 w-14 rounded bg-muted/40 animate-pulse" />
+                      ) : (
+                        <span className="text-[11px] font-medium">{formatUSD(filteredTotalUnclaimedUsd)}</span>
+                      )}
+                </div>
+            </div>
+            </div>
+
+                {/* Container 3: Percentage Split Viewer (spreads when middle is hidden) */}
+                <div className={`${viewportWidth > 1400 ? 'col-[3]' : 'col-[2]'} row-[1/3] rounded-lg bg-muted/30 border border-sidebar-border/60 p-4 h-full flex flex-col justify-between`}>
+              <div>
+                <h1 className="text-xs tracking-wider text-muted-foreground font-mono font-bold mb-3">ASSET ALLOCATION</h1>
+                <div className="flex-1 flex items-center justify-start">
+                  {isPlaceholderComposition ? (
+                    <div className="text-center text-muted-foreground">
+                      <div className="w-16 h-16 rounded-full bg-muted/50 flex items-center justify-center mb-2">
+                        <span className="text-xs">Chart</span>
+                      </div>
+                      <span className="text-xs">Allocation View</span>
+                    </div>
+                  ) : (
+                    <div className="w-full pr-0 pl-2">
+                      <div className="relative">
+                  <PortfolioTickBar
+                    composition={composition}
+                    onHover={setHoveredSegment}
+                    hoveredSegment={hoveredSegment}
+                    containerRef={containerRef}
+                    netApyRef={netApyRef}
+                    handleRestClick={handleRestClick}
+                    setIsRestCycling={setIsRestCycling}
+                    isRestCycling={isRestCycling}
+                    restCycleIndex={restCycleIndex}
+                    forceHideLabels={forceHideLabels}
+                    onApplySort={undefined}
+                    onHoverToken={setHoveredTokenLabel}
+                              activeTokenFilter={activeTokenFilter}
+                              setActiveTokenFilter={setActiveTokenFilter}
+                          />
+                          </div>
+                        </div>
+                        )}
+                      </div>
+                    </div>
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4">
+                <div className="flex items-center justify-between gap-4 cursor-pointer" onClick={() => setIsMobileVisOpen(v => !v)}>
+                  {/* Left: CURRENT VALUE */}
+                  <div className="flex-1 min-w-0">
+                    <h1 className="text-xs tracking-wider text-muted-foreground font-mono font-bold mb-3">CURRENT VALUE</h1>
+                    <div className={`${isVerySmallScreen ? 'text-2xl' : 'text-3xl sm:text-4xl'}`}>
+                      {isPlaceholderComposition ? (
+                        <span className="text-muted-foreground">-</span>
+                      ) : (
+                        <div className="flex flex-col gap-1">
+                          <span className="font-medium tracking-tight">{formatUSDHeader(displayValue)}</span>
+                          {(() => {
+                            const deltaUsd = (() => {
+                              try {
+                                const total = Number(displayValue) || 0;
+                                if (!Number.isFinite(pnl24hPct) || !isFinite(total)) return 0;
+                                return (total * pnl24hPct) / 100;
+                              } catch { return 0; }
+                            })();
+                            const isPos = (pnl24hPct || 0) >= 0;
+                            const absDelta = Math.abs(deltaUsd);
+                            return (
+                              <div className="flex items-center gap-2 text-xs">
+                                <span className="text-muted-foreground font-medium">
+                                  {isPos ? '+' : '-'}{formatUSDShared(absDelta)}
+                                </span>
+                                <div className="flex items-center gap-1">
+                                  {isPos ? (
+                                    <ArrowUpRight className="h-3 w-3 text-green-500" />
+                                  ) : (
+                                    <ArrowDownRight className="h-3 w-3 text-red-500" />
+                                  )}
+                                  <span className={`${isPos ? 'text-green-500' : 'text-red-500'} font-medium`}>
+                                    {formatPercent(Math.abs(pnl24hPct || 0), { min: 2, max: 2 })}
+                                  </span>
+                </div>
+              </div>
+                            );
+                          })()}
+            </div>
+                      )}
+                    </div>
+                  </div>
+                  {/* Right: metrics rows */}
+                  <div className="flex-none min-w-[140px]">
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center pl-4">
+                        <span className="text-[11px] tracking-wider text-muted-foreground font-mono font-bold uppercase">Positions</span>
+                        <span className="text-[11px] font-medium">{filteredPositionCount}</span>
+                      </div>
+                      <div className="flex justify-between items-center pl-4">
+                        <span className="text-[11px] tracking-wider text-muted-foreground font-mono font-bold uppercase">Net APY</span>
+                        <span className="text-[11px] font-medium">
+                          {isPlaceholderComposition ? (
+                            '-'
+                          ) : (
+                            effectiveAprPct !== null ? (
+                              effectiveAprPct > 999 ? (
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <span className="cursor-default">&gt;999%</span>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">{formatPercent(effectiveAprPct, { min: 2, max: 2 })}</TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              ) : (
+                                formatPercent(effectiveAprPct, { min: 1, max: 1 })
+                              )
+                            ) : '—'
+                          )}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center pl-4">
+                        <span className="text-[11px] tracking-wider text-muted-foreground font-mono font-bold uppercase">Fees</span>
+                        {isLoadingUnclaimedFees ? (
+                          <span className="inline-block h-3 w-14 rounded bg-muted/40 animate-pulse" />
+                        ) : (
+                          <span className="text-[11px] font-medium">{formatUSD(filteredTotalUnclaimedUsd)}</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  {/* Chevron */}
+                  <div className="flex items-center self-center pl-3">
                   <svg
                     width={20}
                     height={20}
@@ -2562,73 +2918,12 @@ export default function PortfolioPage() {
                     <path d="m6 9 6 6 6-6" />
                   </svg>
                 </div>
-              )}
-            </div>
-            {/* Inline visualization: absolute overlay on the right */}
-            {!isHiddenVis && (
-              <div
-                className="absolute top-1/2 -translate-y-1/2 flex justify-end"
-                style={{ left: 0, right: 0, paddingLeft: inlineLeftOffset, transform: 'translateY(-50%) translateY(4px)' }}
-              >
-                {isCompactVis ? (
-                  <CompactCompositionBar
-                    composition={composition}
-                    onHover={setHoveredSegment}
-                    hoveredSegment={hoveredSegment}
-                    handleRestClick={handleRestClick}
-                    setIsRestCycling={setIsRestCycling}
-                    isRestCycling={isRestCycling}
-                    restCycleIndex={restCycleIndex}
-                    initialWidth={(() => {
-                      // Compute initial width once from this absolute wrapper (left/right 0 with padding-left applied)
-                      const wrapper = containerRef.current;
-                      const apyEl = netApyRef.current;
-                      if (!wrapper || !apyEl) return undefined;
-                      const wrapperRect = wrapper.getBoundingClientRect();
-                      const apyRect = apyEl.getBoundingClientRect();
-                      // Match the same offset logic used for padding-left so bar fills remaining space to the right
-                      const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
-                      const desiredGapPx = viewportWidth <= 1500 ? -18 : 18;
-                      const leftOffset = Math.max(0, apyRect.right - wrapperRect.left + desiredGapPx);
-                      return Math.max(0, Math.round(wrapperRect.width - leftOffset));
-                    })()}
-                    forceHideLabels={forceHideLabels}
-                    onApplySort={undefined}
-                    onHoverToken={setHoveredTokenLabel}
-                  />
-                ) : (
-                  <PortfolioTickBar
-                    composition={composition}
-                    onHover={setHoveredSegment}
-                    hoveredSegment={hoveredSegment}
-                    containerRef={containerRef}
-                    netApyRef={netApyRef}
-                    handleRestClick={handleRestClick}
-                    setIsRestCycling={setIsRestCycling}
-                    isRestCycling={isRestCycling}
-                    restCycleIndex={restCycleIndex}
-                    forceHideLabels={forceHideLabels}
-                    onApplySort={undefined}
-                    onHoverToken={setHoveredTokenLabel}
-                  />
-                )}
               </div>
-            )}
-          </div>
-          {/* Mobile expandable visualization below 1100px */}
-          {isHiddenVis && (
-            <div
-              id="mobile-portfolio-vis"
-              className="mt-3 overflow-hidden"
-              style={{
-                maxHeight: isMobileVisOpen ? collapseMaxHeight : 0,
-                opacity: isMobileVisOpen ? 1 : 0,
-                transition: 'max-height 300ms ease-out, opacity 250ms ease-out',
-              }}
-            >
-              <div ref={blockVisContainerRef} className="w-full overflow-hidden pt-2">
+
+                {/* Unfold section */}
+                <div className="transition-[max-height] duration-300 ease-out" style={{ maxHeight: isMobileVisOpen ? collapseMaxHeight : 0 }}>
+                  <div ref={blockVisContainerRef} className="pt-3">
                 {isMobileVisOpen && (
-                  <div className="w-full">
                     <PortfolioTickBar
                       composition={composition}
                       onHover={setHoveredSegment}
@@ -2641,9 +2936,12 @@ export default function PortfolioPage() {
                       isRestCycling={isRestCycling}
                       restCycleIndex={restCycleIndex}
                       forceHideLabels={forceHideLabels}
+                      onHoverToken={setHoveredTokenLabel}
+                        activeTokenFilter={activeTokenFilter}
+                        setActiveTokenFilter={setActiveTokenFilter}
                     />
-                  </div>
                 )}
+                  </div>
               </div>
             </div>
           )}
@@ -2809,10 +3107,17 @@ export default function PortfolioPage() {
                                       const price1 = (sym1 && portfolioData.priceMap[sym1]) || 0;
                                       return amt0 * price0 + amt1 * price1;
                                     })();
+                                    // attach prefetched raw fees for FeesCell
+                                    const feesPref = (() => {
+                                      try {
+                                        const rec = unclaimedFeesMap[String(position.positionId)];
+                                        return rec ? { unclaimedRaw0: rec.amount0, unclaimedRaw1: rec.amount1 } : {};
+                                      } catch { return {}; }
+                                    })();
                                     return (
                                       <PositionCard
                                         key={position.positionId}
-                                        position={position as any}
+                                        position={{ ...(position as any), ...feesPref } as any}
                                         valueUSD={valueUSD}
                                         poolKey={poolKey}
                                         getUsdPriceForSymbol={getUsdPriceForSymbol}
@@ -2833,6 +3138,8 @@ export default function PortfolioPage() {
                                         onClick={() => navigateToPoolBySubgraphId(position.poolId)}
                                         isLoadingPrices={!readiness.prices}
                                         isLoadingPoolStates={isLoadingPoolStates}
+                                        // Prefetch fees for FeesCell via centralized batch map
+                                        // Note: PositionCard doesn't accept these props directly; FeesCell will accept via spread below
                                       />
                                     );
                                   })}
@@ -3087,25 +3394,33 @@ export default function PortfolioPage() {
                       </div>
                     </div>
                     {filteredTotalActivityPages > 1 && (
-                      <>
-                        <div className="flex items-center justify-between px-4 py-3 text-xs text-muted-foreground">
-                          <div>Page {activityPage + 1} / {filteredTotalActivityPages}</div>
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              className="px-2 py-1 rounded border border-sidebar-border hover:bg-muted/30"
-                              onClick={() => setActivityPage((p) => Math.max(0, p - 1))}
-                              disabled={activityPage === 0}
-                            >Prev</button>
-                            <button
-                              type="button"
-                              className="px-2 py-1 rounded border border-sidebar-border hover:bg-muted/30"
-                              onClick={() => setActivityPage((p) => Math.min(filteredTotalActivityPages - 1, p + 1))}
-                              disabled={activityPage >= filteredTotalActivityPages - 1}
-                            >Next</button>
+                                            <div className="flex justify-between px-4 py-3">
+                        <div></div>
+                        <div className="flex items-center gap-4">
+                                                      <button
+                            type="button"
+                            className={`text-xs font-medium transition-colors ${
+                              activityPage === 0
+                                ? 'text-white/90'
+                                : 'text-muted-foreground hover:text-white/90'
+                            }`}
+                            onClick={() => setActivityPage(0)}
+                          >
+                            1
+                          </button>
+                          <button
+                            type="button"
+                            className={`text-xs font-medium transition-colors ${
+                              activityPage === 1
+                                ? 'text-white/90'
+                                : 'text-muted-foreground hover:text-white/90'
+                            }`}
+                            onClick={() => setActivityPage(1)}
+                          >
+                            2
+                          </button>
                           </div>
                         </div>
-                      </>
                     )}
                   </div>
                 )
@@ -4005,682 +4320,4 @@ function CompactCompositionBar({ composition, onHover, hoveredSegment, handleRes
   );
 }
 
-interface PortfolioTickBarProps {
-  composition: Array<{ label: string; pct: number; color: string }>;
-  onHover: (segment: number | null) => void;
-  hoveredSegment: number | null;
-  containerRef: React.RefObject<HTMLDivElement | null>;
-  netApyRef: React.RefObject<HTMLDivElement | null>;
-  layout?: "inline" | "block"; // inline: next to NET APY, block: full-width row
-  handleRestClick: (segment: any, segmentIndex?: number) => void;
-  setIsRestCycling: (value: boolean) => void;
-  isRestCycling: boolean;
-  restCycleIndex: number;
-  forceHideLabels?: boolean;
-  onApplySort?: () => void;
-  onHoverToken?: (label: string | null) => void;
-}
-function PortfolioTickBar({ composition, onHover, hoveredSegment, containerRef, netApyRef, layout = "inline", handleRestClick, setIsRestCycling, isRestCycling, restCycleIndex, forceHideLabels, onApplySort, onHoverToken }: PortfolioTickBarProps) {
-  const SMALL_SEGMENT_THRESHOLD = 10; // tweakable (e.g., 5)
-  const { activeTokenFilter, setActiveTokenFilter } = React.useContext(PortfolioFilterContext);
-  const selectedIdx = activeTokenFilter
-    ? (() => {
-        const idx = composition.findIndex(c => c.label?.toUpperCase?.() === activeTokenFilter.toUpperCase());
-        return idx >= 0 ? idx : null;
-      })()
-    : null;
-  const hoverIdx = hoveredSegment;
-  // Hide inline labels entirely for placeholder/empty states (no wallet, 0 positions)
-  const hideAllInlineLabels = React.useMemo(() => {
-    if (forceHideLabels) return true;
-    return composition.length === 1 && (composition[0] as any)?.label === 'All' && Math.round((composition[0] as any)?.pct || 0) === 100;
-  }, [composition, forceHideLabels]);
-  
-  // Check if Rest segment should be highlighted when cycling
-  const isRestSegmentHighlighted = (segmentIdx: number) => {
-    if (!isRestCycling) return false;
-    const segment = composition[segmentIdx];
-    return segment?.label === 'Rest';
-  };
-  // Precise text measurement for overflow decisions (10px label font)
-  const measureTextWidth = React.useCallback((text: string): number => {
-    try {
-      if (typeof document === 'undefined') return (text || '').length * 7;
-      const anyDoc = document as any;
-      const canvas: HTMLCanvasElement = anyDoc.__alphixMeasureCanvas || (anyDoc.__alphixMeasureCanvas = document.createElement('canvas'));
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return (text || '').length * 7;
-      ctx.font = '10px ui-sans-serif';
-      return ctx.measureText(text || '').width;
-    } catch {
-      return (text || '').length * 7;
-    }
-  }, []);
-  const hoverColor = '#f45502';
-  const selectedColor = hoverColor;
-  const [maxTicks, setMaxTicks] = useState(200); // Default fallback
-  const [tickPixelWidth, setTickPixelWidth] = useState<number>(2);
-  const [tickGapWidth, setTickGapWidth] = useState<number>(4);
-  const [availablePixels, setAvailablePixels] = useState<number>(0);
-  const lastPerTickRef = useRef<number | null>(null);
-  const lastTicksRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    const calculateMaxTicks = () => {
-      if (containerRef.current && netApyRef.current) {
-        const containerRect = containerRef.current.getBoundingClientRect();
-        const netApyRect = netApyRef.current.getBoundingClientRect();
-        const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
-        const padding = viewportWidth <= 1500 ? 32 : 44; // More padding for mobile
-        
-        // Available width computation depends on layout
-        const availableInline = layout === "block" || containerRef.current === netApyRef.current
-          ? Math.max(0, containerRect.width - padding)
-          : Math.max(0, (containerRect.right - netApyRect.right) - padding);
-
-        const calcForAvailable = (avail: number) => {
-          // FIXED sizing - never change these values
-          const px = 2;
-          const gap = 4;
-          const perTick = px + gap;
-          let ticks = Math.floor(avail / perTick);
-          
-          // For mobile block layout, use a reasonable number
-          if (layout === "block") {
-            ticks = Math.min(60, Math.max(40, ticks)); // Between 40-60 ticks for mobile
-          }
-          
-          const clampedTicks = Math.max(12, Math.min(300, ticks)); // Increased to better show small percentages
-          const rowWidth = clampedTicks * px + Math.max(0, (clampedTicks - 1)) * gap;
-          return { px, gap, perTick, ticks: clampedTicks, rowWidth };
-        };
-
-        const result = calcForAvailable(availableInline);
-
-        setTickPixelWidth(result.px);
-        setTickGapWidth(result.gap);
-        setMaxTicks(result.ticks);
-        setAvailablePixels(availableInline);
-
-        lastPerTickRef.current = result.perTick;
-        lastTicksRef.current = result.ticks;
-      }
-    };
-
-    // Multiple calculations to ensure proper initial sizing
-    calculateMaxTicks();
-    const timeoutId1 = setTimeout(calculateMaxTicks, 10);
-    const timeoutId2 = setTimeout(calculateMaxTicks, 100);
-    
-    window.addEventListener('resize', calculateMaxTicks);
-    return () => {
-      clearTimeout(timeoutId1);
-      clearTimeout(timeoutId2);
-      window.removeEventListener('resize', calculateMaxTicks);
-    };
-  }, [containerRef, netApyRef, layout]);
-
-  const total = composition.reduce((a, b) => a + b.pct, 0) || 1;
-  const segments = composition.map((c) => ({ ...c, pct: (c.pct / total) * 100 }));
-  // Ensure every segment can display at least a percentage label (~24px)
-  const minLabelPx = 24;
-  const minTicksPerSegment = Math.max(1, Math.ceil(minLabelPx / (tickPixelWidth + tickGapWidth)));
-  // Compute the theoretical ticks required if every segment had min ticks
-  const requiredTicksForLabels = segments.length * minTicksPerSegment;
-  // Prefer maxTicks, but if segments are many, expand ticks so labels fit; scaling is fine per user spec
-  const ticks = Math.max(maxTicks, requiredTicksForLabels);
-  const totalRowWidth = ticks * tickPixelWidth + Math.max(0, (ticks - 1)) * tickGapWidth;
-  // In block layout, scale to exactly the container width; in inline, only shrink if needed.
-  const scaleX = (() => {
-    if (totalRowWidth <= 0) return 1;
-    if (layout === "block") {
-      const containerWidth = containerRef.current?.getBoundingClientRect().width ?? totalRowWidth;
-      // Ensure we don't exceed container width by adding some padding
-      const maxWidth = Math.max(containerWidth - 32, 100); // 32px padding to prevent overflow
-      return Math.min(1, maxWidth / totalRowWidth);
-    }
-    if (availablePixels > 0 && totalRowWidth > availablePixels) {
-      return availablePixels / totalRowWidth;
-    }
-    return 1;
-  })();
-
-  // Compute integer tick spans per segment, ensuring minimum ticks for percentage display
-  const minTicksForPct = minTicksPerSegment; // baseline minimum
-  const minLabelPxSmall = 34; // ensure space for small "%" label comfortably
-  const perTickPx = (tickPixelWidth + tickGapWidth);
-  const baseMinTicksForSmall = Math.max(1, Math.ceil(minLabelPxSmall / perTickPx));
-  const minTicksForSmall = Math.max(1, baseMinTicksForSmall - 1); // shorter by one tick
-  
-  // Establish per-segment minimums (tiny non-OTHERS get larger floor)
-  const minTicksPerSegmentArr = segments.map((s) => {
-    const isSmallNonRest = (s.pct < 5) && (String(s.label) !== 'Rest');
-    return isSmallNonRest ? Math.max(minTicksForSmall, minTicksForPct) : minTicksForPct;
-  });
-
-  // Initial spans respecting minimums
-  const rawSpans = segments.map((s, i) => {
-    const proportionalTicks = Math.round((s.pct / 100) * ticks);
-    return Math.max(minTicksPerSegmentArr[i], proportionalTicks);
-  });
-
-  let spanSum = rawSpans.reduce((a, b) => a + b, 0);
-
-  if (spanSum > ticks) {
-    // Reduce from largest segments first, but never below their own minimums
-    let excess = spanSum - ticks;
-    const candidates = rawSpans
-      .map((span, i) => ({ i, span }))
-      .filter(({ i, span }) => span > minTicksPerSegmentArr[i])
-      .sort((a, b) => b.span - a.span);
-    while (excess > 0 && candidates.length > 0) {
-      for (let k = 0; k < candidates.length && excess > 0; k += 1) {
-        const idx = candidates[k].i;
-        if (rawSpans[idx] > minTicksPerSegmentArr[idx]) {
-          rawSpans[idx] -= 1;
-          excess -= 1;
-        }
-      }
-      // Refilter in case some segments reached their minimums
-      for (let k = candidates.length - 1; k >= 0; k -= 1) {
-        const idx = candidates[k].i;
-        if (rawSpans[idx] <= minTicksPerSegmentArr[idx]) candidates.splice(k, 1);
-      }
-    }
-    spanSum = rawSpans.reduce((a, b) => a + b, 0);
-  } else if (spanSum < ticks) {
-    const deficit = ticks - spanSum;
-    const sortedIndices = rawSpans.map((_, i) => i).sort((a, b) => rawSpans[b] - rawSpans[a]);
-    for (let i = 0; i < deficit; i++) {
-      rawSpans[sortedIndices[i % sortedIndices.length]] += 1;
-    }
-    spanSum = rawSpans.reduce((a, b) => a + b, 0);
-  }
-
-  // Compute starting tick index for each segment
-  const segmentStarts: number[] = [];
-  {
-    let cursor = 0;
-    for (let i = 0; i < rawSpans.length; i += 1) {
-      segmentStarts.push(cursor);
-      cursor += rawSpans[i];
-    }
-  }
-
-  // Precompute tick colors and segment indices aligned to spans
-  const tickColors: string[] = new Array(ticks);
-  const tickSegments: number[] = new Array(ticks);
-  {
-    let cursor = 0;
-    for (let i = 0; i < segments.length; i += 1) {
-      const span = rawSpans[i];
-      const color = segments[i].color;
-      for (let j = 0; j < span; j += 1) {
-        tickColors[cursor + j] = color;
-        tickSegments[cursor + j] = i;
-      }
-      cursor += span;
-    }
-  }
-
-  // Shorten next segment-start tick if hovered/selected label text would overflow into it
-  const shortStartTicks = React.useMemo(() => {
-    const set = new Set<number>();
-    const activeIdx = hoverIdx ?? selectedIdx ?? null;
-    if (activeIdx === null || activeIdx === undefined) return set;
-    if (!segments[activeIdx]) return set;
-    const s = segments[activeIdx] as any;
-    const restToken = (s as any)?.restTokens?.[restCycleIndex];
-    const labelText = (restToken ? restToken.label : s.label) as string;
-    const estNameWidth = measureTextWidth(labelText || '');
-    const pctRounded = Math.round(s.pct);
-    const estPctWidth = measureTextWidth(`${pctRounded}%`);
-    const minGap = 6;
-    const leftPad = tickPixelWidth + tickGapWidth;
-    const spanTicks = rawSpans[activeIdx];
-    const segmentPxWidth = spanTicks * tickPixelWidth + Math.max(0, spanTicks - 1) * tickGapWidth;
-    const availableLabelWidth = Math.max(0, segmentPxWidth - leftPad);
-    const requiredWidth = estPctWidth + minGap + estNameWidth;
-    if (requiredWidth > availableLabelWidth) {
-      const nextStartTick = segmentStarts[activeIdx] + rawSpans[activeIdx];
-      set.add(nextStartTick);
-    }
-    return set;
-  }, [hoverIdx, selectedIdx, segments, rawSpans, segmentStarts, tickPixelWidth, tickGapWidth, restCycleIndex, measureTextWidth]);
-
-  const isMeasured = layout === 'block' ? true : (availablePixels > 0);
-  return (
-    <TooltipProvider>
-    <div
-      className={layout === "block" ? "w-full overflow-hidden" : ""}
-      style={{
-        width: layout === 'block' ? '100%' : (isMeasured ? `${availablePixels}px` : 0),
-        overflow: 'hidden',
-      }}
-    >
-      <div
-        className="relative"
-        style={{
-          width: layout === "block" ? "100%" : totalRowWidth,
-          transform: layout === "block" ? `translateY(3px)` : `scaleX(${isMeasured ? scaleX : 0})`,
-          transformOrigin: layout === "block" ? "left center" : "right center",
-          willChange: 'transform',
-          opacity: isMeasured ? 1 : 0,
-        }}
-      >
-        {/* Large hover zones for each segment (cover ticks + label area) */}
-        <div className="absolute inset-0 z-50 flex" style={{ pointerEvents: (segments.length === 1 && (segments[0] as any)?.label === 'All') ? 'none' : 'auto' }}>
-          {segments.map((segment, segmentIndex) => {
-            const pctRounded = Math.round(segment.pct);
-            const isRest = segment.label === 'Rest';
-            // Custom widened small segment: exactly those with boosted minimum ticks
-            const isCustomSmallWidened = (minTicksPerSegmentArr[segmentIndex] > minTicksForPct) && !isRest;
-
-            // Determine if the segment label is hidden in inline view (percentage-only)
-            const spanTicks = rawSpans[segmentIndex];
-            const segmentPxWidth = spanTicks * tickPixelWidth + Math.max(0, spanTicks - 1) * tickGapWidth;
-            const leftPadForLabel = tickPixelWidth + tickGapWidth;
-            const availableLabelWidthInline = Math.max(0, segmentPxWidth - leftPadForLabel);
-            const restTokenInline = (segment as any)?.restTokens?.[restCycleIndex];
-            const isRestHighlightedInline = isRestSegmentHighlighted(segmentIndex);
-            const labelTextInline = (isRestHighlightedInline && restTokenInline ? restTokenInline.label : (segment as any).label) as string;
-            const estNameWidthInline = measureTextWidth(labelTextInline || '');
-            const estPctWidthInline = measureTextWidth(`${pctRounded}%`);
-            const minGapInline = 6;
-            const barSafetyEarlyInline = 4;
-            const nameHiddenInline = availableLabelWidthInline < (estPctWidthInline + minGapInline + estNameWidthInline + barSafetyEarlyInline);
-
-            // Block layout: detect if label is hidden (percentage-only) using block label metrics
-            const nameHiddenBlock = (() => {
-              if (layout !== 'block') return false;
-              try {
-                const sAny: any = segment as any;
-                const restTok = sAny?.restTokens?.[restCycleIndex];
-                const isRestHi = isRestSegmentHighlighted(segmentIndex);
-                const labelTxt = (isRestHi && restTok ? restTok.label : sAny.label) as string;
-                const span = rawSpans[segmentIndex];
-                const segPx = span * tickPixelWidth + Math.max(0, span - 1) * tickGapWidth;
-                const leftPad = tickPixelWidth + tickGapWidth;
-                const avail = Math.max(0, segPx - leftPad);
-                const estName = measureTextWidth(labelTxt || '');
-                const estPct = measureTextWidth(`${pctRounded}%`);
-                const minGap = 6;
-                const barSafetyEarly = 4;
-                return avail < (estPct + minGap + estName + barSafetyEarly);
-              } catch {
-                return false;
-              }
-            })();
-
-            const content = isRest ? (
-              <div className="space-y-1 max-h-56 overflow-auto pr-1">
-                {(segment as any).restTokens?.map((token: any, idx: number) => (
-                  <div key={idx} className="flex justify-between items-center gap-2">
-                    <span className="flex items-center gap-1 uppercase">
-                      {isRestCycling && (segment as any).restTokens?.[restCycleIndex]?.label === token.label ? (
-                        <span className="inline-block w-1 h-3 rounded-sm" style={{ backgroundColor: hoverColor }} />
-                      ) : (
-                        <span className="inline-block w-1 h-3 rounded-sm" style={{ backgroundColor: 'hsl(var(--muted-foreground))' }} />
-                      )}
-                      {token.label}
-                    </span>
-                    <span>{Math.round(token.pct)}%</span>
-                  </div>
-                ))}
-              </div>
-            ) : `${pctRounded}% ${segment.label}`;
-            
-            const zone = (
-              <div
-                key={`hover-zone-${segmentIndex}`}
-                className="h-full"
-                style={{ 
-                  width: `${segment.pct}%`,
-                  height: "calc(100% + 16px)",
-                  cursor: 'pointer'
-                }}
-                onMouseEnter={() => { if (!(segments.length === 1 && (segments[0] as any)?.label === 'All')) { onHover(segmentIndex); try { onHoverToken?.(segment.label === 'Rest' ? null : segment.label); } catch {} } }}
-                onMouseLeave={() => { if (!(segments.length === 1 && (segments[0] as any)?.label === 'All')) { onHover(null); try { onHoverToken?.(null); } catch {} } }}
-                onClick={() => {
-                  if (segment.label === 'Rest') {
-                    handleRestClick(segment, segmentIndex);
-                  } else {
-                    setActiveTokenFilter((activeToken) => (activeToken?.toUpperCase?.() === segment.label?.toUpperCase?.() ? null : segment.label));
-                    setIsRestCycling(false);
-                    try { onApplySort?.(); } catch {}
-                  }
-                }}
-              />
-            );
-            // For wide (inline) tick visual: show tooltip when name is hidden or for REST (but not in forced-hide state)
-            if (layout !== 'block' && !hideAllInlineLabels && (isRest || nameHiddenInline)) {
-              return (
-                <Tooltip key={`hover-zone-wrap-${segmentIndex}`} open={hoverIdx === segmentIndex}>
-                  <TooltipTrigger asChild>{zone}</TooltipTrigger>
-                  <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs" style={{ pointerEvents: 'none' }}>
-                    {content}
-                  </TooltipContent>
-                </Tooltip>
-              );
-            }
-            return zone;
-          })}
-        </div>
-        {/* Tick row */}
-        <div 
-          className="flex h-8 select-none" 
-          style={{ 
-            gap: layout === "block" ? "2px" : `${tickGapWidth}px`, 
-            width: layout === "block" ? "100%" : totalRowWidth,
-            justifyContent: layout === "block" ? "space-between" : "flex-start"
-          }}
-        >
-          {Array.from({ length: ticks }).map((_, i) => {
-            const segmentIndex = tickSegments[i];
-            const isHovered = hoverIdx === segmentIndex;
-            const isSelected = selectedIdx === segmentIndex;
-            return (
-              <div
-                key={i}
-                className="h-full flex-shrink-0"
-                style={{
-                  width: `${tickPixelWidth}px`,
-                  backgroundColor: (segments.length === 1 && (segments[0] as any)?.label === 'All') ? tickColors[i] : (isHovered ? hoverColor : (isSelected ? selectedColor : (isRestSegmentHighlighted(segmentIndex) ? selectedColor : tickColors[i]))),
-                  opacity: 0.9,
-                }}
-                onMouseEnter={() => { if (!(segments.length === 1 && (segments[0] as any)?.label === 'All')) { onHover(segmentIndex); try { onHoverToken?.(composition[segmentIndex]?.label === 'Rest' ? null : composition[segmentIndex]?.label || null); } catch {} } }}
-                onMouseLeave={() => { if (!(segments.length === 1 && (segments[0] as any)?.label === 'All')) { onHover(null); try { onHoverToken?.(null); } catch {} } }}
-                onClick={() => {
-                  const segment = composition[segmentIndex];
-                  if (!segment) return;
-                  
-                  if (segment.label === 'Rest') {
-                    handleRestClick(segment, segmentIndex);
-                  } else {
-                    setActiveTokenFilter((activeToken) => {
-                      const next = segment.label || null;
-                      if (!next) return null;
-                      return activeToken?.toUpperCase?.() === next.toUpperCase?.() ? null : next;
-                    });
-                    setIsRestCycling(false);
-                  }
-                }}
-              />
-            );
-          })}
-        </div>
-        {/* Segment start markers extending downward */}
-        <div
-          className="pointer-events-none absolute left-0 top-0 flex"
-          style={{ 
-            height: "calc(100% + 12px)", 
-            gap: `${tickGapWidth}px`, 
-            width: layout === "block" ? "100%" : totalRowWidth,
-            justifyContent: layout === "block" ? "space-between" : "flex-start"
-          }}
-        >
-          {Array.from({ length: ticks }).map((_, i) => {
-            const isSegmentStart = segmentStarts.includes(i);
-            const segmentIndex = tickSegments[i];
-            const isHovered = hoverIdx === segmentIndex;
-            const isSelected = selectedIdx === segmentIndex;
-            return isSegmentStart ? (
-              <div
-                key={`marker-${i}`}
-                className="flex-shrink-0"
-                style={{
-                  width: `${tickPixelWidth}px`,
-                  height: shortStartTicks.has(i) ? `calc(100% - 12px)` : "100%",
-                  backgroundColor: (segments.length === 1 && (segments[0] as any)?.label === 'All') ? tickColors[i] : (isHovered ? hoverColor : (isSelected ? selectedColor : (isRestSegmentHighlighted(segmentIndex) ? selectedColor : tickColors[i]))),
-                  opacity: 0.95,
-                }}
-              />
-            ) : (
-              <div key={`marker-${i}`} className="flex-shrink-0" style={{ width: `${tickPixelWidth}px`, height: 0 }} />
-            );
-          })}
-        </div>
-      </div>
-        {/* Labels aligned to segment-start ticks */}
-        {layout === "block" ? (
-          <div
-            className="flex text-xs mt-0"
-            style={{
-              gap: "2px",
-              width: "100%",
-              justifyContent: "space-between",
-              position: "relative",
-              height: "20px",
-              transform: 'translateY(3px)',
-              willChange: 'transform',
-              pointerEvents: 'none'
-            }}
-          >
-            {(() => {
-              let hideNamesFromIndex: number | null = null;
-              const slots: React.ReactNode[] = [];
-              for (let tickIdx = 0; tickIdx < ticks; tickIdx += 1) {
-                const segIdx = segmentStarts.indexOf(tickIdx);
-                const slot = (
-                  <div key={`lbl-slot-${tickIdx}`} className="flex-shrink-0 relative" style={{ width: `${tickPixelWidth}px`, height: "100%" }}>
-                    {segIdx !== -1 && (() => {
-                      const s = segments[segIdx];
-                      const restToken = (s as any)?.restTokens?.[restCycleIndex];
-                      const isRestHighlighted = isRestSegmentHighlighted(segIdx);
-                      const pctRounded = Math.round(isRestHighlighted && restToken ? restToken.pct : s.pct);
-                      const isHovered = hoverIdx === segIdx;
-                      const isSelected = selectedIdx === segIdx;
-                      const startTick = segmentStarts[segIdx];
-                      const spanTicks = rawSpans[segIdx];
-                      const segmentPxWidth = spanTicks * tickPixelWidth + Math.max(0, spanTicks - 1) * tickGapWidth;
-                      const leftPad = tickPixelWidth + tickGapWidth;
-                      const availableLabelWidth = Math.max(0, segmentPxWidth - leftPad);
-                      const labelText = (isRestHighlighted && restToken ? (restToken as any).label : (s as any).label) as string;
-                      const estNameWidth = measureTextWidth(labelText || '');
-                      const estPctWidth = measureTextWidth(`${pctRounded}%`);
-                      const minGap = 6;
-                      const barSafetyEarly = 4; // hide a touch earlier to avoid visible overlap
-                      // Hide names for placeholder composition (single 100% segment)
-                      const hideAllLabels = (segments.length === 1 && (segments[0] as any)?.label === 'All' && Math.round((segments[0] as any)?.pct || 0) === 100) || forceHideLabels;
-                      let showName = !hideAllLabels;
-                      if (hideNamesFromIndex !== null && segIdx >= hideNamesFromIndex) showName = false;
-                      const fits = availableLabelWidth >= estPctWidth + minGap + estNameWidth + barSafetyEarly;
-                      if (showName && !fits) {
-                        // allow overflow on hover/selected; otherwise hide and start cascade
-                        if (!(isHovered || isSelected)) {
-                          hideNamesFromIndex = segIdx;
-                          showName = false;
-                        }
-                      }
-                      // Force show on hover or selected (allow overflow)
-                      if (isHovered || isSelected) showName = true;
-                      const color = isHovered ? hoverColor : ((isSelected || isRestHighlighted) ? selectedColor : (s as any).color);
-                      return (
-                        <div
-                          className="absolute left-0 top-0"
-                          onMouseEnter={() => onHover(segIdx)}
-                          onMouseLeave={() => onHover(null)}
-                          onClick={() => {
-                            if ((s as any).label === 'Rest') {
-                              handleRestClick(s as any, segIdx);
-                            } else {
-                              setActiveTokenFilter((activeToken) => (activeToken?.toUpperCase?.() === (s as any).label?.toUpperCase?.() ? null : ((s as any).label as string)));
-                              setIsRestCycling(false);
-                            }
-                          }}
-                          style={{ paddingLeft: leftPad, width: `${segmentPxWidth}px`, overflow: (isHovered || isSelected) ? 'visible' : 'hidden', zIndex: (isHovered || isSelected) ? 20 : undefined }}
-                        >
-                          <div className="flex items-baseline gap-1" style={{ overflow: (isHovered || isSelected) ? 'visible' : 'hidden' }}>
-                            {(s as any).label === 'Rest' ? (
-                              Array.isArray((s as any).restTokens) && (s as any).restTokens.length > 0 && (
-                                <span className="font-medium" style={{ color, fontSize: 12 }}>
-                                  {isRestCycling && (s as any).restTokens?.[restCycleIndex] ? 
-                                    `${Math.round((s as any).restTokens[restCycleIndex].pct)}%` : 
-                                    `+${(s as any).restTokens.length}`
-                                  }
-                                </span>
-                              )
-                            ) : (
-                              <span className="font-medium" style={{ color }}>{hideAllLabels ? '' : `${pctRounded}%`}</span>
-                            )}
-                            {showName && (
-                              <span className="uppercase tracking-wider text-muted-foreground whitespace-nowrap" style={{ fontSize: 10, maxWidth: (isHovered || isSelected) ? undefined : `${Math.max(0, availableLabelWidth - estPctWidth - minGap)}px`, overflow: (isHovered || isSelected) ? 'visible' : 'hidden', textOverflow: (isHovered || isSelected) ? 'clip' : 'ellipsis', textTransform: (s as any).label === 'Rest' ? 'none' : undefined }}>
-                                {(s as any).label === 'Rest' ? (
-                                  isRestCycling && (s as any).restTokens?.[restCycleIndex] ? 
-                                    (s as any).restTokens[restCycleIndex].label : 
-                                    'Assets'
-                                ) : (
-                                  labelText
-                                )}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })()}
-                  </div>
-                );
-                slots.push(slot);
-              }
-              return slots;
-            })()}
-          </div>
-        ) : (
-          <div
-            className="relative text-xs"
-            style={{
-              marginTop: '0px',
-              height: '20px',
-              width: totalRowWidth,
-              transform: `scaleX(${scaleX})`,
-              transformOrigin: 'left center',
-              willChange: 'transform',
-              zIndex: 30
-            }}
-          >
-            {(() => {
-              let hideNamesFromIndex: number | null = null;
-              const nodes: React.ReactNode[] = [];
-              for (let i = 0; i < segments.length; i += 1) {
-                const s = segments[i];
-                const restToken = (s as any)?.restTokens?.[restCycleIndex];
-                const isRestHighlighted = isRestSegmentHighlighted(i);
-                const pctRounded = Math.round(isRestHighlighted && restToken ? restToken.pct : s.pct);
-                const isHovered = hoverIdx === i;
-                const isSelected = selectedIdx === i;
-                const segmentStart = segmentStarts[i];
-                const startPosition = segmentStart * (tickPixelWidth + tickGapWidth);
-                const segmentPixelWidth = rawSpans[i] * tickPixelWidth + Math.max(0, rawSpans[i] - 1) * tickGapWidth;
-                const leftPad = tickPixelWidth + tickGapWidth;
-                const availableLabelWidth = Math.max(0, segmentPixelWidth - leftPad);
-                const labelText = (isRestHighlighted && restToken ? (restToken as any).label : (s as any).label) as string;
-                const estChar = 7;
-                const estNameWidth = (labelText?.length || 0) * estChar;
-                const estPctWidth = (`${pctRounded}%`).length * estChar;
-                const minGap = 6;
-                const barSafetyEarly = 4; // hide a touch earlier to avoid visible overlap
-                let showName = !hideAllInlineLabels && (s.pct >= 10);
-                if (hideNamesFromIndex !== null && i >= hideNamesFromIndex) showName = false;
-                if (showName && availableLabelWidth < Math.max(0, estPctWidth + minGap + estNameWidth - barSafetyEarly)) {
-                  hideNamesFromIndex = i;
-                  showName = false;
-                }
-                // Wide inline: force show name on hover/selected and let it overflow
-                if (!hideAllInlineLabels && (isHovered || isSelected)) showName = true;
-            {
-              const isRest = (s as any).label === 'Rest';
-              const content = isRest
-                ? (
-                  <div className="space-y-1">
-                    {(s as any).restTokens?.map((token: any, idx: number) => (
-                      <div key={idx} className="flex justify-between items-center gap-2">
-                        <span className="flex items-center gap-1 uppercase">
-                          {isRestCycling && (s as any).restTokens?.[restCycleIndex]?.label === token.label ? (
-                            <span className="inline-block w-1 h-3 rounded-sm" style={{ backgroundColor: hoverColor }} />
-                          ) : (
-                            <span className="inline-block w-1 h-3 rounded-sm" style={{ backgroundColor: 'hsl(var(--muted-foreground))' }} />
-                          )}
-                          {token.label}
-                        </span>
-                        <span>{Math.round(token.pct)}%</span>
-                      </div>
-                    ))}
-                  </div>
-                )
-                : `${pctRounded}% ${labelText}`;
-
-              const labelBody = (
-                <div 
-                  key={`lbl-${i}`}
-                  className="absolute top-0"
-                  style={{ left: `${startPosition}px`, width: `${segmentPixelWidth}px`, paddingLeft: leftPad, overflow: (isHovered || isSelected) ? 'visible' : 'hidden', zIndex: (isHovered || isSelected) ? 20 : undefined }}
-                  onMouseEnter={() => onHover(i)}
-                  onMouseLeave={() => onHover(null)}
-                >
-                  <div className="flex items-baseline gap-1" style={{ overflow: (isHovered || isSelected) ? 'visible' : 'hidden' }}>
-                    {hideAllInlineLabels ? null : (
-                      (s as any).label === 'Rest'
-                        ? (() => {
-                            const restArr = (s as any).restTokens as any[] | undefined;
-                            if (!Array.isArray(restArr) || restArr.length === 0) return null;
-                            const isCycling = !!isRestCycling;
-                            if (isCycling) {
-                              const rt = restArr[restCycleIndex] as any;
-                              const rp = Math.round(rt?.pct ?? 0);
-                              return (
-                                <span className="font-medium" style={{ color: isHovered || isSelected ? hoverColor : ((isSelected || isRestSegmentHighlighted(i)) ? selectedColor : (s as any).color) }}>{`${rp}%`}</span>
-                              );
-                            }
-                            return (
-                              <span className="font-medium" style={{ color: isHovered || isSelected ? hoverColor : ((isSelected || isRestSegmentHighlighted(i)) ? selectedColor : (s as any).color), fontSize: 12 }}>{`+${restArr.length}`}</span>
-                            );
-                          })()
-                        : (
-                          <span className="font-medium" style={{ color: isHovered ? hoverColor : ((isSelected || isRestSegmentHighlighted(i)) ? selectedColor : (s as any).color) }}>{`${pctRounded}%`}</span>
-                        )
-                    )}
-                    {showName && (() => {
-                      const isRest = (s as any).label === 'Rest';
-                      const restArrTmp = ((s as any).restTokens as any[] | undefined) || [];
-                      const hasRest = Array.isArray(restArrTmp) && restArrTmp.length > 0;
-                      const isCycling = isRest && !!isRestCycling && hasRest;
-                      let nameText: string;
-                      if (isRest) {
-                        if (isCycling && hasRest) {
-                          const maybe = (restArrTmp as any[])[restCycleIndex];
-                          nameText = (maybe && maybe.label) ? String(maybe.label) : 'Assets';
-                        } else {
-                          nameText = 'Assets';
-                        }
-                      } else {
-                        nameText = labelText;
-                      }
-                      const style: React.CSSProperties = {
-                        fontSize: 10,
-                        maxWidth: (isHovered || isSelected) ? undefined : `${Math.max(0, availableLabelWidth - estPctWidth - minGap)}px`,
-                        overflow: (isHovered || isSelected) ? 'visible' : 'hidden',
-                        textOverflow: (isHovered || isSelected) ? 'clip' : 'ellipsis',
-                        textTransform: isRest && !isCycling ? 'none' : undefined,
-                      };
-                      return (
-                        <span className="uppercase tracking-wider text-muted-foreground whitespace-nowrap" style={style}>
-                          {nameText}
-                        </span>
-                      );
-                    })()}
-                  </div>
-                </div>
-              );
-
-              // Do not wrap labels in tooltip to avoid hover flicker; tooltips are handled by the striped segment hover zones
-              nodes.push(labelBody);
-            }
-              }
-              return nodes;
-            })()}
-          </div>
-        )}
-    </div>
-    </TooltipProvider>
-  );
-}
+// Moved to components/portfolio/PortfolioTickBar

@@ -1,7 +1,9 @@
 "use client";
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import Script from 'next/script';
+import { motion, useAnimation } from 'framer-motion';
 import { useIsMobile } from '@/hooks/use-is-mobile';
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -23,6 +25,19 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion"
 
+declare global {
+  // reCAPTCHA v3
+  // eslint-disable-next-line no-var
+  var grecaptcha: undefined | {
+    ready: (cb: () => void) => void;
+    execute: (siteKey: string, options: { action: string }) => Promise<string>;
+    enterprise?: {
+      ready: (cb: () => void) => void;
+      execute: (siteKey: string, options: { action: string }) => Promise<string>;
+    };
+  };
+}
+
 export function LoginForm({
   className,
   hasError,
@@ -31,17 +46,37 @@ export function LoginForm({
   onPasswordChange,
   onEmailChange,
   emailError,
+  requireCaptcha,
   ...props
-}: Omit<React.ComponentProps<"div">, "onSubmit"> & { 
-  hasError?: boolean; 
-  isLoading?: boolean; 
+}: Omit<React.ComponentProps<"div">, "onSubmit"> & {
+  hasError?: boolean;
+  isLoading?: boolean;
   onSubmit?: (event: React.FormEvent<HTMLFormElement>) => void;
   onPasswordChange?: (value: string) => void;
   onEmailChange?: (value: string) => void;
   emailError?: boolean;
+  requireCaptcha?: boolean;
 }) {
   const [password, setPassword] = useState('');
   const [email, setEmail] = useState('');
+  const [passwordWiggleCount, setPasswordWiggleCount] = useState(0);
+  const passwordWiggleControls = useAnimation() as any;
+
+  // Trigger wiggle on new error
+  useEffect(() => {
+    if (hasError) {
+      setPasswordWiggleCount((prev) => prev + 1);
+    }
+  }, [hasError]);
+
+  // Password wiggle animation effect
+  useEffect(() => {
+    if (passwordWiggleCount > 0) {
+      passwordWiggleControls
+        .start({ x: [0, -3, 3, -2, 2, 0], transition: { duration: 0.22, ease: 'easeOut' } })
+        .catch(() => {});
+    }
+  }, [passwordWiggleCount, passwordWiggleControls]);
   
   const handlePasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
@@ -78,23 +113,25 @@ export function LoginForm({
               <div className="flex items-center">
                 <Label htmlFor="password">Password</Label>
               </div>
-              <Input 
-                id="password" 
-                type="password" 
-                required 
-                value={password}
-                onChange={handlePasswordChange}
-                className={cn(
-                  "bg-muted/30",
-                  hasError ? "border-red-500 border" : "border-none"
-                )}
-              />
+              <motion.div animate={passwordWiggleControls}>
+                <Input 
+                  id="password" 
+                  type="password" 
+                  required 
+                  value={password}
+                  onChange={handlePasswordChange}
+                  className={cn(
+                    "bg-muted/30",
+                    hasError ? "border-red-500 border" : "border-none"
+                  )}
+                />
+              </motion.div>
             </div>
 
-            <Button 
-              type="submit" 
+                        <Button
+              type="submit"
               className={
-                !password.trim() 
+                !password.trim()
                   ? "w-full relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 text-white/75 hover:bg-[var(--sidebar-connect-button-bg)]"
                   : isLoading
                     ? "w-full text-sidebar-primary border border-sidebar-primary bg-[#3d271b]/50 hover:bg-[#3d271b]/60 opacity-75 cursor-not-allowed"
@@ -124,9 +161,29 @@ export default function LoginPage() {
   const [hasError, setHasError] = useState(false);
   const [emailError, setEmailError] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [recaptchaReady, setRecaptchaReady] = useState(false);
+  const [requireCaptcha, setRequireCaptcha] = useState(false);
+  const [shouldLoadRecaptchaScript, setShouldLoadRecaptchaScript] = useState(false);
   const router = useRouter();
   const isMobile = useIsMobile();
   const debounceTimeout = useRef<NodeJS.Timeout | null>(null);
+  const captchaAction = 'login';
+  const siteKey = process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY;
+
+  // Debug: Check if env vars are loaded
+  useEffect(() => {
+    console.log('reCAPTCHA siteKey available:', !!siteKey);
+    if (!siteKey) {
+      console.warn('NEXT_PUBLIC_RECAPTCHA_SITE_KEY is not set');
+    }
+    // Preload captcha script when user is about to hit threshold
+    try {
+      const prev = Number(sessionStorage.getItem('loginFailCount') || '0') || 0;
+      if (prev >= 2) setShouldLoadRecaptchaScript(true);
+    } catch {}
+  }, []);
+
+  // (moved into LoginForm)
 
   const validateEmail = (email: string) => {
     if (!email) return true; // Optional field
@@ -160,10 +217,28 @@ export default function LoginPage() {
     }
 
     try {
+      let recaptchaToken: string | undefined;
+      if (requireCaptcha) {
+        // Lazily execute reCAPTCHA v3 when required
+        try {
+          const exec = (globalThis.grecaptcha?.enterprise?.execute || globalThis.grecaptcha?.execute);
+          const ready = (globalThis.grecaptcha?.enterprise?.ready || globalThis.grecaptcha?.ready);
+          if (!siteKey) throw new Error('Missing reCAPTCHA site key');
+          if (!exec || !ready) throw new Error('reCAPTCHA not loaded');
+          await new Promise<void>((resolve) => ready(resolve));
+          recaptchaToken = await exec(siteKey as string, { action: captchaAction });
+        } catch (e) {
+          console.error('reCAPTCHA error:', e);
+          setIsLoading(false);
+          setHasError(true);
+          return;
+        }
+      }
+
       const res = await fetch('/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password }),
+        body: JSON.stringify({ password, recaptchaToken, action: captchaAction }),
       });
 
       if (res.ok) {
@@ -175,10 +250,19 @@ export default function LoginPage() {
             body: JSON.stringify({ email }),
           }).catch(err => console.error("Failed to save email:", err)); // Fire-and-forget
         }
+        try { sessionStorage.setItem('loginFailCount', '0'); } catch {}
         try { sessionStorage.setItem('came_from_login', '1'); } catch {}
         router.push('/swap');
       } else {
+        // Consolidated generic failure UX
         setHasError(true);
+        try {
+          const prev = Number(sessionStorage.getItem('loginFailCount') || '0') || 0;
+          const next = Math.min(prev + 1, 100);
+          sessionStorage.setItem('loginFailCount', String(next));
+          if (next >= 2) setShouldLoadRecaptchaScript(true);
+          if (next >= 3) setRequireCaptcha(true);
+        } catch {}
       }
     } catch (err) {
       console.error("Login page error:", err);
@@ -211,6 +295,21 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen bg-background relative flex flex-col p-6">
+      {/* Conditionally load reCAPTCHA v3 script when needed */}
+      {(shouldLoadRecaptchaScript || requireCaptcha) && siteKey && (
+        <Script
+          src={`https://www.google.com/recaptcha/api.js?render=${encodeURIComponent(String(siteKey))}`}
+          strategy="afterInteractive"
+          onLoad={() => {
+            console.log('reCAPTCHA script loaded');
+            setRecaptchaReady(true);
+          }}
+          onError={(e) => {
+            console.error('reCAPTCHA script failed to load:', e);
+            setRecaptchaReady(false);
+          }}
+        />
+      )}
       {/* Back button */}
       <div className="absolute top-6 left-6">
         <Button 
@@ -243,13 +342,14 @@ export default function LoginPage() {
         </div>
 
         {/* Login Form */}
-        <LoginForm 
-          onSubmit={handleSubmit} 
-          hasError={hasError} 
-          isLoading={isLoading} 
+        <LoginForm
+          onSubmit={handleSubmit}
+          hasError={hasError}
+          isLoading={isLoading}
           onPasswordChange={handlePasswordChange}
           onEmailChange={handleEmailChange}
           emailError={emailError}
+          requireCaptcha={requireCaptcha}
         />
       
         {/* Accordion Menu */}

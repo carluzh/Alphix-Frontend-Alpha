@@ -18,6 +18,8 @@ interface FeesCellProps {
   price0: number;
   price1: number;
   refreshKey?: number;
+  prefetchedRaw0?: string | null;
+  prefetchedRaw1?: string | null;
 }
 
 export function FeesCell({
@@ -27,6 +29,8 @@ export function FeesCell({
   price0,
   price1,
   refreshKey = 0,
+  prefetchedRaw0,
+  prefetchedRaw1,
 }: FeesCellProps) {
   const { address: accountAddress } = useAccount();
   const [raw0, setRaw0] = React.useState<string | null>(null);
@@ -39,6 +43,16 @@ export function FeesCell({
     let cancelled = false;
     const run = async () => {
       try {
+        // If parent provided prefetched values, use them and skip fetching
+        if (typeof prefetchedRaw0 === 'string' && typeof prefetchedRaw1 === 'string') {
+          if (!cancelled) {
+            setRaw0(prefetchedRaw0);
+            setRaw1(prefetchedRaw1);
+            setLoading(false);
+            setLastError(null);
+          }
+          return;
+        }
         setLoading(true);
         setLastError(null);
         const data = await loadUncollectedFees(positionId, 60 * 1000);
@@ -59,7 +73,7 @@ export function FeesCell({
     return () => {
       cancelled = true;
     };
-  }, [positionId, refreshKey]);
+  }, [positionId, refreshKey, prefetchedRaw0, prefetchedRaw1]);
 
   // Lazy price fallback: if a price is missing/zero, try fetching shared server prices once
   React.useEffect(() => {

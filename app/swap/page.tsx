@@ -50,6 +50,7 @@ export default function Page() {
               setSelectedPoolIndexForChart={setSelectedPoolIndexForChart}
               handleSelectPoolForChart={handleSelectPoolForChart}
             />
+            <div id="swap-fee-hover-container" className="mt-2 flex justify-end pointer-events-none" />
           </div>
         </div>
         {/* REMOVED: Independent Navigation Buttons */}

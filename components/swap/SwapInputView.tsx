@@ -388,7 +388,7 @@ export function SwapInputView({
                               const fromSym = routeInfo?.path?.[selectedPoolIndexForChart] ?? displayFromToken.symbol;
                               const toIdx = Math.min((routeInfo?.path?.length || 1) - 1, selectedPoolIndexForChart + 1);
                               const toSym = routeInfo?.path?.[toIdx] ?? displayToToken.symbol;
-                              return `Fee: ${fromSym} › ${toSym}`;
+                              return `${fromSym} → ${toSym}`;
                             })()}
                           </p>
                         </TooltipContent>

@@ -154,11 +154,13 @@ export function PositionCard({
                 </div>
                 <div className="flex items-center gap-2 text-xs">
                     <FeesCell
-                    positionId={position.positionId}
-                    sym0={position.token0.symbol || 'T0'}
-                    sym1={position.token1.symbol || 'T1'}
-                    price0={getUsdPriceForSymbol(position.token0.symbol)}
-                    price1={getUsdPriceForSymbol(position.token1.symbol)}
+                      positionId={position.positionId}
+                      sym0={position.token0.symbol || 'T0'}
+                      sym1={position.token1.symbol || 'T1'}
+                      price0={getUsdPriceForSymbol(position.token0.symbol)}
+                      price1={getUsdPriceForSymbol(position.token1.symbol)}
+                      prefetchedRaw0={(position as any)?.unclaimedRaw0}
+                      prefetchedRaw1={(position as any)?.unclaimedRaw1}
                     />
                 </div>
                 </div>
