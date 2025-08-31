@@ -21,6 +21,7 @@ import { X } from "lucide-react";
 import { Area, AreaChart, XAxis, YAxis } from "recharts";
 import { ChartContainer, type ChartConfig } from "@/components/ui/chart";
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract } from "wagmi";
+import { useUserPositions, useActivity, useAllPrices } from "@/components/data/hooks";
 import { prefetchService } from "@/lib/prefetch-service";
 import { baseSepolia } from "@/lib/wagmiConfig";
 import { toast } from "sonner";
@@ -294,16 +295,7 @@ interface PortfolioData {
 
 import { loadUserPositionIds, derivePositionsFromIds, getPoolFeeBps, loadUncollectedFeesBatch, loadUncollectedFees } from '@/lib/client-cache';
 
-async function getUserPositionsOnchain(ownerAddress: string, _opts?: { verifyLiquidity?: boolean }) {
-  try {
-    const owner = getAddress(ownerAddress);
-    const ids = await loadUserPositionIds(owner);
-    const positions = await derivePositionsFromIds(owner, ids);
-    return positions;
-  } catch {
-    return [] as any[];
-  }
-}
+// Removed: getUserPositionsOnchain - now using centralized useUserPositions hook
 
 function formatUSD(num: number) {
   return formatUSDShared(num);
@@ -317,7 +309,7 @@ function formatUSDHeader(num: number) {
 // (removed old PortfolioSkeleton)
 
 // Hook to fetch and aggregate portfolio data
-function usePortfolioData(refreshKey: number = 0): PortfolioData {
+function usePortfolioData(refreshKey: number = 0, userPositionsData?: any[], pricesData?: any): PortfolioData {
   const { address: accountAddress, isConnected, chainId: currentChainId } = useAccount();
   const [portfolioData, setPortfolioData] = useState<PortfolioData>({
     totalValue: 0,
@@ -343,12 +335,12 @@ function usePortfolioData(refreshKey: number = 0): PortfolioData {
       return;
     }
 
-    const fetchPortfolioData = async () => {
+    const fetchPortfolioData = async (positionsData: any[], priceData: any) => {
       try {
         setPortfolioData(prev => ({ ...prev, isLoading: true, error: undefined }));
 
-        // 1. Fetch user positions (discover via subgraph, compute onchain)
-        const positionsRaw = await getUserPositionsOnchain(accountAddress, { verifyLiquidity: false });
+        // 1. Use passed hook data for user positions
+        const positionsRaw = positionsData || [];
         // Filter to configured pools only
         let positions = Array.isArray(positionsRaw) ? positionsRaw : [];
         try {
@@ -373,17 +365,13 @@ function usePortfolioData(refreshKey: number = 0): PortfolioData {
         }
         
 
-        // 3. Fetch token prices via server endpoint (shared cache)
+        // 3. Use passed prices hook data
         const tokenSymbols = Array.from(tokenBalanceMap.keys());
         const priceMap = new Map<string, number>();
-        let priceData: any = {};
-        try {
-          const res = await fetch('/api/prices/get-token-prices');
-          if (res.ok) priceData = await res.json();
-        } catch {}
+        const prices = priceData || {};
         tokenSymbols.forEach(symbol => {
           const mapped = symbol.toUpperCase();
-          const px = priceData[mapped];
+          const px = prices[mapped];
           if (typeof px === 'number') priceMap.set(symbol, px);
           else if (symbol.includes('USDC') || symbol.includes('USDT')) priceMap.set(symbol, 1.0);
         });
@@ -458,141 +446,54 @@ function usePortfolioData(refreshKey: number = 0): PortfolioData {
       }
     };
 
-    fetchPortfolioData();
+    fetchPortfolioData(userPositionsData || [], pricesData || {});
   }, [isConnected, accountAddress, refreshKey]);
 
   return portfolioData;
 }
 
-function usePortfolio(refreshKey: number = 0) {
+function usePortfolio(refreshKey: number = 0, userPositionsData?: any[], pricesData?: any) {
   const { address: accountAddress, isConnected, chainId: currentChainId } = useAccount();
 
-  // All data states
-  const [portfolioData, setPortfolioData] = useState<PortfolioData>({
-    totalValue: 0,
-    tokenBalances: [],
-    isLoading: true,
-    error: undefined,
-    priceMap: {},
-    pnl24hPct: 0,
-    priceChange24hPctMap: {},
-  });
+  // Use the portfolio data hook with passed parameters
+  const portfolioData = usePortfolioData(refreshKey, userPositionsData, pricesData);
+
+  // All other data states
   const [activePositions, setActivePositions] = useState<any[]>([]);
   const [walletBalances, setWalletBalances] = useState<Array<{ symbol: string; balance: number; usdValue: number; color: string }>>([]);
   const [aprByPoolId, setAprByPoolId] = useState<Record<string, string>>({});
   const [poolDataByPoolId, setPoolDataByPoolId] = useState<Record<string, any>>({});
   const [bucketDataCache, setBucketDataCache] = useState<Record<string, any>>({});
-  
+
   // All loading states
   const [isLoadingPositions, setIsLoadingPositions] = useState<boolean>(true);
   const [isLoadingPoolStates, setIsLoadingPoolStates] = useState<boolean>(true);
   const [isLoadingWalletBalances, setIsLoadingWalletBalances] = useState<boolean>(false);
   const [loadingBuckets, setLoadingBuckets] = useState<Set<string>>(new Set());
   
-  // Fetch positions and portfolio data (combined from usePortfolioData and the activePositions useEffect)
+  // Process positions using centralized hooks
   useEffect(() => {
     if (!isConnected || !accountAddress) {
-      setPortfolioData({ totalValue: 0, tokenBalances: [], isLoading: false, error: undefined, priceMap: {}, pnl24hPct: 0, priceChange24hPctMap: {} });
       setActivePositions([]);
       setIsLoadingPositions(false);
       return;
     }
 
-    const fetchAllData = async () => {
-      setIsLoadingPositions(true);
-      setIsLoadingPoolStates(true);
-      setPortfolioData(prev => ({ ...prev, isLoading: true, error: undefined }));
-      
-      try {
-        const positionsRaw = await getUserPositionsOnchain(accountAddress, { verifyLiquidity: false });
-        let positions = Array.isArray(positionsRaw) ? positionsRaw : [];
-        // Filter to configured pools only (use pools-config)
-        try {
-          const pools = getAllPools();
-          const allowedIds = new Set((pools || []).map((p: any) => String(p?.subgraphId || '').toLowerCase()));
-          positions = positions.filter((pos: any) => {
-            const pid = String(pos?.poolId || '').toLowerCase();
-            return pid && allowedIds.has(pid);
-          });
-        } catch {}
-        setActivePositions(positions);
-        
-        const tokenBalanceMap = new Map<string, number>();
-        if (Array.isArray(positions)) {
-          positions.forEach((position: any) => {
-            const t0 = position.token0?.symbol;
-            const a0 = parseFloat(position.token0?.amount || '0');
-            if (t0 && a0 > 0) tokenBalanceMap.set(t0, (tokenBalanceMap.get(t0) || 0) + a0);
-            const t1 = position.token1?.symbol;
-            const a1 = parseFloat(position.token1?.amount || '0');
-            if (t1 && a1 > 0) tokenBalanceMap.set(t1, (tokenBalanceMap.get(t1) || 0) + a1);
-          });
-        }
-        
-        const tokenSymbols = Array.from(tokenBalanceMap.keys());
-        const priceMap = new Map<string, number>();
-        const coinGeckoIds: Record<string, string> = { 'aETH': 'ethereum', 'ETH': 'ethereum', 'aBTC': 'bitcoin', 'aUSDC': 'usd-coin', 'aUSDT': 'tether' };
-        const uniqueCoinIds = [...new Set(tokenSymbols.map(symbol => coinGeckoIds[symbol]).filter(Boolean))];
-        
-        let priceData: any = {};
-        if (uniqueCoinIds.length > 0) {
-          const priceRes = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${uniqueCoinIds.join(',')}&vs_currencies=usd&include_24hr_change=true`);
-          if (priceRes.ok) {
-            priceData = await priceRes.json();
-            tokenSymbols.forEach(symbol => {
-              const coinId = coinGeckoIds[symbol];
-              if (coinId && priceData[coinId]?.usd) {
-                priceMap.set(symbol, priceData[coinId].usd);
-              } else if (symbol.includes('USDC') || symbol.includes('USDT')) {
-                priceMap.set(symbol, 1.0);
-              }
-            });
-          }
-        }
-
-        const tokenBalances: TokenBalance[] = Array.from(tokenBalanceMap.entries())
-          .map(([symbol, balance]) => ({ symbol, balance, usdValue: balance * (priceMap.get(symbol) || 0), color: '' }))
-          .filter(token => token.usdValue > 0.01)
-          .sort((a, b) => b.usdValue - a.usdValue);
-
-        const colors = ["hsl(0 0% 30%)", "hsl(0 0% 40%)", "hsl(0 0% 60%)", "hsl(0 0% 80%)", "hsl(0 0% 95%)"];
-        tokenBalances.forEach((token, index) => { token.color = colors[index % colors.length]; });
-
-        const totalValue = tokenBalances.reduce((sum, token) => sum + token.usdValue, 0);
-
-        let deltaNowUSD = 0;
-        if (uniqueCoinIds.length > 0 && totalValue > 0) {
-          tokenBalances.forEach((tb) => {
-            const coinId = coinGeckoIds[tb.symbol];
-            const ch = coinId ? priceData[coinId]?.usd_24h_change : undefined;
-            if (typeof ch === 'number' && isFinite(ch)) {
-              const pastUsd = tb.usdValue / (1 + ch / 100);
-              deltaNowUSD += tb.usdValue - pastUsd;
-            }
-          });
-        }
-        const pnl24hPct = totalValue > 0 ? (deltaNowUSD / totalValue) * 100 : 0;
-
-        const priceChange24hPctMap: Record<string, number> = {};
-        tokenSymbols.forEach(symbol => {
-          const coinId = coinGeckoIds[symbol];
-          const ch = coinId ? priceData[coinId]?.usd_24h_change : undefined;
-          if (typeof ch === 'number' && isFinite(ch)) priceChange24hPctMap[symbol] = ch;
-        });
-
-        setPortfolioData({ totalValue, tokenBalances, isLoading: false, error: undefined, priceMap: Object.fromEntries(priceMap.entries()), pnl24hPct, priceChange24hPctMap });
-
-      } catch (error) {
-        console.error('Failed to fetch portfolio data:', error);
-        setPortfolioData({ totalValue: 0, tokenBalances: [], isLoading: false, error: error instanceof Error ? error.message : 'Unknown error', priceMap: {}, pnl24hPct: 0, priceChange24hPctMap: {} });
-        setActivePositions([]);
-      } finally {
-        setIsLoadingPositions(false);
-      }
-    };
-
-    fetchAllData();
-  }, [isConnected, accountAddress, refreshKey]);
+    // Use hook data instead of manual fetch
+    const positionsRaw = userPositionsData || [];
+    let positions = Array.isArray(positionsRaw) ? positionsRaw : [];
+    // Filter to configured pools only (use pools-config)
+    try {
+      const pools = getAllPools();
+      const allowedIds = new Set((pools || []).map((p: any) => String(p?.subgraphId || '').toLowerCase()));
+      positions = positions.filter((pos: any) => {
+        const pid = String(pos?.poolId || '').toLowerCase();
+        return pid && allowedIds.has(pid);
+      });
+    } catch {}
+    setActivePositions(positions);
+    setIsLoadingPositions(false);
+  }, [isConnected, accountAddress, userPositionsData]);
 
   // Fetch APRs
   useEffect(() => {
@@ -637,58 +538,9 @@ function usePortfolio(refreshKey: number = 0) {
     fetchApr();
   }, []);
 
-  // Fetch Pool States
+  // Simplify: we no longer need to prefetch pool state for ranges; only for current tick on hover elsewhere
   useEffect(() => {
-    if (isLoadingPositions) return;
-    if (activePositions.length === 0) {
-      setPoolDataByPoolId({});
-      setIsLoadingPoolStates(false);
-      return;
-    }
-    const fetchPoolData = async () => {
-      try {
-        const uniquePairs = new Map<string, { token0Symbol: string; token1Symbol: string; poolId: string }>();
-        activePositions.forEach(p => {
-          if (p?.poolId && p?.token0?.symbol && p?.token1?.symbol) {
-            const key = `${p.token0.symbol}-${p.token1.symbol}`;
-            if (!uniquePairs.has(key)) {
-              uniquePairs.set(key, { token0Symbol: p.token0.symbol, token1Symbol: p.token1.symbol, poolId: p.poolId });
-            }
-          }
-        });
-        
-        const poolDataMap: Record<string, any> = {};
-        for (const { token0Symbol, token1Symbol, poolId } of uniquePairs.values()) {
-          try {
-            const response = await fetch('/api/liquidity/get-pool-state', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ token0Symbol, token1Symbol, chainId: 84532 }),
-            });
-            if (response.ok) {
-              const poolState = await response.json();
-              if (poolState.currentPoolTick !== undefined) {
-                poolDataMap[String(poolId).toLowerCase()] = {
-                  tick: poolState.currentPoolTick,
-                  price: poolState.currentPrice,
-                  sqrtPriceX96: poolState.sqrtPriceX96,
-                  tickSpacing: getPoolById(poolId)?.tickSpacing || 60
-                };
-              }
-            }
-          } catch (error) {
-            console.error(`Failed to fetch pool state for ${token0Symbol}/${token1Symbol}:`, error);
-          }
-        }
-        setPoolDataByPoolId(poolDataMap);
-      } catch (error) {
-        console.error('Error fetching pool data:', error);
-      }
-      finally {
-        setIsLoadingPoolStates(false);
-      }
-    };
-    fetchPoolData();
+    setIsLoadingPoolStates(false);
   }, [activePositions, isLoadingPositions]);
 
   // Fetch Wallet Balances
@@ -856,6 +708,14 @@ function usePortfolio(refreshKey: number = 0) {
 export default function PortfolioPage() {
   const router = useRouter();
   const [positionsRefresh, setPositionsRefresh] = useState(0);
+  const { address: accountAddress, isConnected } = useAccount();
+
+  // Centralized hooks for positions and activity (Category 2: user-action invalidated)
+  const { data: userPositionsData, isLoading: isLoadingUserPositions } = useUserPositions(accountAddress || '');
+  const { data: activityData, isLoading: isLoadingActivity } = useActivity(accountAddress || '', 50);
+
+  // Centralized hook for prices (Category 1: infrequent)
+  const { data: pricesData, isLoading: isLoadingPrices } = useAllPrices();
 
   const {
     portfolioData,
@@ -873,7 +733,7 @@ export default function PortfolioPage() {
     setWalletBalances,
     setIsLoadingWalletBalances,
     setAprByPoolId,
-  } = usePortfolio(positionsRefresh);
+  } = usePortfolio(positionsRefresh, userPositionsData, pricesData);
 
   const isLoading = !readiness.core;
   const { phase, showSkeletonFor } = useLoadPhases(readiness);
@@ -927,29 +787,53 @@ export default function PortfolioPage() {
   const convertTickToPrice = useCallback((tick: number, currentPoolTick: number | null, currentPrice: string | null, baseTokenForPriceDisplay: string, token0Symbol: string, token1Symbol: string): string => {
     if (tick === SDK_MAX_TICK) return '∞';
     if (tick === SDK_MIN_TICK) return '0.00';
-    
-    if (currentPoolTick === null || !currentPrice) return 'N/A';
-    const currentPriceNum = parseFloat(currentPrice);
-    if (isNaN(currentPriceNum) || currentPriceNum <= 0) return 'N/A';
 
-    let priceAtTick: number;
-    const priceDelta = Math.pow(1.0001, tick - currentPoolTick);
-
-    if (baseTokenForPriceDisplay === token0Symbol) {
-      priceAtTick = 1 / (currentPriceNum * priceDelta);
-    } else {
-      priceAtTick = currentPriceNum * priceDelta;
+    // Preferred: relative to current price when available
+    if (currentPoolTick !== null && currentPrice) {
+      const currentPriceNum = parseFloat(currentPrice);
+      if (isFinite(currentPriceNum) && currentPriceNum > 0) {
+        const priceDelta = Math.pow(1.0001, tick - currentPoolTick);
+        const priceAtTick = (baseTokenForPriceDisplay === token0Symbol)
+          ? 1 / (currentPriceNum * priceDelta)
+          : currentPriceNum * priceDelta;
+        if (isFinite(priceAtTick)) {
+          if (priceAtTick < 1e-11 && priceAtTick > 0) return '0';
+          if (priceAtTick > 1e30) return '∞';
+          const displayDecimals = (baseTokenForPriceDisplay === token0Symbol
+            ? (TOKEN_DEFINITIONS[token0Symbol as TokenSymbol]?.displayDecimals ?? 4)
+            : (TOKEN_DEFINITIONS[token1Symbol as TokenSymbol]?.displayDecimals ?? 4));
+          return priceAtTick.toFixed(displayDecimals);
+        }
+      }
     }
 
-    if (!isFinite(priceAtTick) || isNaN(priceAtTick)) return 'N/A';
-    if (priceAtTick < 1e-11 && priceAtTick > 0) return '0';
-    if (priceAtTick > 1e30) return '∞';
-    
-    const displayDecimals = (baseTokenForPriceDisplay === token0Symbol
-      ? (TOKEN_DEFINITIONS[token0Symbol as TokenSymbol]?.displayDecimals ?? 4)
-      : (TOKEN_DEFINITIONS[token1Symbol as TokenSymbol]?.displayDecimals ?? 4));
-
-    return priceAtTick.toFixed(displayDecimals);
+    // Fallback: absolute price from tick (no current price required)
+    try {
+      const cfg0 = TOKEN_DEFINITIONS[token0Symbol as TokenSymbol];
+      const cfg1 = TOKEN_DEFINITIONS[token1Symbol as TokenSymbol];
+      // Fallback-safe token data
+      const addr0 = (cfg0?.address || `0x${token0Symbol}`).toLowerCase();
+      const addr1 = (cfg1?.address || `0x${token1Symbol}`).toLowerCase();
+      const dec0 = cfg0?.decimals ?? 18;
+      const dec1 = cfg1?.decimals ?? 18;
+      const sorted0IsToken0 = addr0 < addr1;
+      const sorted0Decimals = sorted0IsToken0 ? dec0 : dec1;
+      const sorted1Decimals = sorted0IsToken0 ? dec1 : dec0;
+      // price(sorted1 per sorted0) at tick
+      const exp = sorted0Decimals - sorted1Decimals;
+      const price01 = Math.pow(1.0001, tick) * Math.pow(10, exp);
+      const baseIsToken0 = baseTokenForPriceDisplay === token0Symbol;
+      // If base is sorted0, invert; else direct
+      const baseMatchesSorted0 = baseIsToken0 === sorted0IsToken0;
+      const displayVal = baseMatchesSorted0 ? (price01 === 0 ? Infinity : 1 / price01) : price01;
+      if (!isFinite(displayVal) || isNaN(displayVal)) return 'N/A';
+      if (displayVal < 1e-11 && displayVal > 0) return '0';
+      if (displayVal > 1e30) return '∞';
+      const displayDecimals = (TOKEN_DEFINITIONS[baseTokenForPriceDisplay as TokenSymbol]?.displayDecimals ?? 4);
+      return displayVal.toFixed(displayDecimals);
+    } catch {
+      return 'N/A';
+    }
   }, []);
 
   // Dynamic layout helpers
@@ -984,7 +868,7 @@ export default function PortfolioPage() {
   }, [viewportWidth]);
   
   // NEW: local state for positions and activity
-  const { address: accountAddress, isConnected, chainId: currentChainId } = useAccount();
+  const { address: userAddress, isConnected: userIsConnected, chainId: currentChainId } = useAccount();
   const { writeContract } = useWriteContract();
   const faucetAbi = parseAbi(['function faucet() external']);
   const [faucetHash, setFaucetHash] = useState<`0x${string}` | undefined>(undefined);
@@ -996,21 +880,21 @@ export default function PortfolioPage() {
     address: FAUCET_CONTRACT_ADDRESS,
     abi: faucetContractAbi,
     functionName: 'lastCalled',
-    args: [accountAddress!],
+    args: [userAddress!],
     chainId: baseSepolia.id,
     query: {
-      enabled: isConnected && currentChainId === baseSepolia.id && !!accountAddress,
+      enabled: userIsConnected && currentChainId === baseSepolia.id && !!userAddress,
     },
   });
 
   // When confirmed, mirror sidebar behavior: update local cache and button state immediately
   useEffect(() => {
-    if (!isFaucetConfirmed || !accountAddress) return;
+    if (!isFaucetConfirmed || !userAddress) return;
     try {
       const now = Math.floor(Date.now() / 1000);
-      localStorage.setItem(`faucetLastClaimTimestamp_${accountAddress}`, String(now));
+      localStorage.setItem(`faucetLastClaimTimestamp_${userAddress}`, String(now));
       // Signal sidebar listeners to update unread badge
-      localStorage.setItem(`faucetClaimLastSeenAt_${accountAddress}`, String(now));
+      localStorage.setItem(`faucetClaimLastSeenAt_${userAddress}`, String(now));
       setFaucetLastClaimTs(now);
       setIsFaucetBusy(false);
       // Success toast for faucet claim
@@ -1018,16 +902,16 @@ export default function PortfolioPage() {
       // Also trigger wallet balances refetch after a brief delay to allow chain state to settle
       setTimeout(() => {
         try {
-          localStorage.setItem(`walletBalancesRefreshAt_${accountAddress}`, String(Date.now()));
+          localStorage.setItem(`walletBalancesRefreshAt_${userAddress}`, String(Date.now()));
           window.dispatchEvent(new Event('walletBalancesRefresh'));
         } catch {}
       }, 2000);
     } catch {}
-  }, [isFaucetConfirmed, accountAddress]);
+  }, [isFaucetConfirmed, userAddress]);
 
   // Sync cached faucet last-claim timestamp like sidebar does
   useEffect(() => {
-    if (!accountAddress) {
+    if (!userAddress) {
       setFaucetLastClaimTs(-1);
       return;
     }
@@ -1039,21 +923,21 @@ export default function PortfolioPage() {
       }
     }
     try {
-      const cached = localStorage.getItem(`faucetLastClaimTimestamp_${accountAddress}`);
+      const cached = localStorage.getItem(`faucetLastClaimTimestamp_${userAddress}`);
       setFaucetLastClaimTs(cached ? Number(cached) : 0);
     } catch {
       setFaucetLastClaimTs(0);
     }
     const onStorage = (e: StorageEvent) => {
       if (!e.key) return;
-      if (e.key === `faucetLastClaimTimestamp_${accountAddress}`) {
-        const next = Number(localStorage.getItem(`faucetLastClaimTimestamp_${accountAddress}`) || '0');
+      if (e.key === `faucetLastClaimTimestamp_${userAddress}`) {
+        const next = Number(localStorage.getItem(`faucetLastClaimTimestamp_${userAddress}`) || '0');
         setFaucetLastClaimTs(Number.isFinite(next) ? next : 0);
       }
     };
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
-  }, [accountAddress, faucetLastCalledOnchain]);
+  }, [userAddress, faucetLastCalledOnchain]);
   const allowedPoolIds = useMemo(() => {
     try {
       return new Set((poolsConfig?.pools || []).map((p: any) => String(p.subgraphId || "").toLowerCase()));
@@ -1062,7 +946,7 @@ export default function PortfolioPage() {
     }
   }, []);
   const [activityItems, setActivityItems] = useState<any[]>([]);
-  const [isLoadingActivity, setIsLoadingActivity] = useState<boolean>(false);
+  const [isLoadingActivityLocal, setIsLoadingActivityLocal] = useState<boolean>(false);
   const [positionsError, setPositionsError] = useState<string | undefined>(undefined);
   const [activityError, setActivityError] = useState<string | undefined>(undefined);
   const [unclaimedFeesMap, setUnclaimedFeesMap] = useState<Record<string, { amount0: string; amount1: string }>>({});
@@ -1911,8 +1795,8 @@ export default function PortfolioPage() {
       setPositionsError(undefined);
 
       try {
-        // Processed active positions (discover via subgraph, compute onchain)
-        const processedActiveRaw = await getUserPositionsOnchain(accountAddress, { verifyLiquidity: false });
+        // Use centralized hook data for positions
+        const processedActiveRaw = userPositionsData || [];
         let processedActive = Array.isArray(processedActiveRaw) ? processedActiveRaw : [];
         // Filter to configured pools only (use allowedPoolIds set defined above)
         try {
@@ -1971,7 +1855,7 @@ export default function PortfolioPage() {
         }
         return;
       }
-      setIsLoadingActivity(true);
+      setIsLoadingActivityLocal(true);
       setActivityError(undefined);
       try {
         const variables = {
@@ -2010,7 +1894,7 @@ export default function PortfolioPage() {
       } catch (e: any) {
         if (!isCancelled) setActivityError(e?.message || 'Failed to load activity');
       } finally {
-        if (!isCancelled) setIsLoadingActivity(false);
+        if (!isCancelled) setIsLoadingActivityLocal(false);
       }
     };
     fetchActivity();
@@ -3162,7 +3046,7 @@ export default function PortfolioPage() {
                   <div className="border border-dashed rounded-lg bg-muted/10 p-8 w-full flex items-center justify-center">
                     <div className="text-sm text-white/75">Connect Wallet to view Activity</div>
                   </div>
-                ) : (filteredActivityItems.length === 0 && !isLoadingActivity) ? (
+                ) : (filteredActivityItems.length === 0 && !isLoadingActivityLocal) ? (
                   <div className="border border-dashed rounded-lg bg-muted/10 p-8 w-full flex items-center justify-center">
                     <div className="text-sm text-white/75">No Activity</div>
                   </div>

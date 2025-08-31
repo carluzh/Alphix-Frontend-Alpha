@@ -256,6 +256,7 @@ export function InteractiveRangeChart({
 
   // Fetch liquidity depth data
   useEffect(() => {
+    let cancelled = false;
     const fetchLiquidityDepthData = async () => {
       console.log("[DEBUG] Fetching liquidity depth data with params:", { selectedPoolId, chainId, currentPoolTick });
       if (!selectedPoolId || !chainId || currentPoolTick === null) {
@@ -278,18 +279,80 @@ export function InteractiveRangeChart({
 
       try {
         console.log("[InteractiveRangeChart] Fetching depth via server endpoint...");
-        const resp = await fetch('/api/liquidity/get-bucket-depths', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ poolId: selectedPoolId, first: 2000 }),
-        });
-        if (!resp.ok) {
-          const txt = await resp.text();
-          throw new Error(`Depth API failed: ${resp.status} ${resp.statusText}: ${txt}`);
+        // Backoff only when we expect change (local hint set by liquidity actions)
+        let shouldBackoff = false;
+        try {
+          const hk = `recentDepthChange:${String(selectedPoolId).toLowerCase()}`;
+          if (localStorage.getItem(hk)) { shouldBackoff = true; localStorage.removeItem(hk); }
+        } catch {}
+        const attempts = shouldBackoff ? [0, 2000, 5000, 10000, 20000, 40000] : [0];
+        const fp = (arr: any[]) => {
+          try { return JSON.stringify((arr || []).slice(0, 10).map((p:any)=>`${p.tickLower}:${p.tickUpper}:${p.liquidity}`)); } catch { return ''; }
+        };
+        const prevFp = fp(rawHookPositions || []);
+        let lastPositions: any[] = [];
+        let didChange = false;
+        for (let i = 0; i < attempts.length; i++) {
+          if (i > 0) await new Promise(r => setTimeout(r, attempts[i]));
+          const url = '/api/liquidity/get-bucket-depths?revalidate=1';
+          const resp = await fetch(url, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ poolId: selectedPoolId, first: 2000 })
+          } as any);
+          if (!resp.ok) {
+            const txt = await resp.text();
+            throw new Error(`Depth API failed: ${resp.status} ${resp.statusText}: ${txt}`);
+          }
+          const json = await resp.json();
+          const positions = Array.isArray(json?.positions) ? json.positions : [];
+          try {
+            const d0 = (TOKEN_DEFINITIONS?.[token0Symbol as any]?.decimals ?? 18);
+            const d1 = (TOKEN_DEFINITIONS?.[token1Symbol as any]?.decimals ?? 18);
+            const priceAtTick = (tick: number) => Math.pow(1.0001, tick) * Math.pow(10, d0 - d1); // token1 per token0
+            const sqrt = (tick: number) => Math.pow(1.0001, tick / 2);
+            const sqrtC = currentPoolTick != null ? sqrt(currentPoolTick) : sqrt(0);
+            const dbg = (positions || []).map((p: any) => {
+              const tl = Number(p?.tickLower || 0);
+              const tu = Number(p?.tickUpper || 0);
+              const Lraw = String(p?.liquidity || '0');
+              let Lscaled = 0;
+              try { Lscaled = Number((BigInt(Lraw) / (10n ** 12n))); } catch { Lscaled = parseFloat(Lraw) || 0; }
+              const sL = sqrt(tl);
+              const sU = sqrt(tu);
+              let a0 = 0, a1 = 0;
+              if (sqrtC <= sL) { a0 = Lscaled * (1 / sL - 1 / sU); a1 = 0; }
+              else if (sqrtC >= sU) { a0 = 0; a1 = Lscaled * (sU - sL); }
+              else { a0 = Lscaled * (1 / sqrtC - 1 / sU); a1 = Lscaled * (sqrtC - sL); }
+              return {
+                id: p?.id,
+                tickLower: tl,
+                tickUpper: tu,
+                priceLower: priceAtTick(tl),
+                priceUpper: priceAtTick(tu),
+                approxAmount0: a0,
+                approxAmount1: a1,
+                liquidityScaled: Lscaled,
+              };
+            });
+            console.log('[DepthDebug] fetched positions (attempt', i, ') count=', positions?.length);
+            console.table(dbg);
+          } catch {}
+          lastPositions = positions;
+          const curFp = fp(positions);
+          const changed = curFp && curFp !== prevFp;
+          if (changed || !shouldBackoff) {
+            didChange = changed;
+            if (!cancelled) setRawHookPositions(positions);
+            break;
+          }
         }
-        const json = await resp.json();
-        const positions = Array.isArray(json?.positions) ? json.positions : [];
-        setRawHookPositions(positions);
+        if (!rawHookPositions && lastPositions && lastPositions.length) {
+          if (!cancelled) setRawHookPositions(lastPositions);
+        }
+        // If we expected a change but didn't see it yet, schedule one more retry cycle later
+        if (shouldBackoff && !didChange && !cancelled) {
+          setTimeout(() => { if (!cancelled) fetchLiquidityDepthData(); }, 60000);
+        }
       } catch (error: any) {
         console.error("[InteractiveRangeChart] Error fetching liquidity depth data:", error);
         setRawHookPositions(null);
@@ -300,6 +363,7 @@ export function InteractiveRangeChart({
     };
 
     fetchLiquidityDepthData();
+    return () => { cancelled = true; };
   }, [selectedPoolId, chainId, currentPoolTick, token0Symbol, token1Symbol]);
 
   // Process raw positions into processed positions with amounts
@@ -371,11 +435,13 @@ export function InteractiveRangeChart({
               const numericAmount0 = parseFloat(formattedAmount0);
               const numericAmount1 = parseFloat(formattedAmount1);
               
+              // Unify to token0 units. Assumption: currentPrice ≈ price(token1 per token0)
+              // So token1 → token0 conversion is amount1 / price.
               let unifiedValue = numericAmount0;
               if (currentPrice && numericAmount1 > 0) {
                 const price = parseFloat(currentPrice);
                 if (!isNaN(price) && price > 0) {
-                  unifiedValue += numericAmount1 * price;
+                  unifiedValue += numericAmount1 / price;
                 }
               }
 

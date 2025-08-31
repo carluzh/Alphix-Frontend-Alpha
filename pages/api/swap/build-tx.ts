@@ -599,6 +599,22 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
             value: txValue,
         });
 
+        // Derive touched pools (friendly poolId and subgraphId) for downstream cache invalidation
+        const touchedPools: Array<{ poolId: string; subgraphId?: string }> = [];
+        try {
+            if (route.isDirectRoute) {
+                const poolCfg = getPoolConfigForTokens(fromTokenSymbol, toTokenSymbol);
+                if (poolCfg) {
+                    touchedPools.push({ poolId: poolCfg.pool.id, subgraphId: poolCfg.pool.subgraphId || poolCfg.pool.id });
+                }
+            } else {
+                for (const hop of route.pools) {
+                    const cfg = getPoolConfigForTokens(hop.token0 as TokenSymbol, hop.token1 as TokenSymbol);
+                    if (cfg) touchedPools.push({ poolId: cfg.pool.id, subgraphId: cfg.pool.subgraphId || cfg.pool.id });
+                }
+            }
+        } catch {}
+
         res.status(200).json({
             ok: true,
             commands: routePlanner.commands as Hex,
@@ -612,7 +628,8 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
                 isDirectRoute: route.isDirectRoute,
                 pools: route.pools.map(pool => pool.poolName)
             },
-            limitPrice: limitPrice || null // Echo back the limit price for confirmation
+            limitPrice: limitPrice || null,
+            touchedPools
         });
 
     } catch (error: any) {

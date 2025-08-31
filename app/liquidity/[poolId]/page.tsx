@@ -19,6 +19,7 @@ import { TOKEN_DEFINITIONS, TokenSymbol } from "@/lib/pools-config";
 import { formatUnits, type Hex } from "viem";
 import { Bar, BarChart, Line, LineChart, CartesianGrid, XAxis, YAxis, ResponsiveContainer, ComposedChart, Area, ReferenceLine, ReferenceArea } from "recharts";
 import { getPoolById, getPoolSubgraphId, getToken, getAllTokens } from "@/lib/pools-config";
+import { useBlockRefetch, usePoolState } from "@/components/data/hooks";
 import { getPoolFeeBps, loadUncollectedFees } from "@/lib/client-cache";
 import {
   ChartConfig,
@@ -47,7 +48,7 @@ import { useWriteContract, useWaitForTransactionReceipt, useSendTransaction } fr
 import { getPositionManagerAddress } from '@/lib/pools-config';
 import { position_manager_abi } from '@/lib/abis/PositionManager_abi';
 import { baseSepolia } from "../../../lib/wagmiConfig";
-import { getFromCache, setToCache, getFromCacheWithTtl, getUserPositionsCacheKey, getPoolStatsCacheKey, getPoolDynamicFeeCacheKey, getPoolChartDataCacheKey, loadUserPositionIds, derivePositionsFromIds } from "../../../lib/client-cache";
+import { getFromCache, setToCache, getFromCacheWithTtl, getUserPositionsCacheKey, getPoolStatsCacheKey, getPoolDynamicFeeCacheKey, getPoolChartDataCacheKey, loadUserPositionIds, derivePositionsFromIds, invalidateCacheEntry } from "../../../lib/client-cache";
 import type { Pool } from "../../../types";
 import { AddLiquidityForm } from "../../../components/liquidity/AddLiquidityForm";
 import {
@@ -186,41 +187,49 @@ interface PoolDetailData extends Pool { // Extend the main Pool type
 
 // Helper function to convert tick to price using the same logic as AddLiquidityForm.tsx
 const convertTickToPrice = (tick: number, currentPoolTick: number | null, currentPrice: string | null, baseTokenForPriceDisplay: string, token0Symbol: string, token1Symbol: string): string => {
-  if (!currentPrice || currentPoolTick === null) {
-    return "N/A";
+  // Preferred: relative to live current price when available
+  if (currentPoolTick !== null && currentPrice) {
+    const currentPriceNum = parseFloat(currentPrice);
+    if (isFinite(currentPriceNum) && currentPriceNum > 0) {
+      const priceDelta = Math.pow(1.0001, tick - currentPoolTick);
+      const priceAtTick = (baseTokenForPriceDisplay === token0Symbol)
+        ? 1 / (currentPriceNum * priceDelta)
+        : currentPriceNum * priceDelta;
+      if (isFinite(priceAtTick)) {
+        if (priceAtTick < 1e-11 && priceAtTick > 0) return "0";
+        if (priceAtTick > 1e30) return "∞";
+        const displayDecimals = baseTokenForPriceDisplay === token0Symbol 
+          ? (TOKEN_DEFINITIONS[token0Symbol as TokenSymbol]?.displayDecimals ?? 4)
+          : (TOKEN_DEFINITIONS[token1Symbol as TokenSymbol]?.displayDecimals ?? 4);
+        return priceAtTick.toFixed(displayDecimals);
+      }
+    }
   }
 
-  const currentPriceNum = parseFloat(currentPrice);
-  if (isNaN(currentPriceNum) || currentPriceNum <= 0) {
-    return "N/A";
-  }
-
-  let priceAtTick: number;
-
-  if (baseTokenForPriceDisplay === token0Symbol) {
-    // Show prices denominated in token0 - need to invert
-    const priceDelta = Math.pow(1.0001, tick - currentPoolTick);
-    priceAtTick = 1 / (currentPriceNum * priceDelta);
-  } else {
-    // Show prices denominated in token1 - direct calculation
-    const priceDelta = Math.pow(1.0001, tick - currentPoolTick);
-    priceAtTick = currentPriceNum * priceDelta;
-  }
-
-  // Format the price
-  if (!isFinite(priceAtTick) || isNaN(priceAtTick)) {
-    return "N/A";
-  }
-
-  if (priceAtTick >= 0 && priceAtTick < 1e-11) {
-    return "0";
-  } else if (!isFinite(priceAtTick) || priceAtTick > 1e30) {
-    return "∞";
-  } else {
-    const displayDecimals = baseTokenForPriceDisplay === token0Symbol ? 
-      (TOKEN_DEFINITIONS[token0Symbol as TokenSymbol]?.displayDecimals ?? 4) : 
-      (TOKEN_DEFINITIONS[token1Symbol as TokenSymbol]?.displayDecimals ?? 4);
-    return priceAtTick.toFixed(displayDecimals);
+  // Fallback: derive absolute price from tick + decimals (v4 orientation)
+  try {
+    const cfg0 = TOKEN_DEFINITIONS[token0Symbol as TokenSymbol];
+    const cfg1 = TOKEN_DEFINITIONS[token1Symbol as TokenSymbol];
+    const addr0 = (cfg0?.address || `0x${token0Symbol}`).toLowerCase();
+    const addr1 = (cfg1?.address || `0x${token1Symbol}`).toLowerCase();
+    const dec0 = cfg0?.decimals ?? 18;
+    const dec1 = cfg1?.decimals ?? 18;
+    const sorted0IsToken0 = addr0 < addr1;
+    const sorted0Decimals = sorted0IsToken0 ? dec0 : dec1;
+    const sorted1Decimals = sorted0IsToken0 ? dec1 : dec0;
+    // price(sorted1 per sorted0) at tick
+    const exp = sorted0Decimals - sorted1Decimals;
+    const price01 = Math.pow(1.0001, tick) * Math.pow(10, exp);
+    const baseIsToken0 = baseTokenForPriceDisplay === token0Symbol;
+    const baseMatchesSorted0 = baseIsToken0 === sorted0IsToken0;
+    const displayVal = baseMatchesSorted0 ? (price01 === 0 ? Infinity : 1 / price01) : price01;
+    if (!isFinite(displayVal) || isNaN(displayVal)) return 'N/A';
+    if (displayVal < 1e-11 && displayVal > 0) return '0';
+    if (displayVal > 1e30) return '∞';
+    const displayDecimals = (TOKEN_DEFINITIONS[baseTokenForPriceDisplay as TokenSymbol]?.displayDecimals ?? 4);
+    return displayVal.toFixed(displayDecimals);
+  } catch {
+    return 'N/A';
   }
 };
 
@@ -484,7 +493,7 @@ function FeesCell({ positionId, sym0, sym1, price0, price1, refreshKey = 0 }: { 
 export default function PoolDetailPage() {
   const router = useRouter();
   const params = useParams<{ poolId: string }>();
-  const poolId = params?.poolId;
+  const poolId = params?.poolId || '';
   const [userPositions, setUserPositions] = useState<ProcessedPosition[]>([]);
   const [isLoadingPositions, setIsLoadingPositions] = useState(false);
   const [activeChart, setActiveChart] = useState<keyof Pick<typeof chartConfig, 'volume' | 'tvl' | 'volumeTvlRatio' | 'emaRatio' | 'dynamicFee'>>("volumeTvlRatio");
@@ -559,6 +568,24 @@ export default function PoolDetailPage() {
   const [tokenPrices, setTokenPrices] = useState<{ BTC: number; ETH: number; USDC: number }>({ BTC: 0, ETH: 0, USDC: 1 });
   const [isLoadingPrices, setIsLoadingPrices] = useState(false);
 
+  // Pool state hooks (Category 3: continuous, block-invalidated)
+  const basePoolInfo = getPoolConfiguration(poolId);
+  const subgraphId = basePoolInfo?.subgraphId;
+  const apiPoolIdToUse = subgraphId ? subgraphId : '';
+  const { data: poolStateData } = usePoolState(String(apiPoolIdToUse));
+  const { data: poolState } = poolStateData || {};
+
+  // Update state from hook
+  useEffect(() => {
+    if (poolState?.currentPrice && typeof poolState?.currentPoolTick === 'number') {
+      setCurrentPrice(String(poolState.currentPrice));
+      setCurrentPoolTick(Number(poolState.currentPoolTick));
+    }
+  }, [poolState]);
+
+  // Invalidate continuous queries on new blocks for this pool
+  useBlockRefetch({ poolIds: apiPoolIdToUse ? [apiPoolIdToUse] : [] });
+
   useEffect(() => {
     let cancelled = false;
     const loadPrices = async () => {
@@ -598,11 +625,11 @@ export default function PoolDetailPage() {
   }, [tokenPrices]);
 
   // Unified batch pool stats loader (same as pools list): tvlUSD + volume24hUSD
-  const loadPoolStatsFromSubgraph = useCallback(async (apiPoolIdToUse: string, basePoolInfo: ReturnType<typeof getPoolConfiguration>) => {
+  const loadPoolStatsFromSubgraph = useCallback(async (apiPoolIdToUse: string, basePoolInfo: ReturnType<typeof getPoolConfiguration>, force?: boolean) => {
     try {
       // Use existing server batch endpoint (server-only SUBGRAPH_URL; 10m CDN TTL)
       const attempt = async () => {
-        const resp = await fetch('/api/liquidity/get-pools-batch');
+        const resp = await fetch(`/api/liquidity/get-pools-batch${force ? `?bust=${Date.now()}` : ''}`);
         if (!resp.ok) return null;
         const data = await resp.json();
         if (!data?.success || !Array.isArray(data?.pools)) return null;
@@ -895,8 +922,11 @@ export default function PoolDetailPage() {
   }, [currentPoolData, apiChartData]); // Run when data is loaded
 
   // Memoized callback functions to prevent infinite re-renders
+  const positionsWriteLockRef = useRef<number>(0);
+
   const refetchPositionsOnly = useCallback(async () => {
     try {
+      if (Date.now() < positionsWriteLockRef.current) return;
       if (!poolId || !isConnected || !accountAddress) return;
       const basePoolInfo = getPoolConfiguration(poolId);
       if (!basePoolInfo) return;
@@ -947,6 +977,29 @@ export default function PoolDetailPage() {
     pendingActionRef.current = null;
     // Also refresh pool stats and positions to reflect the change immediately
     try { refreshAfterLiquidityAddedRef.current?.(); } catch {}
+    // Also backoff-refresh positions independently so they settle even if chart backoff is skipped
+    try { backoffRefreshPositions(); } catch {}
+    // Invalidate stats and revalidate server-side pools snapshot
+    try { fetch('/api/internal/revalidate-pools', { method: 'POST' } as any); } catch {}
+    // Also nudge depth to incrementally refresh head
+    try {
+      fetch('/api/liquidity/get-bucket-depths?revalidate=1', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-revalidate': '1' },
+        body: JSON.stringify({ poolId, first: 2000 })
+      } as any).catch(() => {});
+      try { localStorage.setItem(`recentDepthChange:${String(poolId).toLowerCase()}`, String(Date.now())); } catch {}
+    } catch {}
+    // Trigger the chart to re-pull depth shortly after to reflect new large positions
+    try {
+      setTimeout(() => {
+        try {
+          fetch('/api/liquidity/get-bucket-depths?revalidate=1', {
+            method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-revalidate': '1' },
+            body: JSON.stringify({ poolId, first: 2000 })
+          } as any);
+        } catch {}
+      }, 1500);
+    } catch {}
   }, []);
 
   const onLiquidityDecreasedCallback = useCallback(() => {
@@ -962,6 +1015,74 @@ export default function PoolDetailPage() {
     setShowBurnConfirmDialog(false);
     setPositionToBurn(null);
     pendingActionRef.current = null;
+    // Ensure TVL/Volume chart reflects the removal; wait then backoff-refetch until changed
+    try {
+      // Set loading immediately and take baseline BEFORE invalidation to reduce race conditions
+      setIsLoadingChartData(true);
+      (async () => {
+        const base = getPoolConfiguration(poolId);
+        const subId = (base?.subgraphId || '').toLowerCase();
+        const todayKey = new Date().toISOString().split('T')[0];
+        const getHeaderTvl = async () => {
+          const r = await fetch(`/api/liquidity/get-pools-batch?bust=${Date.now()}&noStore=1`);
+          if (!r.ok) return 0;
+          const j = await r.json();
+          const m = Array.isArray(j?.pools) ? j.pools.find((p: any) => String(p?.poolId || '').toLowerCase() === subId) : null;
+          return Number(m?.tvlUSD || 0);
+        };
+        const getTodayVol = async () => {
+          const r = await fetch(`/api/liquidity/chart-volume?poolId=${encodeURIComponent(poolId)}&days=60&bust=${Date.now()}`);
+          if (!r.ok) return 0;
+          const j = await r.json();
+          const arr: any[] = Array.isArray(j?.data) ? j.data : [];
+          const last = arr[arr.length - 1];
+          return (last && String(last.date) === todayKey) ? Number(last.volumeUSD || 0) : 0;
+        };
+        const tvlBefore = await getHeaderTvl();
+        const volBefore = await getTodayVol();
+
+        if (poolId) invalidateCacheEntry(getPoolChartDataCacheKey(poolId));
+        try { fetch('/api/internal/revalidate-pools', { method: 'POST' } as any); } catch {}
+        try {
+          fetch('/api/internal/revalidate-chart', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ poolId, subgraphId: subId })
+          } as any);
+        } catch {}
+        const SUBGRAPH_SETTLE_MS = 2500;
+        const backoffs = [0, 2000, 5000, 10000];
+        setTimeout(async () => {
+          try {
+            for (let i = 0; i < backoffs.length; i++) {
+              // Clear server caches each iteration to avoid sticky payloads
+              try { fetch('/api/internal/revalidate-chart', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ poolId, subgraphId: subId }) } as any); } catch {}
+              try { fetch('/api/internal/revalidate-pools', { method: 'POST' } as any); } catch {}
+              const tvlNow = await getHeaderTvl();
+              const volNow = await getTodayVol();
+              const changed = (tvlNow !== tvlBefore) || (volNow !== volBefore);
+              if (changed) {
+                try { await fetchPageData(true, /* skipPositions */ true, /* keepLoading */ true); } catch {}
+                setIsLoadingChartData(false);
+                break;
+              }
+              if (i < backoffs.length - 1) await new Promise(r => setTimeout(r, backoffs[i + 1]));
+            }
+            // If loop completes without changes, end loading state
+            setIsLoadingChartData(false);
+          } catch {}
+        }, SUBGRAPH_SETTLE_MS);
+      })();
+      // Nudge depth cache too (best-effort)
+      try {
+        fetch('/api/liquidity/get-bucket-depths?revalidate=1', {
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-revalidate': '1' },
+          body: JSON.stringify({ poolId, first: 2000 })
+        } as any).catch(() => {});
+        try { localStorage.setItem(`recentDepthChange:${String(poolId).toLowerCase()}`, String(Date.now())); } catch {}
+      } catch {}
+      // Also backoff-refresh positions to reflect decreased balances/closed positions
+      try { backoffRefreshPositions(); } catch {}
+    } catch {}
   }, [isFullBurn, isFullWithdraw]);
 
   // Initialize the liquidity modification hooks
@@ -1028,6 +1149,48 @@ export default function PoolDetailPage() {
   // Track compound intent so we can suppress page-level success toast
   const isCompoundInProgressRef = useRef(false);
 
+  // Backoff refresh for positions after liquidity actions (independent of chart backoff)
+  const backoffRefreshPositions = useCallback(async () => {
+    try {
+      if (!poolId || !isConnected || !accountAddress) return;
+      const baseInfo = getPoolConfiguration(poolId);
+      const subId = (baseInfo?.subgraphId || '').toLowerCase();
+      if (!subId) return;
+
+      const delays = [0, 2000, 5000, 10000];
+      const fingerprint = (arr: ProcessedPosition[]) => {
+        try {
+          return JSON.stringify(arr.map(p => ({ id: p.positionId, a0: p.token0.amount, a1: p.token1.amount, l: (p as any)?.liquidity, lo: p.tickLower, up: p.tickUpper })));
+        } catch { return ''; }
+      };
+      const baseline = userPositions || [];
+      const baselineFp = fingerprint(baseline);
+
+      setIsLoadingPositions(true);
+      // prevent immediate refetch overwrite for ~1.5s after an authoritative update
+      positionsWriteLockRef.current = Date.now() + 1500;
+      for (let i = 0; i < delays.length; i++) {
+        if (i > 0) await new Promise(r => setTimeout(r, delays[i]));
+        try {
+          const res = await fetch(`/api/liquidity/get-positions?ownerAddress=${accountAddress}&bust=${Date.now()}`);
+          if (!res.ok) continue;
+          const data = await res.json();
+          if (!Array.isArray(data)) continue;
+          // Update cache for the owner
+          try { setToCache(getUserPositionsCacheKey(accountAddress), data); } catch {}
+          const filtered = data.filter((pos: any) => String(pos?.poolId || '').toLowerCase() === subId);
+          const nextFp = fingerprint(filtered);
+          if (nextFp !== baselineFp) {
+            setUserPositions(filtered);
+            break;
+          }
+        } catch {}
+      }
+    } finally {
+      setIsLoadingPositions(false);
+    }
+  }, [poolId, isConnected, accountAddress, userPositions]);
+
   // Handle confirmation lifecycle for SDK-based collect (claim fees / compound)
   useEffect(() => {
     if (!isCollectConfirmed || !collectHash) return;
@@ -1081,11 +1244,20 @@ export default function PoolDetailPage() {
 
 
   // Fetch user positions for this pool and pool stats
-  const fetchPageData = useCallback(async () => {
+  const fetchPageData = useCallback(async (force?: boolean, skipPositions?: boolean, keepLoading?: boolean) => {
     if (!poolId) return;
 
     // Start loading chart data
     setIsLoadingChartData(true);
+    // If a recent swap was recorded for this pool, force a refresh once and clear the hint
+    try {
+      const hintKey = `recentSwap:${String(poolId).toLowerCase()}`;
+      const hint = localStorage.getItem(hintKey);
+      if (hint) {
+        force = true;
+        localStorage.removeItem(hintKey);
+      }
+    } catch {}
     // Load daily series for volume & TVL (excluding today), and fee/targets; then merge
     ;(async () => {
       try {
@@ -1094,13 +1266,22 @@ export default function PoolDetailPage() {
         if (!subgraphIdForHist) throw new Error('Missing subgraph id for pool');
         const targetDays = 60;
 
-        // 10-minute local cache for merged chart
+        // 6-hour local cache for merged chart (your recommendation)
         const chartCacheKey = getPoolChartDataCacheKey(poolId);
-        const cached = getFromCacheWithTtl<ChartDataPoint[]>(chartCacheKey, 10 * 60 * 1000);
-        if (cached && cached.length) {
+        const cached = getFromCacheWithTtl<ChartDataPoint[]>(chartCacheKey, 6 * 60 * 60 * 1000); // 6 hours
+        if (!force && cached && cached.length) {
+          // Show cached immediately, but keep spinner while fetching fresh data in background
           setApiChartData(cached);
-          setIsLoadingChartData(false);
-          return;
+          // Update header TVL from the same series used by the chart (today if present, else last)
+          try {
+            const todayKeyLocal = new Date().toISOString().split('T')[0];
+            const latest = cached.find(d => d?.date === todayKeyLocal) || cached[cached.length - 1];
+            const latestTvl = Number(latest?.tvlUSD || 0);
+            if (Number.isFinite(latestTvl)) {
+              setCurrentPoolData(prev => prev ? { ...prev, liquidity: formatUSD(latestTvl) } : prev);
+            }
+          } catch {}
+          // Don't early-return: proceed to fetch to refresh UI
         }
 
         const todayKey = new Date().toISOString().split('T')[0];
@@ -1121,15 +1302,16 @@ export default function PoolDetailPage() {
           throw new Error(`Validation failed for ${url}`);
         };
 
+        const bust = force ? `&bust=${Date.now()}` : '';
         const [feeJson, tvlJson, volJson] = await Promise.all([
-          fetchJsonWithRetry(`/api/liquidity/get-historical-dynamic-fees?poolId=${encodeURIComponent(subgraphIdForHist)}&days=${targetDays}`,
+          fetchJsonWithRetry(`/api/liquidity/get-historical-dynamic-fees?poolId=${encodeURIComponent(subgraphIdForHist)}&days=${targetDays}${bust}`,
             (j) => Array.isArray(j) && j.length > 0
           ),
-          fetchJsonWithRetry(`/api/liquidity/chart-tvl?poolId=${encodeURIComponent(poolId)}&days=${targetDays}`,
+          fetchJsonWithRetry(`/api/liquidity/chart-tvl?poolId=${encodeURIComponent(poolId)}&days=${targetDays}${bust}`,
             (j) => Array.isArray(j?.data)
           ),
-          fetchJsonWithRetry(`/api/liquidity/chart-volume?poolId=${encodeURIComponent(poolId)}&days=${targetDays}`,
-            (j) => Array.isArray(j?.data) && j.data.some((d: any) => String(d?.date || '') === todayKey)
+          fetchJsonWithRetry(`/api/liquidity/chart-volume?poolId=${encodeURIComponent(poolId)}&days=${targetDays}${bust}`,
+            (j) => Array.isArray(j?.data)
           ),
         ]);
         // No ad-hoc quick retries; handled by fetchJsonWithRetry
@@ -1234,15 +1416,24 @@ export default function PoolDetailPage() {
           }];
         }
         setApiChartData(finalMerged);
+        // Keep header TVL strictly in sync with the chart's latest point
+        try {
+          const latest = finalMerged.find(d => d.date === todayKeyLocal) || finalMerged[finalMerged.length - 1];
+          const latestTvl = Number(latest?.tvlUSD || 0);
+          if (Number.isFinite(latestTvl)) {
+            setCurrentPoolData(prev => prev ? { ...prev, liquidity: formatUSD(latestTvl) } : prev);
+          }
+        } catch {}
         // Only cache if we have any non-zero fee fields to avoid sticky flat lines
         const hasFeeOverlay = finalMerged.some(d => (d.volumeTvlRatio || d.emaRatio || d.dynamicFee));
         if (hasFeeOverlay) setToCache(chartCacheKey, finalMerged);
-        // Chart data loaded successfully; end loading state
-        setIsLoadingChartData(false);
+        // Chart data loaded successfully; end loading state unless we are in a controlled backoff
+        if (!keepLoading) setIsLoadingChartData(false);
       } catch (error: any) {
         console.error('Failed to fetch daily chart series:', error);
         toast.error('Could not load pool chart data.', { description: error?.message || String(error) });
-        // Keep loading state true to avoid showing incomplete/incorrect charts
+        // End loading unless caller wants to keep spinner (e.g., backoff window)
+        if (!keepLoading) setIsLoadingChartData(false);
       }
     })();
 
@@ -1256,37 +1447,16 @@ export default function PoolDetailPage() {
     // Use the subgraph ID from the pool configuration for API calls
     const apiPoolIdToUse = basePoolInfo.subgraphId; 
 
-    // Fetch pool state data (currentPoolTick and currentPrice)
-    try {
-      const poolStateResponse = await fetch('/api/liquidity/get-pool-state', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          token0Symbol: basePoolInfo.tokens[0].symbol,
-          token1Symbol: basePoolInfo.tokens[1].symbol,
-          chainId: baseSepolia.id,
-        }),
-      });
-      
-      if (poolStateResponse.ok) {
-        const poolState = await poolStateResponse.json();
-        if (poolState.currentPrice && typeof poolState.currentPoolTick === 'number') {
-          setCurrentPrice(poolState.currentPrice);
-          setCurrentPoolTick(poolState.currentPoolTick);
-        }
-      }
-    } catch (error) {
-      console.error("Failed to fetch pool state:", error);
-    }
+    // Pool state now handled by usePoolState hook at component level
 
-    // 1. Fetch/Cache Pool Stats (Volume 24h/7d via Satsuma; TVL)
-    let poolStats: Partial<Pool> | null = getFromCache(getPoolStatsCacheKey(apiPoolIdToUse));
+    // 1. Fetch/Cache Pool Stats (Volume 24h/7d via Satsuma; TVL) - 1h TTL
+    let poolStats: Partial<Pool> | null = force ? null : getFromCacheWithTtl(getPoolStatsCacheKey(apiPoolIdToUse), 60 * 60 * 1000); // 1 hour
     if (poolStats) {
       console.log(`[Cache HIT] Using cached stats for pool detail: ${apiPoolIdToUse}`);
     } else {
       console.log(`[Cache MISS] Fetching stats from Satsuma for pool detail: ${apiPoolIdToUse}`);
       try {
-        const loaded = await loadPoolStatsFromSubgraph(apiPoolIdToUse, basePoolInfo);
+        const loaded = await loadPoolStatsFromSubgraph(apiPoolIdToUse, basePoolInfo, force);
         if (loaded) {
           poolStats = {
             ...loaded,
@@ -1368,8 +1538,8 @@ export default function PoolDetailPage() {
       }
     } catch {}
 
-    // 4. Fetch/Cache User Positions
-    if (isConnected && accountAddress) {
+    // 4. Fetch/Cache User Positions (optional)
+    if (!skipPositions && isConnected && accountAddress) {
       setIsLoadingPositions(true);
       let allUserPositions: any[] = [];
       try {
@@ -1394,7 +1564,7 @@ export default function PoolDetailPage() {
         console.log(`[Pool Detail] No positions found for pool ${basePoolInfo.pair}.`);
       }
       setIsLoadingPositions(false);
-    } else {
+    } else if (!skipPositions && (!isConnected || !accountAddress)) {
       setUserPositions([]);
       setIsLoadingPositions(false);
     }
@@ -1409,9 +1579,73 @@ export default function PoolDetailPage() {
 
     const apiPoolIdToUse = basePoolInfo.subgraphId;
 
-    // Only refresh pool stats and user positions, not chart data
+    // Invalidate cached chart data and refetch merged TVL/Volume (after brief settle), with backoff if unchanged
     try {
-      // Refresh pool stats (volumes/fees only). TVL is handled via get-pools-batch elsewhere.
+      // Enforce loading state ASAP to avoid perceived randomness
+      setIsLoadingChartData(true);
+
+      // Capture baseline BEFORE invalidating server caches
+      const base = getPoolConfiguration(poolId);
+      const subId = (base?.subgraphId || '').toLowerCase();
+      const todayKey = new Date().toISOString().split('T')[0];
+      const getHeaderTvl = async () => {
+        const r = await fetch(`/api/liquidity/get-pools-batch?bust=${Date.now()}&noStore=1`);
+        if (!r.ok) return 0;
+        const j = await r.json();
+        const m = Array.isArray(j?.pools) ? j.pools.find((p: any) => String(p?.poolId || '').toLowerCase() === subId) : null;
+        return Number(m?.tvlUSD || 0);
+      };
+      const getTodayVol = async () => {
+        const r = await fetch(`/api/liquidity/chart-volume?poolId=${encodeURIComponent(poolId)}&days=60&bust=${Date.now()}`);
+        if (!r.ok) return 0;
+        const j = await r.json();
+        const arr: any[] = Array.isArray(j?.data) ? j.data : [];
+        const last = arr[arr.length - 1];
+        return (last && String(last.date) === todayKey) ? Number(last.volumeUSD || 0) : 0;
+      };
+      const tvlBefore = await getHeaderTvl();
+      const volBefore = await getTodayVol();
+
+      // Client cache bust + server cache revalidation
+      invalidateCacheEntry(getPoolChartDataCacheKey(poolId));
+      try { fetch('/api/internal/revalidate-pools', { method: 'POST' } as any); } catch {}
+      try {
+        fetch('/api/internal/revalidate-chart', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ poolId, subgraphId: subId })
+        } as any);
+      } catch {}
+
+      // Delay a bit so the subgraph can index block changes
+      const SUBGRAPH_SETTLE_MS = 2500;
+      const backoffs = [0, 2000, 5000, 10000];
+      setTimeout(async () => {
+        try {
+          for (let i = 0; i < backoffs.length; i++) {
+            // Clear server caches each attempt (debounced internally)
+            try { fetch('/api/internal/revalidate-chart', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ poolId, subgraphId: subId }) } as any); } catch {}
+            try { fetch('/api/internal/revalidate-pools', { method: 'POST' } as any); } catch {}
+            const tvlNow = await getHeaderTvl();
+            const volNow = await getTodayVol();
+            const changed = (tvlNow !== tvlBefore) || (volNow !== volBefore);
+            if (changed) {
+              try { await fetchPageData(true, /* skipPositions */ true, /* keepLoading */ true); } catch {}
+              setIsLoadingChartData(false);
+              break;
+            }
+            if (i < backoffs.length - 1) await new Promise(r => setTimeout(r, backoffs[i + 1]));
+          }
+          // If loop completes without changes, end loading state
+          setIsLoadingChartData(false);
+        } catch {}
+      }, SUBGRAPH_SETTLE_MS);
+    } catch {}
+
+    // Only refresh pool stats and user positions (header + cards)
+    try {
+      // TEMPORARILY DISABLED: get-rolling-volume-fees API has wrong subgraph schema
+      // TODO: Fix GraphQL query to match actual subgraph schema or remove if not needed
+      /*
       const [res24h, res7d] = await Promise.all([
         fetch(`/api/liquidity/get-rolling-volume-fees?poolId=${apiPoolIdToUse}&days=1`),
         fetch(`/api/liquidity/get-rolling-volume-fees?poolId=${apiPoolIdToUse}&days=7`),
@@ -1431,6 +1665,10 @@ export default function PoolDetailPage() {
           const existing = getFromCache(getPoolStatsCacheKey(apiPoolIdToUse)) || {};
           setToCache(getPoolStatsCacheKey(apiPoolIdToUse), { ...existing, ...partialStats });
         } catch {}
+      */
+
+        // TEMPORARILY DISABLED: Define empty partialStats since API is disabled
+        const partialStats = {};
 
         // Update current pool data with new stats (do not touch liquidity/tvl here)
         setCurrentPoolData(prev => {
@@ -1438,13 +1676,12 @@ export default function PoolDetailPage() {
           return {
             ...prev,
             ...partialStats,
-            volume24h: formatUSD(partialStats.volume24hUSD),
-            volume7d: formatUSD(partialStats.volume7dUSD),
-            fees24h: formatUSD(partialStats.fees24hUSD),
-            fees7d: formatUSD(partialStats.fees7dUSD),
+            volume24h: formatUSD((partialStats as any).volume24hUSD || 0),
+            volume7d: formatUSD((partialStats as any).volume7dUSD || 0),
+            fees24h: formatUSD((partialStats as any).fees24hUSD || 0),
+            fees7d: formatUSD((partialStats as any).fees7dUSD || 0),
           };
         });
-      }
     } catch (error) {
       console.error("Failed to refresh pool stats after liquidity added:", error);
     }
@@ -1452,6 +1689,8 @@ export default function PoolDetailPage() {
     // Refresh user positions
     if (isConnected && accountAddress) {
       setIsLoadingPositions(true);
+      // prevent immediate refetch overwrite for ~1.5s after an authoritative update
+      positionsWriteLockRef.current = Date.now() + 1500;
       try {
         const res = await fetch(`/api/liquidity/get-positions?ownerAddress=${accountAddress}`);
         if (res.ok) {
@@ -1463,17 +1702,10 @@ export default function PoolDetailPage() {
 
             // Filter positions for this specific pool
             const subgraphId = (basePoolInfo.subgraphId || '').toLowerCase();
-            const [poolToken0Raw, poolToken1Raw] = basePoolInfo.pair.split(' / ');
-            const poolToken0 = poolToken0Raw?.trim().toUpperCase();
-            const poolToken1 = poolToken1Raw?.trim().toUpperCase();
-            
+
             const filteredPositions = data.filter((pos: ProcessedPosition) => {
               const poolMatch = subgraphId && String(pos.poolId || '').toLowerCase() === subgraphId;
-              if (poolMatch) return true;
-              const posToken0 = pos.token0.symbol?.trim().toUpperCase();
-              const posToken1 = pos.token1.symbol?.trim().toUpperCase();
-              return (posToken0 === poolToken0 && posToken1 === poolToken1) ||
-                     (posToken0 === poolToken1 && posToken1 === poolToken0);
+              return poolMatch;
             });
             
             setUserPositions(filteredPositions);
@@ -3360,7 +3592,7 @@ export default function PoolDetailPage() {
                                       sym1={position.token1.symbol || 'T1'}
                                       price0={getUsdPriceForSymbol(position.token0.symbol)}
                                       price1={getUsdPriceForSymbol(position.token1.symbol)}
-                                      refreshKey={refreshTrigger}
+                                      // refreshKey removed; fees now on TTL + explicit invalidation
                                     />
                                   </div>
                                 </div>
@@ -3487,78 +3719,9 @@ export default function PoolDetailPage() {
                                     const statusColor = position.isInRange || isFullRange ? 'bg-green-500/20 text-green-500' : 'bg-red-500/20 text-red-500';
 
                                     return (
-                                      <HoverCard>
-                                        <HoverCardTrigger asChild>
-                                            <div className={`flex items-center justify-center h-4 rounded-md px-1.5 text-[10px] leading-none ${statusColor} cursor-default`}>
-                                              {statusText}
-                                            </div>
-                                        </HoverCardTrigger>
-                                        <HoverCardContent
-                                          side="top"
-                                          align="center"
-                                          sideOffset={8}
-                                          className="w-48 p-2 border border-sidebar-border bg-[#0f0f0f] text-xs shadow-lg rounded-lg"
-                                        >
-                                          <div className="grid gap-1">
-                                            <div className="flex items-center justify-between">
-                                              <span className="text-muted-foreground">Min. Price</span>
-                                              <span className="font-mono tabular-nums">
-                                                {(() => {
-                                                  const baseTokenForPriceDisplay = determineBaseTokenForPriceDisplay(
-                                                    position.token0.symbol || '',
-                                                    position.token1.symbol || ''
-                                                  );
-                                                  return convertTickToPrice(
-                                                    position.tickLower,
-                                                    currentPoolTick,
-                                                    currentPrice,
-                                                    baseTokenForPriceDisplay,
-                                                    position.token0.symbol || '',
-                                                    position.token1.symbol || ''
-                                                  );
-                                                })()}
-                                              </span>
-                                            </div>
-                                            <div className="flex items-center justify-between">
-                                              <span className="text-muted-foreground">Max. Price</span>
-                                              <span className="font-mono tabular-nums">
-                                                {(() => {
-                                                  const baseTokenForPriceDisplay = determineBaseTokenForPriceDisplay(
-                                                    position.token0.symbol || '',
-                                                    position.token1.symbol || ''
-                                                  );
-                                                  return convertTickToPrice(
-                                                    position.tickUpper,
-                                                    currentPoolTick,
-                                                    currentPrice,
-                                                    baseTokenForPriceDisplay,
-                                                    position.token0.symbol || '',
-                                                    position.token1.symbol || ''
-                                                  );
-                                                })()}
-                                              </span>
-                                            </div>
-                                            <div className="flex items-center justify-between">
-                                              <span className="text-muted-foreground">Current</span>
-                                              <span className="font-mono tabular-nums">
-                                                {(() => {
-                                                  if (!currentPrice) return 'N/A';
-                                                  const currentNum = parseFloat(currentPrice);
-                                                  if (!Number.isFinite(currentNum) || currentNum <= 0) return 'N/A';
-                                                  const inverse = 1 / currentNum;
-                                                  const flip = inverse > currentNum;
-                                                  const displaySymbol = flip ? (position.token0.symbol || '') : (position.token1.symbol || '');
-                                                  const decimals = TOKEN_DEFINITIONS[displaySymbol as TokenSymbol]?.displayDecimals ?? 4;
-                                                  const value = flip ? inverse : currentNum;
-                                                  if (!Number.isFinite(value)) return '∞';
-                                                  if (value >= 0 && value < 1e-11) return '0';
-                                                  return value.toFixed(decimals);
-                                                })()}
-                                              </span>
-                                            </div>
-                                          </div>
-                                        </HoverCardContent>
-                                      </HoverCard>
+                                      <div className={`flex items-center justify-center h-4 rounded-md px-1.5 text-[10px] leading-none ${statusColor}`}>
+                                        {statusText}
+                                      </div>
                                     );
                                   })()}
 

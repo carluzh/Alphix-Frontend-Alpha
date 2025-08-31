@@ -433,19 +433,14 @@ export function AddLiquidityForm({
   // Effect to fetch initial pool state (current price and tick)
   useEffect(() => {
     const fetchPoolState = async () => {
-      if (!token0Symbol || !token1Symbol || !chainId) return;
+      if (!selectedPoolId || !chainId) return;
       
       setIsPoolStateLoading(true);
       try {
-        const response = await fetch('/api/liquidity/get-pool-state', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            token0Symbol,
-            token1Symbol,
-            chainId,
-          }),
-        });
+        const poolConfig = getPoolById(selectedPoolId);
+        const poolIdParam = poolConfig?.subgraphId || selectedPoolId;
+
+        const response = await fetch(`/api/liquidity/get-pool-state?poolId=${encodeURIComponent(poolIdParam)}`);
         
         if (!response.ok) {
           const errorData = await response.json();
@@ -508,7 +503,7 @@ export function AddLiquidityForm({
     if (selectedPoolId) {
       fetchPoolState();
     }
-  }, [selectedPoolId, chainId, token0Symbol, token1Symbol]);
+  }, [selectedPoolId, chainId]);
 
   // Effect to update custom X-axis ticks when domain changes
   useEffect(() => {

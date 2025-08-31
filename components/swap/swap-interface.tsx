@@ -171,6 +171,9 @@ export interface SwapTxInfo {
   toAmount: string;
   toSymbol: string;
   explorerUrl: string;
+  // Optional: list of pools touched by the executed route (single or multi-hop)
+  // Each entry should include the friendly route id (poolId) and its subgraphId if available
+  touchedPools?: Array<{ poolId: string; subgraphId?: string }>;
 }
 
 // Interface for Fee Details
@@ -1721,7 +1724,8 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                     fromSymbol: fromToken.symbol,
                     toAmount: toAmount,
                     toSymbol: toToken.symbol,
-                    explorerUrl: `https://sepolia.basescan.org/tx/${txHash}`
+                    explorerUrl: `https://sepolia.basescan.org/tx/${txHash}`,
+                    touchedPools: Array.isArray(buildTxApiData?.touchedPools) ? buildTxApiData.touchedPools : undefined
                 });
                 console.log("ETH Swap - setSwapTxInfo called with hash:", txHash);
 
@@ -1921,7 +1925,8 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 fromSymbol: fromToken.symbol,
                 toAmount: toAmount,
                 toSymbol: toToken.symbol,
-                explorerUrl: `https://sepolia.basescan.org/tx/${txHash}`
+                explorerUrl: `https://sepolia.basescan.org/tx/${txHash}`,
+                touchedPools: Array.isArray(buildTxApiData?.touchedPools) ? buildTxApiData.touchedPools : undefined
             });
             console.log("ETH Swap - setSwapTxInfo called with hash:", txHash);
 

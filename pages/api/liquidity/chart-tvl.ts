@@ -13,6 +13,12 @@ if (!SUBGRAPH_URL) {
 interface ChartPointTvl { date: string; tvlUSD: number }
 interface TvlSeries { poolId: string; data: ChartPointTvl[] }
 
+// Simple in-memory server cache (per instance)
+const serverCache = new Map<string, { data: any; ts: number }>();
+const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
+// eslint-disable-next-line @typescript-eslint/naming-convention
+export function __getServerCache() { return serverCache; }
+
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse<TvlSeries | { message: string; error?: any }>
@@ -30,12 +36,20 @@ export default async function handler(
     const rawDays = parseInt(daysQuery || '60', 10);
     const days = Number.isFinite(rawDays) && rawDays > 0 && rawDays <= 120 ? rawDays : 60;
 
-    // Daily cadence: cache 1 day, serve stale 1 day while revalidating
+    // Keep CDN hints; primary is our in-memory cache
     res.setHeader('Cache-Control', 'public, s-maxage=86400, stale-while-revalidate=86400');
 
-    // Resolve subgraph id and pricing
+    const bust = typeof (req.query?.bust as string | undefined) === 'string';
     const allPools = getAllPools();
     const subgraphId = (getPoolSubgraphId(poolId) || poolId).toLowerCase();
+    const cacheKey = `${subgraphId}|${days}`;
+    if (!bust) {
+      const cached = serverCache.get(cacheKey);
+      if (cached && (Date.now() - cached.ts) < SIX_HOURS_MS) {
+        return res.status(200).json(cached.data);
+      }
+    }
+    // Resolve subgraph id and pricing
     const poolCfg = allPools.find(p => (getPoolSubgraphId(p.id) || p.id).toLowerCase() === subgraphId);
     const sym0 = poolCfg?.currency0?.symbol || 'USDC';
     const sym1 = poolCfg?.currency1?.symbol || 'USDC';
@@ -113,7 +127,9 @@ export default async function handler(
 
     // Note: do not append today's point here; it's added client-side from get-pools-batch
 
-    return res.status(200).json({ poolId, data });
+    const payload = { poolId, data } as TvlSeries;
+    try { serverCache.set(cacheKey, { data: payload, ts: Date.now() }); } catch {}
+    return res.status(200).json(payload);
   } catch (error: any) {
     console.error(`[chart-tvl] Error:`, error);
     return res.status(500).json({ message: error?.message || 'Unexpected error', error });

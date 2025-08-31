@@ -41,6 +41,14 @@ interface VolumeSeries {
   data: ChartPointVolume[];
 }
 
+// Simple in-memory server cache (per instance)
+const serverCache = new Map<string, { data: any; ts: number }>();
+const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
+
+// Tiny access hook for internal revalidation
+// eslint-disable-next-line @typescript-eslint/naming-convention
+export function __getServerCache() { return serverCache; }
+
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse<VolumeSeries | { message: string; error?: any }>
@@ -58,12 +66,22 @@ export default async function handler(
     const rawDays = parseInt(daysQuery || '60', 10);
     const days = Number.isFinite(rawDays) && rawDays > 0 && rawDays <= 120 ? rawDays : 60;
 
-    // Hourly cadence: cache 1h, serve stale 1h while revalidating
+    // Keep CDN hints, but primary is our in-memory cache
     res.setHeader('Cache-Control', 'public, s-maxage=3600, stale-while-revalidate=3600');
 
     // Resolve subgraph id and token symbols for pricing
     const allPools = getAllPools();
     const subgraphId = (getPoolSubgraphId(poolId) || poolId).toLowerCase();
+
+    // Server-side cache key and bust support (use subgraphId)
+    const cacheKey = `${subgraphId}|${days}`;
+    const bust = typeof (req.query?.bust as string | undefined) === 'string';
+    if (!bust) {
+      const cached = serverCache.get(cacheKey);
+      if (cached && (Date.now() - cached.ts) < SIX_HOURS_MS) {
+        return res.status(200).json(cached.data);
+      }
+    }
     const poolCfg = allPools.find(p => (getPoolSubgraphId(p.id) || p.id).toLowerCase() === subgraphId);
     const sym0 = poolCfg?.currency0?.symbol || 'USDC';
     const prices = await batchGetTokenPrices([sym0]);
@@ -130,7 +148,9 @@ export default async function handler(
       }
     } catch {}
 
-    return res.status(200).json({ poolId, data });
+    const payload = { poolId, data } as VolumeSeries;
+    try { serverCache.set(cacheKey, { data: payload, ts: Date.now() }); } catch {}
+    return res.status(200).json(payload);
   } catch (error: any) {
     console.error(`[chart-volume] Error:`, error);
     return res.status(500).json({ message: error?.message || 'Unexpected error', error });

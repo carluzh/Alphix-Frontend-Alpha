@@ -14,7 +14,15 @@ import { cookieToInitialState } from 'wagmi'
 
 // --- Removed AppKit Initialization from Module Level --- 
 
-const queryClient = new QueryClient()
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: 1,
+      refetchOnWindowFocus: false,
+      gcTime: 10 * 60 * 1000,
+    },
+  },
+})
 
 // Renamed component back to original
 function AppKitProvider({ children, cookies }: { children: ReactNode, cookies: string | null }) {

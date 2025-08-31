@@ -10,7 +10,7 @@ import { Info, Clock3, ChevronsLeftRight, EllipsisVertical, OctagonX } from "luc
 import { TokenStack } from "./TokenStack";
 import { FeesCell } from "./FeesCell";
 import { TOKEN_DEFINITIONS, TokenSymbol, getToken as getTokenConfig } from '@/lib/pools-config';
-import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
+
 import { cn } from "@/lib/utils";
 
 type ProcessedPosition = {
@@ -193,9 +193,11 @@ export function PositionCard({
                             <ChevronsLeftRight className="h-3 w-3 text-muted-foreground" aria-hidden />
                             {isLoadingPoolStates ? <div className="h-4 w-24 bg-muted/60 rounded animate-pulse" /> : (() => {
                                 const baseToken = determineBaseTokenForPriceDisplay(position.token0.symbol, position.token1.symbol);
-                                const currentPriceStr = poolDataByPoolId[poolKey]?.price ? String(poolDataByPoolId[poolKey].price) : null;
-                                const minPrice = convertTickToPrice(position.tickLower, poolDataByPoolId[poolKey]?.tick, currentPriceStr, baseToken, position.token0.symbol, position.token1.symbol);
-                                const maxPrice = convertTickToPrice(position.tickUpper, poolDataByPoolId[poolKey]?.tick, currentPriceStr, baseToken, position.token0.symbol, position.token1.symbol);
+                                const pool = poolDataByPoolId[poolKey] || poolDataByPoolId[String(position.poolId || '').toLowerCase()] || {};
+                                const currentPriceStr = pool?.price ? String(pool.price) : null;
+                                const tickNow = typeof pool?.tick === 'number' ? pool.tick : null;
+                                const minPrice = convertTickToPrice(position.tickLower, tickNow, currentPriceStr, baseToken, position.token0.symbol, position.token1.symbol);
+                                const maxPrice = convertTickToPrice(position.tickUpper, tickNow, currentPriceStr, baseToken, position.token0.symbol, position.token1.symbol);
                                 return `${minPrice} - ${maxPrice}`;
                             })()}
                         </span>
@@ -225,60 +227,16 @@ export function PositionCard({
             </div>
             
             <div className="flex items-center gap-1.5">
-                <div onMouseEnter={handleChildEnter} onMouseLeave={handleChildLeave}>
+                <div>
                     {(() => {
                         const isFullRange = position.tickLower === SDK_MIN_TICK && position.tickUpper === SDK_MAX_TICK;
                         const statusText = isFullRange ? 'Full Range' : position.isInRange ? 'In Range' : 'Out of Range';
                         const statusColor = position.isInRange || isFullRange ? 'bg-green-500/20 text-green-500' : 'bg-red-500/20 text-red-500';
 
                         return (
-                            <HoverCard>
-                                <HoverCardTrigger asChild>
-                                    <div className={`flex items-center justify-center h-4 rounded-md px-1.5 text-[10px] leading-none ${statusColor} cursor-default`}>
-                                        {statusText}
-                                    </div>
-                                </HoverCardTrigger>
-                                <HoverCardContent
-                                    side="top"
-                                    align="center"
-                                    sideOffset={8}
-                                    className="w-48 p-2 border border-sidebar-border bg-[#0f0f0f] text-xs shadow-lg rounded-lg"
-                                >
-                                    <div className="grid gap-1">
-                                    <div className="flex items-center justify-between">
-                                        <span className="text-muted-foreground">Min. Price</span>
-                                        <span className="font-mono tabular-nums">
-                                        {convertTickToPrice(position.tickLower, poolDataByPoolId[poolKey]?.tick, poolDataByPoolId[poolKey]?.price, determineBaseTokenForPriceDisplay(position.token0.symbol, position.token1.symbol), position.token0.symbol, position.token1.symbol)}
-                                        </span>
-                                    </div>
-                                    <div className="flex items-center justify-between">
-                                        <span className="text-muted-foreground">Max. Price</span>
-                                        <span className="font-mono tabular-nums">
-                                        {convertTickToPrice(position.tickUpper, poolDataByPoolId[poolKey]?.tick, poolDataByPoolId[poolKey]?.price, determineBaseTokenForPriceDisplay(position.token0.symbol, position.token1.symbol), position.token0.symbol, position.token1.symbol)}
-                                        </span>
-                                    </div>
-                                    <div className="flex items-center justify-between">
-                                        <span className="text-muted-foreground">Current</span>
-                                        <span className="font-mono tabular-nums">
-                                        {(() => {
-                                            const currentPriceStr = poolDataByPoolId[poolKey]?.price ? String(poolDataByPoolId[poolKey]?.price) : null;
-                                            if (!currentPriceStr) return 'N/A';
-                                            const cp = parseFloat(currentPriceStr);
-                                            if (!Number.isFinite(cp) || cp <= 0) return 'N/A';
-                                            const inv = 1 / cp;
-                                            const flip = inv > cp;
-                                            const displaySymbol = flip ? (position.token0.symbol || '') : (position.token1.symbol || '');
-                                            const decimals = TOKEN_DEFINITIONS[displaySymbol as TokenSymbol]?.displayDecimals ?? 4;
-                                            const val = flip ? inv : cp;
-                                            if (!Number.isFinite(val)) return '∞';
-                                            if (val >= 0 && val < 1e-11) return '0';
-                                            return val.toFixed(decimals);
-                                        })()}
-                                        </span>
-                                    </div>
-                                    </div>
-                                </HoverCardContent>
-                            </HoverCard>
+                            <div className={`flex items-center justify-center h-4 rounded-md px-1.5 text-[10px] leading-none ${statusColor}`}>
+                                {statusText}
+                            </div>
                         );
                     })()}
                 </div>

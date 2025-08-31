@@ -7,13 +7,30 @@ if (!SUBGRAPH_ORIGINAL_URL) {
   throw new Error('SUBGRAPH_ORIGINAL_URL env var is required');
 }
 
-// In-memory cache (12 hours)
-const TTL_MS = 12 * 60 * 60 * 1000; // 12h
-const memCache = new Map<string, { ts: number; data: any }>();
+// In-memory cache (up to 24h), with incremental refresh window at 1h
+const TTL_MS = 24 * 60 * 60 * 1000; // 24h hard cap
+const INCREMENTAL_WINDOW_MS = 60 * 60 * 1000; // 1h: try cheap head refresh if older than this
+type PositionRow = { id?: string; pool: string; tickLower: number; tickUpper: number; liquidity: string };
+type CachedDepth = {
+  ts: number;
+  // Raw positions kept for incremental merging (ordered by liquidity desc from subgraph)
+  positions?: PositionRow[];
+  // Last aggregated buckets payload when bucket params are used
+  data?: any;
+  // a light-weight fingerprint of the head (top 10) to detect changes quickly
+  headKeys?: string[];
+};
+const memCache = new Map<string, CachedDepth>();
 
-function cacheKey(poolId: string, first: number) {
-  return `hookpos:${poolId.toLowerCase()}:${first}`;
-}
+function cacheKey(poolId: string, first: number) { return `hookpos:${poolId.toLowerCase()}:${first}`; }
+const PER_PAGE = 100; // full (cold) paging
+const INCR_PAGE = 10; // incremental paging size
+const BACKOFFS_MS = [0, 2000, 5000, 10000];
+const HEAD_COMPARE = 10; // compare top 10 for head-stability
+const MAX_KEEP = 5000; // cap positions stored per pool to bound memory
+const makeKey = (p: PositionRow) => (p && typeof p.id === 'string' && p.id.length > 0)
+  ? p.id
+  : `${p.tickLower}:${p.tickUpper}:${p.liquidity}`;
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
@@ -34,45 +51,175 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const forceRevalidate = String(req.headers['x-internal-revalidate'] || '').trim() === '1' || String((req.query as any)?.revalidate || '').trim() === '1';
     const cached = memCache.get(key);
-    if (!forceRevalidate && cached && Date.now() - cached.ts < TTL_MS) {
-      // 12h CDN cache with 12h SWR
-      res.setHeader('Cache-Control', 'public, s-maxage=43200, stale-while-revalidate=43200');
-      return res.status(200).json(cached.data);
-    }
 
-    const query = `
-      query GetHookPositions($pool: Bytes!, $first: Int!, $skip: Int!) {
-        hookPositions(first: $first, skip: $skip, orderBy: liquidity, orderDirection: desc, where: { pool: $pool }) {
-          pool
-          tickLower
-          tickUpper
-          liquidity
+    // Helper: incremental merge fetcher
+    const fetchPageWithOrder = async (skip: number, pageFirst: number, orderByField: string) => {
+      // Only query hookPositions; filter to active liquidity
+      const qHook = `
+        query GetHookPositions($pool: Bytes!, $first: Int!, $skip: Int!) {
+          hookPositions(
+            first: $first, skip: $skip,
+            orderBy: ${orderByField}, orderDirection: desc,
+            where: { pool: $pool, liquidity_gt: "0" }
+          ) { id pool tickLower tickUpper liquidity }
         }
-      }
-    `;
-    // Paginate in small pages to respect subgraph limits
-    const perPage = 100;
-    const positions: any[] = [];
-    let skip = 0;
-    while (positions.length < totalTarget) {
-      const pageFirst = Math.min(perPage, totalTarget - positions.length);
+      `;
       const resp = await fetch(SUBGRAPH_ORIGINAL_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query, variables: { pool: apiId.toLowerCase(), first: pageFirst, skip } }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: qHook, variables: { pool: apiId.toLowerCase(), first: pageFirst, skip } }),
       });
       if (!resp.ok) {
         const txt = await resp.text();
-        return res.status(resp.status).json({ error: 'Subgraph query failed', details: txt });
+        throw new Error(`Subgraph query failed: ${resp.status} ${resp.statusText}: ${txt}`);
       }
       const json = await resp.json();
-      if (json?.errors) {
-        return res.status(500).json({ error: 'Subgraph error', details: json.errors });
+      if (json?.errors) throw new Error(`Subgraph error: ${JSON.stringify(json.errors)}`);
+      const pageItems: any[] = Array.isArray(json?.data?.hookPositions) ? json.data.hookPositions : [];
+      return pageItems as PositionRow[];
+    };
+
+    // Tries blockTimestamp, then createdAtTimestamp, then liquidity
+    const fetchPageSmart = async (skip: number, pageFirst: number): Promise<{ rows: PositionRow[]; orderUsed: 'blockTimestamp' | 'createdAtTimestamp' | 'liquidity' }> => {
+      try {
+        const r = await fetchPageWithOrder(skip, pageFirst, 'blockTimestamp');
+        return { rows: r, orderUsed: 'blockTimestamp' };
+      } catch {}
+      try {
+        const r = await fetchPageWithOrder(skip, pageFirst, 'createdAtTimestamp');
+        return { rows: r, orderUsed: 'createdAtTimestamp' };
+      } catch {}
+      const r = await fetchPageWithOrder(skip, pageFirst, 'liquidity');
+      return { rows: r, orderUsed: 'liquidity' };
+    };
+
+    // Fetch a full list up to total, paging with the chosen order
+    const fetchFullPositions = async (total: number, pageSize: number) => {
+      const first = await fetchPageSmart(0, Math.min(pageSize, total));
+      const out: PositionRow[] = [...first.rows];
+      let skip = out.length;
+      while (out.length < total) {
+        const remain = total - out.length;
+        const page = await fetchPageWithOrder(skip, Math.min(pageSize, remain), first.orderUsed);
+        out.push(...page);
+        if (page.length < Math.min(pageSize, remain)) break;
+        skip += page.length;
       }
-      const pageItems = Array.isArray(json?.data?.hookPositions) ? json.data.hookPositions : [];
-      positions.push(...pageItems);
-      if (pageItems.length < pageFirst) break; // last page
-      skip += pageItems.length;
+      return { rows: out, orderUsed: first.orderUsed } as const;
+    };
+
+    const sumLiquidity = (rows: PositionRow[] | undefined) => {
+      let s = 0n;
+      if (!rows) return s;
+      for (const p of rows) {
+        try { s += BigInt(String(p.liquidity)); } catch {}
+      }
+      return s;
+    };
+
+    // If cache is present, fresh (<1h): serve directly unless it's undersized vs requested 'first'
+    if (!forceRevalidate && cached && (Date.now() - cached.ts) < INCREMENTAL_WINDOW_MS && cached.data) {
+      const enough = Array.isArray(cached.positions) ? cached.positions.length >= totalTarget : true;
+      if (enough) {
+        res.setHeader('Cache-Control', 'public, s-maxage=3600, stale-while-revalidate=3600');
+        return res.status(200).json(cached.data);
+      }
+      // else fall through to refresh to fill up to totalTarget
+    }
+
+    // Incremental path: if we have a cache older than 1h (or forced), fetch the head and merge until overlap
+    let positions: PositionRow[] = [];
+    // Incremental update if we have a cache and either forced or older than the incremental window, but not past the hard TTL
+    if (cached && cached.positions && !forceRevalidate && (Date.now() - cached.ts) >= INCREMENTAL_WINDOW_MS && (Date.now() - cached.ts) < TTL_MS) {
+      try {
+        // Fetch head page with backoff; prefer time order
+        let head: PositionRow[] = [];
+        let orderUsed: 'blockTimestamp' | 'createdAtTimestamp' | 'liquidity' = 'liquidity';
+        for (let i = 0; i < BACKOFFS_MS.length; i++) {
+          if (i > 0) await new Promise(r => setTimeout(r, BACKOFFS_MS[i]));
+          const { rows, orderUsed: ou } = await fetchPageSmart(0, Math.min(INCR_PAGE, totalTarget));
+          head = rows;
+          orderUsed = ou;
+          const headKeys = head.slice(0, HEAD_COMPARE).map(makeKey);
+          const cachedHead = (cached.headKeys || []).slice(0, HEAD_COMPARE);
+          const headStableTry = headKeys.length && cachedHead.length && headKeys.every((k, j) => k === cachedHead[j]);
+          if (!headStableTry) break;
+          // else continue backoff attempts
+        }
+        const headKeys = head.slice(0, HEAD_COMPARE).map(makeKey);
+        const cachedHead = (cached.headKeys || []).slice(0, HEAD_COMPARE);
+        const headStable = headKeys.length && cachedHead.length && headKeys.every((k, i) => k === cachedHead[i]);
+        if (headStable) {
+          // No significant change: reuse cached positions
+          positions = cached.positions.slice(0, Math.min(cached.positions.length, totalTarget));
+        } else {
+          // Merge new head with cached body until overlap
+          const existingKeys = new Set<string>(cached.positions.map(makeKey));
+          const merged: PositionRow[] = [];
+          let skip = 0;
+          while (merged.length < totalTarget) {
+            const page = skip === 0
+              ? head
+              : (await fetchPageWithOrder(skip, Math.min(INCR_PAGE, totalTarget - merged.length), orderUsed)).map(p => p);
+            if (!page.length) break;
+            for (const p of page) {
+              const k = makeKey(p);
+              if (!existingKeys.has(k)) {
+                merged.push(p);
+              } else {
+                // hit overlap: append cached tail excluding already merged keys and stop
+                const mergedKeys = new Set<string>(merged.map(makeKey));
+                for (const cp of cached.positions) {
+                  const ck = makeKey(cp);
+                  if (!mergedKeys.has(ck)) merged.push(cp);
+                  if (merged.length >= totalTarget) break;
+                }
+                skip = -1; // signal to break outer loop
+                break;
+              }
+              if (merged.length >= totalTarget) break;
+            }
+            if (skip < 0 || page.length < INCR_PAGE) break;
+            skip += page.length;
+          }
+          // fallback: if still empty (full overlap at head), reuse full cached set; else use head
+          positions = merged.length
+            ? merged.slice(0, totalTarget)
+            : cached.positions.slice(0, Math.min(cached.positions.length, totalTarget));
+          // Ensure chart prioritizes largest liquidity: sort desc by liquidity
+          try { positions.sort((a,b) => (BigInt(b.liquidity) > BigInt(a.liquidity) ? 1 : -1)); } catch {}
+          // update cache core fields
+          const newHeadKeys = positions.slice(0, HEAD_COMPARE).map(makeKey);
+          memCache.set(key, { ts: Date.now(), positions: positions.slice(0, Math.min(positions.length, MAX_KEEP)), headKeys: newHeadKeys, data: cached.data });
+        }
+      } catch {
+        // On failure, serve the old cache data
+        res.setHeader('Cache-Control', 'public, s-maxage=3600, stale-while-revalidate=3600');
+        return res.status(200).json(cached.data);
+      }
+    }
+
+    // Cold path or forced: fetch pages fully up to target
+    if (!positions.length) {
+      if (forceRevalidate) {
+        // Backoff until total liquidity differs vs cached
+        const cachedSum = sumLiquidity(cached?.positions);
+        let settled: PositionRow[] | null = null;
+        for (let i = 0; i < BACKOFFS_MS.length; i++) {
+          if (i > 0) await new Promise(r => setTimeout(r, BACKOFFS_MS[i]));
+          const full = await fetchFullPositions(Math.min(totalTarget, 2000), 100);
+          const cur = sumLiquidity(full.rows);
+          const changed = cachedSum === 0n ? (full.rows.length > 0) : (cur !== cachedSum);
+          if (changed) { settled = full.rows; break; }
+        }
+        positions = (settled || cached?.positions || []).slice(0, totalTarget);
+      } else {
+        const full = await fetchFullPositions(totalTarget, PER_PAGE);
+        positions = full.rows;
+      }
+      // Ensure chart prioritizes largest liquidity: sort desc by liquidity
+      try { positions.sort((a,b) => (BigInt(b.liquidity) > BigInt(a.liquidity) ? 1 : -1)); } catch {}
+      const newHeadKeys = positions.slice(0, HEAD_COMPARE).map(makeKey);
+      memCache.set(key, { ts: Date.now(), positions: positions.slice(0, Math.min(positions.length, MAX_KEEP)), headKeys: newHeadKeys });
     }
 
     // If bucket parameters are provided, compute aggregated bucket depths (server-side)
@@ -122,20 +269,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
 
       const bucketPayload = { success: true, buckets, poolId: apiId };
-      memCache.set(key, { ts: Date.now(), data: bucketPayload });
-      res.setHeader('Cache-Control', 'public, s-maxage=43200, stale-while-revalidate=43200');
+      const existing = memCache.get(key) || { ts: 0 };
+      memCache.set(key, { ts: Date.now(), positions: existing.positions, headKeys: existing.headKeys, data: bucketPayload });
+      // TTL 24h, allow SWR
+      res.setHeader('Cache-Control', 'public, s-maxage=86400, stale-while-revalidate=86400');
       return res.status(200).json(bucketPayload);
     } else {
       // Legacy: return raw positions
-      const payload = {
-        success: true,
-        positions,
-        totalPositions: positions.length,
-        poolId: apiId,
-      };
-      memCache.set(key, { ts: Date.now(), data: payload });
-      // 12h CDN cache with 12h SWR
-      res.setHeader('Cache-Control', 'public, s-maxage=43200, stale-while-revalidate=43200');
+      const payload = { success: true, positions, totalPositions: positions.length, poolId: apiId };
+      const existing = memCache.get(key) || { ts: 0 };
+      memCache.set(key, { ts: Date.now(), positions, headKeys: positions.slice(0, HEAD_COMPARE).map(makeKey), data: payload });
+      // TTL 24h, allow SWR
+      res.setHeader('Cache-Control', 'public, s-maxage=86400, stale-while-revalidate=86400');
       return res.status(200).json(payload);
     }
   } catch (err: any) {
