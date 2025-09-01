@@ -145,7 +145,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
       setShowLoadingSkeleton(true);
       const timer = setTimeout(() => {
         setShowLoadingSkeleton(false);
-      }, 1000); // 1 second delay for debugging
+      }, 1000);
       return () => clearTimeout(timer);
     } else {
       // Immediately hide skeleton when not loading
@@ -178,7 +178,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
         router.push(href);
       }
     } else {
-      console.warn(`No pool configuration found for ${poolInfo.token0Symbol}/${poolInfo.token1Symbol}`);
+
     }
   };
 
@@ -193,16 +193,17 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
     if (!effectiveData || effectiveData.length === 0) {
       return null;
     }
-    
+
     // When data is available, render the full chart preview
     // Straight mapping: no normalization, 30-day window already applied
     const newChartData = effectiveData.map((point, index) => ({
-      name: point.timeLabel,
-      activity: Number(point.volumeTvlRatio) || 0,
-      target: Number(point.emaRatio) || 0,
-      fee: Number(point.dynamicFee) || 0,
+      name: point?.timeLabel || `Point ${index}`,
+      activity: Number(point?.volumeTvlRatio) || 0,
+      target: Number(point?.emaRatio) || 0,
+      fee: Number(point?.dynamicFee) || 0,
     }));
-    
+
+
     return newChartData;
   }, [effectiveData]);
 
@@ -225,11 +226,12 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
     const lastIndex = chartData.length - 1;
     if (hoveredIndex < 0 || hoveredIndex >= lastIndex) return null;
     const hoveredFee = chartData[hoveredIndex]?.fee ?? null;
-    return chartData.map((point, index) => {
+    const result = chartData.map((point, index) => {
       if (index === hoveredIndex) return { ...point, fee: hoveredFee };
       if (index === hoveredIndex + 1) return { ...point, fee: hoveredFee };
       return { ...point, fee: null };
     });
+    return result;
   }, [chartData, hoveredIndex]);
 
   // Footer info: show only on hover
@@ -238,7 +240,8 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
     const clampedIdx = Math.max(0, Math.min(hoveredIndex, chartData.length - 1));
     const point = chartData[clampedIdx];
     if (!point) return null;
-    const pointDate = new Date(String(point.name));
+    const pointName = point.name || `Point ${clampedIdx}`;
+    const pointDate = new Date(String(pointName));
     const today = new Date();
     const daysAgo = Math.floor((today.getTime() - pointDate.getTime()) / (1000 * 60 * 60 * 24));
     const daysAgoLabel = daysAgo === 0 ? "Today" : `${daysAgo}d ago`;
@@ -408,7 +411,23 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
           </div>
         </div>
         <div className="px-2 pb-2 pt-0 h-[120px] relative">
-          <div className="w-full h-full cursor-pointer [&_.recharts-wrapper]:outline-none [&_.recharts-wrapper]:focus:outline-none [&_.recharts-surface]:outline-none">
+          <div
+            className="w-full h-full cursor-pointer [&_.recharts-wrapper]:outline-none [&_.recharts-wrapper]:focus:outline-none [&_.recharts-surface]:outline-none"
+            onMouseMove={(e) => {
+              // Calculate which data point based on mouse position
+              if (chartData && chartData.length > 0) {
+                const rect = e.currentTarget.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const percentage = x / rect.width;
+                const index = Math.floor(percentage * chartData.length);
+                const clampedIndex = Math.max(0, Math.min(index, chartData.length - 1));
+                setHoveredIndex(clampedIndex);
+              }
+            }}
+            onMouseLeave={() => {
+              setHoveredIndex(null);
+            }}
+          >
             {showLoadingSkeleton && !hasData ? (
               <div className="w-full h-[92px] bg-muted/40 rounded animate-pulse mt-2"></div>
             ) : (
@@ -418,7 +437,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
                   margin={{ top: 5, right: 8, bottom: 5, left: 8 }}
                   style={{ cursor: 'pointer' }}
                   onMouseMove={(e: any) => {
-                    if (e && e.activeTooltipIndex !== undefined) {
+                    if (e && e.activeTooltipIndex !== undefined && typeof e.activeTooltipIndex === 'number') {
                       setHoveredIndex(e.activeTooltipIndex);
                     }
                   }}
@@ -446,15 +465,15 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
                   </defs>
                   <Tooltip
                     content={() => null}
-                    cursor={false}
+                    cursor={{ stroke: 'transparent', strokeWidth: 0 }}
                   />
-                  {hoveredIndex !== null && chartData && hoveredIndex < chartData.length - 1 && (
+                  {hoveredIndex !== null && chartData && hoveredIndex >= 0 && hoveredIndex < chartData.length - 1 && (
                     <ReferenceArea
-                      x1={chartData[hoveredIndex].name}
-                      x2={chartData[hoveredIndex + 1].name}
+                      x1={chartData[hoveredIndex]?.name}
+                      x2={chartData[hoveredIndex + 1]?.name}
                       yAxisId="right"
                       y1={(feeYAxisDomain as any)[0] ?? 'auto'}
-                      y2={chartData[hoveredIndex].fee}
+                      y2={chartData[hoveredIndex]?.fee}
                       fill="url(#hoverFeeShade)"
                       strokeOpacity={0}
                     />

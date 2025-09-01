@@ -39,7 +39,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
-    const { poolId, first, tickLower, tickUpper, tickSpacing, bucketCount } = req.body ?? {};
+    const { poolId, first, tickLower, tickUpper, tickSpacing, bucketCount, inverted } = req.body ?? {};
     if (!poolId || typeof poolId !== 'string') {
       return res.status(400).json({ error: 'Missing poolId in body' });
     }
@@ -47,7 +47,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const totalTarget = Number(first) && Number(first) > 0 ? Math.min(Number(first), 10000) : 2000;
 
     const apiId = getPoolSubgraphId(poolId) || poolId;
-    const key = cacheKey(apiId, totalTarget);
+    // Determine if this request asks for bucket aggregation; used to scope cache keys
+    const hasBucketParamsEarly = [tickLower, tickUpper, tickSpacing].every((v) => v !== undefined && v !== null);
+    const key = cacheKey(apiId, totalTarget) + (hasBucketParamsEarly
+      ? `:b:${String(tickLower)}:${String(tickUpper)}:${String(tickSpacing)}:${String(bucketCount ?? '')}`
+      : ':p');
 
     const forceRevalidate = String(req.headers['x-internal-revalidate'] || '').trim() === '1' || String((req.query as any)?.revalidate || '').trim() === '1';
     const cached = memCache.get(key);
@@ -223,7 +227,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     // If bucket parameters are provided, compute aggregated bucket depths (server-side)
-    const hasBucketParams = [tickLower, tickUpper, tickSpacing].every((v) => v !== undefined && v !== null);
+    const hasBucketParams = hasBucketParamsEarly;
     if (hasBucketParams) {
       const lo = Math.floor(Number(tickLower));
       const hi = Math.ceil(Number(tickUpper));
@@ -243,32 +247,129 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const alignedBucketSize = Math.ceil(targetBucketSize / spacing) * spacing;
 
       const buckets: Array<{ tickLower: number; tickUpper: number; midTick: number; liquidityToken0: string }> = [];
-      let cursor = lo;
+      
+      // Align the starting point to tick spacing for consistent bucket boundaries
+      const alignedStart = Math.floor(lo / spacing) * spacing;
+      let cursor = alignedStart;
+      
       while (cursor < hi) {
-        const upper = Math.min(cursor + alignedBucketSize, hi);
-        buckets.push({ tickLower: cursor, tickUpper: upper, midTick: Math.floor((cursor + upper) / 2), liquidityToken0: '0' });
+        const upper = cursor + alignedBucketSize;
+        // Only include buckets that have some overlap with the requested range
+        if (upper > lo && cursor < hi) {
+          const bucketLower = Math.max(cursor, lo);
+          const bucketUpper = Math.min(upper, hi);
+          buckets.push({ 
+            tickLower: bucketLower, 
+            tickUpper: bucketUpper, 
+            midTick: Math.floor((bucketLower + bucketUpper) / 2), 
+            liquidityToken0: '0' 
+          });
+        }
         cursor = upper;
       }
 
-      // Aggregate by summing raw liquidity across overlapping buckets (as a depth proxy)
-      // This avoids requiring sqrtPrice/decimals on the server.
+      // Build proper step function: compute net liquidity changes at each tick boundary
+      const tickEvents = new Map<number, bigint>();
+      
       for (const pos of positions) {
         const pLo = Number(pos.tickLower);
         const pHi = Number(pos.tickUpper);
         if (!isFinite(pLo) || !isFinite(pHi) || pLo >= pHi) continue;
-        const L = Number(pos.liquidity);
-        if (!isFinite(L) || L <= 0) continue;
-        for (let i = 0; i < buckets.length; i++) {
-          const b = buckets[i];
-          const overlap = !(pHi <= b.tickLower || pLo >= b.tickUpper);
-          if (overlap) {
-            const cur = Number(b.liquidityToken0) || 0;
-            b.liquidityToken0 = (cur + L).toString();
+        let L: bigint = 0n;
+        try { L = BigInt(String(pos.liquidity)); } catch { L = 0n; }
+        if (L <= 0n) continue;
+        
+        // Add liquidity at lower tick, remove at upper tick
+        const currentLower = tickEvents.get(pLo) || 0n;
+        const currentUpper = tickEvents.get(pHi) || 0n;
+        tickEvents.set(pLo, currentLower + L);
+        tickEvents.set(pHi, currentUpper - L);
+      }
+      
+      // Sort all tick events and build cumulative liquidity
+      const sortedTicks = Array.from(tickEvents.keys()).sort((a, b) => a - b);
+      const tickToLiquidity = new Map<number, bigint>();
+      let cumulativeLiquidity = 0n;
+      
+      for (const tick of sortedTicks) {
+        cumulativeLiquidity += tickEvents.get(tick) || 0n;
+        tickToLiquidity.set(tick, cumulativeLiquidity);
+      }
+
+
+      
+      // Sample the step function at bucket start (tickLower) to capture active liquidity for the entire bucket range
+      for (const bucket of buckets) {
+        const sampleTick = bucket.tickLower;
+        
+        // Find the active liquidity at bucket start by looking at the last tick event <= sampleTick
+        let activeLiquidity = 0n;
+        for (let i = sortedTicks.length - 1; i >= 0; i--) {
+          if (sortedTicks[i] <= sampleTick) {
+            activeLiquidity = tickToLiquidity.get(sortedTicks[i]) || 0n;
+            break;
           }
+        }
+        
+        bucket.liquidityToken0 = activeLiquidity < 0n ? "0" : activeLiquidity.toString();
+      }
+      
+      // Debug: Check if the massive position is dominating
+      const debugRequested = String(req.headers['x-debug-depth'] || '').trim() === '1' || String((req.query as any)?.debug || '').trim() === '1';
+      if (debugRequested) {
+        const massivePositions = positions.filter(p => Math.abs(Number(p.tickUpper) - Number(p.tickLower)) > 1000000);
+        console.log('[get-bucket-depths][debug] Found', massivePositions.length, 'massive positions (>1M tick range)');
+        if (massivePositions.length > 0) {
+          console.log('[get-bucket-depths][debug] Largest position:', {
+            tickLower: massivePositions[0].tickLower,
+            tickUpper: massivePositions[0].tickUpper,
+            liquidity: massivePositions[0].liquidity,
+            range: Number(massivePositions[0].tickUpper) - Number(massivePositions[0].tickLower)
+          });
         }
       }
 
-      const bucketPayload = { success: true, buckets, poolId: apiId };
+      // Optional debug: log positions and per-bucket net changes when requested
+      let debugInfo: any = undefined;
+      if (debugRequested) {
+        try {
+          const existing = memCache.get(key)?.data as any;
+          const prevBuckets = Array.isArray(existing?.buckets) ? existing.buckets : [];
+          const prevByMid = new Map<number, bigint>();
+          for (const pb of prevBuckets) {
+            try { prevByMid.set(Number(pb?.midTick), BigInt(String(pb?.liquidityToken0 || '0'))); } catch {}
+          }
+          const deltas: Array<{ midTick: number; before: string; after: string; delta: string }> = [];
+          for (const b of buckets) {
+            const before = prevByMid.get(b.midTick) ?? 0n;
+            let after: bigint = 0n;
+            try { after = BigInt(b.liquidityToken0); } catch { after = 0n; }
+            deltas.push({ midTick: b.midTick, before: before.toString(), after: after.toString(), delta: (after - before).toString() });
+          }
+          // Sample a few positions to avoid log bloat
+          const samplePositions = positions.slice(0, 20);
+          
+          // Debug step function: sample some tick events in our range
+          const rangeEvents = Array.from(tickEvents.entries())
+            .filter(([tick]) => tick >= lo && tick <= hi)
+            .sort(([a], [b]) => a - b)
+            .slice(0, 20);
+          
+          debugInfo = { 
+            samplePositions, 
+            deltasSample: deltas.slice(0, 50),
+            tickEventsInRange: rangeEvents.map(([tick, change]) => ({ tick, change: change.toString() })),
+            totalTickEvents: tickEvents.size,
+            rangeStats: { lo, hi, spacing, bucketCount: buckets.length }
+          };
+          // Emit to server logs as well
+          console.log('[get-bucket-depths][debug] samplePositions count=', samplePositions.length);
+          console.log('[get-bucket-depths][debug] deltasSample count=', Math.min(deltas.length, 50));
+          console.log('[get-bucket-depths][debug] tickEvents total=', tickEvents.size, 'in range=', rangeEvents.length);
+        } catch {}
+      }
+
+      const bucketPayload = { success: true, buckets, poolId: apiId, ...(debugInfo ? { debug: debugInfo } : {}) };
       const existing = memCache.get(key) || { ts: 0 };
       memCache.set(key, { ts: Date.now(), positions: existing.positions, headKeys: existing.headKeys, data: bucketPayload });
       // TTL 24h, allow SWR

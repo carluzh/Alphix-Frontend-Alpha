@@ -346,30 +346,156 @@ export async function loadUserPositionIds(ownerAddress: string): Promise<string[
   if (ongoing) return ongoing;
 
   const promise = (async () => {
-    const res = await fetch(`/api/liquidity/get-positions?ownerAddress=${ownerAddress}&idsOnly=1&withCreatedAt=1` as any, { cache: 'no-store' as any } as any);
-    if (!res.ok) return [] as string[];
-    const data = await res.json();
-    const ids: string[] = [];
-    const itemsPersist: Array<{ id: string; createdAt?: number; lastTimestamp?: number }> = [];
-    if (Array.isArray(data)) {
-      for (const item of data) {
-        try {
-          if (!item) continue;
-          const idStr = typeof item.id === 'string' ? item.id : String((item as any).id || '');
-          if (idStr) {
-            ids.push(idStr);
-            itemsPersist.push({ id: idStr, createdAt: Number((item as any)?.createdAt || 0), lastTimestamp: Number((item as any)?.lastTimestamp || 0) });
-          }
-        } catch {}
-      }
-    }
-    setToCache(key, ids);
+    // Check if a position was recently created (within last 5 minutes)
+    const recentPositionHintKey = `recentPositionCreated:${ownerAddress.toLowerCase()}`;
+    let expectedNewPositionId: string | null = null;
+    let recentCreationTime = 0;
+    let expectNewPosition = false;
+
     try {
       if (typeof window !== 'undefined') {
-        window.localStorage.setItem(key, JSON.stringify({ items: itemsPersist, ts: Date.now() }));
+        const hint = window.localStorage.getItem(recentPositionHintKey);
+        if (hint) {
+          const parsed = JSON.parse(hint);
+          expectedNewPositionId = parsed.positionId;
+          recentCreationTime = parsed.timestamp || 0;
+          expectNewPosition = parsed.action === 'create';
+          // Clean up old hints (older than 10 minutes)
+          if (Date.now() - recentCreationTime > 10 * 60 * 1000) {
+            window.localStorage.removeItem(recentPositionHintKey);
+            expectedNewPositionId = null;
+            recentCreationTime = 0;
+            expectNewPosition = false;
+          }
+        }
       }
     } catch {}
-    return ids;
+
+    // Get previously cached positions to compare
+    let previousPositionCount = 0;
+    try {
+      const previousCached = getFromCacheWithTtl<string[]>(key, IDS_TTL_MS * 2); // Look further back
+      if (previousCached) {
+        previousPositionCount = previousCached.length;
+      }
+    } catch {}
+
+    let attempts = (expectedNewPositionId || expectNewPosition) ? 8 : 1; // Increased attempts for new positions
+    let lastResult: string[] = [];
+    let foundRecentPosition = false; // Track across all attempts
+    let lastValidResult: string[] = []; // Track last successful response
+    // Persist the most recent items with server-provided timestamps (seconds)
+    let itemsPersistForPersist: Array<{ id: string; createdAt?: number; lastTimestamp?: number }> = [];
+
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      // Add cache busting for new position detection
+      const bustParam = expectNewPosition ? `&_t=${Date.now()}` : '';
+      const res = await fetch(`/api/liquidity/get-positions?ownerAddress=${ownerAddress}&idsOnly=1&withCreatedAt=1${bustParam}` as any, { cache: 'no-store' as any } as any);
+      if (!res.ok) {
+        // Don't fail immediately - try more attempts for critical new position detection
+        if (expectNewPosition && attempt < attempts - 1) {
+          console.warn(`[Cache] API call failed on attempt ${attempt + 1}, retrying...`);
+          continue;
+        }
+        // Return last valid result if available, otherwise empty array
+        return lastValidResult.length > 0 ? lastValidResult : [] as string[];
+      }
+
+      const data = await res.json();
+      const ids: string[] = [];
+      const itemsPersist: Array<{ id: string; createdAt?: number; lastTimestamp?: number }> = [];
+
+      if (Array.isArray(data)) {
+        for (const item of data) {
+          try {
+            if (!item) continue;
+            // More robust ID extraction to handle different formats
+            let idStr = '';
+            if (typeof item.id === 'string') {
+              idStr = item.id;
+            } else if (typeof item.id === 'number') {
+              idStr = item.id.toString();
+            } else if (typeof item.id === 'bigint') {
+              idStr = item.id.toString();
+            } else if (item.id && typeof item.id === 'object' && 'toString' in item.id) {
+              idStr = item.id.toString();
+            } else {
+              idStr = String((item as any).id || '');
+            }
+            
+            if (idStr && idStr !== '0' && idStr !== 'undefined' && idStr !== 'null') {
+              ids.push(idStr);
+              itemsPersist.push({ 
+                id: idStr, 
+                createdAt: Number((item as any)?.createdAt || 0), 
+                lastTimestamp: Number((item as any)?.lastTimestamp || 0) 
+              });
+            }
+          } catch (error) {
+            console.warn('[Cache] Failed to process position item:', item, error);
+          }
+        }
+      }
+
+      lastResult = ids;
+      lastValidResult = [...ids]; // Store as last valid response
+      itemsPersistForPersist = [...itemsPersist];
+
+      // Check if we have the expected conditions for proceeding with caching
+      let shouldProceed = true;
+
+      if (expectedNewPositionId && !ids.includes(expectedNewPositionId)) {
+        // Specific position ID expected but not found
+        shouldProceed = false;
+      } else if (expectNewPosition) {
+        // Look for positions created since the hint was set (with 30s buffer for transaction time)
+        const now = Date.now() / 1000;
+        const hintBuffer = 30; // seconds
+        const recentPositions = itemsPersist.filter(item => 
+          item.createdAt && (item.createdAt >= (recentCreationTime / 1000) - hintBuffer)
+        );
+        
+        if (recentPositions.length > 0) {
+          foundRecentPosition = true;
+          console.log(`[Cache] Found ${recentPositions.length} position(s) created since hint was set`);
+        } else {
+          shouldProceed = false;
+        }
+      }
+
+      if (!shouldProceed && attempt < attempts - 1) {
+        // Conditions not met, wait and retry with increasing delays
+        const delay = Math.min(1500 + (attempt * 800), 5000); // 1.5s, 2.3s, 3.1s, 3.9s, 4.7s, 5s (capped)
+        console.log(`[Cache] Waiting ${delay}ms for new position to be indexed... attempt ${attempt + 1}/${attempts}`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      } else {
+        // Conditions met or this is the last attempt - proceed with caching
+        if (foundRecentPosition || expectedNewPositionId) {
+          console.log(`[Cache] Proceeding with caching after ${attempt + 1} attempts`);
+        }
+        break;
+      }
+    }
+
+    // Cache the final result
+    setToCache(key, lastResult);
+    try {
+      if (typeof window !== 'undefined') {
+        // Prefer server-provided createdAt/lastTimestamp (seconds). Fallback to hint when unavailable
+        const toStore = (itemsPersistForPersist.length > 0
+          ? itemsPersistForPersist
+          : lastResult.map(id => ({ id, createdAt: Math.floor(recentCreationTime / 1000), lastTimestamp: Math.floor(Date.now() / 1000) }))
+        );
+        window.localStorage.setItem(key, JSON.stringify({ items: toStore, ts: Date.now() }));
+        // Clean up the hint if we successfully found the new position(s)
+        if ((expectedNewPositionId && lastResult.includes(expectedNewPositionId)) ||
+            foundRecentPosition) {
+          window.localStorage.removeItem(recentPositionHintKey);
+        }
+      }
+    } catch {}
+    return lastResult;
   })();
 
   return setOngoingRequest(key, promise);
@@ -469,11 +595,14 @@ export async function derivePositionsFromIds(ownerAddress: string, tokenIds: Arr
         tickUpper: details.tickUpper,
         liquidityRaw: details.liquidity.toString(),
         ageSeconds: (() => {
-          const created = createdAtMap.get(String(nftTokenId)) || 0;
+          let created = createdAtMap.get(String(nftTokenId)) || 0;
+          // Normalize potential ms to seconds
+          if (created > 1e12) created = Math.floor(created / 1000);
           return created > 0 ? Math.max(0, Math.floor(Date.now()/1000) - created) : 0;
         })(),
         blockTimestamp: (() => {
-          const created = createdAtMap.get(String(nftTokenId)) || 0;
+          let created = createdAtMap.get(String(nftTokenId)) || 0;
+          if (created > 1e12) created = Math.floor(created / 1000);
           return String(created || '0');
         })(),
         // last modified removed from UI; keep internal maps harmlessly
@@ -484,4 +613,32 @@ export async function derivePositionsFromIds(ownerAddress: string, tokenIds: Arr
     }
   }
   return out;
+}
+
+// ---- Subgraph head waiter ----
+export async function waitForSubgraphBlock(targetBlock: number, opts?: { timeoutMs?: number; minWaitMs?: number; maxIntervalMs?: number }): Promise<boolean> {
+  const timeoutMs = opts?.timeoutMs ?? 15000;
+  const minWaitMs = opts?.minWaitMs ?? 800;
+  const maxIntervalMs = opts?.maxIntervalMs ?? 1200;
+
+  const start = Date.now();
+  let interval = 250;
+  const jitter = () => Math.floor(Math.random() * 80);
+
+  try {
+    // small initial wait to smooth indexing jitter
+    await new Promise((r) => setTimeout(r, minWaitMs));
+    for (;;) {
+      if (Date.now() - start > timeoutMs) return false;
+      const resp = await fetch('/api/liquidity/subgraph-head', { cache: 'no-store' as any } as any);
+      if (resp.ok) {
+        const { subgraphHead } = await resp.json();
+        if (typeof subgraphHead === 'number' && subgraphHead >= targetBlock) return true;
+      }
+      await new Promise((r) => setTimeout(r, Math.min(maxIntervalMs, interval) + jitter()));
+      interval = Math.min(maxIntervalMs, Math.floor(interval * 1.6));
+    }
+  } catch {
+    return false;
+  }
 }

@@ -117,7 +117,11 @@ export function useActivity(ownerAddress: string, first: number = 20) {
   return useQuery({
     queryKey: qk.activity(ownerAddress || '', first),
     queryFn: async () => {
-      const resp = await fetch(`/api/portfolio/get-activity?owner=${encodeURIComponent(ownerAddress)}&first=${first}`, { cache: 'no-store' as any } as any)
+      const resp = await fetch('/api/portfolio/get-activity', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ owner: ownerAddress, first }),
+      } as any)
       if (!resp.ok) throw new Error('Failed to load activity')
       return resp.json()
     },

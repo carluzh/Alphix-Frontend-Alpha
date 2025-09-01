@@ -85,6 +85,8 @@ function useLoadPhases(readiness: Readiness) {
     if (readiness.core || readiness.prices) {
       targetPhase = Math.max(targetPhase, 1) as 0 | 1 | 2 | 3 | 4; // at least show layout
     }
+    
+
 
     // Only advance phases, never regress
     if (targetPhase > phases.phase) {
@@ -105,6 +107,16 @@ function useLoadPhases(readiness: Readiness) {
         table: targetPhase < 3,
         charts: targetPhase < 4,
         actions: targetPhase < 2,
+      });
+    }
+    
+    // Always clear all skeletons immediately when phase 4 is reached, regardless of timing
+    if (targetPhase >= 4) {
+      setShowSkeletonFor({
+        header: false,
+        table: false,
+        charts: false,
+        actions: false,
       });
     }
   }, [readiness, phases.phase, phases.startedAt]);
@@ -337,6 +349,7 @@ function usePortfolioData(refreshKey: number = 0, userPositionsData?: any[], pri
 
     const fetchPortfolioData = async (positionsData: any[], priceData: any) => {
       try {
+
         setPortfolioData(prev => ({ ...prev, isLoading: true, error: undefined }));
 
         // 1. Use passed hook data for user positions
@@ -447,7 +460,7 @@ function usePortfolioData(refreshKey: number = 0, userPositionsData?: any[], pri
     };
 
     fetchPortfolioData(userPositionsData || [], pricesData || {});
-  }, [isConnected, accountAddress, refreshKey]);
+  }, [isConnected, accountAddress, refreshKey, userPositionsData, pricesData]);
 
   return portfolioData;
 }
@@ -677,6 +690,9 @@ function usePortfolio(refreshKey: number = 0, userPositionsData?: any[], pricesD
       }
     });
     const isEmptyPortfolio = !portfolioData.isLoading && !isLoadingPositions && !isLoadingPoolStates && activePositions.length === 0;
+    
+
+    
     return {
       core: !isLoadingPositions && !portfolioData.isLoading && !isLoadingPoolStates,
       prices: isEmptyPortfolio || Object.keys(portfolioData.priceMap).length > 0,
@@ -2433,6 +2449,8 @@ export default function PortfolioPage() {
   const forceHideLabels = (!isConnected || activePositions.length === 0) && portfolioData.tokenBalances.length === 0;
   // Labels visibility control: hide only when not connected OR no positions AND no token balances
   const hideCompositionLabelsFlag = (!isConnected || activePositions.length === 0) && portfolioData.tokenBalances.length === 0;
+
+
   // Show skeleton during loading, empty state only after data is loaded
   if (showSkeletonFor.header || showSkeletonFor.table) {
     return (

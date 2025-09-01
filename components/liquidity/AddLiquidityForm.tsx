@@ -55,6 +55,8 @@ import { Token } from '@uniswap/sdk-core';
 import { Pool as V4PoolSDK, Position as V4PositionSDK } from "@uniswap/v4-sdk";
 import JSBI from "jsbi";
 import poolsConfig from "../../config/pools.json";
+import { useAllPrices } from "@/components/data/hooks";
+import { formatUSD } from "@/lib/format";
 
 // Utility functions
 const getTokenIcon = (symbol?: string) => {
@@ -95,7 +97,7 @@ function debounce<F extends (...args: any[]) => any>(func: F, waitFor: number) {
 // Chart data interfaces - now handled in InteractiveRangeChart
 
 export interface AddLiquidityFormProps {
-  onLiquidityAdded: () => void; 
+  onLiquidityAdded: (token0Symbol?: string, token1Symbol?: string) => void; 
   selectedPoolId?: string;
   sdkMinTick: number;
   sdkMaxTick: number;
@@ -212,6 +214,30 @@ export function AddLiquidityForm({
   const [customXAxisTicks, setCustomXAxisTicks] = useState<CustomAxisLabel[]>([]);
   
   const { address: accountAddress, chainId, isConnected } = useAccount();
+  const { data: allPrices } = useAllPrices();
+
+  // Map any token symbol (e.g., aUSDC, aETH) to a USD price
+  const getUSDPriceForSymbol = useCallback((symbol?: string): number => {
+    if (!symbol) return 0;
+    const s = symbol.toUpperCase();
+    if (s.includes('BTC')) return allPrices?.BTC ?? 0;
+    if (s.includes('ETH')) return allPrices?.ETH ?? 0;
+    if (s.includes('USDC')) return allPrices?.USDC ?? 1;
+    if (s.includes('USDT')) return allPrices?.USDT ?? 1;
+    return 0;
+  }, [allPrices]);
+
+  // Parse displayed token amount strings (handles "< 0.0001" and commas)
+  const parseDisplayAmount = useCallback((value?: string): number => {
+    if (!value) return 0;
+    const trimmed = value.trim();
+    if (trimmed.startsWith('<')) {
+      const approx = parseFloat(trimmed.replace('<', '').trim().replace(/,/g, ''));
+      return Number.isFinite(approx) ? approx : 0;
+    }
+    const n = parseFloat(trimmed.replace(/,/g, ''));
+    return Number.isFinite(n) ? n : 0;
+  }, []);
   
   // Track previous calculation dependencies
   const prevCalculationDeps = useRef({
@@ -326,13 +352,8 @@ export function AddLiquidityForm({
     return inverse > currentPriceNum;
   }, [currentPrice]);
 
-  // Inversion state based on current price
-  const isInverted = useMemo(() => {
-    if (!currentPrice) return false;
-    const v = parseFloat(currentPrice);
-    if (!isFinite(v) || v <= 0) return false;
-    return 1 / v > v;
-  }, [currentPrice]);
+  // Inversion state based on current price (same as shouldFlipDenomination for consistency)
+  const isInverted = useMemo(() => shouldFlipDenomination, [shouldFlipDenomination]);
 
   // Keep denomination aligned with inversion (but freeze while editing)
   useEffect(() => {
@@ -814,11 +835,12 @@ export function AddLiquidityForm({
 
   // Helper function to convert price to nearest valid tick
   const convertPriceToValidTick = useCallback((priceStr: string, isMaxPrice: boolean): number | null => {
-    const numericPrice = parseFloat(priceStr);
-    const isInfinityInput = priceStr.trim().toLowerCase() === "∞" || priceStr.trim().toLowerCase() === "infinity" || priceStr.trim().toLowerCase() === "infinite";
+    const normalizedStr = (priceStr || '').replace(/[\s,]/g, '');
+    const numericPrice = parseFloat(normalizedStr);
+    const isInfinityInput = normalizedStr.trim().toLowerCase() === "∞" || normalizedStr.trim().toLowerCase() === "infinity" || normalizedStr.trim().toLowerCase() === "infinite";
 
     // Handle empty or invalid input
-    if (!priceStr.trim() || (isNaN(numericPrice) && !isInfinityInput)) {
+    if (!normalizedStr.trim() || (isNaN(numericPrice) && !isInfinityInput)) {
       return null;
     }
 
@@ -884,25 +906,33 @@ export function AddLiquidityForm({
     let newTickLower = parseInt(tickLower);
     let newTickUpper = parseInt(tickUpper);
     
-    // Map editing sides to actual ticks based on displayed left/right (inversion-aware)
-    // Under inversion, left should update upper and right should update lower
-    const editingMinMapsTo = isInverted ? 'upper' : 'lower';
-    const editingMaxMapsTo = isInverted ? 'lower' : 'upper';
-
-    // Process min price input for the correct underlying tick
+    // Always map 'min' to lower price display and 'max' to higher price display
+    // The convertPriceToValidTick function handles the inversion internally
+    
+    // Process min price input (always for the lower displayed price)
     if (editingMinPrice !== minPriceInputString) {
       const newTick = convertPriceToValidTick(editingMinPrice, false);
       if (newTick !== null) {
-        if (editingMinMapsTo === 'lower') newTickLower = newTick; else newTickUpper = newTick;
+        // When inverted, the "min" display price corresponds to tickUpper
+        if (isInverted) {
+          newTickUpper = newTick;
+        } else {
+          newTickLower = newTick;
+        }
         hasChanges = true;
       }
     }
     
-    // Process max price input for the correct underlying tick
+    // Process max price input (always for the higher displayed price)
     if (editingMaxPrice !== maxPriceInputString) {
       const newTick = convertPriceToValidTick(editingMaxPrice, true);
       if (newTick !== null) {
-        if (editingMaxMapsTo === 'upper') newTickUpper = newTick; else newTickLower = newTick;
+        // When inverted, the "max" display price corresponds to tickLower
+        if (isInverted) {
+          newTickLower = newTick;
+        } else {
+          newTickUpper = newTick;
+        }
         hasChanges = true;
       }
     }
@@ -936,10 +966,13 @@ export function AddLiquidityForm({
   const handleClickToEditPrice = (side: 'min' | 'max') => {
     setShowPresetSelector(false);
     setEditingSide(side);
+    const labels = computeRangeLabels();
     if (side === 'min') {
-      setEditingMinPrice(minPriceInputString);
+      const seed = labels ? labels.left : (minPriceInputString || "");
+      setEditingMinPrice(seed.replace(/,/g, ''));
     } else {
-      setEditingMaxPrice(maxPriceInputString);
+      const seed = labels ? labels.right : (maxPriceInputString || "");
+      setEditingMaxPrice(seed.replace(/,/g, ''));
     }
   };
 
@@ -1970,11 +2003,14 @@ export function AddLiquidityForm({
     });
     
     if (tickLower === sdkMinTick.toString() && tickUpper === sdkMaxTick.toString()) {
-      return isInverted ? `∞ - 0.00` : `0.00 - ∞`;
+      return `0.00 - ∞`;
     }
 
-    // When inverted, flip the order visually: right is lower, left is upper
-    return isInverted ? `${formattedUpper} - ${formattedLower}` : `${formattedLower} - ${formattedUpper}`;
+    // Always display ascending by price (left = lower price, right = higher price)
+    const lowFirst = priceAtLowerTick <= priceAtUpperTick;
+    const leftVal = lowFirst ? formattedLower : formattedUpper;
+    const rightVal = lowFirst ? formattedUpper : formattedLower;
+    return `${leftVal} - ${rightVal}`;
   }, [currentPoolTick, currentPrice, tickLower, tickUpper, sdkMinTick, sdkMaxTick, token0Symbol, token1Symbol]);
 
   // Compute precise left/right labels to mirror chart axis (ascending by price)
@@ -2020,10 +2056,8 @@ export function AddLiquidityForm({
       return v.toLocaleString('en-US', { maximumFractionDigits: decimals, minimumFractionDigits: Math.min(2, decimals) });
     };
 
-    // When inverted, flip the visual order
-    return isInverted
-      ? { left: formatVal(points[1].price), right: formatVal(points[0].price) }
-      : { left: formatVal(points[0].price), right: formatVal(points[1].price) };
+    // Always display ascending by price: left = lower, right = higher
+    return { left: formatVal(points[0].price), right: formatVal(points[1].price) };
   }, [currentPoolTick, currentPrice, tickLower, tickUpper, token0Symbol, token1Symbol, sdkMinTick, sdkMaxTick, isInverted]);
 
   // const { open } = useWeb3Modal();
@@ -2104,20 +2138,28 @@ export function AddLiquidityForm({
                         id="amount0"
                         placeholder="0.0"
                         value={amount0}
-                        onChange={(e) => { 
+                        onChange={(e) => {
                           const newValue = e.target.value.replace(',', '.'); // Ensure decimal separator is always period
-                          if (preparedTxData) { resetTransactionState(); } 
-                          setAmount0(newValue); 
-                          setActiveInputSide('amount0'); 
-                        }} 
+                          if (preparedTxData) { resetTransactionState(); }
+                          setAmount0(newValue);
+                          setActiveInputSide('amount0');
+                        }}
                         onFocus={() => setIsAmount0Focused(true)}
                         onBlur={() => setIsAmount0Focused(false)}
                         type="text"
                         pattern="[0-9]*\.?[0-9]*"
                         inputMode="decimal"
+                        autoComplete="off"
                         disabled={isWorking || (isCalculating && activeInputSide === 'amount1')}
                         className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
                       />
+                      <div className="text-right text-xs text-muted-foreground">
+                        {(() => {
+                          const usdPrice = getUSDPriceForSymbol(token0Symbol);
+                          const numeric = parseDisplayAmount(amount0);
+                          return formatUSD(numeric * usdPrice);
+                        })()}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -2161,20 +2203,28 @@ export function AddLiquidityForm({
                         id="amount1"
                         placeholder="0.0"
                         value={amount1}
-                        onChange={(e) => { 
+                        onChange={(e) => {
                           const newValue = e.target.value.replace(',', '.'); // Ensure decimal separator is always period
-                          if (preparedTxData) { resetTransactionState(); } 
-                          setAmount1(newValue); 
-                          setActiveInputSide('amount1'); 
-                        }} 
+                          if (preparedTxData) { resetTransactionState(); }
+                          setAmount1(newValue);
+                          setActiveInputSide('amount1');
+                        }}
                         onFocus={() => setIsAmount1Focused(true)}
                         onBlur={() => setIsAmount1Focused(false)}
                         type="text"
                         pattern="[0-9]*\.?[0-9]*"
                         inputMode="decimal"
+                        autoComplete="off"
                         disabled={isWorking || (isCalculating && activeInputSide === 'amount0')}
                         className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
                       />
+                      <div className="text-right text-xs text-muted-foreground">
+                        {(() => {
+                          const usdPrice = getUSDPriceForSymbol(token1Symbol);
+                          const numeric = parseDisplayAmount(amount1);
+                          return formatUSD(numeric * usdPrice);
+                        })()}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -2260,10 +2310,11 @@ export function AddLiquidityForm({
                                   }}
                                   className={cn(
                                     "w-16 h-auto p-0 text-xs text-center bg-transparent border-0 appearance-none focus:outline-none focus:ring-0 focus-visible:ring-offset-0 focus-visible:ring-0 font-sans transition-colors",
-                                    convertPriceToValidTick(editingMinPrice, false) !== null 
-                                      ? "text-white" 
+                                    convertPriceToValidTick(editingMinPrice, false) !== null
+                                      ? "text-white"
                                       : "text-muted-foreground"
                                   )}
+                                  autoComplete="off"
                                   autoFocus
                                 />
                               ) : (
@@ -2289,10 +2340,11 @@ export function AddLiquidityForm({
                                   }}
                                   className={cn(
                                     "w-16 h-auto p-0 text-xs text-center bg-transparent border-0 appearance-none focus:outline-none focus:ring-0 focus-visible:ring-offset-0 focus-visible:ring-0 font-sans transition-colors",
-                                    convertPriceToValidTick(editingMaxPrice, true) !== null 
-                                      ? "text-white" 
+                                    convertPriceToValidTick(editingMaxPrice, true) !== null
+                                      ? "text-white"
                                       : "text-muted-foreground"
                                   )}
+                                  autoComplete="off"
                                   autoFocus
                                 />
                               ) : (
@@ -2326,7 +2378,7 @@ export function AddLiquidityForm({
                                       </span>
                                     </TooltipTrigger>
                                     <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
-                                      Current Price
+                                      Current Pool Price
                                     </TooltipContent>
                                   </Tooltip>
                                 </TooltipProvider>
@@ -2374,7 +2426,7 @@ export function AddLiquidityForm({
                                       </span>
                                     </TooltipTrigger>
                                     <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
-                                      Current Price
+                                      Current Pool Price
                                     </TooltipContent>
                                   </Tooltip>
                                 </TooltipProvider>

@@ -2,8 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { ResponsiveContainer, ComposedChart, XAxis, YAxis, Area, ReferenceLine, ReferenceArea, Tooltip as RechartsTooltip } from "recharts";
-import { ChevronLeft, ChevronRight, PlusIcon, MinusIcon, CrosshairIcon } from "lucide-react";
-import { toast } from "sonner";
+import { ChevronLeft, ChevronRight, PlusIcon, MinusIcon } from "lucide-react";
 import { TOKEN_DEFINITIONS, TokenSymbol } from "@/lib/pools-config";
 import { formatUnits as viemFormatUnits } from "viem";
 import { Token } from '@uniswap/sdk-core';
@@ -44,22 +43,6 @@ interface ProcessedPositionDetail {
   unifiedValueInToken0: number; 
 }
 
-interface DepthChartDataPoint {
-  tick: number;
-  token0Depth: number;
-  normToken0Depth?: number;
-  token1Depth?: number;
-  unifiedValue?: number;
-  normUnifiedValue?: number;
-  isUserPosition?: boolean;
-  price?: number;
-  value?: number;
-  cumulativeUnifiedValue?: number;
-  displayCumulativeValue?: number;
-  liquidityToken0?: number;
-  bucketWidth?: number;
-}
-
 interface BucketData {
   tickLower: number;
   tickUpper: number;
@@ -87,8 +70,6 @@ interface InteractiveRangeChartProps {
   poolToken1?: any;
   onDragStateChange?: (state: 'left' | 'right' | 'center' | null) => void;
 }
-
-const SUBGRAPH_URL = "https://api.studio.thegraph.com/query/111443/alphix-test/version/latest";
 
 export function InteractiveRangeChart({
   selectedPoolId,
@@ -135,11 +116,11 @@ export function InteractiveRangeChart({
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // Chart data state
+  // Net liquidity state for proper Uniswap V4 visualization
   const [rawHookPositions, setRawHookPositions] = useState<Array<HookPosition & { pool: string }> | null>(null);
   const [processedPositions, setProcessedPositions] = useState<ProcessedPositionDetail[] | null>(null);
-  const [bucketLiquidityData, setBucketLiquidityData] = useState<BucketData[]>([]);
-  const [isFetchingLiquidityDepth, setIsFetchingLiquidityDepth] = useState(false);
+  const [netLiquidityByTick, setNetLiquidityByTick] = useState<Map<number, number>>(new Map());
+
   const [isChartDataLoading, setIsChartDataLoading] = useState(false);
   
   // Throttle high-frequency updates with requestAnimationFrame
@@ -154,6 +135,7 @@ export function InteractiveRangeChart({
       rafIdRangeRef.current = null;
     });
   }, [onRangeChange]);
+  
   const scheduleXDomainChange = useCallback((domain: [number, number]) => {
     if (!onXDomainChange) return;
     if (rafIdDomainRef.current !== null) cancelAnimationFrame(rafIdDomainRef.current);
@@ -164,11 +146,11 @@ export function InteractiveRangeChart({
     });
   }, [onXDomainChange]);
 
-  // Helper function to determine the better base token for price display (same logic as AddLiquidityModal)
+  // Helper function to determine the better base token for price display
   const determineBaseTokenForPriceDisplay = useCallback((token0: TokenSymbol, token1: TokenSymbol): TokenSymbol => {
     if (!token0 || !token1) return token0;
 
-    // Priority order for quote tokens (these should be the base for price display)
+    // Priority order for quote tokens
     const quotePriority: Record<string, number> = {
       'aUSDC': 10,
       'aUSDT': 9,
@@ -183,8 +165,6 @@ export function InteractiveRangeChart({
     const token0Priority = quotePriority[token0] || 0;
     const token1Priority = quotePriority[token1] || 0;
 
-    // Return the token with higher priority (better quote currency)
-    // If priorities are equal, default to token0
     return token1Priority > token0Priority ? token1 : token0;
   }, []);
 
@@ -193,6 +173,7 @@ export function InteractiveRangeChart({
     if (!token0Symbol || !token1Symbol) return token0Symbol;
     return determineBaseTokenForPriceDisplay(token0Symbol, token1Symbol);
   }, [token0Symbol, token1Symbol, determineBaseTokenForPriceDisplay]);
+
   const isStablePool = useMemo(() => {
     if (!selectedPoolId) return false;
     const pool = poolsConfig.pools.find(p => p.id === selectedPoolId);
@@ -210,163 +191,88 @@ export function InteractiveRangeChart({
     return inversePrice > currentPriceNum;
   }, [currentPrice, token0Symbol, token1Symbol]);
 
-  // Derive on-chain pool ID
-  const getDerivedOnChainPoolId = useCallback(() => {
-    if (!token0Symbol || !token1Symbol || !chainId || !selectedPoolId) {
-      return null;
-    }
+  // Complete coordinate transformation system
+  // When inverted, we create a display coordinate system that makes the chart appear as token1/token0
+  const transformTickToDisplay = useCallback((tick: number): number => {
+    if (!shouldFlipDenomination || !currentPoolTick) return tick;
+    // Mirror around current price to create inverted display space
+    return 2 * currentPoolTick - tick;
+  }, [shouldFlipDenomination, currentPoolTick]);
 
-    try {
-      const token0Def = TOKEN_DEFINITIONS[token0Symbol];
-      const token1Def = TOKEN_DEFINITIONS[token1Symbol];
-      
-      if (!token0Def || !token1Def) {
-        return null;
-      }
+  const transformDisplayToTick = useCallback((displayTick: number): number => {
+    if (!shouldFlipDenomination || !currentPoolTick) return displayTick;
+    // Inverse transformation: convert display space back to tick space
+    return 2 * currentPoolTick - displayTick;
+  }, [shouldFlipDenomination, currentPoolTick]);
 
-      // Create sorted tokens for pool ID calculation
-      const sdkBaseToken0 = new Token(chainId, getAddress(token0Def.address), token0Def.decimals);
-      const sdkBaseToken1 = new Token(chainId, getAddress(token1Def.address), token1Def.decimals);
-      const [sdkSortedToken0, sdkSortedToken1] = sdkBaseToken0.sortsBefore(sdkBaseToken1) 
-          ? [sdkBaseToken0, sdkBaseToken1] 
-          : [sdkBaseToken1, sdkBaseToken0];
+  // Transform domain to display coordinates
+  const displayDomain = useMemo((): [number, number] => {
+    if (!shouldFlipDenomination) return xDomain;
+    // When inverted, the display domain is flipped and transformed
+    const [minTick, maxTick] = xDomain;
+    const displayMin = transformTickToDisplay(maxTick);
+    const displayMax = transformTickToDisplay(minTick);
+    return [displayMin, displayMax];
+  }, [xDomain, shouldFlipDenomination, transformTickToDisplay]);
 
-      // Use the actual pool configuration values
-      const poolConfig = {
-        fee: 3000, // Default fee
-        tickSpacing: defaultTickSpacing,
-        hooks: "0x0000000000000000000000000000000000000000" as Hex
-      };
+  // Normalize price once so downstream calculations don't branch on every update
+  const normalizedCurrentPriceNum = useMemo(() => {
+    const p = currentPrice ? parseFloat(currentPrice) : NaN;
+    if (!isFinite(p) || p <= 0) return NaN;
+    return shouldFlipDenomination ? 1 / p : p;
+  }, [currentPrice, shouldFlipDenomination]);
 
-      // Calculate pool ID using the same logic as the API
-      const poolIdBytes32 = V4PoolSDK.getPoolId(
-        sdkSortedToken0,
-        sdkSortedToken1,
-        poolConfig.fee, 
-        poolConfig.tickSpacing, 
-        poolConfig.hooks
-      );
-      
-      return poolIdBytes32.toLowerCase();
-    } catch (error) {
-      console.error("[InteractiveRangeChart] Error deriving on-chain pool ID:", error);
-      return null;
-    }
-  }, [token0Symbol, token1Symbol, chainId, selectedPoolId, defaultTickSpacing]);
+  // Remove complex domain transformation - keep it simple
 
-  // Fetch liquidity depth data
+  // Fetch raw positions (with caching to prevent zoom delays)
   useEffect(() => {
     let cancelled = false;
-    const fetchLiquidityDepthData = async () => {
-      console.log("[DEBUG] Fetching liquidity depth data with params:", { selectedPoolId, chainId, currentPoolTick });
+    const fetchPositionData = async () => {
       if (!selectedPoolId || !chainId || currentPoolTick === null) {
-        console.log("[DEBUG] Missing required params for liquidity depth fetch");
         setRawHookPositions(null);
         return;
       }
 
-      // Use selectedPoolId directly instead of deriving a new one
       const poolIdToSearch = getSubgraphIdFromPoolId(selectedPoolId);
-      console.log("[DEBUG] Using pool ID directly:", poolIdToSearch);
       if (!poolIdToSearch) {
-        console.warn("[InteractiveRangeChart] Could not find subgraphId for pool ID:", selectedPoolId);
         setRawHookPositions(null);
         return;
       }
 
-      setIsFetchingLiquidityDepth(true);
       setIsChartDataLoading(true);
 
       try {
-        console.log("[InteractiveRangeChart] Fetching depth via server endpoint...");
-        // Backoff only when we expect change (local hint set by liquidity actions)
-        let shouldBackoff = false;
-        try {
-          const hk = `recentDepthChange:${String(selectedPoolId).toLowerCase()}`;
-          if (localStorage.getItem(hk)) { shouldBackoff = true; localStorage.removeItem(hk); }
-        } catch {}
-        const attempts = shouldBackoff ? [0, 2000, 5000, 10000, 20000, 40000] : [0];
-        const fp = (arr: any[]) => {
-          try { return JSON.stringify((arr || []).slice(0, 10).map((p:any)=>`${p.tickLower}:${p.tickUpper}:${p.liquidity}`)); } catch { return ''; }
-        };
-        const prevFp = fp(rawHookPositions || []);
-        let lastPositions: any[] = [];
-        let didChange = false;
-        for (let i = 0; i < attempts.length; i++) {
-          if (i > 0) await new Promise(r => setTimeout(r, attempts[i]));
-          const url = '/api/liquidity/get-bucket-depths?revalidate=1';
-          const resp = await fetch(url, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ poolId: selectedPoolId, first: 2000 })
-          } as any);
-          if (!resp.ok) {
-            const txt = await resp.text();
-            throw new Error(`Depth API failed: ${resp.status} ${resp.statusText}: ${txt}`);
-          }
-          const json = await resp.json();
-          const positions = Array.isArray(json?.positions) ? json.positions : [];
-          try {
-            const d0 = (TOKEN_DEFINITIONS?.[token0Symbol as any]?.decimals ?? 18);
-            const d1 = (TOKEN_DEFINITIONS?.[token1Symbol as any]?.decimals ?? 18);
-            const priceAtTick = (tick: number) => Math.pow(1.0001, tick) * Math.pow(10, d0 - d1); // token1 per token0
-            const sqrt = (tick: number) => Math.pow(1.0001, tick / 2);
-            const sqrtC = currentPoolTick != null ? sqrt(currentPoolTick) : sqrt(0);
-            const dbg = (positions || []).map((p: any) => {
-              const tl = Number(p?.tickLower || 0);
-              const tu = Number(p?.tickUpper || 0);
-              const Lraw = String(p?.liquidity || '0');
-              let Lscaled = 0;
-              try { Lscaled = Number((BigInt(Lraw) / (10n ** 12n))); } catch { Lscaled = parseFloat(Lraw) || 0; }
-              const sL = sqrt(tl);
-              const sU = sqrt(tu);
-              let a0 = 0, a1 = 0;
-              if (sqrtC <= sL) { a0 = Lscaled * (1 / sL - 1 / sU); a1 = 0; }
-              else if (sqrtC >= sU) { a0 = 0; a1 = Lscaled * (sU - sL); }
-              else { a0 = Lscaled * (1 / sqrtC - 1 / sU); a1 = Lscaled * (sqrtC - sL); }
-              return {
-                id: p?.id,
-                tickLower: tl,
-                tickUpper: tu,
-                priceLower: priceAtTick(tl),
-                priceUpper: priceAtTick(tu),
-                approxAmount0: a0,
-                approxAmount1: a1,
-                liquidityScaled: Lscaled,
-              };
-            });
-            console.log('[DepthDebug] fetched positions (attempt', i, ') count=', positions?.length);
-            console.table(dbg);
-          } catch {}
-          lastPositions = positions;
-          const curFp = fp(positions);
-          const changed = curFp && curFp !== prevFp;
-          if (changed || !shouldBackoff) {
-            didChange = changed;
-            if (!cancelled) setRawHookPositions(positions);
-            break;
-          }
+        // Fetch raw positions without bucket parameters for caching
+        const resp = await fetch('/api/liquidity/get-bucket-depths', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            poolId: selectedPoolId,
+            first: 2000
+          })
+        });
+
+        if (!resp.ok) {
+          throw new Error(`API failed: ${resp.status} ${resp.statusText}`);
         }
-        if (!rawHookPositions && lastPositions && lastPositions.length) {
-          if (!cancelled) setRawHookPositions(lastPositions);
-        }
-        // If we expected a change but didn't see it yet, schedule one more retry cycle later
-        if (shouldBackoff && !didChange && !cancelled) {
-          setTimeout(() => { if (!cancelled) fetchLiquidityDepthData(); }, 60000);
-        }
-      } catch (error: any) {
-        console.error("[InteractiveRangeChart] Error fetching liquidity depth data:", error);
+
+        const json = await resp.json();
+        const positions = Array.isArray(json?.positions) ? json.positions : [];
+        
+        if (!cancelled) setRawHookPositions(positions);
+      } catch (error) {
+        console.error("[InteractiveRangeChart] Error fetching position data:", error);
         setRawHookPositions(null);
       } finally {
-        setIsFetchingLiquidityDepth(false);
         setIsChartDataLoading(false);
       }
     };
 
-    fetchLiquidityDepthData();
+    fetchPositionData();
     return () => { cancelled = true; };
-  }, [selectedPoolId, chainId, currentPoolTick, token0Symbol, token1Symbol]);
+  }, [selectedPoolId, chainId, currentPoolTick]); // Remove xDomain dependency for caching
 
-  // Process raw positions into processed positions with amounts
+  // Process positions into unified amount0 values
   useEffect(() => {
     if (
       rawHookPositions && rawHookPositions.length > 0 &&
@@ -385,9 +291,8 @@ export function InteractiveRangeChart({
         return;
       }
 
-      // Find pool config
       const poolConfig = {
-        fee: 3000, // Default fee, should be passed as prop
+        fee: 3000,
         tickSpacing: defaultTickSpacing,
         hooks: "0x0000000000000000000000000000000000000000" as Hex
       };
@@ -411,6 +316,15 @@ export function InteractiveRangeChart({
           JSBI.BigInt(0),
           currentPoolTick
         );
+
+        // Pre-calculate price conversion factor
+        const priceNum = currentPrice ? parseFloat(currentPrice) : 0;
+        const hasValidPrice = !isNaN(priceNum) && priceNum > 0;
+        
+        const token0Decimals = poolToken0.decimals;
+        const token1Decimals = poolToken1.decimals;
+        const token0Divisor = BigInt(10) ** BigInt(token0Decimals);
+        const token1Divisor = BigInt(10) ** BigInt(token1Decimals);
       
         for (const position of rawHookPositions) {
           if (Number(position.tickLower) >= Number(position.tickUpper)) {
@@ -429,20 +343,19 @@ export function InteractiveRangeChart({
               const calculatedAmount0_JSBI = v4Position.amount0.quotient;
               const calculatedAmount1_JSBI = v4Position.amount1.quotient;
 
-              const formattedAmount0 = viemFormatUnits(BigInt(calculatedAmount0_JSBI.toString()), poolToken0.decimals);
-              const formattedAmount1 = viemFormatUnits(BigInt(calculatedAmount1_JSBI.toString()), poolToken1.decimals);
+              const amount0BigInt = BigInt(calculatedAmount0_JSBI.toString());
+              const amount1BigInt = BigInt(calculatedAmount1_JSBI.toString());
               
-              const numericAmount0 = parseFloat(formattedAmount0);
-              const numericAmount1 = parseFloat(formattedAmount1);
+              const numericAmount0 = Number(amount0BigInt) / Number(token0Divisor);
+              const numericAmount1 = Number(amount1BigInt) / Number(token1Divisor);
               
-              // Unify to token0 units. Assumption: currentPrice ≈ price(token1 per token0)
-              // So token1 → token0 conversion is amount1 / price.
+              const formattedAmount0 = viemFormatUnits(amount0BigInt, token0Decimals);
+              const formattedAmount1 = viemFormatUnits(amount1BigInt, token1Decimals);
+              
+              // Convert everything to amount0 equivalent using current price
               let unifiedValue = numericAmount0;
-              if (currentPrice && numericAmount1 > 0) {
-                const price = parseFloat(currentPrice);
-                if (!isNaN(price) && price > 0) {
-                  unifiedValue += numericAmount1 / price;
-                }
+              if (hasValidPrice && numericAmount1 > 0) {
+                unifiedValue += numericAmount1 / priceNum;
               }
 
               processed.push({
@@ -456,7 +369,7 @@ export function InteractiveRangeChart({
                 unifiedValueInToken0: unifiedValue
               });
             } catch (error) {
-              // Silently skip invalid positions
+              // Skip invalid positions
             }
           }
         }
@@ -471,120 +384,35 @@ export function InteractiveRangeChart({
     }
   }, [rawHookPositions, currentPoolTick, currentPoolSqrtPriceX96, token0Symbol, token1Symbol, chainId, poolToken0, poolToken1, currentPrice, defaultTickSpacing]);
 
-  // Calculate tick buckets and generate bucket data
-  const calculateTickBuckets = useCallback((tickLower: number, tickUpper: number, tickSpacing: number, bucketCount: number = 25) => {
-    const range = tickUpper - tickLower;
-    // Enforce a minimum visual bin width to avoid per-tick rendering for tiny spacings
-    const MIN_VISUAL_BIN = 30; // ticks
-    const minBin = Math.max(MIN_VISUAL_BIN, tickSpacing);
-
-    const rawBucketSize = Math.max(range / bucketCount, tickSpacing);
-    const targetBucketSize = Math.max(rawBucketSize, minBin);
-    const alignedBucketSize = Math.ceil(targetBucketSize / tickSpacing) * tickSpacing;
-
-    const buckets: { tickLower: number; tickUpper: number }[] = [];
-    let currentTick = tickLower;
-
-    while (currentTick < tickUpper) {
-      const bucketUpper = Math.min(currentTick + alignedBucketSize, tickUpper);
-      buckets.push({ tickLower: currentTick, tickUpper: bucketUpper });
-      currentTick = bucketUpper;
-    }
-
-    return buckets;
-  }, []);
-
-  // Generate bucket liquidity data
+  // Calculate net liquidity by tick (Uniswap V4 style)
   useEffect(() => {
-    // Skip runtime logging during drag to improve performance
-    
     if (processedPositions && processedPositions.length > 0) {
-      // Build a stable liquidity profile across full positions span to avoid replot on pan/zoom
-      const globalMin = Math.min(...processedPositions.map(p => p.tickLower));
-      const globalMax = Math.max(...processedPositions.map(p => p.tickUpper));
-
-      // Adaptive bucket count: aim for ~200 buckets, clamp, and enforce min visual bin
-      const MIN_VISUAL_BIN = 30; // ticks
-      const approxBuckets = Math.ceil((globalMax - globalMin) / Math.max(defaultTickSpacing, MIN_VISUAL_BIN));
-      const targetBuckets = Math.max(60, Math.min(300, approxBuckets));
-      const buckets = calculateTickBuckets(globalMin, globalMax, defaultTickSpacing, targetBuckets);
-
-      // Fast aggregation using a difference-array over buckets (O(n + m))
-      const nb = buckets.length;
-      if (nb === 0) {
-        setBucketLiquidityData([]);
-        return;
-      }
-      const alignedBucketSize = buckets[0].tickUpper - buckets[0].tickLower;
-      const diff = new Float64Array(nb + 1);
-
-      const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
-
+      const netLiquidityMap = new Map<number, number>();
+      
       for (const position of processedPositions) {
-        // Map position span to bucket index range (inclusive)
-        const sTick = clamp(position.tickLower, globalMin, globalMax - 1);
-        const eTick = clamp(position.tickUpper - 1, globalMin, globalMax - 1);
-        if (eTick < sTick) continue;
-        const s = clamp(Math.floor((sTick - globalMin) / alignedBucketSize), 0, nb - 1);
-        const e = clamp(Math.floor((eTick - globalMin) / alignedBucketSize), 0, nb - 1);
-        if (s <= e) {
-          diff[s] += position.unifiedValueInToken0;
-          diff[e + 1] -= position.unifiedValueInToken0;
-        }
+        const tickLower = position.tickLower;
+        const tickUpper = position.tickUpper;
+        const liquidity = position.unifiedValueInToken0;
+        
+        // Add liquidity at tickLower (position opens)
+        const currentLowerLiquidity = netLiquidityMap.get(tickLower) || 0;
+        netLiquidityMap.set(tickLower, currentLowerLiquidity + liquidity);
+        
+        // Subtract liquidity at tickUpper (position closes)
+        const currentUpperLiquidity = netLiquidityMap.get(tickUpper) || 0;
+        netLiquidityMap.set(tickUpper, currentUpperLiquidity - liquidity);
       }
-
-      const bucketData: BucketData[] = new Array(nb);
-      let running = 0;
-      for (let i = 0; i < nb; i++) {
-        running += diff[i];
-        const b = buckets[i];
-        bucketData[i] = {
-          tickLower: b.tickLower,
-          tickUpper: b.tickUpper,
-          midTick: Math.floor((b.tickLower + b.tickUpper) / 2),
-          liquidityToken0: running.toFixed(2),
-        };
-      }
-
-      setBucketLiquidityData(bucketData);
+      
+      setNetLiquidityByTick(netLiquidityMap);
     } else {
-      setBucketLiquidityData([]);
+      setNetLiquidityByTick(new Map());
     }
-  }, [processedPositions, defaultTickSpacing, calculateTickBuckets]);
+  }, [processedPositions]);
 
-  // Calculate if axis should be flipped based on price order
-  const isAxisFlipped = useMemo(() => {
-    if (!currentPoolTick || !currentPrice || !optimalDenomination || !token0Symbol || bucketLiquidityData.length < 2) {
-      return false;
-    }
-    
-    const currentPriceNum = parseFloat(currentPrice);
-    
-    const tickSortedBuckets = [...bucketLiquidityData].sort((a, b) => a.midTick - b.midTick);
-    const firstByTick = tickSortedBuckets[0];
-    const secondByTick = tickSortedBuckets[1];
-    
-    // Avoid logging during drag
-    
-    const firstDelta = Math.pow(1.0001, firstByTick.midTick - currentPoolTick);
-    const secondDelta = Math.pow(1.0001, secondByTick.midTick - currentPoolTick);
-    
-    let firstPrice, secondPrice;
-    if (shouldFlipDenomination) {
-      // Use inverse prices for comparison
-      firstPrice = 1 / (currentPriceNum * firstDelta);
-      secondPrice = 1 / (currentPriceNum * secondDelta);
-    } else {
-      // Use direct prices for comparison
-      firstPrice = currentPriceNum * firstDelta;
-      secondPrice = currentPriceNum * secondDelta;
-    }
-    
-    const shouldFlip = firstPrice > secondPrice;
-    // Avoid logging during drag
-    
-    return shouldFlip;
-  }, [currentPoolTick, currentPrice, optimalDenomination, token0Symbol, bucketLiquidityData, shouldFlipDenomination]);
+
+
+  // Axis is flipped whenever denomination is flipped
+  const isAxisFlipped = useMemo(() => shouldFlipDenomination, [shouldFlipDenomination]);
 
   // Generate custom x-axis ticks for the preview chart using optimal denomination (simplified to 3 labels)
   const previewXAxisTicks = useMemo(() => {
@@ -592,9 +420,10 @@ export function InteractiveRangeChart({
     const minTickDomain = xDomain[0];
     const maxTickDomain = xDomain[1];
 
-    if (poolToken0 && poolToken1 && optimalDenomination && currentPoolTick !== null && currentPrice) {
+    if (poolToken0 && poolToken1 && optimalDenomination && currentPoolTick !== null) {
       if (isFinite(minTickDomain) && isFinite(maxTickDomain)) {
-        const currentPriceNum = parseFloat(currentPrice);
+        const basePrice = normalizedCurrentPriceNum;
+        if (!isFinite(basePrice) || basePrice <= 0) return newLabels;
         const displayDecimals = TOKEN_DEFINITIONS[optimalDenomination]?.displayDecimals || 4;
         
         // For USD-denominated tokens show more precision (6 decimals) only for Stable pools
@@ -607,32 +436,23 @@ export function InteractiveRangeChart({
         const pricePoints: { tick: number; price: number }[] = [];
         
         for (const tickVal of tickPositions) {
-          const priceDelta = Math.pow(1.0001, tickVal - currentPoolTick);
-          
-          let priceAtTick = NaN;
-          if (shouldFlipDenomination) {
-            // Show the inverse price (higher denomination)
-            priceAtTick = 1 / (currentPriceNum * priceDelta);
-          } else {
-            // Show the direct price (higher denomination)
-            priceAtTick = currentPriceNum * priceDelta;
-          }
-
-          // Avoid logging during drag
-
-          if (!isNaN(priceAtTick)) {
-            pricePoints.push({ tick: tickVal, price: priceAtTick });
-          }
+          const delta = tickVal - currentPoolTick;
+          // Calculate price - use inverted calculation when flipped but keep normal tick order
+          const priceAtTick = basePrice * Math.pow(1.0001, shouldFlipDenomination ? -delta : delta);
+          if (!isNaN(priceAtTick)) pricePoints.push({ tick: tickVal, price: priceAtTick });
         }
         
-        // Sort price points by price (ascending) to get the desired price order
-        pricePoints.sort((a, b) => a.price - b.price);
+        // Sort price points by tick position (left to right) but show prices in ascending order
+        pricePoints.sort((a, b) => a.tick - b.tick);
         
-        // When axis is flipped, the chart data is reversed, so we need to reverse the labels
-        // to maintain the correct visual order (left to right = ascending price)
-        if (isAxisFlipped) {
-          // Chart data is reversed, so labels should also be reversed to match visual order
-          pricePoints.reverse();
+        // If flipped, the prices will be descending by tick, so we need to reverse the labels
+        // to show ascending prices from left to right
+        if (shouldFlipDenomination) {
+          // Reverse the price labels but keep the tick positions
+          const reversedPrices = [...pricePoints].map(p => p.price).reverse();
+          pricePoints.forEach((point, index) => {
+            point.price = reversedPrices[index];
+          });
         }
         
         // Create 3 labels: left border, center, right border
@@ -643,54 +463,107 @@ export function InteractiveRangeChart({
           });
           
           newLabels.push({ 
-            tickValue: pricePoint.tick, 
+            tickValue: transformTickToDisplay(pricePoint.tick), 
             displayLabel
           });
         }
       }
     }
     return newLabels;
-  }, [xDomain, optimalDenomination, token0Symbol, token1Symbol, poolToken0, poolToken1, currentPoolTick, currentPrice, isAxisFlipped, shouldFlipDenomination]);
+  }, [xDomain, optimalDenomination, token0Symbol, token1Symbol, poolToken0, poolToken1, currentPoolTick, shouldFlipDenomination, normalizedCurrentPriceNum, isStablePool, transformTickToDisplay]);
 
-  // Step-area series removed; rectangles will be drawn per bucket via ReferenceArea
-  // Provide minimal frame data so Recharts lays out axes/domains even without a data series
-  const frameData = useMemo(() => {
+  // Generate cumulative liquidity chart data from net liquidity by tick
+  const liquidityChartData = useMemo(() => {
+    if (netLiquidityByTick.size === 0) return [];
+    
+    // Get all ticks and sort them
+    const sortedTicks = Array.from(netLiquidityByTick.keys()).sort((a, b) => a - b);
+    
+    // Filter to visible range for performance using original domain
     const [minTick, maxTick] = xDomain;
-    return [
-      { tick: minTick, liquidityToken0: 0 },
-      { tick: maxTick, liquidityToken0: 0 }
-    ];
-  }, [xDomain]);
+    const buffer = Math.max((maxTick - minTick) * 0.2, defaultTickSpacing * 50); // 20% buffer or at least 50 tick spacings
+    const visibleTicks = sortedTicks.filter(tick => 
+      tick >= minTick - buffer && tick <= maxTick + buffer
+    );
+    
+    // Calculate cumulative liquidity starting from the earliest tick
+    const chartData: Array<{ tick: number; liquidity: number }> = [];
+    let cumulativeLiquidity = 0;
+    
+    // Calculate baseline cumulative liquidity from all ticks before our visible range
+    if (visibleTicks.length > 0) {
+      for (const tick of sortedTicks) {
+        if (tick < visibleTicks[0]) {
+          cumulativeLiquidity += netLiquidityByTick.get(tick) || 0;
+        } else {
+          break;
+        }
+      }
+    }
+    
 
-  // Render only buckets overlapping the current view (with a small buffer)
-  const visibleBuckets = useMemo(() => {
-    if (!bucketLiquidityData || bucketLiquidityData.length === 0) return [] as BucketData[];
-    const [viewMin, viewMax] = xDomain;
-    const buffer = defaultTickSpacing * 4;
-    const min = viewMin - buffer;
-    const max = viewMax + buffer;
-    return bucketLiquidityData.filter(b => b.tickUpper >= min && b.tickLower <= max);
-  }, [bucketLiquidityData, xDomain, defaultTickSpacing]);
 
-  // Calculate max bucket liquidity for chart scaling
-  const maxBucketLiquidity = useMemo(() => {
-    if (bucketLiquidityData.length === 0) return 1;
-    const maxVal = Math.max(...bucketLiquidityData.map(d => parseFloat(d.liquidityToken0)));
+    // Process visible ticks with correct cumulative baseline
+    for (const tick of visibleTicks) {
+      const netChange = netLiquidityByTick.get(tick) || 0;
+      cumulativeLiquidity += netChange;
+      
+      // Add data point with display-space positioning
+      chartData.push({
+        tick: transformTickToDisplay(tick),
+        liquidity: Math.max(0, cumulativeLiquidity) // Ensure non-negative
+      });
+    }
+    
+    // Ensure at least two points exist at the domain bounds so the area renders even when zoomed tightly
+    const [displayMin, displayMax] = displayDomain;
+    if (chartData.length === 0) {
+      // If no liquidity data in range, show baseline from the cumulative calculation
+      return [
+        { tick: displayMin, liquidity: Math.max(0, cumulativeLiquidity) },
+        { tick: displayMax, liquidity: Math.max(0, cumulativeLiquidity) }
+      ];
+    }
+    
+    // Sort chart data by display tick for proper rendering
+    chartData.sort((a, b) => a.tick - b.tick);
+    
+    if (chartData[0].tick > displayMin) {
+      chartData.unshift({ tick: displayMin, liquidity: chartData[0].liquidity });
+    }
+    if (chartData[chartData.length - 1].tick < displayMax) {
+      chartData.push({ tick: displayMax, liquidity: chartData[chartData.length - 1].liquidity });
+    }
+    
+    return chartData;
+  }, [netLiquidityByTick, xDomain, defaultTickSpacing, transformTickToDisplay, displayDomain]);
+
+  // Calculate max liquidity for chart scaling
+  const maxLiquidity = useMemo(() => {
+    if (liquidityChartData.length === 0) return 1;
+    const maxVal = Math.max(...liquidityChartData.map(d => d.liquidity));
     if (maxVal === 0) return 1;
-    return maxVal / 0.6; // Set max so tallest bar is 60% of height
-  }, [bucketLiquidityData]);
+    return maxVal * 1.1; // Add 10% padding at top
+  }, [liquidityChartData]);
 
-  // Calculate positions based on chart dimensions
-  const getTickPosition = (tick: number) => {
-    const [minTick, maxTick] = xDomain;
-    const tickRange = maxTick - minTick;
-    const position = ((tick - minTick) / tickRange) * 100;
-    // Ensure position stays within container bounds (0% to 100%)
+  // Calculate positions based on display dimensions
+  const getDisplayPosition = (displayTick: number) => {
+    const [displayMin, displayMax] = displayDomain;
+    const displayRange = displayMax - displayMin;
+    const position = ((displayTick - displayMin) / displayRange) * 100;
     return Math.max(0, Math.min(100, position));
   };
 
-  const leftPos = getTickPosition(parseInt(tickLower));
-  const rightPos = getTickPosition(parseInt(tickUpper));
+  // Calculate visual positions for drag handles using display coordinates
+  const displayTickLower = transformTickToDisplay(Number(tickLower));
+  const displayTickUpper = transformTickToDisplay(Number(tickUpper));
+  
+  // In display space, we always want left handle at lower display value, right at higher
+  const leftPos = getDisplayPosition(Math.min(displayTickLower, displayTickUpper));
+  const rightPos = getDisplayPosition(Math.max(displayTickLower, displayTickUpper));
+  
+  // Track which underlying tick corresponds to which visual position
+  const leftIsLower = displayTickLower <= displayTickUpper;
 
   const handleMouseDown = (e: React.MouseEvent, side: 'left' | 'right' | 'center') => {
     e.preventDefault();
@@ -703,6 +576,7 @@ export function InteractiveRangeChart({
       tickUpper: parseInt(tickUpper)
     });
   };
+
   const handleBackgroundMouseDown = (e: React.MouseEvent) => {
     if (isDragging || !containerRef.current) return;
     e.preventDefault();
@@ -744,12 +618,22 @@ export function InteractiveRangeChart({
     const dx = e.clientX - panViewportStartRef.current.x;
     const [minTick, maxTick] = panViewportStartRef.current.domain;
     const domainSize = maxTick - minTick;
-    const deltaTicks = (dx / rect.width) * domainSize;
+    
+    // Calculate delta in tick space (always work in underlying tick space for panning)
+    let deltaTicks = (dx / rect.width) * domainSize;
+    
+    // When inverted, we want visual panning to work intuitively (left moves left in display)
+    // So we need to invert the delta when the display is flipped
+    if (shouldFlipDenomination) {
+      deltaTicks = -deltaTicks;
+    }
+    
     const newMin = minTick - deltaTicks;
     const newMax = maxTick - deltaTicks;
     const [cMin, cMax] = applyDomainConstraintsLocal(newMin, newMax);
-    if (onXDomainChange) onXDomainChange([cMin, cMax]);
+    scheduleXDomainChange([cMin, cMax]);
   };
+
   const stopBackgroundPan = () => {
     if (isPanningViewport) {
       setIsPanningViewport(false);
@@ -776,128 +660,155 @@ export function InteractiveRangeChart({
     const rect = containerRef.current.getBoundingClientRect();
     const deltaX = e.clientX - dragStart.x;
     const containerWidth = rect.width;
-    const [minTick, maxTick] = xDomain;
-    const tickRange = maxTick - minTick;
-    const deltaTicks = (deltaX / containerWidth) * tickRange;
+    const [displayMin, displayMax] = displayDomain;
+    const displayRange = displayMax - displayMin;
+    const deltaDisplayTicks = (deltaX / containerWidth) * displayRange;
 
-    let newTickLower = dragStart.tickLower;
-    let newTickUpper = dragStart.tickUpper;
+    // Convert current ticks to display space for manipulation
+    const startDisplayLower = transformTickToDisplay(dragStart.tickLower);
+    const startDisplayUpper = transformTickToDisplay(dragStart.tickUpper);
+    
+    let newDisplayLower = startDisplayLower;
+    let newDisplayUpper = startDisplayUpper;
+
+    // Work in display space - left handle controls left display boundary, right controls right
+    const leftDisplayTick = Math.min(startDisplayLower, startDisplayUpper);
+    const rightDisplayTick = Math.max(startDisplayLower, startDisplayUpper);
+    const isLowerOnLeft = startDisplayLower <= startDisplayUpper;
 
     if (isDragging === 'left') {
-      // Constrain left handle to visible domain and maintain minimum spacing
-      newTickLower = Math.min(dragStart.tickUpper - defaultTickSpacing, dragStart.tickLower + deltaTicks);
-      newTickLower = Math.round(newTickLower / defaultTickSpacing) * defaultTickSpacing;
-      // Constrain to visible domain
-      newTickLower = Math.max(minTick, Math.min(maxTick, newTickLower));
+      const newLeftDisplay = leftDisplayTick + deltaDisplayTicks;
+      if (isLowerOnLeft) {
+        newDisplayLower = Math.min(rightDisplayTick - defaultTickSpacing, newLeftDisplay);
+      } else {
+        newDisplayUpper = Math.min(rightDisplayTick - defaultTickSpacing, newLeftDisplay);
+      }
     } else if (isDragging === 'right') {
-      // Constrain right handle to visible domain and maintain minimum spacing
-      newTickUpper = Math.max(dragStart.tickLower + defaultTickSpacing, dragStart.tickUpper + deltaTicks);
-      newTickUpper = Math.round(newTickUpper / defaultTickSpacing) * defaultTickSpacing;
-      // Constrain to visible domain
-      newTickUpper = Math.max(minTick, Math.min(maxTick, newTickUpper));
+      const newRightDisplay = rightDisplayTick + deltaDisplayTicks;
+      if (isLowerOnLeft) {
+        newDisplayUpper = Math.max(leftDisplayTick + defaultTickSpacing, newRightDisplay);
+      } else {
+        newDisplayLower = Math.max(leftDisplayTick + defaultTickSpacing, newRightDisplay);
+      }
     } else if (isDragging === 'center') {
-      // Constrain center dragging to keep entire range within visible domain
-      const rangeWidth = dragStart.tickUpper - dragStart.tickLower;
-      const newCenter = ((dragStart.tickLower + dragStart.tickUpper) / 2) + deltaTicks;
-      newTickLower = newCenter - rangeWidth / 2;
-      newTickUpper = newCenter + rangeWidth / 2;
+      // Center drag moves both boundaries together in display space
+      newDisplayLower = startDisplayLower + deltaDisplayTicks;
+      newDisplayUpper = startDisplayUpper + deltaDisplayTicks;
       
-      // Constrain the entire range to stay within visible domain
-      if (newTickLower < minTick) {
-        const adjustment = minTick - newTickLower;
-        newTickLower = minTick;
-        newTickUpper = newTickUpper + adjustment;
+      // Constrain to display bounds
+      if (Math.min(newDisplayLower, newDisplayUpper) < displayMin) {
+        const adjustment = displayMin - Math.min(newDisplayLower, newDisplayUpper);
+        newDisplayLower += adjustment;
+        newDisplayUpper += adjustment;
       }
-      if (newTickUpper > maxTick) {
-        const adjustment = newTickUpper - maxTick;
-        newTickUpper = maxTick;
-        newTickLower = newTickLower - adjustment;
+      if (Math.max(newDisplayLower, newDisplayUpper) > displayMax) {
+        const adjustment = Math.max(newDisplayLower, newDisplayUpper) - displayMax;
+        newDisplayLower -= adjustment;
+        newDisplayUpper -= adjustment;
       }
-      
-      newTickLower = Math.round(newTickLower / defaultTickSpacing) * defaultTickSpacing;
-      newTickUpper = Math.round(newTickUpper / defaultTickSpacing) * defaultTickSpacing;
     }
 
-    // Final constraint to valid range (broader constraint for edge cases)
+    // Convert back to tick space
+    let newTickLower = transformDisplayToTick(newDisplayLower);
+    let newTickUpper = transformDisplayToTick(newDisplayUpper);
+
+    // Ensure proper order in tick space
+    if (newTickLower > newTickUpper) {
+      [newTickLower, newTickUpper] = [newTickUpper, newTickLower];
+    }
+
+    // Apply tick space constraints
     newTickLower = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTickLower));
     newTickUpper = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTickUpper));
 
-    // Ensure minimum spacing
+    // Ensure minimum spacing in tick space
     if (newTickUpper - newTickLower < defaultTickSpacing) {
-      if (isDragging === 'left') {
-        newTickLower = newTickUpper - defaultTickSpacing;
-      } else if (isDragging === 'right') {
-        newTickUpper = newTickLower + defaultTickSpacing;
-      }
+      const center = (newTickLower + newTickUpper) / 2;
+      newTickLower = center - defaultTickSpacing / 2;
+      newTickUpper = center + defaultTickSpacing / 2;
+      newTickLower = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTickLower));
+      newTickUpper = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTickUpper));
     }
 
-    onRangeChange(newTickLower.toString(), newTickUpper.toString());
+    scheduleRangeChange(newTickLower.toString(), newTickUpper.toString());
     
-    // Store the final position for viewport adjustment on mouse up
     finalDragPositionRef.current = { 
       tickLower: newTickLower, 
       tickUpper: newTickUpper,
-      hitRightEdge: false, // Will be calculated on mouse up
-      hitLeftEdge: false   // Will be calculated on mouse up
+      hitRightEdge: false,
+      hitLeftEdge: false
     };
   };
 
   const handleTouchMove = (e: TouchEvent) => {
     if (!isDragging || !dragStart || !containerRef.current) return;
 
-    e.preventDefault(); // Prevent scrolling while dragging
+    e.preventDefault();
     e.stopPropagation();
     const touch = e.touches[0];
     const rect = containerRef.current.getBoundingClientRect();
     const deltaX = touch.clientX - dragStart.x;
     const containerWidth = rect.width;
-    const [minTick, maxTick] = xDomain;
-    const tickRange = maxTick - minTick;
-    const deltaTicks = (deltaX / containerWidth) * tickRange;
+    const [displayMin, displayMax] = displayDomain;
+    const displayRange = displayMax - displayMin;
+    const deltaDisplayTicks = (deltaX / containerWidth) * displayRange;
 
-    let newTickLower = dragStart.tickLower;
-    let newTickUpper = dragStart.tickUpper;
+    // Get start positions in display space
+    const startDisplayLower = transformTickToDisplay(dragStart.tickLower);
+    const startDisplayUpper = transformTickToDisplay(dragStart.tickUpper);
+    
+    let newDisplayLower = startDisplayLower;
+    let newDisplayUpper = startDisplayUpper;
+
+    // Work in display space - left handle controls left display boundary, right controls right
+    const leftDisplayTick = Math.min(startDisplayLower, startDisplayUpper);
+    const rightDisplayTick = Math.max(startDisplayLower, startDisplayUpper);
+    const isLowerOnLeft = startDisplayLower <= startDisplayUpper;
 
     if (isDragging === 'left') {
-      // Constrain left handle to visible domain and maintain minimum spacing
-      newTickLower = Math.min(dragStart.tickUpper - defaultTickSpacing, dragStart.tickLower + deltaTicks);
-      newTickLower = Math.round(newTickLower / defaultTickSpacing) * defaultTickSpacing;
-      // Constrain to visible domain
-      newTickLower = Math.max(minTick, Math.min(maxTick, newTickLower));
+      const newLeftDisplay = leftDisplayTick + deltaDisplayTicks;
+      if (isLowerOnLeft) {
+        newDisplayLower = Math.min(rightDisplayTick - defaultTickSpacing, newLeftDisplay);
+      } else {
+        newDisplayUpper = Math.min(rightDisplayTick - defaultTickSpacing, newLeftDisplay);
+      }
     } else if (isDragging === 'right') {
-      // Constrain right handle to visible domain and maintain minimum spacing
-      newTickUpper = Math.max(dragStart.tickLower + defaultTickSpacing, dragStart.tickUpper + deltaTicks);
-      newTickUpper = Math.round(newTickUpper / defaultTickSpacing) * defaultTickSpacing;
-      // Constrain to visible domain
-      newTickUpper = Math.max(minTick, Math.min(maxTick, newTickUpper));
+      const newRightDisplay = rightDisplayTick + deltaDisplayTicks;
+      if (isLowerOnLeft) {
+        newDisplayUpper = Math.max(leftDisplayTick + defaultTickSpacing, newRightDisplay);
+      } else {
+        newDisplayLower = Math.max(leftDisplayTick + defaultTickSpacing, newRightDisplay);
+      }
     } else if (isDragging === 'center') {
-      // Constrain center dragging to keep entire range within visible domain
-      const rangeWidth = dragStart.tickUpper - dragStart.tickLower;
-      const newCenter = ((dragStart.tickLower + dragStart.tickUpper) / 2) + deltaTicks;
-      newTickLower = newCenter - rangeWidth / 2;
-      newTickUpper = newCenter + rangeWidth / 2;
+      // Center drag moves both boundaries together in display space
+      newDisplayLower = startDisplayLower + deltaDisplayTicks;
+      newDisplayUpper = startDisplayUpper + deltaDisplayTicks;
       
-      // Constrain the entire range to stay within visible domain
-      if (newTickLower < minTick) {
-        const adjustment = minTick - newTickLower;
-        newTickLower = minTick;
-        newTickUpper = newTickUpper + adjustment;
+      // Constrain to display bounds
+      if (Math.min(newDisplayLower, newDisplayUpper) < displayMin) {
+        const adjustment = displayMin - Math.min(newDisplayLower, newDisplayUpper);
+        newDisplayLower += adjustment;
+        newDisplayUpper += adjustment;
       }
-      if (newTickUpper > maxTick) {
-        const adjustment = newTickUpper - maxTick;
-        newTickUpper = maxTick;
-        newTickLower = newTickLower - adjustment;
+      if (Math.max(newDisplayLower, newDisplayUpper) > displayMax) {
+        const adjustment = Math.max(newDisplayLower, newDisplayUpper) - displayMax;
+        newDisplayLower -= adjustment;
+        newDisplayUpper -= adjustment;
       }
-      
-      newTickLower = Math.round(newTickLower / defaultTickSpacing) * defaultTickSpacing;
-      newTickUpper = Math.round(newTickUpper / defaultTickSpacing) * defaultTickSpacing;
     }
 
-    // Final constraint to valid range (broader constraint for edge cases)
+    // Convert back to tick space
+    let newTickLower = transformDisplayToTick(newDisplayLower);
+    let newTickUpper = transformDisplayToTick(newDisplayUpper);
+
+    // Ensure proper order in tick space
+    if (newTickLower > newTickUpper) {
+      [newTickLower, newTickUpper] = [newTickUpper, newTickLower];
+    }
+
     newTickLower = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTickLower));
     newTickUpper = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTickUpper));
 
-    // Ensure minimum spacing
     if (newTickUpper - newTickLower < defaultTickSpacing) {
       if (isDragging === 'left') {
         newTickLower = newTickUpper - defaultTickSpacing;
@@ -906,30 +817,27 @@ export function InteractiveRangeChart({
       }
     }
 
-    onRangeChange(newTickLower.toString(), newTickUpper.toString());
+    scheduleRangeChange(newTickLower.toString(), newTickUpper.toString());
     
-    // Store the final position for viewport adjustment on touch end
     finalDragPositionRef.current = { 
       tickLower: newTickLower, 
       tickUpper: newTickUpper,
-      hitRightEdge: false, // Will be calculated on touch end
-      hitLeftEdge: false   // Will be calculated on touch end
+      hitRightEdge: false,
+      hitLeftEdge: false
     };
   };
 
   const handleMouseUp = () => {
-    if (onXDomainChange && finalDragPositionRef.current) {
+    if (finalDragPositionRef.current) {
       const { tickLower: finalTickLower, tickUpper: finalTickUpper } = finalDragPositionRef.current;
       let [currentMinTick, currentMaxTick] = xDomain;
       const currentDomainSize = currentMaxTick - currentMinTick;
       const minDomainSize = defaultTickSpacing * 10;
       const minSelectionRatio = 0.2;
 
-      // Detect if we touched either edge of the current viewport
       const touchedLeft = finalTickLower <= currentMinTick;
       const touchedRight = finalTickUpper >= currentMaxTick;
 
-      // Only expand viewport if an edge was touched; expand that side by 25%
       if (touchedLeft || touchedRight) {
         let newMinTick = currentMinTick;
         let newMaxTick = currentMaxTick;
@@ -938,17 +846,15 @@ export function InteractiveRangeChart({
         if (touchedLeft) newMinTick = currentMinTick - expandBy;
         if (touchedRight) newMaxTick = currentMaxTick + expandBy;
 
-        // Apply global constraints
         if (currentPoolTick !== null) {
-          const maxUpperDelta = Math.round(Math.log(6) / Math.log(1.0001)); // +500%
-          const maxLowerDelta = Math.round(Math.log(0.05) / Math.log(1.0001)); // -95%
+          const maxUpperDelta = Math.round(Math.log(6) / Math.log(1.0001));
+          const maxLowerDelta = Math.round(Math.log(0.05) / Math.log(1.0001));
           const maxUpperTick = currentPoolTick + maxUpperDelta;
           const maxLowerTick = currentPoolTick + maxLowerDelta;
           newMinTick = Math.max(newMinTick, maxLowerTick);
           newMaxTick = Math.min(newMaxTick, maxUpperTick);
         }
 
-        // Align and enforce minimum domain
         newMinTick = Math.floor(newMinTick / defaultTickSpacing) * defaultTickSpacing;
         newMaxTick = Math.ceil(newMaxTick / defaultTickSpacing) * defaultTickSpacing;
         if (newMaxTick - newMinTick < minDomainSize) {
@@ -959,17 +865,27 @@ export function InteractiveRangeChart({
           newMaxTick = Math.ceil(newMaxTick / defaultTickSpacing) * defaultTickSpacing;
         }
 
-        onXDomainChange([newMinTick, newMaxTick]);
+        if (onXDomainChange) onXDomainChange([newMinTick, newMaxTick]);
       } else {
-        // Enforce minimum selection width: if selection < 20% of view, zoom in
         const selectionSize = finalTickUpper - finalTickLower;
         if (selectionSize > 0 && selectionSize < currentDomainSize * minSelectionRatio) {
           const targetSize = Math.max(minDomainSize, currentDomainSize * minSelectionRatio);
           const center = (finalTickLower + finalTickUpper) / 2;
           const [cMin, cMax] = applyDomainConstraintsLocal(center - targetSize / 2, center + targetSize / 2);
-          onXDomainChange([cMin, cMax]);
+          if (onXDomainChange) onXDomainChange([cMin, cMax]);
         }
       }
+
+      let snapLower = Math.round(finalTickLower / defaultTickSpacing) * defaultTickSpacing;
+      let snapUpper = Math.round(finalTickUpper / defaultTickSpacing) * defaultTickSpacing;
+      if (snapUpper - snapLower < defaultTickSpacing) {
+        const center = (snapLower + snapUpper) / 2;
+        snapLower = Math.floor((center - defaultTickSpacing / 2) / defaultTickSpacing) * defaultTickSpacing;
+        snapUpper = snapLower + defaultTickSpacing;
+      }
+      snapLower = Math.max(currentMinTick, Math.min(currentMaxTick, snapLower));
+      snapUpper = Math.max(currentMinTick, Math.min(currentMaxTick, snapUpper));
+      onRangeChange(String(snapLower), String(snapUpper));
     }
 
     setIsDragging(null);
@@ -979,7 +895,6 @@ export function InteractiveRangeChart({
   };
 
   const handleTouchEnd = () => {
-    // Use the same logic as handleMouseUp
     handleMouseUp();
   };
 
@@ -1030,7 +945,6 @@ export function InteractiveRangeChart({
 
   return (
     <div className="space-y-2">
-      {/* Legend removed per UX request */}
       <div 
         className="relative h-[80px] w-full touch-manipulation" 
         ref={containerRef}
@@ -1038,7 +952,6 @@ export function InteractiveRangeChart({
         onMouseLeave={() => { setIsHovering(false); stopBackgroundPan(); }}
         onMouseDown={handleBackgroundMouseDown}
         onTouchStart={(e) => {
-          // Prevent scrolling when touching the chart area
           if (e.touches.length === 1) {
             e.preventDefault();
           }
@@ -1047,15 +960,14 @@ export function InteractiveRangeChart({
         {/* Chart */}
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart 
-            data={frameData}
+            data={liquidityChartData}
             margin={{ top: 2, right: 5, bottom: 5, left: 5 }}
           >
-            {/* Disable hover cursor/tooltip entirely */}
             <RechartsTooltip cursor={false} content={() => null} />
             <XAxis 
               dataKey="tick" 
               type="number" 
-              domain={xDomain} 
+              domain={displayDomain} 
               allowDataOverflow 
               tick={false}
               axisLine={false}
@@ -1067,29 +979,28 @@ export function InteractiveRangeChart({
               yAxisId="bucketAxis" 
               orientation="right"
               type="number"
-              domain={[0, maxBucketLiquidity]}
+              domain={[0, maxLiquidity]}
               allowDecimals={true}
             />
             
-            {/* Draw per-bucket rectangles aligned to [tickLower, tickUpper], touching; culled to viewport */}
-            {visibleBuckets.map((bucket, idx) => (
-              <ReferenceArea
-                key={`bucket-${bucket.tickLower}-${idx}`}
-                x1={bucket.tickLower}
-                x2={bucket.tickUpper}
-                y1={parseFloat(bucket.liquidityToken0)}
-                y2={0}
-                yAxisId="bucketAxis"
-                strokeOpacity={0}
-                fill="#404040"
-                fillOpacity={0.4}
-                ifOverflow="extendDomain"
-              />
-            ))}
+            {/* Step-after area chart for liquidity depth */}
+            <Area
+              yAxisId="bucketAxis"
+              type="stepAfter"
+              dataKey="liquidity"
+              stroke="none"
+              fill="#404040"
+              fillOpacity={0.4}
+              isAnimationActive={false}
+              connectNulls={false}
+              dot={false}
+              activeDot={false}
+            />
             
+            {/* Current price line */}
             {currentPoolTick !== null && (
               <ReferenceLine 
-                x={currentPoolTick} 
+                x={transformTickToDisplay(currentPoolTick)} 
                 stroke="#e85102"
                 strokeWidth={1.5} 
                 ifOverflow="extendDomain"
@@ -1097,9 +1008,10 @@ export function InteractiveRangeChart({
               />
             )}
             
+            {/* Selected range indicator */}
             <ReferenceArea 
-              x1={parseInt(tickLower)} 
-              x2={parseInt(tickUpper)} 
+              x1={transformTickToDisplay(parseInt(tickLower))} 
+              x2={transformTickToDisplay(parseInt(tickUpper))} 
               yAxisId="bucketAxis"
               strokeOpacity={0} 
               fill="#e85102" 
@@ -1111,7 +1023,6 @@ export function InteractiveRangeChart({
                   return <rect x={0} y={0} width={0} height={0} />;
                 }
                 
-                // Sharp bottom corners, rounded top corners
                 const radius = 6;
                 
                 return (
@@ -1123,7 +1034,6 @@ export function InteractiveRangeChart({
                 );
               }}
             />
-            {/* Floating tooltip for live lower/upper price during drag - rendered outside chart container */}
           </ComposedChart>
         </ResponsiveContainer>
 
@@ -1197,7 +1107,6 @@ export function InteractiveRangeChart({
             onClick={centerOnCurrentPrice}
             aria-label="Center on current price"
           >
-            {/* Parallel drag-like lines icon */}
             <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" className="opacity-80">
               <rect x="4" y="2" width="1" height="8" rx="0.5" fill="currentColor" />
               <rect x="7" y="2" width="1" height="8" rx="0.5" fill="currentColor" />

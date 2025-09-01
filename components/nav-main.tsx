@@ -301,7 +301,12 @@ export function NavMain({
   return (
     <SidebarMenu className="flex flex-col gap-1 px-3">
       {items.map((item) => {
-        const isActive = item.url === pathname;
+        const isActive = (() => {
+          if (!item.url) return false;
+          // Highlight parent section for sub-routes as well, e.g. /liquidity/*
+          const currentPath = pathname || "";
+          return currentPath === item.url || currentPath.startsWith(`${item.url}/`);
+        })();
 
         return (
           <SidebarMenuItem key={item.title} className="list-none">

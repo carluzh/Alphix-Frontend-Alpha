@@ -119,7 +119,7 @@ export interface UseAddLiquidityTransactionProps {
   tickUpper: string;
   activeInputSide: 'amount0' | 'amount1' | null;
   calculatedData: any | null;
-  onLiquidityAdded: () => void;
+  onLiquidityAdded: (token0Symbol?: string, token1Symbol?: string) => void;
   onOpenChange: (isOpen: boolean) => void;
 }
 
@@ -609,10 +609,27 @@ export function useAddLiquidityTransaction({
   useEffect(() => {
     if (isMintConfirmed) {
       toast.success("Liquidity minted successfully!");
-      onLiquidityAdded();
+      onLiquidityAdded(token0Symbol, token1Symbol);
       try { if (accountAddress) prefetchService.requestPositionsRefresh({ owner: accountAddress, reason: 'mint' }); } catch {}
       try { if (accountAddress) invalidateActivityCache(accountAddress); } catch {}
-      try { if (accountAddress) { invalidateUserPositionsCache(accountAddress); invalidateUserPositionIdsCache(accountAddress); } } catch {}
+      try {
+        if (accountAddress) {
+          invalidateUserPositionsCache(accountAddress);
+          invalidateUserPositionIdsCache(accountAddress);
+          // Set hint for newly created position to ensure it's included in cached data
+          try {
+            if (typeof window !== 'undefined') {
+              const hintKey = `recentPositionCreated:${accountAddress.toLowerCase()}`;
+              // Note: We don't have the exact position ID here, but we can set a flag to wait for new positions
+              window.localStorage.setItem(hintKey, JSON.stringify({
+                positionId: null, // Will be detected by checking for new positions in the response
+                timestamp: Date.now(),
+                action: 'create'
+              }));
+            }
+          } catch {}
+        }
+      } catch {}
       resetTransactionState();
       onOpenChange(false);
       resetSendTransaction();
