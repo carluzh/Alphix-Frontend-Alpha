@@ -48,8 +48,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             }) as readonly [bigint, number, number, number];
 
             const [, , , lpFeeMillionths] = slot0Data;
-            // Convert millionths to basis points: (lpFee / 1_000_000) * 10_000
-            actualDynamicFeeBps = Math.max(0, Math.round((Number(lpFeeMillionths) / 1_000_000) * 10_000));
+            // Convert millionths to basis points (may be fractional): bps = (lpFee / 1_000_000) * 10_000
+            const rawBps = (Number(lpFeeMillionths) / 1_000_000) * 10_000;
+            // Preserve hundredths of a basis point (0.01 bps) to avoid rounding down 4.4 bps -> 4 bps
+            actualDynamicFeeBps = Math.max(0, Math.round(rawBps * 100) / 100);
             
             console.log(`Read LP fee ~${actualDynamicFeeBps} bps for pool ${poolConfig.id} (${poolConfig.name})`);
         } catch (error) {

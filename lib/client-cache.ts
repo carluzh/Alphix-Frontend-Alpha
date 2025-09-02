@@ -311,7 +311,8 @@ export async function getPoolFeeBps(poolIdHex: string, ttlMs: number = 10 * 60 *
         args: [poolIdHex as `0x${string}`],
       }) as readonly [bigint, number, number, number];
       const lpFeeRaw = Number(slot0?.[3] ?? 3000);
-      const bps = Math.max(0, Math.round((lpFeeRaw / 1_000_000) * 10_000));
+      // Preserve hundredths of a basis point to avoid rounding drift in display
+      const bps = Math.max(0, Math.round((((lpFeeRaw / 1_000_000) * 10_000) * 100)) / 100);
       setToCache(key, bps);
       return bps;
     } catch {

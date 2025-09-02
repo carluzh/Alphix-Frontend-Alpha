@@ -408,8 +408,8 @@ function FeesCell({ positionId, sym0, sym1, price0, price1 }: { positionId: stri
   try { amt0 = parseFloat(formatUnits(BigInt(fees.amount0), d0)); } catch {}
   try { amt1 = parseFloat(formatUnits(BigInt(fees.amount1), d1)); } catch {}
   const usd = (amt0 * (price0 || 0)) + (amt1 * (price1 || 0));
-  // Only show fees if USD > $1
-  if (!Number.isFinite(usd) || usd < 1) {
+  // Match portfolio PositionCard's FeesCell: show values down to $0.01, otherwise show "< $0.01"
+  if (!Number.isFinite(usd)) {
     return <span className="whitespace-nowrap text-muted-foreground">—</span>;
   }
   
@@ -425,7 +425,7 @@ function FeesCell({ positionId, sym0, sym1, price0, price1 }: { positionId: stri
             {fmtUsd(usd)}
           </span>
         </TooltipTrigger>
-        <TooltipContent side="top" align="center" sideOffset={8} className="px-2 py-1 text-xs max-w-48">
+        <TooltipContent side="top" align="center" sideOffset={8} className="px-2 py-1 text-xs w-48">
           <div className="grid gap-1">
             <div className="flex items-center justify-between">
               <span className="text-muted-foreground">{sym0}</span>

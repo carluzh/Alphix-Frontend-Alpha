@@ -172,7 +172,7 @@ export function FeesCell({
         side="top"
         align="center"
         sideOffset={8}
-        className="w-40 p-2 border border-sidebar-border bg-[#0f0f0f] text-xs shadow-lg rounded-lg"
+        className="w-48 p-2 border border-sidebar-border bg-[#0f0f0f] text-xs shadow-lg rounded-lg"
       >
         <div className="grid gap-1">
           <div className="flex items-center justify-between">

@@ -6,6 +6,7 @@ import Image from 'next/image';
 import {
   ArrowDownIcon,
   ChevronRightIcon,
+  ChevronsRight,
   InfoIcon,
   ChevronDown as ChevronDownIcon,
 } from "lucide-react";
@@ -138,7 +139,8 @@ export function SwapInputView({
   const wiggleControls = useAnimation();
 
   const formatPercentFromBps = React.useCallback((bps: number) => {
-    const percent = bps / 10000; // convert bps to percent
+    // Convert basis points to percentage points: 1 bps = 0.01%
+    const percent = bps / 100;
     const decimals = percent < 0.1 ? 3 : 2;
     return `${percent.toFixed(decimals)}%`;
   }, []);
@@ -388,7 +390,13 @@ export function SwapInputView({
                               const fromSym = routeInfo?.path?.[selectedPoolIndexForChart] ?? displayFromToken.symbol;
                               const toIdx = Math.min((routeInfo?.path?.length || 1) - 1, selectedPoolIndexForChart + 1);
                               const toSym = routeInfo?.path?.[toIdx] ?? displayToToken.symbol;
-                              return `${fromSym} → ${toSym}`;
+                              return (
+                                <span className="inline-flex items-center gap-1.5">
+                                  <span>{fromSym}</span>
+                                  <ChevronsRight className="h-3 w-3 text-muted-foreground/70" />
+                                  <span>{toSym}</span>
+                                </span>
+                              );
                             })()}
                           </p>
                         </TooltipContent>
@@ -608,7 +616,8 @@ export function SwapInputView({
                       }
                       const totalFeeBps = routeFees.reduce((total, routeFee) => total + routeFee.fee, 0);
                       const inputAmountUSD = parseFloat(fromAmount || "0") * (displayFromToken.usdPrice || 0);
-                      const feeInUSD = inputAmountUSD * (totalFeeBps / 1000000);
+                      // totalFeeBps is in basis points; convert to fraction by dividing by 10,000
+                      const feeInUSD = inputAmountUSD * (totalFeeBps / 10000);
                       const isMultiHop = (routeInfo?.path?.length || 2) > 2;
                       const percentDisplay = formatPercentFromBps(totalFeeBps);
                       const amountDisplay = feeInUSD > 0 && feeInUSD < 0.01 ? "< $0.01" : formatCurrency(feeInUSD.toString());
