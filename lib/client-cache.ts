@@ -7,9 +7,10 @@ import { getPositionDetails, getPoolState } from './liquidity-utils';
 import { publicClient } from './viemClient';
 import { parseAbi } from 'viem';
 import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from './abis/state_view_abi';
-import { getStateViewAddress } from './pools-config';
+import { getStateViewAddress, getPositionManagerAddress } from './pools-config';
 import { getToken as getTokenConfig, getTokenSymbolByAddress, CHAIN_ID } from './pools-config';
 import type { Address } from 'viem';
+import { position_manager_abi } from './abis/PositionManager_abi';
 const CACHE_DURATION_MS = 60 * 60 * 1000; // 1 hour
 const LONG_CACHE_DURATION_MS = 15 * 60 * 1000; // 15 minutes for stable data
 const TEN_MINUTES_MS = 10 * 60 * 1000;
@@ -501,61 +502,157 @@ export async function loadUserPositionIds(ownerAddress: string): Promise<string[
   return setOngoingRequest(key, promise);
 }
 
+// Helper moved from liquidity-utils to be self-contained
+export interface DecodedPositionInfo {
+    tickLower: number;
+    tickUpper: number;
+    hasSubscriber: boolean;
+}
+export function decodePositionInfo(value: bigint): DecodedPositionInfo {
+    const toSigned24 = (raw: number): number => (raw >= 0x800000 ? raw - 0x1000000 : raw);
+    const rawLower = Number((value >> 8n) & 0xFFFFFFn);
+    const rawUpper = Number((value >> 32n) & 0xFFFFFFn);
+    const hasSub = (value & 0xFFn) !== 0n;
+    return {
+        tickLower: toSigned24(rawLower),
+        tickUpper: toSigned24(rawUpper),
+        hasSubscriber: hasSub,
+    };
+}
+
 // Derive full position data from tokenIds using current on-chain state
 export async function derivePositionsFromIds(ownerAddress: string, tokenIds: Array<string | number | bigint>): Promise<any[]> {
   if (!Array.isArray(tokenIds) || tokenIds.length === 0) return [];
-  const stateCache = new Map<string, { sqrtPriceX96: string; tick: number; poolLiquidity: string }>();
-  // Read createdAt map if available
-  const createdAtMap = new Map<string, number>();
-  const lastTsMap = new Map<string, number>();
-  try {
-    if (typeof window !== 'undefined') {
-      const raw = window.localStorage.getItem(getUserPositionIdsCacheKey(ownerAddress));
-      if (raw) {
-        const parsed = JSON.parse(raw) as StoredIdsWithMeta | null;
-        if (parsed && Array.isArray(parsed.items)) {
-          for (const it of parsed.items) {
-            if (it && it.id) {
-              createdAtMap.set(String(it.id), Number(it.createdAt || 0));
-              lastTsMap.set(String(it.id), Number(it.lastTimestamp || 0));
-            }
-          }
-        }
-      }
-    }
-  } catch {}
-  const out: any[] = [];
-  for (const idLike of tokenIds) {
-    try {
-      const nftTokenId = BigInt(String(idLike));
-      const details = await getPositionDetails(nftTokenId);
-      const encodedPoolKey = encodeAbiParameters([
-        { type: 'tuple', components: [
-          { name: 'currency0', type: 'address' },
-          { name: 'currency1', type: 'address' },
-          { name: 'fee', type: 'uint24' },
-          { name: 'tickSpacing', type: 'int24' },
-          { name: 'hooks', type: 'address' },
-        ]}
-      ], [{
-        currency0: details.poolKey.currency0 as `0x${string}`,
-        currency1: details.poolKey.currency1 as `0x${string}`,
-        fee: Number(details.poolKey.fee),
-        tickSpacing: Number(details.poolKey.tickSpacing),
-        hooks: details.poolKey.hooks as `0x${string}`,
-      }]);
+
+  const pmAddress = getPositionManagerAddress() as Address;
+  const stateViewAddr = getStateViewAddress() as Address;
+
+  // 1. First Multicall: Get position info and liquidity for all tokenIds
+  const positionDetailsContracts = tokenIds.flatMap(id => ([
+    {
+      address: pmAddress,
+      abi: position_manager_abi as any,
+      functionName: 'getPoolAndPositionInfo',
+      args: [BigInt(String(id))],
+    },
+    {
+      address: pmAddress,
+      abi: position_manager_abi as any,
+      functionName: 'getPositionLiquidity',
+      args: [BigInt(String(id))],
+    },
+  ]));
+
+  const positionDetailsResults = await publicClient.multicall({
+    contracts: positionDetailsContracts,
+    allowFailure: true,
+  });
+
+  // 2. Process first multicall results and gather unique pool keys
+  const poolKeys = new Map<string, any>();
+  const positionDataMap = new Map<string, any>();
+
+  for (let i = 0; i < tokenIds.length; i++) {
+    const tokenId = String(tokenIds[i]);
+    const infoResult = positionDetailsResults[i * 2];
+    const liquidityResult = positionDetailsResults[i * 2 + 1];
+
+    if (infoResult.status === 'success' && liquidityResult.status === 'success') {
+      const [poolKey, infoValue] = infoResult.result as any;
+      const liquidity = liquidityResult.result as bigint;
+
+      const encodedPoolKey = encodeAbiParameters(
+          [{ type: 'tuple', components: [
+              { name: 'currency0', type: 'address' }, { name: 'currency1', type: 'address' },
+              { name: 'fee', type: 'uint24' }, { name: 'tickSpacing', type: 'int24' },
+              { name: 'hooks', type: 'address' },
+          ]}],
+          [poolKey]
+      );
       const poolIdHex = keccak256(encodedPoolKey) as Hex;
-      const poolIdStr = poolIdHex;
 
-      let state = stateCache.get(poolIdStr);
-      if (!state) {
-        const ps = await getPoolState(poolIdHex);
-        state = { sqrtPriceX96: ps.sqrtPriceX96.toString(), tick: Number(ps.tick), poolLiquidity: ps.liquidity.toString() };
-        stateCache.set(poolIdStr, state);
+      if (!poolKeys.has(poolIdHex)) {
+          poolKeys.set(poolIdHex, poolKey);
       }
+      
+      positionDataMap.set(tokenId, {
+          poolId: poolIdHex,
+          poolKey,
+          infoValue,
+          liquidity,
+      });
+    }
+  }
 
-      const t0Addr = details.poolKey.currency0 as Address;
-      const t1Addr = details.poolKey.currency1 as Address;
+  // 3. Second Multicall: Get state for all unique pools
+  const uniquePoolIds = Array.from(poolKeys.keys());
+  const poolStateContracts = uniquePoolIds.flatMap(poolId => ([
+    {
+      address: stateViewAddr,
+      abi: parseAbi(STATE_VIEW_HUMAN_READABLE_ABI as any),
+      functionName: 'getSlot0',
+      args: [poolId],
+    },
+    {
+      address: stateViewAddr,
+      abi: parseAbi(STATE_VIEW_HUMAN_READABLE_ABI as any),
+      functionName: 'getLiquidity',
+      args: [poolId],
+    },
+  ]));
+
+  const poolStateResults = await publicClient.multicall({
+    contracts: poolStateContracts,
+    allowFailure: true,
+  });
+
+  // 4. Process second multicall results
+  const poolStateMap = new Map<string, any>();
+  for (let i = 0; i < uniquePoolIds.length; i++) {
+    const poolId = uniquePoolIds[i];
+    const slot0Result = poolStateResults[i * 2];
+    const liquidityResult = poolStateResults[i * 2 + 1];
+
+    if (slot0Result.status === 'success' && liquidityResult.status === 'success') {
+      const [sqrtPriceX96, tick] = slot0Result.result as any;
+      const poolLiquidity = liquidityResult.result as bigint;
+      poolStateMap.set(poolId, {
+        sqrtPriceX96: sqrtPriceX96.toString(),
+        tick: Number(tick),
+        poolLiquidity: poolLiquidity.toString(),
+      });
+    }
+  }
+
+  // 5. Final Assembly: Construct V4Position objects and derive amounts
+  const createdAtMap = new Map<string, number>();
+  try {
+      if (typeof window !== 'undefined') {
+          const raw = window.localStorage.getItem(getUserPositionIdsCacheKey(ownerAddress));
+          if (raw) {
+              const parsed = JSON.parse(raw) as any;
+              if (parsed && Array.isArray(parsed.items)) {
+                  for (const it of parsed.items) {
+                      if (it && it.id) createdAtMap.set(String(it.id), Number(it.createdAt || 0));
+                  }
+              }
+          }
+      }
+  } catch {}
+
+  const out: any[] = [];
+  for (const tokenIdStr of tokenIds.map(String)) {
+    try {
+      const positionData = positionDataMap.get(tokenIdStr);
+      if (!positionData) continue;
+      
+      const poolState = poolStateMap.get(positionData.poolId);
+      if (!poolState) continue;
+
+      const { poolKey, infoValue, liquidity } = positionData;
+      
+      const t0Addr = poolKey.currency0 as Address;
+      const t1Addr = poolKey.currency1 as Address;
       const sym0 = getTokenSymbolByAddress(t0Addr) || 'T0';
       const sym1 = getTokenSymbolByAddress(t1Addr) || 'T1';
       const cfg0 = sym0 ? getTokenConfig(sym0) : undefined;
@@ -566,50 +663,41 @@ export async function derivePositionsFromIds(ownerAddress: string, tokenIds: Arr
       const tok1 = new Token(CHAIN_ID, t1Addr, dec1, sym1);
 
       const v4Pool = new V4Pool(
-        tok0,
-        tok1,
-        details.poolKey.fee,
-        details.poolKey.tickSpacing,
-        details.poolKey.hooks,
-        state.sqrtPriceX96,
-        JSBI.BigInt(state.poolLiquidity),
-        state.tick
+        tok0, tok1, poolKey.fee, poolKey.tickSpacing, poolKey.hooks,
+        JSBI.BigInt(poolState.sqrtPriceX96),
+        JSBI.BigInt(poolState.poolLiquidity),
+        poolState.tick
       );
+
+      const { tickLower, tickUpper } = decodePositionInfo(infoValue);
+
       const v4Position = new V4Position({
         pool: v4Pool,
-        tickLower: details.tickLower,
-        tickUpper: details.tickUpper,
-        liquidity: JSBI.BigInt(details.liquidity.toString()),
+        tickLower,
+        tickUpper,
+        liquidity: JSBI.BigInt(liquidity.toString()),
       });
 
       const raw0 = BigInt(v4Position.amount0.quotient.toString());
       const raw1 = BigInt(v4Position.amount1.quotient.toString());
+      
+      let created = createdAtMap.get(tokenIdStr) || 0;
+      if (created > 1e12) created = Math.floor(created / 1000);
 
-      const lastTs = lastTsMap.get(String(nftTokenId)) || 0;
       out.push({
-        positionId: String(nftTokenId),
-        poolId: poolIdStr,
+        positionId: tokenIdStr,
+        poolId: positionData.poolId,
         token0: { address: tok0.address, symbol: tok0.symbol || 'T0', amount: formatUnits(raw0, tok0.decimals), rawAmount: raw0.toString() },
         token1: { address: tok1.address, symbol: tok1.symbol || 'T1', amount: formatUnits(raw1, tok1.decimals), rawAmount: raw1.toString() },
-        tickLower: details.tickLower,
-        tickUpper: details.tickUpper,
-        liquidityRaw: details.liquidity.toString(),
-        ageSeconds: (() => {
-          let created = createdAtMap.get(String(nftTokenId)) || 0;
-          // Normalize potential ms to seconds
-          if (created > 1e12) created = Math.floor(created / 1000);
-          return created > 0 ? Math.max(0, Math.floor(Date.now()/1000) - created) : 0;
-        })(),
-        blockTimestamp: (() => {
-          let created = createdAtMap.get(String(nftTokenId)) || 0;
-          if (created > 1e12) created = Math.floor(created / 1000);
-          return String(created || '0');
-        })(),
-        // last modified removed from UI; keep internal maps harmlessly
-        isInRange: state.tick >= details.tickLower && state.tick < details.tickUpper,
+        tickLower,
+        tickUpper,
+        liquidityRaw: liquidity.toString(),
+        ageSeconds: created > 0 ? Math.max(0, Math.floor(Date.now()/1000) - created) : 0,
+        blockTimestamp: String(created || '0'),
+        isInRange: poolState.tick >= tickLower && poolState.tick < tickUpper,
       });
     } catch (e) {
-      // swallow one-off errors per id
+      console.warn(`[derivePositionsFromIds] Error processing tokenId ${tokenIdStr}:`, e);
     }
   }
   return out;

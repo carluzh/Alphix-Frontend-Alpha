@@ -245,28 +245,9 @@ export function PortfolioTickBar({ composition, onHover, hoveredSegment, contain
 
   // Shorten next segment-start tick if hovered/selected label text would overflow into it
   const shortStartTicks = React.useMemo(() => {
-    const set = new Set<number>();
-    const activeIdx = hoverIdx ?? selectedIdx ?? null;
-    if (activeIdx === null || activeIdx === undefined) return set;
-    if (!segments[activeIdx]) return set;
-    const s = segments[activeIdx] as any;
-    const restToken = (s as any)?.restTokens?.[restCycleIndex];
-    const labelText = (restToken ? restToken.label : s.label) as string;
-    const estNameWidth = measureTextWidth(labelText || '');
-    const pctRounded = Math.round(s.pct);
-    const estPctWidth = measureTextWidth(`${pctRounded}%`);
-    const minGap = 6;
-    const leftPad = Math.max(0, tickPixelWidth - 1);
-    const spanTicks = rawSpans[activeIdx];
-    const segmentPxWidth = spanTicks * tickPixelWidth + Math.max(0, spanTicks - 1) * tickGapWidth;
-    const availableLabelWidth = Math.max(0, segmentPxWidth - leftPad);
-    const requiredWidth = estPctWidth + minGap + estNameWidth;
-    if (requiredWidth > availableLabelWidth) {
-      const nextStartTick = segmentStarts[activeIdx] + rawSpans[activeIdx];
-      set.add(nextStartTick);
-    }
-    return set;
-  }, [hoverIdx, selectedIdx, segments, rawSpans, segmentStarts, tickPixelWidth, tickGapWidth, restCycleIndex, measureTextWidth]);
+    // This feature is disabled as inline labels no longer appear on hover for small segments.
+    return new Set<number>();
+  }, []);
 
   const isMeasured = layout === 'block' ? true : (availablePixels > 0);
 
@@ -385,7 +366,7 @@ export function PortfolioTickBar({ composition, onHover, hoveredSegment, contain
           style={{
             gap: layout === "block" ? "2px" : `${tickGapWidth}px`,
             width: layout === "block" ? "100%" : totalRowWidth,
-            justifyContent: layout === "block" ? "space-between" : "flex-start"
+            justifyContent: layout === "block" ? "justify-between" : "flex-start"
           }}
         >
           {Array.from({ length: ticks }).map((_, i) => {
@@ -401,8 +382,6 @@ export function PortfolioTickBar({ composition, onHover, hoveredSegment, contain
                   backgroundColor: (segments.length === 1 && (segments[0] as any)?.label === 'All') ? (tickColors?.[i] || '#666') : (isHovered ? hoverColor : (isSelected ? selectedColor : (isRestSegmentHighlighted(segmentIndex) ? selectedColor : (tickColors?.[i] || '#666')))),
                   opacity: 0.9,
                 }}
-                onMouseEnter={() => { if (!(segments.length === 1 && (segments[0] as any)?.label === 'All')) { onHover(segmentIndex); try { onHoverToken?.(composition?.[segmentIndex]?.label === 'Rest' ? 'Rest' : composition?.[segmentIndex]?.label || null); } catch {} } }}
-                onMouseLeave={() => { if (!(segments.length === 1 && (segments[0] as any)?.label === 'All')) { onHover(null); try { onHoverToken?.(null); } catch {} } }}
                 onClick={() => {
                   const segment = composition?.[segmentIndex];
                   if (!segment) return;
@@ -476,7 +455,6 @@ export function PortfolioTickBar({ composition, onHover, hoveredSegment, contain
             }}
           >
             {(() => {
-              let hideNamesFromIndex: number | null = null;
               const slots: React.ReactNode[] = [];
               for (let tickIdx = 0; tickIdx < ticks; tickIdx += 1) {
                 const segIdx = segmentStarts.indexOf(tickIdx);
@@ -502,12 +480,10 @@ export function PortfolioTickBar({ composition, onHover, hoveredSegment, contain
                       // Hide names for placeholder composition (single 100% segment)
                       const hideAllLabels = (segments.length === 1 && (segments[0] as any)?.label === 'All' && Math.round((segments[0] as any)?.pct || 0) === 100) || forceHideLabels;
                       let showName = !hideAllLabels;
-                      if (hideNamesFromIndex !== null && segIdx >= hideNamesFromIndex) showName = false;
                       const fits = availableLabelWidth >= estPctWidth + minGap + estNameWidth + barSafetyEarly;
                       if (showName && !fits) {
-                        // allow overflow on hover/selected; otherwise hide and start cascade
+                        // allow overflow on hover/selected; otherwise hide
                         if (!(isHovered || isSelected)) {
-                          hideNamesFromIndex = segIdx;
                           showName = false;
                         }
                       }
@@ -517,8 +493,6 @@ export function PortfolioTickBar({ composition, onHover, hoveredSegment, contain
                       return (
                         <div
                           className="absolute left-0 top-0"
-                          onMouseEnter={() => onHover(segIdx)}
-                          onMouseLeave={() => onHover(null)}
                           onClick={() => {
                             if ((s as any).label === 'Rest') {
                               handleRestClick(s as any, segIdx);
@@ -578,7 +552,6 @@ export function PortfolioTickBar({ composition, onHover, hoveredSegment, contain
             }}
           >
             {(() => {
-              let hideNamesFromIndex: number | null = null;
               const nodes: React.ReactNode[] = [];
               for (let i = 0; i < segments.length; i += 1) {
                 const s = segments[i];
@@ -593,20 +566,37 @@ export function PortfolioTickBar({ composition, onHover, hoveredSegment, contain
                 const leftPad = Math.max(0, tickPixelWidth - 1); // tighter gap to ticks
                 const availableLabelWidth = Math.max(0, segmentPixelWidth - leftPad);
                 const labelText = (isRestHighlighted && restToken ? (restToken as any).label : (s as any).label) as string;
-                const estChar = 7;
-                const estNameWidth = (labelText?.length || 0) * estChar;
-                const estPctWidth = (`${pctRounded}%`).length * estChar;
+                
+                const isRest = (s as any).label === 'Rest';
+                const isCycling = isRest && !!isRestCycling;
+                const restArr = (s as any).restTokens as any[] | undefined;
+                let percentText = '';
+                if (!hideAllInlineLabels) {
+                    if (isRest) {
+                        if (isCycling && restArr?.[restCycleIndex]) {
+                            const rt = restArr[restCycleIndex];
+                            percentText = `${Math.round(rt?.pct ?? 0)}%`;
+                        } else {
+                            percentText = `+${restArr?.length || 0}`;
+                        }
+                    } else {
+                        percentText = `${pctRounded}%`;
+                    }
+                }
+
+                const estNameWidth = measureTextWidth(labelText || '');
+                const estPctWidth = measureTextWidth(percentText);
                 const minGap = 6;
                 const barSafetyEarly = 4; // hide a touch earlier to avoid visible overlap
-                let showName = !hideAllInlineLabels && (s.pct >= 10);
-                if (hideNamesFromIndex !== null && i >= hideNamesFromIndex) showName = false;
-                if (showName && availableLabelWidth < Math.max(0, estPctWidth + minGap + estNameWidth - barSafetyEarly)) {
-                  hideNamesFromIndex = i;
-                  showName = false;
+                
+                const fits = availableLabelWidth >= (estPctWidth + minGap + estNameWidth - barSafetyEarly);
+
+                let showName = !hideAllInlineLabels && (s.pct >= 10) && fits;
+                
+                // Wide inline: force show name on hover/selected only if it fits
+                if (!hideAllInlineLabels && (isHovered || isSelected) && fits) {
+                  showName = true;
                 }
-                // Wide inline: force show name on hover/selected and let it overflow
-                if (!hideAllInlineLabels && (isHovered || isSelected)) showName = true;
-              const isRest = (s as any).label === 'Rest';
               const content = isRest
                 ? (
                   <div className="space-y-1">
@@ -632,8 +622,6 @@ export function PortfolioTickBar({ composition, onHover, hoveredSegment, contain
                     key={`lbl-${i}`}
                     className="absolute top-0 cursor-pointer"
                     style={{ left: `${startPosition}px`, width: `${segmentPixelWidth}px`, paddingLeft: leftPad, overflow: (isHovered || isSelected) ? 'visible' : 'hidden', zIndex: (isHovered || isSelected) ? 20 : undefined }}
-                    onMouseEnter={() => onHover(i)}
-                    onMouseLeave={() => onHover(null)}
                     onClick={() => {
                       if ((s as any).label === 'Rest') {
                         handleRestClick(s as any, i);

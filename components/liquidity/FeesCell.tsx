@@ -146,6 +146,9 @@ export function FeesCell({
     : (priceOverrides[sym1U] ?? (stable(sym1U) ? 1 : 0));
   const usd = amt0 * (effPrice0 || 0) + amt1 * (effPrice1 || 0);
 
+  // Debug logging for all positions
+  console.log(`[FeesCell DEBUG] Position ${positionId}: ${sym0}=${amt0} * $${effPrice0} + ${sym1}=${amt1} * $${effPrice1} = $${usd.toFixed(4)}`);
+
   // If there are no raw amounts, show plain text without hover
   if (BigInt(raw0) <= 0n && BigInt(raw1) <= 0n) {
     return (

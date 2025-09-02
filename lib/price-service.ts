@@ -13,6 +13,7 @@ const API_TIMEOUT_MS = 8000;
 const ALL_COINGECKO_IDS = ['bitcoin', 'usd-coin', 'ethereum', 'tether'];
 const ONGOING_REQUEST_KEY = 'fetch_all_prices';
 
+
 // Map token symbols to their underlying asset prices based on pools.json naming
 function getUnderlyingAsset(tokenSymbol: string): keyof AllPricesData | null {
   // Direct mappings for base assets
@@ -42,7 +43,7 @@ export interface AllPricesData {
 /**
  * Fetch ALL prices in one API call and cache globally
  */
-async function fetchAllPrices(): Promise<AllPricesData> {
+async function fetchAllPrices(signal?: AbortSignal): Promise<AllPricesData> {
   // Check if there's an ongoing request
   const ongoingRequest = getOngoingRequest<AllPricesData>(ONGOING_REQUEST_KEY);
   if (ongoingRequest) {
@@ -57,13 +58,16 @@ async function fetchAllPrices(): Promise<AllPricesData> {
     const timeoutId = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
     
     try {
-      const response = await fetch(
-        `${COINGECKO_PRICE_ENDPOINT}?ids=${ALL_COINGECKO_IDS.join(',')}&vs_currencies=usd`,
-        { 
-          cache: 'no-store',
-          signal: controller.signal
-        }
-      );
+      // Use proxied endpoint when running in browser (avoid CORS and rate limits)
+      const isBrowser = typeof window !== 'undefined';
+      const url = isBrowser
+        ? `/api/prices?ids=${ALL_COINGECKO_IDS.join(',')}&vs=usd`
+        : `${COINGECKO_PRICE_ENDPOINT}?ids=${ALL_COINGECKO_IDS.join(',')}&vs_currencies=usd`;
+
+      const response = await fetch(url, { 
+        cache: 'no-store',
+        signal: signal || controller.signal
+      });
       
       clearTimeout(timeoutId);
       
@@ -75,10 +79,10 @@ async function fetchAllPrices(): Promise<AllPricesData> {
       console.log('[PriceService] CoinGecko response:', data);
       
       const prices: AllPricesData = {
-        BTC: data.bitcoin?.usd || getFallbackPrice('BTC'),
-        USDC: data['usd-coin']?.usd || getFallbackPrice('USDC'),
-        ETH: data.ethereum?.usd || getFallbackPrice('ETH'),
-        USDT: data.tether?.usd || getFallbackPrice('USDT'),
+        BTC: data.bitcoin?.usd,
+        USDC: data['usd-coin']?.usd,
+        ETH: data.ethereum?.usd,
+        USDT: data.tether?.usd,
         lastUpdated: Date.now()
       };
       
@@ -94,13 +98,7 @@ async function fetchAllPrices(): Promise<AllPricesData> {
       console.error('[PriceService] Error fetching all prices:', error);
       
       // Return fallback prices on error
-      return {
-        BTC: getFallbackPrice('BTC'),
-        USDC: getFallbackPrice('USDC'),
-        ETH: getFallbackPrice('ETH'),
-        USDT: getFallbackPrice('USDT'),
-        lastUpdated: Date.now()
-      };
+      throw error;
     }
   })();
 
@@ -110,7 +108,7 @@ async function fetchAllPrices(): Promise<AllPricesData> {
 /**
  * Get all token prices - main entry point
  */
-export async function getAllTokenPrices(): Promise<AllPricesData> {
+export async function getAllTokenPrices(params?: { signal?: AbortSignal }): Promise<AllPricesData> {
   // Check cache first
   const cachedData = getFromCache<AllPricesData>(ALL_PRICES_CACHE_KEY);
   
@@ -120,7 +118,7 @@ export async function getAllTokenPrices(): Promise<AllPricesData> {
   }
   
   // Fetch fresh prices
-  return await fetchAllPrices();
+  return await fetchAllPrices(params?.signal);
 }
 
 /**
@@ -136,15 +134,7 @@ export async function getTokenPrice(tokenSymbol: string): Promise<number | null>
  * Get fallback price if API fails - uses real asset prices based on token mapping
  */
 export function getFallbackPrice(tokenSymbol: string): number {
-  const baseFallbacks: Record<string, number> = {
-    'BTC': 111260,    // ~$111k
-    'USDC': 0.9998,   // ~$1
-    'ETH': 2795,      // ~$2,795
-    'USDT': 1,        // ~$1
-  };
-  
-  const baseSymbol = getUnderlyingAsset(tokenSymbol);
-  return baseSymbol ? baseFallbacks[baseSymbol] : 0;
+  return 0;
 }
 
 /**
@@ -165,7 +155,7 @@ export async function batchGetTokenPrices(tokenSymbols: string[]): Promise<Recor
       result[symbol] = price;
     } else {
       // Use fallback for unknown symbols
-      result[symbol] = getFallbackPrice(symbol);
+      result[symbol] = 0;
     }
   }
   

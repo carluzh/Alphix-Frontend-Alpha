@@ -8,11 +8,11 @@ import { logger } from '@/lib/logger'
 export function useAllPrices() {
   return useQuery({
     queryKey: qk.pricesAll,
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const startTime = Date.now();
       try {
         const svc = await import('@/lib/price-service')
-        const result = await svc.getAllTokenPrices();
+        const result = await svc.getAllTokenPrices({ signal });
         const duration = Date.now() - startTime;
         logger.performance('useAllPrices query', duration, { success: true });
         return result;

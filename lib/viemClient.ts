@@ -57,6 +57,10 @@ const transport = process.env.USE_RATE_LIMITED_RPC === 'true' ? rateLimitedTrans
 export const publicClient = createPublicClient({
     chain: baseSepolia,
     transport,
+    // Ensure viem knows about multicall, otherwise fallback to individual calls
+    batch: {
+      multicall: true,
+    },
 });
 
 // You can also export the chain object if it's needed elsewhere directly

@@ -42,6 +42,13 @@ export const baseSepolia = defineChain({
     default: { name: 'Basescan Sepolia', url: 'https://sepolia.basescan.org' },
   },
   testnet: true,
+  // Provide Multicall3 deployment so viem can batch calls on Base Sepolia
+  contracts: {
+    multicall3: {
+      // Standard Multicall3 address deployed on many chains (including Base testnets)
+      address: '0xca11bde05977b3631167028862be2a173976ca11',
+    },
+  },
 });
 
 export const networks = [baseSepolia] // Added baseSepolia

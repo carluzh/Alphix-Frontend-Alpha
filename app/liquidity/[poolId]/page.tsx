@@ -1235,12 +1235,12 @@ export default function PoolDetailPage() {
             // For TVL data, ensure we have reasonable values (not all zeros)
             if (dataType === 'tvl') {
               const nonZeroValues = data.filter(item => Number(item?.tvlUSD || 0) > 0);
-              // Require at least some non-zero values and recent data
-              return nonZeroValues.length > 0 && hasRecentData;
+              // Relax validation: accept if we have any non-zero historical TVL OR a recent data point
+              return nonZeroValues.length > 0 || hasRecentData;
             }
 
-            // For volume data, just ensure we have the structure and recent data
-            return hasRecentData;
+            // For volume data, accept if we have recent data or at least a small history
+            return hasRecentData || data.length >= 7;
           }
 
           return true;

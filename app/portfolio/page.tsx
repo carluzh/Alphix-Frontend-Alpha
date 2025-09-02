@@ -45,6 +45,8 @@ import { useBalance } from "wagmi";
 import { CardFooter } from "@/components/ui/card";
 import { Info, Clock3, ChevronsLeftRight } from "lucide-react";
 import { PositionCard } from "@/components/liquidity/PositionCard";
+import { waitForSubgraphBlock } from '@/lib/client-cache';
+import { batchGetTokenPrices } from '@/lib/price-service';
 
 // Loading phases for skeleton system
 type LoadPhases = { phase: 0 | 1 | 2 | 3 | 4; startedAt: number };
@@ -94,17 +96,22 @@ function useLoadPhases(readiness: Readiness) {
     }
 
     // Control skeleton visibility with staggered timing for smooth transitions
-    if (elapsed >= minShowTime && targetPhase >= 3) {
+    // Header skeleton stays until positions are loaded and APRs are available
+    const headerReady = targetPhase >= 3;
+    // Table skeleton stays until positions are fully loaded
+    const tableReady = targetPhase >= 2;
+
+    if (elapsed >= minShowTime) {
       setShowSkeletonFor({
-        header: false,
-        table: targetPhase < 3,
+        header: !headerReady,
+        table: !tableReady,
         charts: targetPhase < 4,
         actions: false,
       });
     } else if (elapsed >= initialDelay) { // initial delay to avoid flicker
       setShowSkeletonFor({
         header: targetPhase < 2,
-        table: targetPhase < 3,
+        table: targetPhase < 2,
         charts: targetPhase < 4,
         actions: targetPhase < 2,
       });
@@ -140,55 +147,61 @@ const TokenPairLogoSkeleton = ({ size = 28, offset = 16, className = "" }: { siz
   );
 };
 
-// Portfolio header skeleton (left-aligned on mobile; square vis on small)
-const PortfolioHeaderSkeleton = ({ isVerySmallScreen = false, viewportWidth = 1440, isHiddenVis = false, isCompactVis = false, inlineAvailableWidth = 0 }: { isVerySmallScreen?: boolean; viewportWidth?: number; isHiddenVis?: boolean; isCompactVis?: boolean; inlineAvailableWidth?: number }) => {
-  const visWidthPx = (() => {
-    if (isVerySmallScreen || isHiddenVis) return 20; // chevron-only
-    if (isCompactVis) return Math.max(80, Math.min(420, Math.round(viewportWidth * 0.25)));
-    // Inline: match measured available width next to NET APY
-    return Math.max(80, inlineAvailableWidth || Math.min(560, Math.round(viewportWidth * 0.32)));
-  })();
-  const visHeightPx = isVerySmallScreen ? 32 : 40; // match value skeleton heights (h-8 / h-10)
+// New Portfolio Header Skeleton that matches the responsive 3/2/1 card layout
+const PortfolioHeaderSkeleton = ({ viewportWidth = 1440 }: { viewportWidth?: number }) => {
+  if (viewportWidth <= 1000) {
+    // Mobile/Tablet collapsible header skeleton
+    return (
+      <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4 animate-pulse">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex-1 min-w-0 space-y-3">
+            <SkeletonLine className="h-3 w-24" />
+            <SkeletonBlock className="h-10 w-40" />
+            <SkeletonLine className="h-3 w-32" />
+          </div>
+          <div className="flex-none min-w-[140px] space-y-2">
+            <div className="flex justify-between items-center pl-4"><SkeletonLine className="h-3 w-16" /><SkeletonLine className="h-3 w-8" /></div>
+            <div className="flex justify-between items-center pl-4"><SkeletonLine className="h-3 w-12" /><SkeletonLine className="h-3 w-10" /></div>
+            <div className="flex justify-between items-center pl-4"><SkeletonLine className="h-3 w-8" /><SkeletonLine className="h-3 w-12" /></div>
+          </div>
+          <div className="h-5 w-5 bg-muted/60 rounded-full" />
+        </div>
+      </div>
+    );
+  }
+
+  const isThreeCard = viewportWidth > 1400;
+
   return (
-    <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-6">
-      <div
-        className="grid items-start"
-        style={{
-          gridTemplateColumns: isVerySmallScreen 
-            ? "minmax(100px, max-content) minmax(100px, max-content) 1fr"
-            : "minmax(200px, max-content) minmax(200px, max-content) 1fr",
-          gridTemplateRows: "auto auto",
-          columnGap: "4rem",
-        }}
-      >
-        {/* Row 1: Headers */}
-        <div className="col-[1] row-[1]">
-          <div className="flex sm:block justify-start">
-            <SkeletonLine className="h-3 w-20" />
+    <div className="grid items-start gap-4" style={{ gridTemplateColumns: isThreeCard ? 'minmax(240px, max-content) minmax(240px, max-content) 1fr' : 'minmax(240px, max-content) 1fr' }}>
+      <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4 h-full flex flex-col justify-between animate-pulse space-y-3">
+        <SkeletonLine className="h-3 w-24" />
+        <div>
+          <SkeletonBlock className="h-10 w-40" />
+          <SkeletonLine className="h-4 w-32 mt-2" />
+        </div>
+        <div />
+      </div>
+      {isThreeCard && (
+        <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 py-1.5 px-4 h-full flex flex-col justify-center animate-pulse">
+          <div className="w-full divide-y divide-sidebar-border/40 space-y-2 py-2">
+            <div className="flex justify-between items-center pt-1"><SkeletonLine className="h-3 w-16" /><SkeletonLine className="h-3 w-8" /></div>
+            <div className="flex justify-between items-center pt-2"><SkeletonLine className="h-3 w-12" /><SkeletonLine className="h-3 w-10" /></div>
+            <div className="flex justify-between items-center pt-2"><SkeletonLine className="h-3 w-8" /><SkeletonLine className="h-3 w-12" /></div>
           </div>
         </div>
-        <div className="col-[2] row-[1]">
-          <div className="flex sm:block justify-start">
-            <SkeletonLine className="h-3 w-16" />
-          </div>
+      )}
+      <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4 h-full flex flex-col justify-between animate-pulse space-y-3">
+        <SkeletonLine className="h-3 w-32" />
+        <div className="space-y-2">
+           <SkeletonBlock className="h-2 w-full rounded-full" />
+           <div className="flex justify-between">
+             <SkeletonLine className="h-3 w-12" />
+             <SkeletonLine className="h-3 w-10" />
+             <SkeletonLine className="h-3 w-16" />
+           </div>
         </div>
-        
-        {/* Row 2: Values (consistent vertical alignment) */}
-        <div className="col-[1] row-[2] pt-1.5 sm:pt-2">
-          <div className="flex items-center justify-start">
-            <SkeletonBlock className={`${isVerySmallScreen ? 'h-8 w-32' : 'h-10 w-40'}`} />
-          </div>
-        </div>
-        <div className="col-[2] row-[2] pt-1.5 sm:pt-2">
-          <div className="flex items-center justify-start">
-            <SkeletonBlock className={`${isVerySmallScreen ? 'h-8 w-32' : 'h-10 w-40'}`} />
-          </div>
-        </div>
-        
-        {/* Row 2, Col 3: Visualization placeholder (match real width, center vertically) */}
-        <div className="col-[3] row-[1/3] flex items-center justify-end self-center">
-          <SkeletonBlock style={{ width: (isVerySmallScreen || isHiddenVis) ? visHeightPx : visWidthPx, height: visHeightPx }} />
-        </div>
+        <div />
       </div>
     </div>
   );
@@ -206,7 +219,7 @@ const BalancesListSkeleton = () => (
     {[...Array(6)].map((_, idx) => (
       <div key={idx} className="flex items-center justify-between h-[64px] pl-6 pr-6">
         <div className="flex items-center gap-2 min-w-0">
-          <div className="w-6 h-6 rounded-full bg-muted/60 animate-pulse flex-shrink-0" />
+          <div className="w-6 h-6 rounded-full bg-muted/40 animate-pulse flex-shrink-0" />
           <div className="flex flex-col min-w-0 gap-1">
             <SkeletonLine className="h-3 w-16" />
             <SkeletonLine className="h-3 w-24 opacity-80" />
@@ -378,16 +391,25 @@ function usePortfolioData(refreshKey: number = 0, userPositionsData?: any[], pri
         }
         
 
-        // 3. Use passed prices hook data
+        // 3. Resolve prices for all tokens (use price-service batch to map wrapped symbols -> underlying CoinGecko ids)
         const tokenSymbols = Array.from(tokenBalanceMap.keys());
         const priceMap = new Map<string, number>();
-        const prices = priceData || {};
-        tokenSymbols.forEach(symbol => {
-          const mapped = symbol.toUpperCase();
-          const px = prices[mapped];
-          if (typeof px === 'number') priceMap.set(symbol, px);
-          else if (symbol.includes('USDC') || symbol.includes('USDT')) priceMap.set(symbol, 1.0);
-        });
+        try {
+          const svc = await import('@/lib/price-service');
+          const batch = await svc.batchGetTokenPrices(tokenSymbols);
+          tokenSymbols.forEach(symbol => {
+            const px = batch[symbol];
+            if (typeof px === 'number') priceMap.set(symbol, px);
+          });
+        } catch (err) {
+          // Fallback to existing hook-provided shape when price-service import fails
+          const prices = priceData || {};
+          tokenSymbols.forEach(symbol => {
+            const mapped = String(symbol).toUpperCase();
+            const px = prices[mapped];
+            if (typeof px === 'number') priceMap.set(symbol, px);
+          });
+        }
 
         // 4. Create token balances with USD values and colors
         const tokenBalances: TokenBalance[] = Array.from(tokenBalanceMap.entries())
@@ -465,7 +487,7 @@ function usePortfolioData(refreshKey: number = 0, userPositionsData?: any[], pri
   return portfolioData;
 }
 
-function usePortfolio(refreshKey: number = 0, userPositionsData?: any[], pricesData?: any) {
+function usePortfolio(refreshKey: number = 0, userPositionsData?: any[], pricesData?: any, isLoadingHookPositions?: boolean) {
   const { address: accountAddress, isConnected, chainId: currentChainId } = useAccount();
 
   // Use the portfolio data hook with passed parameters
@@ -473,7 +495,6 @@ function usePortfolio(refreshKey: number = 0, userPositionsData?: any[], pricesD
 
   // All other data states
   const [activePositions, setActivePositions] = useState<any[]>([]);
-  const [walletBalances, setWalletBalances] = useState<Array<{ symbol: string; balance: number; usdValue: number; color: string }>>([]);
   const [aprByPoolId, setAprByPoolId] = useState<Record<string, string>>({});
   const [poolDataByPoolId, setPoolDataByPoolId] = useState<Record<string, any>>({});
   const [bucketDataCache, setBucketDataCache] = useState<Record<string, any>>({});
@@ -481,14 +502,15 @@ function usePortfolio(refreshKey: number = 0, userPositionsData?: any[], pricesD
   // All loading states
   const [isLoadingPositions, setIsLoadingPositions] = useState<boolean>(true);
   const [isLoadingPoolStates, setIsLoadingPoolStates] = useState<boolean>(true);
-  const [isLoadingWalletBalances, setIsLoadingWalletBalances] = useState<boolean>(false);
   const [loadingBuckets, setLoadingBuckets] = useState<Set<string>>(new Set());
   
   // Process positions using centralized hooks
   useEffect(() => {
+    setIsLoadingPositions(!!isLoadingHookPositions);
+
     if (!isConnected || !accountAddress) {
       setActivePositions([]);
-      setIsLoadingPositions(false);
+      if (!isLoadingHookPositions) setIsLoadingPositions(false);
       return;
     }
 
@@ -505,8 +527,7 @@ function usePortfolio(refreshKey: number = 0, userPositionsData?: any[], pricesD
       });
     } catch {}
     setActivePositions(positions);
-    setIsLoadingPositions(false);
-  }, [isConnected, accountAddress, userPositionsData]);
+  }, [isConnected, accountAddress, userPositionsData, isLoadingHookPositions]);
 
   // Fetch APRs
   useEffect(() => {
@@ -556,76 +577,7 @@ function usePortfolio(refreshKey: number = 0, userPositionsData?: any[], pricesD
     setIsLoadingPoolStates(false);
   }, [activePositions, isLoadingPositions]);
 
-  // Fetch Wallet Balances
-  useEffect(() => {
-    const run = async () => {
-      if (!isConnected || !accountAddress) {
-        setWalletBalances([]);
-        return;
-      }
-      setIsLoadingWalletBalances(true);
-      try {
-        const tokenMapOrArray = getAllTokens?.() as any;
-        const tokens = Array.isArray(tokenMapOrArray) ? tokenMapOrArray : Object.values(tokenMapOrArray || {});
-        const balances: Record<string, number> = {};
-        for (const t of tokens) {
-          const symbol = t?.symbol as string | undefined;
-          if (!symbol) continue;
-          const addr = (t as any)?.address as `0x${string}` | undefined;
-          try {
-            let raw: bigint = 0n;
-            if (!addr || addr.toLowerCase() === NATIVE_TOKEN_ADDRESS?.toLowerCase?.()) {
-              raw = await publicClient.getBalance({ address: accountAddress as `0x${string}` });
-            } else {
-              const bal = await publicClient.readContract({
-                address: addr,
-                abi: parseAbi(['function balanceOf(address) view returns (uint256)']) as unknown as Abi,
-                functionName: 'balanceOf',
-                args: [accountAddress as `0x${string}`],
-              });
-              raw = BigInt(bal as any);
-            }
-            const dec = (TOKEN_DEFINITIONS as any)?.[symbol]?.decimals ?? 18;
-            balances[symbol] = parseFloat(viemFormatUnits(raw, dec));
-          } catch {}
-        }
-
-        const coinGeckoIds: Record<string, string> = { aETH: 'ethereum', ETH: 'ethereum', aBTC: 'bitcoin', aUSDC: 'usd-coin', aUSDT: 'tether' };
-        const symbols = Object.keys(balances);
-        const priceMap = new Map<string, number>();
-        const uniqueCoinIds = [...new Set(symbols.map(s => coinGeckoIds[s]).filter(Boolean))];
-        let priceData: any = {};
-        if (uniqueCoinIds.length > 0) {
-          try {
-            const priceRes = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${uniqueCoinIds.join(',')}&vs_currencies=usd&include_24hr_change=true`);
-            if (priceRes.ok) priceData = await priceRes.json();
-          } catch (error) { console.warn('Failed to fetch prices for wallet from CoinGecko:', error); }
-        }
-        
-        symbols.forEach((symbol) => {
-          const coinId = coinGeckoIds[symbol];
-          const px = coinId && priceData[coinId]?.usd;
-          if (px) priceMap.set(symbol, px);
-          else if (symbol.includes('USDC') || symbol.includes('USDT')) priceMap.set(symbol, 1.0);
-        });
-
-        const entries = symbols
-          .map((symbol) => ({ symbol, balance: balances[symbol] || 0, usdValue: (balances[symbol] || 0) * (priceMap.get(symbol) || 0), color: '' }))
-          .filter((x) => x.usdValue > 0.01)
-          .sort((a, b) => b.usdValue - a.usdValue);
-        const colors = ['hsl(0 0% 30%)', 'hsl(0 0% 40%)', 'hsl(0 0% 60%)', 'hsl(0 0% 80%)', 'hsl(0 0% 95%)'];
-        entries.forEach((e, i) => { e.color = colors[i % colors.length]; });
-        setWalletBalances(entries);
-      } finally {
-        setIsLoadingWalletBalances(false);
-      }
-    };
-    run();
-    const onRefresh = () => { run(); };
-    window.addEventListener('walletBalancesRefresh', onRefresh as EventListener);
-    return () => { window.removeEventListener('walletBalancesRefresh', onRefresh as EventListener); };
-  }, [isConnected, accountAddress, currentChainId && false]);
-
+  // Fetch Wallet Balances is handled in the main component body now
 
   const getCacheKey = useCallback((poolId: string, tickLower: number, tickUpper: number) => {
     const positionRange = Math.abs(tickUpper - tickLower);
@@ -678,7 +630,7 @@ function usePortfolio(refreshKey: number = 0, userPositionsData?: any[], pricesD
     });
   }, [activePositions, poolDataByPoolId, fetchBucketData]);
 
-  // Calculate readiness object
+  // Calculate readiness object - separate positions/APRs from other data
   const readiness: Readiness = useMemo(() => {
     const buckets: Record<string, boolean> = {};
     activePositions.forEach(position => {
@@ -689,23 +641,24 @@ function usePortfolio(refreshKey: number = 0, userPositionsData?: any[], pricesD
         buckets[cacheKey] = !loadingBuckets.has(cacheKey);
       }
     });
-    const isEmptyPortfolio = !portfolioData.isLoading && !isLoadingPositions && !isLoadingPoolStates && activePositions.length === 0;
-    
 
-    
+    // Positions are empty only when loading is complete and no positions exist
+    const isPositionsLoaded = !isLoadingPositions;
+    const isEmptyPortfolio = isPositionsLoaded && activePositions.length === 0;
+
     return {
-      core: !isLoadingPositions && !portfolioData.isLoading && !isLoadingPoolStates,
+      // Core readiness requires positions to be loaded (not just prices)
+      core: isPositionsLoaded && !isLoadingPoolStates,
+      // Prices can be ready independently
       prices: isEmptyPortfolio || Object.keys(portfolioData.priceMap).length > 0,
       apr: isEmptyPortfolio || Object.keys(aprByPoolId).length > 0,
       buckets,
     };
-  }, [portfolioData.isLoading, portfolioData.priceMap, aprByPoolId, activePositions, loadingBuckets, getCacheKey, isLoadingPositions, isLoadingPoolStates]);
+  }, [portfolioData.priceMap, aprByPoolId, activePositions, loadingBuckets, getCacheKey, isLoadingPositions, isLoadingPoolStates]);
 
   return {
     portfolioData,
     activePositions,
-    walletBalances,
-    isLoadingWalletBalances,
     aprByPoolId,
     poolDataByPoolId,
     bucketDataCache,
@@ -715,8 +668,6 @@ function usePortfolio(refreshKey: number = 0, userPositionsData?: any[], pricesD
     isLoadingPoolStates,
     setActivePositions,
     setIsLoadingPositions,
-    setWalletBalances,
-    setIsLoadingWalletBalances,
     setAprByPoolId,
   };
 }
@@ -736,8 +687,6 @@ export default function PortfolioPage() {
   const {
     portfolioData,
     activePositions,
-    walletBalances,
-    isLoadingWalletBalances,
     aprByPoolId,
     poolDataByPoolId,
     bucketDataCache,
@@ -746,10 +695,8 @@ export default function PortfolioPage() {
     isLoadingPoolStates,
     setActivePositions,
     setIsLoadingPositions,
-    setWalletBalances,
-    setIsLoadingWalletBalances,
     setAprByPoolId,
-  } = usePortfolio(positionsRefresh, userPositionsData, pricesData);
+  } = usePortfolio(positionsRefresh, userPositionsData, pricesData, isLoadingUserPositions);
 
   const isLoading = !readiness.core;
   const { phase, showSkeletonFor } = useLoadPhases(readiness);
@@ -972,13 +919,21 @@ export default function PortfolioPage() {
   const totalUnclaimedUsd = useMemo(() => {
     try {
       let usd = 0;
+      const seen = new Set<string>();
       for (const pos of activePositions) {
-        const rec = unclaimedFeesMap[String(pos.positionId)];
+        const id = String(pos?.positionId || pos?.tokenId || '') || '';
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        const rec = unclaimedFeesMap[id];
         if (!rec) continue;
         const sym0 = pos?.token0?.symbol as string | undefined;
         const sym1 = pos?.token1?.symbol as string | undefined;
-        const px0 = (sym0 && portfolioData.priceMap[sym0]) || 0;
-        const px1 = (sym1 && portfolioData.priceMap[sym1]) || 0;
+        // Match FeesCell's price lookup logic including stable coin fallback
+        const stable = (s: string) => s.includes('USDC') || s.includes('USDT');
+        const sym0U = (sym0 || '').toUpperCase();
+        const sym1U = (sym1 || '').toUpperCase();
+        const px0 = (sym0 && (portfolioData.priceMap[sym0] ?? portfolioData.priceMap[sym0U])) || (stable(sym0U) ? 1 : 0);
+        const px1 = (sym1 && (portfolioData.priceMap[sym1] ?? portfolioData.priceMap[sym1U])) || (stable(sym1U) ? 1 : 0);
         const d0 = TOKEN_DEFINITIONS[sym0 as TokenSymbol]?.decimals ?? 18;
         const d1 = TOKEN_DEFINITIONS[sym1 as TokenSymbol]?.decimals ?? 18;
         const a0 = Number(rec?.amount0 ? viemFormatUnits(BigInt(rec.amount0), d0) : 0);
@@ -1036,6 +991,9 @@ export default function PortfolioPage() {
   const [withdrawPercentage, setWithdrawPercentage] = useState<number>(0);
   const [isFullWithdraw, setIsFullWithdraw] = useState(false);
   const lastDecreaseWasFullRef = useRef<boolean>(false);
+  const lastTxBlockRef = useRef<bigint | null>(null);
+  const [walletBalances, setWalletBalances] = useState<Array<{ symbol: string; balance: number; usdValue: number; color: string }>>([]);
+  const [isLoadingWalletBalances, setIsLoadingWalletBalances] = useState<boolean>(false);
 
   const withdrawProductiveSide = useMemo<null | 'amount0' | 'amount1'>(() => {
     if (!positionToWithdraw || positionToWithdraw.isInRange) return null;
@@ -1101,24 +1059,36 @@ export default function PortfolioPage() {
   }, [accountAddress]);
 
   // Liquidity hooks
-  const onLiquidityIncreased = useCallback(() => {
+  const onLiquidityIncreased = useCallback(async () => {
     toast.success('Position Increased', { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
+    if (lastTxBlockRef.current) {
+      await waitForSubgraphBlock(Number(lastTxBlockRef.current));
+      lastTxBlockRef.current = null;
+    }
     bumpPositionsRefresh();
     setShowIncreaseModal(false);
   }, [bumpPositionsRefresh]);
-  const onLiquidityDecreased = useCallback(() => {
+  const onLiquidityDecreased = useCallback(async () => {
     const wasFull = !!lastDecreaseWasFullRef.current;
     toast.success(wasFull ? 'Position Closed' : 'Position Decreased', { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
     // Only bump refresh (and thus reload positions) when a full burn occurred
     if (wasFull) {
+       if (lastTxBlockRef.current) {
+        await waitForSubgraphBlock(Number(lastTxBlockRef.current));
+        lastTxBlockRef.current = null;
+      }
       bumpPositionsRefresh();
     }
     lastDecreaseWasFullRef.current = false;
     setShowWithdrawModal(false);
   }, [bumpPositionsRefresh]);
   const { increaseLiquidity, isLoading: isIncreasingLiquidity } = useIncreaseLiquidity({ onLiquidityIncreased });
-  const onFeesCollected = useCallback(() => {
+  const onFeesCollected = useCallback(async () => {
     toast.success('Fees Collected', { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
+    if (lastTxBlockRef.current) {
+      await waitForSubgraphBlock(Number(lastTxBlockRef.current));
+      lastTxBlockRef.current = null;
+    }
     bumpPositionsRefresh();
   }, [bumpPositionsRefresh]);
   const { decreaseLiquidity, compoundFees, claimFees, isLoading: isDecreasingLiquidity } = useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected });
@@ -1368,27 +1338,15 @@ export default function PortfolioPage() {
         let priceData: any = {};
         if (uniqueCoinIds.length > 0) {
           try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
-            
-            const priceRes = await fetch(
-              `https://api.coingecko.com/api/v3/simple/price?ids=${uniqueCoinIds.join(',')}&vs_currencies=usd&include_24hr_change=true`,
-              {
-                method: 'GET',
-                headers: {
-                  'Accept': 'application/json',
-                },
-                signal: controller.signal,
-              }
-            );
-            
-            clearTimeout(timeoutId);
-            
-            if (priceRes.ok) {
-              priceData = await priceRes.json();
-            } else {
-              console.warn('CoinGecko API error:', priceRes.status, priceRes.statusText);
-            }
+            const prices = await batchGetTokenPrices(symbols);
+            priceData = prices; // The batch result is the price map
+            symbols.forEach((symbol) => {
+              if (prices[symbol]) priceMap.set(symbol, prices[symbol]);
+            });
+
+            // TODO: The batchGetTokenPrices does not return 24h change data.
+            // This logic will need to be updated if 24h change is required for wallet balances.
+            // For now, it will gracefully handle the absence of this data.
           } catch (error) {
             console.warn('Failed to fetch prices from CoinGecko:', error);
           }
@@ -1514,12 +1472,49 @@ export default function PortfolioPage() {
     ));
   }, [activePositions, activeTokenFilter, portfolioData.tokenBalances, portfolioData.totalValue]);
 
+  // Unclaimed fees for the positions currently displayed (after filter)
+  const displayedUnclaimedUsd = useMemo(() => {
+    try {
+      let usd = 0;
+      const list = Array.isArray(filteredPositions) ? filteredPositions : [];
+      const seen = new Set<string>();
+      for (const pos of list) {
+        const id = String(pos?.positionId || pos?.tokenId || '') || '';
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        const rec = unclaimedFeesMap[id];
+        if (!rec) continue;
+        const sym0 = pos?.token0?.symbol as string | undefined;
+        const sym1 = pos?.token1?.symbol as string | undefined;
+        // Match FeesCell's price lookup logic including stable coin fallback
+        const stable = (s: string) => s.includes('USDC') || s.includes('USDT');
+        const sym0U = (sym0 || '').toUpperCase();
+        const sym1U = (sym1 || '').toUpperCase();
+        const px0 = (sym0 && (portfolioData.priceMap[sym0] ?? portfolioData.priceMap[sym0U])) || (stable(sym0U) ? 1 : 0);
+        const px1 = (sym1 && (portfolioData.priceMap[sym1] ?? portfolioData.priceMap[sym1U])) || (stable(sym1U) ? 1 : 0);
+        const d0 = TOKEN_DEFINITIONS[sym0 as TokenSymbol]?.decimals ?? 18;
+        const d1 = TOKEN_DEFINITIONS[sym1 as TokenSymbol]?.decimals ?? 18;
+        const a0 = Number(rec?.amount0 ? viemFormatUnits(BigInt(rec.amount0), d0) : 0);
+        const a1 = Number(rec?.amount1 ? viemFormatUnits(BigInt(rec.amount1), d1) : 0);
+        const positionUsd = a0 * px0 + a1 * px1;
+        usd += positionUsd;
+      }
+      return usd;
+    } catch (e) { 
+      console.error('[DEBUG] Error calculating displayedUnclaimedUsd:', e);
+      return 0; 
+    }
+  }, [filteredPositions.length, unclaimedFeesMap, portfolioData.priceMap]);
+
 
 
   const getUsdPriceForSymbol = useCallback((symbolRaw?: string): number => {
-    const symbol = (symbolRaw || '').toUpperCase();
-    if (!symbol) return 0;
-    return (portfolioData.priceMap[symbol] || 0)
+    if (!symbolRaw) return 0;
+    // Match FeesCell's price lookup logic including stable coin fallback
+    const stable = (s: string) => s.includes('USDC') || s.includes('USDT');
+    const symbolU = symbolRaw.toUpperCase();
+    const price = portfolioData.priceMap[symbolRaw] ?? portfolioData.priceMap[symbolU];
+    return price || (stable(symbolU) ? 1 : 0);
   }, [portfolioData.priceMap]);
 
   // Apply filters to Activity items (Swaps & Liquidity)
@@ -1793,73 +1788,34 @@ export default function PortfolioPage() {
     return `${m}m`;
   };
 
-  // Load positions (processed for active only)
+
+  // Ensure unclaimed fees are loaded if map is empty (guard against missed fetch)
   useEffect(() => {
-    let isCancelled = false;
-
-    const fetchPositions = async () => {
-      if (!isConnected || !accountAddress) {
-        if (!isCancelled) {
-          setActivePositions([]);
-          setIsLoadingPositions(false);
-          setPositionsError(undefined);
-        }
-        return;
-      }
-
-      setIsLoadingPositions(true);
-      setPositionsError(undefined);
-
+    let cancelled = false;
+    const run = async () => {
       try {
-        // Use centralized hook data for positions
-        const processedActiveRaw = userPositionsData || [];
-        let processedActive = Array.isArray(processedActiveRaw) ? processedActiveRaw : [];
-        // Filter to configured pools only (use allowedPoolIds set defined above)
-        try {
-          processedActive = processedActive.filter((p: any) => {
-            const pid = String(p?.poolId || '').toLowerCase();
-            return pid && allowedPoolIds.has(pid);
-          });
-        } catch {}
-        try { console.log('[Portfolio] positions fetched:', processedActive.length, processedActive?.[0]); } catch {}
-        if (!isCancelled) {
-          setActivePositions(processedActive);
+        if (!isConnected || !accountAddress) return;
+        if (isLoadingUnclaimedFees) return;
+        if (Object.keys(unclaimedFeesMap || {}).length > 0) return;
+        const ids: string[] = (activePositions || []).map((p: any) => String(p?.positionId || p?.tokenId || '')).filter(Boolean);
+        if (ids.length === 0) return;
+        setIsLoadingUnclaimedFees(true);
+        const items = await loadUncollectedFeesBatch(ids, 60 * 1000);
+        if (cancelled) return;
+        if (Array.isArray(items)) {
+          const map: Record<string, { amount0: string; amount1: string }> = {};
+          for (const it of items) map[String(it.positionId)] = { amount0: String(it.amount0 ?? '0'), amount1: String(it.amount1 ?? '0') };
+          setUnclaimedFeesMap(map);
         }
-
-        // Batched unclaimed fees fetch (centralized) — run after positions are known
-        try {
-          const ids: string[] = (processedActive || []).map((p: any) => String(p?.positionId || p?.tokenId || '')).filter(Boolean);
-          if (ids.length > 0) {
-            if (!isCancelled) setIsLoadingUnclaimedFees(true);
-            const items = await loadUncollectedFeesBatch(ids, 60 * 1000);
-            if (!isCancelled && Array.isArray(items)) {
-              const map: Record<string, { amount0: string; amount1: string }> = {};
-              for (const it of items) {
-                map[String(it.positionId)] = { amount0: String(it.amount0 ?? '0'), amount1: String(it.amount1 ?? '0') };
-              }
-              setUnclaimedFeesMap(map);
-              setIsLoadingUnclaimedFees(false);
-            }
-          } else if (!isCancelled) {
-            setUnclaimedFeesMap({});
-            setIsLoadingUnclaimedFees(false);
-          }
-        } catch {
-          if (!isCancelled) setIsLoadingUnclaimedFees(false);
-        }
-      } catch (e: any) {
-        if (!isCancelled) {
-          setPositionsError(e?.message || 'Failed to load positions');
-          setActivePositions([]);
-        }
+      } catch (e) {
+        // swallow
       } finally {
-        if (!isCancelled) setIsLoadingPositions(false);
+        if (!cancelled) setIsLoadingUnclaimedFees(false);
       }
     };
-
-    fetchPositions();
-    return () => { isCancelled = true; };
-  }, [isConnected, accountAddress && false]);
+    run();
+    return () => { cancelled = true; };
+  }, [activePositions.length, isConnected, accountAddress]);
   // Load activity (best-effort): mints, burns, collects, swaps for owner
   useEffect(() => {
     let isCancelled = false;
@@ -2456,13 +2412,7 @@ export default function PortfolioPage() {
     return (
       <AppLayout>
         <div className="flex flex-1 flex-col p-3 sm:p-6 sm:px-10">
-          <PortfolioHeaderSkeleton 
-            isVerySmallScreen={isVerySmallScreen}
-            viewportWidth={viewportWidth}
-            isHiddenVis={isHiddenVis}
-            isCompactVis={isCompactVis}
-            inlineAvailableWidth={inlineAvailableWidth}
-          />
+          <PortfolioHeaderSkeleton viewportWidth={viewportWidth} />
           
           <div className="mt-6 flex flex-col lg:flex-row" style={{ gap: `${getColumnGapPx(viewportWidth)}px` }}>
             <div className="flex-1 min-w-0">
@@ -2580,8 +2530,8 @@ export default function PortfolioPage() {
       <AppLayout>
       <div className="flex flex-1 flex-col p-3 sm:p-6 sm:px-10">
         {/* Portfolio header with skeleton gate */}
-        {isLoading ? (
-          <PortfolioHeaderSkeleton isVerySmallScreen={isVerySmallScreen} />
+        {showSkeletonFor.header ? (
+          <PortfolioHeaderSkeleton viewportWidth={viewportWidth} />
         ) : (
           <div>
             {viewportWidth > 1000 ? (
@@ -2675,7 +2625,7 @@ export default function PortfolioPage() {
                       {isLoadingUnclaimedFees ? (
                         <span className="inline-block h-3 w-14 rounded bg-muted/40 animate-pulse" />
                       ) : (
-                        <span className="text-[11px] font-medium">{formatUSD(filteredTotalUnclaimedUsd)}</span>
+                        <span className="text-[11px] font-medium">{formatUSD(displayedUnclaimedUsd)}</span>
                       )}
                 </div>
             </div>
@@ -2798,7 +2748,7 @@ export default function PortfolioPage() {
                         {isLoadingUnclaimedFees ? (
                           <span className="inline-block h-3 w-14 rounded bg-muted/40 animate-pulse" />
                         ) : (
-                          <span className="text-[11px] font-medium">{formatUSD(filteredTotalUnclaimedUsd)}</span>
+                          <span className="text-[11px] font-medium">{formatUSD(displayedUnclaimedUsd)}</span>
                         )}
                       </div>
                     </div>
@@ -2902,14 +2852,16 @@ export default function PortfolioPage() {
               {selectedSection === 'Active Positions' && (
                 <div>
                   <div>
-                    {isLoading ? (
+                    {showSkeletonFor.table ? (
                       <ActivePositionsSkeleton />
-                    ) : (!isConnected || activePositions.length === 0) ? (
+                    ) : (!isConnected) ? (
                       <div className="border border-dashed rounded-lg bg-muted/10 p-8 w-full flex items-center justify-center">
-                        <div className="text-sm text-white/75">
-                          {!isConnected ? 'Connect Wallet to see Positions' : 'No active positions.'}
-                                  </div>
-                                    </div>
+                        <div className="text-sm text-white/75">Connect Wallet to see Positions</div>
+                      </div>
+                    ) : showSkeletonFor.table === false && activePositions.length === 0 ? (
+                      <div className="border border-dashed rounded-lg bg-muted/10 p-8 w-full flex items-center justify-center">
+                        <div className="text-sm text-white/75">No active positions.</div>
+                      </div>
                     ) : (
                       <div className="flex flex-col gap-3 lg:gap-4">
                         {groupedByPool.map(({ poolId, items, totalUSD }) => {
@@ -3001,13 +2953,22 @@ export default function PortfolioPage() {
                                 <div className="flex flex-col gap-3 lg:gap-4 pl-4 border-l border-dashed border-sidebar-border/60 ml-4">
                                   {items.map((position) => {
                                     const valueUSD = (() => {
-                                      const sym0 = position?.token0?.symbol as string | undefined;
-                                      const sym1 = position?.token1?.symbol as string | undefined;
-                                      const amt0 = parseFloat(position?.token0?.amount || '0');
-                                      const amt1 = parseFloat(position?.token1?.amount || '0');
-                                      const price0 = (sym0 && portfolioData.priceMap[sym0]) || 0;
-                                      const price1 = (sym1 && portfolioData.priceMap[sym1]) || 0;
-                                      return amt0 * price0 + amt1 * price1;
+                                      try {
+                                        const sym0 = position?.token0?.symbol as string | undefined;
+                                        const sym1 = position?.token1?.symbol as string | undefined;
+                                        const amt0 = parseFloat(position?.token0?.amount || '0');
+                                        const amt1 = parseFloat(position?.token1?.amount || '0');
+                                        const price0 = (sym0 && portfolioData.priceMap[sym0]) || 0;
+                                        const price1 = (sym1 && portfolioData.priceMap[sym1]) || 0;
+                                        // Ensure both sides are accounted for; numeric safety
+                                        const a0 = isFinite(amt0) ? amt0 : 0;
+                                        const a1 = isFinite(amt1) ? amt1 : 0;
+                                        const p0 = isFinite(price0) ? price0 : 0;
+                                        const p1 = isFinite(price1) ? price1 : 0;
+                                        return a0 * p0 + a1 * p1;
+                                      } catch (e) {
+                                        return 0;
+                                      }
                                     })();
                                     // attach prefetched raw fees for FeesCell
                                     const feesPref = (() => {
@@ -3705,6 +3666,7 @@ export default function PortfolioPage() {
                   tickLower: positionToModify.tickLower,
                   tickUpper: positionToModify.tickUpper,
                 };
+                publicClient.getBlockNumber().then(block => lastTxBlockRef.current = block);
                 increaseLiquidity(data);
                 // keep modal open; will close on success via onLiquidityIncreasedCallback
               }} disabled={isIncreasingLiquidity || isIncreaseCalculating || ((!increaseAmount0 || parseFloat(increaseAmount0) <= 0) && (!increaseAmount1 || parseFloat(increaseAmount1) <= 0))} style={(isIncreasingLiquidity || isIncreaseCalculating) ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}>
@@ -3863,6 +3825,7 @@ export default function PortfolioPage() {
                   tickLower: positionToWithdraw.tickLower,
                   tickUpper: positionToWithdraw.tickUpper,
                 };
+                publicClient.getBlockNumber().then(block => lastTxBlockRef.current = block);
                 decreaseLiquidity(data, 0);
                 // keep modal open; will close on success via onLiquidityDecreasedCallback
               }} disabled={isDecreasingLiquidity || ((!withdrawAmount0 || parseFloat(withdrawAmount0) <= 0) && (!withdrawAmount1 || parseFloat(withdrawAmount1) <= 0))}>
@@ -4143,11 +4106,21 @@ function CompactCompositionBar({ composition, onHover, hoveredSegment, handleRes
             const barSafetyEarly = 4; // hide a touch earlier to avoid visible overlap
             let showName = !hideAllLabels;
             const fits = availableLabelWidth >= estPctWidth + minGap + estNameWidth + barSafetyEarly;
+
+            // NEW: determine if a tooltip will be shown for this segment
+            const tooltipWillShow = s.pct < SMALL_SEGMENT_THRESHOLD || !fits;
+
             if (!fits && !isHovered) {
               // mark overflow start but still allow name on hover via overflow visible
               if (hideNamesFromIndex === null) hideNamesFromIndex = i;
               showName = false;
             }
+
+            // If hovered and a tooltip is showing, hide the inline name
+            if (isHovered && tooltipWillShow) {
+              showName = false;
+            }
+
             // No cascade-right; never hide following percentages
             const hideFollowingPct = false;
             // If hovered and the name cannot fit, hide the inline percent for subsequent segments and do NOT force show the name for the hovered segment
@@ -4222,4 +4195,5 @@ function CompactCompositionBar({ composition, onHover, hoveredSegment, handleRes
   );
 }
 
+// Moved to components/portfolio/PortfolioTickBar
 // Moved to components/portfolio/PortfolioTickBar
