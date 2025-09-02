@@ -2636,35 +2636,55 @@ export default function PortfolioPage() {
               <div>
                 <h1 className="text-xs tracking-wider text-muted-foreground font-mono font-bold mb-3">ASSET ALLOCATION</h1>
                 <div className="flex-1 flex items-center justify-start">
-                  {isPlaceholderComposition ? (
-                    <div className="text-center text-muted-foreground">
-                      <div className="w-16 h-16 rounded-full bg-muted/50 flex items-center justify-center mb-2">
-                        <span className="text-xs">Chart</span>
-                      </div>
-                      <span className="text-xs">Allocation View</span>
-                    </div>
-                  ) : (
-                    <div className="w-full pr-0 pl-2">
-                      <div className="relative">
-                  <PortfolioTickBar
-                    composition={composition}
-                    onHover={setHoveredSegment}
-                    hoveredSegment={hoveredSegment}
-                    containerRef={containerRef}
-                    netApyRef={netApyRef}
-                    handleRestClick={handleRestClick}
-                    setIsRestCycling={setIsRestCycling}
-                    isRestCycling={isRestCycling}
-                    restCycleIndex={restCycleIndex}
-                    forceHideLabels={forceHideLabels}
-                    onApplySort={undefined}
-                    onHoverToken={setHoveredTokenLabel}
+                  {(() => {
+                    if (isPlaceholderComposition) {
+                      const fallback = [{ label: 'All', pct: 100, color: composition?.[0]?.color || 'hsl(0 0% 30%)' }];
+                      return (
+                        <div className="w-full pr-0 pl-2">
+                          <div className="relative">
+                            <PortfolioTickBar
+                              composition={fallback}
+                              onHover={setHoveredSegment}
+                              hoveredSegment={hoveredSegment}
+                              containerRef={containerRef}
+                              netApyRef={netApyRef}
+                              handleRestClick={handleRestClick}
+                              setIsRestCycling={setIsRestCycling}
+                              isRestCycling={isRestCycling}
+                              restCycleIndex={restCycleIndex}
+                              forceHideLabels={true}
+                              onApplySort={undefined}
+                              onHoverToken={setHoveredTokenLabel}
                               activeTokenFilter={activeTokenFilter}
                               setActiveTokenFilter={setActiveTokenFilter}
-                          />
+                            />
                           </div>
                         </div>
-                        )}
+                      );
+                    }
+                    return (
+                      <div className="w-full pr-0 pl-2">
+                        <div className="relative">
+                          <PortfolioTickBar
+                            composition={composition}
+                            onHover={setHoveredSegment}
+                            hoveredSegment={hoveredSegment}
+                            containerRef={containerRef}
+                            netApyRef={netApyRef}
+                            handleRestClick={handleRestClick}
+                            setIsRestCycling={setIsRestCycling}
+                            isRestCycling={isRestCycling}
+                            restCycleIndex={restCycleIndex}
+                            forceHideLabels={forceHideLabels}
+                            onApplySort={undefined}
+                            onHoverToken={setHoveredTokenLabel}
+                            activeTokenFilter={activeTokenFilter}
+                            setActiveTokenFilter={setActiveTokenFilter}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })()}
                       </div>
                     </div>
                 </div>

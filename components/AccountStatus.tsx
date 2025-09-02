@@ -79,7 +79,8 @@ export function AccountStatus() {
       <SidebarMenu>
         <SidebarMenuItem className="list-none"> 
           <div className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30" style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}>
-            <button type="button" aria-hidden="true" className="absolute inset-0 z-10 block h-full w-full cursor-pointer p-0 opacity-0" />
+            {/* @ts-expect-error custom element provided by wallet kit */}
+            <appkit-button className="absolute inset-0 z-10 block h-full w-full cursor-pointer p-0 opacity-0" />
             <span className="relative z-0 pointer-events-none">Connect Wallet</span>
           </div>
         </SidebarMenuItem>
