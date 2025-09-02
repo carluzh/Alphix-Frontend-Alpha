@@ -79,8 +79,9 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
         if (!resp.ok) return;
         const events = await resp.json();
         if (!Array.isArray(events)) return;
+        // Filter to last 30 days from today (not from oldest data)
         const nowSec = Math.floor(Date.now() / 1000);
-        const cutoff = nowSec - 30 * 24 * 60 * 60;
+        const thirtyDaysAgoSec = nowSec - (30 * 24 * 60 * 60);
         const evAsc = events
           .map((e: any) => ({
             ts: Number(e?.timestamp) || 0,
@@ -89,7 +90,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
             // API returns oldTargetRatio (not newTargetRatio). Use oldTargetRatio; fallback to currentTargetRatio.
             ema: e?.oldTargetRatio ?? e?.currentTargetRatio,
           }))
-          .filter((e: any) => e.ts > cutoff)
+          .filter((e: any) => e.ts >= thirtyDaysAgoSec) // Keep only last 30 days
           .sort((a: any, b: any) => a.ts - b.ts);
         const scaleRatio = (val: any): number => {
           const n = typeof val === 'string' ? Number(val) : (typeof val === 'number' ? val : 0);
