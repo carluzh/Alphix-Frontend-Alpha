@@ -10,7 +10,7 @@ import { config, baseSepolia } from "../lib/wagmiConfig";
 import { getAddress, parseUnits, type Address, type Hex } from "viem"
 import { publicClient } from "../lib/viemClient";
 import { FAUCET_CONTRACT_ADDRESS, FAUCET_FUNCTION_SIGNATURE, faucetContractAbi } from "../pages/api/misc/faucet"; // Import constants
-import { useRouter } from "next/navigation"; // Import useRouter
+import Link from "next/link";
 // Removed unused SuccessToastIcon import to satisfy linter
 import { BadgeCheck } from "lucide-react";
 import { parseAbi } from "viem"
@@ -394,10 +394,10 @@ export function NavMain({
               </SidebarMenuButton>
             ) : item.title === "Portfolio" ? (
               <SidebarMenuButton tooltip={item.title} asChild className="w-full" isActive={isActive}>
-                <a href={item.url!} className="flex items-center w-full">
+                <Link href={item.url!} className="flex items-center w-full">
                   {item.icon && <item.icon />}
                   <span className="flex-1 truncate">{item.title}</span>
-                </a>
+                </Link>
               </SidebarMenuButton>
             ) : item.title === "Swap" ? (
               <SidebarMenuButton
@@ -406,17 +406,17 @@ export function NavMain({
                 asChild
                 isActive={isActive}
               >
-                <a href={item.url!} className="flex items-center w-full">
+                <Link href={item.url!} className="flex items-center w-full">
                   {item.icon ? <item.icon /> : <PlusCircleIcon />}
                   <span className="flex-1 truncate">Swap</span>
-                </a>
+                </Link>
               </SidebarMenuButton>
             ) : (
               <SidebarMenuButton tooltip={item.title} asChild className="w-full" isActive={isActive}>
-                <a href={item.url!} className="flex items-center w-full">
+                <Link href={item.url!} className="flex items-center w-full">
                   {item.icon && <item.icon />}
                   <span className="flex-1 truncate">{item.title}</span>
-                </a>
+                </Link>
               </SidebarMenuButton>
             )}
           </SidebarMenuItem>

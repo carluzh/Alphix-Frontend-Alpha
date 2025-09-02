@@ -36,6 +36,7 @@ import { getFromCache, getFromCacheWithTtl, setToCache, getUserPositionsCacheKey
 import { Pool } from "../../types";
 import { AddLiquidityModal } from "@liquidity/AddLiquidityModal";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { ChevronUpIcon, ChevronDownIcon, ChevronsUpDownIcon, PlusIcon } from "lucide-react";
 import { ArrowUpRight, ArrowDownRight } from "lucide-react";
 import { TOKEN_DEFINITIONS, type TokenSymbol } from "@/lib/pools-config";
@@ -653,17 +654,18 @@ export default function LiquidityPage() {
             )}
             
             {/* Add Liquidity Button (on row hover) */}
-            <a
+            <button
               onClick={(e) => {
+                e.preventDefault();
                 e.stopPropagation();
-                handlePoolClick(row.original.id);
+                handleAddLiquidity(e, row.original.id);
               }}
               className="absolute right-0 top-1/2 -translate-y-1/2 flex h-10 cursor-pointer items-center justify-end gap-2 rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto hover:brightness-110 hover:border-white/30"
               style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
             >
               <PlusIcon className="h-4 w-4 relative z-0" />
               <span className="relative z-0 whitespace-nowrap">Add Liquidity</span>
-            </a>
+            </button>
           </div>
         );
       },
@@ -785,9 +787,7 @@ export default function LiquidityPage() {
     setAddLiquidityOpen(true);
   };
 
-  const handlePoolClick = (poolId: string) => {
-    router.push(`/liquidity/${poolId}`);
-  };
+  // handlePoolClick removed - using Link components for navigation
 
   const handleSortCycle = (columnId: string) => {
     const col = table.getColumn(columnId as any);
@@ -1011,7 +1011,7 @@ export default function LiquidityPage() {
                 {isMobile ? (
                   <MobileLiquidityList 
                     pools={filteredPools}
-                    onSelectPool={handlePoolClick}
+                    onSelectPool={(poolId) => router.push(`/liquidity/${poolId}`)}
                   />
                 ) : (
                   <div className="overflow-x-auto isolate">
@@ -1055,23 +1055,22 @@ export default function LiquidityPage() {
 
                             return (
                               <React.Fragment key={row.id}>
-                                <TableRow
-                                  className="group cursor-pointer transition-colors hover:bg-muted/30"
-                                  onClick={() => handlePoolClick(pool.id)}
-                                >
-                                  {row.getVisibleCells().map((cell, index) => (
-                                    <TableCell 
-                                      key={cell.id}
-                                      className={`relative py-4 px-2 ${index === 0 ? 'pl-6' : ''} ${index === row.getVisibleCells().length - 1 ? 'pr-6' : ''}`}
-                                      style={{ width: `${cell.column.getSize()}px` }}
-                                    >
-                                      {flexRender(
-                                        cell.column.columnDef.cell,
-                                        cell.getContext()
-                                      )}
-                                    </TableCell>
-                                  ))}
-                                </TableRow>
+                                <Link href={`/liquidity/${pool.id}`} className="contents">
+                                  <TableRow className="group cursor-pointer transition-colors hover:bg-muted/30">
+                                    {row.getVisibleCells().map((cell, index) => (
+                                      <TableCell 
+                                        key={cell.id}
+                                        className={`relative py-4 px-2 ${index === 0 ? 'pl-6' : ''} ${index === row.getVisibleCells().length - 1 ? 'pr-6' : ''}`}
+                                        style={{ width: `${cell.column.getSize()}px` }}
+                                      >
+                                        {flexRender(
+                                          cell.column.columnDef.cell,
+                                          cell.getContext()
+                                        )}
+                                      </TableCell>
+                                    ))}
+                                  </TableRow>
+                                </Link>
                                 {/* Expanded positions removed */}
                               </React.Fragment>
                             );
