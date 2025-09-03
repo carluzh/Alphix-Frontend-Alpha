@@ -1601,9 +1601,9 @@ export default function PoolDetailPage() {
     }
   }, [userPositions, pendingNewPositions]);
 
-  // useEffect(() => {
-  //   fetchPageData();
-  // }, [fetchPageData]); // Temporarily disabled to prevent infinite loops
+  useEffect(() => {
+    fetchPageData();
+  }, [poolId, isConnected, accountAddress]); // Depend on stable values instead of fetchPageData function
 
   // Calculate total liquidity value
   const totalLiquidity = userPositions.reduce((sum, pos) => sum + calculatePositionUsd(pos), 0);
