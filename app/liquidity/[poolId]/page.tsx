@@ -1172,7 +1172,7 @@ export default function PoolDetailPage() {
         // Get current stats from batch API to ensure today's point is present
         let tvlFromHeader = 0;
         try {
-          const resp = await fetch('/api/liquidity/get-pools-batch');
+          const resp = await fetch(`/api/liquidity/get-pools-batch${force ? `?bust=${Date.now()}` : ''}`, { cache: 'no-store' as any } as any);
           if (resp.ok) {
             const data = await resp.json();
             const poolIdLc = String(subgraphIdForHist || '').toLowerCase();
@@ -1426,7 +1426,7 @@ export default function PoolDetailPage() {
         const basePoolInfoTmp = getPoolConfiguration(poolId);
         const apiPoolIdToUseLocal = basePoolInfoTmp?.subgraphId || '';
         if (!apiPoolIdToUseLocal) return null;
-        const resp = await fetch(`/api/liquidity/get-pools-batch${force ? `?bust=${Date.now()}` : ''}`);
+        const resp = await fetch(`/api/liquidity/get-pools-batch${force ? `?bust=${Date.now()}` : ''}`, { cache: 'no-store' as any } as any);
         if (!resp.ok) return null;
         const data = await resp.json();
         const poolIdLc = String(apiPoolIdToUseLocal || '').toLowerCase();

@@ -109,6 +109,7 @@ export function AppSidebar({ variant = "floating", ...props }: React.ComponentPr
   const { resolvedTheme } = useTheme()
   const router = useRouter(); // Initialize useRouter
   const [showVersionInitial, setShowVersionInitial] = useState(false);
+  const [badgeHovered, setBadgeHovered] = useState(false);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -155,16 +156,19 @@ export function AppSidebar({ variant = "floating", ...props }: React.ComponentPr
                   {/* Show 'Beta' by default; on hover swap to version text without resizing */}
                   <Badge
                     variant="outline"
-                    className="bg-[#3d271b] text-sidebar-primary border-sidebar-primary rounded-md font-normal hover:bg-[#4a2f1f] transition-colors cursor-default inline-block group"
+                    className="bg-[#3d271b] text-sidebar-primary border-sidebar-primary rounded-md font-normal hover:bg-[#4a2f1f] transition-colors cursor-default inline-block"
                     style={{ fontFamily: 'Consolas, monospace' }}
                     title="Version 1.0"
+                    onMouseEnter={() => setBadgeHovered(true)}
+                    onMouseLeave={() => setBadgeHovered(false)}
+                    onFocus={() => setBadgeHovered(true)}
+                    onBlur={() => setBadgeHovered(false)}
                   >
                     {showVersionInitial ? (
                       <span className="inline-flex items-center justify-center" style={{ minWidth: 28 }}>1.0</span>
                     ) : (
                       <span className="inline-flex items-center justify-center" style={{ minWidth: 28 }}>
-                        <span className="group-hover:hidden">Beta</span>
-                        <span className="hidden group-hover:inline">1.0</span>
+                        {badgeHovered ? '1.0' : 'Beta'}
                       </span>
                     )}
                   </Badge>
