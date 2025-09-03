@@ -221,6 +221,10 @@ async function fetchAndProcessUserPositionsForApi(ownerAddress: string): Promise
     return [];
 }
 
+// Simple in-memory server cache to hold the last successful positions payload for an owner
+const serverCache = new Map<string, { data: any; ts: number }>();
+const CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes
+
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse<ProcessedPosition[] | { message: string; count?: number; error?: any }>
@@ -232,90 +236,95 @@ export default async function handler(
 
   const { ownerAddress, countOnly, idsOnly, withCreatedAt } = req.query as { ownerAddress?: string; countOnly?: string; idsOnly?: string; withCreatedAt?: string };
 
-  if (!ownerAddress || typeof ownerAddress !== 'string' || !ethers.utils.isAddress(ownerAddress)) { // Keep ethers for isAddress for now, or switch to viem's isAddress
+  if (!ownerAddress || typeof ownerAddress !== 'string' || !ethers.utils.isAddress(ownerAddress)) {
     return res.status(400).json({ message: 'Valid ownerAddress query parameter is required.' });
   }
 
-  try {
-    if (countOnly === '1') {
-      // Count via subgraph only
-      try {
-        const resp = await fetch(SUBGRAPH_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: GET_USER_HOOK_POSITIONS_QUERY, variables: { owner: ownerAddress.toLowerCase() } }),
-        });
-        if (!resp.ok) return res.status(200).json({ message: 'ok', count: 0 });
-        const json = await resp.json() as any;
-        const raw = (json?.data?.hookPositions || []) as SubgraphPosition[];
-        return res.status(200).json({ message: 'ok', count: raw.length });
-      } catch {
-        return res.status(200).json({ message: 'ok', count: 0 });
-      }
-    }
+  const cacheKey = `positions:${ownerAddress.toLowerCase()}`;
 
-    if (idsOnly === '1') {
-      // Return only tokenIds (no on-chain processing)
-      try {
-        const resp = await fetch(SUBGRAPH_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: GET_USER_HOOK_POSITIONS_QUERY, variables: { owner: ownerAddress.toLowerCase() } }),
-        });
-        if (!resp.ok) return res.status(200).json([] as any);
-        const json = await resp.json() as any;
-        let raw = (json?.data?.hookPositions || []) as SubgraphPosition[];
-        if ((!Array.isArray(raw) || raw.length === 0)) {
-          try {
-            const respLegacy = await fetch(SUBGRAPH_URL, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ query: GET_USER_LEGACY_POSITIONS_QUERY, variables: { owner: ownerAddress.toLowerCase() } }),
-            });
-            if (respLegacy.ok) {
-              const jsonLegacy = await respLegacy.json() as any;
-              const legacy = (jsonLegacy?.data?.positions || []) as Array<{ id: string; tokenId?: string; owner: string; createdAtTimestamp?: string }>;
-              raw = legacy.map((p) => ({
-                id: p.id,
-                owner: p.owner,
-                tickLower: '0',
-                tickUpper: '0',
-                liquidity: '0',
-                creationTimestamp: p.createdAtTimestamp || '0',
-                lastTimestamp: '0',
-                pool: { id: '' },
-              })) as any;
-            }
-          } catch {}
-        }
-        if (withCreatedAt === '1') {
-          const list = raw.map(r => {
-            const parsed = parseTokenIdFromHexId(r.id);
-            const idStr = parsed ? parsed.toString() : '';
-            return idStr ? { id: idStr, createdAt: Number(r.creationTimestamp || 0), lastTimestamp: Number(r.lastTimestamp || 0) } : null;
-          }).filter(Boolean) as Array<{ id: string; createdAt: number; lastTimestamp?: number }>;
-          return res.status(200).json(list as any);
-        } else {
-          const ids = Array.from(new Set(raw.map(r => {
-            const parsed = parseTokenIdFromHexId(r.id);
-            return parsed ? parsed.toString() : '';
-          }).filter(Boolean)));
-          return res.status(200).json(ids as any);
-        }
-      } catch {
-        return res.status(200).json([] as any);
-      }
+  try {
+    if (countOnly === '1' || idsOnly === '1') {
+      // For lightweight modes, bypass the main cache and fetch directly.
+      // These are less critical and have their own internal fallbacks.
+      const resp = await fetchIdsOrCount(ownerAddress, idsOnly === '1', withCreatedAt === '1');
+      return res.status(200).json(resp as any);
     }
 
     const positions = await fetchAndProcessUserPositionsForApi(ownerAddress);
+    // On success, update the cache.
+    serverCache.set(cacheKey, { data: positions, ts: Date.now() });
     return res.status(200).json(positions);
   } catch (error: any) {
     console.error(`API Error in /api/liquidity/get-positions for ${ownerAddress}:`, error);
-    // Ensure error is serializable
+    
+    // On failure, attempt to serve from cache
+    const cached = serverCache.get(cacheKey);
+    if (cached && (Date.now() - cached.ts) < CACHE_TTL_MS * 10) { // Allow stale for up to 20 mins
+      console.warn(`[get-positions] Serving stale positions for ${ownerAddress} due to fetch error.`);
+      res.setHeader('Cache-Control', 'no-store'); // Do not cache the stale response
+      return res.status(200).json(cached.data);
+    }
+    
+    // If fetch fails and cache is empty or too old, return an error
     const errorMessage = error instanceof Error ? error.message : "An unknown error occurred while fetching positions.";
-    const errorDetails = error instanceof Error ? { name: error.name, stack: error.stack } : {}; // Include more details if needed, carefully for prod
-    // Check if running in development to provide more details
-    const detailedError = process.env.NODE_ENV === 'development' ? errorDetails : {};
-    return res.status(500).json({ message: errorMessage, error: detailedError });
+    return res.status(500).json({ message: errorMessage });
+  }
+}
+
+// Extracted helper for idsOnly/countOnly to keep main handler clean
+async function fetchIdsOrCount(ownerAddress: string, idsOnly: boolean, withCreatedAt: boolean) {
+  try {
+    const resp = await fetch(SUBGRAPH_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: GET_USER_HOOK_POSITIONS_QUERY, variables: { owner: ownerAddress.toLowerCase() } }),
+    });
+    if (!resp.ok) return idsOnly ? [] : { message: 'ok', count: 0 };
+    const json = await resp.json() as any;
+    let raw = (json?.data?.hookPositions || []) as SubgraphPosition[];
+    if ((!Array.isArray(raw) || raw.length === 0)) {
+      try {
+        const respLegacy = await fetch(SUBGRAPH_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: GET_USER_LEGACY_POSITIONS_QUERY, variables: { owner: ownerAddress.toLowerCase() } }),
+        });
+        if (respLegacy.ok) {
+          const jsonLegacy = await respLegacy.json() as any;
+          const legacy = (jsonLegacy?.data?.positions || []) as Array<{ id: string; tokenId?: string; owner: string; createdAtTimestamp?: string }>;
+          raw = legacy.map((p) => ({
+            id: p.id,
+            owner: p.owner,
+            tickLower: '0',
+            tickUpper: '0',
+            liquidity: '0',
+            creationTimestamp: p.createdAtTimestamp || '0',
+            lastTimestamp: '0',
+            pool: { id: '' },
+          })) as any;
+        }
+      } catch {}
+    }
+
+    if (!idsOnly) {
+        return { message: 'ok', count: raw.length };
+    }
+    
+    if (withCreatedAt) {
+      const list = raw.map(r => {
+        const parsed = parseTokenIdFromHexId(r.id);
+        const idStr = parsed ? parsed.toString() : '';
+        return idStr ? { id: idStr, createdAt: Number(r.creationTimestamp || 0), lastTimestamp: Number(r.lastTimestamp || 0) } : null;
+      }).filter(Boolean) as Array<{ id: string; createdAt: number; lastTimestamp?: number }>;
+      return list;
+    } else {
+      const ids = Array.from(new Set(raw.map(r => {
+        const parsed = parseTokenIdFromHexId(r.id);
+        return parsed ? parsed.toString() : '';
+      }).filter(Boolean)));
+      return ids;
+    }
+  } catch {
+    return idsOnly ? [] : { message: 'ok', count: 0 };
   }
 } 
