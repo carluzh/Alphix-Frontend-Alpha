@@ -1452,112 +1452,74 @@ export default function PoolDetailPage() {
     }
   };
 
-  // Updated callbacks accept tx info
+  const refreshAfterMutation = useCallback(async (info?: { txHash?: `0x${string}`; blockNumber?: bigint }) => {
+    // This function orchestrates the entire post-transaction refresh sequence.
+    if (!poolId || !isConnected || !accountAddress) return;
+
+    // Record baseline TVL to ensure a meaningful change is detected.
+    try { 
+      const stats = await loadHeaderStats(true); // Force fetch for baseline
+      baselineTvlBeforeMutationRef.current = stats ? stats.tvlUSD : null;
+    } catch { 
+      baselineTvlBeforeMutationRef.current = null; 
+    }
+    setPostMutationWindow();
+
+    try {
+      setIsLoadingChartData(true);
+      const targetBlock = info?.blockNumber ?? await publicClient.getBlockNumber();
+      await waitForSubgraphBlock(Number(targetBlock), { timeoutMs: 30000, minWaitMs: 1000, maxIntervalMs: 2000 });
+
+      // Invalidate server caches once subgraph is synced.
+      const base = getPoolConfiguration(poolId);
+      const subId = (base?.subgraphId || '').toLowerCase();
+      try { fetch('/api/internal/revalidate-pools', { method: 'POST' } as any); } catch {}
+      try {
+        fetch('/api/internal/revalidate-chart', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ poolId, subgraphId: subId })
+        } as any);
+      } catch {}
+
+      // Now, force refetch all page data with backoff. This will handle charts, header, and positions.
+      await fetchWithBackoffIfNeeded(true, false); // skipPositions = false to get new position data.
+      
+    } catch (error) {
+      console.error('[refreshAfterMutation] failed:', error);
+    } finally {
+      setIsLoadingChartData(false);
+    }
+  }, [poolId, isConnected, accountAddress]);
+
   const onLiquidityIncreasedCallback = useCallback((info?: { txHash?: `0x${string}`; blockNumber?: bigint }) => {
     if (pendingActionRef.current?.type !== 'increase') return;
-
-    // Prevent rapid revalidations (cooldown: 30 seconds)
     const now = Date.now();
-    if (now - lastRevalidationRef.current < 30000) {
-      console.log('Skipping revalidation due to cooldown (increase)');
-      return;
-    }
+    if (now - lastRevalidationRef.current < 15000) return; // Shorter cooldown
     lastRevalidationRef.current = now;
 
-    // Record baseline TVL before mutation backoff
-    try { baselineTvlBeforeMutationRef.current = Number((currentPoolData as any)?.tvlUSD || 0) || null; } catch { baselineTvlBeforeMutationRef.current = null; }
-    setPostMutationWindow();
     toast.success("Position Increased", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
     setShowIncreaseModal(false);
     pendingActionRef.current = null;
-
-    try {
-      (async () => {
-        try {
-          const targetBlock = info?.blockNumber ?? await publicClient.getBlockNumber();
-          await waitForSubgraphBlock(Number(targetBlock), { timeoutMs: 30000, minWaitMs: 1000, maxIntervalMs: 1500 });
-          try { fetch('/api/internal/revalidate-pools', { method: 'POST' } as any); } catch {}
-          try {
-            const base = getPoolConfiguration(poolId);
-            const subId = (base?.subgraphId || '').toLowerCase();
-            fetch('/api/internal/revalidate-chart', {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ poolId, subgraphId: subId })
-            } as any);
-          } catch {}
-          await fetchWithBackoffIfNeeded(true, /* skipPositions */ true);
-        } catch {}
-      })();
-    } catch {}
-  }, [poolId, currentPoolData]);
-
+    
+    refreshAfterMutation(info);
+  }, [refreshAfterMutation]);
+  
   const onLiquidityDecreasedCallback = useCallback((info?: { txHash?: `0x${string}`; blockNumber?: bigint }) => {
     if (isCompoundInProgressRef.current) { isCompoundInProgressRef.current = false; return; }
     if (pendingActionRef.current?.type !== 'decrease' && pendingActionRef.current?.type !== 'withdraw') return;
 
     const now = Date.now();
-    if (now - lastRevalidationRef.current < 30000) {
-      console.log('Skipping revalidation due to cooldown');
-      return;
-    }
+    if (now - lastRevalidationRef.current < 15000) return; // Shorter cooldown
     lastRevalidationRef.current = now;
 
-    // Record baseline TVL before mutation backoff
-    try { baselineTvlBeforeMutationRef.current = Number((currentPoolData as any)?.tvlUSD || 0) || null; } catch { baselineTvlBeforeMutationRef.current = null; }
-    setPostMutationWindow();
     const closing = isFullBurn || isFullWithdraw;
     toast.success(closing ? "Position Closed" : "Position Decreased", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
     setShowBurnConfirmDialog(false);
     setPositionToBurn(null);
     pendingActionRef.current = null;
 
-    try {
-      setIsLoadingChartData(true);
-      (async () => {
-        try {
-          const targetBlock = info?.blockNumber ?? await publicClient.getBlockNumber();
-          await waitForSubgraphBlock(Number(targetBlock), { timeoutMs: 30000, minWaitMs: 1000, maxIntervalMs: 1500 });
-          try { fetch('/api/internal/revalidate-pools', { method: 'POST' } as any); } catch {}
-          try {
-            const base = getPoolConfiguration(poolId);
-            const subId = (base?.subgraphId || '').toLowerCase();
-            fetch('/api/internal/revalidate-chart', {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ poolId, subgraphId: subId })
-            } as any);
-          } catch {}
-          await fetchWithBackoffIfNeeded(true, /* skipPositions */ true);
-          // Targeted positions refresh ... unchanged below
-
-          // Targeted positions refresh (0,2,5,10s) until the closed position disappears
-          const delays = [0, 2000, 5000, 10000];
-          const baseInfo = getPoolConfiguration(poolId);
-          const subId = (baseInfo?.subgraphId || '').toLowerCase();
-          if (isConnected && accountAddress && subId) {
-            const baselineIds = new Set((userPositions || []).map(p => p.positionId));
-            for (let i = 0; i < delays.length; i++) {
-              if (i > 0) await new Promise(r => setTimeout(r, delays[i]));
-              try {
-                const ids = await loadUserPositionIds(accountAddress);
-                const derived = await derivePositionsFromIds(accountAddress, ids);
-                const filtered = (derived || []).filter((pos: any) => String(pos?.poolId || '').toLowerCase() === subId);
-                const currentIds = new Set(filtered.map((p: any) => p.positionId));
-                // if a baseline id is missing, accept and update
-                let removedDetected = false;
-                for (const id of baselineIds) { if (!currentIds.has(id)) { removedDetected = true; break; } }
-                if (removedDetected || (filtered.length !== (userPositions || []).length)) {
-                  setUserPositions(filtered);
-                  break;
-                }
-              } catch {}
-            }
-          }
-        } finally {
-                setIsLoadingChartData(false);
-        }
-      })();
-    } catch {}
-  }, [isFullBurn, isFullWithdraw, poolId, isConnected, accountAddress, userPositions]);
+    refreshAfterMutation(info);
+  }, [isFullBurn, isFullWithdraw, refreshAfterMutation]);
 
   // Initialize the liquidity modification hooks (moved here after callback definitions)
   const { burnLiquidity, isLoading: isBurningLiquidity } = useBurnLiquidity({

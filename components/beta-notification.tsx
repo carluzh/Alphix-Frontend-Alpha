@@ -43,6 +43,21 @@ export function BetaNotification() {
     }
   };
 
+  // Expose a short-lived flag so other notifications can avoid overlapping
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      if (isVisible) {
+        sessionStorage.setItem('beta_notification_showing', '1');
+      } else {
+        sessionStorage.removeItem('beta_notification_showing');
+      }
+    } catch {}
+    return () => {
+      try { sessionStorage.removeItem('beta_notification_showing'); } catch {}
+    };
+  }, [isVisible]);
+
   if (!isVisible || isDismissed) {
     return null;
   }

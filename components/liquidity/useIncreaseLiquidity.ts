@@ -361,7 +361,7 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
       });
       setIsIncreasing(false);
     }
-  }, [isIncreaseConfirmed, increaseConfirmError, hash, onLiquidityIncreased, baseSepolia?.blockExplorers?.default?.url]);
+  }, [isIncreaseConfirmed, increaseConfirmError, hash, onLiquidityIncreased, accountAddress]);
 
   return {
     increaseLiquidity,

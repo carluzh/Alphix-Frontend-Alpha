@@ -615,7 +615,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
       setIsDecreasing(false);
       isCompoundRef.current = false;
     }
-  }, [isDecreaseConfirming, isDecreaseConfirmed, decreaseConfirmError, hash, onLiquidityDecreased, baseSepolia?.blockExplorers?.default?.url]);
+  }, [isDecreaseConfirming, isDecreaseConfirmed, decreaseConfirmError, hash, onLiquidityDecreased, onFeesCollected, accountAddress]);
 
   return {
     decreaseLiquidity,

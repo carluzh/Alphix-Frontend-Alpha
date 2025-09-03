@@ -17,14 +17,17 @@ export function UpdatesNotification() {
         fromLogin = flag === '1' || flag === 'true';
       } catch {}
 
-      if (fromLogin) {
+      // Avoid overlapping with beta notification if it's showing
+      const betaShowing = typeof window !== 'undefined' && sessionStorage.getItem('beta_notification_showing') === '1';
+
+      if (fromLogin && !betaShowing) {
         setIsVisible(true);
         try { sessionStorage.removeItem('came_from_login_updates'); } catch {}
         return;
       }
 
       const wasDismissed = localStorage.getItem("updates_notification_dismissed") === "true";
-      if (!wasDismissed) {
+      if (!wasDismissed && !betaShowing) {
         const timer = setTimeout(() => {
           setIsVisible(true);
         }, 2400);
@@ -56,7 +59,7 @@ export function UpdatesNotification() {
         >
           <div className="rounded-lg border border-[#2a2a2a] overflow-hidden bg-[var(--modal-background)]">
             <div className="flex items-center justify-between px-3 py-1 border-b border-[#2a2a2a]">
-              <span className="text-xs tracking-wider font-mono font-bold text-amber-400">NEW UPDATES</span>
+              <span className="text-xs tracking-wider font-mono font-bold text-sidebar-primary">NEW UPDATES</span>
               <Button
                 variant="ghost"
                 className="group -my-1 -me-1 size-8 p-0 hover:bg-transparent"
