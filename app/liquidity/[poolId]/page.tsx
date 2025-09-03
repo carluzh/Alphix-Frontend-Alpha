@@ -40,6 +40,7 @@ import { useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { getPositionManagerAddress } from '@/lib/pools-config';
 import { position_manager_abi } from '@/lib/abis/PositionManager_abi';
 import { getFromCache, setToCache, getFromCacheWithTtl, getUserPositionsCacheKey, getPoolStatsCacheKey, getPoolDynamicFeeCacheKey, getPoolChartDataCacheKey, loadUserPositionIds, derivePositionsFromIds, invalidateCacheEntry, waitForSubgraphBlock } from "../../../lib/client-cache";
+import { poolsDataCache, invalidateAndRefresh } from "../../../lib/pools-data-cache";
 import type { Pool } from "../../../types";
 import { AddLiquidityForm } from "../../../components/liquidity/AddLiquidityForm";
 import {
@@ -1241,14 +1242,15 @@ export default function PoolDetailPage() {
 
     // Pool state now handled by usePoolState hook at component level
 
-    // 1. Fetch Pool Stats from server; server caches for 10m-1h and dedupes
+    // 1. Get Pool Stats from shared cache or fetch fresh
     let poolStats: Partial<Pool> | null = null;
     try {
-      const resp = await fetch(`/api/liquidity/get-pools-batch${force ? `?bust=${Date.now()}` : ''}`);
-      if (resp.ok) {
-        const data = await resp.json();
-        const poolIdLc = String(apiPoolIdToUse || '').toLowerCase();
-        const match = Array.isArray(data?.pools) ? data.pools.find((p: any) => String(p.poolId || '').toLowerCase() === poolIdLc) : null;
+      const cachedData = poolsDataCache.getData();
+      const poolIdLc = String(apiPoolIdToUse || '').toLowerCase();
+      
+      if (cachedData && poolsDataCache.isFresh()) {
+        // Use cached data if fresh
+        const match = cachedData.find((p: any) => String(p.poolId || '').toLowerCase() === poolIdLc);
         if (match) {
           poolStats = {
             tvlUSD: Number(match.tvlUSD) || 0,
@@ -1256,6 +1258,26 @@ export default function PoolDetailPage() {
             tvlYesterdayUSD: Number(match.tvlYesterdayUSD) || 0,
             volumePrev24hUSD: Number(match.volumePrev24hUSD) || 0,
           } as any;
+        }
+      } else {
+        // Fetch fresh data and update cache
+        const resp = await fetch(`/api/liquidity/get-pools-batch${force ? `?bust=${Date.now()}` : ''}`);
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data.success && Array.isArray(data.pools)) {
+            // Update shared cache
+            poolsDataCache.setData(data.pools);
+            
+            const match = data.pools.find((p: any) => String(p.poolId || '').toLowerCase() === poolIdLc);
+            if (match) {
+              poolStats = {
+                tvlUSD: Number(match.tvlUSD) || 0,
+                volume24hUSD: Number(match.volume24hUSD) || 0,
+                tvlYesterdayUSD: Number(match.tvlYesterdayUSD) || 0,
+                volumePrev24hUSD: Number(match.volumePrev24hUSD) || 0,
+              } as any;
+            }
+          }
         }
       }
     } catch (error) {
@@ -1414,24 +1436,17 @@ export default function PoolDetailPage() {
     // This function orchestrates the entire post-transaction refresh sequence.
     if (!poolId || !isConnected || !accountAddress) return;
 
-    // Record baseline TVL to ensure a meaningful change is detected.
-    try { 
-      const stats = await loadHeaderStats(true); // Force fetch for baseline
-      baselineTvlBeforeMutationRef.current = stats ? stats.tvlUSD : null;
-    } catch { 
-      baselineTvlBeforeMutationRef.current = null; 
-    }
-    setPostMutationWindow();
-
     try {
       setIsLoadingChartData(true);
       const targetBlock = info?.blockNumber ?? await publicClient.getBlockNumber();
       await waitForSubgraphBlock(Number(targetBlock), { timeoutMs: 30000, minWaitMs: 1000, maxIntervalMs: 2000 });
 
-      // Invalidate server caches once subgraph is synced.
+      // Use the shared cache invalidation system
+      await invalidateAndRefresh();
+
+      // Also invalidate chart data
       const base = getPoolConfiguration(poolId);
       const subId = (base?.subgraphId || '').toLowerCase();
-      try { fetch('/api/internal/revalidate-pools', { method: 'POST' } as any); } catch {}
       try {
         fetch('/api/internal/revalidate-chart', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1439,18 +1454,15 @@ export default function PoolDetailPage() {
         } as any);
       } catch {}
 
-      // Set localStorage hint for the main liquidity list page to refetch
-      try { localStorage.setItem('cache:pools-batch:invalidated', 'true'); } catch {}
-
-      // Now, force refetch all page data with backoff. This will handle charts, header, and positions.
-      await fetchWithBackoffIfNeeded(true, false); // skipPositions = false to get new position data.
+      // Refresh page data
+      await fetchWithBackoffIfNeeded(true, false);
       
     } catch (error) {
       console.error('[refreshAfterMutation] failed:', error);
     } finally {
       setIsLoadingChartData(false);
     }
-  }, [poolId, isConnected, accountAddress, loadHeaderStats, fetchWithBackoffIfNeeded]);
+  }, [poolId, isConnected, accountAddress, fetchWithBackoffIfNeeded]);
 
   const onLiquidityIncreasedCallback = useCallback((info?: { txHash?: `0x${string}`; blockNumber?: bigint }) => {
     if (pendingActionRef.current?.type !== 'increase') return;
