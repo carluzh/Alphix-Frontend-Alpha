@@ -109,8 +109,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     }
 
-    // Public bust calls: coalesce and debounce to protect the subgraph
-    if (!isInternal) {
+    // Public calls: coalesce and debounce to protect the subgraph
+    // BUT: when a bust param is present, always compute fresh (skip reuse/lastPayload)
+    if (!isInternal && !bust) {
       if (inFlight) {
         try {
           const data = await inFlight;
@@ -314,11 +315,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return payload;
     };
 
-    // Share computation if multiple callers hit concurrently
-    if (!inFlight) {
-      inFlight = compute().finally(() => { inFlight = null; });
+    // Share computation if multiple callers hit concurrently, except for bust: compute fresh
+    let payload: any;
+    if (bust) {
+      payload = await compute();
+    } else {
+      if (!inFlight) {
+        inFlight = compute().finally(() => { inFlight = null; });
+      }
+      payload = await inFlight;
     }
-    const payload = await inFlight;
     lastPayload = payload;
     lastComputeAt = Date.now();
 
