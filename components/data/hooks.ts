@@ -192,16 +192,28 @@ export function useQuote(params: { from: string; to: string; amount: string; swa
 export function useBlockRefetch(options?: { poolIds?: string[]; onBlock?: (n?: bigint) => void }) {
   const qc = useQueryClient()
   useEffect(() => {
+    let lastRefetchAt = 0
+    const minIntervalMs = 10_000 // throttle: at most once every 10s
+    const isTabVisible = () => (typeof document === 'undefined') || document.visibilityState === 'visible'
+
     const unwatch = publicClient.watchBlockNumber({
       onBlockNumber: (n) => {
-        options?.onBlock?.(n)
+        // Skip when tab is hidden to avoid background churn
+        if (!isTabVisible()) return
+        // Throttle invalidations
+        const now = Date.now()
+        if (now - lastRefetchAt < minIntervalMs) return
+        lastRefetchAt = now
+
+        try { options?.onBlock?.(n) } catch {}
         for (const pid of options?.poolIds || []) {
           qc.invalidateQueries({ queryKey: qk.poolState(pid), exact: true })
           qc.invalidateQueries({ queryKey: qk.dynamicFeeNow(pid), exact: true })
         }
       },
-      emitOnBegin: true,
+      emitOnBegin: false, // do not spam immediately on mount
     })
+
     return () => { try { unwatch?.() } catch {} }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [qc, JSON.stringify(options?.poolIds)])

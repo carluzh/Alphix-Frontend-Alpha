@@ -1367,6 +1367,9 @@ export default function PoolDetailPage() {
       setUserPositions(filtered);
       // Remove skeletons only once we have derived positions ready
       setPendingNewPositions([]);
+
+      // NEW: Actively refetch chart + header stats after revalidation (skip positions)
+      await fetchPageData(true, /* skipPositions */ true, /* keepLoading */ false);
     } catch (error) {
       // Silent failure - error logged in waitForSubgraphBlock if needed
     } finally {
