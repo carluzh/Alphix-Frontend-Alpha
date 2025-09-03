@@ -90,6 +90,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const providedSecret = (req.headers['x-internal-secret'] as string) || '';
     const isInternal = revalidateHint || (!!expectedSecret && providedSecret === expectedSecret);
     const bust = typeof (req.query?.bust as string | undefined) === 'string';
+    const allowSuspicious = isInternal && (String(req.query?.allow_suspicious || '').toLowerCase() === '1');
     // Honor noStore only for internal calls; public calls cannot force noStore
     const noStore = isInternal && (String(req.query?.noStore || '').toLowerCase() === '1' || String(req.query?.no_store || '').toLowerCase() === '1');
     if (revalidateHint) {
@@ -322,7 +323,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     lastComputeAt = Date.now();
 
     // Validate payload before caching - prevent caching suspicious zero values
-    if (payload?.pools && Array.isArray(payload.pools)) {
+    if (!allowSuspicious && payload?.pools && Array.isArray(payload.pools)) {
       let hasValidData = false;
       let suspiciousCount = 0;
       for (const pool of payload.pools) {

@@ -50,7 +50,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const poolsCount = Array.isArray(json?.pools) ? json.pools.length : undefined;
     // Step 2: immediately request a cacheable response to warm the edge and server cache
     try {
-      await fetch(`${url}?bust=${Date.now()}`, { method: 'GET' } as any);
+      await fetch(`${url}?allow_suspicious=1&bust=${Date.now()}`, { method: 'GET' } as any);
     } catch {}
     const now2 = Date.now();
     lastGlobalTriggerAt = now2;
