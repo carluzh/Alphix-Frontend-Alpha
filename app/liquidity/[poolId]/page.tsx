@@ -1379,6 +1379,7 @@ export default function PoolDetailPage() {
 
   // Post-mutation window to treat zero-like responses as transient
   const lastMutationAtRef = useRef<number>(0);
+  const baselineTvlBeforeMutationRef = useRef<number | null>(null);
   const setPostMutationWindow = () => { lastMutationAtRef.current = Date.now(); };
   const isInPostMutationWindow = () => Date.now() - lastMutationAtRef.current < 60_000; // 60s window
 
@@ -1393,6 +1394,13 @@ export default function PoolDetailPage() {
     if (tvlNow > 0 && tvlY === 0) return true;
     // If previous volume non-zero and next shows zero, consider suspicious
     if (prev && Number(prev.volume24hUSD || 0) > 0 && vol24 === 0) return true;
+    // Require a minimal TVL movement vs baseline when a mutation just happened
+    const baseline = baselineTvlBeforeMutationRef.current;
+    if (baseline !== null && isFinite(baseline) && baseline > 0) {
+      const delta = Math.abs(tvlNow - baseline);
+      const threshold = Math.max(50, baseline * 0.001); // $50 or 0.1%
+      if (delta < threshold) return true;
+    }
     return false;
   };
 
@@ -1456,6 +1464,8 @@ export default function PoolDetailPage() {
     }
     lastRevalidationRef.current = now;
 
+    // Record baseline TVL before mutation backoff
+    try { baselineTvlBeforeMutationRef.current = Number((currentPoolData as any)?.tvlUSD || 0) || null; } catch { baselineTvlBeforeMutationRef.current = null; }
     setPostMutationWindow();
     toast.success("Position Increased", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
     setShowIncreaseModal(false);
@@ -1479,13 +1489,12 @@ export default function PoolDetailPage() {
         } catch {}
       })();
     } catch {}
-  }, [poolId]);
+  }, [poolId, currentPoolData]);
 
   const onLiquidityDecreasedCallback = useCallback((info?: { txHash?: `0x${string}`; blockNumber?: bigint }) => {
     if (isCompoundInProgressRef.current) { isCompoundInProgressRef.current = false; return; }
     if (pendingActionRef.current?.type !== 'decrease' && pendingActionRef.current?.type !== 'withdraw') return;
 
-    // Prevent rapid revalidations (cooldown: 30 seconds)
     const now = Date.now();
     if (now - lastRevalidationRef.current < 30000) {
       console.log('Skipping revalidation due to cooldown');
@@ -1493,6 +1502,8 @@ export default function PoolDetailPage() {
     }
     lastRevalidationRef.current = now;
 
+    // Record baseline TVL before mutation backoff
+    try { baselineTvlBeforeMutationRef.current = Number((currentPoolData as any)?.tvlUSD || 0) || null; } catch { baselineTvlBeforeMutationRef.current = null; }
     setPostMutationWindow();
     const closing = isFullBurn || isFullWithdraw;
     toast.success(closing ? "Position Closed" : "Position Decreased", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
@@ -1515,8 +1526,8 @@ export default function PoolDetailPage() {
               body: JSON.stringify({ poolId, subgraphId: subId })
             } as any);
           } catch {}
-          // Charts first (skip positions), then targeted positions refresh with bounded backoff
           await fetchWithBackoffIfNeeded(true, /* skipPositions */ true);
+          // Targeted positions refresh ... unchanged below
 
           // Targeted positions refresh (0,2,5,10s) until the closed position disappears
           const delays = [0, 2000, 5000, 10000];

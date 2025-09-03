@@ -1,6 +1,7 @@
 "use client"
 
 import type * as React from "react"
+import { useEffect, useState } from "react"
 import {
   BarChartIcon,
   ClipboardListIcon,
@@ -107,6 +108,21 @@ export function AppSidebar({ variant = "floating", ...props }: React.ComponentPr
   const isMobile = useIsMobile()
   const { resolvedTheme } = useTheme()
   const router = useRouter(); // Initialize useRouter
+  const [showVersionInitial, setShowVersionInitial] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const flag = sessionStorage.getItem('came_from_login');
+        if (flag === '1' || flag === 'true') {
+          setShowVersionInitial(true);
+          try { sessionStorage.removeItem('came_from_login'); } catch {}
+          const timer = setTimeout(() => setShowVersionInitial(false), 1000);
+          return () => clearTimeout(timer);
+        }
+      } catch {}
+    }
+  }, []);
 
   return (
     <Sidebar variant={variant} collapsible="offcanvas" {...props}>
@@ -143,10 +159,14 @@ export function AppSidebar({ variant = "floating", ...props }: React.ComponentPr
                     style={{ fontFamily: 'Consolas, monospace' }}
                     title="Version 1.0"
                   >
-                    <span className="inline-flex items-center justify-center" style={{ minWidth: 28 }}>
-                      <span className="group-hover:hidden">Beta</span>
-                      <span className="hidden group-hover:inline">1.0</span>
-                    </span>
+                    {showVersionInitial ? (
+                      <span className="inline-flex items-center justify-center" style={{ minWidth: 28 }}>1.0</span>
+                    ) : (
+                      <span className="inline-flex items-center justify-center" style={{ minWidth: 28 }}>
+                        <span className="group-hover:hidden">Beta</span>
+                        <span className="hidden group-hover:inline">1.0</span>
+                      </span>
+                    )}
                   </Badge>
                 </div>
               </div>
