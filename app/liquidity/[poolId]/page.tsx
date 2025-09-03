@@ -1380,6 +1380,7 @@ export default function PoolDetailPage() {
   // Post-mutation window to treat zero-like responses as transient
   const lastMutationAtRef = useRef<number>(0);
   const baselineTvlBeforeMutationRef = useRef<number | null>(null);
+  const lastGoodStatsRef = useRef<{ tvlUSD: number; volume24hUSD: number } | null>(null);
   const setPostMutationWindow = () => { lastMutationAtRef.current = Date.now(); };
   const isInPostMutationWindow = () => Date.now() - lastMutationAtRef.current < 60_000; // 60s window
 
@@ -1444,8 +1445,16 @@ export default function PoolDetailPage() {
     for (let i = 0; i < schedules.length; i++) {
       if (schedules[i] > 0) await new Promise(r => setTimeout(r, schedules[i]));
       await fetchPageData(force, skipPositions, /* keepLoading */ i < schedules.length - 1);
-      const nextStats = await loadHeaderStats();
+      const nextStats = await loadHeaderStats(force);
       if (!isSuspiciousBatchStats(lastStats, nextStats)) {
+        // Accept and pin as last-good stats during the window
+        try {
+          if (nextStats && Number.isFinite(nextStats.tvlUSD) && Number.isFinite(nextStats.volume24hUSD)) {
+            lastGoodStatsRef.current = { tvlUSD: nextStats.tvlUSD, volume24hUSD: nextStats.volume24hUSD };
+          }
+        } catch {}
+        // Warm CDN cache once with a cacheable request so subsequent navigations see the updated values
+        try { if (force) fetch('/api/liquidity/get-pools-batch'); } catch {}
         break;
       }
       lastStats = nextStats || lastStats;
