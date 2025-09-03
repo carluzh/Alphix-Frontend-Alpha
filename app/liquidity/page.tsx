@@ -133,6 +133,109 @@ export default function LiquidityPage() {
   const [poolDataByPoolId, setPoolDataByPoolId] = useState<Record<string, any>>({});
   const [priceMap, setPriceMap] = useState<Record<string, number>>({});
   const [isLoadingPoolStates, setIsLoadingPoolStates] = useState(true);
+  const [refetchIndex, setRefetchIndex] = useState(0);
+
+  const isSuspiciousBatchPayload = (pools: Pool[]) => {
+    if (!pools || pools.length === 0) return true; // No data is suspicious
+    // Check if a significant pool has zero volume or yesterday's TVL when it shouldn't
+    const suspiciousPool = pools.find(p => {
+        const tvl = (p as any).tvlUSD || 0;
+        const vol24h = (p as any).volume24hUSD; // Can be undefined while loading
+        const tvlY = (p as any).tvlYesterdayUSD; // Can be undefined
+
+        // If TVL is loaded and significant, but key metrics are missing/zero, it's suspicious.
+        return tvl > 1000 && (vol24h === 0 || tvlY === 0);
+    });
+    return !!suspiciousPool;
+  };
+  
+  useEffect(() => {
+    const fetchAllPoolStatsBatch = async () => {
+      console.log("[LiquidityPage] Starting batch fetch with backoff...");
+      const schedules = [0, 2000, 5000, 10000, 30000];
+      let successful = false;
+
+      for (let i = 0; i < schedules.length; i++) {
+        if (schedules[i] > 0) await new Promise(r => setTimeout(r, schedules[i]));
+        try {
+          const response = await fetch('/api/liquidity/get-pools-batch', { cache: 'no-store' });
+          if (!response.ok) throw new Error(`Batch API failed: ${response.status}`);
+          const batchData = await response.json();
+          if (!batchData.success) throw new Error(`Batch API error: ${batchData.message}`);
+
+          const updatedPools = await Promise.all(dynamicPools.map(async (pool) => {
+            const apiPoolId = getPoolSubgraphId(pool.id) || pool.id;
+            const batchPoolData = batchData.pools.find((p: any) => p.poolId.toLowerCase() === apiPoolId.toLowerCase());
+            if (batchPoolData) {
+              const tvlUSD = typeof batchPoolData.tvlUSD === 'number' ? batchPoolData.tvlUSD : undefined;
+              const tvlYesterdayUSD = typeof batchPoolData.tvlYesterdayUSD === 'number' ? batchPoolData.tvlYesterdayUSD : undefined;
+              const volume24hUSD = typeof batchPoolData.volume24hUSD === 'number' ? batchPoolData.volume24hUSD : undefined;
+              const volumePrev24hUSD = typeof batchPoolData.volumePrev24hUSD === 'number' ? batchPoolData.volumePrev24hUSD : undefined;
+              let fees24hUSD: number | undefined = undefined;
+              let aprStr: string = 'N/A';
+              
+              if (typeof volume24hUSD === 'number') {
+                try {
+                  const bps = await getPoolFeeBps(apiPoolId);
+                  const feeRate = Math.max(0, bps) / 10_000;
+                  fees24hUSD = volume24hUSD * feeRate;
+                } catch {}
+              }
+              if (typeof fees24hUSD === 'number' && typeof tvlUSD === 'number' && tvlUSD > 0) {
+                const apr = (fees24hUSD * 365 / tvlUSD) * 100;
+                aprStr = `${apr.toFixed(2)}%`;
+              }
+              return { 
+                ...pool, 
+                tvlUSD, 
+                tvlYesterdayUSD, 
+                volume24hUSD, 
+                volumePrev24hUSD, 
+                fees24hUSD, 
+                apr: aprStr,
+                volumeChangeDirection: (volume24hUSD !== undefined && volumePrev24hUSD !== undefined) ? (volume24hUSD > volumePrev24hUSD ? 'up' : volume24hUSD < volumePrev24hUSD ? 'down' : 'neutral') : 'loading',
+                tvlChangeDirection: (tvlUSD !== undefined && tvlYesterdayUSD !== undefined) ? (tvlUSD > tvlYesterdayUSD ? 'up' : tvlUSD < tvlYesterdayUSD ? 'down' : 'neutral') : 'loading',
+              };
+            }
+            return pool;
+          }));
+
+          if (!isSuspiciousBatchPayload(updatedPools)) {
+            setPoolsData(updatedPools);
+            successful = true;
+            console.log("[LiquidityPage] Batch fetch successful and data is valid.");
+            break;
+          } else {
+            console.warn(`[LiquidityPage] Batch fetch attempt ${i + 1} returned suspicious data. Retrying...`);
+          }
+        } catch (error) {
+          console.error(`[LiquidityPage] Batch fetch attempt ${i + 1} failed:`, error);
+        }
+      }
+
+      if (!successful) {
+        toast.error("Could not load pool data", { description: "Failed to fetch reliable data from the server." });
+      }
+    };
+
+    fetchAllPoolStatsBatch();
+  }, [refetchIndex]);
+
+  useEffect(() => {
+    const checkAndRefetch = () => {
+        try {
+            if (localStorage.getItem('cache:pools-batch:invalidated') === 'true') {
+                console.log("[LiquidityPage] Invalidation hint found. Triggering refetch.");
+                localStorage.removeItem('cache:pools-batch:invalidated');
+                setRefetchIndex(i => i + 1);
+            }
+        } catch {}
+    };
+
+    checkAndRefetch();
+    window.addEventListener('focus', checkAndRefetch);
+    return () => window.removeEventListener('focus', checkAndRefetch);
+  }, []);
 
   const determineBaseTokenForPriceDisplay = useCallback((token0: string, token1: string): string => {
     if (!token0 || !token1) return token0;
@@ -267,137 +370,6 @@ export default function LiquidityPage() {
   }, [poolsData, userPositions]);
 
   // Removed expanded row pool-state prefetch; keep placeholder states for helpers
-
-  useEffect(() => {
-    const fetchAllPoolStatsBatch = async () => {
-      console.log("[LiquidityPage] Starting batch fetch for all pools...");
-      
-      try {
-        // Always fetch; rely on CDN/server cache for freshness and throttling
-        const response = await fetch('/api/liquidity/get-pools-batch');
-        
-        if (!response.ok) {
-          throw new Error(`Batch API failed: ${response.status}`);
-        }
-
-        const batchData = await response.json();
-        
-        if (!batchData.success) {
-          throw new Error(`Batch API error: ${batchData.message}`);
-        }
-
-        console.log(`[LiquidityPage] Batch API returned data for ${batchData.pools.length} pools`);
-
-        // Compute fees (24h) and APR client-side using StateView fee per pool
-        const updatedPools = await Promise.all(poolsData.map(async (pool) => {
-          const apiPoolId = getPoolSubgraphId(pool.id) || pool.id;
-          const batchPoolData = batchData.pools.find((p: any) => p.poolId.toLowerCase() === apiPoolId.toLowerCase());
-
-          if (batchPoolData) {
-            const tvlUSD: number | undefined = typeof batchPoolData.tvlUSD === 'number' ? batchPoolData.tvlUSD : undefined;
-            const tvlYesterdayUSD: number | undefined = typeof batchPoolData.tvlYesterdayUSD === 'number' ? batchPoolData.tvlYesterdayUSD : undefined;
-            const volume24hUSD: number | undefined = typeof batchPoolData.volume24hUSD === 'number' ? batchPoolData.volume24hUSD : undefined;
-            const volumePrev24hUSD: number | undefined = typeof batchPoolData.volumePrev24hUSD === 'number' ? batchPoolData.volumePrev24hUSD : undefined;
-            let fees24hUSD: number | undefined = undefined;
-            let feesPrev24hUSD: number | undefined = undefined;
-            let aprStr: string = 'N/A';
-            let tvlChangeDirection: 'up' | 'down' | 'neutral' = 'neutral';
-            let volumeChangeDirection: 'up' | 'down' | 'loading' | 'neutral' = 'neutral';
-
-            try {
-              if (typeof volume24hUSD === 'number') {
-                const bps = await getPoolFeeBps(apiPoolId);
-                const feeRate = Math.max(0, bps) / 10_000; // convert bps to fraction
-                fees24hUSD = volume24hUSD * feeRate;
-                if (typeof volumePrev24hUSD === 'number') {
-                  feesPrev24hUSD = volumePrev24hUSD * feeRate;
-                }
-              }
-            } catch {}
-
-            if (typeof fees24hUSD === 'number' && typeof tvlUSD === 'number' && tvlUSD > 0) {
-              const apr = (fees24hUSD * 365 / tvlUSD) * 100;
-              aprStr = `${apr.toFixed(2)}%`;
-            }
-
-            if (typeof tvlUSD === 'number' && typeof tvlYesterdayUSD === 'number') {
-              if (tvlUSD > tvlYesterdayUSD) tvlChangeDirection = 'up';
-              else if (tvlUSD < tvlYesterdayUSD) tvlChangeDirection = 'down';
-              else tvlChangeDirection = 'neutral';
-            }
-            if (typeof volume24hUSD === 'number' && typeof volumePrev24hUSD === 'number') {
-              if (volume24hUSD > volumePrev24hUSD) volumeChangeDirection = 'up';
-              else if (volume24hUSD < volumePrev24hUSD) volumeChangeDirection = 'down';
-              else volumeChangeDirection = 'neutral';
-            }
-
-            const updatedStats = {
-              volume24hUSD,
-              fees24hUSD,
-              tvlUSD,
-              tvlYesterdayUSD,
-              volumePrev24hUSD,
-              feesPrev24hUSD,
-              volumeChangeDirection: volumeChangeDirection,
-              tvlChangeDirection: tvlChangeDirection,
-              apr: aprStr,
-            };
-
-            return { ...pool, ...updatedStats };
-          } else {
-            return {
-              ...pool,
-              volume24hUSD: undefined,
-              fees24hUSD: undefined,
-              volumePrev24hUSD: undefined,
-              tvlUSD: undefined,
-              tvlYesterdayUSD: undefined,
-              volumeChangeDirection: 'loading' as const,
-              tvlChangeDirection: 'loading' as const,
-              apr: 'Loading...',
-            };
-          }
-        }));
-
-        console.log("[LiquidityPage] Updated pools with batch data:", updatedPools);
-        setPoolsData(updatedPools);
-
-      } catch (error) {
-        console.error("[LiquidityPage] Error in batch fetch:", error);
-        
-        const fallbackPools = poolsData.map(pool => {
-          const apiPoolId = getPoolSubgraphId(pool.id) || pool.id;
-          const statsCacheKey = getPoolStatsCacheKey(apiPoolId);
-          const cachedStats = getFromCacheWithTtl<Partial<Pool>>(statsCacheKey, 10 * 60 * 1000);
-          
-          if (cachedStats) {
-            return { ...pool, ...cachedStats };
-          } else {
-            return {
-              ...pool,
-              volume24hUSD: undefined,
-              fees24hUSD: undefined,
-              volumePrev24hUSD: undefined,
-              tvlUSD: undefined,
-              tvlYesterdayUSD: undefined,
-              volumeChangeDirection: 'neutral' as const,
-              tvlChangeDirection: 'neutral' as const,
-              apr: "N/A",
-            };
-          }
-        });
-        
-        setPoolsData(fallbackPools);
-      }
-    };
-
-    if (poolsData.length > 0) {
-      fetchAllPoolStatsBatch();
-    }
-
-    // No client polling; rely on CDN 10m TTL + SWR
-    return () => {};
-  }, []);
 
   const filteredPools = useMemo(() => {
     if (selectedCategory === 'All') return poolsWithPositionCounts;

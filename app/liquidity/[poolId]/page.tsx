@@ -1383,6 +1383,27 @@ export default function PoolDetailPage() {
   const setPostMutationWindow = () => { lastMutationAtRef.current = Date.now(); };
   const isInPostMutationWindow = () => Date.now() - lastMutationAtRef.current < 60_000; // 60s window
 
+  // Helper to fetch current header stats deterministically, now defined at a higher scope
+  const loadHeaderStats = useCallback(async (force?: boolean): Promise<{ tvlUSD: number; tvlYesterdayUSD?: number; volume24hUSD: number; volumePrev24hUSD?: number } | null> => {
+    try {
+      const basePoolInfoTmp = getPoolConfiguration(poolId);
+      const apiPoolIdToUseLocal = basePoolInfoTmp?.subgraphId || '';
+      if (!apiPoolIdToUseLocal) return null;
+      const resp = await fetch(`/api/liquidity/get-pools-batch${force ? `?bust=${Date.now()}` : ''}`, { cache: 'no-store' as any } as any);
+      if (!resp.ok) return null;
+      const data = await resp.json();
+      const poolIdLc = String(apiPoolIdToUseLocal || '').toLowerCase();
+      const match = Array.isArray(data?.pools) ? data.pools.find((p: any) => String(p.poolId || '').toLowerCase() === poolIdLc) : null;
+      if (!match) return null;
+      return {
+        tvlUSD: Number(match.tvlUSD) || 0,
+        volume24hUSD: Number(match.volume24hUSD) || 0,
+        tvlYesterdayUSD: Number(match.tvlYesterdayUSD) || 0,
+        volumePrev24hUSD: Number(match.volumePrev24hUSD) || 0,
+      };
+    } catch { return null; }
+  }, [poolId]);
+
   // Helper to test suspicious payloads after mutations
   const isSuspiciousBatchStats = (prev: any | null, next: { tvlUSD: number; tvlYesterdayUSD?: number; volume24hUSD: number; volumePrev24hUSD?: number } | null) => {
     if (!isInPostMutationWindow()) return false;
@@ -1419,27 +1440,6 @@ export default function PoolDetailPage() {
         };
       }
     } catch {}
-
-    // Helper to fetch current header stats deterministically
-    const loadHeaderStats = async (): Promise<{ tvlUSD: number; tvlYesterdayUSD?: number; volume24hUSD: number; volumePrev24hUSD?: number } | null> => {
-      try {
-        const basePoolInfoTmp = getPoolConfiguration(poolId);
-        const apiPoolIdToUseLocal = basePoolInfoTmp?.subgraphId || '';
-        if (!apiPoolIdToUseLocal) return null;
-        const resp = await fetch(`/api/liquidity/get-pools-batch${force ? `?bust=${Date.now()}` : ''}`, { cache: 'no-store' as any } as any);
-        if (!resp.ok) return null;
-        const data = await resp.json();
-        const poolIdLc = String(apiPoolIdToUseLocal || '').toLowerCase();
-        const match = Array.isArray(data?.pools) ? data.pools.find((p: any) => String(p.poolId || '').toLowerCase() === poolIdLc) : null;
-        if (!match) return null;
-        return {
-          tvlUSD: Number(match.tvlUSD) || 0,
-          volume24hUSD: Number(match.volume24hUSD) || 0,
-          tvlYesterdayUSD: Number(match.tvlYesterdayUSD) || 0,
-          volumePrev24hUSD: Number(match.volumePrev24hUSD) || 0,
-        };
-      } catch { return null; }
-    };
 
     for (let i = 0; i < schedules.length; i++) {
       if (schedules[i] > 0) await new Promise(r => setTimeout(r, schedules[i]));
@@ -1481,6 +1481,9 @@ export default function PoolDetailPage() {
         } as any);
       } catch {}
 
+      // Set localStorage hint for the main liquidity list page to refetch
+      try { localStorage.setItem('cache:pools-batch:invalidated', 'true'); } catch {}
+
       // Now, force refetch all page data with backoff. This will handle charts, header, and positions.
       await fetchWithBackoffIfNeeded(true, false); // skipPositions = false to get new position data.
       
@@ -1489,7 +1492,7 @@ export default function PoolDetailPage() {
     } finally {
       setIsLoadingChartData(false);
     }
-  }, [poolId, isConnected, accountAddress]);
+  }, [poolId, isConnected, accountAddress, loadHeaderStats, fetchWithBackoffIfNeeded]);
 
   const onLiquidityIncreasedCallback = useCallback((info?: { txHash?: `0x${string}`; blockNumber?: bigint }) => {
     if (pendingActionRef.current?.type !== 'increase') return;
