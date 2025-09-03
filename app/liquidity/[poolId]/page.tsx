@@ -469,6 +469,7 @@ export default function PoolDetailPage() {
   const { isLoading: isCollectConfirming, isSuccess: isCollectConfirmed } = useWaitForTransactionReceipt({ hash: collectHash });
   // Guard to prevent duplicate toasts and unintended modal closes across re-renders
   const pendingActionRef = useRef<null | { type: 'increase' | 'decrease' | 'withdraw' | 'burn' | 'collect' | 'compound' }>(null);
+  const lastRevalidationRef = useRef<number>(0);
   const handledCollectHashRef = useRef<string | null>(null);
   
   // Balance hooks for tokens
@@ -1390,6 +1391,15 @@ export default function PoolDetailPage() {
     }
     // Only react to an explicit decrease/withdraw action in progress
     if (pendingActionRef.current?.type !== 'decrease' && pendingActionRef.current?.type !== 'withdraw') return;
+    
+    // Prevent rapid revalidations (cooldown: 30 seconds)
+    const now = Date.now();
+    if (now - lastRevalidationRef.current < 30000) {
+      console.log('Skipping revalidation due to cooldown');
+      return;
+    }
+    lastRevalidationRef.current = now;
+    
     const closing = isFullBurn || isFullWithdraw;
     toast.success(closing ? "Position Closed" : "Position Decreased", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
     setShowBurnConfirmDialog(false);
@@ -1417,7 +1427,7 @@ export default function PoolDetailPage() {
         }
       })();
       // positions backoff can remain lightweight
-      try { backoffRefreshPositions(); } catch {}
+      // try { backoffRefreshPositions(); } catch {} // Temporarily disabled to test loop fix
     } catch {}
   }, [isFullBurn, isFullWithdraw, poolId, fetchPageData, backoffRefreshPositions]);
 

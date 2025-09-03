@@ -320,143 +320,25 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const payload = await inFlight;
     lastPayload = payload;
     lastComputeAt = Date.now();
-    // TVL for all pools
-    const tvlResp = await fetch(SUBGRAPH_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: GET_POOLS_TVL_BULK, variables: { poolIds: targetPoolIds.map((id) => id.toLowerCase()) } })
-    });
-    const tvlJson = tvlResp.ok ? await tvlResp.json() : { data: { pools: [] } };
-    const tvlById = new Map<string, { tvl0: any; tvl1: any }>();
-    for (const p of (tvlJson?.data?.pools || [])) {
-      tvlById.set(String(p.id).toLowerCase(), { tvl0: p.totalValueLockedToken0, tvl1: p.totalValueLockedToken1 });
-    }
 
-    // Hourly volume for all pools in one go (last ~49h)
-    const cutoffHourly = cutoff49h;
-    const hourlyResp = await fetch(SUBGRAPH_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: GET_POOLS_HOURLY_BULK, variables: { poolIds: targetPoolIds.map((id) => id.toLowerCase()), cutoff: cutoffHourly } })
-    });
-    const hourlyJson = hourlyResp.ok ? await hourlyResp.json() : { data: { poolHourDatas: [] } };
-    const hourlyByPoolId = new Map<string, Array<any>>();
-    for (const h of (hourlyJson?.data?.poolHourDatas || [])) {
-      const id = String(h?.pool?.id || '').toLowerCase();
-      if (!id) continue;
-      if (!hourlyByPoolId.has(id)) hourlyByPoolId.set(id, []);
-      hourlyByPoolId.get(id)!.push(h);
-    }
-
-    // Previous-day TVL snapshot using block-at-timestamp approach (consistent with chart-data)
-    let prevDayBlock = 0;
-    try {
-      const blkResp = await fetch(SUBGRAPH_URL, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: GET_BLOCK_FOR_TS, variables: { ts: dayEndPrev } })
-      });
-      if (blkResp.ok) {
-        const blkJson = await blkResp.json();
-        prevDayBlock = Number(blkJson?.data?.transactions?.[0]?.blockNumber) || 0;
+    // Validate payload before caching - prevent caching suspicious zero values
+    if (payload?.pools && Array.isArray(payload.pools)) {
+      let hasValidData = false;
+      for (const pool of payload.pools) {
+        // If any pool has reasonable TVL data, consider the batch valid
+        if (pool.tvlUSD > 1000 || (pool.tvlYesterdayUSD > 0 && pool.tvlYesterdayUSD > 1000)) {
+          hasValidData = true;
+          break;
+        }
       }
-    } catch {}
-
-    const prevTvlByPoolId = new Map<string, { tvl0: number; tvl1: number }>();
-    if (prevDayBlock > 0) {
-      try {
-        const poolsAtBlockResp = await fetch(SUBGRAPH_URL, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: GET_POOLS_AT_BLOCK_BULK, variables: { poolIds: targetPoolIds.map(id => id.toLowerCase()), block: prevDayBlock } })
-        });
-        if (poolsAtBlockResp.ok) {
-          const poolsAtBlockJson = await poolsAtBlockResp.json();
-          const items = poolsAtBlockJson?.data?.pools || [];
-          for (const it of items) {
-            const id = String(it?.id || '').toLowerCase();
-            if (!id) continue;
-            const tvl0 = Number(it?.totalValueLockedToken0) || 0;
-            const tvl1 = Number(it?.totalValueLockedToken1) || 0;
-            prevTvlByPoolId.set(id, { tvl0, tvl1 });
-          }
-        }
-      } catch {}
-    }
-
-    // (no internal fallbacks; rely solely on block snapshot)
-
-    // ---- Process data per pool ----
-    const poolsStats: BatchPoolStatsMinimal[] = [];
-    for (const pool of allPools) {
-      try {
-        const poolId = (getPoolSubgraphId(pool.id) || pool.id).toLowerCase();
-        const symbol0 = pool.currency0.symbol;
-        const symbol1 = pool.currency1.symbol;
-        const token0Price = tokenPrices[symbol0];
-        const token1Price = tokenPrices[symbol1];
-
-        // Prices service returns fallbacks; if still missing, treat as 0
-        const safeToken0Price = typeof token0Price === 'number' ? token0Price : 0;
-        const safeToken1Price = typeof token1Price === 'number' ? token1Price : 0;
-
-        // TVL
-        const cfg = poolIdToConfig.get(poolId)!;
-        const tvlEntry = tvlById.get(poolId);
-        let tvlUSD = 0;
-        if (tvlEntry) {
-          const toHuman = (val: any, decimals: number) => {
-            try {
-              const bi = BigInt(String(val));
-              return parseFloat(formatUnits(bi, decimals));
-            } catch {
-              const n = parseFloat(String(val));
-              return Number.isFinite(n) ? n : 0;
-            }
-          };
-          const amt0 = toHuman(tvlEntry.tvl0 || '0', cfg.dec0);
-          const amt1 = toHuman(tvlEntry.tvl1 || '0', cfg.dec1);
-          tvlUSD = calculateTotalUSD(amt0, amt1, safeToken0Price, safeToken1Price);
-        }
-
-        // Volume windows from hourly rollups (current: >= cutoff24h; previous: [cutoff49h, cutoff25h))
-        let volume24hUSD = 0;
-        let volumePrev24hUSD = 0;
-        const hours = hourlyByPoolId.get(poolId) || [];
-        if (hours.length > 0) {
-          let sumCurr0 = 0;
-          let sumPrev0 = 0;
-          for (const h of hours) {
-            const ts = Number(h?.periodStartUnix) || 0;
-            const v0 = Number(h?.volumeToken0) || 0;
-            if (ts >= cutoff24h) sumCurr0 += v0;
-            else if (ts >= cutoff49h && ts < cutoff25h) sumPrev0 += v0;
-          }
-          volume24hUSD = sumCurr0 * safeToken0Price;
-          volumePrev24hUSD = sumPrev0 * safeToken0Price;
-        }
-
-        // TVL yesterday from block snapshot (priced with current prices)
-        let tvlYesterdayUSD = 0;
-        const prevEntry = prevTvlByPoolId.get(poolId);
-        if (prevEntry) {
-          const amt0Prev = Number(prevEntry.tvl0) || 0;
-          const amt1Prev = Number(prevEntry.tvl1) || 0;
-          tvlYesterdayUSD = calculateTotalUSD(amt0Prev, amt1Prev, safeToken0Price, safeToken1Price);
-        }
-        poolsStats.push({
-          poolId,
-          tvlUSD,
-          tvlYesterdayUSD,
-          volume24hUSD,
-          volumePrev24hUSD,
-        });
-
-        console.log(`[Batch API] Processed pool ${poolId}: TVL=$${tvlUSD.toFixed(2)}, TVLprev=$${tvlYesterdayUSD.toFixed(2)}, Vol24h=$${volume24hUSD.toFixed(2)}, VolPrev24h=$${volumePrev24hUSD.toFixed(2)}`);
-      } catch (error) {
-        console.error(`[Batch API] Error processing pool ${pool.id}:`, error);
+      
+      if (!hasValidData) {
+        console.warn('[Batch API] Suspicious data detected - all pools have low/zero TVL, not caching');
+        // Return the data but don't cache it
+        res.setHeader('Cache-Control', 'no-store');
+        return res.status(200).json(payload);
       }
     }
-
-    console.log(`[Batch API] Successfully processed ${poolsStats.length}/${allPools.length} pools`);
 
     // Category 1: align with chart endpoints (1h CDN) but primary is server cache (6h)
     // Only write to server cache unless explicitly told not to
