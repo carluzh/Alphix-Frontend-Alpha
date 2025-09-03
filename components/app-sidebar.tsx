@@ -139,13 +139,13 @@ export function AppSidebar({ variant = "floating", ...props }: React.ComponentPr
                   {/* Show 'Beta' by default; on hover swap to version text without resizing */}
                   <Badge
                     variant="outline"
-                    className="peer bg-[#3d271b] text-sidebar-primary border-sidebar-primary rounded-md font-normal hover:bg-[#4a2f1f] transition-colors cursor-default"
+                    className="bg-[#3d271b] text-sidebar-primary border-sidebar-primary rounded-md font-normal hover:bg-[#4a2f1f] transition-colors cursor-default inline-block group"
                     style={{ fontFamily: 'Consolas, monospace' }}
                     title="Version 1.0"
                   >
                     <span className="inline-flex items-center justify-center" style={{ minWidth: 28 }}>
-                      <span className="peer-hover:hidden">Beta</span>
-                      <span className="hidden peer-hover:inline">1.0</span>
+                      <span className="group-hover:hidden">Beta</span>
+                      <span className="hidden group-hover:inline">1.0</span>
                     </span>
                   </Badge>
                 </div>

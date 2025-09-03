@@ -601,7 +601,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
       try { if (accountAddress) prefetchService.requestPositionsRefresh({ owner: accountAddress, reason: lastWasCollectOnly.current ? 'collect' : 'decrease' }); } catch {}
       try { if (accountAddress) invalidateActivityCache(accountAddress); } catch {}
       try { if (accountAddress) { invalidateUserPositionsCache(accountAddress); invalidateUserPositionIdsCache(accountAddress); } } catch {}
-      try { fetch('/api/internal/revalidate-pools', { method: 'POST' } as any).catch(() => {}); } catch {}
+      // Removed hook-level revalidate to avoid duplicates; page handles revalidation after subgraph sync
       setIsDecreasing(false);
     } else if (decreaseConfirmError) {
        const message = decreaseConfirmError instanceof BaseError ? decreaseConfirmError.shortMessage : decreaseConfirmError.message;

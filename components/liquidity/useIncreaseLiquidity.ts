@@ -348,10 +348,10 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
       try { if (accountAddress) prefetchService.requestPositionsRefresh({ owner: accountAddress, reason: 'increase' }); } catch {}
       try { if (accountAddress) invalidateActivityCache(accountAddress); } catch {}
       try { if (accountAddress) { invalidateUserPositionsCache(accountAddress); invalidateUserPositionIdsCache(accountAddress); } } catch {}
-      try { fetch('/api/internal/revalidate-pools', { method: 'POST' } as any).catch(() => {}); } catch {}
+      // Removed hook-level revalidate to avoid duplicates; page handles revalidation after subgraph sync
       setIsIncreasing(false);
     } else if (increaseConfirmError) {
-       const message = increaseConfirmError instanceof BaseError ? increaseConfirmError.shortMessage : increaseConfirmError.message;
+      const message = increaseConfirmError instanceof BaseError ? increaseConfirmError.shortMessage : increaseConfirmError.message;
       toast.error("Increase Failed", {
         id: hash,
         description: message,

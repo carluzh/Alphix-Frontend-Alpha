@@ -324,17 +324,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Validate payload before caching - prevent caching suspicious zero values
     if (payload?.pools && Array.isArray(payload.pools)) {
       let hasValidData = false;
+      let suspiciousCount = 0;
       for (const pool of payload.pools) {
-        // If any pool has reasonable TVL data, consider the batch valid
-        if (pool.tvlUSD > 1000 || (pool.tvlYesterdayUSD > 0 && pool.tvlYesterdayUSD > 1000)) {
-          hasValidData = true;
-          break;
-        }
+        const tvlNow = Number(pool?.tvlUSD || 0);
+        const tvlY = Number(pool?.tvlYesterdayUSD || 0);
+        const vol24 = Number(pool?.volume24hUSD || 0);
+        const volPrev = Number(pool?.volumePrev24hUSD || 0);
+        if (tvlNow > 1000) hasValidData = true;
+        if ((tvlNow > 0 && tvlY === 0) || (vol24 === 0 && volPrev === 0)) suspiciousCount++;
       }
-      
-      if (!hasValidData) {
-        console.warn('[Batch API] Suspicious data detected - all pools have low/zero TVL, not caching');
-        // Return the data but don't cache it
+      const majoritySuspicious = suspiciousCount > (payload.pools.length / 2);
+      if (!hasValidData || majoritySuspicious) {
+        console.warn('[Batch API] Suspicious data detected - not caching this response');
         res.setHeader('Cache-Control', 'no-store');
         return res.status(200).json(payload);
       }
