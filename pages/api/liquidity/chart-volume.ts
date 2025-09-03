@@ -58,6 +58,8 @@ export default async function handler(
     return res.status(405).json({ message: `Method ${req.method} Not Allowed` });
   }
 
+  let fallbackCacheKey = '';
+
   try {
     const { poolId, days: daysQuery } = req.query as { poolId?: string; days?: string };
     if (!poolId || typeof poolId !== 'string') {
@@ -66,30 +68,27 @@ export default async function handler(
     const rawDays = parseInt(daysQuery || '60', 10);
     const days = Number.isFinite(rawDays) && rawDays > 0 && rawDays <= 120 ? rawDays : 60;
 
-    // Keep CDN hints, but primary is our in-memory cache
-    res.setHeader('Cache-Control', 'public, s-maxage=3600, stale-while-revalidate=3600');
+    res.setHeader('Cache-Control', 'public, s-maxage=86400, stale-while-revalidate=86400');
 
-    // Resolve subgraph id and token symbols for pricing
-    const allPools = getAllPools();
-    const subgraphId = (getPoolSubgraphId(poolId) || poolId).toLowerCase();
-
-    // Server-side cache key and bust support (use subgraphId)
-    const cacheKey = `${subgraphId}|${days}`;
     const bust = typeof (req.query?.bust as string | undefined) === 'string';
+    const subgraphId = (getPoolSubgraphId(poolId) || poolId).toLowerCase();
+    const cacheKey = `${subgraphId}|${days}`;
+    fallbackCacheKey = cacheKey;
+
     if (!bust) {
       const cached = serverCache.get(cacheKey);
       if (cached && (Date.now() - cached.ts) < SIX_HOURS_MS) {
         return res.status(200).json(cached.data);
       }
     }
+
+    const allPools = getAllPools();
     const poolCfg = allPools.find(p => (getPoolSubgraphId(p.id) || p.id).toLowerCase() === subgraphId);
     const sym0 = poolCfg?.currency0?.symbol || 'USDC';
-    const prices = await batchGetTokenPrices([sym0]);
-    const p0 = prices[sym0] || 1;
+    const p0 = (await batchGetTokenPrices([sym0]))[sym0] || 1;
 
-    // Compute date keys for the last N days excluding today (local midnight UTC)
     const end = new Date();
-    end.setUTCHours(0, 0, 0, 0); // midnight today
+    end.setUTCHours(0, 0, 0, 0);
     const start = new Date(end);
     start.setUTCDate(end.getUTCDate() - days);
     const allDateKeys: string[] = [];
@@ -99,60 +98,56 @@ export default async function handler(
       cursor.setUTCDate(cursor.getUTCDate() + 1);
     }
 
-    // Query poolDayDatas (we will filter out today in processing regardless)
-    const resp = await fetch(SUBGRAPH_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: GET_POOL_DAY_VOLUMES, variables: { pool: subgraphId, first: days } }),
+    const cutoff = Math.floor(start.getTime() / 1000);
+    const query = `{
+      poolHourDatas(
+        where: { pool: "${subgraphId}", periodStartUnix_gte: ${cutoff} }
+        orderBy: periodStartUnix
+        orderDirection: asc
+        first: 1000
+      ) {
+        periodStartUnix
+        volumeToken0
+      }
+    }`;
+
+    const hourlyResp = await fetch(SUBGRAPH_URL, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query })
     });
-    if (!resp.ok) {
-      const body = await resp.text();
-      throw new Error(`Subgraph query failed: ${body}`);
+    if (!hourlyResp.ok) {
+      const body = await hourlyResp.text();
+      throw new Error(`hourly query failed: ${body}`);
     }
-    const json = await resp.json();
-    const rows = Array.isArray(json?.data?.poolDayDatas) ? json.data.poolDayDatas : [];
+    const hourlyJson = await hourlyResp.json();
+    const hourlyData = hourlyJson?.data?.poolHourDatas || [];
 
-    // Map from date key to USD volume (using token0 only, consistent with existing logic)
-    const endTs = Math.floor(end.getTime() / 1000);
-    const volByKey = new Map<string, number>();
-    for (const r of rows) {
-      const dateSec = Number(r?.date) || 0;
-      if (!dateSec || dateSec >= endTs) continue; // exclude today
-      const key = new Date(dateSec * 1000).toISOString().split('T')[0];
-      const v0 = Math.abs(parseFloat(String(r?.volumeToken0 || '0')) || 0);
-      const usd = Math.max(0, v0 * p0);
-      volByKey.set(key, usd);
+    const volByDate = new Map<string, number>();
+    for (const h of hourlyData) {
+      const date = new Date(h.periodStartUnix * 1000).toISOString().split('T')[0];
+      const vol = (volByDate.get(date) || 0) + Number(h.volumeToken0);
+      volByDate.set(date, vol);
     }
 
-    // Produce a continuous series; fill missing with 0
-    const data: ChartPointVolume[] = allDateKeys.map((key) => ({
+    const data: ChartPointVolume[] = allDateKeys.map(key => ({
       date: key,
-      volumeUSD: Math.max(0, volByKey.get(key) ?? 0),
+      volumeUSD: (volByDate.get(key) || 0) * p0,
     }));
 
-    // Append today's midnight->now volume using hourly rollups (robust to subgraph tip lag)
-    try {
-      const todayKey = new Date().toISOString().split('T')[0];
-      const dayStart = Math.floor(new Date(`${todayKey}T00:00:00Z`).getTime() / 1000);
-      const hrResp = await fetch(SUBGRAPH_URL, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: GET_POOL_HOURLY_SINCE, variables: { pool: subgraphId, cutoff: dayStart } })
-      });
-      if (hrResp.ok) {
-        const hrJson = await hrResp.json();
-        const hours = Array.isArray(hrJson?.data?.poolHourDatas) ? hrJson.data.poolHourDatas : [];
-        let sum0 = 0;
-        for (const h of hours) sum0 += Number(h?.volumeToken0) || 0;
-        const todayVolumeUSD = Math.max(0, sum0 * p0);
-        data.push({ date: todayKey, volumeUSD: todayVolumeUSD });
-      }
-    } catch {}
-
-    const payload = { poolId, data } as VolumeSeries;
+    const payload = { poolId, data };
     try { serverCache.set(cacheKey, { data: payload, ts: Date.now() }); } catch {}
     return res.status(200).json(payload);
   } catch (error: any) {
     console.error(`[chart-volume] Error:`, error);
+    try {
+      if (fallbackCacheKey) {
+        const cached = serverCache.get(fallbackCacheKey);
+        if (cached) {
+          console.log(`[chart-volume] Serving stale cache for ${fallbackCacheKey} due to error.`);
+          res.setHeader('Cache-Control', 'no-store');
+          return res.status(200).json(cached.data);
+        }
+      }
+    } catch {}
     return res.status(500).json({ message: error?.message || 'Unexpected error', error });
   }
 }

@@ -349,6 +349,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   } catch (error) {
     console.error('[Batch API] Error in batch pool data fetch:', error);
+    // Graceful fallback to last cached payload if present
+    try {
+      const cached = serverCache.get('all-pools-batch');
+      if (cached) {
+        console.log('[Batch API] Serving stale cache due to error.');
+        res.setHeader('Cache-Control', 'no-store');
+        return res.status(200).json(cached.data);
+      }
+    } catch {}
     return res.status(500).json({
       success: false,
       message: error instanceof Error ? error.message : 'Unknown error',
