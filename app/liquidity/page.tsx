@@ -134,6 +134,7 @@ export default function LiquidityPage() {
   const [priceMap, setPriceMap] = useState<Record<string, number>>({});
   const [isLoadingPoolStates, setIsLoadingPoolStates] = useState(true);
   const [refetchIndex, setRefetchIndex] = useState(0);
+  const forceNextFetchRef = React.useRef(false);
 
   const isSuspiciousBatchPayload = (pools: Pool[]) => {
     if (!pools || pools.length === 0) return true; // No data is suspicious
@@ -158,7 +159,8 @@ export default function LiquidityPage() {
       for (let i = 0; i < schedules.length; i++) {
         if (schedules[i] > 0) await new Promise(r => setTimeout(r, schedules[i]));
         try {
-          const response = await fetch('/api/liquidity/get-pools-batch', { cache: 'no-store' });
+          const bust = forceNextFetchRef.current ? `?bust=${Date.now()}` : '';
+          const response = await fetch(`/api/liquidity/get-pools-batch${bust}`, { cache: 'no-store' as any } as any);
           if (!response.ok) throw new Error(`Batch API failed: ${response.status}`);
           const batchData = await response.json();
           if (!batchData.success) throw new Error(`Batch API error: ${batchData.message}`);
@@ -202,6 +204,10 @@ export default function LiquidityPage() {
 
           if (!isSuspiciousBatchPayload(updatedPools)) {
             setPoolsData(updatedPools);
+            // Warm CDN with a cacheable request once accepted
+            try { fetch('/api/liquidity/get-pools-batch'); } catch {}
+            // Clear force flag after a successful accepted fetch
+            forceNextFetchRef.current = false;
             successful = true;
             console.log("[LiquidityPage] Batch fetch successful and data is valid.");
             break;
@@ -227,6 +233,7 @@ export default function LiquidityPage() {
             if (localStorage.getItem('cache:pools-batch:invalidated') === 'true') {
                 console.log("[LiquidityPage] Invalidation hint found. Triggering refetch.");
                 localStorage.removeItem('cache:pools-batch:invalidated');
+                forceNextFetchRef.current = true;
                 setRefetchIndex(i => i + 1);
             }
         } catch {}
