@@ -470,6 +470,7 @@ export default function PoolDetailPage() {
   // Guard to prevent duplicate toasts and unintended modal closes across re-renders
   const pendingActionRef = useRef<null | { type: 'increase' | 'decrease' | 'withdraw' | 'burn' | 'collect' | 'compound' }>(null);
   const lastRevalidationRef = useRef<number>(0);
+  const lastPositionRefreshRef = useRef<number>(0);
   const handledCollectHashRef = useRef<string | null>(null);
   
   // Balance hooks for tokens
@@ -866,13 +867,13 @@ export default function PoolDetailPage() {
   }, [poolId, isConnected, accountAddress]);
 
   // Subscribe once to centralized positions refresh events
-  useEffect(() => {
-    if (!isConnected || !accountAddress) return;
-    const unsubscribe = prefetchService.addPositionsListener(accountAddress, () => {
-      refetchPositionsOnly();
-    });
-    return unsubscribe;
-  }, [isConnected, accountAddress, refetchPositionsOnly]);
+  // useEffect(() => {
+  //   if (!isConnected || !accountAddress) return;
+  //   const unsubscribe = prefetchService.addPositionsListener(accountAddress, () => {
+  //     refetchPositionsOnly();
+  //   });
+  //   return unsubscribe;
+  // }, [isConnected, accountAddress, refetchPositionsOnly]); // Temporarily disabled to prevent infinite loops
   const onLiquidityBurnedCallback = useCallback(() => {
     if (pendingActionRef.current?.type !== 'burn') return; // ignore stale callback
     toast.success("Position Closed", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
@@ -893,6 +894,15 @@ export default function PoolDetailPage() {
   const silentBackoffRefreshPositions = useCallback(async (removeSkeletonsWhenFound = false) => {
     try {
       if (!poolId || !isConnected || !accountAddress) return;
+      
+      // Prevent rapid silent position refreshes (cooldown: 5 seconds)
+      const now = Date.now();
+      if (now - lastPositionRefreshRef.current < 5000) {
+        console.log('Skipping silent position refresh due to cooldown');
+        return;
+      }
+      lastPositionRefreshRef.current = now;
+      
       const baseInfo = getPoolConfiguration(poolId);
       const subId = (baseInfo?.subgraphId || '').toLowerCase();
       if (!subId) return;
@@ -952,6 +962,15 @@ export default function PoolDetailPage() {
   const backoffRefreshPositions = useCallback(async () => {
     try {
       if (!poolId || !isConnected || !accountAddress) return;
+      
+      // Prevent rapid position refreshes (cooldown: 10 seconds)
+      const now = Date.now();
+      if (now - lastPositionRefreshRef.current < 10000) {
+        console.log('Skipping position refresh due to cooldown');
+        return;
+      }
+      lastPositionRefreshRef.current = now;
+      
       const baseInfo = getPoolConfiguration(poolId);
       const subId = (baseInfo?.subgraphId || '').toLowerCase();
       if (!subId) return;
@@ -1358,6 +1377,15 @@ export default function PoolDetailPage() {
   // Callback definitions (moved here after fetchPageData and backoffRefreshPositions are defined)
   const onLiquidityIncreasedCallback = useCallback(() => {
     if (pendingActionRef.current?.type !== 'increase') return; // ignore if not current action
+    
+    // Prevent rapid revalidations (cooldown: 30 seconds)
+    const now = Date.now();
+    if (now - lastRevalidationRef.current < 30000) {
+      console.log('Skipping revalidation due to cooldown (increase)');
+      return;
+    }
+    lastRevalidationRef.current = now;
+    
     toast.success("Position Increased", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
     setShowIncreaseModal(false);
     pendingActionRef.current = null;
@@ -1427,7 +1455,7 @@ export default function PoolDetailPage() {
         }
       })();
       // positions backoff can remain lightweight
-      // try { backoffRefreshPositions(); } catch {} // Temporarily disabled to test loop fix
+      // try { backoffRefreshPositions(); } catch {} // Temporarily disabled to prevent infinite loops
     } catch {}
   }, [isFullBurn, isFullWithdraw, poolId, fetchPageData, backoffRefreshPositions]);
 
@@ -1573,9 +1601,9 @@ export default function PoolDetailPage() {
     }
   }, [userPositions, pendingNewPositions]);
 
-  useEffect(() => {
-    fetchPageData();
-  }, [fetchPageData]); // Re-fetch if fetchPageData changes
+  // useEffect(() => {
+  //   fetchPageData();
+  // }, [fetchPageData]); // Temporarily disabled to prevent infinite loops
 
   // Calculate total liquidity value
   const totalLiquidity = userPositions.reduce((sum, pos) => sum + calculatePositionUsd(pos), 0);
