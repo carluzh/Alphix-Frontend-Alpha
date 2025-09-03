@@ -136,91 +136,61 @@ export default function LiquidityPage() {
   const [refetchIndex, setRefetchIndex] = useState(0);
   const forceNextFetchRef = React.useRef(false);
 
-  const isSuspiciousBatchPayload = (pools: Pool[]) => {
-    if (!pools || pools.length === 0) return true; // No data is suspicious
-    // Check if a significant pool has zero volume or yesterday's TVL when it shouldn't
-    const suspiciousPool = pools.find(p => {
-        const tvl = (p as any).tvlUSD || 0;
-        const vol24h = (p as any).volume24hUSD; // Can be undefined while loading
-        const tvlY = (p as any).tvlYesterdayUSD; // Can be undefined
-
-        // If TVL is loaded and significant, but key metrics are missing/zero, it's suspicious.
-        return tvl > 1000 && (vol24h === 0 || tvlY === 0);
-    });
-    return !!suspiciousPool;
-  };
-  
   useEffect(() => {
     const fetchAllPoolStatsBatch = async () => {
-      console.log("[LiquidityPage] Starting batch fetch with backoff...");
-      const schedules = [0, 2000, 5000, 10000, 30000];
-      let successful = false;
+      console.log("[LiquidityPage] Starting batch fetch...");
+      
+      try {
+        const bust = forceNextFetchRef.current ? `?bust=${Date.now()}` : '';
+        const response = await fetch(`/api/liquidity/get-pools-batch${bust}`, { cache: 'no-store' as any } as any);
+        if (!response.ok) throw new Error(`Batch API failed: ${response.status}`);
+        const batchData = await response.json();
+        if (!batchData.success) throw new Error(`Batch API error: ${batchData.message}`);
 
-      for (let i = 0; i < schedules.length; i++) {
-        if (schedules[i] > 0) await new Promise(r => setTimeout(r, schedules[i]));
-        try {
-          const bust = forceNextFetchRef.current ? `?bust=${Date.now()}` : '';
-          const response = await fetch(`/api/liquidity/get-pools-batch${bust}`, { cache: 'no-store' as any } as any);
-          if (!response.ok) throw new Error(`Batch API failed: ${response.status}`);
-          const batchData = await response.json();
-          if (!batchData.success) throw new Error(`Batch API error: ${batchData.message}`);
-
-          const updatedPools = await Promise.all(dynamicPools.map(async (pool) => {
-            const apiPoolId = getPoolSubgraphId(pool.id) || pool.id;
-            const batchPoolData = batchData.pools.find((p: any) => p.poolId.toLowerCase() === apiPoolId.toLowerCase());
-            if (batchPoolData) {
-              const tvlUSD = typeof batchPoolData.tvlUSD === 'number' ? batchPoolData.tvlUSD : undefined;
-              const tvlYesterdayUSD = typeof batchPoolData.tvlYesterdayUSD === 'number' ? batchPoolData.tvlYesterdayUSD : undefined;
-              const volume24hUSD = typeof batchPoolData.volume24hUSD === 'number' ? batchPoolData.volume24hUSD : undefined;
-              const volumePrev24hUSD = typeof batchPoolData.volumePrev24hUSD === 'number' ? batchPoolData.volumePrev24hUSD : undefined;
-              let fees24hUSD: number | undefined = undefined;
-              let aprStr: string = 'N/A';
-              
-              if (typeof volume24hUSD === 'number') {
-                try {
-                  const bps = await getPoolFeeBps(apiPoolId);
-                  const feeRate = Math.max(0, bps) / 10_000;
-                  fees24hUSD = volume24hUSD * feeRate;
-                } catch {}
-              }
-              if (typeof fees24hUSD === 'number' && typeof tvlUSD === 'number' && tvlUSD > 0) {
-                const apr = (fees24hUSD * 365 / tvlUSD) * 100;
-                aprStr = `${apr.toFixed(2)}%`;
-              }
-              return { 
-                ...pool, 
-                tvlUSD, 
-                tvlYesterdayUSD, 
-                volume24hUSD, 
-                volumePrev24hUSD, 
-                fees24hUSD, 
-                apr: aprStr,
-                volumeChangeDirection: (volume24hUSD !== undefined && volumePrev24hUSD !== undefined) ? (volume24hUSD > volumePrev24hUSD ? 'up' : volume24hUSD < volumePrev24hUSD ? 'down' : 'neutral') : 'loading',
-                tvlChangeDirection: (tvlUSD !== undefined && tvlYesterdayUSD !== undefined) ? (tvlUSD > tvlYesterdayUSD ? 'up' : tvlUSD < tvlYesterdayUSD ? 'down' : 'neutral') : 'loading',
-              };
+        const updatedPools = await Promise.all(dynamicPools.map(async (pool) => {
+          const apiPoolId = getPoolSubgraphId(pool.id) || pool.id;
+          const batchPoolData = batchData.pools.find((p: any) => p.poolId.toLowerCase() === apiPoolId.toLowerCase());
+          if (batchPoolData) {
+            const tvlUSD = typeof batchPoolData.tvlUSD === 'number' ? batchPoolData.tvlUSD : undefined;
+            const tvlYesterdayUSD = typeof batchPoolData.tvlYesterdayUSD === 'number' ? batchPoolData.tvlYesterdayUSD : undefined;
+            const volume24hUSD = typeof batchPoolData.volume24hUSD === 'number' ? batchPoolData.volume24hUSD : undefined;
+            const volumePrev24hUSD = typeof batchPoolData.volumePrev24hUSD === 'number' ? batchPoolData.volumePrev24hUSD : undefined;
+            let fees24hUSD: number | undefined = undefined;
+            let aprStr: string = 'N/A';
+            
+            if (typeof volume24hUSD === 'number') {
+              try {
+                const bps = await getPoolFeeBps(apiPoolId);
+                const feeRate = Math.max(0, bps) / 10_000;
+                fees24hUSD = volume24hUSD * feeRate;
+              } catch {}
             }
-            return pool;
-          }));
-
-          if (!isSuspiciousBatchPayload(updatedPools)) {
-            setPoolsData(updatedPools);
-            // Warm CDN with a cacheable request once accepted
-            try { fetch('/api/liquidity/get-pools-batch'); } catch {}
-            // Clear force flag after a successful accepted fetch
-            forceNextFetchRef.current = false;
-            successful = true;
-            console.log("[LiquidityPage] Batch fetch successful and data is valid.");
-            break;
-          } else {
-            console.warn(`[LiquidityPage] Batch fetch attempt ${i + 1} returned suspicious data. Retrying...`);
+            if (typeof fees24hUSD === 'number' && typeof tvlUSD === 'number' && tvlUSD > 0) {
+              const apr = (fees24hUSD * 365 / tvlUSD) * 100;
+              aprStr = `${apr.toFixed(2)}%`;
+            }
+            return { 
+              ...pool, 
+              tvlUSD, 
+              tvlYesterdayUSD, 
+              volume24hUSD, 
+              volumePrev24hUSD, 
+              fees24hUSD, 
+              apr: aprStr,
+              volumeChangeDirection: (volume24hUSD !== undefined && volumePrev24hUSD !== undefined) ? (volume24hUSD > volumePrev24hUSD ? 'up' : volume24hUSD < volumePrev24hUSD ? 'down' : 'neutral') : 'loading',
+              tvlChangeDirection: (tvlUSD !== undefined && tvlYesterdayUSD !== undefined) ? (tvlUSD > tvlYesterdayUSD ? 'up' : tvlUSD < tvlYesterdayUSD ? 'down' : 'neutral') : 'loading',
+            };
           }
-        } catch (error) {
-          console.error(`[LiquidityPage] Batch fetch attempt ${i + 1} failed:`, error);
-        }
-      }
+          return pool;
+        }));
 
-      if (!successful) {
-        toast.error("Could not load pool data", { description: "Failed to fetch reliable data from the server." });
+        setPoolsData(updatedPools);
+        forceNextFetchRef.current = false;
+        console.log("[LiquidityPage] Batch fetch successful.");
+        
+      } catch (error) {
+        console.error("[LiquidityPage] Batch fetch failed:", error);
+        toast.error("Could not load pool data", { description: "Failed to fetch data from the server." });
       }
     };
 

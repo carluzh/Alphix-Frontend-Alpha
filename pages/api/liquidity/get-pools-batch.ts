@@ -328,26 +328,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     lastPayload = payload;
     lastComputeAt = Date.now();
 
-    // Validate payload before caching - prevent caching suspicious zero values
-    if (!allowSuspicious && !bust && payload?.pools && Array.isArray(payload.pools)) {
-      let hasValidData = false;
-      let suspiciousCount = 0;
-      for (const pool of payload.pools) {
-        const tvlNow = Number(pool?.tvlUSD || 0);
-        const tvlY = Number(pool?.tvlYesterdayUSD || 0);
-        const vol24 = Number(pool?.volume24hUSD || 0);
-        const volPrev = Number(pool?.volumePrev24hUSD || 0);
-        if (tvlNow > 1000) hasValidData = true;
-        // Allow tvlYesterdayUSD === 0; only treat double-zero volume windows as suspicious
-        if (vol24 === 0 && volPrev === 0) suspiciousCount++;
-      }
-      const majoritySuspicious = suspiciousCount > (payload.pools.length / 2);
-      if (!hasValidData || majoritySuspicious) {
-        console.warn('[Batch API] Suspicious data detected - not caching this response');
-        res.setHeader('Cache-Control', 'no-store');
-        return res.status(200).json(payload);
-      }
-    }
+    // Always cache valid responses - let the client handle any data validation
 
     // Category 1: align with chart endpoints (1h CDN) but primary is server cache (6h)
     // Only write to server cache unless explicitly told not to

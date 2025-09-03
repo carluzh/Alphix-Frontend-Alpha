@@ -1405,60 +1405,9 @@ export default function PoolDetailPage() {
     } catch { return null; }
   }, [poolId]);
 
-  // Helper to test suspicious payloads after mutations
-  const isSuspiciousBatchStats = (prev: any | null, next: { tvlUSD: number; tvlYesterdayUSD?: number; volume24hUSD: number; volumePrev24hUSD?: number } | null) => {
-    if (!isInPostMutationWindow()) return false;
-    if (!next) return true;
-    const tvlNow = Number(next.tvlUSD || 0);
-    const tvlY = Number(next.tvlYesterdayUSD || 0);
-    const vol24 = Number(next.volume24hUSD || 0);
-    // If TVL now > 0 but TVL yesterday is exactly 0 shortly after mutation, retry
-    if (tvlNow > 0 && tvlY === 0) return true;
-    // If previous volume non-zero and next shows zero, consider suspicious
-    if (prev && Number(prev.volume24hUSD || 0) > 0 && vol24 === 0) return true;
-    // Require a minimal TVL movement vs baseline when a mutation just happened
-    const baseline = baselineTvlBeforeMutationRef.current;
-    if (baseline !== null && isFinite(baseline) && baseline > 0) {
-      const delta = Math.abs(tvlNow - baseline);
-      const threshold = Math.max(50, baseline * 0.001); // $50 or 0.1%
-      if (delta < threshold) return true;
-    }
-    return false;
-  };
-
-  // Wrap fetch that builds chart + header to use exponential backoff when in post-mutation window
+  // Simple fetch wrapper - no more complex backoff logic
   const fetchWithBackoffIfNeeded = async (force?: boolean, skipPositions?: boolean) => {
-    const schedules = isInPostMutationWindow() ? [0, 2000, 5000, 10000, 30000] : [0];
-    // Snapshot previous known stats from header (if available)
-    let lastStats: { tvlUSD: number; tvlYesterdayUSD?: number; volume24hUSD: number; volumePrev24hUSD?: number } | null = null;
-    try {
-      if (currentPoolData) {
-        lastStats = {
-          tvlUSD: Number((currentPoolData as any)?.tvlUSD || 0),
-          volume24hUSD: Number((currentPoolData as any)?.volume24hUSD || 0),
-          tvlYesterdayUSD: Number((currentPoolData as any)?.tvlYesterdayUSD || 0),
-          volumePrev24hUSD: Number((currentPoolData as any)?.volumePrev24hUSD || 0),
-        };
-      }
-    } catch {}
-
-    for (let i = 0; i < schedules.length; i++) {
-      if (schedules[i] > 0) await new Promise(r => setTimeout(r, schedules[i]));
-      await fetchPageData(force, skipPositions, /* keepLoading */ i < schedules.length - 1);
-      const nextStats = await loadHeaderStats(force);
-      if (!isSuspiciousBatchStats(lastStats, nextStats)) {
-        // Accept and pin as last-good stats during the window
-        try {
-          if (nextStats && Number.isFinite(nextStats.tvlUSD) && Number.isFinite(nextStats.volume24hUSD)) {
-            lastGoodStatsRef.current = { tvlUSD: nextStats.tvlUSD, volume24hUSD: nextStats.volume24hUSD };
-          }
-        } catch {}
-        // Warm CDN cache once with a cacheable request so subsequent navigations see the updated values
-        try { if (force) fetch('/api/liquidity/get-pools-batch'); } catch {}
-        break;
-      }
-      lastStats = nextStats || lastStats;
-    }
+    await fetchPageData(force, skipPositions);
   };
 
   const refreshAfterMutation = useCallback(async (info?: { txHash?: `0x${string}`; blockNumber?: bigint }) => {

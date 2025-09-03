@@ -29,34 +29,31 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
+    // Clear server cache first
+    const { __getServerCache } = await import('../liquidity/get-pools-batch');
+    const serverCache = __getServerCache();
+    serverCache.clear();
+    console.log('[Revalidate] Cleared server cache');
+
     // Build absolute URL to warm the canonical batch endpoint
     const proto = (req.headers['x-forwarded-proto'] as string) || 'https';
     const host = (req.headers['x-forwarded-host'] as string) || (req.headers.host as string) || '';
     if (!host) throw new Error('Host header missing');
     const url = `${proto}://${host}/api/liquidity/get-pools-batch`;
 
-    // Step 1: recompute fresh at origin (no-store)
-    const resp = await fetch(url, {
+    // Step 1: Force fresh computation and cache it
+    const bustParam = `bust=${Date.now()}`;
+    const resp = await fetch(`${url}?${bustParam}`, {
       method: 'GET',
       headers: {
-        // Try to bypass any intermediary client caches; CDN may ignore, but origin will recompute.
         'cache-control': 'no-cache',
-        'x-internal-revalidate': '1',
         ...(expected ? { 'x-internal-secret': expected } : {}),
       } as any,
     } as any);
 
     const json = await resp.json().catch(() => ({}));
     const poolsCount = Array.isArray(json?.pools) ? json.pools.length : undefined;
-    // Step 2: immediately request a cacheable response to warm the edge and server cache
-    try {
-      await fetch(`${url}?allow_suspicious=1&bust=${Date.now()}`, {
-        method: 'GET',
-        headers: {
-          ...(expected ? { 'x-internal-secret': expected } : {}),
-        } as any,
-      } as any);
-    } catch {}
+    
     const now2 = Date.now();
     lastGlobalTriggerAt = now2;
     return res.status(200).json({ success: true, message: 'Revalidate triggered', poolsCount, timestamp: now2 });
