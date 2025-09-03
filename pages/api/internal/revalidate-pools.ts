@@ -35,24 +35,37 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     serverCache.clear();
     console.log('[Revalidate] Cleared server cache');
 
-    // Build absolute URL to warm the canonical batch endpoint
+    // Build absolute URL to purge CDN cache
     const proto = (req.headers['x-forwarded-proto'] as string) || 'https';
     const host = (req.headers['x-forwarded-host'] as string) || (req.headers.host as string) || '';
     if (!host) throw new Error('Host header missing');
     const url = `${proto}://${host}/api/liquidity/get-pools-batch`;
 
-    // Step 1: Force fresh computation and cache it
-    const bustParam = `bust=${Date.now()}`;
-    const resp = await fetch(`${url}?${bustParam}`, {
+    // Step 1: Purge CDN cache by making a request with revalidate hint
+    const purgeResp = await fetch(url, {
       method: 'GET',
       headers: {
         'cache-control': 'no-cache',
+        'x-internal-revalidate': '1',
         ...(expected ? { 'x-internal-secret': expected } : {}),
       } as any,
     } as any);
 
-    const json = await resp.json().catch(() => ({}));
+    console.log('[Revalidate] CDN purge response:', purgeResp.status);
+
+    // Step 2: Immediately fetch again to populate both server cache and CDN
+    const bustParam = `bust=${Date.now()}`;
+    const warmResp = await fetch(`${url}?${bustParam}`, {
+      method: 'GET',
+      headers: {
+        ...(expected ? { 'x-internal-secret': expected } : {}),
+      } as any,
+    } as any);
+
+    const json = await warmResp.json().catch(() => ({}));
     const poolsCount = Array.isArray(json?.pools) ? json.pools.length : undefined;
+    
+    console.log('[Revalidate] Warm response:', warmResp.status, 'pools:', poolsCount);
     
     const now2 = Date.now();
     lastGlobalTriggerAt = now2;
