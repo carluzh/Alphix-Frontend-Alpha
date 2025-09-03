@@ -102,9 +102,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // Server-side cache for the entire batch payload (single key)
     const cacheKey = 'all-pools-batch';
-    if (!bust && !revalidateHint) {
+    // Always check cache first unless explicitly bypassed with revalidateHint
+    if (!revalidateHint) {
       const cached = serverCache.get(cacheKey);
       if (cached && (Date.now() - cached.ts) < SIX_HOURS_MS) {
+        console.log('[Batch API] Serving from server cache, age:', Math.floor((Date.now() - cached.ts) / 1000), 'seconds');
         return res.status(200).json(cached.data);
       }
     }
