@@ -43,6 +43,8 @@ import { TOKEN_DEFINITIONS, type TokenSymbol } from "@/lib/pools-config";
 import { useIncreaseLiquidity, type IncreasePositionData } from "@/components/liquidity/useIncreaseLiquidity";
 import { useDecreaseLiquidity, type DecreasePositionData } from "@/components/liquidity/useDecreaseLiquidity";
 import { toast as sonnerToast } from "sonner";
+import { publicClient } from "@/lib/viemClient";
+import { waitForSubgraphBlock } from "../../lib/client-cache";
 
 const SDK_MIN_TICK = -887272;
 const SDK_MAX_TICK = 887272;
@@ -1098,8 +1100,25 @@ export default function LiquidityPage() {
           onOpenChange={setAddLiquidityOpen}
           selectedPoolId={selectedPoolId}
           poolApr={selectedPoolApr}
-          onLiquidityAdded={() => {
+          onLiquidityAdded={async () => {
             if (isConnected && accountAddress) {
+              try {
+                const blockNumber = await publicClient.getBlockNumber();
+                await waitForSubgraphBlock(Number(blockNumber));
+                
+                const poolSubgraphId = getPoolSubgraphId(selectedPoolId);
+                if (poolSubgraphId) {
+                  fetch('/api/internal/revalidate-pools', { method: 'POST' });
+                  fetch('/api/internal/revalidate-chart', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ poolId: selectedPoolId, subgraphId: poolSubgraphId }),
+                  });
+                }
+              } catch (error) {
+                console.error("Error during cache revalidation:", error);
+              }
+
               // Mint happened -> invalidate only for mint/burn, not for simple adds.
               // Mint creates a new tokenId, so refresh the global positions cache now.
               loadUserPositionIds(accountAddress)

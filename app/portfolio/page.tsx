@@ -698,6 +698,8 @@ export default function PortfolioPage() {
     setAprByPoolId,
   } = usePortfolio(positionsRefresh, userPositionsData, pricesData, isLoadingUserPositions);
 
+  const modifiedPositionPoolInfoRef = useRef<{ poolId: string; subgraphId: string } | null>(null);
+
   const isLoading = !readiness.core;
   const { phase, showSkeletonFor } = useLoadPhases(readiness);
 
@@ -1065,6 +1067,20 @@ export default function PortfolioPage() {
       await waitForSubgraphBlock(Number(lastTxBlockRef.current));
       lastTxBlockRef.current = null;
     }
+
+    if (modifiedPositionPoolInfoRef.current) {
+      const { poolId, subgraphId } = modifiedPositionPoolInfoRef.current;
+      try { fetch('/api/internal/revalidate-pools', { method: 'POST' }); } catch {}
+      try {
+        fetch('/api/internal/revalidate-chart', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ poolId, subgraphId })
+        });
+      } catch {}
+      modifiedPositionPoolInfoRef.current = null;
+    }
+
     bumpPositionsRefresh();
     setShowIncreaseModal(false);
   }, [bumpPositionsRefresh]);
@@ -3686,6 +3702,13 @@ export default function PortfolioPage() {
                   tickLower: positionToModify.tickLower,
                   tickUpper: positionToModify.tickUpper,
                 };
+
+                const poolSubgraphId = positionToModify.poolId;
+                const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === poolSubgraphId.toLowerCase());
+                if (poolConfig) {
+                  modifiedPositionPoolInfoRef.current = { poolId: poolConfig.id, subgraphId: poolSubgraphId };
+                }
+
                 publicClient.getBlockNumber().then(block => lastTxBlockRef.current = block);
                 increaseLiquidity(data);
                 // keep modal open; will close on success via onLiquidityIncreasedCallback
@@ -3845,6 +3868,13 @@ export default function PortfolioPage() {
                   tickLower: positionToWithdraw.tickLower,
                   tickUpper: positionToWithdraw.tickUpper,
                 };
+
+                const poolSubgraphId = positionToWithdraw.poolId;
+                const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === poolSubgraphId.toLowerCase());
+                if (poolConfig) {
+                  modifiedPositionPoolInfoRef.current = { poolId: poolConfig.id, subgraphId: poolSubgraphId };
+                }
+
                 publicClient.getBlockNumber().then(block => lastTxBlockRef.current = block);
                 decreaseLiquidity(data, 0);
                 // keep modal open; will close on success via onLiquidityDecreasedCallback

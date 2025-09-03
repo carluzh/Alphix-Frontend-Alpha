@@ -883,131 +883,7 @@ export default function PoolDetailPage() {
 
 
 
-  const onLiquidityIncreasedCallback = useCallback(() => {
-    if (pendingActionRef.current?.type !== 'increase') return; // ignore if not current action
-    toast.success("Position Increased", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
-    setShowIncreaseModal(false);
-    pendingActionRef.current = null;
-    // Centralized: wait for subgraph head to reach the mined block, then single refetch
-    try {
-      // Invalidate server caches for shared data, then server will rebuild after subgraph sync
-      try { fetch('/api/internal/revalidate-pools', { method: 'POST' } as any); } catch {}
-      try {
-        const base = getPoolConfiguration(poolId);
-        const subId = (base?.subgraphId || '').toLowerCase();
-        fetch('/api/internal/revalidate-chart', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ poolId, subgraphId: subId })
-        } as any);
-      } catch {}
-      (async () => {
-        try {
-          const targetBlock = Number(await publicClient.getBlockNumber());
-          await waitForSubgraphBlock(targetBlock, { timeoutMs: 15000, minWaitMs: 800, maxIntervalMs: 1000 });
-          await fetchPageData(true, /* skipPositions */ false, /* keepLoading */ false);
-        } catch {}
-      })();
-    } catch {}
-  }, []);
-
-  const onLiquidityDecreasedCallback = useCallback(() => {
-    // Compound path handled elsewhere; suppress page toast
-    if (isCompoundInProgressRef.current) {
-      isCompoundInProgressRef.current = false;
-      return;
-    }
-    // Only react to an explicit decrease/withdraw action in progress
-    if (pendingActionRef.current?.type !== 'decrease' && pendingActionRef.current?.type !== 'withdraw') return;
-    const closing = isFullBurn || isFullWithdraw;
-    toast.success(closing ? "Position Closed" : "Position Decreased", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
-    setShowBurnConfirmDialog(false);
-    setPositionToBurn(null);
-    pendingActionRef.current = null;
-    // Ensure TVL/Volume reflects the removal: single invalidate + wait-for-head + refetch
-    try {
-      setIsLoadingChartData(true);
-      try { fetch('/api/internal/revalidate-pools', { method: 'POST' } as any); } catch {}
-      try {
-        const base = getPoolConfiguration(poolId);
-        const subId = (base?.subgraphId || '').toLowerCase();
-        fetch('/api/internal/revalidate-chart', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ poolId, subgraphId: subId })
-        } as any);
-      } catch {}
-      (async () => {
-        try {
-          const targetBlock = Number(await publicClient.getBlockNumber());
-          await waitForSubgraphBlock(targetBlock, { timeoutMs: 15000, minWaitMs: 800, maxIntervalMs: 1000 });
-          await fetchPageData(true, /* skipPositions */ true, /* keepLoading */ false);
-        } finally {
-                setIsLoadingChartData(false);
-        }
-      })();
-      // positions backoff can remain lightweight
-      try { backoffRefreshPositions(); } catch {}
-    } catch {}
-  }, [isFullBurn, isFullWithdraw]);
-
-  // Initialize the liquidity modification hooks
-  const { burnLiquidity, isLoading: isBurningLiquidity } = useBurnLiquidity({
-    onLiquidityBurned: onLiquidityBurnedCallback
-  });
-
-  const { increaseLiquidity, isLoading: isIncreasingLiquidity } = useIncreaseLiquidity({
-    onLiquidityIncreased: onLiquidityIncreasedCallback,
-  });
-
-  const pendingCompoundRef = useRef<null | { position: ProcessedPosition; raw0: string; raw1: string }>(null);
-
-  const { decreaseLiquidity, compoundFees, isLoading: isDecreasingLiquidity } = useDecreaseLiquidity({
-    onLiquidityDecreased: onLiquidityDecreasedCallback,
-    onFeesCollected: () => {
-      const pending = pendingCompoundRef.current;
-      if (pending && pending.position && pending.raw0 && pending.raw1) {
-        try {
-          const pos = pending.position;
-          const token0Def = TOKEN_DEFINITIONS[pos.token0.symbol as TokenSymbol];
-          const token1Def = TOKEN_DEFINITIONS[pos.token1.symbol as TokenSymbol];
-          // Strictly round down by reducing 1 wei if non-zero to avoid any rounding up edge cases
-          const raw0 = BigInt(pending.raw0);
-          const raw1 = BigInt(pending.raw1);
-          const raw0Floored = raw0 > 0n ? raw0 - 1n : 0n;
-          const raw1Floored = raw1 > 0n ? raw1 - 1n : 0n;
-          const amt0Str = token0Def ? formatUnits(raw0Floored, token0Def.decimals) : '0';
-          const amt1Str = token1Def ? formatUnits(raw1Floored, token1Def.decimals) : '0';
-
-          const incData: IncreasePositionData = {
-            tokenId: pos.positionId,
-            token0Symbol: pos.token0.symbol as TokenSymbol,
-            token1Symbol: pos.token1.symbol as TokenSymbol,
-            additionalAmount0: amt0Str,
-            additionalAmount1: amt1Str,
-            poolId: pos.poolId,
-            tickLower: pos.tickLower,
-            tickUpper: pos.tickUpper,
-          };
-
-          pendingCompoundRef.current = null;
-          increaseLiquidity(incData);
-          // Only show once per compound flow
-          if (pendingActionRef.current?.type !== 'compound') {
-            pendingActionRef.current = { type: 'compound' };
-          }
-          toast.success("Compounding Fees", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
-        } catch (e) {
-          console.error('Compound follow-up failed:', e);
-          pendingCompoundRef.current = null;
-          toast.error("Failed to compound after collection", { icon: <OctagonX className="h-4 w-4 text-red-500" /> });
-        }
-      } else {
-        if (pendingActionRef.current?.type === 'collect') {
-          toast.success("Fees Collected", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
-          pendingActionRef.current = null;
-        }
-      }
-    },
-  });
+  // Note: Hook initializations moved after callback definitions
 
   // Track compound intent so we can suppress page-level success toast
   const isCompoundInProgressRef = useRef(false);
@@ -1113,53 +989,7 @@ export default function PoolDetailPage() {
     }
   }, [poolId, isConnected, accountAddress, userPositions]);
 
-  // Handle confirmation lifecycle for SDK-based collect (claim fees / compound)
-  useEffect(() => {
-    if (!isCollectConfirmed || !collectHash) return;
-    // de-dupe by tx hash so we don't double-handle on re-render
-    if (handledCollectHashRef.current === collectHash) return;
-    handledCollectHashRef.current = collectHash;
-    const pending = pendingCompoundRef.current;
-    if (pending && pending.position && pending.raw0 && pending.raw1) {
-      try {
-        const pos = pending.position;
-        const token0Def = TOKEN_DEFINITIONS[pos.token0.symbol as TokenSymbol];
-        const token1Def = TOKEN_DEFINITIONS[pos.token1.symbol as TokenSymbol];
-        const raw0 = BigInt(pending.raw0);
-        const raw1 = BigInt(pending.raw1);
-        const raw0Floored = raw0 > 0n ? raw0 - 1n : 0n;
-        const raw1Floored = raw1 > 0n ? raw1 - 1n : 0n;
-        const amt0Str = token0Def ? formatUnits(raw0Floored, token0Def.decimals) : '0';
-        const amt1Str = token1Def ? formatUnits(raw1Floored, token1Def.decimals) : '0';
-        const incData: IncreasePositionData = {
-          tokenId: pos.positionId,
-          token0Symbol: pos.token0.symbol as TokenSymbol,
-          token1Symbol: pos.token1.symbol as TokenSymbol,
-          additionalAmount0: amt0Str,
-          additionalAmount1: amt1Str,
-          poolId: pos.poolId,
-          tickLower: pos.tickLower,
-          tickUpper: pos.tickUpper,
-        };
-        pendingCompoundRef.current = null;
-        increaseLiquidity(incData);
-        if (!isCompoundInProgressRef.current) {
-          toast.success('Compounding Fees', { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
-        }
-      } catch (e) {
-        console.error('Compound follow-up failed (SDK path):', e);
-        pendingCompoundRef.current = null;
-        toast.error('Failed to compound after collection', { icon: <OctagonX className="h-4 w-4 text-red-500" /> });
-
-      }
-    } else {
-      if (pendingActionRef.current?.type === 'collect') {
-        toast.success('Fees Collected', { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
-      }
-    }
-
-    setCollectHash(undefined);
-  }, [isCollectConfirmed, collectHash, increaseLiquidity]);
+  // Note: useEffect moved after hook initialization
 
 
 
@@ -1497,6 +1327,10 @@ export default function PoolDetailPage() {
 
     try {
       setIsLoadingChartData(true);
+
+      const targetBlock = Number(await publicClient.getBlockNumber());
+      await waitForSubgraphBlock(targetBlock, { timeoutMs: 15000, minWaitMs: 800, maxIntervalMs: 1000 });
+
       try { fetch('/api/internal/revalidate-pools', { method: 'POST' } as any); } catch {}
       try {
         fetch('/api/internal/revalidate-chart', {
@@ -1504,9 +1338,6 @@ export default function PoolDetailPage() {
           body: JSON.stringify({ poolId, subgraphId: subId })
         } as any);
       } catch {}
-
-      const targetBlock = Number(await publicClient.getBlockNumber());
-      await waitForSubgraphBlock(targetBlock, { timeoutMs: 15000, minWaitMs: 800, maxIntervalMs: 1000 });
 
       // Load ids then derive full positions
       const ids = await loadUserPositionIds(accountAddress);
@@ -1523,7 +1354,180 @@ export default function PoolDetailPage() {
     }
   }, [poolId, isConnected, accountAddress]);
 
+  // Callback definitions (moved here after fetchPageData and backoffRefreshPositions are defined)
+  const onLiquidityIncreasedCallback = useCallback(() => {
+    if (pendingActionRef.current?.type !== 'increase') return; // ignore if not current action
+    toast.success("Position Increased", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
+    setShowIncreaseModal(false);
+    pendingActionRef.current = null;
+    // Centralized: wait for subgraph head to reach the mined block, then single refetch
+    try {
+      (async () => {
+        try {
+          const targetBlock = Number(await publicClient.getBlockNumber());
+          await waitForSubgraphBlock(targetBlock, { timeoutMs: 15000, minWaitMs: 800, maxIntervalMs: 1000 });
+          // Invalidate server caches for shared data, then server will rebuild after subgraph sync
+          try { fetch('/api/internal/revalidate-pools', { method: 'POST' } as any); } catch {}
+          try {
+            const base = getPoolConfiguration(poolId);
+            const subId = (base?.subgraphId || '').toLowerCase();
+            fetch('/api/internal/revalidate-chart', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ poolId, subgraphId: subId })
+            } as any);
+          } catch {}
+          await fetchPageData(true, /* skipPositions */ false, /* keepLoading */ false);
+        } catch {}
+      })();
+    } catch {}
+  }, [poolId, fetchPageData]);
 
+  const onLiquidityDecreasedCallback = useCallback(() => {
+    // Compound path handled elsewhere; suppress page toast
+    if (isCompoundInProgressRef.current) {
+      isCompoundInProgressRef.current = false;
+      return;
+    }
+    // Only react to an explicit decrease/withdraw action in progress
+    if (pendingActionRef.current?.type !== 'decrease' && pendingActionRef.current?.type !== 'withdraw') return;
+    const closing = isFullBurn || isFullWithdraw;
+    toast.success(closing ? "Position Closed" : "Position Decreased", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
+    setShowBurnConfirmDialog(false);
+    setPositionToBurn(null);
+    pendingActionRef.current = null;
+    // Ensure TVL/Volume reflects the removal: single invalidate + wait-for-head + refetch
+    try {
+      setIsLoadingChartData(true);
+      (async () => {
+        try {
+          const targetBlock = Number(await publicClient.getBlockNumber());
+          await waitForSubgraphBlock(targetBlock, { timeoutMs: 15000, minWaitMs: 800, maxIntervalMs: 1000 });
+          try { fetch('/api/internal/revalidate-pools', { method: 'POST' } as any); } catch {}
+          try {
+            const base = getPoolConfiguration(poolId);
+            const subId = (base?.subgraphId || '').toLowerCase();
+            fetch('/api/internal/revalidate-chart', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ poolId, subgraphId: subId })
+            } as any);
+          } catch {}
+          await fetchPageData(true, /* skipPositions */ true, /* keepLoading */ false);
+        } finally {
+                setIsLoadingChartData(false);
+        }
+      })();
+      // positions backoff can remain lightweight
+      try { backoffRefreshPositions(); } catch {}
+    } catch {}
+  }, [isFullBurn, isFullWithdraw, poolId, fetchPageData, backoffRefreshPositions]);
+
+  // Initialize the liquidity modification hooks (moved here after callback definitions)
+  const { burnLiquidity, isLoading: isBurningLiquidity } = useBurnLiquidity({
+    onLiquidityBurned: onLiquidityBurnedCallback
+  });
+
+  const { increaseLiquidity, isLoading: isIncreasingLiquidity } = useIncreaseLiquidity({
+    onLiquidityIncreased: onLiquidityIncreasedCallback,
+  });
+
+  const pendingCompoundRef = useRef<null | { position: ProcessedPosition; raw0: string; raw1: string }>(null);
+
+  const { decreaseLiquidity, compoundFees, isLoading: isDecreasingLiquidity } = useDecreaseLiquidity({
+    onLiquidityDecreased: onLiquidityDecreasedCallback,
+    onFeesCollected: () => {
+      const pending = pendingCompoundRef.current;
+      if (pending && pending.position && pending.raw0 && pending.raw1) {
+        try {
+          const pos = pending.position;
+          const token0Def = TOKEN_DEFINITIONS[pos.token0.symbol as TokenSymbol];
+          const token1Def = TOKEN_DEFINITIONS[pos.token1.symbol as TokenSymbol];
+          // Strictly round down by reducing 1 wei if non-zero to avoid any rounding up edge cases
+          const raw0 = BigInt(pending.raw0);
+          const raw1 = BigInt(pending.raw1);
+          const raw0Floored = raw0 > 0n ? raw0 - 1n : 0n;
+          const raw1Floored = raw1 > 0n ? raw1 - 1n : 0n;
+          const amt0Str = token0Def ? formatUnits(raw0Floored, token0Def.decimals) : '0';
+          const amt1Str = token1Def ? formatUnits(raw1Floored, token1Def.decimals) : '0';
+
+          const incData: IncreasePositionData = {
+            tokenId: pos.positionId,
+            token0Symbol: pos.token0.symbol as TokenSymbol,
+            token1Symbol: pos.token1.symbol as TokenSymbol,
+            additionalAmount0: amt0Str,
+            additionalAmount1: amt1Str,
+            poolId: pos.poolId,
+            tickLower: pos.tickLower,
+            tickUpper: pos.tickUpper,
+          };
+
+          pendingCompoundRef.current = null;
+          increaseLiquidity(incData);
+          // Only show once per compound flow
+          if (pendingActionRef.current?.type !== 'compound') {
+            pendingActionRef.current = { type: 'compound' };
+          }
+          toast.success("Compounding Fees", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
+        } catch (e) {
+          console.error('Compound follow-up failed:', e);
+          pendingCompoundRef.current = null;
+          toast.error("Failed to compound after collection", { icon: <OctagonX className="h-4 w-4 text-red-500" /> });
+        }
+      } else {
+        if (pendingActionRef.current?.type === 'collect') {
+          toast.success("Fees Collected", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
+          pendingActionRef.current = null;
+        }
+      }
+    },
+  });
+
+  // Handle confirmation lifecycle for SDK-based collect (claim fees / compound)
+  useEffect(() => {
+    if (!isCollectConfirmed || !collectHash) return;
+    // de-dupe by tx hash so we don't double-handle on re-render
+    if (handledCollectHashRef.current === collectHash) return;
+    handledCollectHashRef.current = collectHash;
+    const pending = pendingCompoundRef.current;
+    if (pending && pending.position && pending.raw0 && pending.raw1) {
+      try {
+        const pos = pending.position;
+        const token0Def = TOKEN_DEFINITIONS[pos.token0.symbol as TokenSymbol];
+        const token1Def = TOKEN_DEFINITIONS[pos.token1.symbol as TokenSymbol];
+        const raw0 = BigInt(pending.raw0);
+        const raw1 = BigInt(pending.raw1);
+        const raw0Floored = raw0 > 0n ? raw0 - 1n : 0n;
+        const raw1Floored = raw1 > 0n ? raw1 - 1n : 0n;
+        const amt0Str = token0Def ? formatUnits(raw0Floored, token0Def.decimals) : '0';
+        const amt1Str = token1Def ? formatUnits(raw1Floored, token1Def.decimals) : '0';
+        const incData: IncreasePositionData = {
+          tokenId: pos.positionId,
+          token0Symbol: pos.token0.symbol as TokenSymbol,
+          token1Symbol: pos.token1.symbol as TokenSymbol,
+          additionalAmount0: amt0Str,
+          additionalAmount1: amt1Str,
+          poolId: pos.poolId,
+          tickLower: pos.tickLower,
+          tickUpper: pos.tickUpper,
+        };
+        pendingCompoundRef.current = null;
+        increaseLiquidity(incData);
+        if (!isCompoundInProgressRef.current) {
+          toast.success('Compounding Fees', { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
+        }
+      } catch (e) {
+        console.error('Compound follow-up failed (SDK path):', e);
+        pendingCompoundRef.current = null;
+        toast.error('Failed to compound after collection', { icon: <OctagonX className="h-4 w-4 text-red-500" /> });
+
+      }
+    } else {
+      if (pendingActionRef.current?.type === 'collect') {
+        toast.success('Fees Collected', { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
+      }
+    }
+
+    setCollectHash(undefined);
+  }, [isCollectConfirmed, collectHash, increaseLiquidity]);
 
   // Watch for new positions actually appearing compared to baseline captured at skeleton creation
   useEffect(() => {
