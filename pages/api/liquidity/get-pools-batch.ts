@@ -106,9 +106,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (!revalidateHint) {
       const cached = serverCache.get(cacheKey);
       if (cached && (Date.now() - cached.ts) < SIX_HOURS_MS) {
-        console.log('[Batch API] Serving from server cache, age:', Math.floor((Date.now() - cached.ts) / 1000), 'seconds');
+        const age = Math.floor((Date.now() - cached.ts) / 1000);
+        console.log(`[Batch API] Serving from server cache, age: ${age}s, bust: ${bust}, revalidateHint: ${revalidateHint}`);
         return res.status(200).json(cached.data);
+      } else {
+        console.log(`[Batch API] Cache miss or expired, cached: ${!!cached}, age: ${cached ? Math.floor((Date.now() - cached.ts) / 1000) : 'N/A'}s`);
       }
+    } else {
+      console.log('[Batch API] Bypassing cache due to revalidateHint');
     }
 
     // Public calls: coalesce and debounce to protect the subgraph
@@ -334,7 +339,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // Category 1: align with chart endpoints (1h CDN) but primary is server cache (6h)
     // Only write to server cache unless explicitly told not to
-    try { if (!noStore) serverCache.set(cacheKey, { data: payload, ts: Date.now() }); } catch {}
+    try { 
+      if (!noStore) {
+        serverCache.set(cacheKey, { data: payload, ts: Date.now() });
+        console.log(`[Batch API] Updated server cache with ${payload?.pools?.length || 0} pools`);
+      } else {
+        console.log('[Batch API] Skipping cache write due to noStore');
+      }
+    } catch (error) {
+      console.error('[Batch API] Failed to update cache:', error);
+    }
     res.setHeader('Cache-Control', 'public, s-maxage=3600, stale-while-revalidate=3600');
     return res.status(200).json(payload);
 
