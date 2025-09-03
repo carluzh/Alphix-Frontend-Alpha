@@ -329,7 +329,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     lastComputeAt = Date.now();
 
     // Validate payload before caching - prevent caching suspicious zero values
-    if (!allowSuspicious && payload?.pools && Array.isArray(payload.pools)) {
+    if (!allowSuspicious && !bust && payload?.pools && Array.isArray(payload.pools)) {
       let hasValidData = false;
       let suspiciousCount = 0;
       for (const pool of payload.pools) {
@@ -338,7 +338,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const vol24 = Number(pool?.volume24hUSD || 0);
         const volPrev = Number(pool?.volumePrev24hUSD || 0);
         if (tvlNow > 1000) hasValidData = true;
-        if ((tvlNow > 0 && tvlY === 0) || (vol24 === 0 && volPrev === 0)) suspiciousCount++;
+        // Allow tvlYesterdayUSD === 0; only treat double-zero volume windows as suspicious
+        if (vol24 === 0 && volPrev === 0) suspiciousCount++;
       }
       const majoritySuspicious = suspiciousCount > (payload.pools.length / 2);
       if (!hasValidData || majoritySuspicious) {
