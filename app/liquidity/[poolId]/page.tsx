@@ -40,7 +40,7 @@ import { useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { getPositionManagerAddress } from '@/lib/pools-config';
 import { position_manager_abi } from '@/lib/abis/PositionManager_abi';
 import { getFromCache, setToCache, getFromCacheWithTtl, getUserPositionsCacheKey, getPoolStatsCacheKey, getPoolDynamicFeeCacheKey, getPoolChartDataCacheKey, loadUserPositionIds, derivePositionsFromIds, invalidateCacheEntry, waitForSubgraphBlock } from "../../../lib/client-cache";
-import { poolsDataCache, invalidateAndRefresh } from "../../../lib/pools-data-cache";
+import { poolsDataCache, invalidateAndRefresh, fetchPoolsData } from "../../../lib/pools-data-cache";
 import type { Pool } from "../../../types";
 import { AddLiquidityForm } from "../../../components/liquidity/AddLiquidityForm";
 import {
@@ -523,6 +523,43 @@ export default function PoolDetailPage() {
 
   // State for the pool's detailed data (including fetched stats)
   const [currentPoolData, setCurrentPoolData] = useState<PoolDetailData | null>(null);
+  
+  // Subscribe to shared cache changes
+  useEffect(() => {
+    const unsubscribe = poolsDataCache.subscribe(() => {
+      const cachedData = poolsDataCache.getData();
+      if (cachedData && currentPoolData) {
+        const basePoolInfo = getPoolConfiguration(poolId);
+        const apiPoolIdToUse = basePoolInfo?.subgraphId || '';
+        const poolIdLc = String(apiPoolIdToUse).toLowerCase();
+        const match = cachedData.find((p: any) => String(p.poolId || '').toLowerCase() === poolIdLc);
+        
+        if (match) {
+          // Update current pool data with fresh cache values (sync only)
+          const vol24 = Number(match.volume24hUSD || 0);
+          const tvlNow = Number(match.tvlUSD || 0);
+          const dynamicFeeBps = currentPoolData.dynamicFeeBps;
+          const feeRate = (typeof dynamicFeeBps === 'number' && dynamicFeeBps >= 0) ? dynamicFeeBps / 10_000 : 0;
+          const fees24hUSD = vol24 * feeRate;
+          const calculatedApr = (tvlNow > 0 && fees24hUSD > 0) ? (((fees24hUSD * 365) / tvlNow) * 100).toFixed(2) + '%' : 'N/A';
+          
+          setCurrentPoolData(prev => prev ? {
+            ...prev,
+            tvlUSD: match.tvlUSD,
+            volume24hUSD: match.volume24hUSD,
+            tvlYesterdayUSD: match.tvlYesterdayUSD,
+            volumePrev24hUSD: match.volumePrev24hUSD,
+            volume24h: isFinite(vol24) ? formatUSD(vol24) : prev.volume24h,
+            fees24h: isFinite(fees24hUSD) ? formatUSD(fees24hUSD) : prev.fees24h,
+            liquidity: isFinite(tvlNow) ? formatUSD(tvlNow) : prev.liquidity,
+            apr: calculatedApr,
+          } : prev);
+        }
+      }
+    });
+    
+    return unsubscribe;
+  }, [poolId, currentPoolData]);
   const [apiChartData, setApiChartData] = useState<ChartDataPoint[]>([]);
   const [isLoadingChartData, setIsLoadingChartData] = useState(false);
   const [currentPoolTick, setCurrentPoolTick] = useState<number | null>(null);
@@ -1260,24 +1297,18 @@ export default function PoolDetailPage() {
           } as any;
         }
       } else {
-        // Fetch fresh data and update cache
-        const resp = await fetch(`/api/liquidity/get-pools-batch${force ? `?bust=${Date.now()}` : ''}`);
-        if (resp.ok) {
-          const data = await resp.json();
-          if (data.success && Array.isArray(data.pools)) {
-            // Update shared cache
-            poolsDataCache.setData(data.pools);
-            
-            const match = data.pools.find((p: any) => String(p.poolId || '').toLowerCase() === poolIdLc);
-            if (match) {
-              poolStats = {
-                tvlUSD: Number(match.tvlUSD) || 0,
-                volume24hUSD: Number(match.volume24hUSD) || 0,
-                tvlYesterdayUSD: Number(match.tvlYesterdayUSD) || 0,
-                volumePrev24hUSD: Number(match.volumePrev24hUSD) || 0,
-              } as any;
-            }
-          }
+        // Always fetch fresh and update cache when force=true or cache is stale
+        const freshData = await fetchPoolsData(force);
+        poolsDataCache.setData(freshData);
+        
+        const match = freshData.find((p: any) => String(p.poolId || '').toLowerCase() === poolIdLc);
+        if (match) {
+          poolStats = {
+            tvlUSD: Number(match.tvlUSD) || 0,
+            volume24hUSD: Number(match.volume24hUSD) || 0,
+            tvlYesterdayUSD: Number(match.tvlYesterdayUSD) || 0,
+            volumePrev24hUSD: Number(match.volumePrev24hUSD) || 0,
+          } as any;
         }
       }
     } catch (error) {
