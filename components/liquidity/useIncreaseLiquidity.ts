@@ -23,7 +23,7 @@ const safeParseUnits = (amount: string, decimals: number): bigint => {
 import JSBI from 'jsbi';
 
 interface UseIncreaseLiquidityProps {
-  onLiquidityIncreased: () => void;
+  onLiquidityIncreased: (info?: { txHash?: `0x${string}`; blockNumber?: bigint }) => void;
 }
 
 export interface IncreasePositionData {
@@ -337,7 +337,14 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
 
     if (isIncreaseConfirmed) {
       // Delegate the sole success toast to page-level logic
-      onLiquidityIncreased();
+      (async () => {
+        let blockNumber: bigint | undefined = undefined;
+        try {
+          const receipt = await publicClient.getTransactionReceipt({ hash: hash as `0x${string}` });
+          blockNumber = receipt?.blockNumber;
+        } catch {}
+        onLiquidityIncreased({ txHash: hash as `0x${string}`, blockNumber });
+      })();
       try { if (accountAddress) prefetchService.requestPositionsRefresh({ owner: accountAddress, reason: 'increase' }); } catch {}
       try { if (accountAddress) invalidateActivityCache(accountAddress); } catch {}
       try { if (accountAddress) { invalidateUserPositionsCache(accountAddress); invalidateUserPositionIdsCache(accountAddress); } } catch {}

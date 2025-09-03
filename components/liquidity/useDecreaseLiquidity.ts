@@ -13,6 +13,7 @@ import { getAddress, type Hex, BaseError, parseUnits, encodeAbiParameters, kecca
 import { getPositionDetails, getPoolState } from '@/lib/liquidity-utils';
 import { prefetchService } from '@/lib/prefetch-service';
 import { invalidateActivityCache, invalidateUserPositionsCache, invalidateUserPositionIdsCache } from '@/lib/client-cache';
+import { publicClient } from '@/lib/viemClient';
 
 // Helper function to safely parse amounts without precision loss
 const safeParseUnits = (amount: string, decimals: number): bigint => {
@@ -23,7 +24,7 @@ const safeParseUnits = (amount: string, decimals: number): bigint => {
 import JSBI from 'jsbi';
 
 interface UseDecreaseLiquidityProps {
-  onLiquidityDecreased: () => void;
+  onLiquidityDecreased: (info?: { txHash?: `0x${string}`; blockNumber?: bigint }) => void;
   onFeesCollected?: () => void;
 }
 
@@ -572,26 +573,31 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
     if (!hash) return;
 
     if (isDecreaseConfirmed) {
-      // Single user-friendly toast depending on whether this was a compound or a decrease/collect
-      if (isCompoundRef.current) {
-        toast.success("Compound Success", {
-          id: hash,
-          description: "Fees added back to your position.",
-          action: baseSepolia?.blockExplorers?.default?.url 
-            ? { label: "View Tx", onClick: () => window.open(`${baseSepolia.blockExplorers.default.url}/tx/${hash}`, '_blank') }
-            : undefined,
-        });
-        onLiquidityDecreased();
-        try { if (accountAddress) prefetchService.requestPositionsRefresh({ owner: accountAddress, reason: 'compound' }); } catch {}
-        isCompoundRef.current = false;
-      } else {
-        // Delegate success toast to page-level logic to avoid duplicates
-        if (lastWasCollectOnly.current && onFeesCollected) {
-          onFeesCollected();
+      (async () => {
+        let blockNumber: bigint | undefined = undefined;
+        try {
+          const receipt = await publicClient.getTransactionReceipt({ hash: hash as `0x${string}` });
+          blockNumber = receipt?.blockNumber;
+        } catch {}
+        if (isCompoundRef.current) {
+          toast.success("Compound Success", {
+            id: hash,
+            description: "Fees added back to your position.",
+            action: baseSepolia?.blockExplorers?.default?.url 
+              ? { label: "View Tx", onClick: () => window.open(`${baseSepolia.blockExplorers.default.url}/tx/${hash}`, '_blank') }
+              : undefined,
+          });
+          onLiquidityDecreased({ txHash: hash as `0x${string}`, blockNumber } as any);
+          try { if (accountAddress) prefetchService.requestPositionsRefresh({ owner: accountAddress, reason: 'compound' }); } catch {}
+          isCompoundRef.current = false;
         } else {
-          onLiquidityDecreased();
+          if (lastWasCollectOnly.current && onFeesCollected) {
+            onFeesCollected();
+          } else {
+            onLiquidityDecreased({ txHash: hash as `0x${string}`, blockNumber } as any);
+          }
         }
-      }
+      })();
       try { if (accountAddress) prefetchService.requestPositionsRefresh({ owner: accountAddress, reason: lastWasCollectOnly.current ? 'collect' : 'decrease' }); } catch {}
       try { if (accountAddress) invalidateActivityCache(accountAddress); } catch {}
       try { if (accountAddress) { invalidateUserPositionsCache(accountAddress); invalidateUserPositionIdsCache(accountAddress); } } catch {}

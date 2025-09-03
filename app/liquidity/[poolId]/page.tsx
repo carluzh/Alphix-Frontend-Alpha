@@ -1377,10 +1377,77 @@ export default function PoolDetailPage() {
     }
   }, [poolId, isConnected, accountAddress]);
 
-  // Callback definitions (moved here after fetchPageData and backoffRefreshPositions are defined)
-  const onLiquidityIncreasedCallback = useCallback(() => {
-    if (pendingActionRef.current?.type !== 'increase') return; // ignore if not current action
-    
+  // Post-mutation window to treat zero-like responses as transient
+  const lastMutationAtRef = useRef<number>(0);
+  const setPostMutationWindow = () => { lastMutationAtRef.current = Date.now(); };
+  const isInPostMutationWindow = () => Date.now() - lastMutationAtRef.current < 60_000; // 60s window
+
+  // Helper to test suspicious payloads after mutations
+  const isSuspiciousBatchStats = (prev: any | null, next: { tvlUSD: number; tvlYesterdayUSD?: number; volume24hUSD: number; volumePrev24hUSD?: number } | null) => {
+    if (!isInPostMutationWindow()) return false;
+    if (!next) return true;
+    const tvlNow = Number(next.tvlUSD || 0);
+    const tvlY = Number(next.tvlYesterdayUSD || 0);
+    const vol24 = Number(next.volume24hUSD || 0);
+    // If TVL now > 0 but TVL yesterday is exactly 0 shortly after mutation, retry
+    if (tvlNow > 0 && tvlY === 0) return true;
+    // If previous volume non-zero and next shows zero, consider suspicious
+    if (prev && Number(prev.volume24hUSD || 0) > 0 && vol24 === 0) return true;
+    return false;
+  };
+
+  // Wrap fetch that builds chart + header to use exponential backoff when in post-mutation window
+  const fetchWithBackoffIfNeeded = async (force?: boolean, skipPositions?: boolean) => {
+    const schedules = isInPostMutationWindow() ? [0, 2000, 5000, 10000, 30000] : [0];
+    // Snapshot previous known stats from header (if available)
+    let lastStats: { tvlUSD: number; tvlYesterdayUSD?: number; volume24hUSD: number; volumePrev24hUSD?: number } | null = null;
+    try {
+      if (currentPoolData) {
+        lastStats = {
+          tvlUSD: Number((currentPoolData as any)?.tvlUSD || 0),
+          volume24hUSD: Number((currentPoolData as any)?.volume24hUSD || 0),
+          tvlYesterdayUSD: Number((currentPoolData as any)?.tvlYesterdayUSD || 0),
+          volumePrev24hUSD: Number((currentPoolData as any)?.volumePrev24hUSD || 0),
+        };
+      }
+    } catch {}
+
+    // Helper to fetch current header stats deterministically
+    const loadHeaderStats = async (): Promise<{ tvlUSD: number; tvlYesterdayUSD?: number; volume24hUSD: number; volumePrev24hUSD?: number } | null> => {
+      try {
+        const basePoolInfoTmp = getPoolConfiguration(poolId);
+        const apiPoolIdToUseLocal = basePoolInfoTmp?.subgraphId || '';
+        if (!apiPoolIdToUseLocal) return null;
+        const resp = await fetch(`/api/liquidity/get-pools-batch${force ? `?bust=${Date.now()}` : ''}`);
+        if (!resp.ok) return null;
+        const data = await resp.json();
+        const poolIdLc = String(apiPoolIdToUseLocal || '').toLowerCase();
+        const match = Array.isArray(data?.pools) ? data.pools.find((p: any) => String(p.poolId || '').toLowerCase() === poolIdLc) : null;
+        if (!match) return null;
+        return {
+          tvlUSD: Number(match.tvlUSD) || 0,
+          volume24hUSD: Number(match.volume24hUSD) || 0,
+          tvlYesterdayUSD: Number(match.tvlYesterdayUSD) || 0,
+          volumePrev24hUSD: Number(match.volumePrev24hUSD) || 0,
+        };
+      } catch { return null; }
+    };
+
+    for (let i = 0; i < schedules.length; i++) {
+      if (schedules[i] > 0) await new Promise(r => setTimeout(r, schedules[i]));
+      await fetchPageData(force, skipPositions, /* keepLoading */ i < schedules.length - 1);
+      const nextStats = await loadHeaderStats();
+      if (!isSuspiciousBatchStats(lastStats, nextStats)) {
+        break;
+      }
+      lastStats = nextStats || lastStats;
+    }
+  };
+
+  // Updated callbacks accept tx info
+  const onLiquidityIncreasedCallback = useCallback((info?: { txHash?: `0x${string}`; blockNumber?: bigint }) => {
+    if (pendingActionRef.current?.type !== 'increase') return;
+
     // Prevent rapid revalidations (cooldown: 30 seconds)
     const now = Date.now();
     if (now - lastRevalidationRef.current < 30000) {
@@ -1388,17 +1455,17 @@ export default function PoolDetailPage() {
       return;
     }
     lastRevalidationRef.current = now;
-    
+
+    setPostMutationWindow();
     toast.success("Position Increased", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
     setShowIncreaseModal(false);
     pendingActionRef.current = null;
-    // Centralized: wait for subgraph head to reach the mined block, then single refetch
+
     try {
       (async () => {
         try {
-          const targetBlock = Number(await publicClient.getBlockNumber());
-          await waitForSubgraphBlock(targetBlock, { timeoutMs: 15000, minWaitMs: 800, maxIntervalMs: 1000 });
-          // Invalidate server caches for shared data, then server will rebuild after subgraph sync
+          const targetBlock = info?.blockNumber ?? await publicClient.getBlockNumber();
+          await waitForSubgraphBlock(Number(targetBlock), { timeoutMs: 30000, minWaitMs: 1000, maxIntervalMs: 1500 });
           try { fetch('/api/internal/revalidate-pools', { method: 'POST' } as any); } catch {}
           try {
             const base = getPoolConfiguration(poolId);
@@ -1408,21 +1475,16 @@ export default function PoolDetailPage() {
               body: JSON.stringify({ poolId, subgraphId: subId })
             } as any);
           } catch {}
-          await fetchPageData(true, /* skipPositions */ false, /* keepLoading */ false);
+          await fetchWithBackoffIfNeeded(true, /* skipPositions */ true);
         } catch {}
       })();
     } catch {}
-  }, [poolId, fetchPageData]);
+  }, [poolId]);
 
-  const onLiquidityDecreasedCallback = useCallback(() => {
-    // Compound path handled elsewhere; suppress page toast
-    if (isCompoundInProgressRef.current) {
-      isCompoundInProgressRef.current = false;
-      return;
-    }
-    // Only react to an explicit decrease/withdraw action in progress
+  const onLiquidityDecreasedCallback = useCallback((info?: { txHash?: `0x${string}`; blockNumber?: bigint }) => {
+    if (isCompoundInProgressRef.current) { isCompoundInProgressRef.current = false; return; }
     if (pendingActionRef.current?.type !== 'decrease' && pendingActionRef.current?.type !== 'withdraw') return;
-    
+
     // Prevent rapid revalidations (cooldown: 30 seconds)
     const now = Date.now();
     if (now - lastRevalidationRef.current < 30000) {
@@ -1430,19 +1492,20 @@ export default function PoolDetailPage() {
       return;
     }
     lastRevalidationRef.current = now;
-    
+
+    setPostMutationWindow();
     const closing = isFullBurn || isFullWithdraw;
     toast.success(closing ? "Position Closed" : "Position Decreased", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
     setShowBurnConfirmDialog(false);
     setPositionToBurn(null);
     pendingActionRef.current = null;
-    // Ensure TVL/Volume reflects the removal: single invalidate + wait-for-head + refetch
+
     try {
       setIsLoadingChartData(true);
       (async () => {
         try {
-          const targetBlock = Number(await publicClient.getBlockNumber());
-          await waitForSubgraphBlock(targetBlock, { timeoutMs: 15000, minWaitMs: 800, maxIntervalMs: 1000 });
+          const targetBlock = info?.blockNumber ?? await publicClient.getBlockNumber();
+          await waitForSubgraphBlock(Number(targetBlock), { timeoutMs: 30000, minWaitMs: 1000, maxIntervalMs: 1500 });
           try { fetch('/api/internal/revalidate-pools', { method: 'POST' } as any); } catch {}
           try {
             const base = getPoolConfiguration(poolId);
@@ -1452,15 +1515,38 @@ export default function PoolDetailPage() {
               body: JSON.stringify({ poolId, subgraphId: subId })
             } as any);
           } catch {}
-          await fetchPageData(true, /* skipPositions */ true, /* keepLoading */ false);
+          // Charts first (skip positions), then targeted positions refresh with bounded backoff
+          await fetchWithBackoffIfNeeded(true, /* skipPositions */ true);
+
+          // Targeted positions refresh (0,2,5,10s) until the closed position disappears
+          const delays = [0, 2000, 5000, 10000];
+          const baseInfo = getPoolConfiguration(poolId);
+          const subId = (baseInfo?.subgraphId || '').toLowerCase();
+          if (isConnected && accountAddress && subId) {
+            const baselineIds = new Set((userPositions || []).map(p => p.positionId));
+            for (let i = 0; i < delays.length; i++) {
+              if (i > 0) await new Promise(r => setTimeout(r, delays[i]));
+              try {
+                const ids = await loadUserPositionIds(accountAddress);
+                const derived = await derivePositionsFromIds(accountAddress, ids);
+                const filtered = (derived || []).filter((pos: any) => String(pos?.poolId || '').toLowerCase() === subId);
+                const currentIds = new Set(filtered.map((p: any) => p.positionId));
+                // if a baseline id is missing, accept and update
+                let removedDetected = false;
+                for (const id of baselineIds) { if (!currentIds.has(id)) { removedDetected = true; break; } }
+                if (removedDetected || (filtered.length !== (userPositions || []).length)) {
+                  setUserPositions(filtered);
+                  break;
+                }
+              } catch {}
+            }
+          }
         } finally {
                 setIsLoadingChartData(false);
         }
       })();
-      // positions backoff can remain lightweight
-      // try { backoffRefreshPositions(); } catch {} // Temporarily disabled to prevent infinite loops
     } catch {}
-  }, [isFullBurn, isFullWithdraw, poolId, fetchPageData, backoffRefreshPositions]);
+  }, [isFullBurn, isFullWithdraw, poolId, isConnected, accountAddress, userPositions]);
 
   // Initialize the liquidity modification hooks (moved here after callback definitions)
   const { burnLiquidity, isLoading: isBurningLiquidity } = useBurnLiquidity({
