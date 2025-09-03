@@ -41,8 +41,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (!host) throw new Error('Host header missing');
     const url = `${proto}://${host}/api/liquidity/get-pools-batch`;
 
+    // Generate a cache version that will be shared across all requests after this revalidation
+    const cacheVersion = Date.now();
+    
     // Step 1: Purge CDN cache by making a request with revalidate hint
-    const purgeResp = await fetch(url, {
+    const purgeResp = await fetch(`${url}?v=${cacheVersion}`, {
       method: 'GET',
       headers: {
         'cache-control': 'no-cache',
@@ -53,23 +56,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     console.log('[Revalidate] CDN purge response:', purgeResp.status);
 
-    // Step 2: Immediately fetch again to populate both server cache and CDN
-    const bustParam = `bust=${Date.now()}`;
-    const warmResp = await fetch(`${url}?${bustParam}`, {
-      method: 'GET',
-      headers: {
-        ...(expected ? { 'x-internal-secret': expected } : {}),
-      } as any,
-    } as any);
-
-    const json = await warmResp.json().catch(() => ({}));
+    const json = await purgeResp.json().catch(() => ({}));
     const poolsCount = Array.isArray(json?.pools) ? json.pools.length : undefined;
     
-    console.log('[Revalidate] Warm response:', warmResp.status, 'pools:', poolsCount);
+    console.log('[Revalidate] Cache version set to:', cacheVersion, 'pools:', poolsCount);
     
     const now2 = Date.now();
     lastGlobalTriggerAt = now2;
-    return res.status(200).json({ success: true, message: 'Revalidate triggered', poolsCount, timestamp: now2 });
+    return res.status(200).json({ 
+      success: true, 
+      message: 'Revalidate triggered', 
+      poolsCount, 
+      timestamp: now2,
+      cacheVersion 
+    });
   } catch (e: any) {
     return res.status(500).json({ success: false, message: e?.message || 'Internal error' });
   }

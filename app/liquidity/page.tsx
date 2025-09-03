@@ -139,18 +139,24 @@ export default function LiquidityPage() {
       console.log("[LiquidityPage] Starting batch fetch...");
       
       try {
-        // Check for invalidation hint
-        let forceFresh = false;
+        // Check for invalidation hint and cache version
+        let cacheParams = '';
         try {
           if (localStorage.getItem('cache:pools-batch:invalidated') === 'true') {
-            console.log("[LiquidityPage] Invalidation hint found. Forcing fresh fetch.");
+            console.log("[LiquidityPage] Invalidation hint found. Using cache version.");
             localStorage.removeItem('cache:pools-batch:invalidated');
-            forceFresh = true;
+            
+            const cacheVersion = localStorage.getItem('pools-cache-version');
+            if (cacheVersion) {
+              cacheParams = `?v=${cacheVersion}`;
+              console.log("[LiquidityPage] Using cache version:", cacheVersion);
+            } else {
+              cacheParams = `?bust=${Date.now()}`;
+            }
           }
         } catch {}
 
-        const bust = forceFresh ? `?bust=${Date.now()}` : '';
-        const response = await fetch(`/api/liquidity/get-pools-batch${bust}`);
+        const response = await fetch(`/api/liquidity/get-pools-batch${cacheParams}`);
         if (!response.ok) throw new Error(`Batch API failed: ${response.status}`);
         const batchData = await response.json();
         if (!batchData.success) throw new Error(`Batch API error: ${batchData.message}`);
@@ -217,7 +223,11 @@ export default function LiquidityPage() {
           // Trigger refetch
           (async () => {
             try {
-              const response = await fetch(`/api/liquidity/get-pools-batch?bust=${Date.now()}`);
+              const cacheVersion = localStorage.getItem('pools-cache-version');
+              const params = cacheVersion ? `?v=${cacheVersion}` : `?bust=${Date.now()}`;
+              console.log("[LiquidityPage] Refetching with params:", params);
+              
+              const response = await fetch(`/api/liquidity/get-pools-batch${params}`);
               if (!response.ok) throw new Error(`Batch API failed: ${response.status}`);
               const batchData = await response.json();
               if (!batchData.success) throw new Error(`Batch API error: ${batchData.message}`);

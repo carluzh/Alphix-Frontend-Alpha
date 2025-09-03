@@ -1247,7 +1247,18 @@ export default function PoolDetailPage() {
     // 1. Get Pool Stats from shared cache or fetch fresh
     let poolStats: Partial<Pool> | null = null;
     try {
-      const resp = await fetch(`/api/liquidity/get-pools-batch${force ? `?bust=${Date.now()}` : ''}`);
+      let params = '';
+      if (force) {
+        // Try to use cache version first, fallback to bust
+        try {
+          const cacheVersion = localStorage.getItem('pools-cache-version');
+          params = cacheVersion ? `?v=${cacheVersion}` : `?bust=${Date.now()}`;
+        } catch {
+          params = `?bust=${Date.now()}`;
+        }
+      }
+      
+      const resp = await fetch(`/api/liquidity/get-pools-batch${params}`);
       if (resp.ok) {
         const data = await resp.json();
         const poolIdLc = String(apiPoolIdToUse || '').toLowerCase();
@@ -1424,8 +1435,14 @@ export default function PoolDetailPage() {
 
       // Trigger server revalidation
       try { 
-        await fetch('/api/internal/revalidate-pools', { method: 'POST' });
-        console.log('[refreshAfterMutation] Server cache revalidated');
+        const revalidateResp = await fetch('/api/internal/revalidate-pools', { method: 'POST' });
+        const revalidateData = await revalidateResp.json();
+        console.log('[refreshAfterMutation] Server cache revalidated:', revalidateData);
+        
+        // Store cache version for subsequent fetches
+        if (revalidateData.cacheVersion) {
+          localStorage.setItem('pools-cache-version', revalidateData.cacheVersion.toString());
+        }
         
         // Set hint for list page to refetch
         localStorage.setItem('cache:pools-batch:invalidated', 'true');
