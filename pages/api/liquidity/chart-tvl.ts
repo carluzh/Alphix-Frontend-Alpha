@@ -28,6 +28,9 @@ export default async function handler(
     return res.status(405).json({ message: `Method ${req.method} Not Allowed` });
   }
 
+  // Allow graceful fallback to cached payload on failure
+  let fallbackCacheKey = '';
+
   try {
     const { poolId, days: daysQuery } = req.query as { poolId?: string; days?: string };
     if (!poolId || typeof poolId !== 'string') {
@@ -43,6 +46,7 @@ export default async function handler(
     const allPools = getAllPools();
     const subgraphId = (getPoolSubgraphId(poolId) || poolId).toLowerCase();
     const cacheKey = `${subgraphId}|${days}`;
+    fallbackCacheKey = cacheKey;
     if (!bust) {
       const cached = serverCache.get(cacheKey);
       if (cached && (Date.now() - cached.ts) < SIX_HOURS_MS) {
@@ -132,6 +136,16 @@ export default async function handler(
     return res.status(200).json(payload);
   } catch (error: any) {
     console.error(`[chart-tvl] Error:`, error);
+    // Graceful fallback to last cached payload if present
+    try {
+      if (fallbackCacheKey) {
+        const cached = serverCache.get(fallbackCacheKey);
+        if (cached) {
+          res.setHeader('Cache-Control', 'no-store');
+          return res.status(200).json(cached.data);
+        }
+      }
+    } catch {}
     return res.status(500).json({ message: error?.message || 'Unexpected error', error });
   }
 }

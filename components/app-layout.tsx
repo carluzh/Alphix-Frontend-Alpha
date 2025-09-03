@@ -3,6 +3,7 @@
 import { AppSidebar } from "./app-sidebar";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { BetaNotification } from "./beta-notification";
+import { UpdatesNotification } from "./updates-notification";
 // import { MobileMenuButton } from "./MobileMenuButton"; // Keep this commented
 import { MobileHeader } from "./MobileHeader"; // Import MobileHeader
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -30,6 +31,7 @@ export function AppLayout({ children }: AppLayoutProps) {
         </div>
       </SidebarInset>
       <BetaNotification />
+      <UpdatesNotification />
     </SidebarProvider>
   );
 } 
