@@ -259,11 +259,12 @@ async function computePoolsBatch(): Promise<any> {
 function isDataValid(pools: any[]): boolean {
   if (!pools || pools.length === 0) return false;
 
-  // Check if any pool has non-zero TVL (volume can legitimately be 0)
-  return pools.some(pool => {
-    const hasValidTVL = pool.tvlUSD && pool.tvlUSD > 0;
-    return hasValidTVL;
-  });
+  // Check if any pool has non-zero TVL AND at least one pool has non-zero volume
+  // This handles the case where subgraph lag affects volume differently than TVL
+  const hasValidTVL = pools.some(pool => pool.tvlUSD && pool.tvlUSD > 0);
+  const hasValidVolume = pools.some(pool => pool.volume24hUSD && pool.volume24hUSD > 0);
+
+  return hasValidTVL && hasValidVolume;
 }
 
 export async function GET(request: Request) {
@@ -281,17 +282,18 @@ export async function GET(request: Request) {
 
     let payload = await cachedCompute();
 
-    // If data appears invalid (all zeros), implement exponential backoff retry
+    // If data appears invalid (all zeros), implement custom backoff retry
     if (payload.success && payload.pools && !isDataValid(payload.pools)) {
+      const delays = [0, 2000, 5000, 10000, 30000]; // immediate, 2s, 5s, 10s, 30s
       let attempt = 0;
-      const maxAttempts = 3;
-      const baseDelay = 1000; // 1 second
 
-      while (attempt < maxAttempts && !isDataValid(payload.pools)) {
+      while (attempt < delays.length && !isDataValid(payload.pools)) {
+        const delay = delays[attempt];
         attempt++;
-        const delay = baseDelay * Math.pow(2, attempt - 1); // 1s, 2s, 4s
 
-        await new Promise(resolve => setTimeout(resolve, delay));
+        if (delay > 0) {
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
 
         // Clear cache and recompute fresh data
         payload = await computePoolsBatch();
