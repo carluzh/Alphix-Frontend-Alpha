@@ -31,7 +31,7 @@ export async function POST(req: Request) {
 
   try {
     // Bump global version to force cache miss on subsequent requests
-    bumpGlobalVersion();
+    const newVersion = bumpGlobalVersion();
 
     revalidateTag('pools-batch');
 
@@ -68,16 +68,22 @@ export async function POST(req: Request) {
       const proto = req.headers.get('x-forwarded-proto') || 'https';
       const host = req.headers.get('x-forwarded-host') || req.headers.get('host') || '';
       if (host) {
-        const warmUrl = `${proto}://${host}/api/liquidity/get-pools-batch`;
+        const warmUrl = `${proto}://${host}/api/liquidity/get-pools-batch?v=${newVersion}`;
         // Force CDN to revalidate with origin and refresh its stored object
         await fetch(warmUrl, { method: 'GET', headers: { 'cache-control': 'no-cache' } as any } as any);
       }
     } catch {}
-    return Response.json({
+    return new Response(JSON.stringify({
       revalidated: true,
       tag: 'pools-batch',
+      version: newVersion,
       now: Date.now()
-    }, { headers: { 'Cache-Control': 'no-store' } });
+    }), {
+      headers: {
+        'Cache-Control': 'no-store',
+        'Content-Type': 'application/json'
+      }
+    });
   } catch (e: any) {
     return Response.json({ message: e?.message || 'Revalidation failed' }, { status: 500, headers: { 'Cache-Control': 'no-store' } });
   }

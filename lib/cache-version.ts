@@ -1,6 +1,6 @@
 // Global cache version management - stable until mutations
 let globalVersion = Date.now();
-const VERSION_TTL = 10 * 60 * 1000; // 10 minutes - data considered fresh for this long
+const VERSION_TTL = 60 * 60 * 1000; // 1 hour TTL
 let lastVersionUpdate = Date.now();
 
 // Client-side batch data cache
@@ -14,14 +14,7 @@ let batchDataCache: CachedBatchData | null = null;
 const BATCH_CACHE_TTL = 5 * 60 * 1000; // 5 minutes for client cache
 
 export function getGlobalVersion(): number {
-  const now = Date.now();
-  // Auto-refresh version if TTL expired
-  if (now - lastVersionUpdate > VERSION_TTL) {
-    globalVersion = now;
-    lastVersionUpdate = now;
-    // Clear client cache when version changes
-    batchDataCache = null;
-  }
+  // No automatic bump here; version changes on explicit bump or via cache-version route TTL check
   return globalVersion;
 }
 
