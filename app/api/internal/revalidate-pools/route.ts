@@ -12,6 +12,11 @@ export async function POST(req: Request) {
   const secret = url.searchParams.get('secret') || req.headers.get('x-internal-secret') || '';
   const expected = process.env.INTERNAL_API_SECRET || '';
   const isDev = process.env.NODE_ENV !== 'production';
+  let targetBlock = 0;
+  try {
+    const body = await req.json().catch(() => null);
+    if (body && typeof body.targetBlock === 'number') targetBlock = Math.max(0, Math.floor(body.targetBlock));
+  } catch {}
 
   // In production, allow unsigned client calls; apply a short global debounce instead of per-IP cooldown.
   // If a valid secret is provided, bypass the debounce.
@@ -25,6 +30,31 @@ export async function POST(req: Request) {
 
   try {
     revalidateTag('pools-batch');
+    // Optional: wait for subgraph head to reach targetBlock before warming to avoid stale TVL from lagging index
+    try {
+      if (targetBlock > 0) {
+        const proto = req.headers.get('x-forwarded-proto') || 'https';
+        const host = req.headers.get('x-forwarded-host') || req.headers.get('host') || '';
+        if (host) {
+          const headUrl = `${proto}://${host}/api/liquidity/subgraph-head`;
+          const start = Date.now();
+          const timeoutMs = 15000;
+          let interval = 300;
+          const jitter = () => Math.floor(Math.random() * 120);
+          for (;;) {
+            const r = await fetch(headUrl, { method: 'GET' });
+            if (r.ok) {
+              const j = await r.json().catch(() => ({}));
+              const head = Number(j?.subgraphHead || 0);
+              if (head >= targetBlock) break;
+            }
+            if (Date.now() - start > timeoutMs) break;
+            await new Promise((res) => setTimeout(res, Math.min(1500, interval) + jitter()));
+            interval = Math.min(1500, Math.floor(interval * 1.6));
+          }
+        }
+      }
+    } catch {}
     // Proactively warm the cache so the next user gets fresh data
     try {
       const proto = req.headers.get('x-forwarded-proto') || 'https';
