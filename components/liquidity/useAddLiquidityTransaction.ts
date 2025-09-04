@@ -624,7 +624,7 @@ export function useAddLiquidityTransaction({
       } catch {}
       // Set hint for newly created position to ensure it's included in cached data
       try {
-        if (typeof window !== 'undefined') {
+        if (typeof window !== 'undefined' && accountAddress) {
           const hintKey = `recentPositionCreated:${accountAddress.toLowerCase()}`;
           // Note: We don't have the exact position ID here, but we can set a flag to wait for new positions
           window.localStorage.setItem(hintKey, JSON.stringify({
@@ -633,7 +633,6 @@ export function useAddLiquidityTransaction({
             action: 'create'
           }));
         }
-      } catch {}
       } catch {}
       resetTransactionState();
       onOpenChange(false);
