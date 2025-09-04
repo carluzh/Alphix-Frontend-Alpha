@@ -33,6 +33,7 @@ import {
 import { toast } from "sonner";
 import { getEnabledPools, getToken, getPoolSubgraphId, getPoolById } from "../../lib/pools-config";
 import { getFromCache, getFromCacheWithTtl, setToCache, getUserPositionsCacheKey, getPoolStatsCacheKey, loadUserPositionIds, derivePositionsFromIds, getPoolFeeBps } from "../../lib/client-cache";
+import { getCachedBatchData, setCachedBatchData, clearBatchDataCache, bumpGlobalVersion } from "../../lib/cache-version";
 import { Pool } from "../../types";
 import { AddLiquidityModal } from "@liquidity/AddLiquidityModal";
 import { useRouter } from "next/navigation";
@@ -134,35 +135,79 @@ export default function LiquidityPage() {
   const [poolDataByPoolId, setPoolDataByPoolId] = useState<Record<string, any>>({});
   const [priceMap, setPriceMap] = useState<Record<string, number>>({});
   const [isLoadingPoolStates, setIsLoadingPoolStates] = useState(true);
-  useEffect(() => {
-    const fetchAllPoolStatsBatch = async () => {
+
+  const fetchAllPoolStatsBatch = useCallback(async () => {
       console.log("[LiquidityPage] Starting batch fetch...");
-      
+
       try {
-        // Check for invalidation hint and cache version
-        let cacheParams = '';
+        // First check client-side cache for valid data
+        const cachedData = getCachedBatchData();
+        if (cachedData) {
+          console.log("[LiquidityPage] Using cached batch data");
+          const updatedPools = await Promise.all(dynamicPools.map(async (pool) => {
+            const apiPoolId = getPoolSubgraphId(pool.id) || pool.id;
+            const batchPoolData = cachedData.pools.find((p: any) => p.poolId.toLowerCase() === apiPoolId.toLowerCase());
+            if (batchPoolData) {
+              const tvlUSD = typeof batchPoolData.tvlUSD === 'number' ? batchPoolData.tvlUSD : undefined;
+              const tvlYesterdayUSD = typeof batchPoolData.tvlYesterdayUSD === 'number' ? batchPoolData.tvlYesterdayUSD : undefined;
+              const volume24hUSD = typeof batchPoolData.volume24hUSD === 'number' ? batchPoolData.volume24hUSD : undefined;
+              const volumePrev24hUSD = typeof batchPoolData.volumePrev24hUSD === 'number' ? batchPoolData.volumePrev24hUSD : undefined;
+              let fees24hUSD: number | undefined = undefined;
+              let aprStr: string = 'N/A';
+
+              if (typeof volume24hUSD === 'number') {
+                try {
+                  const bps = await getPoolFeeBps(apiPoolId);
+                  const feeRate = Math.max(0, bps) / 10_000;
+                  fees24hUSD = volume24hUSD * feeRate;
+                } catch {}
+              }
+              if (typeof fees24hUSD === 'number' && typeof tvlUSD === 'number' && tvlUSD > 0) {
+                const apr = (fees24hUSD * 365 / tvlUSD) * 100;
+                aprStr = `${apr.toFixed(2)}%`;
+              }
+              return {
+                ...pool,
+                tvlUSD,
+                tvlYesterdayUSD,
+                volume24hUSD,
+                volumePrev24hUSD,
+                fees24hUSD,
+                apr: aprStr,
+                volumeChangeDirection: (volume24hUSD !== undefined && volumePrev24hUSD !== undefined) ?
+                  (volume24hUSD > volumePrev24hUSD ? 'up' : volume24hUSD < volumePrev24hUSD ? 'down' : 'neutral') : 'loading',
+                tvlChangeDirection: (tvlUSD !== undefined && tvlYesterdayUSD !== undefined) ?
+                  (tvlUSD > tvlYesterdayUSD ? 'up' : tvlUSD < tvlYesterdayUSD ? 'down' : 'neutral') : 'loading',
+              };
+            }
+            return pool;
+          }));
+
+          setPoolsData(updatedPools as Pool[]);
+          console.log("[LiquidityPage] Batch fetch completed from cache.");
+          return;
+        }
+
+        // Check for invalidation hint and clear cache if needed
         try {
           if (localStorage.getItem('cache:pools-batch:invalidated') === 'true') {
-            console.log("[LiquidityPage] Invalidation hint found. Using cache version.");
+            console.log("[LiquidityPage] Invalidation hint found. Clearing cache.");
             localStorage.removeItem('cache:pools-batch:invalidated');
-            
-            const cacheVersion = localStorage.getItem('pools-cache-version');
-            if (cacheVersion) {
-              cacheParams = `?v=${cacheVersion}`;
-              console.log("[LiquidityPage] Using cache version:", cacheVersion);
-            } else {
-              cacheParams = `?bust=${Date.now()}`;
-            }
+            clearBatchDataCache();
           }
         } catch {}
 
-        // Always use fresh version for batch requests to avoid stale cache
+        // No valid cache, make API call
+        console.log("[LiquidityPage] No valid cache, fetching from API...");
         const versionResponse = await fetch('/api/cache-version', { cache: 'no-store' as any } as any);
         const versionData = await versionResponse.json();
         const response = await fetch(versionData.cacheUrl, { cache: 'no-store' as any } as any);
         if (!response.ok) throw new Error(`Batch API failed: ${response.status}`);
         const batchData = await response.json();
         if (!batchData.success) throw new Error(`Batch API error: ${batchData.message}`);
+
+        // Cache the fresh data
+        setCachedBatchData(batchData);
 
         const updatedPools = await Promise.all(dynamicPools.map(async (pool) => {
           const apiPoolId = getPoolSubgraphId(pool.id) || pool.id;
@@ -205,80 +250,27 @@ export default function LiquidityPage() {
 
         setPoolsData(updatedPools as Pool[]);
         console.log("[LiquidityPage] Batch fetch successful.");
-        
+
       } catch (error) {
         console.error("[LiquidityPage] Batch fetch failed:", error);
         toast.error("Could not load pool data", { description: "Failed to fetch data from the server." });
       }
-    };
+    }, [dynamicPools]);
 
+  useEffect(() => {
     fetchAllPoolStatsBatch();
-  }, []);
+  }, [fetchAllPoolStatsBatch]);
 
   // Listen for invalidation hints
   useEffect(() => {
     const checkAndRefetch = () => {
       try {
         if (localStorage.getItem('cache:pools-batch:invalidated') === 'true') {
-          console.log("[LiquidityPage] Invalidation hint found. Triggering refetch.");
+          console.log("[LiquidityPage] Invalidation hint found. Clearing cache and refetching.");
           localStorage.removeItem('cache:pools-batch:invalidated');
-          
-          // Trigger refetch
-          (async () => {
-            try {
-              const cacheVersion = localStorage.getItem('pools-cache-version');
-              const params = cacheVersion ? `?v=${cacheVersion}` : `?bust=${Date.now()}`;
-              console.log("[LiquidityPage] Refetching with params:", params);
-              
-              // Use fresh version for refetch to avoid stale cache
-              const versionResponse = await fetch('/api/cache-version', { cache: 'no-store' as any } as any);
-              const versionData = await versionResponse.json();
-              const response = await fetch(versionData.cacheUrl, { cache: 'no-store' as any } as any);
-              if (!response.ok) throw new Error(`Batch API failed: ${response.status}`);
-              const batchData = await response.json();
-              if (!batchData.success) throw new Error(`Batch API error: ${batchData.message}`);
-
-              const updatedPools = await Promise.all(dynamicPools.map(async (pool) => {
-                const apiPoolId = getPoolSubgraphId(pool.id) || pool.id;
-                const batchPoolData = batchData.pools.find((p: any) => p.poolId.toLowerCase() === apiPoolId.toLowerCase());
-                if (batchPoolData) {
-                  let fees24hUSD: number | undefined = undefined;
-                  let aprStr: string = 'N/A';
-                  
-                  if (typeof batchPoolData.volume24hUSD === 'number') {
-                    try {
-                      const bps = await getPoolFeeBps(apiPoolId);
-                      const feeRate = Math.max(0, bps) / 10_000;
-                      fees24hUSD = batchPoolData.volume24hUSD * feeRate;
-                    } catch {}
-                  }
-                  if (typeof fees24hUSD === 'number' && typeof batchPoolData.tvlUSD === 'number' && batchPoolData.tvlUSD > 0) {
-                    const apr = (fees24hUSD * 365 / batchPoolData.tvlUSD) * 100;
-                    aprStr = `${apr.toFixed(2)}%`;
-                  }
-                  return { 
-                    ...pool, 
-                    tvlUSD: batchPoolData.tvlUSD,
-                    tvlYesterdayUSD: batchPoolData.tvlYesterdayUSD,
-                    volume24hUSD: batchPoolData.volume24hUSD,
-                    volumePrev24hUSD: batchPoolData.volumePrev24hUSD,
-                    fees24hUSD,
-                    apr: aprStr,
-                    volumeChangeDirection: (batchPoolData.volume24hUSD !== undefined && batchPoolData.volumePrev24hUSD !== undefined) ? 
-                      (batchPoolData.volume24hUSD > batchPoolData.volumePrev24hUSD ? 'up' : batchPoolData.volume24hUSD < batchPoolData.volumePrev24hUSD ? 'down' : 'neutral') : 'loading',
-                    tvlChangeDirection: (batchPoolData.tvlUSD !== undefined && batchPoolData.tvlYesterdayUSD !== undefined) ? 
-                      (batchPoolData.tvlUSD > batchPoolData.tvlYesterdayUSD ? 'up' : batchPoolData.tvlUSD < batchPoolData.tvlYesterdayUSD ? 'down' : 'neutral') : 'loading',
-                  };
-                }
-                return pool;
-              }));
-
-              setPoolsData(updatedPools as Pool[]);
-              console.log("[LiquidityPage] Refetch after invalidation successful.");
-            } catch (error) {
-              console.error("[LiquidityPage] Refetch after invalidation failed:", error);
-            }
-          })();
+          clearBatchDataCache();
+          // Trigger refetch by calling the main function
+          fetchAllPoolStatsBatch();
         }
       } catch {}
     };

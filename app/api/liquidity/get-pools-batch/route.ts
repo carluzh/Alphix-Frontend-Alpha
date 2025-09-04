@@ -6,7 +6,14 @@ import { unstable_cache } from 'next/cache';
 import { getPoolSubgraphId, getAllPools, getTokenDecimals } from '@/lib/pools-config';
 import { batchGetTokenPrices, calculateTotalUSD } from '@/lib/price-service';
 import { formatUnits } from 'viem';
-import { getCacheKeyWithVersionSync } from '@/lib/cache-version';
+import { getCacheKeyWithVersion } from '@/lib/cache-version';
+
+// For unstable_cache compatibility, create a synchronous version
+function getCacheKeyWithVersionSync(baseKey: string): string[] {
+  // Use a simple timestamp-based versioning for cache keys
+  const version = Math.floor(Date.now() / (10 * 60 * 1000)); // 10-minute buckets
+  return [`${baseKey}-v${version}`];
+}
 
 const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
 

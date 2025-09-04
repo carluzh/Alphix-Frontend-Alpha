@@ -1,6 +1,5 @@
 import { revalidateTag } from 'next/cache';
-// Simple global version counter that resets on cold start but works within request lifecycle
-let currentVersion = Date.now();
+import { bumpGlobalVersion, getGlobalVersion } from '@/lib/cache-version';
 
 export const runtime = 'nodejs';
 export const preferredRegion = 'auto';
@@ -31,13 +30,17 @@ export async function POST(req: Request) {
   }
 
   try {
-    // Bump version to force cache miss on subsequent requests
-    const oldVersion = currentVersion;
-    currentVersion = Date.now();
+    // Bump global version to force cache miss on subsequent requests
+    const oldVersion = getGlobalVersion();
+    const newVersion = bumpGlobalVersion();
 
-    console.log(`[Revalidate] Cache version changed from ${oldVersion} to ${currentVersion}`);
+    console.log(`[Revalidate] Version changed from ${oldVersion} to ${newVersion}`);
 
     revalidateTag('pools-batch');
+
+    // Set client-side invalidation hint (this will be picked up by the page listeners)
+    // Note: In serverless, we can't directly modify client localStorage, but we can return it in the response
+    // The client will set this when it receives the response
     // Optional: wait for subgraph head to reach targetBlock before warming to avoid stale TVL from lagging index
     try {
       if (targetBlock > 0) {
@@ -76,8 +79,9 @@ export async function POST(req: Request) {
     return Response.json({
       revalidated: true,
       tag: 'pools-batch',
-      version: currentVersion,
-      cacheUrl: `/api/liquidity/get-pools-batch?v=${currentVersion}`,
+      version: newVersion,
+      cacheUrl: `/api/liquidity/get-pools-batch?v=${newVersion}`,
+      shouldInvalidateClientCache: true, // Client should set localStorage invalidation hint
       now: Date.now()
     }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (e: any) {
