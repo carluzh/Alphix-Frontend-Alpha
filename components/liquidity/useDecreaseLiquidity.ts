@@ -592,8 +592,10 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
           try { if (accountAddress) prefetchService.requestPositionsRefresh({ owner: accountAddress, reason: 'compound' }); } catch {}
           isCompoundRef.current = false;
           // CRITICAL: Invalidate global batch cache after compound
-          clearBatchDataCache();
-          fetch('/api/internal/revalidate-pools', { method: 'POST' }).catch(() => {});
+          try {
+            clearBatchDataCache();
+            fetch('/api/internal/revalidate-pools', { method: 'POST' }).catch(() => {});
+          } catch {}
         } else {
           if (lastWasCollectOnly.current && onFeesCollected) {
             onFeesCollected();
@@ -602,8 +604,10 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
           }
         }
         // CRITICAL: Invalidate global batch cache after liquidity decrease
-        clearBatchDataCache();
-        fetch('/api/internal/revalidate-pools', { method: 'POST' }).catch(() => {});
+        try {
+          clearBatchDataCache();
+          fetch('/api/internal/revalidate-pools', { method: 'POST' }).catch(() => {});
+        } catch {}
       })();
       try { if (accountAddress) prefetchService.requestPositionsRefresh({ owner: accountAddress, reason: lastWasCollectOnly.current ? 'collect' : 'decrease' }); } catch {}
       try { if (accountAddress) invalidateActivityCache(accountAddress); } catch {}

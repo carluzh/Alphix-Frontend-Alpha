@@ -255,6 +255,17 @@ async function computePoolsBatch(): Promise<any> {
   return payload;
 }
 
+// Validate if data looks reasonable (not all zeros due to stale subgraph)
+function isDataValid(pools: any[]): boolean {
+  if (!pools || pools.length === 0) return false;
+
+  // Check if any pool has non-zero TVL (volume can legitimately be 0)
+  return pools.some(pool => {
+    const hasValidTVL = pool.tvlUSD && pool.tvlUSD > 0;
+    return hasValidTVL;
+  });
+}
+
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
@@ -268,7 +279,25 @@ export async function GET(request: Request) {
       { tags: ['pools-batch'], revalidate: 3600 }
     );
 
-    const payload = await cachedCompute();
+    let payload = await cachedCompute();
+
+    // If data appears invalid (all zeros), implement exponential backoff retry
+    if (payload.success && payload.pools && !isDataValid(payload.pools)) {
+      let attempt = 0;
+      const maxAttempts = 3;
+      const baseDelay = 1000; // 1 second
+
+      while (attempt < maxAttempts && !isDataValid(payload.pools)) {
+        attempt++;
+        const delay = baseDelay * Math.pow(2, attempt - 1); // 1s, 2s, 4s
+
+        await new Promise(resolve => setTimeout(resolve, delay));
+
+        // Clear cache and recompute fresh data
+        payload = await computePoolsBatch();
+      }
+    }
+
     return NextResponse.json(payload, {
       headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=3600' },
     });
