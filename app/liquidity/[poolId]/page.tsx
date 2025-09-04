@@ -559,7 +559,7 @@ export default function PoolDetailPage() {
     try {
       // Use existing server batch endpoint (server-only SUBGRAPH_URL; 10m CDN TTL)
       const attempt = async () => {
-        const resp = await fetch(`/api/liquidity/get-pools-batch${force ? `?bust=${Date.now()}` : ''}`);
+        const resp = await fetch(`/api/liquidity/get-pools-batch${force ? `?bust=${Date.now()}` : ''}`, { cache: 'no-store' as any } as any);
         if (!resp.ok) return null;
         const data = await resp.json();
         if (!data?.success || !Array.isArray(data?.pools)) return null;
@@ -1258,7 +1258,7 @@ export default function PoolDetailPage() {
         }
       }
       
-      const resp = await fetch(`/api/liquidity/get-pools-batch${params}`);
+      const resp = await fetch(`/api/liquidity/get-pools-batch${params}`, { cache: 'no-store' as any } as any);
       if (resp.ok) {
         const data = await resp.json();
         const poolIdLc = String(apiPoolIdToUse || '').toLowerCase();

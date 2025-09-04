@@ -74,12 +74,12 @@ class PrefetchService {
     const operation = async () => {
       try {
         console.log(`[Prefetch] Loading pool ${poolId}`);
-        const resp = await fetch(`/api/liquidity/get-pools-batch`);
+        const resp = await fetch(`/api/liquidity/get-pools-batch`, { cache: 'no-store' as any } as any);
         if (resp.ok) {
           const json = await resp.json();
           const match = Array.isArray(json?.pools) ? json.pools.find((p: any) => String(p?.poolId || '').toLowerCase() === String(poolId).toLowerCase()) : null;
           if (match) {
-            setToCache(getPoolStatsCacheKey(poolId), { tvlUSD: Number(match.tvlUSD) || 0, volume24hUSD: Number(match.volume24hUSD) || 0 });
+            // Do not write TVL/volume to client cache; rely on server response on-demand to avoid stale overrides
           }
         }
       } catch (error) {
@@ -109,17 +109,14 @@ class PrefetchService {
       try {
         console.log(`[Prefetch] Batch loading ${uncachedPools.length} pools`);
         
-        const response = await fetch(`/api/liquidity/get-pools-batch`);
+        const response = await fetch(`/api/liquidity/get-pools-batch`, { cache: 'no-store' as any } as any);
 
         if (response.ok) {
           const data = await response.json();
           
           const map = new Map<string, any>();
           for (const p of (data?.pools || [])) map.set(String(p.poolId).toLowerCase(), p);
-          for (const id of uncachedPools) {
-            const m = map.get(String(id).toLowerCase());
-            if (m) setToCache(getPoolStatsCacheKey(id), { tvlUSD: Number(m.tvlUSD) || 0, volume24hUSD: Number(m.volume24hUSD) || 0 });
-          }
+          // Do not write batch-derived TVL/volume to client cache; avoid stale client-state overriding fresh server data
           
           console.log(`[Prefetch] Batch cached minimal stats`);
         }
