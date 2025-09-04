@@ -545,7 +545,7 @@ function usePortfolio(refreshKey: number = 0, userPositionsData?: any[], pricesD
             }
           }
         } catch {}
-        const response = await fetch('/api/liquidity/get-pools-batch');
+        const response = await fetch('/api/liquidity/get-pools-batch', { cache: 'no-store' as any } as any);
         if (!response.ok) return;
         const data = await response.json();
         if (!data?.success || !Array.isArray(data.pools)) return;
@@ -1765,7 +1765,7 @@ export default function PortfolioPage() {
             }
           }
         } catch {}
-        const response = await fetch('/api/liquidity/get-pools-batch');
+        const response = await fetch('/api/liquidity/get-pools-batch', { cache: 'no-store' as any } as any);
         if (!response.ok) return;
         const data = await response.json();
         if (!data?.success || !Array.isArray(data.pools)) return;

@@ -55,13 +55,14 @@ export async function POST(req: Request) {
         }
       }
     } catch {}
-    // Proactively warm the cache so the next user gets fresh data
+    // Proactively warm the CDN+server cache so the next user gets fresh data
     try {
       const proto = req.headers.get('x-forwarded-proto') || 'https';
       const host = req.headers.get('x-forwarded-host') || req.headers.get('host') || '';
       if (host) {
         const warmUrl = `${proto}://${host}/api/liquidity/get-pools-batch`;
-        await fetch(warmUrl, { method: 'GET' });
+        // Force CDN to revalidate with origin and refresh its stored object
+        await fetch(warmUrl, { method: 'GET', headers: { 'cache-control': 'no-cache' } as any } as any);
       }
     } catch {}
     return Response.json({ revalidated: true, tag: 'pools-batch', now: Date.now() }, { headers: { 'Cache-Control': 'no-store' } });
