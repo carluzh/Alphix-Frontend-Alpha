@@ -89,8 +89,6 @@ const generatePoolsFromConfig = (): Pool[] => {
 };
 
 const dynamicPools = generatePoolsFromConfig();
-// Debugging: Log the final Pool object created for each pool
-console.log("[generatePoolsFromConfig] Final generated pools:", dynamicPools);
 
 declare module '@tanstack/react-table' {
   interface ColumnMeta<TData extends RowData, TValue> {
@@ -137,13 +135,10 @@ export default function LiquidityPage() {
   const [isLoadingPoolStates, setIsLoadingPoolStates] = useState(true);
 
   const fetchAllPoolStatsBatch = useCallback(async () => {
-      console.log("[LiquidityPage] Starting batch fetch...");
-
       try {
         // First check client-side cache for valid data
         const cachedData = getCachedBatchData();
         if (cachedData) {
-          console.log("[LiquidityPage] Using cached batch data");
           const updatedPools = await Promise.all(dynamicPools.map(async (pool) => {
             const apiPoolId = getPoolSubgraphId(pool.id) || pool.id;
             const batchPoolData = cachedData.pools.find((p: any) => p.poolId.toLowerCase() === apiPoolId.toLowerCase());
@@ -184,21 +179,18 @@ export default function LiquidityPage() {
           }));
 
           setPoolsData(updatedPools as Pool[]);
-          console.log("[LiquidityPage] Batch fetch completed from cache.");
           return;
         }
 
         // Check for invalidation hint and clear cache if needed
         try {
           if (localStorage.getItem('cache:pools-batch:invalidated') === 'true') {
-            console.log("[LiquidityPage] Invalidation hint found. Clearing cache.");
             localStorage.removeItem('cache:pools-batch:invalidated');
             clearBatchDataCache();
           }
         } catch {}
 
         // No valid cache, make API call
-        console.log("[LiquidityPage] No valid cache, fetching from API...");
         const versionResponse = await fetch('/api/cache-version', { cache: 'no-store' as any } as any);
         const versionData = await versionResponse.json();
         const response = await fetch(versionData.cacheUrl, { cache: 'no-store' as any } as any);

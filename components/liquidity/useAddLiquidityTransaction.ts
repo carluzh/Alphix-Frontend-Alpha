@@ -13,6 +13,7 @@ import { TOKEN_DEFINITIONS } from "@/lib/pools-config";
 import { baseSepolia } from "@/lib/wagmiConfig";
 import { prefetchService } from "@/lib/prefetch-service";
 import { invalidateActivityCache, invalidateUserPositionsCache, invalidateUserPositionIdsCache } from "@/lib/client-cache";
+import { clearBatchDataCache } from "@/lib/cache-version";
 import { ERC20_ABI } from "@/lib/abis/erc20";
 import { type Hex, formatUnits, parseUnits, encodeFunctionData } from "viem";
 import { TokenSymbol } from "@/lib/pools-config";
@@ -620,6 +621,9 @@ export function useAddLiquidityTransaction({
       } catch {}
       // CRITICAL: Invalidate global batch cache after liquidity addition
       try {
+        // Clear client cache immediately
+        clearBatchDataCache();
+        // Trigger server-side cache invalidation
         fetch('/api/internal/revalidate-pools', { method: 'POST' }).catch(() => {});
       } catch {}
       // Set hint for newly created position to ensure it's included in cached data

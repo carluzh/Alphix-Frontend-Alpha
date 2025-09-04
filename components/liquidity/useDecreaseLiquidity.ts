@@ -13,6 +13,7 @@ import { getAddress, type Hex, BaseError, parseUnits, encodeAbiParameters, kecca
 import { getPositionDetails, getPoolState } from '@/lib/liquidity-utils';
 import { prefetchService } from '@/lib/prefetch-service';
 import { invalidateActivityCache, invalidateUserPositionsCache, invalidateUserPositionIdsCache } from '@/lib/client-cache';
+import { clearBatchDataCache } from '@/lib/cache-version';
 import { publicClient } from '@/lib/viemClient';
 
 // Helper function to safely parse amounts without precision loss
@@ -591,6 +592,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
           try { if (accountAddress) prefetchService.requestPositionsRefresh({ owner: accountAddress, reason: 'compound' }); } catch {}
           isCompoundRef.current = false;
           // CRITICAL: Invalidate global batch cache after compound
+          clearBatchDataCache();
           fetch('/api/internal/revalidate-pools', { method: 'POST' }).catch(() => {});
         } else {
           if (lastWasCollectOnly.current && onFeesCollected) {
@@ -600,6 +602,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
           }
         }
         // CRITICAL: Invalidate global batch cache after liquidity decrease
+        clearBatchDataCache();
         fetch('/api/internal/revalidate-pools', { method: 'POST' }).catch(() => {});
       })();
       try { if (accountAddress) prefetchService.requestPositionsRefresh({ owner: accountAddress, reason: lastWasCollectOnly.current ? 'collect' : 'decrease' }); } catch {}

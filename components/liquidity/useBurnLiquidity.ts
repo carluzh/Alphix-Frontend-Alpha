@@ -10,6 +10,7 @@ import { getAddress, type Hex, BaseError } from 'viem';
 import JSBI from 'jsbi';
 import { prefetchService } from '@/lib/prefetch-service';
 import { invalidateActivityCache, invalidateUserPositionsCache, invalidateUserPositionIdsCache } from '@/lib/client-cache';
+import { clearBatchDataCache } from '@/lib/cache-version';
 
 interface UseBurnLiquidityProps {
   onLiquidityBurned: () => void;
@@ -162,7 +163,7 @@ export function useBurnLiquidity({ onLiquidityBurned }: UseBurnLiquidityProps) {
       try { if (accountAddress) prefetchService.requestPositionsRefresh({ owner: accountAddress, reason: 'burn' }); } catch {}
       try { if (accountAddress) invalidateActivityCache(accountAddress); } catch {}
       try { if (accountAddress) { invalidateUserPositionsCache(accountAddress); invalidateUserPositionIdsCache(accountAddress); } } catch {}
-      try { fetch('/api/internal/revalidate-pools', { method: 'POST' } as any).catch(() => {}); } catch {}
+      try { clearBatchDataCache(); fetch('/api/internal/revalidate-pools', { method: 'POST' } as any).catch(() => {}); } catch {}
       setIsBurning(false);
     } else if (burnConfirmError) {
        const message = burnConfirmError instanceof BaseError ? burnConfirmError.shortMessage : burnConfirmError.message;

@@ -12,6 +12,7 @@ import { getPositionDetails, getPoolState, preparePermit2BatchForPosition } from
 import { publicClient } from '@/lib/viemClient';
 import { prefetchService } from '@/lib/prefetch-service';
 import { invalidateActivityCache, invalidateUserPositionsCache, invalidateUserPositionIdsCache } from '@/lib/client-cache';
+import { clearBatchDataCache } from '@/lib/cache-version';
 import { OctagonX } from 'lucide-react';
 
 // Helper function to safely parse amounts without precision loss
@@ -349,6 +350,7 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
       try { if (accountAddress) invalidateActivityCache(accountAddress); } catch {}
       // CRITICAL: Invalidate global batch cache after liquidity increase
       try {
+        clearBatchDataCache();
         fetch('/api/internal/revalidate-pools', { method: 'POST' }).catch(() => {});
       } catch {}
       try { if (accountAddress) { invalidateUserPositionsCache(accountAddress); invalidateUserPositionIdsCache(accountAddress); } } catch {}
