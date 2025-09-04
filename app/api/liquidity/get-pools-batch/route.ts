@@ -2,16 +2,14 @@ export const runtime = 'nodejs';
 export const preferredRegion = 'auto';
 
 import { NextResponse } from 'next/server';
+import { unstable_cache } from 'next/cache';
 import { getPoolSubgraphId, getAllPools, getTokenDecimals } from '@/lib/pools-config';
 import { batchGetTokenPrices, calculateTotalUSD } from '@/lib/price-service';
 import { formatUnits } from 'viem';
 
 const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
 
-// Small compute coalescer to avoid duplicate expensive work during bursts
-let inFlight: Promise<any> | null = null;
-let lastPayload: any | null = null;
-let lastComputeAt = 0;
+// We rely on Next Data Cache via unstable_cache for caching + global tag invalidation
 
 const GET_POOLS_TVL_BULK = `
   query GetPoolsTVL($poolIds: [String!]!) {
@@ -251,35 +249,19 @@ async function computePoolsBatch(): Promise<any> {
 
 export async function GET() {
   try {
-    // Simple coalescing: reuse last payload if computed within 1s to avoid bursts
-    if (inFlight) {
-      const data = await inFlight;
-      return NextResponse.json(data, {
-        headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=3600' },
-      });
-    }
+    const cachedCompute = unstable_cache(
+      async () => {
+        return await computePoolsBatch();
+      },
+      ['pools-batch-key'],
+      { tags: ['pools-batch'], revalidate: 3600 }
+    );
 
-    const now = Date.now();
-    if (lastPayload && now - lastComputeAt < 1000) {
-      return NextResponse.json(lastPayload, {
-        headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=3600' },
-      });
-    }
-
-    inFlight = computePoolsBatch().finally(() => {
-      inFlight = null;
-    });
-    const payload = await inFlight;
-    lastPayload = payload;
-    lastComputeAt = Date.now();
-
+    const payload = await cachedCompute();
     return NextResponse.json(payload, {
       headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=3600' },
     });
   } catch (error: any) {
-    if (lastPayload) {
-      return NextResponse.json(lastPayload, { headers: { 'Cache-Control': 'no-store' } });
-    }
     return NextResponse.json({ success: false, message: error?.message || 'Unknown error' }, { status: 500 });
   }
 }

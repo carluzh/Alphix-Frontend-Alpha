@@ -3,11 +3,24 @@ import { revalidateTag } from 'next/cache';
 export const runtime = 'nodejs';
 export const preferredRegion = 'auto';
 
+// Short global debounce window to avoid hammering with redundant revalidations
+let lastGlobalTriggerAt = 0;
+const DEBOUNCE_WINDOW_MS = 2_000; // 2s debounce
+
 export async function POST(req: Request) {
   const url = new URL(req.url);
   const secret = url.searchParams.get('secret') || req.headers.get('x-internal-secret') || '';
-  if (secret !== (process.env.INTERNAL_API_SECRET || '')) {
-    return Response.json({ message: 'Invalid secret' }, { status: 401, headers: { 'Cache-Control': 'no-store' } });
+  const expected = process.env.INTERNAL_API_SECRET || '';
+  const isDev = process.env.NODE_ENV !== 'production';
+
+  // In production, allow unsigned client calls; apply a short global debounce instead of per-IP cooldown.
+  // If a valid secret is provided, bypass the debounce.
+  if (!isDev && (!expected || secret !== expected)) {
+    const now = Date.now();
+    if (now - lastGlobalTriggerAt < DEBOUNCE_WINDOW_MS) {
+      return Response.json({ revalidated: true, message: 'Recently revalidated; skipped duplicate', now }, { headers: { 'Cache-Control': 'no-store' } });
+    }
+    lastGlobalTriggerAt = now;
   }
 
   try {
