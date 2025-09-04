@@ -259,7 +259,7 @@ export async function GET() {
 
     const payload = await cachedCompute();
     return NextResponse.json(payload, {
-      headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=3600' },
+      headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=3600, must-revalidate' },
     });
   } catch (error: any) {
     return NextResponse.json({ success: false, message: error?.message || 'Unknown error' }, { status: 500 });
