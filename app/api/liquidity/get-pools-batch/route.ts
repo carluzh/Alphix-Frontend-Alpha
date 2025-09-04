@@ -6,7 +6,7 @@ import { unstable_cache } from 'next/cache';
 import { getPoolSubgraphId, getAllPools, getTokenDecimals } from '@/lib/pools-config';
 import { batchGetTokenPrices, calculateTotalUSD } from '@/lib/price-service';
 import { formatUnits } from 'viem';
-import { getCacheKeyWithVersion } from '@/lib/cache-version';
+import { getCacheKeyWithVersionSync } from '@/lib/cache-version';
 
 const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
 
@@ -254,7 +254,7 @@ export async function GET() {
       async () => {
         return await computePoolsBatch();
       },
-      getCacheKeyWithVersion('pools-batch'),
+      getCacheKeyWithVersionSync('pools-batch'),
       { tags: ['pools-batch'], revalidate: 3600 }
     );
 

@@ -1,5 +1,5 @@
 import { revalidateTag } from 'next/cache';
-import { bumpGlobalCacheVersion } from '@/lib/cache-version';
+import { bumpGlobalCacheVersion, getGlobalCacheVersion } from '@/lib/cache-version';
 
 export const runtime = 'nodejs';
 export const preferredRegion = 'auto';
@@ -31,7 +31,10 @@ export async function POST(req: Request) {
 
   try {
     // Bump global cache version to force all subsequent requests to miss cache
-    const newVersion = bumpGlobalCacheVersion();
+    const oldVersion = await getGlobalCacheVersion();
+    const newVersion = await bumpGlobalCacheVersion();
+
+    console.log(`[Revalidate] Cache version changed from ${oldVersion} to ${newVersion}`);
 
     revalidateTag('pools-batch');
     // Optional: wait for subgraph head to reach targetBlock before warming to avoid stale TVL from lagging index
