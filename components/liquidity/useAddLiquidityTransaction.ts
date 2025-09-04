@@ -616,19 +616,24 @@ export function useAddLiquidityTransaction({
         if (accountAddress) {
           invalidateUserPositionsCache(accountAddress);
           invalidateUserPositionIdsCache(accountAddress);
-          // Set hint for newly created position to ensure it's included in cached data
-          try {
-            if (typeof window !== 'undefined') {
-              const hintKey = `recentPositionCreated:${accountAddress.toLowerCase()}`;
-              // Note: We don't have the exact position ID here, but we can set a flag to wait for new positions
-              window.localStorage.setItem(hintKey, JSON.stringify({
-                positionId: null, // Will be detected by checking for new positions in the response
-                timestamp: Date.now(),
-                action: 'create'
-              }));
-            }
-          } catch {}
         }
+      } catch {}
+      // CRITICAL: Invalidate global batch cache after liquidity addition
+      try {
+        fetch('/api/internal/revalidate-pools', { method: 'POST' }).catch(() => {});
+      } catch {}
+      // Set hint for newly created position to ensure it's included in cached data
+      try {
+        if (typeof window !== 'undefined') {
+          const hintKey = `recentPositionCreated:${accountAddress.toLowerCase()}`;
+          // Note: We don't have the exact position ID here, but we can set a flag to wait for new positions
+          window.localStorage.setItem(hintKey, JSON.stringify({
+            positionId: null, // Will be detected by checking for new positions in the response
+            timestamp: Date.now(),
+            action: 'create'
+          }));
+        }
+      } catch {}
       } catch {}
       resetTransactionState();
       onOpenChange(false);

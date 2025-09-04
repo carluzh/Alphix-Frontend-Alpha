@@ -347,6 +347,10 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
       })();
       try { if (accountAddress) prefetchService.requestPositionsRefresh({ owner: accountAddress, reason: 'increase' }); } catch {}
       try { if (accountAddress) invalidateActivityCache(accountAddress); } catch {}
+      // CRITICAL: Invalidate global batch cache after liquidity increase
+      try {
+        fetch('/api/internal/revalidate-pools', { method: 'POST' }).catch(() => {});
+      } catch {}
       try { if (accountAddress) { invalidateUserPositionsCache(accountAddress); invalidateUserPositionIdsCache(accountAddress); } } catch {}
       // Removed hook-level revalidate to avoid duplicates; page handles revalidation after subgraph sync
       setIsIncreasing(false);
