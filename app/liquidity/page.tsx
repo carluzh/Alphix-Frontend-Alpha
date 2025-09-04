@@ -156,7 +156,10 @@ export default function LiquidityPage() {
           }
         } catch {}
 
-        const response = await fetch(`/api/liquidity/get-pools-batch${cacheParams}`, { cache: 'no-store' as any } as any);
+        // Always use fresh version for batch requests to avoid stale cache
+        const versionResponse = await fetch('/api/cache-version', { cache: 'no-store' as any } as any);
+        const versionData = await versionResponse.json();
+        const response = await fetch(versionData.cacheUrl, { cache: 'no-store' as any } as any);
         if (!response.ok) throw new Error(`Batch API failed: ${response.status}`);
         const batchData = await response.json();
         if (!batchData.success) throw new Error(`Batch API error: ${batchData.message}`);
@@ -227,7 +230,10 @@ export default function LiquidityPage() {
               const params = cacheVersion ? `?v=${cacheVersion}` : `?bust=${Date.now()}`;
               console.log("[LiquidityPage] Refetching with params:", params);
               
-              const response = await fetch(`/api/liquidity/get-pools-batch${params}`, { cache: 'no-store' as any } as any);
+              // Use fresh version for refetch to avoid stale cache
+              const versionResponse = await fetch('/api/cache-version', { cache: 'no-store' as any } as any);
+              const versionData = await versionResponse.json();
+              const response = await fetch(versionData.cacheUrl, { cache: 'no-store' as any } as any);
               if (!response.ok) throw new Error(`Batch API failed: ${response.status}`);
               const batchData = await response.json();
               if (!batchData.success) throw new Error(`Batch API error: ${batchData.message}`);

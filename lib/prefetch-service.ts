@@ -74,7 +74,10 @@ class PrefetchService {
     const operation = async () => {
       try {
         console.log(`[Prefetch] Loading pool ${poolId}`);
-        const resp = await fetch(`/api/liquidity/get-pools-batch`, { cache: 'no-store' as any } as any);
+        // Use versioned URL to avoid stale cache
+        const versionResponse = await fetch('/api/cache-version', { cache: 'no-store' as any } as any);
+        const versionData = await versionResponse.json();
+        const resp = await fetch(versionData.cacheUrl, { cache: 'no-store' as any } as any);
         if (resp.ok) {
           const json = await resp.json();
           const match = Array.isArray(json?.pools) ? json.pools.find((p: any) => String(p?.poolId || '').toLowerCase() === String(poolId).toLowerCase()) : null;
@@ -109,7 +112,10 @@ class PrefetchService {
       try {
         console.log(`[Prefetch] Batch loading ${uncachedPools.length} pools`);
         
-        const response = await fetch(`/api/liquidity/get-pools-batch`, { cache: 'no-store' as any } as any);
+        // Use versioned URL to avoid stale cache
+        const versionResponse = await fetch('/api/cache-version', { cache: 'no-store' as any } as any);
+        const versionData = await versionResponse.json();
+        const response = await fetch(versionData.cacheUrl, { cache: 'no-store' as any } as any);
 
         if (response.ok) {
           const data = await response.json();

@@ -1,5 +1,6 @@
 import { revalidateTag } from 'next/cache';
-import { bumpGlobalCacheVersion, getGlobalCacheVersion } from '@/lib/cache-version';
+// Simple global version counter that resets on cold start but works within request lifecycle
+let currentVersion = Date.now();
 
 export const runtime = 'nodejs';
 export const preferredRegion = 'auto';
@@ -30,11 +31,11 @@ export async function POST(req: Request) {
   }
 
   try {
-    // Bump global cache version to force all subsequent requests to miss cache
-    const oldVersion = await getGlobalCacheVersion();
-    const newVersion = await bumpGlobalCacheVersion();
+    // Bump version to force cache miss on subsequent requests
+    const oldVersion = currentVersion;
+    currentVersion = Date.now();
 
-    console.log(`[Revalidate] Cache version changed from ${oldVersion} to ${newVersion}`);
+    console.log(`[Revalidate] Cache version changed from ${oldVersion} to ${currentVersion}`);
 
     revalidateTag('pools-batch');
     // Optional: wait for subgraph head to reach targetBlock before warming to avoid stale TVL from lagging index
@@ -75,7 +76,8 @@ export async function POST(req: Request) {
     return Response.json({
       revalidated: true,
       tag: 'pools-batch',
-      version: newVersion,
+      version: currentVersion,
+      cacheUrl: `/api/liquidity/get-pools-batch?v=${currentVersion}`,
       now: Date.now()
     }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (e: any) {

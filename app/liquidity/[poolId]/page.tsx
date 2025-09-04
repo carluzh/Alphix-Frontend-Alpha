@@ -559,7 +559,10 @@ export default function PoolDetailPage() {
     try {
       // Use existing server batch endpoint (server-only SUBGRAPH_URL; 10m CDN TTL)
       const attempt = async () => {
-        const resp = await fetch(`/api/liquidity/get-pools-batch${force ? `?bust=${Date.now()}` : ''}`, { cache: 'no-store' as any } as any);
+        // Use versioned URL to avoid stale cache
+        const versionResponse = await fetch('/api/cache-version', { cache: 'no-store' as any } as any);
+        const versionData = await versionResponse.json();
+        const resp = await fetch(versionData.cacheUrl, { cache: 'no-store' as any } as any);
         if (!resp.ok) return null;
         const data = await resp.json();
         if (!data?.success || !Array.isArray(data?.pools)) return null;
@@ -1175,7 +1178,10 @@ export default function PoolDetailPage() {
         // Get current stats from batch API to ensure today's point is present
         let tvlFromHeader = 0;
         try {
-          const resp = await fetch(`/api/liquidity/get-pools-batch${force ? `?bust=${Date.now()}` : ''}`, { cache: 'no-store' as any } as any);
+          // Use versioned URL to avoid stale cache
+          const versionResponse = await fetch('/api/cache-version', { cache: 'no-store' as any } as any);
+          const versionData = await versionResponse.json();
+          const resp = await fetch(versionData.cacheUrl, { cache: 'no-store' as any } as any);
           if (resp.ok) {
             const data = await resp.json();
             const poolIdLc = String(subgraphIdForHist || '').toLowerCase();
@@ -1257,8 +1263,11 @@ export default function PoolDetailPage() {
           params = `?bust=${Date.now()}`;
         }
       }
-      
-      const resp = await fetch(`/api/liquidity/get-pools-batch${params}`, { cache: 'no-store' as any } as any);
+
+      // Use versioned URL to avoid stale cache
+      const versionResponse = await fetch('/api/cache-version', { cache: 'no-store' as any } as any);
+      const versionData = await versionResponse.json();
+      const resp = await fetch(versionData.cacheUrl, { cache: 'no-store' as any } as any);
       if (resp.ok) {
         const data = await resp.json();
         const poolIdLc = String(apiPoolIdToUse || '').toLowerCase();
@@ -1404,7 +1413,10 @@ export default function PoolDetailPage() {
       const basePoolInfoTmp = getPoolConfiguration(poolId);
       const apiPoolIdToUseLocal = basePoolInfoTmp?.subgraphId || '';
       if (!apiPoolIdToUseLocal) return null;
-      const resp = await fetch(`/api/liquidity/get-pools-batch${force ? `?bust=${Date.now()}` : ''}`, { cache: 'no-store' as any } as any);
+      // Use versioned URL to avoid stale cache
+      const versionResponse = await fetch('/api/cache-version', { cache: 'no-store' as any } as any);
+      const versionData = await versionResponse.json();
+      const resp = await fetch(versionData.cacheUrl, { cache: 'no-store' as any } as any);
       if (!resp.ok) return null;
       const data = await resp.json();
       const poolIdLc = String(apiPoolIdToUseLocal || '').toLowerCase();

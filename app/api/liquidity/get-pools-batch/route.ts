@@ -248,13 +248,19 @@ async function computePoolsBatch(): Promise<any> {
   return payload;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const url = new URL(request.url);
+    const version = url.searchParams.get('v') || 'default';
+
+    console.log(`[Batch API] Request with version: ${version}, URL: ${url.pathname}${url.search}`);
+
     const cachedCompute = unstable_cache(
       async () => {
+        console.log(`[Batch API] Computing fresh data for version: ${version}`);
         return await computePoolsBatch();
       },
-      getCacheKeyWithVersionSync('pools-batch'),
+      [`pools-batch-${version}`],
       { tags: ['pools-batch'], revalidate: 3600 }
     );
 
