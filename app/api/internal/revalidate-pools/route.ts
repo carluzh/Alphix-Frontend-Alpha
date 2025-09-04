@@ -25,6 +25,15 @@ export async function POST(req: Request) {
 
   try {
     revalidateTag('pools-batch');
+    // Proactively warm the cache so the next user gets fresh data
+    try {
+      const proto = req.headers.get('x-forwarded-proto') || 'https';
+      const host = req.headers.get('x-forwarded-host') || req.headers.get('host') || '';
+      if (host) {
+        const warmUrl = `${proto}://${host}/api/liquidity/get-pools-batch`;
+        await fetch(warmUrl, { method: 'GET' });
+      }
+    } catch {}
     return Response.json({ revalidated: true, tag: 'pools-batch', now: Date.now() }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (e: any) {
     return Response.json({ message: e?.message || 'Revalidation failed' }, { status: 500, headers: { 'Cache-Control': 'no-store' } });
