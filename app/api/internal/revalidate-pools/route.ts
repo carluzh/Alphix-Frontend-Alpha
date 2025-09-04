@@ -31,10 +31,7 @@ export async function POST(req: Request) {
 
   try {
     // Bump global version to force cache miss on subsequent requests
-    const oldVersion = getGlobalVersion();
-    const newVersion = bumpGlobalVersion();
-
-    console.log(`[Revalidate] Version changed from ${oldVersion} to ${newVersion}`);
+    bumpGlobalVersion();
 
     revalidateTag('pools-batch');
 
@@ -79,9 +76,6 @@ export async function POST(req: Request) {
     return Response.json({
       revalidated: true,
       tag: 'pools-batch',
-      version: newVersion,
-      cacheUrl: `/api/liquidity/get-pools-batch?v=${newVersion}`,
-      shouldInvalidateClientCache: true, // Client should set localStorage invalidation hint
       now: Date.now()
     }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (e: any) {

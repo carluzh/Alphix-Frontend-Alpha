@@ -19,7 +19,6 @@ export function getGlobalVersion(): number {
   if (now - lastVersionUpdate > VERSION_TTL) {
     globalVersion = now;
     lastVersionUpdate = now;
-    console.log(`[Version] Auto-refreshed to: ${globalVersion}`);
     // Clear client cache when version changes
     batchDataCache = null;
   }
@@ -29,7 +28,6 @@ export function getGlobalVersion(): number {
 export function bumpGlobalVersion(): number {
   globalVersion = Date.now();
   lastVersionUpdate = Date.now();
-  console.log(`[Version] Bumped to: ${globalVersion}`);
   // Clear client cache when version changes
   batchDataCache = null;
   return globalVersion;
@@ -49,12 +47,10 @@ export function getCachedBatchData(): any | null {
 
   // Check if cache is expired or version changed
   if (age > BATCH_CACHE_TTL || batchDataCache.version !== getGlobalVersion()) {
-    console.log(`[BatchCache] Cache expired (age: ${Math.round(age/1000)}s)`);
     batchDataCache = null;
     return null;
   }
 
-  console.log(`[BatchCache] Hit (age: ${Math.round(age/1000)}s)`);
   return batchDataCache.data;
 }
 
@@ -64,12 +60,10 @@ export function setCachedBatchData(data: any): void {
     timestamp: Date.now(),
     version: getGlobalVersion()
   };
-  console.log(`[BatchCache] Set`);
 }
 
 export function clearBatchDataCache(): void {
   batchDataCache = null;
-  console.log(`[BatchCache] Cleared`);
 }
 
 // For debugging

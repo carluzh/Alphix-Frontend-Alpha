@@ -260,11 +260,8 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const version = url.searchParams.get('v') || 'default';
 
-    console.log(`[Batch API] Request with version: ${version}, URL: ${url.pathname}${url.search}`);
-
     const cachedCompute = unstable_cache(
       async () => {
-        console.log(`[Batch API] Computing fresh data for version: ${version}`);
         return await computePoolsBatch();
       },
       [`pools-batch-${version}`],
