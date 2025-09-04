@@ -6,6 +6,7 @@ import { unstable_cache } from 'next/cache';
 import { getPoolSubgraphId, getAllPools, getTokenDecimals } from '@/lib/pools-config';
 import { batchGetTokenPrices, calculateTotalUSD } from '@/lib/price-service';
 import { formatUnits } from 'viem';
+import { getCacheKeyWithVersion } from '@/lib/cache-version';
 
 const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
 
@@ -253,13 +254,13 @@ export async function GET() {
       async () => {
         return await computePoolsBatch();
       },
-      ['pools-batch-key'],
+      getCacheKeyWithVersion('pools-batch'),
       { tags: ['pools-batch'], revalidate: 3600 }
     );
 
     const payload = await cachedCompute();
     return NextResponse.json(payload, {
-      headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=3600, must-revalidate' },
+      headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=3600' },
     });
   } catch (error: any) {
     return NextResponse.json({ success: false, message: error?.message || 'Unknown error' }, { status: 500 });

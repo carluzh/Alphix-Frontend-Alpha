@@ -1,4 +1,5 @@
 import { revalidateTag } from 'next/cache';
+import { bumpGlobalCacheVersion } from '@/lib/cache-version';
 
 export const runtime = 'nodejs';
 export const preferredRegion = 'auto';
@@ -29,6 +30,9 @@ export async function POST(req: Request) {
   }
 
   try {
+    // Bump global cache version to force all subsequent requests to miss cache
+    const newVersion = bumpGlobalCacheVersion();
+
     revalidateTag('pools-batch');
     // Optional: wait for subgraph head to reach targetBlock before warming to avoid stale TVL from lagging index
     try {
@@ -65,7 +69,12 @@ export async function POST(req: Request) {
         await fetch(warmUrl, { method: 'GET', headers: { 'cache-control': 'no-cache' } as any } as any);
       }
     } catch {}
-    return Response.json({ revalidated: true, tag: 'pools-batch', now: Date.now() }, { headers: { 'Cache-Control': 'no-store' } });
+    return Response.json({
+      revalidated: true,
+      tag: 'pools-batch',
+      version: newVersion,
+      now: Date.now()
+    }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (e: any) {
     return Response.json({ message: e?.message || 'Revalidation failed' }, { status: 500, headers: { 'Cache-Control': 'no-store' } });
   }
