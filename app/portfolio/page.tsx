@@ -15,7 +15,6 @@ import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from "@/lib/abis/stat
 // position_manager_abi is no longer needed here; hooks encapsulate calldata
 import { parseAbi, type Abi, type Hex, getAddress } from "viem";
 import { ethers } from "ethers";
-import { X } from "lucide-react";
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract } from "wagmi";
 import { useUserPositions, useActivity, useAllPrices, useUncollectedFeesBatch } from "@/components/data/hooks";
 import { prefetchService } from "@/lib/prefetch-service";
@@ -23,7 +22,7 @@ import { baseSepolia } from "@/lib/wagmiConfig";
 import { toast } from "sonner";
 import { FAUCET_CONTRACT_ADDRESS, faucetContractAbi } from "@/pages/api/misc/faucet";
 import poolsConfig from "@/config/pools.json";
-import { ChevronUpIcon, ChevronDownIcon, ChevronsUpDownIcon, ChevronRight, OctagonX, OctagonAlert, EllipsisVertical, PlusIcon, RefreshCwIcon, BadgeCheck, Menu, ArrowUpRight, ArrowDownRight } from "lucide-react";
+import { ChevronUpIcon, ChevronDownIcon, ChevronsUpDownIcon, ChevronRight, OctagonX, OctagonAlert, EllipsisVertical, PlusIcon, RefreshCwIcon, BadgeCheck, Menu, ArrowUpRight, ArrowDownRight, X } from "lucide-react";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { PortfolioTickBar } from "@/components/portfolio/PortfolioTickBar";
@@ -35,7 +34,6 @@ import { AddLiquidityModal } from "@/components/liquidity/AddLiquidityModal";
 import { WithdrawLiquidityModal } from "@/components/liquidity/WithdrawLiquidityModal";
 
 import { PositionCard } from "@/components/liquidity/PositionCard";
-import { waitForSubgraphBlock } from '@/lib/client-cache';
 import { batchGetTokenPrices } from '@/lib/price-service';
 
 // Loading phases for skeleton system
@@ -308,7 +306,7 @@ interface PortfolioData {
 
 // Removed legacy composite id parsing
 
-import { loadUserPositionIds, derivePositionsFromIds, getPoolFeeBps, loadUncollectedFeesBatch, loadUncollectedFees } from '@/lib/client-cache';
+import { loadUserPositionIds, derivePositionsFromIds, getPoolFeeBps, loadUncollectedFeesBatch, loadUncollectedFees, waitForSubgraphBlock } from '@/lib/client-cache';
 
 // Removed: getUserPositionsOnchain - now using centralized useUserPositions hook
 
@@ -699,6 +697,10 @@ export default function PortfolioPage() {
   } = usePortfolio(positionsRefresh, userPositionsData, pricesData, isLoadingUserPositions);
 
   const modifiedPositionPoolInfoRef = useRef<{ poolId: string; subgraphId: string } | null>(null);
+  const pendingActionRef = useRef<null | { type: 'increase' | 'decrease' | 'withdraw' | 'collect' }>(null);
+  const lastRevalidationRef = useRef<number>(0);
+  const handledIncreaseHashRef = useRef<string | null>(null);
+  const handledDecreaseHashRef = useRef<string | null>(null);
 
   const isLoading = !readiness.core;
   const { phase, showSkeletonFor } = useLoadPhases(readiness);
@@ -1030,6 +1032,81 @@ export default function PortfolioPage() {
   };
 
 
+  // Enhanced refetching functions (based on pool page logic)
+  const refreshSinglePosition = useCallback(async (positionId: string) => {
+    if (!accountAddress) return;
+
+    try {
+      // Fetch updated data for just this position
+      const updatedPositions = await derivePositionsFromIds(accountAddress, [positionId]);
+      const updatedPosition = updatedPositions[0];
+      
+      if (updatedPosition) {
+        // Update only this position in the array, keeping others untouched
+        // Preserve the original ageSeconds if the refreshed data doesn't have it or it's 0
+        setActivePositions(prev => {
+          const preservedAgeSeconds = updatedPosition.ageSeconds && updatedPosition.ageSeconds > 0 
+            ? updatedPosition.ageSeconds 
+            : prev.find(p => p.positionId === positionId)?.ageSeconds;
+            
+          return prev.map(p => 
+            p.positionId === positionId 
+              ? { ...updatedPosition, 
+                  isOptimisticallyUpdating: undefined,
+                  ageSeconds: preservedAgeSeconds || updatedPosition.ageSeconds
+                }
+              : p
+          );
+        });
+      } else {
+        // If position not found, just clear loading state
+        setActivePositions(prev => prev.map(p => 
+          p.positionId === positionId
+            ? { ...p, isOptimisticallyUpdating: undefined }
+            : p
+        ));
+      }
+    } catch (error) {
+      console.error('[refreshSinglePosition] failed:', error);
+      // Clear loading state on error
+      setActivePositions(prev => prev.map(p => 
+        p.positionId === positionId
+          ? { ...p, isOptimisticallyUpdating: undefined }
+          : p
+      ));
+    }
+  }, [accountAddress]);
+
+  const refreshAfterMutation = useCallback(async (info?: { txHash?: `0x${string}`; blockNumber?: bigint }) => {
+    if (!accountAddress) return;
+
+    try {
+      const targetBlock = info?.blockNumber ?? await publicClient.getBlockNumber();
+      await waitForSubgraphBlock(Number(targetBlock), { timeoutMs: 30000, minWaitMs: 1000, maxIntervalMs: 2000 });
+
+      // Trigger server revalidation
+      try { 
+        const revalidateResp = await fetch('/api/internal/revalidate-pools', { method: 'POST' });
+        const revalidateData = await revalidateResp.json();
+        console.log('[Portfolio refreshAfterMutation] Server cache revalidated:', revalidateData);
+      } catch (error) {
+        console.error('[Portfolio refreshAfterMutation] Failed to revalidate server cache:', error);
+      }
+
+      // Refresh positions data
+      bumpPositionsRefresh();
+      
+      // Clear any optimistic loading states
+      setActivePositions(prev => prev.map(p => ({ ...p, isOptimisticallyUpdating: undefined })));
+      
+    } catch (error) {
+      console.error('[Portfolio refreshAfterMutation] failed:', error);
+      
+      // Clear optimistic states on error too
+      setActivePositions(prev => prev.map(p => ({ ...p, isOptimisticallyUpdating: undefined })));
+    }
+  }, [accountAddress]);
+
   // After-confirmation refresh using the same centralized prefetch hook as pool page
   const bumpPositionsRefresh = useCallback(() => { // Refresh positions after add/withdraw
     try {
@@ -1047,9 +1124,113 @@ export default function PortfolioPage() {
     return unsubscribe;
   }, [accountAddress]);
 
-  // Liquidity hooks
+  // Enhanced liquidity hooks with optimistic updates and proper error handling
+  const onLiquidityIncreasedCallback = useCallback(async (info?: { txHash?: `0x${string}`; blockNumber?: bigint, increaseAmounts?: { amount0: string; amount1: string }, positionId?: string }) => {
+    console.log('[Portfolio] onLiquidityIncreasedCallback called:', { 
+      pendingActionType: pendingActionRef.current?.type, 
+      txHash: info?.txHash?.slice(0, 10) + '...',
+      hasIncreaseAmounts: !!info?.increaseAmounts 
+    });
+    
+    // Require valid hash to proceed and prevent duplicates
+    if (!info?.txHash) {
+      console.log('[Portfolio] Skipping - missing txHash');
+      return;
+    }
+    if (handledIncreaseHashRef.current === info.txHash) {
+      console.log('[Portfolio] Skipping - already handled this txHash');
+      return;
+    }
+    handledIncreaseHashRef.current = info.txHash;
+
+    if (pendingActionRef.current?.type !== 'increase') {
+      console.log('[Portfolio] Skipping - not increase type');
+      return;
+    }
+    const now = Date.now();
+    if (now - lastRevalidationRef.current < 15000) {
+      console.log('[Portfolio] Skipping - cooldown active');
+      return;
+    }
+    lastRevalidationRef.current = now;
+
+    // IMMEDIATE OPTIMISTIC UPDATES (happen with toast)
+    const targetPositionId = info?.positionId || positionToModify?.positionId;
+    if (targetPositionId && info?.increaseAmounts) {
+      // If we have the exact amounts, update optimistically with real values
+      setActivePositions(prev => prev.map(p => {
+        if (p.positionId === targetPositionId) {
+          const currentAmount0 = parseFloat(p.token0.amount || '0');
+          const currentAmount1 = parseFloat(p.token1.amount || '0');
+          const addedAmount0 = parseFloat(info.increaseAmounts!.amount0 || '0');
+          const addedAmount1 = parseFloat(info.increaseAmounts!.amount1 || '0');
+          
+          return { 
+            ...p, 
+            token0: { ...p.token0, amount: (currentAmount0 + addedAmount0).toString() },
+            token1: { ...p.token1, amount: (currentAmount1 + addedAmount1).toString() },
+            isOptimisticallyUpdating: true 
+          };
+        }
+        return p;
+      }));
+    } else if (targetPositionId) {
+      // Fallback to just showing loading state
+      setActivePositions(prev => prev.map(p => 
+        p.positionId === targetPositionId 
+          ? { ...p, isOptimisticallyUpdating: true } 
+          : p
+      ));
+      
+      // Safety timeout to clear loading state if refresh fails
+      setTimeout(() => {
+        setActivePositions(prev => prev.map(p => 
+          p.positionId === targetPositionId 
+            ? { ...p, isOptimisticallyUpdating: undefined } 
+            : p
+        ));
+      }, 30000); // 30 second timeout
+    }
+
+    // Set pool info for stats refresh
+    if (positionToModify?.poolId) {
+      const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === positionToModify.poolId.toLowerCase());
+      if (poolConfig) {
+        modifiedPositionPoolInfoRef.current = { poolId: poolConfig.id, subgraphId: positionToModify.poolId };
+      }
+    }
+
+    // Show toast immediately and close modal
+    console.log('[Portfolio] Transaction successful, clearing pendingActionRef');
+    toast.success("Position Increased", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
+    setShowIncreaseModal(false);
+    pendingActionRef.current = null;
+    
+    // Background refetch to get updated position data
+    if (targetPositionId) {
+      refreshSinglePosition(targetPositionId).catch(console.error);
+    } else {
+      // For new positions or when we don't have the position ID, do a more targeted refresh
+      bumpPositionsRefresh();
+    }
+
+    // Trigger pool stats refresh for the affected pool
+    if (modifiedPositionPoolInfoRef.current) {
+      const { poolId, subgraphId } = modifiedPositionPoolInfoRef.current;
+      try { 
+        fetch('/api/internal/revalidate-pools', { method: 'POST' })
+          .then(resp => resp.json())
+          .then(data => console.log('[onLiquidityIncreasedCallback] Pool stats refreshed:', data))
+          .catch(error => console.warn('[onLiquidityIncreasedCallback] Failed to refresh pool stats:', error));
+      } catch (error) {
+        console.warn('[onLiquidityIncreasedCallback] Failed to refresh pool stats:', error);
+      }
+      modifiedPositionPoolInfoRef.current = null;
+    }
+  }, [refreshSinglePosition, refreshAfterMutation, positionToModify]);
+
+  // Legacy callback for compatibility
   const onLiquidityIncreased = useCallback(async () => {
-    toast.success('Position Increased', { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
     if (lastTxBlockRef.current) {
       await waitForSubgraphBlock(Number(lastTxBlockRef.current));
       lastTxBlockRef.current = null;
@@ -1071,30 +1252,158 @@ export default function PortfolioPage() {
     bumpPositionsRefresh();
     setShowIncreaseModal(false);
   }, [bumpPositionsRefresh]);
-  const onLiquidityDecreased = useCallback(async () => {
-    const wasFull = !!lastDecreaseWasFullRef.current;
-    toast.success(wasFull ? 'Position Closed' : 'Position Decreased', { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
-    // Only bump refresh (and thus reload positions) when a full burn occurred
-    if (wasFull) {
-       if (lastTxBlockRef.current) {
-        await waitForSubgraphBlock(Number(lastTxBlockRef.current));
-        lastTxBlockRef.current = null;
-      }
-      bumpPositionsRefresh();
+  const onLiquidityDecreasedCallback = useCallback(async (info?: { txHash?: `0x${string}`; blockNumber?: bigint; isFullBurn?: boolean }) => {
+    console.log('[Portfolio] onLiquidityDecreasedCallback called:', {
+      pendingActionType: pendingActionRef.current?.type,
+      txHash: info?.txHash?.slice(0, 10) + '...',
+      isFullBurn: info?.isFullBurn,
+      positionToWithdraw: positionToWithdraw?.positionId
+    });
+    
+    // Require a valid tx hash and dedupe by hash to support rapid successive burns
+    if (!info?.txHash) {
+      console.log('[Portfolio] Skipping - missing txHash');
+      return;
     }
-    lastDecreaseWasFullRef.current = false;
+    if (handledDecreaseHashRef.current === info.txHash) {
+      console.log('[Portfolio] Skipping - already handled this txHash');
+      return;
+    }
+    handledDecreaseHashRef.current = info.txHash;
+
+    if (pendingActionRef.current?.type !== 'decrease' && pendingActionRef.current?.type !== 'withdraw') {
+      console.log('[Portfolio] Skipping - not withdraw/decrease type');
+      return;
+    }
+
+    const closing = info?.isFullBurn ?? !!lastDecreaseWasFullRef.current;
+    const targetPositionId = positionToWithdraw?.positionId;
+    
+    // IMMEDIATE OPTIMISTIC UPDATES (happen with toast)
+    if (targetPositionId) {
+      if (closing) {
+        // For full burns: immediately remove position from UI
+        setActivePositions(prev => prev.filter(p => p.positionId !== targetPositionId));
+      } else {
+        // For partial withdrawals: show loading state on the position
+        setActivePositions(prev => prev.map(p => 
+          p.positionId === targetPositionId 
+            ? { ...p, isOptimisticallyUpdating: true } 
+            : p
+        ));
+        
+        // Safety timeout to clear loading state if refresh fails
+        setTimeout(() => {
+          setActivePositions(prev => prev.map(p => 
+            p.positionId === targetPositionId 
+              ? { ...p, isOptimisticallyUpdating: undefined } 
+              : p
+          ));
+        }, 30000); // 30 second timeout
+      }
+    }
+
+    // Set pool info for stats refresh
+    if (positionToWithdraw?.poolId) {
+      const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === positionToWithdraw.poolId.toLowerCase());
+      if (poolConfig) {
+        modifiedPositionPoolInfoRef.current = { poolId: poolConfig.id, subgraphId: positionToWithdraw.poolId };
+      }
+    }
+    
+    toast.success(closing ? "Position Closed" : "Position Decreased", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
     setShowWithdrawModal(false);
-  }, [bumpPositionsRefresh]);
-  const { increaseLiquidity, isLoading: isIncreasingLiquidity } = useIncreaseLiquidity({ onLiquidityIncreased });
+    setPositionToWithdraw(null);
+    pendingActionRef.current = null;
+
+    // Background refetch to correct any optimistic errors (guard with 15s cooldown)
+    const now = Date.now();
+    if (now - lastRevalidationRef.current >= 15000) {
+      lastRevalidationRef.current = now;
+      if (targetPositionId) {
+        if (closing) {
+          // For full burns, remove optimistically then just bump refresh
+          bumpPositionsRefresh();
+        } else {
+          // For partial decreases, refresh just this position
+          refreshSinglePosition(targetPositionId).catch(console.error);
+        }
+      } else {
+        // Fallback to full refresh if no position ID
+        refreshAfterMutation(info).catch(console.error);
+      }
+    }
+
+    // Trigger pool stats refresh for the affected pool
+    if (modifiedPositionPoolInfoRef.current) {
+      const { poolId, subgraphId } = modifiedPositionPoolInfoRef.current;
+      try { 
+        fetch('/api/internal/revalidate-pools', { method: 'POST' })
+          .then(resp => resp.json())
+          .then(data => console.log('[onLiquidityDecreasedCallback] Pool stats refreshed:', data))
+          .catch(error => console.warn('[onLiquidityDecreasedCallback] Failed to refresh pool stats:', error));
+      } catch (error) {
+        console.warn('[onLiquidityDecreasedCallback] Failed to refresh pool stats:', error);
+      }
+      modifiedPositionPoolInfoRef.current = null;
+    }
+  }, [refreshAfterMutation, refreshSinglePosition, bumpPositionsRefresh, positionToWithdraw]);
+
+  // Legacy callback for compatibility - DISABLED to prevent position folding
+  const onLiquidityDecreased = useCallback(async () => {
+    // This callback is disabled to prevent position folding
+    // All logic is handled by onLiquidityDecreasedCallback now
+    console.log('[Portfolio] Legacy onLiquidityDecreased called - doing nothing to prevent folding');
+  }, []);
+  // Enhanced liquidity hooks with proper callbacks
+  const { increaseLiquidity, isLoading: isIncreasingLiquidity } = useIncreaseLiquidity({ 
+    onLiquidityIncreased: onLiquidityIncreasedCallback 
+  });
+  
   const onFeesCollected = useCallback(async () => {
     toast.success('Fees Collected', { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
     if (lastTxBlockRef.current) {
       await waitForSubgraphBlock(Number(lastTxBlockRef.current));
       lastTxBlockRef.current = null;
     }
-    bumpPositionsRefresh();
-  }, [bumpPositionsRefresh]);
-  const { decreaseLiquidity, claimFees, isLoading: isDecreasingLiquidity } = useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected });
+    // Use targeted refresh instead of bumpPositionsRefresh to avoid folding
+    // bumpPositionsRefresh();
+  }, []);
+  
+  const { decreaseLiquidity, claimFees, isLoading: isDecreasingLiquidity } = useDecreaseLiquidity({ 
+    onLiquidityDecreased: onLiquidityDecreasedCallback, 
+    onFeesCollected 
+  });
+
+  // Enhanced claimFees with optimistic updates
+  const enhancedClaimFees = useCallback(async (positionId: string) => {
+    try {
+      pendingActionRef.current = { type: 'collect' };
+      
+      // Show optimistic loading state
+      setActivePositions(prev => prev.map(p => 
+        p.positionId === positionId 
+          ? { ...p, isOptimisticallyUpdating: true } 
+          : p
+      ));
+      
+      await claimFees(positionId);
+    } catch (error: any) {
+      toast.error('Collect failed', { 
+        icon: <OctagonX className="h-4 w-4 text-red-500" />, 
+        description: error?.message 
+      });
+      
+      // Clear loading state on error
+      setActivePositions(prev => prev.map(p => 
+        p.positionId === positionId 
+          ? { ...p, isOptimisticallyUpdating: undefined } 
+          : p
+      ));
+      
+      pendingActionRef.current = null;
+    }
+  }, [claimFees]);
 
   const isCompoundInProgressRef = useRef(false);
 
@@ -1501,13 +1810,17 @@ export default function PortfolioPage() {
   };
 
 
-  // Wire up menu actions
+  // Enhanced menu actions with pending action tracking
   const openAddLiquidity = useCallback((pos: any) => {
+    console.log('[Portfolio] Opening add liquidity modal for position:', pos.positionId);
     setPositionToModify(pos);
+    pendingActionRef.current = { type: 'increase' };
     setShowIncreaseModal(true);
   }, []);
+  
   const openWithdraw = useCallback((pos: any) => {
     setPositionToWithdraw(pos);
+    pendingActionRef.current = { type: 'withdraw' };
     setShowWithdrawModal(true);
   }, []);
 
@@ -2916,7 +3229,7 @@ export default function PortfolioPage() {
                                         formatAgeShort={formatAgeShort}
                                         openWithdraw={openWithdraw}
                                         openAddLiquidity={openAddLiquidity}
-                                        claimFees={claimFees}
+                                        claimFees={enhancedClaimFees}
                                         toast={toast}
                                         openPositionMenuKey={openPositionMenuKey}
                                         setOpenPositionMenuKey={setOpenPositionMenuKey}
@@ -2925,6 +3238,9 @@ export default function PortfolioPage() {
                                         onClick={() => navigateToPoolBySubgraphId(position.poolId)}
                                         isLoadingPrices={!readiness.prices}
                                         isLoadingPoolStates={isLoadingPoolStates}
+                                        // New props for ascending range logic
+                                        currentPrice={poolDataByPoolId[poolKey]?.price ? String(poolDataByPoolId[poolKey].price) : null}
+                                        currentPoolTick={typeof poolDataByPoolId[poolKey]?.tick === 'number' ? poolDataByPoolId[poolKey].tick : null}
                                         // Prefetch fees for FeesCell via centralized batch map
                                         // Note: PositionCard doesn't accept these props directly; FeesCell will accept via spread below
                                       />
@@ -3405,7 +3721,8 @@ export default function PortfolioPage() {
           isOpen={showIncreaseModal}
           onOpenChange={setShowIncreaseModal}
           onLiquidityAdded={() => {
-            // Handle post-addition logic for portfolio page
+            // This will only be called for new positions (when no positionToModify)
+            console.log('[Portfolio] Modal onLiquidityAdded called for new position');
             const poolSubgraphId = positionToModify?.poolId;
             if (poolSubgraphId) {
                 const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === poolSubgraphId.toLowerCase());
@@ -3413,10 +3730,12 @@ export default function PortfolioPage() {
                   modifiedPositionPoolInfoRef.current = { poolId: poolConfig.id, subgraphId: poolSubgraphId };
                 }
             }
-                publicClient.getBlockNumber().then(block => lastTxBlockRef.current = block);
+            publicClient.getBlockNumber().then(block => lastTxBlockRef.current = block);
           }}
           positionToModify={positionToModify}
           feesForIncrease={feesForIncrease}
+          increaseLiquidity={increaseLiquidity}
+          isIncreasingLiquidity={isIncreasingLiquidity}
           sdkMinTick={-887272}
           sdkMaxTick={887272}
           defaultTickSpacing={60}
@@ -3428,7 +3747,11 @@ export default function PortfolioPage() {
           onOpenChange={setShowWithdrawModal}
           position={positionToWithdraw}
           feesForWithdraw={feesForWithdraw}
+          decreaseLiquidity={decreaseLiquidity}
+          isWorking={isDecreasingLiquidity}
           onLiquidityWithdrawn={() => {
+            // This will only be called for internal transactions (fallback)
+            console.log('[Portfolio] Modal onLiquidityWithdrawn called (fallback)');
             const poolSubgraphId = positionToWithdraw?.poolId;
             if (poolSubgraphId) {
                 const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === poolSubgraphId.toLowerCase());
@@ -3436,7 +3759,7 @@ export default function PortfolioPage() {
                   modifiedPositionPoolInfoRef.current = { poolId: poolConfig.id, subgraphId: poolSubgraphId };
                 }
             }
-                publicClient.getBlockNumber().then(block => lastTxBlockRef.current = block);
+            publicClient.getBlockNumber().then(block => lastTxBlockRef.current = block);
           }}
         />
 

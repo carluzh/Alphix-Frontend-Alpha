@@ -7,6 +7,35 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
+// Format token amounts to max 9 decimals with ... truncation
+export function formatTokenAmount(amount: string | number, maxDecimals: number = 9): string {
+  if (!amount || amount === '0' || amount === 0) return '0';
+  
+  const numAmount = typeof amount === 'string' ? parseFloat(amount) : amount;
+  if (!Number.isFinite(numAmount)) return '0';
+  
+  // Convert to string to work with decimal places
+  const amountStr = numAmount.toString();
+  
+  // If it's scientific notation, convert to regular decimal
+  if (amountStr.includes('e')) {
+    const formatted = numAmount.toFixed(maxDecimals);
+    return formatted;
+  }
+  
+  // Split by decimal point
+  const [integerPart, decimalPart = ''] = amountStr.split('.');
+  
+  // If no decimal part or decimal part is within limit, return as is
+  if (!decimalPart || decimalPart.length <= maxDecimals) {
+    return amountStr;
+  }
+  
+  // Truncate decimal part and add ellipsis
+  const truncatedDecimal = decimalPart.substring(0, maxDecimals);
+  return `${integerPart}.${truncatedDecimal}...`;
+}
+
 export function shortenAddress(address: string, chars = 4): string {
   if (!address) return "";
   const parsed = getAddress(address);

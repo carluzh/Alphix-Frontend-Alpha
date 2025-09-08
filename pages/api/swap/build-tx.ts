@@ -31,10 +31,13 @@ import {
     getPoolConfigForTokens,
     createTokenSDK,
     createPoolKeyFromConfig,
+    createCanonicalPoolKey,
 } from '../../../lib/pools-config';
 import { UniversalRouterAbi, TX_DEADLINE_SECONDS } from '../../../lib/swap-constants';
-import { getUniversalRouterAddress } from '../../../lib/pools-config';
+import { getUniversalRouterAddress, getStateViewAddress } from '../../../lib/pools-config';
 import { findBestRoute, SwapRoute, routeToString } from '../../../lib/routing-engine';
+import { STATE_VIEW_ABI } from '../../../lib/abis/state_view_abi';
+import { ethers } from 'ethers';
 
 // Define MaxUint160 here as well
 const MaxUint160 = BigInt('0xffffffffffffffffffffffffffffffffffffffff');
@@ -126,6 +129,37 @@ export function encodeMultihopExactInPath(
   
   return pathKeys
 }
+
+export function encodeMultihopExactOutPath(
+  poolKeys: PoolKey[],
+  currencyOut: string
+): PathKeyGuide[] {
+  const pathKeys: PathKeyGuide[] = []
+  let currentCurrencyOut = currencyOut
+  
+  // For ExactOut, we process pools in reverse order (like V3)
+  for (let i = poolKeys.length - 1; i >= 0; i--) {
+    // Determine the input currency for this hop (reverse direction)
+    const currencyIn = currentCurrencyOut === poolKeys[i].currency0
+      ? poolKeys[i].currency1
+      : poolKeys[i].currency0
+    
+    // Create path key for this hop
+    const pathKey: PathKeyGuide = {
+      intermediateCurrency: currencyIn,
+      fee: poolKeys[i].fee,
+      tickSpacing: poolKeys[i].tickSpacing,
+      hooks: poolKeys[i].hooks,
+      hookData: '0x'
+    }
+    
+    pathKeys.push(pathKey)
+    currentCurrencyOut = currencyIn // Input becomes output for next hop (going backwards)
+  }
+  
+  return pathKeys
+}
+
 
 // --- Helper: Prepare V4 Exact Input Swap Data (Adapted from original swap.ts) ---
 // This function can be kept within this file or moved to a separate utility if it grows.
@@ -242,15 +276,53 @@ async function prepareV4MultiHopExactInSwapData(
     }
 
     // Build PoolKeys for each hop from config, and PathKey[] per guide
+    console.log(`[ExactIn Debug] Building pool keys for route: ${routeToString(route)}`);
+    console.log(`[ExactIn Debug] Route path:`, route.path);
+    console.log(`[ExactIn Debug] Route pools:`, route.pools.map(p => ({
+        poolId: p.poolId,
+        poolName: p.poolName,
+        token0: p.token0,
+        token1: p.token1,
+        fee: p.fee,
+        tickSpacing: p.tickSpacing,
+        subgraphId: p.subgraphId
+    })));
+    
     const poolKeys: PoolKey[] = [];
     for (let i = 0; i < route.pools.length; i++) {
         const hop = route.pools[i];
+        console.log(`[ExactIn Debug] Hop ${i}: ${hop.token0} -> ${hop.token1} (${hop.poolName})`);
         const poolCfg = getPoolConfigForTokens(hop.token0, hop.token1);
         if (!poolCfg) throw new Error(`Pool config not found for hop ${i}: ${hop.poolName}`);
-        poolKeys.push(createPoolKeyFromConfig(poolCfg.pool));
+        const poolKey = createPoolKeyFromConfig(poolCfg.pool);
+        console.log(`[ExactIn Debug] Pool key ${i}:`, {
+            currency0: poolKey.currency0,
+            currency1: poolKey.currency1,
+            fee: poolKey.fee,
+            tickSpacing: poolKey.tickSpacing,
+            hooks: poolKey.hooks
+        });
+        
+        // Calculate and log pool ID for debugging
+        const poolId = ethers.utils.solidityKeccak256(
+            ['address','address','uint24','int24','address'],
+            [poolKey.currency0, poolKey.currency1, poolKey.fee, poolKey.tickSpacing, poolKey.hooks]
+        );
+        console.log(`[ExactIn Debug] Pool ID for hop ${i}: ${poolId}`);
+        console.log(`[ExactIn Debug] Expected subgraphId for hop ${i}: ${hop.subgraphId}`);
+        
+        poolKeys.push(poolKey);
     }
     // Use the guide helper to encode PathKey[] from PoolKey[]
+    console.log(`[ExactIn Debug] Encoding path with inputToken: ${inputToken.address}`);
     const pathKeys = encodeMultihopExactInPath(poolKeys, inputToken.address);
+    console.log(`[ExactIn Debug] Generated pathKeys:`, pathKeys.map((pk, i) => ({
+        hop: i,
+        intermediateCurrency: pk.intermediateCurrency,
+        fee: pk.fee,
+        tickSpacing: pk.tickSpacing,
+        hooks: pk.hooks
+    })));
 
     const v4Planner = new V4Planner();
 
@@ -297,6 +369,25 @@ async function prepareV4MultiHopExactOutSwapData(
     // Create V4Planner for multi-hop
     const v4Planner = new V4Planner();
     
+    // Initialize provider for StateView check
+    const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL || process.env.RPC_URL || 'https://sepolia.base.org';
+    const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
+    
+    // Preflight: verify each hop pool exists via StateView (same as ExactIn)
+    const stateView = new ethers.Contract(getStateViewAddress(), STATE_VIEW_ABI as any, provider);
+    for (let i = 0; i < route.pools.length; i++) {
+        const hop = route.pools[i];
+        const poolCfg = getPoolConfigForTokens(hop.token0, hop.token1);
+        if (!poolCfg) {
+            throw new Error(`Missing pool config for hop ${i}: ${hop.poolName}`);
+        }
+        const poolId = ethers.utils.solidityKeccak256(
+            ['address','address','uint24','int24','address'],
+            [poolCfg.pool.currency0.address, poolCfg.pool.currency1.address, poolCfg.pool.fee, poolCfg.pool.tickSpacing, poolCfg.pool.hooks]
+        );
+        await stateView.callStatic.getSlot0(poolId);
+    }
+    
     // Build the encoded path for multi-hop
     const pools: Pool[] = [];
     for (let i = 0; i < route.pools.length; i++) {
@@ -323,36 +414,90 @@ async function prepareV4MultiHopExactOutSwapData(
         pools.push(pool);
     }
 
-    // Create PathKey[] directly per guide
+    // Use the SAME pool resolution logic as ExactIn multihop (which works)
+    console.log(`[ExactOut Debug] Building pool keys for route: ${routeToString(route)}`);
     const poolKeys: PoolKey[] = [];
     for (let i = 0; i < route.pools.length; i++) {
         const hop = route.pools[i];
+        console.log(`[ExactOut Debug] Hop ${i}: ${hop.token0} -> ${hop.token1} (${hop.poolName})`);
         const poolCfg = getPoolConfigForTokens(hop.token0, hop.token1);
         if (!poolCfg) throw new Error(`Pool config not found for hop ${i}: ${hop.poolName}`);
-        poolKeys.push(createPoolKeyFromConfig(poolCfg.pool));
+        const poolKey = createPoolKeyFromConfig(poolCfg.pool);
+        console.log(`[ExactOut Debug] Pool key ${i}:`, {
+            currency0: poolKey.currency0,
+            currency1: poolKey.currency1,
+            fee: poolKey.fee,
+            tickSpacing: poolKey.tickSpacing,
+            hooks: poolKey.hooks
+        });
+        poolKeys.push(poolKey);
     }
-    // Use the guide helper to encode PathKey[] from PoolKey[]
-    const pathKeys = encodeMultihopExactInPath(poolKeys, inputToken.address);
-
-    // Add the multi-hop swap action
-    v4Planner.addAction(Actions.SWAP_EXACT_OUT, [
-        {
-            currencyOut: outputToken.address,
-            path: pathKeys,
-            amountOut: BigNumber.from(amountOutSmallestUnits.toString()),
-            amountInMaximum: BigNumber.from(maxAmountInSmallestUnits.toString()),
+    // V4 doesn't support multihop ExactOut - use individual SWAP_EXACT_OUT_SINGLE actions
+    console.log(`[ExactOut Debug] Building individual hop actions (V4 limitation)`);
+    
+    // Process hops in reverse order for ExactOut (like V3)
+    for (let i = poolKeys.length - 1; i >= 0; i--) {
+        const poolKey = poolKeys[i];
+        const hop = poolKeys.length - 1 - i;
+        const routeHop = route.pools[i];
+        
+        let currencyIn: string;
+        let currencyOut: string;
+        let zeroForOne: boolean;
+        
+        if (i === poolKeys.length - 1) {
+            // Last hop: intermediate -> final output
+            currencyIn = poolKey.currency0 === inputToken.address ? poolKey.currency1 : poolKey.currency0;
+            currencyOut = outputToken.address;
+        } else {
+            // Intermediate hops: previous intermediate -> next intermediate
+            currencyIn = poolKey.currency0 === inputToken.address ? poolKey.currency1 : poolKey.currency0;
+            currencyOut = poolKey.currency0 === currencyIn ? poolKey.currency1 : poolKey.currency0;
         }
-    ]);
-
-    // SETTLE_ALL on true input currency and TAKE_ALL on true output currency
-    v4Planner.addAction(Actions.SETTLE_ALL, [
-        getAddress(inputToken.address!),
-        BigNumber.from(maxAmountInSmallestUnits.toString()),
-    ]);
-    v4Planner.addAction(Actions.TAKE_ALL, [
-        getAddress(outputToken.address!),
-        BigNumber.from(amountOutSmallestUnits.toString()),
-    ]);
+        
+        zeroForOne = getAddress(currencyIn) === poolKey.currency0;
+        
+        // Use the route's calculated amounts for each hop
+        const hopAmountOut = BigNumber.from(amountOutSmallestUnits.toString());
+        const hopAmountInMaximum = BigNumber.from(maxAmountInSmallestUnits.toString());
+        
+        console.log(`[ExactOut Debug] Hop ${hop}: ${currencyIn} -> ${currencyOut}, zeroForOne: ${zeroForOne}`);
+        console.log(`[ExactOut Debug] Hop ${hop} amounts: amountOut=${hopAmountOut.toString()}, amountInMaximum=${hopAmountInMaximum.toString()}`);
+        
+        v4Planner.addAction(Actions.SWAP_EXACT_OUT_SINGLE, [
+            {
+                poolKey: poolKey,
+                zeroForOne: zeroForOne,
+                amountOut: hopAmountOut,
+                amountInMaximum: hopAmountInMaximum,
+                sqrtPriceLimitX96: BigNumber.from(0),
+                hookData: '0x'
+            }
+        ]);
+        // For each hop, settle the input currency and take the output currency
+        if (i === poolKeys.length - 1) {
+            // Last hop: settle input currency (max amount needed)
+            v4Planner.addAction(Actions.SETTLE_ALL, [
+                getAddress(currencyIn),
+                BigNumber.from(maxAmountInSmallestUnits.toString()),
+            ]);
+            // Take final output currency (exact amount desired)
+            v4Planner.addAction(Actions.TAKE_ALL, [
+                getAddress(currencyOut),
+                BigNumber.from(amountOutSmallestUnits.toString()),
+            ]);
+        } else {
+            // Intermediate hops: settle input and take intermediate output
+            v4Planner.addAction(Actions.SETTLE_ALL, [
+                getAddress(currencyIn),
+                BigNumber.from(maxAmountInSmallestUnits.toString()),
+            ]);
+            v4Planner.addAction(Actions.TAKE_ALL, [
+                getAddress(currencyOut),
+                BigNumber.from(hopAmountOut.toString()),
+            ]);
+        }
+    }
 
     const encodedActions = v4Planner.finalize() as Hex;
     return { encodedActions, actions: (v4Planner as any).actions, params: (v4Planner as any).params };

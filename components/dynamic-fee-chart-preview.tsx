@@ -41,12 +41,22 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
   // Loading state for chart data fetching
   const [isChartDataLoading, setIsChartDataLoading] = useState(false);
 
-  // Debug state for artificial loading delay
+  // Loading skeleton flag (follows actual loading state)
   const [showLoadingSkeleton, setShowLoadingSkeleton] = useState(false);
+
+  // Track if this is the initial load to disable animations
+  const [hasLoadedData, setHasLoadedData] = useState(false);
+  // Track if we've ever loaded data to prevent chart disappearing
+  const [hasEverLoadedData, setHasEverLoadedData] = useState(false);
+  // Simple animation control: animate on first load OR when pool changes
+  const [shouldAnimate, setShouldAnimate] = useState(true);
+  // Track if this is the very first load
+  const [isFirstLoad, setIsFirstLoad] = useState(true);
 
   // Hover state for tooltip
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [portalEl, setPortalEl] = useState<HTMLElement | null>(null);
+  const [isHovering, setIsHovering] = useState(false);
 
   // Combined loading state - show skeleton when either parent isLoading or internal isChartDataLoading
   const isActuallyLoading = isLoading || isChartDataLoading;
@@ -80,6 +90,27 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
         const cfg = getPoolByTokens(poolInfo.token0Symbol, poolInfo.token1Symbol);
         const subgraphId = (cfg as any)?.subgraphId || (cfg as any)?.id;
         if (!subgraphId) return;
+        
+        // Check local cache with 60s TTL
+        const cacheKey = `dynamicFeeChart_${subgraphId}_30days`;
+        try {
+          const cachedItem = sessionStorage.getItem(cacheKey);
+          if (cachedItem) {
+            const cached = JSON.parse(cachedItem);
+            const now = Date.now();
+            
+            // Cache expires after 60 seconds (60,000 ms)
+            if (cached.timestamp && (now - cached.timestamp) < 60000 && cached.data) {
+              setAutoData(cached.data);
+              return;
+            } else {
+              sessionStorage.removeItem(cacheKey); // Clean up expired cache
+            }
+          }
+        } catch (error) {
+          console.warn('Failed to load cached dynamic fee chart data:', error);
+          sessionStorage.removeItem(cacheKey); // Clean up corrupted cache
+        }
         
         setIsChartDataLoading(true);
         setShowLoadingSkeleton(true);
@@ -115,7 +146,23 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
           emaRatio: scaleRatio(e.ema),
           dynamicFee: (Number.isFinite(e.feeBps) ? e.feeBps : 0) / 10000,
         }));
+        
+        // Cache the processed data
+        if (out && out.length > 0) {
+          try {
+            const cacheData = {
+              data: out,
+              timestamp: Date.now()
+            };
+            sessionStorage.setItem(cacheKey, JSON.stringify(cacheData));
+          } catch (error) {
+            console.warn('Failed to cache dynamic fee chart data:', error);
+          }
+        }
+        
         setAutoData(out);
+        setHasLoadedData(true); // Mark that we've loaded data at least once
+        setHasEverLoadedData(true); // Mark that we've ever loaded data
       } catch {}
       finally {
         setIsChartDataLoading(false);
@@ -145,22 +192,9 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
     }
   }, [isActuallyLoading, data, onContentStableChange, isContentStable]);
   
-  // Debug/UX effect for loading skeleton visibility
+  // Keep skeleton visible exactly while loading (or when forced)
   useEffect(() => {
-    if (alwaysShowSkeleton) {
-      setShowLoadingSkeleton(true);
-      return;
-    }
-    if (isActuallyLoading) {
-      setShowLoadingSkeleton(true);
-      const timer = setTimeout(() => {
-        setShowLoadingSkeleton(false);
-      }, 1000);
-      return () => clearTimeout(timer);
-    } else {
-      // Immediately hide skeleton when not loading
-      setShowLoadingSkeleton(false);
-    }
+    setShowLoadingSkeleton(Boolean(alwaysShowSkeleton || isActuallyLoading));
   }, [isActuallyLoading, alwaysShowSkeleton]);
 
   // Handle click to navigate to pool page
@@ -201,6 +235,21 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
 
   // Build chart data from supplied series (preferred only if usable) or fetched fallback
   const effectiveData = isParentDataUsable ? data : (autoData || []);
+  
+  // Simple animation control: animate only on first load
+  useEffect(() => {
+    if (effectiveData && effectiveData.length > 0) {
+      setHasLoadedData(true);
+      setHasEverLoadedData(true);
+      
+      // Only animate on the very first load
+      if (isFirstLoad) {
+        setShouldAnimate(true);
+        setTimeout(() => setShouldAnimate(false), 600);
+        setIsFirstLoad(false); // Mark that we've done the first load
+      }
+    }
+  }, [effectiveData, isFirstLoad]);
 
   // Removed in-chart CustomTooltip; using external portal container instead
 
@@ -370,7 +419,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
              <ArrowUpRight aria-hidden="true" data-arrow className="h-4 w-4 text-muted-foreground transition-colors duration-150" />
           </div>
         </div>
-        <div className="px-2 pb-2 pt-0 h-[120px] relative">
+        <div className="px-2 py-2 h-[120px] relative">
           <div className="w-full h-full flex items-center justify-center" />
         </div>
         
@@ -426,7 +475,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
              <ArrowUpRight aria-hidden="true" data-arrow className="h-4 w-4 text-muted-foreground transition-colors duration-150" />
           </div>
         </div>
-        <div className="px-2 pb-2 pt-0 h-[120px] relative">
+        <div className="px-2 py-2 h-[120px] relative">
           <div
             className="w-full h-full cursor-pointer [&_.recharts-wrapper]:outline-none [&_.recharts-wrapper]:focus:outline-none [&_.recharts-surface]:outline-none"
             onMouseMove={(e) => {
@@ -438,27 +487,41 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
                 const index = Math.floor(percentage * chartData.length);
                 const clampedIndex = Math.max(0, Math.min(index, chartData.length - 1));
                 setHoveredIndex(clampedIndex);
+                setIsHovering(true);
               }
             }}
             onMouseLeave={() => {
               setHoveredIndex(null);
+              setIsHovering(false);
             }}
           >
-            {showLoadingSkeleton && !hasData ? (
-              <div className="w-full h-[92px] bg-muted/40 rounded animate-pulse mt-2"></div>
+            {showLoadingSkeleton && isActuallyLoading ? (
+              <div className="w-full h-full bg-muted/40 rounded flex items-center justify-center">
+                <div className="animate-pulse">
+                  <Image 
+                    src="/LogoIconWhite.svg" 
+                    alt="Loading" 
+                    width={24} 
+                    height={24} 
+                    className="opacity-60"
+                  />
+                </div>
+              </div>
             ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart
                   data={chartData || []}
-                  margin={{ top: 5, right: 8, bottom: 5, left: 8 }}
+                  margin={{ top: 0, right: 8, bottom: 0, left: 8 }}
                   style={{ cursor: 'pointer' }}
                   onMouseMove={(e: any) => {
                     if (e && e.activeTooltipIndex !== undefined && typeof e.activeTooltipIndex === 'number') {
                       setHoveredIndex(e.activeTooltipIndex);
+                      setIsHovering(true);
                     }
                   }}
                   onMouseLeave={() => {
                     setHoveredIndex(null);
+                    setIsHovering(false);
                   }}
                 >
                   <XAxis dataKey="name" hide={true} />
@@ -502,8 +565,8 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
                     strokeWidth={1.5}
                     dot={false}
                     activeDot={false}
-                    isAnimationActive={true}
-                    animationDuration={800}
+                    isAnimationActive={!isHovering && shouldAnimate}
+                    animationDuration={600}
                     animationEasing="ease-out"
                   />
                   <Line
@@ -515,8 +578,8 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
                     strokeDasharray="3 3"
                     dot={false}
                     activeDot={false}
-                    isAnimationActive={true}
-                    animationDuration={800}
+                    isAnimationActive={!isHovering && shouldAnimate}
+                    animationDuration={600}
                     animationEasing="ease-out"
                   />
                   {/* Base line: orange before hover, grey during hover */}
@@ -529,8 +592,8 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
                     strokeOpacity={hoveredIndex === null ? 1 : 0.6}
                     dot={false}
                     activeDot={false}
-                    isAnimationActive={true}
-                    animationDuration={800}
+                    isAnimationActive={!isHovering && shouldAnimate}
+                    animationDuration={600}
                     animationEasing="ease-out"
                   />
 

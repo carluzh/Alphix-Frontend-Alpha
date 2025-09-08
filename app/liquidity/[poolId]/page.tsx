@@ -2991,19 +2991,36 @@ export default function PoolDetailPage() {
                             )}
                             <CardContent className="p-3 sm:p-4 group">
                             {/* Grid layout on non-mobile; stacked on mobile */}
-                              <div
-                                className="grid sm:items-center"
-                                style={{
-                                  gridTemplateColumns: 'min-content max-content max-content 1fr 5.5rem',
-                                  columnGap: '1.25rem', // slightly increased equal gaps between columns
-                                }}
-                              >
+                              <div className="grid sm:items-center grid-cols-[min-content_max-content_max-content_1fr_5.5rem] sm:grid-cols-[min-content_max-content_max-content_max-content_1fr_5.5rem] gap-5">
                               {/* Column 1: Token Icons - Very narrow */}
                               <div className="flex items-center min-w-0 flex-none gap-0">
                                 <TokenStack position={position} currentPoolData={currentPoolData} getToken={getToken} />
                               </div>
 
-                              {/* Column 2: Position Value - left-bound, size-to-content */}
+                              {/* Column 2: Amount0/Amount1 - Desktop only, left-bound, size-to-content */}
+                              <div className="hidden sm:flex items-start pr-2">
+                                <div className="flex flex-col gap-1 items-start">
+                                  <div className="flex flex-col gap-0.5 text-xs">
+                                    {isLoadingPrices ? (
+                                      <>
+                                        <div className="h-4 w-16 bg-muted/60 rounded animate-pulse" />
+                                        <div className="h-4 w-16 bg-muted/60 rounded animate-pulse" />
+                                      </>
+                                    ) : (
+                                      <>
+                                        <div className="font-mono text-muted-foreground">
+                                          {formatTokenDisplayAmount(position.token0.amount)} {position.token0.symbol}
+                                        </div>
+                                        <div className="font-mono text-muted-foreground">
+                                          {formatTokenDisplayAmount(position.token1.amount)} {position.token1.symbol}
+                                        </div>
+                                      </>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Column 3: Position Value - left-bound, size-to-content */}
                               <div className="flex items-start pr-2">
                                 <div className="flex flex-col gap-1 items-start">
                                   <div className="text-xs text-muted-foreground">Position Value</div>
@@ -3021,7 +3038,7 @@ export default function PoolDetailPage() {
                                 </div>
                               </div>
 
-                              {/* Column 3: Fees - left-bound, size-to-content */}
+                              {/* Column 4: Fees - left-bound, size-to-content */}
                               <div className="flex items-start pr-2">
                                 <div className="flex flex-col gap-1 items-start">
                                   <div className="flex items-center gap-1">
@@ -3050,10 +3067,10 @@ export default function PoolDetailPage() {
                                 </div>
                               </div>
 
-                              {/* Column 4: Flexible spacer to push Withdraw; absorbs surplus width */}
+                              {/* Column 5: Flexible spacer to push Withdraw; absorbs surplus width */}
                               <div />
 
-                              {/* Column 5: Actions - Static Withdraw button */}
+                              {/* Column 6: Actions - Static Withdraw button */}
                               <div className="flex items-center justify-end gap-2 w-[5.5rem] flex-none">
                                 <a
                                   onClick={(e) => {

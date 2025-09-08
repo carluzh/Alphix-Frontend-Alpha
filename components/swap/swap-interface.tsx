@@ -997,30 +997,96 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
         }),
       });
 
-      const data = await response.json();
+      let data: any = null;
+      try {
+        data = await response.json();
+      } catch (e) {
+        // Non-JSON (e.g., HTML error page). Normalize to a structured error.
+        const text = await response.text().catch(() => '');
+        console.error('❌ V4 Quoter Non-JSON response:', text?.slice(0, 200));
+        data = { success: false, error: 'Failed to get quote' };
+      }
 
       if (response.ok && data.success) {
         if (data.swapType === 'ExactOut') {
           // When editing Buy, backfill Sell only;
           // never mutate Buy to preserve user typing (incl. trailing dot)
-          setFromAmount(String(data.fromAmount ?? ""));
+          const raw = String(data.fromAmount ?? "");
+          const [intPart, decPart = ""] = raw.split(".");
+          const truncated = decPart.length > 9 ? `${intPart}.${decPart.slice(0,9)}` : raw;
+          setFromAmount(truncated);
         } else {
           // ExactIn flow: update Buy value from quote
-          setToAmount(data.toAmount);
+          const rawTo = String(data.toAmount ?? "");
+          const [i2, d2 = ""] = rawTo.split(".");
+          const truncTo = d2.length > 9 ? `${i2}.${d2.slice(0,9)}` : rawTo;
+          setToAmount(truncTo);
         }
         setRouteInfo(data.route || null);
         setQuoteError(null);
       } else {
         console.error('❌ V4 Quoter Error:', data.error);
-        toast.error(`Quote Error: ${data.error || 'Failed to get quote'}`);
-        setQuoteError(data.error || 'Failed to get quote');
+        
+        // Handle specific error types with appropriate toasts
+        const errorMsg = data.error || 'Failed to get quote';
+        if (errorMsg === 'Not enough liquidity') {
+          toast.error('Not enough liquidity', {
+            description: 'Try reducing the amount or check back later'
+          });
+        } else if (errorMsg === 'Amount exceeds available liquidity') {
+          toast.error('Amount too large', {
+            description: 'The requested amount exceeds available liquidity'
+          });
+        } else if (errorMsg === 'Price impact too high') {
+          toast.error('Price impact too high', {
+            description: 'Try reducing the amount or adjust slippage'
+          });
+        } else if (errorMsg === 'Route not available for this amount') {
+          toast.error('Route not available', {
+            description: 'Try a different amount or use exact input instead'
+          });
+        } else if (errorMsg === 'Cannot fulfill exact output amount') {
+          toast.error('Cannot fulfill exact amount', {
+            description: 'Try reducing the output amount or use exact input'
+          });
+        } else {
+          toast.error(`Quote Error: ${errorMsg}`);
+        }
+        
+        setQuoteError(errorMsg);
         // Do not infer on error; clear the side we tried to compute
         // Leave the user's actively edited field untouched on error
       }
     } catch (error: any) {
       console.error('❌ V4 Quoter Exception:', error);
-      toast.error(`Quote Error: ${error.message || 'Failed to fetch quote'}`);
-      setQuoteError('Failed to fetch quote');
+      
+      // Handle network/connection errors with appropriate messaging
+      let errorMsg = 'Failed to fetch quote';
+      if (error instanceof Error) {
+        const errorStr = error.message.toLowerCase();
+        
+        // Check for smart contract call exceptions (common in ExactOut multihop)
+        if (errorStr.includes('call_exception') || 
+            errorStr.includes('call revert exception') ||
+            (errorStr.includes('0x6190b2b0') || errorStr.includes('0x486aa307'))) {
+          if (activelyEditedSide === 'to') {
+            errorMsg = 'Route not available for this amount';
+          } else {
+            errorMsg = 'Smart contract error';
+          }
+        }
+        // Check for network/connection errors
+        else if (errorStr.includes('network') || errorStr.includes('connection') || errorStr.includes('timeout')) {
+          errorMsg = 'Network error - please try again';
+        }
+        // Check for fetch/HTTP errors
+        else if (errorStr.includes('fetch') || errorStr.includes('http')) {
+          errorMsg = 'Connection error - please try again';
+        }
+      }
+      
+      toast.error(`Quote Error: ${errorMsg}`);
+      setQuoteError(errorMsg);
       // Leave the user's actively edited field untouched on exception
     } finally {
       setQuoteLoading(false);
@@ -2416,7 +2482,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     // Update fromToken price, only if it changes
     setFromToken(prev => {
       const priceType = getTokenPriceMapping(prev.symbol);
-      const newPrice = tokenPrices[priceType] || prev.usdPrice;
+      const newPrice = tokenPrices[priceType]?.usd ?? prev.usdPrice;
       if (prev.usdPrice === newPrice) return prev;
       return { ...prev, usdPrice: newPrice };
     });
@@ -2424,7 +2490,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     // Update toToken price, only if it changes
     setToToken(prev => {
       const priceType = getTokenPriceMapping(prev.symbol);
-      const newPrice = tokenPrices[priceType] || prev.usdPrice;
+      const newPrice = tokenPrices[priceType]?.usd ?? prev.usdPrice;
       if (prev.usdPrice === newPrice) return prev;
       return { ...prev, usdPrice: newPrice };
     });
@@ -2435,7 +2501,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
         const priceType = getTokenPriceMapping(token.symbol);
         return {
           ...token,
-          usdPrice: tokenPrices[priceType] || token.usdPrice
+          usdPrice: tokenPrices[priceType]?.usd ?? token.usdPrice
         };
       })
     );

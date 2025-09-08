@@ -1,7 +1,7 @@
 "use client"
 
 import type * as React from "react"
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef } from "react"
 import {
   BarChartIcon,
   ClipboardListIcon,
@@ -26,6 +26,7 @@ import { NavMain } from "./nav-main"
 import { NavSecondary } from "./nav-secondary"
 import { NavGovernance } from "./nav-governance"
 import { AccountStatus } from "./AccountStatus"
+import { CustomLockIcon } from "./CustomLockIcon"
 import {
   Sidebar,
   SidebarContent,
@@ -118,6 +119,26 @@ export function AppSidebar({ variant = "floating", onBetaClick, ...props }: AppS
   const [showVersionInitial, setShowVersionInitial] = useState(false);
   const [badgeHovered, setBadgeHovered] = useState(false);
   const [isLinksOpen, setIsLinksOpen] = useState(false);
+  const [lockedItem, setLockedItem] = useState<string | null>(null)
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+  const handleLockedClick = (itemName: string) => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current)
+    }
+    setLockedItem(itemName)
+    timeoutRef.current = setTimeout(() => {
+      setLockedItem(null)
+    }, 1000)
+  }
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current)
+      }
+    }
+  }, [])
   
   // Get latest version info
   const latestVersion = getLatestVersion();
@@ -237,11 +258,19 @@ export function AppSidebar({ variant = "floating", onBetaClick, ...props }: AppS
                       <SidebarGroupContent className="px-3">
                         <SidebarMenu>
                           <SidebarMenuItem className="list-none">
-                            <SidebarMenuButton asChild size="sm" className="h-7 opacity-80">
-                              <a href="#" className="w-full flex items-center">
-                                <BookTextIcon className="h-4 w-4" />
-                                <span>Documentation</span>
-                              </a>
+                            <SidebarMenuButton 
+                              onClick={() => handleLockedClick("Documentation")}
+                              size="sm" 
+                              className="h-7 opacity-80"
+                            >
+                              <BookTextIcon className="h-4 w-4" />
+                              <span>Documentation</span>
+                              {lockedItem === "Documentation" && (
+                                <span className="flex items-center ml-auto">
+                                  <CustomLockIcon className="h-4 w-4 flex-shrink-0 text-muted-foreground animate-pulse mr-0.5" />
+                                  <span className="text-[10px] text-muted-foreground animate-pulse">Soon</span>
+                                </span>
+                              )}
                             </SidebarMenuButton>
                           </SidebarMenuItem>
                           <SidebarMenuItem className="list-none">

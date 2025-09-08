@@ -16,16 +16,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Attempt to fetch fresh prices
     const allPrices = await getAllTokenPrices();
     
-    // Provide aliases expected by UI
+    // Provide aliases expected by UI - maintain object structure for consistency
     const response = {
       BTC: allPrices.BTC,
       aBTC: allPrices.BTC,
       ETH: allPrices.ETH,
       aETH: allPrices.ETH,
       USDC: allPrices.USDC,
-      aUSDC: 1.0,
-      USDT: 1.0,
-      aUSDT: 1.0,
+      aUSDC: allPrices.USDC,
+      USDT: allPrices.USDT,
+      aUSDT: allPrices.USDT,
       timestamp: allPrices.lastUpdated
     };
 

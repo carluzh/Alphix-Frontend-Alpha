@@ -12,8 +12,8 @@ export const VERSION_LOG: VersionEntry[] = [
     bulletPoints: [
       "Improved Portfolio Page UX",
       "Mobile Support", 
-      "Versioned Caching",
-      "Liquidity Depth Performance Improvements"
+      "Improved Data Flow",
+      "Pool Page Performance Improvements"
     ],
     releaseDate: "2025-09-09"
   },

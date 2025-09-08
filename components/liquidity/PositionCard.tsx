@@ -13,6 +13,30 @@ import { TOKEN_DEFINITIONS, TokenSymbol, getToken as getTokenConfig } from '@/li
 
 import { cn } from "@/lib/utils";
 
+// Helper function to determine base token for price display (same logic as pool page)
+const determineBaseTokenForPriceDisplay = (token0: string, token1: string): string => {
+  if (!token0 || !token1) return token0;
+
+  // Priority order for quote tokens (these should be the base for price display)
+  const quotePriority: Record<string, number> = {
+    'aUSDC': 10,
+    'aUSDT': 9,
+    'USDC': 8,
+    'USDT': 7,
+    'aETH': 6,
+    'ETH': 5,
+    'YUSD': 4,
+    'mUSDT': 3,
+  };
+
+  const token0Priority = quotePriority[token0] || 0;
+  const token1Priority = quotePriority[token1] || 0;
+
+  // Return the token with higher priority (better quote currency)
+  // If priorities are equal, default to token0
+  return token1Priority > token0Priority ? token1 : token0;
+};
+
 type ProcessedPosition = {
     positionId: string;
     owner: string;
@@ -57,6 +81,9 @@ interface PositionCardProps {
     onClick: () => void;
     isLoadingPrices: boolean;
     isLoadingPoolStates: boolean;
+    // New props for ascending range logic
+    currentPrice?: string | null;
+    currentPoolTick?: number | null;
 }
 
 const SDK_MIN_TICK = -887272;
@@ -83,6 +110,8 @@ export function PositionCard({
     onClick,
     isLoadingPrices,
     isLoadingPoolStates,
+    currentPrice,
+    currentPoolTick,
 }: PositionCardProps) {
     const [isHoverDisabled, setIsHoverDisabled] = useState(false);
 
@@ -90,29 +119,67 @@ export function PositionCard({
     const handleChildLeave = () => setIsHoverDisabled(false);
     const handleChildClick = (e: React.MouseEvent) => e.stopPropagation();
 
+    // Determine if denomination should be flipped (same logic as pool page)
+    const shouldFlipDenomination = React.useMemo(() => {
+        if (!currentPrice) return false;
+        const currentPriceNum = parseFloat(currentPrice);
+        if (!isFinite(currentPriceNum) || currentPriceNum <= 0) return false;
+        const inversePrice = 1 / currentPriceNum;
+        return inversePrice > currentPriceNum;
+    }, [currentPrice]);
+
     return (
         <Card
             key={position.positionId}
             className={cn(
-                "bg-muted/30 border border-sidebar-border/60 transition-colors group cursor-pointer",
+                "bg-muted/30 border border-sidebar-border/60 transition-colors group cursor-pointer relative",
                 !isHoverDisabled && "hover:border-sidebar-border"
             )}
             onClick={onClick}
         >
+            {/* Loading overlay for optimistic updates */}
+            {(position as any).isOptimisticallyUpdating && (
+              <div className="absolute inset-0 bg-muted/20 backdrop-blur-sm rounded-lg flex items-center justify-center z-10">
+                <Image 
+                  src="/LogoIconWhite.svg" 
+                  alt="Updating..." 
+                  width={24}
+                  height={24}
+                  className="animate-pulse opacity-75"
+                />
+              </div>
+            )}
             <CardContent className="p-3 sm:p-4 group">
-            <div
-                className="grid sm:items-center"
-                style={{
-                gridTemplateColumns: 'min-content max-content max-content 1fr 5.5rem',
-                columnGap: '1.25rem',
-                }}
-            >
+            <div className="grid sm:items-center grid-cols-[min-content_max-content_max-content_1fr_5.5rem] sm:grid-cols-[min-content_max-content_max-content_max-content_1fr_5.5rem] gap-5">
             {/* Column 1: Token Icons - Very narrow */}
             <div className="flex items-center min-w-0 flex-none gap-0">
                 {isLoadingPrices || isLoadingPoolStates ? <div className="h-6 w-10 bg-muted/60 rounded-full animate-pulse" /> : <TokenStack position={position as any} />}
             </div>
 
-            {/* Column 2: Position Value - left-bound, size-to-content */}
+            {/* Column 2: Amount0/Amount1 - Desktop only, left-bound, size-to-content */}
+            <div className="hidden sm:flex items-start pr-2">
+                <div className="flex flex-col gap-1 items-start">
+                    <div className="flex flex-col gap-0.5 text-xs">
+                        {isLoadingPrices ? (
+                            <>
+                                <div className="h-4 w-16 bg-muted/60 rounded animate-pulse" />
+                                <div className="h-4 w-16 bg-muted/60 rounded animate-pulse" />
+                            </>
+                        ) : (
+                            <>
+                                <div className="font-mono text-muted-foreground">
+                                    {formatTokenDisplayAmount(position.token0.amount)} {position.token0.symbol}
+                                </div>
+                                <div className="font-mono text-muted-foreground">
+                                    {formatTokenDisplayAmount(position.token1.amount)} {position.token1.symbol}
+                                </div>
+                            </>
+                        )}
+                    </div>
+                </div>
+            </div>
+
+            {/* Column 3: Position Value - left-bound, size-to-content */}
             <div className="flex items-start pr-2">
                 <div className="flex flex-col gap-1 items-start">
                 <div className="text-xs text-muted-foreground">Position Value</div>
@@ -126,7 +193,7 @@ export function PositionCard({
                 </div>
             </div>
 
-            {/* Column 3: Fees - left-bound, size-to-content */}
+            {/* Column 4: Fees - left-bound, size-to-content */}
             <div className="flex items-start pr-2" onMouseEnter={handleChildEnter} onMouseLeave={handleChildLeave} onClick={handleChildClick}>
                 <div className="flex flex-col gap-1 items-start">
                 <div className="flex items-center gap-1">
@@ -156,10 +223,10 @@ export function PositionCard({
                 </div>
             </div>
 
-            {/* Column 4: Flexible spacer to push Withdraw; absorbs surplus width */}
+            {/* Column 5: Flexible spacer to push Withdraw; absorbs surplus width */}
             <div />
 
-            {/* Column 5: Actions - Static Withdraw button */}
+            {/* Column 6: Actions - Static Withdraw button */}
             <div className="flex items-center justify-end gap-2 w-[5.5rem] flex-none" onMouseEnter={handleChildEnter} onMouseLeave={handleChildLeave} onClick={handleChildClick}>
                 <button
                 onClick={(e) => {
@@ -184,12 +251,43 @@ export function PositionCard({
                         <span className="font-mono tabular-nums flex items-center gap-1.5 cursor-default">
                             <ChevronsLeftRight className="h-3 w-3 text-muted-foreground" aria-hidden />
                             {isLoadingPoolStates ? <div className="h-4 w-24 bg-muted/60 rounded animate-pulse" /> : (() => {
-                                const baseToken = determineBaseTokenForPriceDisplay(position.token0.symbol, position.token1.symbol);
+                                // Use flipped denomination logic (same as pool page)
+                                const optimalBase = determineBaseTokenForPriceDisplay(
+                                    position.token0.symbol || '',
+                                    position.token1.symbol || ''
+                                );
+                                // When flipped, use the opposite token as base to show ascending prices
+                                const baseTokenForPriceDisplay = shouldFlipDenomination 
+                                    ? (optimalBase === position.token0.symbol ? position.token1.symbol : position.token0.symbol)
+                                    : optimalBase;
+
                                 const pool = poolDataByPoolId[poolKey] || poolDataByPoolId[String(position.poolId || '').toLowerCase()] || {};
-                                const currentPriceStr = pool?.price ? String(pool.price) : null;
-                                const tickNow = typeof pool?.tick === 'number' ? pool.tick : null;
-                                const minPrice = convertTickToPrice(position.tickLower, tickNow, currentPriceStr, baseToken, position.token0.symbol, position.token1.symbol);
-                                const maxPrice = convertTickToPrice(position.tickUpper, tickNow, currentPriceStr, baseToken, position.token0.symbol, position.token1.symbol);
+                                const currentPriceStr = currentPrice || (pool?.price ? String(pool.price) : null);
+                                const tickNow = currentPoolTick !== null ? currentPoolTick : (typeof pool?.tick === 'number' ? pool.tick : null);
+                                
+                                const minPrice = convertTickToPrice(
+                                    position.tickLower,
+                                    tickNow,
+                                    currentPriceStr,
+                                    baseTokenForPriceDisplay,
+                                    position.token0.symbol || '',
+                                    position.token1.symbol || ''
+                                );
+                                const maxPrice = convertTickToPrice(
+                                    position.tickUpper,
+                                    tickNow,
+                                    currentPriceStr,
+                                    baseTokenForPriceDisplay,
+                                    position.token0.symbol || '',
+                                    position.token1.symbol || ''
+                                );
+                                
+                                // Ensure ascending display order regardless of base/inversion
+                                const minNum = parseFloat(minPrice);
+                                const maxNum = parseFloat(maxPrice);
+                                if (Number.isFinite(minNum) && Number.isFinite(maxNum) && minNum > maxNum) {
+                                    return `${maxPrice} - ${minPrice}`;
+                                }
                                 return `${minPrice} - ${maxPrice}`;
                             })()}
                         </span>

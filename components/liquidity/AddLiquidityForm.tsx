@@ -221,10 +221,10 @@ export function AddLiquidityForm({
   const getUSDPriceForSymbol = useCallback((symbol?: string): number => {
     if (!symbol) return 0;
     const s = symbol.toUpperCase();
-    if (s.includes('BTC')) return allPrices?.BTC ?? 0;
-    if (s.includes('ETH')) return allPrices?.ETH ?? 0;
-    if (s.includes('USDC')) return allPrices?.USDC ?? 1;
-    if (s.includes('USDT')) return allPrices?.USDT ?? 1;
+    if (s.includes('BTC')) return allPrices?.BTC?.usd ?? 0;
+    if (s.includes('ETH')) return allPrices?.ETH?.usd ?? 0;
+    if (s.includes('USDC')) return allPrices?.USDC?.usd ?? 1;
+    if (s.includes('USDT')) return allPrices?.USDT?.usd ?? 1;
     return 0;
   }, [allPrices]);
 

@@ -136,6 +136,7 @@ export function WithdrawLiquidityModal({
     return `${integerPart}.${decimalPart.substring(0, 9)}`;
   }, []);
 
+
   // State for withdraw amounts and controls
   const [withdrawAmount0, setWithdrawAmount0] = useState<string>("");
   const [withdrawAmount1, setWithdrawAmount1] = useState<string>("");
@@ -408,11 +409,23 @@ export function WithdrawLiquidityModal({
     if (tokenSide === 'amount0') {
       setWithdrawAmount0(position.token0.amount);
       setWithdrawActiveInputSide('amount0');
-      calculateWithdrawAmount(position.token0.amount, 'amount0');
+      // For in-range positions, set both amounts to exact position amounts to avoid rounding issues
+      if (position.isInRange) {
+        setWithdrawAmount1(position.token1.amount);
+      } else {
+        // For out-of-range positions, still use API calculation
+        calculateWithdrawAmount(position.token0.amount, 'amount0');
+      }
     } else {
       setWithdrawAmount1(position.token1.amount);
       setWithdrawActiveInputSide('amount1');
-      calculateWithdrawAmount(position.token1.amount, 'amount1');
+      // For in-range positions, set both amounts to exact position amounts to avoid rounding issues
+      if (position.isInRange) {
+        setWithdrawAmount0(position.token0.amount);
+      } else {
+        // For out-of-range positions, still use API calculation
+        calculateWithdrawAmount(position.token1.amount, 'amount1');
+      }
     }
     setIsFullWithdraw(true);
   }, [position, calculateWithdrawAmount]);

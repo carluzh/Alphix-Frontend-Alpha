@@ -16,6 +16,7 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { Token, SwapProgressState } from './swap-interface'; // Removed FeeDetail and SwapTxInfo as they are not directly used in this simplified props interface yet
+import { formatTokenAmount } from "@/lib/utils";
 
 // Forward declare props that might come from the main interface or be defined here
 interface SwapReviewViewProps {
@@ -177,7 +178,17 @@ export function SwapReviewView({
               {calculatedValues.fromTokenAmount === "< 0.001" ? (
                 <span className="text-xs text-muted-foreground">{calculatedValues.fromTokenAmount}</span>
               ) : (
-                <span className="text-sm">{calculatedValues.fromTokenAmount}</span>
+                (() => {
+                  const formatted = formatTokenAmount(calculatedValues.fromTokenAmount);
+                  const hasEllipsis = formatted.endsWith('...');
+                  const main = hasEllipsis ? formatted.slice(0, -3) : formatted;
+                  return (
+                    <span className="text-sm">
+                      {main}
+                      {hasEllipsis && <span className="text-muted-foreground">...</span>}
+                    </span>
+                  );
+                })()
               )}
               <span className="ml-1 text-xs text-muted-foreground">{displayFromToken.symbol}</span>
             </div>
@@ -191,7 +202,17 @@ export function SwapReviewView({
               {calculatedValues.toTokenAmount === "< 0.001" ? (
                 <span className="text-xs text-muted-foreground">{calculatedValues.toTokenAmount}</span>
               ) : (
-                <span className="text-sm">{calculatedValues.toTokenAmount}</span>
+                (() => {
+                  const formatted = formatTokenAmount(calculatedValues.toTokenAmount);
+                  const hasEllipsis = formatted.endsWith('...');
+                  const main = hasEllipsis ? formatted.slice(0, -3) : formatted;
+                  return (
+                    <span className="text-sm">
+                      {main}
+                      {hasEllipsis && <span className="text-muted-foreground">...</span>}
+                    </span>
+                  );
+                })()
               )}
               <span className="ml-1 text-xs text-muted-foreground">{displayToToken.symbol}</span>
             </div>

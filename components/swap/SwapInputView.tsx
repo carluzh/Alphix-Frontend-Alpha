@@ -15,7 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { cn } from "@/lib/utils";
+import { cn, formatTokenAmount } from "@/lib/utils";
 import { Token, FeeDetail, OutlineArcIcon } from './swap-interface';
 import { TokenSelector, TokenSelectorToken } from './TokenSelector';
 import { getToken } from '@/lib/pools-config';

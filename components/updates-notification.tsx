@@ -9,6 +9,7 @@ import { getLatestVersion } from "@/lib/version-log";
 export function UpdatesNotification({ forceShow = false }: { forceShow?: boolean }) {
   const [isVisible, setIsVisible] = useState(false);
   const [isDismissed, setIsDismissed] = useState(false);
+  const [isToggled, setIsToggled] = useState(false);
   
   // Get latest version info
   const latestVersion = getLatestVersion();
@@ -26,10 +27,16 @@ export function UpdatesNotification({ forceShow = false }: { forceShow?: boolean
       const firstLoginShown = document.cookie.includes('first_login_shown=true');
       console.log('First login shown:', firstLoginShown); // Debug log
 
-      // Force show if requested (from sidebar beta badge click) - ignore previous show status
+      // Check if this is the second login (updates notification)
+      const secondLoginShownKey = `second_login_${currentVersion.replace('.', '_')}_shown`;
+      const wasSecondLoginShown = document.cookie.includes(`${secondLoginShownKey}=true`);
+      console.log('Second login shown:', wasSecondLoginShown); // Debug log
+
+      // Force show if requested (from sidebar beta badge click) - toggle behavior
       if (forceShow) {
         console.log('Force showing updates notification!'); // Debug log
-        setIsVisible(true);
+        setIsToggled(true);
+        setIsVisible(!isVisible); // Toggle visibility
         return;
       }
 
@@ -40,19 +47,28 @@ export function UpdatesNotification({ forceShow = false }: { forceShow?: boolean
         fromLogin = flag === '1' || flag === 'true';
       } catch {}
 
-      if (fromLogin && firstLoginShown && !wasVersionShown) {
-        // Show immediately if coming from login, beta was already shown, and this version not shown
-        setIsVisible(true);
-        try { sessionStorage.removeItem('came_from_login_updates'); } catch {}
-        return;
-      }
-
-      if (!wasVersionShown && firstLoginShown) {
-        // Show with delay if this version hasn't been shown and beta was already shown
-        const timer = setTimeout(() => {
+      // Only show if not toggled and conditions are met
+      if (!isToggled) {
+        // Only show if:
+        // 1. Coming from login
+        // 2. Beta notification was already shown (first login completed)
+        // 3. This version's updates notification hasn't been shown yet
+        // 4. This version's second login hasn't been shown yet
+        if (fromLogin && firstLoginShown && !wasVersionShown && !wasSecondLoginShown) {
+          // Show immediately if coming from login, beta was already shown, and this version not shown
           setIsVisible(true);
-        }, 2400);
-        return () => clearTimeout(timer);
+          try { sessionStorage.removeItem('came_from_login_updates'); } catch {}
+          return;
+        }
+
+        // Fallback: Show with delay if conditions are met
+        if (!wasVersionShown && firstLoginShown && !wasSecondLoginShown) {
+          // Show with delay if this version hasn't been shown and beta was already shown
+          const timer = setTimeout(() => {
+            setIsVisible(true);
+          }, 2400);
+          return () => clearTimeout(timer);
+        }
       }
     }
   }, [forceShow]);
@@ -61,10 +77,17 @@ export function UpdatesNotification({ forceShow = false }: { forceShow?: boolean
     setIsVisible(false);
     setIsDismissed(true);
     if (typeof window !== 'undefined') {
-      // Set version-specific cookie (lifetime)
-      const currentVersion = latestVersion.version;
-      const versionShownKey = `updates_${currentVersion.replace('.', '_')}_shown`;
-      document.cookie = `${versionShownKey}=true; path=/; max-age=31536000`; // 1 year lifetime
+      // Only set cookies if this wasn't a toggle (i.e., it was dismissed normally)
+      if (!isToggled) {
+        // Set version-specific cookie (lifetime)
+        const currentVersion = latestVersion.version;
+        const versionShownKey = `updates_${currentVersion.replace('.', '_')}_shown`;
+        const secondLoginShownKey = `second_login_${currentVersion.replace('.', '_')}_shown`;
+        
+        // Set both cookies to prevent showing again
+        document.cookie = `${versionShownKey}=true; path=/; max-age=31536000`; // 1 year lifetime
+        document.cookie = `${secondLoginShownKey}=true; path=/; max-age=31536000`; // 1 year lifetime
+      }
     }
   };
 
