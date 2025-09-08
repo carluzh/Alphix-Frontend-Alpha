@@ -17,9 +17,12 @@ import { cookieToInitialState } from 'wagmi'
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      retry: 1,
+      retry: 0, // Disable retries to prevent duplicate calls
       refetchOnWindowFocus: false,
+      refetchOnMount: false, // Disable refetch on mount
+      refetchOnReconnect: false, // Disable refetch on reconnect
       gcTime: 10 * 60 * 1000,
+      networkMode: 'online',
     },
   },
 })

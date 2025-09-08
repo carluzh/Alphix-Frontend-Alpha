@@ -11,6 +11,8 @@ import { getStateViewAddress, getPositionManagerAddress } from './pools-config';
 import { getToken as getTokenConfig, getTokenSymbolByAddress, CHAIN_ID } from './pools-config';
 import type { Address } from 'viem';
 import { position_manager_abi } from './abis/PositionManager_abi';
+import { SafeStorage } from './safe-storage';
+import { RetryUtility } from './retry-utility';
 const CACHE_DURATION_MS = 60 * 60 * 1000; // 1 hour
 const LONG_CACHE_DURATION_MS = 15 * 60 * 1000; // 15 minutes for stable data
 const TEN_MINUTES_MS = 10 * 60 * 1000;
@@ -111,14 +113,13 @@ type StoredIds = { ids: string[]; ts: number };
 type StoredIdsWithMeta = { items: Array<{ id: string; createdAt?: number; lastTimestamp?: number }>; ts: number };
 
 function readIdsFromLocalStorage(key: string): string[] | null {
-  if (typeof window === 'undefined') return null;
   try {
-    const raw = window.localStorage.getItem(key);
+    const raw = SafeStorage.get(key);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as StoredIds | StoredIdsWithMeta | null;
     if (!parsed || typeof (parsed as any).ts !== 'number') return null;
     if (Date.now() - (parsed as any).ts > IDS_TTL_MS) {
-      window.localStorage.removeItem(key);
+      SafeStorage.remove(key);
       return null;
     }
     if (Array.isArray((parsed as any).ids)) return (parsed as StoredIds).ids;
@@ -130,9 +131,8 @@ function readIdsFromLocalStorage(key: string): string[] | null {
 }
 
 function writeIdsToLocalStorage(key: string, ids: string[]): void {
-  if (typeof window === 'undefined') return;
   try {
-    window.localStorage.setItem(key, JSON.stringify({ ids, ts: Date.now() }));
+    SafeStorage.set(key, JSON.stringify({ ids, ts: Date.now() }));
   } catch {}
 }
 
@@ -145,9 +145,7 @@ export function invalidateUserPositionsCache(ownerAddress: string): void {
 export function invalidateUserPositionIdsCache(ownerAddress: string): void {
   const key = getUserPositionIdsCacheKey(ownerAddress);
   invalidateCacheEntry(key);
-  if (typeof window !== 'undefined') {
-    try { window.localStorage.removeItem(key); } catch {}
-  }
+  SafeStorage.remove(key);
 }
 
 // Function to generate a cache key for a specific pool's detailed stats
@@ -279,16 +277,24 @@ export async function loadUncollectedFeesBatch(positionIds: string[], ttlMs: num
 
 // --- Portfolio activity cache helpers (client-side localStorage) ---
 export function invalidateActivityCache(ownerAddress: string, first: number = 20): void {
-  if (typeof window === 'undefined') return;
   try {
     const owner = (ownerAddress || '').toLowerCase();
     const prefix = `activity:${owner}:${first}:`;
-    const toDelete: string[] = [];
-    for (let i = 0; i < window.localStorage.length; i++) {
-      const key = window.localStorage.key(i) as string | null;
-      if (key && key.startsWith(prefix)) toDelete.push(key);
+
+    // Since SafeStorage doesn't provide enumeration, we'll use direct localStorage access
+    // but with error handling for private browsing
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        const toDelete: string[] = [];
+        for (let i = 0; i < window.localStorage.length; i++) {
+          const key = window.localStorage.key(i) as string | null;
+          if (key && key.startsWith(prefix)) toDelete.push(key);
+        }
+        toDelete.forEach((k) => SafeStorage.remove(k));
+      } catch {
+        // Silently handle private browsing or other storage errors
+      }
     }
-    toDelete.forEach((k) => window.localStorage.removeItem(k));
   } catch {}
 }
 
@@ -355,20 +361,18 @@ export async function loadUserPositionIds(ownerAddress: string): Promise<string[
     let expectNewPosition = false;
 
     try {
-      if (typeof window !== 'undefined') {
-        const hint = window.localStorage.getItem(recentPositionHintKey);
-        if (hint) {
-          const parsed = JSON.parse(hint);
-          expectedNewPositionId = parsed.positionId;
-          recentCreationTime = parsed.timestamp || 0;
-          expectNewPosition = parsed.action === 'create';
-          // Clean up old hints (older than 10 minutes)
-          if (Date.now() - recentCreationTime > 10 * 60 * 1000) {
-            window.localStorage.removeItem(recentPositionHintKey);
-            expectedNewPositionId = null;
-            recentCreationTime = 0;
-            expectNewPosition = false;
-          }
+      const hint = SafeStorage.get(recentPositionHintKey);
+      if (hint) {
+        const parsed = JSON.parse(hint);
+        expectedNewPositionId = parsed.positionId;
+        recentCreationTime = parsed.timestamp || 0;
+        expectNewPosition = parsed.action === 'create';
+        // Clean up old hints (older than 10 minutes)
+        if (Date.now() - recentCreationTime > 10 * 60 * 1000) {
+          SafeStorage.remove(recentPositionHintKey);
+          expectedNewPositionId = null;
+          recentCreationTime = 0;
+          expectNewPosition = false;
         }
       }
     } catch {}
@@ -382,102 +386,99 @@ export async function loadUserPositionIds(ownerAddress: string): Promise<string[
       }
     } catch {}
 
-    let attempts = (expectedNewPositionId || expectNewPosition) ? 8 : 1; // Increased attempts for new positions
-    let lastResult: string[] = [];
-    let foundRecentPosition = false; // Track across all attempts
-    let lastValidResult: string[] = []; // Track last successful response
-    // Persist the most recent items with server-provided timestamps (seconds)
-    let itemsPersistForPersist: Array<{ id: string; createdAt?: number; lastTimestamp?: number }> = [];
+    const result = await RetryUtility.execute(
+      async () => {
+        // Add cache busting for new position detection
+        const bustParam = expectNewPosition ? `&_t=${Date.now()}` : '';
+        const res = await fetch(`/api/liquidity/get-positions?ownerAddress=${ownerAddress}&idsOnly=1&withCreatedAt=1${bustParam}` as any, { cache: 'no-store' as any } as any);
 
-    for (let attempt = 0; attempt < attempts; attempt++) {
-      // Add cache busting for new position detection
-      const bustParam = expectNewPosition ? `&_t=${Date.now()}` : '';
-      const res = await fetch(`/api/liquidity/get-positions?ownerAddress=${ownerAddress}&idsOnly=1&withCreatedAt=1${bustParam}` as any, { cache: 'no-store' as any } as any);
-      if (!res.ok) {
-        // Don't fail immediately - try more attempts for critical new position detection
-        if (expectNewPosition && attempt < attempts - 1) {
-          console.warn(`[Cache] API call failed on attempt ${attempt + 1}, retrying...`);
-          continue;
-        }
-        // Return last valid result if available, otherwise empty array
-        return lastValidResult.length > 0 ? lastValidResult : [] as string[];
-      }
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-      const data = await res.json();
-      const ids: string[] = [];
-      const itemsPersist: Array<{ id: string; createdAt?: number; lastTimestamp?: number }> = [];
+        const data = await res.json();
+        const ids: string[] = [];
+        const itemsPersist: Array<{ id: string; createdAt?: number; lastTimestamp?: number }> = [];
 
-      if (Array.isArray(data)) {
-        for (const item of data) {
-          try {
-            if (!item) continue;
-            // More robust ID extraction to handle different formats
-            let idStr = '';
-            if (typeof item.id === 'string') {
-              idStr = item.id;
-            } else if (typeof item.id === 'number') {
-              idStr = item.id.toString();
-            } else if (typeof item.id === 'bigint') {
-              idStr = item.id.toString();
-            } else if (item.id && typeof item.id === 'object' && 'toString' in item.id) {
-              idStr = item.id.toString();
-            } else {
-              idStr = String((item as any).id || '');
+        if (Array.isArray(data)) {
+          for (const item of data) {
+            try {
+              if (!item) continue;
+              // More robust ID extraction to handle different formats
+              let idStr = '';
+              if (typeof item.id === 'string') {
+                idStr = item.id;
+              } else if (typeof item.id === 'number') {
+                idStr = item.id.toString();
+              } else if (typeof item.id === 'bigint') {
+                idStr = item.id.toString();
+              } else if (item.id && typeof item.id === 'object' && 'toString' in item.id) {
+                idStr = item.id.toString();
+              } else {
+                idStr = String((item as any).id || '');
+              }
+
+              if (idStr && idStr !== '0' && idStr !== 'undefined' && idStr !== 'null') {
+                ids.push(idStr);
+                itemsPersist.push({
+                  id: idStr,
+                  createdAt: Number((item as any)?.createdAt || 0),
+                  lastTimestamp: Number((item as any)?.lastTimestamp || 0)
+                });
+              }
+            } catch (error) {
+              console.warn('[Cache] Failed to process position item:', item, error);
             }
-            
-            if (idStr && idStr !== '0' && idStr !== 'undefined' && idStr !== 'null') {
-              ids.push(idStr);
-              itemsPersist.push({ 
-                id: idStr, 
-                createdAt: Number((item as any)?.createdAt || 0), 
-                lastTimestamp: Number((item as any)?.lastTimestamp || 0) 
-              });
-            }
-          } catch (error) {
-            console.warn('[Cache] Failed to process position item:', item, error);
           }
         }
+
+        return { ids, itemsPersist };
+      },
+      {
+        attempts: expectedNewPositionId || expectNewPosition ? 8 : 1,
+        backoffStrategy: 'exponential',
+        baseDelay: 1500,
+        maxDelay: 5000,
+        shouldRetry: (attempt, error, result) => {
+          if (!result) return true; // Network error, retry
+
+          const { ids, itemsPersist } = result;
+
+          // Check if we have the expected conditions for proceeding with caching
+          if (expectedNewPositionId && !ids.includes(expectedNewPositionId)) {
+            return true; // Specific position ID expected but not found, retry
+          }
+
+          if (expectNewPosition) {
+            // Look for positions created since the hint was set (with 30s buffer for transaction time)
+            const now = Date.now() / 1000;
+            const hintBuffer = 30; // seconds
+            const recentPositions = itemsPersist.filter(item =>
+              item.createdAt && (item.createdAt >= (recentCreationTime / 1000) - hintBuffer)
+            );
+
+            if (recentPositions.length > 0) {
+              console.log(`[Cache] Found ${recentPositions.length} position(s) created since hint was set`);
+              return false; // Success, found new positions
+            }
+
+            return true; // No recent positions found, retry
+          }
+
+          return false; // Conditions met, don't retry
+        },
+        onRetry: (attempt, error) => {
+          console.log(`[Cache] Waiting for new position to be indexed... attempt ${attempt + 1}`);
+        },
+        throwOnFailure: false
       }
+    );
 
-      lastResult = ids;
-      lastValidResult = [...ids]; // Store as last valid response
-      itemsPersistForPersist = [...itemsPersist];
+    // Extract results
+    let lastResult: string[] = [];
+    let itemsPersistForPersist: Array<{ id: string; createdAt?: number; lastTimestamp?: number }> = [];
 
-      // Check if we have the expected conditions for proceeding with caching
-      let shouldProceed = true;
-
-      if (expectedNewPositionId && !ids.includes(expectedNewPositionId)) {
-        // Specific position ID expected but not found
-        shouldProceed = false;
-      } else if (expectNewPosition) {
-        // Look for positions created since the hint was set (with 30s buffer for transaction time)
-        const now = Date.now() / 1000;
-        const hintBuffer = 30; // seconds
-        const recentPositions = itemsPersist.filter(item => 
-          item.createdAt && (item.createdAt >= (recentCreationTime / 1000) - hintBuffer)
-        );
-        
-        if (recentPositions.length > 0) {
-          foundRecentPosition = true;
-          console.log(`[Cache] Found ${recentPositions.length} position(s) created since hint was set`);
-        } else {
-          shouldProceed = false;
-        }
-      }
-
-      if (!shouldProceed && attempt < attempts - 1) {
-        // Conditions not met, wait and retry with increasing delays
-        const delay = Math.min(1500 + (attempt * 800), 5000); // 1.5s, 2.3s, 3.1s, 3.9s, 4.7s, 5s (capped)
-        console.log(`[Cache] Waiting ${delay}ms for new position to be indexed... attempt ${attempt + 1}/${attempts}`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-        continue;
-      } else {
-        // Conditions met or this is the last attempt - proceed with caching
-        if (foundRecentPosition || expectedNewPositionId) {
-          console.log(`[Cache] Proceeding with caching after ${attempt + 1} attempts`);
-        }
-        break;
-      }
+    if (result.success && result.data) {
+      lastResult = result.data.ids;
+      itemsPersistForPersist = result.data.itemsPersist;
     }
 
     // Cache the final result
@@ -489,11 +490,11 @@ export async function loadUserPositionIds(ownerAddress: string): Promise<string[
           ? itemsPersistForPersist
           : lastResult.map(id => ({ id, createdAt: Math.floor(recentCreationTime / 1000), lastTimestamp: Math.floor(Date.now() / 1000) }))
         );
-        window.localStorage.setItem(key, JSON.stringify({ items: toStore, ts: Date.now() }));
+        SafeStorage.set(key, JSON.stringify({ items: toStore, ts: Date.now() }));
         // Clean up the hint if we successfully found the new position(s)
         if ((expectedNewPositionId && lastResult.includes(expectedNewPositionId)) ||
             foundRecentPosition) {
-          window.localStorage.removeItem(recentPositionHintKey);
+          SafeStorage.remove(recentPositionHintKey);
         }
       }
     } catch {}
@@ -628,14 +629,12 @@ export async function derivePositionsFromIds(ownerAddress: string, tokenIds: Arr
   // 5. Final Assembly: Construct V4Position objects and derive amounts
   const createdAtMap = new Map<string, number>();
   try {
-      if (typeof window !== 'undefined') {
-          const raw = window.localStorage.getItem(getUserPositionIdsCacheKey(ownerAddress));
-          if (raw) {
-              const parsed = JSON.parse(raw) as any;
-              if (parsed && Array.isArray(parsed.items)) {
-                  for (const it of parsed.items) {
-                      if (it && it.id) createdAtMap.set(String(it.id), Number(it.createdAt || 0));
-                  }
+      const raw = SafeStorage.get(getUserPositionIdsCacheKey(ownerAddress));
+      if (raw) {
+          const parsed = JSON.parse(raw) as any;
+          if (parsed && Array.isArray(parsed.items)) {
+              for (const it of parsed.items) {
+                  if (it && it.id) createdAtMap.set(String(it.id), Number(it.createdAt || 0));
               }
           }
       }

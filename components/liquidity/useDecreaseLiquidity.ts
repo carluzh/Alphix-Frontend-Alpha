@@ -25,7 +25,7 @@ const safeParseUnits = (amount: string, decimals: number): bigint => {
 import JSBI from 'jsbi';
 
 interface UseDecreaseLiquidityProps {
-  onLiquidityDecreased: (info?: { txHash?: `0x${string}`; blockNumber?: bigint }) => void;
+  onLiquidityDecreased: (info?: { txHash?: `0x${string}`; blockNumber?: bigint; isFullBurn?: boolean }) => void;
   onFeesCollected?: () => void;
 }
 
@@ -61,7 +61,8 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
 
   const [isDecreasing, setIsDecreasing] = useState(false);
   const lastWasCollectOnly = useRef(false);
-  const isCompoundRef = useRef(false);
+  const lastIsFullBurn = useRef(false);
+  const processedTransactions = useRef(new Set<string>());
 
   // Helper function to get the NFT token ID from position parameters
   const getTokenIdFromPosition = useCallback(async (positionData: DecreasePositionData): Promise<bigint> => {
@@ -92,17 +93,18 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
 
   const decreaseLiquidity = useCallback(async (positionData: DecreasePositionData, decreasePercentage: number, opts?: DecreaseOptions) => {
     if (!accountAddress || !chainId) {
-      toast.error("Wallet not connected. Please connect your wallet and try again.");
+      toast.error("Wallet Not Connected", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Please connect your wallet and try again." });
       return;
     }
     if (!V4_POSITION_MANAGER_ADDRESS) {
-      toast.error("Configuration Error: Position Manager address not set.");
+      toast.error("Configuration Error", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Position Manager address not set." });
       return;
     }
 
     setIsDecreasing(true);
     const actionName = positionData.isFullBurn ? "burn" : (positionData.collectOnly ? "collect" : "decrease");
     lastWasCollectOnly.current = !!positionData.collectOnly;
+    lastIsFullBurn.current = !!positionData.isFullBurn;
 
     try {
       // Only use percentage path if user did NOT specify explicit token amounts
@@ -556,6 +558,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
       console.error(`Error preparing ${actionName} transaction:`, error);
       const errorMessage = error.message || `Could not prepare the ${actionName} transaction.`;
       toast.error(`${actionName.charAt(0).toUpperCase() + actionName.slice(1)} Preparation Failed`, { 
+        icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
         description: errorMessage 
       });
       setIsDecreasing(false);
@@ -565,7 +568,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
   useEffect(() => {
     if (decreaseSendError) {
       const message = decreaseSendError instanceof BaseError ? decreaseSendError.shortMessage : decreaseSendError.message;
-      toast.error("Withdraw Failed", { description: message });
+      toast.error("Withdraw Failed", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: message });
       setIsDecreasing(false);
     }
   }, [decreaseSendError]);
@@ -573,35 +576,26 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
   useEffect(() => {
     if (!hash) return;
 
+    // Prevent processing the same transaction multiple times
+    const hashString = hash.toString();
+    if (processedTransactions.current.has(hashString)) {
+      return;
+    }
+
     if (isDecreaseConfirmed) {
+      // Mark transaction as processed immediately
+      processedTransactions.current.add(hashString);
+      
       (async () => {
         let blockNumber: bigint | undefined = undefined;
         try {
           const receipt = await publicClient.getTransactionReceipt({ hash: hash as `0x${string}` });
           blockNumber = receipt?.blockNumber;
         } catch {}
-        if (isCompoundRef.current) {
-          toast.success("Compound Success", {
-            id: hash,
-            description: "Fees added back to your position.",
-            action: baseSepolia?.blockExplorers?.default?.url 
-              ? { label: "View Tx", onClick: () => window.open(`${baseSepolia.blockExplorers.default.url}/tx/${hash}`, '_blank') }
-              : undefined,
-          });
-          onLiquidityDecreased({ txHash: hash as `0x${string}`, blockNumber } as any);
-          try { if (accountAddress) prefetchService.requestPositionsRefresh({ owner: accountAddress, reason: 'compound' }); } catch {}
-          isCompoundRef.current = false;
-          // CRITICAL: Invalidate global batch cache after compound
-          try {
-            clearBatchDataCache();
-            fetch('/api/internal/revalidate-pools', { method: 'POST' }).catch(() => {});
-          } catch {}
+        if (lastWasCollectOnly.current && onFeesCollected) {
+          onFeesCollected();
         } else {
-          if (lastWasCollectOnly.current && onFeesCollected) {
-            onFeesCollected();
-          } else {
-            onLiquidityDecreased({ txHash: hash as `0x${string}`, blockNumber } as any);
-          }
+          onLiquidityDecreased({ txHash: hash as `0x${string}`, blockNumber, isFullBurn: lastIsFullBurn.current } as any);
         }
         // CRITICAL: Invalidate global batch cache after liquidity decrease
         try {
@@ -615,16 +609,16 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
       // Removed hook-level revalidate to avoid duplicates; page handles revalidation after subgraph sync
       setIsDecreasing(false);
     } else if (decreaseConfirmError) {
+      // Mark failed transaction as processed to prevent retry loops
+      processedTransactions.current.add(hashString);
+      
        const message = decreaseConfirmError instanceof BaseError ? decreaseConfirmError.shortMessage : decreaseConfirmError.message;
-      toast.error("Withdraw Failed", {
+      toast.error("Withdraw Failed", { 
         id: hash,
-        description: message,
-        action: baseSepolia?.blockExplorers?.default?.url 
-          ? { label: "View Tx", onClick: () => window.open(`${baseSepolia.blockExplorers.default.url}/tx/${hash}`, '_blank') }
-          : undefined,
+        icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
+        description: message
       });
       setIsDecreasing(false);
-      isCompoundRef.current = false;
     }
   }, [isDecreaseConfirming, isDecreaseConfirmed, decreaseConfirmError, hash, onLiquidityDecreased, onFeesCollected, accountAddress]);
 
@@ -633,17 +627,16 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
     // Claim fees only: decrease 0 liquidity, take pair, optional sweep
     claimFees: useCallback(async (tokenIdLike: string | number) => {
       if (!accountAddress || !chainId) {
-        toast.error("Wallet not connected. Please connect your wallet and try again.");
+        toast.error("Wallet Not Connected", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Please connect your wallet and try again." });
         return;
       }
       if (!V4_POSITION_MANAGER_ADDRESS) {
-        toast.error("Configuration Error: Position Manager address not set.");
+        toast.error("Configuration Error", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Position Manager address not set." });
         return;
       }
 
       setIsDecreasing(true);
       lastWasCollectOnly.current = true;
-      isCompoundRef.current = false;
 
       try {
         const nftTokenId = await getTokenIdFromPosition({
@@ -699,160 +692,8 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
           chainId: chainId,
         });
       } catch (e: any) {
-        toast.error('Claim Fees Preparation Failed', { description: e?.message || 'Could not prepare claim-fees transaction.' });
+        toast.error('Claim Fees Preparation Failed', { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: e?.message || 'Could not prepare claim-fees transaction.' });
         setIsDecreasing(false);
-      }
-    }, [accountAddress, chainId, writeContract, resetWriteContract, getTokenIdFromPosition]),
-    // One-shot compound: collect fees then add as liquidity in a single modifyLiquidities call
-    compoundFees: useCallback(async (position: {
-      tokenId: string | number;
-      token0Symbol: TokenSymbol;
-      token1Symbol: TokenSymbol;
-      poolId: string;
-      tickLower: number;
-      tickUpper: number;
-    }, raw0: string, raw1: string) => {
-      if (!accountAddress || !chainId) {
-        toast.error("Wallet not connected. Please connect your wallet and try again.");
-        return;
-      }
-      if (!V4_POSITION_MANAGER_ADDRESS) {
-        toast.error("Configuration Error: Position Manager address not set.");
-        return;
-      }
-
-      setIsDecreasing(true);
-      lastWasCollectOnly.current = false;
-      isCompoundRef.current = true;
-
-      try {
-        const token0Def = getToken(position.token0Symbol);
-        const token1Def = getToken(position.token1Symbol);
-        if (!token0Def || !token1Def || !token0Def.address || !token1Def.address) {
-          throw new Error("Token definitions missing");
-        }
-
-        const sdkToken0 = new Token(chainId, getAddress(token0Def.address), token0Def.decimals, token0Def.symbol);
-        const sdkToken1 = new Token(chainId, getAddress(token1Def.address), token1Def.decimals, token1Def.symbol);
-        const [sortedSdkToken0, sortedSdkToken1] = sdkToken0.sortsBefore(sdkToken1)
-          ? [sdkToken0, sdkToken1]
-          : [sdkToken1, sdkToken0];
-
-        const planner = new V4PositionPlanner();
-
-        // Resolve NFT tokenId (from composite id salt)
-        const nftTokenId = await Promise.race([
-          getTokenIdFromPosition(position as any),
-          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Failed to resolve token ID. Please try again.')), 10000))
-        ]);
-        const tokenIdJSBI = JSBI.BigInt(nftTokenId.toString());
-
-        // Step 1: collect fees via zero-liquidity decrease (keep balances internal; don't take to EOA yet)
-        const zero = JSBI.BigInt(0);
-        planner.addDecrease(tokenIdJSBI, zero, zero, zero, EMPTY_BYTES || '0x');
-        const hasNativeETH = token0Def.address === "0x0000000000000000000000000000000000000000" || 
-                             token1Def.address === "0x0000000000000000000000000000000000000000";
-
-        // Step 3: compute liquidity using both sides and pick the better (maximize added liquidity without swaps)
-        const amt0 = BigInt(raw0 || '0');
-        const amt1 = BigInt(raw1 || '0');
-
-        const token0Decimals = token0Def!.decimals;
-        const token1Decimals = token1Def!.decimals;
-        async function planFromSide(side: 'token0' | 'token1') {
-          const sideSymbol = side === 'token0' ? position.token0Symbol : position.token1Symbol;
-          const sideDecimals = side === 'token0' ? token0Decimals : token1Decimals;
-          const sideRaw = side === 'token0' ? raw0 : raw1;
-          if (!sideRaw || BigInt(sideRaw) === 0n) {
-            return { liquidity: JSBI.BigInt(0), req0: 0n, req1: 0n, max0: JSBI.BigInt(0), max1: JSBI.BigInt(0) };
-          }
-          let liq = JSBI.BigInt(0);
-          let req0: bigint = 0n;
-          let req1: bigint = 0n;
-          try {
-            const human = formatRawToHuman(sideRaw, sideDecimals);
-            const resp = await fetch('/api/liquidity/calculate-liquidity-parameters', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                token0Symbol: position.token0Symbol,
-                token1Symbol: position.token1Symbol,
-                inputAmount: human,
-                inputTokenSymbol: sideSymbol,
-                userTickLower: position.tickLower,
-                userTickUpper: position.tickUpper,
-                chainId: chainId,
-              }),
-            });
-            if (!resp.ok) throw new Error(await resp.text());
-            const r = await resp.json();
-            liq = JSBI.BigInt(r.liquidity);
-            req0 = BigInt(r.amount0);
-            req1 = BigInt(r.amount1);
-          } catch {
-            // conservative fallback
-            const maxRaw = side === 'token0' ? amt0 : amt1;
-            const estimated = JSBI.divide(JSBI.BigInt(maxRaw.toString()), JSBI.BigInt(10));
-            liq = JSBI.greaterThan(estimated, JSBI.BigInt(1)) ? estimated : JSBI.BigInt(1);
-            // approximate proportional requirements assuming other side small; keep reqs at collected
-            req0 = amt0; req1 = amt1;
-          }
-          // Feasibility: Require that the API-required amounts are fully covered by collected amounts.
-          // If not, treat as zero-liquidity plan to avoid requesting unavailable tokens.
-          const feasible = req0 <= amt0 && req1 <= amt1;
-          if (!feasible) {
-            return { liquidity: JSBI.BigInt(0), req0: 0n, req1: 0n, max0: JSBI.BigInt(0), max1: JSBI.BigInt(0) };
-          }
-          // clamp to collected to avoid EOA pull
-          const collectedSorted0Raw = sdkToken0.address === sortedSdkToken0.address ? amt0 : amt1;
-          const collectedSorted1Raw = sdkToken0.address === sortedSdkToken0.address ? amt1 : amt0;
-          const reqSorted0Raw = sdkToken0.address === sortedSdkToken0.address ? req0 : req1;
-          const reqSorted1Raw = sdkToken0.address === sortedSdkToken0.address ? req1 : req0;
-          const out0 = reqSorted0Raw <= collectedSorted0Raw ? reqSorted0Raw : collectedSorted0Raw;
-          const out1 = reqSorted1Raw <= collectedSorted1Raw ? reqSorted1Raw : collectedSorted1Raw;
-          return { liquidity: liq, req0, req1, max0: JSBI.BigInt(out0.toString()), max1: JSBI.BigInt(out1.toString()) };
-        }
-
-        const [plan0, plan1] = await Promise.all([planFromSide('token0'), planFromSide('token1')]);
-        const pickPlan = JSBI.greaterThan(plan0.liquidity, plan1.liquidity) ? plan0 : plan1;
-        if (!JSBI.greaterThan(pickPlan.liquidity, JSBI.BigInt(0)) || (JSBI.equal(pickPlan.max0, JSBI.BigInt(0)) && JSBI.equal(pickPlan.max1, JSBI.BigInt(0)))) {
-          toast.error('Cannot Compound Single Sided Fees', { icon: React.createElement(OctagonX, { className: 'h-4 w-4 text-red-500' }) });
-          setIsDecreasing(false);
-          isCompoundRef.current = false;
-          return;
-        }
-
-        // Step 4: increase using collected tokens (best plan). Since we kept balances internal, no Permit2 settle is needed.
-        planner.addIncrease(tokenIdJSBI, pickPlan.liquidity, pickPlan.max0, pickPlan.max1, EMPTY_BYTES || '0x');
-
-        // Step 5: take any leftover internal balances back to the user (and sweep if native)
-        planner.addTakePair(sortedSdkToken0.wrapped, sortedSdkToken1.wrapped, accountAddress);
-        if (hasNativeETH && getAddress(sortedSdkToken0.address) === '0x0000000000000000000000000000000000000000') {
-          planner.addSweep(sortedSdkToken0.wrapped, accountAddress);
-        } else if (hasNativeETH && getAddress(sortedSdkToken1.address) === '0x0000000000000000000000000000000000000000') {
-          planner.addSweep(sortedSdkToken1.wrapped, accountAddress);
-        }
-
-        // Finalize and submit
-        resetWriteContract();
-        const deadline = Math.floor(Date.now() / 1000) + 600;
-        const unlockData = planner.finalize();
-        // No Permit2 settlement from EOA, keep value at 0
-        let txValue = 0n;
-
-        writeContract({
-          address: V4_POSITION_MANAGER_ADDRESS as Hex,
-          abi: V4_POSITION_MANAGER_ABI,
-          functionName: 'modifyLiquidities',
-          args: [unlockData as Hex, deadline],
-          value: txValue,
-          chainId: chainId,
-        });
-      } catch (error: any) {
-        console.error('Error preparing compound transaction:', error);
-        toast.error('Compound Preparation Failed', { description: error?.message || 'Could not prepare the compound transaction.' });
-        setIsDecreasing(false);
-        isCompoundRef.current = false;
       }
     }, [accountAddress, chainId, writeContract, resetWriteContract, getTokenIdFromPosition]),
     isLoading: isDecreasing || isDecreaseSendPending || isDecreaseConfirming,

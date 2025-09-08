@@ -33,10 +33,10 @@ function getUnderlyingAsset(tokenSymbol: string): keyof AllPricesData | null {
 
 // Interface for all prices cache
 export interface AllPricesData {
-  BTC: number;
-  USDC: number;
-  ETH: number;
-  USDT: number;
+  BTC: { usd: number; usd_24h_change?: number };
+  USDC: { usd: number; usd_24h_change?: number };
+  ETH: { usd: number; usd_24h_change?: number };
+  USDT: { usd: number; usd_24h_change?: number };
   lastUpdated: number;
 }
 
@@ -61,8 +61,8 @@ async function fetchAllPrices(signal?: AbortSignal): Promise<AllPricesData> {
       // Use proxied endpoint when running in browser (avoid CORS and rate limits)
       const isBrowser = typeof window !== 'undefined';
       const url = isBrowser
-        ? `/api/prices?ids=${ALL_COINGECKO_IDS.join(',')}&vs=usd`
-        : `${COINGECKO_PRICE_ENDPOINT}?ids=${ALL_COINGECKO_IDS.join(',')}&vs_currencies=usd`;
+        ? `/api/prices?ids=${ALL_COINGECKO_IDS.join(',')}&vs=usd&include_24hr_change=true`
+        : `${COINGECKO_PRICE_ENDPOINT}?ids=${ALL_COINGECKO_IDS.join(',')}&vs_currencies=usd&include_24hr_change=true`;
 
       const response = await fetch(url, { 
         cache: 'no-store',
@@ -79,10 +79,10 @@ async function fetchAllPrices(signal?: AbortSignal): Promise<AllPricesData> {
       console.log('[PriceService] CoinGecko response:', data);
       
       const prices: AllPricesData = {
-        BTC: data.bitcoin?.usd,
-        USDC: data['usd-coin']?.usd,
-        ETH: data.ethereum?.usd,
-        USDT: data.tether?.usd,
+        BTC: { usd: data.bitcoin?.usd || 0, usd_24h_change: data.bitcoin?.usd_24h_change },
+        USDC: { usd: data['usd-coin']?.usd || 1, usd_24h_change: data['usd-coin']?.usd_24h_change },
+        ETH: { usd: data.ethereum?.usd || 0, usd_24h_change: data.ethereum?.usd_24h_change },
+        USDT: { usd: data.tether?.usd || 1, usd_24h_change: data.tether?.usd_24h_change },
         lastUpdated: Date.now()
       };
       
@@ -127,7 +127,7 @@ export async function getAllTokenPrices(params?: { signal?: AbortSignal }): Prom
 export async function getTokenPrice(tokenSymbol: string): Promise<number | null> {
   const allPrices = await getAllTokenPrices();
   const baseSymbol = getUnderlyingAsset(tokenSymbol);
-  return baseSymbol ? allPrices[baseSymbol] : null;
+  return baseSymbol ? allPrices[baseSymbol]?.usd || null : null;
 }
 
 /**

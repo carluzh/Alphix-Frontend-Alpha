@@ -114,9 +114,11 @@ export function SwapSuccessView({
           }
           if (targets.length) {
             const getBatch = async () => {
-              const r = await fetch(`/api/liquidity/get-pools-batch?bust=${Date.now()}&noStore=1`);
-              if (!r.ok) return null;
-              return r.json();
+              // DISABLED: Causing duplicate API calls
+              // const r = await fetch(`/api/liquidity/get-pools-batch?bust=${Date.now()}&noStore=1`);
+              // if (!r.ok) return null;
+              // return r.json();
+              return null; // Disabled to prevent duplicate calls
             };
             const readVolumes = (json: any) => {
               const byId = new Map<string, number>();

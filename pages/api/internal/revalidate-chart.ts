@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
+import { bumpGlobalVersion, getGlobalVersion } from '@/lib/cache-version'
 
 // These are module singletons inside the target modules; we can't import their Maps directly
 // So we expose a minimal in-process registry here.
@@ -28,6 +29,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   // Best-effort: import the API route modules and clear their internal caches
   try {
+    // Bump global version to force cache miss on subsequent requests
+    const newVersion = bumpGlobalVersion();
+
     const vol = await import('../liquidity/chart-volume') as unknown as AnyHandlerModule
     const tvl = await import('../liquidity/chart-tvl') as unknown as AnyHandlerModule
 
@@ -50,7 +54,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     }
 
-    return res.status(200).json({ success: true, cleared })
+    return res.status(200).json({
+      success: true,
+      cleared,
+      version: newVersion,
+      now: Date.now()
+    })
   } catch (err: any) {
     return res.status(500).json({ message: err?.message || 'Failed to revalidate' })
   }

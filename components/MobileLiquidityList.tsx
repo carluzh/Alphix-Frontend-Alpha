@@ -25,61 +25,63 @@ export function MobileLiquidityList({ pools, onSelectPool }: MobileLiquidityList
   }
 
   return (
-    <div className="space-y-4 p-4">
-      <div className="mb-4 px-4">
-        <h2 className="text-xl font-semibold">Liquidity Pools</h2>
-        <p className="text-sm text-muted-foreground">
-          Explore and manage your liquidity positions.
-        </p>
-      </div>
+    <div className="space-y-3">
       {pools.map((pool) => (
-        <Card 
-          key={pool.id} 
-          onClick={() => onSelectPool(pool.id)} 
-          className="cursor-pointer hover:bg-muted/10 transition-colors bg-card/80 border-border/70"
+        <Card
+          key={pool.id}
+          onClick={() => onSelectPool(pool.id)}
+          className="cursor-pointer bg-muted/30 border border-sidebar-border/60 hover:bg-muted/40 transition-colors"
         >
-          <CardHeader className="flex flex-row items-center justify-between pb-2 pt-4 px-4">
-            <div className="flex items-center gap-2">
-              <div className="relative w-12 h-6"> {/* Slightly smaller icons for mobile list view */}
-                <div className="absolute top-0 left-0 w-6 h-6 rounded-full overflow-hidden bg-background border border-border/50">
-                  <Image 
-                    src={pool.tokens[0].icon} 
-                    alt={pool.tokens[0].symbol} 
-                    width={24} 
-                    height={24} 
-                    className="w-full h-full object-cover" 
+          <CardHeader className="space-y-0 flex flex-row items-center justify-between py-3 px-3">
+            <div className="flex items-center">
+              <div className="relative w-14 h-8">
+                <div className="absolute top-0 left-0 w-8 h-8 rounded-full overflow-hidden bg-background border border-border/50">
+                  <Image
+                    src={pool.tokens[0].icon}
+                    alt={pool.tokens[0].symbol}
+                    width={32}
+                    height={32}
+                    className="w-full h-full object-cover"
                   />
                 </div>
-                <div className="absolute top-0 left-3 w-6 h-6 rounded-full overflow-hidden bg-background border border-border/50">
-                  <Image 
-                    src={pool.tokens[1].icon} 
-                    alt={pool.tokens[1].symbol} 
-                    width={24} 
-                    height={24} 
-                    className="w-full h-full object-cover" 
+                <div className="absolute top-0 left-3 w-8 h-8 rounded-full overflow-hidden bg-background border border-border/50">
+                  <Image
+                    src={pool.tokens[1].icon}
+                    alt={pool.tokens[1].symbol}
+                    width={32}
+                    height={32}
+                    className="w-full h-full object-cover"
                   />
                 </div>
               </div>
-              <CardTitle className="text-base font-semibold">{pool.pair}</CardTitle>
+              <CardTitle className="text-sm font-semibold">{pool.pair}</CardTitle>
             </div>
-            <Badge className="bg-[#e85102]/20 text-[#e85102] rounded-md hover:bg-[#e85102]/20">
-              {pool.apr}
-            </Badge>
-          </CardHeader>
-          <CardContent className="px-4 pb-4 pt-2">
-            <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-              <div className="text-muted-foreground">Volume (24h)</div>
-              <div className="text-right font-medium">
-                {typeof pool.volume24hUSD === 'number' 
-                  ? formatUSD(pool.volume24hUSD) 
-                  : pool.volume24h}
+            {pool.apr && pool.apr !== "Loading..." ? (
+              <div className="bg-green-500/20 text-green-500 text-[11px] px-2 py-1 rounded-md font-medium">
+                {pool.apr}
               </div>
-              
-              <div className="text-muted-foreground">Liquidity</div>
-              <div className="text-right font-medium">
-                {typeof pool.tvlUSD === 'number' 
-                  ? formatUSD(pool.tvlUSD) 
-                  : pool.liquidity}
+            ) : (
+              <div className="bg-muted/60 h-5 w-12 rounded-md animate-pulse"></div>
+            )}
+          </CardHeader>
+          <CardContent className="px-3 pb-3 pt-1.5">
+            <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs">
+              <div className="text-muted-foreground">Volume (24h)</div>
+              <div className="text-right text-muted-foreground">
+                {typeof pool.volume24hUSD === 'number' ? formatUSD(pool.volume24hUSD) : pool.volume24h === "Loading..." ? (
+                  <div className="inline-block h-3 w-16 bg-muted/60 rounded animate-pulse"></div>
+                ) : (
+                  pool.volume24h
+                )}
+              </div>
+
+              <div className="text-muted-foreground">TVL</div>
+              <div className="text-right text-muted-foreground">
+                {typeof pool.tvlUSD === 'number' ? formatUSD(pool.tvlUSD) : pool.liquidity === "Loading..." ? (
+                  <div className="inline-block h-3 w-16 bg-muted/60 rounded animate-pulse"></div>
+                ) : (
+                  pool.liquidity
+                )}
               </div>
             </div>
           </CardContent>

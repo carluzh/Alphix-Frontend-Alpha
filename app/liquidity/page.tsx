@@ -35,7 +35,6 @@ import { getEnabledPools, getToken, getPoolSubgraphId, getPoolById } from "../..
 import { getFromCache, getFromCacheWithTtl, setToCache, getUserPositionsCacheKey, getPoolStatsCacheKey, loadUserPositionIds, derivePositionsFromIds, getPoolFeeBps } from "../../lib/client-cache";
 import { getCachedBatchData, setCachedBatchData, clearBatchDataCache, bumpGlobalVersion } from "../../lib/cache-version";
 import { Pool } from "../../types";
-import { AddLiquidityModal } from "@liquidity/AddLiquidityModal";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ChevronUpIcon, ChevronDownIcon, ChevronsUpDownIcon, PlusIcon } from "lucide-react";
@@ -125,8 +124,6 @@ export default function LiquidityPage() {
   const [windowWidth, setWindowWidth] = useState<number>(
     typeof window !== 'undefined' ? window.innerWidth : 1200
   );
-  const [addLiquidityOpen, setAddLiquidityOpen] = useState(false);
-  const [selectedPoolApr, setSelectedPoolApr] = useState<string | undefined>(undefined);
   const router = useRouter();
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   // Removed expanded row behavior
@@ -329,7 +326,7 @@ export default function LiquidityPage() {
     },
   });
 
-  const { decreaseLiquidity, compoundFees, claimFees } = useDecreaseLiquidity({
+  const { decreaseLiquidity, claimFees } = useDecreaseLiquidity({
     onLiquidityDecreased: () => {
       sonnerToast.success("Liquidity Decreased");
       // Consider a targeted position refresh here
@@ -415,7 +412,7 @@ export default function LiquidityPage() {
     {
       accessorKey: "pair",
       header: "Pool",
-      size: 300, // 3/7 of total width (will be converted to percentage)
+      size: 240, // Compact size for first column
       cell: ({ row }) => {
         const pool = row.original;
         return (
@@ -492,7 +489,7 @@ export default function LiquidityPage() {
           )}
         </div>
       ),
-      size: 100, // 1/7 of total width
+      size: 140, // Compact size for volume column
       sortingFn: (rowA, rowB) => {
         const a = typeof rowA.original.volume24hUSD === 'number' ? rowA.original.volume24hUSD : 0;
         const b = typeof rowB.original.volume24hUSD === 'number' ? rowB.original.volume24hUSD : 0;
@@ -545,7 +542,7 @@ export default function LiquidityPage() {
           )}
         </div>
       ),
-      size: 100, // 1/7 of total width
+      size: 120, // Compact size for fees column
       sortingFn: (rowA, rowB) => {
         const a = typeof rowA.original.fees24hUSD === 'number' ? rowA.original.fees24hUSD : 0;
         const b = typeof rowB.original.fees24hUSD === 'number' ? rowB.original.fees24hUSD : 0;
@@ -587,7 +584,7 @@ export default function LiquidityPage() {
           )}
         </div>
       ),
-      size: 100, // 1/7 of total width
+      size: 140, // Compact size for liquidity column
       sortingFn: (rowA, rowB) => {
         const a = rowA.original.tvlUSD || 0;
         const b = rowB.original.tvlUSD || 0;
@@ -640,7 +637,7 @@ export default function LiquidityPage() {
           )}
         </div>
       ),
-      size: 80, // 1/14 of total width (half of other metric columns)
+      size: 200, // Larger size for yield column to push it right
       sortingFn: (rowA, rowB) => {
         const a = rowA.original.apr ? parseFloat(rowA.original.apr.replace('%', '')) : 0;
         const b = rowB.original.apr ? parseFloat(rowB.original.apr.replace('%', '')) : 0;
@@ -690,11 +687,7 @@ export default function LiquidityPage() {
     }
 
     let hideLevel = 0;
-    if (windowWidth < 900) {
-      hideLevel = 3;
-    } else if (windowWidth < 1100) {
-      hideLevel = 2;
-    } else if (windowWidth < 1300) {
+    if (windowWidth < 1400) {
       hideLevel = 1;
     }
     
@@ -703,13 +696,27 @@ export default function LiquidityPage() {
       (column) => column.meta?.hidePriority === undefined || column.meta.hidePriority > hideLevel
     );
 
-    // Adjust Yield column size based on screen size
+    // Adjust column sizes based on screen size - identical spacing for first 4, spacious last column
     return filteredColumns.map((col) => {
-      if ('accessorKey' in col && col.accessorKey === 'apr') {
-        return { ...col, size: windowWidth >= 1800 ? 40 : 80 }; // Reverted width to original
-      }
       if ('accessorKey' in col && col.accessorKey === 'pair') {
-        return { ...col, size: windowWidth >= 2200 ? 400 : 300 };
+        // Pool column: same size as others for uniform spacing
+        return { ...col, size: windowWidth >= 2000 ? 200 : windowWidth >= 1600 ? 300 : windowWidth >= 1200 ? 250 : 250 };
+      }
+      if ('accessorKey' in col && col.accessorKey === 'volume24h') {
+        // Volume column: same size as others
+        return { ...col, size: windowWidth >= 2000 ? 150 : windowWidth >= 1600 ? 180 : windowWidth >= 1200 ? 160 : 160 };
+      }
+      if ('accessorKey' in col && col.accessorKey === 'fees24h') {
+        // Fees column: same size as others
+        return { ...col, size: windowWidth >= 2000 ? 150 : windowWidth >= 1600 ? 180 : windowWidth >= 1200 ? 160 : 160 };
+      }
+      if ('accessorKey' in col && col.accessorKey === 'liquidity') {
+        // Liquidity column: same size as others
+        return { ...col, size: windowWidth >= 2000 ? 180 : windowWidth >= 1600 ? 180 : windowWidth >= 1200 ? 160 : 140 };
+      }
+      if ('accessorKey' in col && col.accessorKey === 'apr') {
+        // Yield column: takes remaining space to push right
+        return { ...col, size: windowWidth >= 2000 ? 400 : windowWidth >= 1600 ? 400 : windowWidth >= 1200 ? 320 : 260 };
       }
       return col;
     });
@@ -739,11 +746,11 @@ export default function LiquidityPage() {
     const liqCol = table.getColumn('liquidity' as any);
     const aprCol = table.getColumn('apr' as any);
     return {
-      pair: pairCol ? pairCol.getSize() : 300,
-      volume24h: volCol ? volCol.getSize() : 100,
-      fees24h: feesCol ? feesCol.getSize() : 100,
-      liquidity: liqCol ? liqCol.getSize() : 100,
-      apr: aprCol ? aprCol.getSize() : (windowWidth >= 1800 ? 40 : 80),
+      pair: pairCol ? pairCol.getSize() : (windowWidth >= 2000 ? 300 : windowWidth >= 1600 ? 300 : windowWidth >= 1200 ? 250 : 140),
+      volume24h: volCol ? volCol.getSize() : (windowWidth >= 2000 ? 180 : windowWidth >= 1600 ? 180 : windowWidth >= 1200 ? 160 : 140),
+      fees24h: feesCol ? feesCol.getSize() : (windowWidth >= 2000 ? 180 : windowWidth >= 1600 ? 180 : windowWidth >= 1200 ? 160 : 140),
+      liquidity: liqCol ? liqCol.getSize() : (windowWidth >= 2000 ? 180 : windowWidth >= 1600 ? 180 : windowWidth >= 1200 ? 160 : 140),
+      apr: aprCol ? aprCol.getSize() : (windowWidth >= 2000 ? 400 : windowWidth >= 1600 ? 400 : windowWidth >= 1200 ? 320 : 260),
     };
   }, [table, columnSizing, windowWidth, visibleColumns]);
 
@@ -790,10 +797,7 @@ export default function LiquidityPage() {
 
   const handleAddLiquidity = (e: React.MouseEvent, poolId: string) => {
     e.stopPropagation();
-    setSelectedPoolId(poolId); 
-    const pool = poolsWithPositionCounts.find(p => p.id === poolId);
-    setSelectedPoolApr(pool?.apr);
-    setAddLiquidityOpen(true);
+    router.push(`/liquidity/${poolId}`);
   };
 
   // handlePoolClick removed - using Link components for navigation
@@ -817,184 +821,95 @@ export default function LiquidityPage() {
     <AppLayout>
       <div className="flex flex-1 flex-col">
         <div className="flex flex-1 flex-col p-6 px-10">
-          <div className="hidden">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h2 className="text-xl font-semibold">Liquidity Pools</h2>
-                <p className="text-sm text-muted-foreground">Explore and manage your liquidity positions.</p>
-                <div className="mt-3 flex items-center gap-2 flex-wrap">
-                  {categories.map((cat) => (
-                    <button
-                      key={cat}
-                      onClick={() => setSelectedCategory(cat)}
-                      className={`px-2 py-1 text-xs rounded-md transition-all duration-200 cursor-pointer ${
-                        selectedCategory === cat
-                          ? 'border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-foreground brightness-110'
-                          : 'text-muted-foreground hover:text-foreground'
-                      }`}
-                      style={selectedCategory === cat ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
-                    >
-                      {cat}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="flex items-stretch gap-2 sm:gap-3">
-                  <div className="w-[220px] sm:w-[260px] rounded-lg bg-muted/30 border border-sidebar-border/60 p-4">
-                    <div className="flex items-start justify-between">
-                      <div className="text-xs tracking-wider text-muted-foreground font-mono font-bold">TVL</div>
-                      <div className="flex items-center gap-1">
-                        {poolAggregates.isLoading ? (
-                          <span className="inline-block h-3 w-8 bg-muted/60 rounded animate-pulse" />
-                        ) : (() => {
-                          const deltaPct = poolAggregates.tvlDeltaPct || 0;
-                          const isPos = deltaPct >= 0;
-                          return (
-                            <>
-                              {isPos ? <ArrowUpRight className="h-3 w-3 text-green-500" /> : <ArrowDownRight className="h-3 w-3 text-red-500" />}
-                              <span className={`text-[11px] font-medium ${isPos ? 'text-green-500' : 'text-red-500'}`}>{Math.abs(deltaPct).toFixed(2)}%</span>
-                            </>
-                          );
-                        })()}
-                      </div>
-                    </div>
-                    <div className="mt-2 font-medium tracking-tight text-2xl sm:text-3xl">
-                      {poolAggregates.isLoading ? <span className="inline-block h-6 w-20 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalTVL)}
-                    </div>
-                  </div>
-                  <div className="w-[220px] sm:w-[260px] rounded-lg bg-muted/30 border border-sidebar-border/60 p-4">
-                    <div className="flex items-start justify-between">
-                      <div className="text-xs tracking-wider text-muted-foreground font-mono font-bold">VOLUME (24H)</div>
-                      <div className="flex items-center gap-1">
-                        {poolAggregates.isLoading ? (
-                          <span className="inline-block h-3 w-8 bg-muted/60 rounded animate-pulse" />
-                        ) : (() => {
-                          const deltaPct = poolAggregates.volDeltaPct || 0;
-                          const isPos = deltaPct >= 0;
-                          return (
-                            <>
-                              {isPos ? <ArrowUpRight className="h-3 w-3 text-green-500" /> : <ArrowDownRight className="h-3 w-3 text-red-500" />}
-                              <span className={`text-[11px] font-medium ${isPos ? 'text-green-500' : 'text-red-500'}`}>{Math.abs(deltaPct).toFixed(2)}%</span>
-                            </>
-                          );
-                        })()}
-                      </div>
-                    </div>
-                    <div className="mt-2 font-medium tracking-tight text-2xl sm:text-3xl">
-                      {poolAggregates.isLoading ? <span className="inline-block h-6 w-24 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalVol24h)}
-                    </div>
-                  </div>
-                  <div className="w-[220px] sm:w-[260px] rounded-lg bg-muted/30 border border-sidebar-border/60 p-4">
-                    <div className="flex items-start justify-between">
-                      <div className="text-xs tracking-wider text-muted-foreground font-mono font-bold">FEES (24H)</div>
-                      <div className="flex items-center gap-1">
-                        {poolAggregates.isLoading ? (
-                          <span className="inline-block h-3 w-8 bg-muted/60 rounded animate-pulse" />
-                        ) : (() => {
-                          const deltaPct = poolAggregates.feesDeltaPct || 0;
-                          const isPos = deltaPct >= 0;
-                          return (
-                            <>
-                              {isPos ? <ArrowUpRight className="h-3 w-3 text-green-500" /> : <ArrowDownRight className="h-3 w-3 text-red-500" />}
-                              <span className={`text-[11px] font-medium ${isPos ? 'text-green-500' : 'text-red-500'}`}>{Math.abs(deltaPct).toFixed(2)}%</span>
-                            </>
-                          );
-                        })()}
-                      </div>
-                    </div>
-                    <div className="mt-2 font-medium tracking-tight text-2xl sm:text-3xl">
-                      {poolAggregates.isLoading ? <span className="inline-block h-6 w-20 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalFees24h)}
-                    </div>
-                  </div>
-                </div>
-            </div>
-          </div>
+          {/* Removed duplicate header + summary container */}
 
-            <div className="mb-4">
+            <div className="mb-2">
               <div className="flex items-stretch justify-between gap-4">
                 <div className="flex flex-col">
                   <h2 className="text-xl font-semibold">Liquidity Pools</h2>
                   <p className="text-sm text-muted-foreground">Explore and manage your liquidity positions.</p>
                   <div className="mt-4">
-                    <div className="rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 p-3 sm:p-4">
-                      <div className="flex items-stretch gap-2 sm:gap-3">
-                        <div className="w-[220px] sm:w-[260px] rounded-lg bg-muted/30 border border-sidebar-border/60">
-                          <div className="flex items-center justify-between px-4 h-9">
-                            <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">TVL</h2>
+                    <div className="rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 p-2 md:p-4">
+                      <div className="flex items-stretch gap-1.5 md:gap-3">
+                        <div className="w-[165px] md:w-[260px] rounded-lg bg-muted/30 border border-sidebar-border/60">
+                          <div className="flex items-center justify-between px-3 md:px-4 h-7 md:h-9">
+                            <h2 className="mt-0.5 text-[10px] md:text-xs tracking-wider text-muted-foreground font-mono font-bold">TVL</h2>
                             <div className="flex items-center gap-1">
                               {poolAggregates.isLoading ? (
-                                <span className="inline-block h-3 w-8 bg-muted/60 rounded animate-pulse" />
+                                <span className="inline-block h-2.5 w-7 md:h-3 md:w-8 bg-muted/60 rounded animate-pulse" />
                               ) : (() => {
                                 const deltaPct = poolAggregates.tvlDeltaPct || 0;
                                 const isPos = deltaPct >= 0;
                                 return (
                                   <>
-                                    {isPos ? <ArrowUpRight className="h-3 w-3 text-green-500" /> : <ArrowDownRight className="h-3 w-3 text-red-500" />}
-                                    <span className={`${isPos ? 'text-green-500' : 'text-red-500'} text-[11px] font-medium`}>{Math.abs(deltaPct).toFixed(2)}%</span>
+                                    {isPos ? <ArrowUpRight className="h-2.5 w-2.5 md:h-3 md:w-3 text-green-500" /> : <ArrowDownRight className="h-2.5 w-2.5 md:h-3 md:w-3 text-red-500" />}
+                                    <span className={`${isPos ? 'text-green-500' : 'text-red-500'} text-[10px] md:text-[11px] font-medium`}>{Math.abs(deltaPct).toFixed(2)}%</span>
                                   </>
                                 );
                               })()}
                             </div>
                           </div>
-                          <div className="px-4 py-1">
-                            <div className="text-lg font-medium">
-                              {poolAggregates.isLoading ? <span className="inline-block h-6 w-20 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalTVL)}
+                          <div className="px-3 md:px-4 py-1">
+                            <div className="text-base md:text-lg font-medium">
+                              {poolAggregates.isLoading ? <span className="inline-block h-5 w-16 md:h-6 md:w-20 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalTVL)}
                             </div>
                           </div>
                         </div>
-                        <div className="w-[220px] sm:w-[260px] rounded-lg bg-muted/30 border border-sidebar-border/60">
-                          <div className="flex items-center justify-between px-4 h-9">
-                            <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">VOLUME (24H)</h2>
+                        <div className="w-[165px] md:w-[260px] rounded-lg bg-muted/30 border border-sidebar-border/60">
+                          <div className="flex items-center justify-between px-3 md:px-4 h-7 md:h-9">
+                            <h2 className="mt-0.5 text-[10px] md:text-xs tracking-wider text-muted-foreground font-mono font-bold">VOLUME (24H)</h2>
                             <div className="flex items-center gap-1">
                               {poolAggregates.isLoading ? (
-                                <span className="inline-block h-3 w-8 bg-muted/60 rounded animate-pulse" />
+                                <span className="inline-block h-2.5 w-7 md:h-3 md:w-8 bg-muted/60 rounded animate-pulse" />
                               ) : (() => {
                                 const deltaPct = poolAggregates.volDeltaPct || 0;
                                 const isPos = deltaPct >= 0;
                                 return (
                                   <>
-                                    {isPos ? <ArrowUpRight className="h-3 w-3 text-green-500" /> : <ArrowDownRight className="h-3 w-3 text-red-500" />}
-                                    <span className={`${isPos ? 'text-green-500' : 'text-red-500'} text-[11px] font-medium`}>{Math.abs(deltaPct).toFixed(2)}%</span>
+                                    {isPos ? <ArrowUpRight className="h-2.5 w-2.5 md:h-3 md:w-3 text-green-500" /> : <ArrowDownRight className="h-2.5 w-2.5 md:h-3 md:w-3 text-red-500" />}
+                                    <span className={`${isPos ? 'text-green-500' : 'text-red-500'} text-[10px] md:text-[11px] font-medium`}>{Math.abs(deltaPct).toFixed(2)}%</span>
                                   </>
                                 );
                               })()}
                             </div>
                           </div>
-                          <div className="px-4 py-1">
-                            <div className="text-lg font-medium">
-                              {poolAggregates.isLoading ? <span className="inline-block h-6 w-24 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalVol24h)}
+                          <div className="px-3 md:px-4 py-1">
+                            <div className="text-base md:text-lg font-medium">
+                              {poolAggregates.isLoading ? <span className="inline-block h-5 w-20 md:h-6 md:w-24 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalVol24h)}
                             </div>
                           </div>
                         </div>
-                        <div className="w-[220px] sm:w-[260px] rounded-lg bg-muted/30 border border-sidebar-border/60">
-                          <div className="flex items-center justify-between px-4 h-9">
-                            <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">FEES (24H)</h2>
-                            <div className="flex items-center gap-1">
-                              {poolAggregates.isLoading ? (
-                                <span className="inline-block h-3 w-8 bg-muted/60 rounded animate-pulse" />
-                              ) : (() => {
-                                const deltaPct = poolAggregates.feesDeltaPct || 0;
-                                const isPos = deltaPct >= 0;
-                                return (
-                                  <>
-                                    {isPos ? <ArrowUpRight className="h-3 w-3 text-green-500" /> : <ArrowDownRight className="h-3 w-3 text-red-500" />}
-                                    <span className={`${isPos ? 'text-green-500' : 'text-red-500'} text-[11px] font-medium`}>{Math.abs(deltaPct).toFixed(2)}%</span>
-                                  </>
-                                );
-                              })()}
+                        {windowWidth >= 1400 && (
+                          <div className="w-[165px] md:w-[260px] rounded-lg bg-muted/30 border border-sidebar-border/60">
+                            <div className="flex items-center justify-between px-3 md:px-4 h-7 md:h-9">
+                              <h2 className="mt-0.5 text-[10px] md:text-xs tracking-wider text-muted-foreground font-mono font-bold">FEES (24H)</h2>
+                              <div className="flex items-center gap-1">
+                                {poolAggregates.isLoading ? (
+                                  <span className="inline-block h-2.5 w-7 md:h-3 md:w-8 bg-muted/60 rounded animate-pulse" />
+                                ) : (() => {
+                                  const deltaPct = poolAggregates.feesDeltaPct || 0;
+                                  const isPos = deltaPct >= 0;
+                                  return (
+                                    <>
+                                      {isPos ? <ArrowUpRight className="h-2.5 w-2.5 md:h-3 md:w-3 text-green-500" /> : <ArrowDownRight className="h-2.5 w-2.5 md:h-3 md:w-3 text-red-500" />}
+                                      <span className={`${isPos ? 'text-green-500' : 'text-red-500'} text-[10px] md:text-[11px] font-medium`}>{Math.abs(deltaPct).toFixed(2)}%</span>
+                                    </>
+                                  );
+                                })()}
+                              </div>
+                            </div>
+                            <div className="px-3 md:px-4 py-1">
+                              <div className="text-base md:text-lg font-medium">
+                                {poolAggregates.isLoading ? <span className="inline-block h-5 w-16 md:h-6 md:w-20 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalFees24h)}
+                              </div>
                             </div>
                           </div>
-                          <div className="px-4 py-1">
-                            <div className="text-lg font-medium">
-                              {poolAggregates.isLoading ? <span className="inline-block h-6 w-20 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalFees24h)}
-                            </div>
-                          </div>
-                        </div>
+                        )}
                       </div>
                     </div>
                   </div>
                 </div>
-                <div className="flex items-end">
+                <div className="hidden md:flex items-end">
                   <div className="flex items-center gap-2 flex-wrap">
                     {categories.map((cat) => (
                       <button
@@ -1015,129 +930,89 @@ export default function LiquidityPage() {
               </div>
             </div>
 
-            <div className="rounded-lg bg-muted/30 border border-sidebar-border/60">
-              <div className="p-0">
-                {isMobile ? (
-                  <MobileLiquidityList 
-                    pools={filteredPools}
-                    onSelectPool={(poolId) => router.push(`/liquidity/${poolId}`)}
-                  />
-                ) : (
-                  <div className="overflow-x-auto isolate">
-                    <Table className="w-full" style={{ tableLayout: 'fixed' }}>
-                      <TableHeader>
-                        {/* New category header row inside the table for perfect alignment */}
-                        <TableRow className="hover:bg-transparent">
-                          {table.getVisibleLeafColumns().map((col, index, arr) => (
-                            <TableHead
-                              key={`cat-${col.id}`}
-                              className={`px-2 relative text-xs text-muted-foreground ${index === 0 ? 'pl-6' : ''} ${index === arr.length - 1 ? 'pr-6' : ''}`}
-                              style={{ width: `${col.getSize()}px` }}
+            {isMobile ? (
+              <MobileLiquidityList 
+                pools={filteredPools}
+                onSelectPool={(poolId) => router.push(`/liquidity/${poolId}`)}
+              />
+            ) : (
+              <div className="overflow-x-auto isolate">
+                <Table className="w-full bg-muted/30 border border-sidebar-border/60 overflow-hidden" style={{ tableLayout: 'fixed' }}>
+                  <TableHeader>
+                    {/* New category header row inside the table for perfect alignment */}
+                    <TableRow className="hover:bg-transparent">
+                      {table.getVisibleLeafColumns().map((col, index, arr) => (
+                        <TableHead
+                          key={`cat-${col.id}`}
+                          className={`px-2 relative text-xs text-muted-foreground ${index === 0 ? 'pl-6' : ''} ${index === arr.length - 1 ? 'pr-6' : ''}`}
+                          style={{ width: `${col.getSize()}px` }}
+                        >
+                          {col.id === 'pair' ? (
+                            <span className="tracking-wider font-mono font-bold">POOLS</span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleSortCycle(col.id)}
+                              className={`flex w-full items-center ${col.id === 'apr' ? 'justify-end text-right' : 'justify-start text-left'} cursor-pointer select-none`}
                             >
-                              {col.id === 'pair' ? (
-                                <span className="tracking-wider font-mono font-bold">POOLS</span>
-                              ) : (
-                                <button
-                                  type="button"
-                                  onClick={() => handleSortCycle(col.id)}
-                                  className={`flex w-full items-center ${col.id === 'apr' ? 'justify-end text-right' : 'justify-start text-left'} cursor-pointer select-none`}
-                                >
-                                  <span>
-                                    {col.id === 'volume24h' && 'Volume (24h)'}
-                                    {col.id === 'fees24h' && 'Fees (24h)'}
-                                    {col.id === 'liquidity' && 'Liquidity'}
-                                    {col.id === 'apr' && 'Yield'}
-                                  </span>
-                                  {renderSortIcon(table.getColumn(col.id as any)?.getIsSorted?.() as any)}
-                                </button>
-                              )}
-                              {/* no resizer in category row */}
-                            </TableHead>
-                          ))}
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {table.getRowModel().rows?.length ? (
-                          table.getRowModel().rows.map((row) => {
-                            const pool = row.original;
-                            const isExpanded = false;
+                              <span>
+                                {col.id === 'volume24h' && 'Volume (24h)'}
+                                {col.id === 'fees24h' && 'Fees (24h)'}
+                                {col.id === 'liquidity' && 'Liquidity'}
+                                {col.id === 'apr' && 'Yield'}
+                              </span>
+                              {renderSortIcon(table.getColumn(col.id as any)?.getIsSorted?.() as any)}
+                            </button>
+                          )}
+                          {/* no resizer in category row */}
+                        </TableHead>
+                      ))}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {table.getRowModel().rows?.length ? (
+                      table.getRowModel().rows.map((row) => {
+                        const pool = row.original;
+                        const isExpanded = false;
 
-                            return (
-                              <React.Fragment key={row.id}>
-                                <Link href={`/liquidity/${pool.id}`} className="contents">
-                                  <TableRow className="group cursor-pointer transition-colors hover:bg-muted/30">
-                                    {row.getVisibleCells().map((cell, index) => (
-                                      <TableCell 
-                                        key={cell.id}
-                                        className={`relative py-4 px-2 ${index === 0 ? 'pl-6' : ''} ${index === row.getVisibleCells().length - 1 ? 'pr-6' : ''}`}
-                                        style={{ width: `${cell.column.getSize()}px` }}
-                                      >
-                                        {flexRender(
-                                          cell.column.columnDef.cell,
-                                          cell.getContext()
-                                        )}
-                                      </TableCell>
-                                    ))}
-                                  </TableRow>
-                                </Link>
-                                {/* Expanded positions removed */}
-                              </React.Fragment>
-                            );
-                          })
-                        ) : (
-                          <TableRow>
-                            <TableCell
-                              colSpan={columns.length}
-                              className="h-24 text-center"
-                            >
-                              No pools available.
-                            </TableCell>
-                          </TableRow>
-                        )}
-                      </TableBody>
-                    </Table>
-                  </div>
-                )}
+                        return (
+                          <React.Fragment key={row.id}>
+                            <Link href={`/liquidity/${pool.id}`} className="contents">
+                              <TableRow className="group cursor-pointer transition-colors hover:bg-muted/30">
+                                {row.getVisibleCells().map((cell, index) => (
+                                  <TableCell 
+                                    key={cell.id}
+                                    className={`relative py-4 px-2 ${index === 0 ? 'pl-6' : ''} ${index === row.getVisibleCells().length - 1 ? 'pr-6' : ''}`}
+                                    style={{ width: `${cell.column.getSize()}px` }}
+                                  >
+                                    {flexRender(
+                                      cell.column.columnDef.cell,
+                                      cell.getContext()
+                                    )}
+                                  </TableCell>
+                                ))}
+                              </TableRow>
+                            </Link>
+                            {/* Expanded positions removed */}
+                          </React.Fragment>
+                        );
+                      })
+                    ) : (
+                      <TableRow>
+                        <TableCell
+                          colSpan={columns.length}
+                          className="h-24 text-center"
+                        >
+                          No pools available.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
               </div>
-            </div>
+            )}
           </div>
         </div>
-        <AddLiquidityModal
-          isOpen={addLiquidityOpen}
-          onOpenChange={setAddLiquidityOpen}
-          selectedPoolId={selectedPoolId}
-          poolApr={selectedPoolApr}
-          onLiquidityAdded={async () => {
-            if (isConnected && accountAddress) {
-              try {
-                const blockNumber = await publicClient.getBlockNumber();
-                await waitForSubgraphBlock(Number(blockNumber));
-                
-                const poolSubgraphId = getPoolSubgraphId(selectedPoolId);
-                if (poolSubgraphId) {
-                  fetch('/api/internal/revalidate-pools', { method: 'POST' });
-                  fetch('/api/internal/revalidate-chart', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ poolId: selectedPoolId, subgraphId: poolSubgraphId }),
-                  });
-                }
-              } catch (error) {
-                console.error("Error during cache revalidation:", error);
-              }
-
-              // Mint happened -> invalidate only for mint/burn, not for simple adds.
-              // Mint creates a new tokenId, so refresh the global positions cache now.
-              loadUserPositionIds(accountAddress)
-                .then((ids) => derivePositionsFromIds(accountAddress, ids))
-                .then((positions) => setUserPositions(Array.isArray(positions) ? positions : []))
-                .catch((error) => console.error("Failed to refresh positions:", error));
-            }
-          }}
-          sdkMinTick={SDK_MIN_TICK}
-          sdkMaxTick={SDK_MAX_TICK}
-          defaultTickSpacing={getPoolById(selectedPoolId)?.tickSpacing || DEFAULT_TICK_SPACING}
-        />
       </AppLayout>
     );
   } 

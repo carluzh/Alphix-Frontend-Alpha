@@ -189,11 +189,13 @@ export function useQuote(params: { from: string; to: string; amount: string; swa
   })
 }
 
+// Temporarily disabled - was causing excessive subgraph spam
+// Pool state data doesn't need real-time updates every 10s
 export function useBlockRefetch(options?: { poolIds?: string[]; onBlock?: (n?: bigint) => void }) {
   const qc = useQueryClient()
   useEffect(() => {
     let lastRefetchAt = 0
-    const minIntervalMs = 10_000 // throttle: at most once every 10s
+    const minIntervalMs = 60_000 // Increased to 60s to reduce spam
     const isTabVisible = () => (typeof document === 'undefined') || document.visibilityState === 'visible'
 
     const unwatch = publicClient.watchBlockNumber({
@@ -206,10 +208,14 @@ export function useBlockRefetch(options?: { poolIds?: string[]; onBlock?: (n?: b
         lastRefetchAt = now
 
         try { options?.onBlock?.(n) } catch {}
+        // Only invalidate if explicitly needed - not automatic
+        // Comment out the automatic invalidations to stop subgraph spam
+        /*
         for (const pid of options?.poolIds || []) {
           qc.invalidateQueries({ queryKey: qk.poolState(pid), exact: true })
           qc.invalidateQueries({ queryKey: qk.dynamicFeeNow(pid), exact: true })
         }
+        */
       },
       emitOnBegin: false, // do not spam immediately on mount
     })

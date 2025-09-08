@@ -32,7 +32,7 @@ export default async function handler(
   let fallbackCacheKey = '';
 
   try {
-    const { poolId, days: daysQuery } = req.query as { poolId?: string; days?: string };
+    const { poolId, days: daysQuery, v: versionQuery } = req.query as { poolId?: string; days?: string; v?: string };
     if (!poolId || typeof poolId !== 'string') {
       return res.status(400).json({ message: 'Valid poolId query parameter is required.' });
     }
@@ -43,11 +43,15 @@ export default async function handler(
     res.setHeader('Cache-Control', 'public, s-maxage=86400, stale-while-revalidate=86400');
 
     const bust = typeof (req.query?.bust as string | undefined) === 'string';
+    const version = versionQuery || '';
     const allPools = getAllPools();
     const subgraphId = (getPoolSubgraphId(poolId) || poolId).toLowerCase();
     const cacheKey = `${subgraphId}|${days}`;
     fallbackCacheKey = cacheKey;
-    if (!bust) {
+
+    // Support both version-based and timestamp-based cache busting
+    const shouldBypassCache = bust || (version && version !== 'default');
+    if (!shouldBypassCache) {
       const cached = serverCache.get(cacheKey);
       if (cached && (Date.now() - cached.ts) < SIX_HOURS_MS) {
         return res.status(200).json(cached.data);

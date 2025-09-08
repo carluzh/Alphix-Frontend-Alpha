@@ -69,6 +69,7 @@ interface InteractiveRangeChartProps {
   poolToken0?: any;
   poolToken1?: any;
   onDragStateChange?: (state: 'left' | 'right' | 'center' | null) => void;
+  onLoadingChange?: (isLoading: boolean) => void;
 }
 
 export function InteractiveRangeChart({
@@ -89,7 +90,8 @@ export function InteractiveRangeChart({
   defaultTickSpacing,
   poolToken0,
   poolToken1,
-  onDragStateChange
+  onDragStateChange,
+  onLoadingChange
 }: InteractiveRangeChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState<'left' | 'right' | 'center' | null>(null);
@@ -240,6 +242,7 @@ export function InteractiveRangeChart({
       }
 
       setIsChartDataLoading(true);
+      if (onLoadingChange) onLoadingChange(true);
 
       try {
         // Fetch raw positions without bucket parameters for caching
@@ -265,6 +268,7 @@ export function InteractiveRangeChart({
         setRawHookPositions(null);
       } finally {
         setIsChartDataLoading(false);
+        if (onLoadingChange) onLoadingChange(false);
       }
     };
 

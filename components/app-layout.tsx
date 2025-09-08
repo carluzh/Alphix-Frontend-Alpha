@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { AppSidebar } from "./app-sidebar";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { BetaNotification } from "./beta-notification";
@@ -18,20 +19,35 @@ const MOBILE_HEADER_PADDING_CLASS = "pt-14";
 
 export function AppLayout({ children }: AppLayoutProps) {
   const isMobile = useIsMobile();
+  const [showUpdatesNotification, setShowUpdatesNotification] = useState(false);
+
+  const handleBetaClick = () => {
+    console.log('handleBetaClick called!'); // Debug log
+    // Only trigger if not already showing
+    if (!showUpdatesNotification) {
+      console.log('Setting showUpdatesNotification to true'); // Debug log
+      setShowUpdatesNotification(true);
+      // Reset after a short delay to allow re-triggering if needed
+      setTimeout(() => {
+        console.log('Resetting showUpdatesNotification to false'); // Debug log
+        setShowUpdatesNotification(false);
+      }, 100);
+    }
+  };
 
   return (
     <SidebarProvider>
-              <AppSidebar variant="floating" />
+              <AppSidebar variant="floating" onBetaClick={handleBetaClick} />
       <MobileHeader />
       <SidebarInset
-        className={isMobile ? MOBILE_HEADER_PADDING_CLASS : ""}
+        className={isMobile === true ? MOBILE_HEADER_PADDING_CLASS : ""}
       >
         <div className="flex flex-1 flex-col overflow-y-auto">
           {children}
         </div>
       </SidebarInset>
       <BetaNotification />
-      <UpdatesNotification />
+      <UpdatesNotification forceShow={showUpdatesNotification} />
     </SidebarProvider>
   );
 } 

@@ -48,15 +48,27 @@ export default async function handler(
     return res.status(405).json({ message: `Method ${req.method} Not Allowed` });
   }
 
-  const { poolId } = req.query;
+  const { poolId, v: versionQuery } = req.query as { poolId?: string; v?: string };
   if (!poolId || typeof poolId !== 'string') {
     return res.status(400).json({ message: 'Valid poolId query parameter is required.' });
   }
 
   const cacheKey = `dynamic-fees:${poolId.toLowerCase()}`;
-  
+
   // CDN: cache for 12h, serve stale for 12h while revalidating
   res.setHeader('Cache-Control', 'public, s-maxage=43200, stale-while-revalidate=43200');
+
+  // Support version-based cache busting
+  const version = versionQuery || '';
+  const shouldBypassCache = version && version !== 'default';
+
+  // Check cache unless we're bypassing it
+  if (!shouldBypassCache) {
+    const cached = serverCache.get(cacheKey);
+    if (cached && (Date.now() - cached.ts) < CACHE_TTL_MS) {
+      return res.status(200).json(cached.data);
+    }
+  }
 
   try {
     const SUBGRAPH_URL = selectSubgraphUrl(req);

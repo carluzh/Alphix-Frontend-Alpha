@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { PlusIcon, RefreshCwIcon, MinusIcon, ActivityIcon, CheckIcon, InfoIcon, ArrowLeftIcon } from "lucide-react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { PlusIcon, RefreshCwIcon, MinusIcon, ActivityIcon, CheckIcon, InfoIcon, ArrowLeftIcon, OctagonX } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -181,6 +181,7 @@ export function AddLiquidityForm({
   const [isInsufficientBalance, setIsInsufficientBalance] = useState(false);
   const [activePreset, setActivePreset] = useState<string | null>("Full Range");
   const [isPoolStateLoading, setIsPoolStateLoading] = useState<boolean>(false);
+  const [isChartLoading, setIsChartLoading] = useState<boolean>(false);
   const [enhancedAprDisplay, setEnhancedAprDisplay] = useState<string>(poolApr || "Yield N/A");
   const [capitalEfficiencyFactor, setCapitalEfficiencyFactor] = useState<number>(1);
   const [initialDefaultApplied, setInitialDefaultApplied] = useState(false);
@@ -513,7 +514,7 @@ export function AddLiquidityForm({
           throw new Error("Pool state data is incomplete.");
         }
       } catch (error: any) {
-        toast.error(`Pool Data Error: ${error.message}`);
+        toast.error("Pool Data Error", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: error.message });
         setCurrentPriceLine(null);
         setCurrentPoolSqrtPriceX96(null);
       } finally {
@@ -1061,12 +1062,12 @@ export function AddLiquidityForm({
   // Handle preparation and submission
   const handlePrepareAndSubmit = async () => {
     if (isInsufficientBalance) {
-      toast.error("Insufficient balance");
+      toast.error("Insufficient Balance", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "You don't have enough tokens for this transaction." });
       return;
     }
     
     if (parseFloat(amount0 || "0") <= 0 && parseFloat(amount1 || "0") <= 0) {
-      toast.error("Amount must be greater than 0");
+      toast.error("Invalid Amount", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Amount must be greater than 0." });
       return;
     }
     
@@ -1120,7 +1121,7 @@ export function AddLiquidityForm({
             // Fallback to currentPrice if currentPoolTick is not yet available
             const numericCurrentPrice = parseFloat(currentPrice);
             if (isNaN(numericCurrentPrice)) {
-                toast.error("Cannot apply preset: current price is invalid");
+                toast.error("Invalid Price", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Cannot apply preset: current price is invalid." });
                 return;
             }
             const priceLowerTarget = numericCurrentPrice * (1 - percentage);
@@ -1432,7 +1433,7 @@ export function AddLiquidityForm({
             // Reset viewbox for manual range change
             resetChartViewbox(newTick, parseInt(tickUpper));
           } else {
-            toast.error("Invalid Range: Min price results in a range where min tick >= max tick.");
+            toast.error("Invalid Range", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Min price results in a range where min tick >= max tick." });
           }
           return;
         }
@@ -1458,7 +1459,7 @@ export function AddLiquidityForm({
           setInitialDefaultApplied(true);
           resetChartViewbox(newTick, parseInt(tickUpper));
         } else {
-          toast.error("Invalid Range: Min price must be less than max price.");
+          toast.error("Invalid Range", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Min price must be less than max price." });
         }
       } else { // inverted: left edits upper tick (visual flip)
         if (priceStr.trim() === "0") {
@@ -1469,7 +1470,7 @@ export function AddLiquidityForm({
             // Reset viewbox for manual range change
             resetChartViewbox(parseInt(tickLower), newTick);
           } else {
-            toast.error("Invalid Range: Min price results in a range where max tick <= min tick.");
+            toast.error("Invalid Range", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Min price results in a range where max tick <= min tick." });
           }
           return;
         }
@@ -1495,7 +1496,7 @@ export function AddLiquidityForm({
           setInitialDefaultApplied(true);
           resetChartViewbox(parseInt(tickLower), newTick);
         } else {
-          toast.error("Invalid Range: Min price must result in a max tick greater than min tick.");
+          toast.error("Invalid Range", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Min price must result in a max tick greater than min tick." });
         }
       }
     }, 750), 
@@ -1515,7 +1516,7 @@ export function AddLiquidityForm({
             setTickUpper(newTick.toString());
             setInitialDefaultApplied(true);
           } else {
-            toast.error("Invalid Range: Max price results in a range where max tick <= min tick.");
+            toast.error("Invalid Range", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Max price results in a range where max tick <= min tick." });
           }
           return;
         }
@@ -1529,7 +1530,7 @@ export function AddLiquidityForm({
           setTickUpper(newTick.toString());
           setInitialDefaultApplied(true);
         } else {
-          toast.error("Invalid Range: Max price must be greater than min price.");
+          toast.error("Invalid Range", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Max price must be greater than min price." });
         }
       } else { // inverted: right edits lower tick (visual flip)
         if (isInfinityInput) {
@@ -1540,7 +1541,7 @@ export function AddLiquidityForm({
             // Reset viewbox for manual range change
             resetChartViewbox(newTick, parseInt(tickUpper));
           } else {
-            toast.error("Invalid Range: Max price results in a range where min tick >= max tick.");
+            toast.error("Invalid Range", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Max price results in a range where min tick >= max tick." });
           }
           return;
         }
@@ -1560,7 +1561,7 @@ export function AddLiquidityForm({
           // Reset viewbox for manual range change
           resetChartViewbox(newTick, parseInt(tickUpper));
         } else {
-          toast.error("Invalid Range: Max price must result in a min tick less than max tick.");
+          toast.error("Invalid Range", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Max price must result in a min tick less than max tick." });
         }
       }
     }, 750),
@@ -1661,7 +1662,7 @@ export function AddLiquidityForm({
           } catch (e) {
             console.error('Error formatting amount1:', e);
             setAmount1("Error");
-            toast.error("Calculation Error: Could not parse calculated amount for the other token.");
+            toast.error("Calculation Error", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Could not parse calculated amount for the other token." });
             setCalculatedData(null);
           }
         } else {
@@ -1672,12 +1673,12 @@ export function AddLiquidityForm({
           } catch (e) {
             console.error('Error formatting amount0:', e);
             setAmount0("Error");
-            toast.error("Calculation Error: Could not parse calculated amount for the other token.");
+            toast.error("Calculation Error", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Could not parse calculated amount for the other token." });
             setCalculatedData(null);
           }
         }
       } catch (error: any) {
-        toast.error(`Calculation Error: ${error.message || "Could not estimate amounts."}`);
+        toast.error("Calculation Error", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: error.message || "Could not estimate amounts." });
         setCalculatedData(null);
         setCurrentPrice(null);      
         setCurrentPoolTick(null);   
@@ -2139,7 +2140,9 @@ export function AddLiquidityForm({
                         placeholder="0.0"
                         value={amount0}
                         onChange={(e) => {
-                          const newValue = e.target.value.replace(',', '.'); // Ensure decimal separator is always period
+                          let newValue = e.target.value.replace(',', '.'); // Ensure decimal separator is always period
+                          // Only allow numbers, one decimal point, and prevent multiple decimal points
+                          newValue = newValue.replace(/[^0-9.]/g, '').replace(/(\..*?)\./g, '$1');
                           if (preparedTxData) { resetTransactionState(); }
                           setAmount0(newValue);
                           setActiveInputSide('amount0');
@@ -2204,7 +2207,9 @@ export function AddLiquidityForm({
                         placeholder="0.0"
                         value={amount1}
                         onChange={(e) => {
-                          const newValue = e.target.value.replace(',', '.'); // Ensure decimal separator is always period
+                          let newValue = e.target.value.replace(',', '.'); // Ensure decimal separator is always period
+                          // Only allow numbers, one decimal point, and prevent multiple decimal points
+                          newValue = newValue.replace(/[^0-9.]/g, '').replace(/(\..*?)\./g, '$1');
                           if (preparedTxData) { resetTransactionState(); }
                           setAmount1(newValue);
                           setActiveInputSide('amount1');
@@ -2458,7 +2463,7 @@ export function AddLiquidityForm({
                       />
                     </div>
                   ) : (
-                    <>
+                    <div className="relative">
                       <InteractiveRangeChart
                         selectedPoolId={selectedPoolId}
                         chainId={chainId}
@@ -2490,10 +2495,24 @@ export function AddLiquidityForm({
                         poolToken0={poolToken0}
                         poolToken1={poolToken1}
                         onDragStateChange={(state) => setIsDraggingRange(state)}
+                        onLoadingChange={(loading) => setIsChartLoading(loading)}
                       />
                       
                       {/* Chart labels are now handled internally by InteractiveRangeChart */}
-                    </>
+                      
+                      {/* Loading overlay for chart data using existing pattern */}
+                      {(isChartLoading || isCalculating) && (
+                        <div className="absolute inset-0 flex items-center justify-center bg-muted/20 rounded">
+                          <Image 
+                            src="/LogoIconWhite.svg" 
+                            alt="Loading" 
+                            width={24}
+                            height={24}
+                            className="animate-pulse opacity-75"
+                          />
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
               ) : (

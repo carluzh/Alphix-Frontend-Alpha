@@ -61,7 +61,7 @@ export default async function handler(
   let fallbackCacheKey = '';
 
   try {
-    const { poolId, days: daysQuery } = req.query as { poolId?: string; days?: string };
+    const { poolId, days: daysQuery, v: versionQuery } = req.query as { poolId?: string; days?: string; v?: string };
     if (!poolId || typeof poolId !== 'string') {
       return res.status(400).json({ message: 'Valid poolId query parameter is required.' });
     }
@@ -71,11 +71,14 @@ export default async function handler(
     res.setHeader('Cache-Control', 'public, s-maxage=86400, stale-while-revalidate=86400');
 
     const bust = typeof (req.query?.bust as string | undefined) === 'string';
+    const version = versionQuery || '';
     const subgraphId = (getPoolSubgraphId(poolId) || poolId).toLowerCase();
     const cacheKey = `${subgraphId}|${days}`;
     fallbackCacheKey = cacheKey;
 
-    if (!bust) {
+    // Support both version-based and timestamp-based cache busting
+    const shouldBypassCache = bust || (version && version !== 'default');
+    if (!shouldBypassCache) {
       const cached = serverCache.get(cacheKey);
       if (cached && (Date.now() - cached.ts) < SIX_HOURS_MS) {
         return res.status(200).json(cached.data);
@@ -88,12 +91,12 @@ export default async function handler(
     const p0 = (await batchGetTokenPrices([sym0]))[sym0] || 1;
 
     const end = new Date();
-    end.setUTCHours(0, 0, 0, 0);
+    end.setUTCHours(0, 0, 0, 0); // Midnight UTC of today
     const start = new Date(end);
     start.setUTCDate(end.getUTCDate() - days);
     const allDateKeys: string[] = [];
     const cursor = new Date(start);
-    while (cursor < end) {
+    while (cursor <= end) { // Include today
       allDateKeys.push(cursor.toISOString().split('T')[0]);
       cursor.setUTCDate(cursor.getUTCDate() + 1);
     }
@@ -103,7 +106,7 @@ export default async function handler(
       poolHourDatas(
         where: { pool: "${subgraphId}", periodStartUnix_gte: ${cutoff} }
         orderBy: periodStartUnix
-        orderDirection: asc
+        orderDirection: desc
         first: 1000
       ) {
         periodStartUnix
@@ -122,6 +125,7 @@ export default async function handler(
     const hourlyData = hourlyJson?.data?.poolHourDatas || [];
 
     const volByDate = new Map<string, number>();
+    // Note: Data comes in descending order (newest first) due to query optimization
     for (const h of hourlyData) {
       const date = new Date(h.periodStartUnix * 1000).toISOString().split('T')[0];
       const vol = (volByDate.get(date) || 0) + Number(h.volumeToken0);

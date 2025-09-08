@@ -1,5 +1,5 @@
 // components/liquidity/useAddLiquidityTransaction.ts
-import { useState, useCallback, useEffect, useMemo } from "react";
+import React, { useState, useCallback, useEffect, useMemo } from "react";
 import { 
   useAccount, 
   useWriteContract, 
@@ -8,6 +8,7 @@ import {
   useSignTypedData
 } from "wagmi";
 import { toast } from "sonner";
+import { BadgeCheck, OctagonX } from "lucide-react";
 import { V4_POOL_FEE, V4_POOL_TICK_SPACING, V4_POOL_HOOKS } from "@/lib/swap-constants";
 import { TOKEN_DEFINITIONS } from "@/lib/pools-config";
 import { baseSepolia } from "@/lib/wagmiConfig";
@@ -181,7 +182,7 @@ export function useAddLiquidityTransaction({
     permitMessage?: any
   ): Promise<PreparedTxData | null> => {
     if (!accountAddress || !chainId) {
-      if (!isCalledAfterApprovalOrPermit) toast.error("Please connect your wallet.");
+      if (!isCalledAfterApprovalOrPermit) toast.error("Wallet Not Connected", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Please connect your wallet to continue." });
       // For internal calls, don't toast, just return null to signal failure to caller
       return null;
     }
@@ -211,7 +212,7 @@ export function useAddLiquidityTransaction({
     }
 
     if (!finalInputAmount || !finalInputTokenSymbol) {
-        if (!isCalledAfterApprovalOrPermit) toast.error("Please enter an amount for at least one token.");
+        if (!isCalledAfterApprovalOrPermit) toast.error("Missing Amount", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Please enter an amount for at least one token." });
         return null;
     }
 
@@ -219,11 +220,11 @@ export function useAddLiquidityTransaction({
     const finalTickUpperNum = calculatedData?.finalTickUpper ?? parseInt(tickUpper);
 
     if (isNaN(finalTickLowerNum) || isNaN(finalTickUpperNum) || finalTickLowerNum >= finalTickUpperNum) {
-      toast.error("Invalid tick range provided or calculated.");
+      toast.error("Invalid Range", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "The price range is invalid or overlapping." });
       return null;
     }
     if (token0Symbol === token1Symbol) {
-      toast.error("Tokens cannot be the same.");
+      toast.error("Invalid Tokens", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Cannot create pool with identical tokens." });
       return null;
     }
     
@@ -345,7 +346,7 @@ export function useAddLiquidityTransaction({
     if (!preparedTxData?.needsApproval || preparedTxData.approvalType !== 'ERC20_TO_PERMIT2' || !approveERC20Async) return;
 
     if (!accountAddress || chainId === undefined || chainId === null) {
-      toast.error("Wallet not connected or chain not identified. Please reconnect.");
+      toast.error("Connection Error", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Wallet not connected or chain not identified." });
       setIsWorking(false);
       return;
     }
@@ -381,7 +382,7 @@ export function useAddLiquidityTransaction({
         detailedErrorMessage = err.message;
         if ((err as any).shortMessage) { detailedErrorMessage = (err as any).shortMessage; }
       }
-      toast.error(`Failed to send approval transaction: ${detailedErrorMessage}`);
+      toast.error("Approval Failed", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: detailedErrorMessage });
       setIsWorking(false);
       resetApproveWriteContract();
     }
@@ -481,7 +482,7 @@ export function useAddLiquidityTransaction({
   const handleMint = useCallback(async () => {
     if (!preparedTxData || preparedTxData.needsApproval || !sendTransactionAsync) return;
     if (!preparedTxData.transaction || typeof preparedTxData.transaction.data !== 'string') {
-      toast.error("Minting Error: Transaction data is missing or invalid. Please try preparing again.");
+      toast.error("Invalid Transaction", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Transaction data is missing or invalid." });
       setStep('input'); 
       setIsWorking(false);
       return;
@@ -498,14 +499,16 @@ export function useAddLiquidityTransaction({
       if (txValueString && BigInt(txValueString) > 0n) {
         txParams.value = BigInt(txValueString);
       }
-      await sendTransactionAsync(txParams);
+      const hash = await sendTransactionAsync(txParams);
+      // Immediately notify UI to show skeleton while waiting for confirmation
+      try { onLiquidityAdded(token0Symbol, token1Symbol); } catch {}
     } catch (err: any) { 
       let detailedErrorMessage = "Unknown error sending mint transaction.";
       if (err instanceof Error) {
         detailedErrorMessage = err.message;
         if ((err as any).shortMessage) { detailedErrorMessage = (err as any).shortMessage; }
       }
-      toast.error(`Failed to send mint transaction: ${detailedErrorMessage}`);
+      toast.error("Transaction Failed", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: detailedErrorMessage });
       setIsWorking(false);
       resetSendTransaction();
     }
@@ -555,7 +558,7 @@ export function useAddLiquidityTransaction({
     
     if (approveWriteError || approveReceiptError) {
       const errorMsg = (approveWriteError as any)?.shortMessage || (approveReceiptError as any)?.shortMessage || approveWriteError?.message || approveReceiptError?.message || "Approval transaction failed.";
-      toast.error(`Approval failed: ${errorMsg}`);
+      toast.error("Approval Failed", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: errorMsg });
       setIsWorking(false);
       resetApproveWriteContract();
       setPreparedTxData(null);
@@ -599,7 +602,7 @@ export function useAddLiquidityTransaction({
     
     if (permit2SendError || permit2ReceiptError) {
       const errorMsg = (permit2SendError as any)?.shortMessage || (permit2ReceiptError as any)?.shortMessage || permit2SendError?.message || permit2ReceiptError?.message || "Permit transaction failed.";
-      toast.error(`Permit failed: ${errorMsg}`);
+      toast.error("Permit Failed", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: errorMsg });
       setIsWorking(false);
       resetPermit2SendTransaction();
       setStep('permit2Sign'); // Stay on permit step to retry
@@ -609,9 +612,8 @@ export function useAddLiquidityTransaction({
   // Update states when mint transaction is completed
   useEffect(() => {
     if (isMintConfirmed) {
-      toast.success("Liquidity minted successfully!");
-      onLiquidityAdded(token0Symbol, token1Symbol);
-      try { if (accountAddress) prefetchService.requestPositionsRefresh({ owner: accountAddress, reason: 'mint' }); } catch {}
+      toast.success("Position Created", { icon: React.createElement(BadgeCheck, { className: "h-4 w-4 text-green-500" }) });
+      try { if (accountAddress) prefetchService.notifyPositionsRefresh(accountAddress, 'mint'); } catch {}
       try { if (accountAddress) invalidateActivityCache(accountAddress); } catch {}
       try {
         if (accountAddress) {
@@ -645,7 +647,7 @@ export function useAddLiquidityTransaction({
     
     if (mintSendError || mintReceiptError) {
       const errorMsg = (mintSendError as any)?.shortMessage || (mintReceiptError as any)?.shortMessage || mintSendError?.message || mintReceiptError?.message || "Minting transaction failed.";
-      toast.error(`Minting failed: ${errorMsg}`);
+      toast.error("Position Creation Failed", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: errorMsg });
       
       setIsWorking(false);
       resetSendTransaction();

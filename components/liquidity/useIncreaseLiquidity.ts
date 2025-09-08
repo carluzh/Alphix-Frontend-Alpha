@@ -24,7 +24,7 @@ const safeParseUnits = (amount: string, decimals: number): bigint => {
 import JSBI from 'jsbi';
 
 interface UseIncreaseLiquidityProps {
-  onLiquidityIncreased: (info?: { txHash?: `0x${string}`; blockNumber?: bigint }) => void;
+  onLiquidityIncreased: (info?: { txHash?: `0x${string}`; blockNumber?: bigint; increaseAmounts?: { amount0: string; amount1: string } | null }) => void;
 }
 
 export interface IncreasePositionData {
@@ -47,6 +47,9 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
   const { data: hash, writeContract, isPending: isIncreaseSendPending, error: increaseSendError, reset: resetWriteContract } = useWriteContract();
   const { isLoading: isIncreaseConfirming, isSuccess: isIncreaseConfirmed, error: increaseConfirmError, status: waitForTxStatus } = useWaitForTransactionReceipt({ hash });
   const { signTypedDataAsync } = useSignTypedData();
+  
+  // Store the increase amounts for the callback
+  const increaseAmountsRef = React.useRef<{ amount0: string; amount1: string } | null>(null);
 
   // Log minimal useAccount details for debugging
   useEffect(() => {
@@ -54,6 +57,8 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
   }, [accountAddress, chainId]);
 
   const [isIncreasing, setIsIncreasing] = useState(false);
+  // Ensure we only invoke onLiquidityIncreased once per tx hash
+  const handledIncreaseHashRef = React.useRef<string | null>(null);
 
   // Helper function to get the NFT token ID from position parameters
   const getTokenIdFromPosition = useCallback(async (positionData: IncreasePositionData): Promise<bigint> => {
@@ -84,15 +89,23 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
 
   const increaseLiquidity = useCallback(async (positionData: IncreasePositionData, opts?: IncreaseOptions) => {
     if (!accountAddress || !chainId) {
-      toast.error("Wallet not connected. Please connect your wallet and try again.");
+      toast.error("Wallet Not Connected", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Please connect your wallet and try again." });
       return;
     }
     if (!V4_POSITION_MANAGER_ADDRESS) {
-      toast.error("Configuration Error: Position Manager address not set.");
+      toast.error("Configuration Error", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Position Manager address not set." });
       return;
     }
 
+    // Store the amounts for the callback
+    increaseAmountsRef.current = {
+      amount0: positionData.additionalAmount0,
+      amount1: positionData.additionalAmount1
+    };
+
     setIsIncreasing(true);
+    // Allow next tx hash to be handled
+    handledIncreaseHashRef.current = null;
 
     try {
       const token0Def = getToken(positionData.token0Symbol);
@@ -164,7 +177,7 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
         amount0RawUser = 0n;
       }
       if (amount0RawUser === 0n && amount1RawUser === 0n) {
-        toast.error('Please enter a valid amount to add');
+        toast.error('Invalid Amount', { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: 'Please enter a valid amount to add.' });
         setIsIncreasing(false);
         return;
       }
@@ -319,7 +332,7 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
       if ((error as any)?.__zero || msg.includes('ZERO_LIQUIDITY')) {
         toast.error("Try a larger Amount", { icon: React.createElement(OctagonX, { className: 'h-4 w-4 text-red-500' }) });
       } else {
-        toast.error("Increase Failed", { description: msg || "Could not prepare the transaction." });
+        toast.error("Increase Failed", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: msg || "Could not prepare the transaction." });
       }
       setIsIncreasing(false);
     }
@@ -328,7 +341,7 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
   useEffect(() => {
     if (increaseSendError) {
       const message = increaseSendError instanceof BaseError ? increaseSendError.shortMessage : increaseSendError.message;
-      toast.error("Increase Failed", { description: message });
+      toast.error("Increase Failed", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: message });
       setIsIncreasing(false);
     }
   }, [increaseSendError]);
@@ -336,7 +349,8 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
   useEffect(() => {
     if (!hash) return;
 
-    if (isIncreaseConfirmed) {
+    if (isIncreaseConfirmed && handledIncreaseHashRef.current !== hash) {
+      handledIncreaseHashRef.current = hash;
       // Delegate the sole success toast to page-level logic
       (async () => {
         let blockNumber: bigint | undefined = undefined;
@@ -344,7 +358,11 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
           const receipt = await publicClient.getTransactionReceipt({ hash: hash as `0x${string}` });
           blockNumber = receipt?.blockNumber;
         } catch {}
-        onLiquidityIncreased({ txHash: hash as `0x${string}`, blockNumber });
+        onLiquidityIncreased({ 
+          txHash: hash as `0x${string}`, 
+          blockNumber, 
+          increaseAmounts: increaseAmountsRef.current 
+        });
       })();
       try { if (accountAddress) prefetchService.requestPositionsRefresh({ owner: accountAddress, reason: 'increase' }); } catch {}
       try { if (accountAddress) invalidateActivityCache(accountAddress); } catch {}
@@ -358,12 +376,10 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
       setIsIncreasing(false);
     } else if (increaseConfirmError) {
       const message = increaseConfirmError instanceof BaseError ? increaseConfirmError.shortMessage : increaseConfirmError.message;
-      toast.error("Increase Failed", {
+      toast.error("Increase Failed", { 
         id: hash,
-        description: message,
-        action: baseSepolia?.blockExplorers?.default?.url 
-          ? { label: "View Tx", onClick: () => window.open(`${baseSepolia.blockExplorers.default.url}/tx/${hash}`, '_blank') }
-          : undefined,
+        icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
+        description: message
       });
       setIsIncreasing(false);
     }

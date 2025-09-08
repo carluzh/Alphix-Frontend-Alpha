@@ -1,12 +1,10 @@
 "use client";
 
 import React from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AppLayout } from "@/components/app-layout";
 import Image from "next/image";
 import { useMemo, useState, useEffect, useRef, useCallback, useLayoutEffect } from "react";
-import { motion, AnimatePresence } from "framer-motion";
 import { formatUSD as formatUSDShared, formatUSDHeader as formatUSDHeaderShared, formatNumber, formatPercent, formatTokenAmount } from "@/lib/format";
 import JSBI from "jsbi";
 import { Token } from "@uniswap/sdk-core";
@@ -18,10 +16,8 @@ import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from "@/lib/abis/stat
 import { parseAbi, type Abi, type Hex, getAddress } from "viem";
 import { ethers } from "ethers";
 import { X } from "lucide-react";
-import { Area, AreaChart, XAxis, YAxis } from "recharts";
-import { ChartContainer, type ChartConfig } from "@/components/ui/chart";
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract } from "wagmi";
-import { useUserPositions, useActivity, useAllPrices } from "@/components/data/hooks";
+import { useUserPositions, useActivity, useAllPrices, useUncollectedFeesBatch } from "@/components/data/hooks";
 import { prefetchService } from "@/lib/prefetch-service";
 import { baseSepolia } from "@/lib/wagmiConfig";
 import { toast } from "sonner";
@@ -31,19 +27,13 @@ import { ChevronUpIcon, ChevronDownIcon, ChevronsUpDownIcon, ChevronRight, Octag
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { PortfolioTickBar } from "@/components/portfolio/PortfolioTickBar";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { TOKEN_DEFINITIONS, type TokenSymbol, getToken as getTokenCfg } from "@/lib/pools-config";
 import { formatUnits as viemFormatUnits } from "viem";
-import { useIncreaseLiquidity, type IncreasePositionData } from "@/components/liquidity/useIncreaseLiquidity";
-import { useDecreaseLiquidity, type DecreasePositionData } from "@/components/liquidity/useDecreaseLiquidity";
-import { useBalance } from "wagmi";
-import { CardFooter } from "@/components/ui/card";
-import { Info, Clock3, ChevronsLeftRight } from "lucide-react";
+import { useIncreaseLiquidity } from "@/components/liquidity/useIncreaseLiquidity";
+import { useDecreaseLiquidity } from "@/components/liquidity/useDecreaseLiquidity";
+import { AddLiquidityModal } from "@/components/liquidity/AddLiquidityModal";
+import { WithdrawLiquidityModal } from "@/components/liquidity/WithdrawLiquidityModal";
+
 import { PositionCard } from "@/components/liquidity/PositionCard";
 import { waitForSubgraphBlock } from '@/lib/client-cache';
 import { batchGetTokenPrices } from '@/lib/price-service';
@@ -219,7 +209,7 @@ const BalancesListSkeleton = () => (
     {[...Array(6)].map((_, idx) => (
       <div key={idx} className="flex items-center justify-between h-[64px] pl-6 pr-6">
         <div className="flex items-center gap-2 min-w-0">
-          <div className="w-6 h-6 rounded-full bg-muted/40 animate-pulse flex-shrink-0" />
+          <div className="w-6 h-6 rounded-full bg-muted/60 animate-pulse flex-shrink-0" />
           <div className="flex flex-col min-w-0 gap-1">
             <SkeletonLine className="h-3 w-16" />
             <SkeletonLine className="h-3 w-24 opacity-80" />
@@ -440,7 +430,11 @@ function usePortfolioData(refreshKey: number = 0, userPositionsData?: any[], pri
         let deltaNowUSD = 0;
         if (totalValue > 0) {
           tokenBalances.forEach((tb) => {
-            const ch = priceData?.[tb.symbol]?.usd_24h_change; // percent if server includes
+            // Map any wrapped/suffixed symbol to base asset used by price-service
+            const s = String(tb.symbol || '').toUpperCase();
+            const base = s.includes('BTC') ? 'BTC' : s.includes('ETH') ? 'ETH' : s.includes('USDC') ? 'USDC' : s.includes('USDT') ? 'USDT' : tb.symbol;
+            const coinData = priceData?.[base] || priceData?.[tb.symbol];
+            const ch = coinData?.usd_24h_change; // percent if server includes
             if (typeof ch === 'number' && isFinite(ch)) {
               // exact delta using current value and inverse of (1 + ch/100)
               const pastUsd = tb.usdValue / (1 + ch / 100);
@@ -453,8 +447,14 @@ function usePortfolioData(refreshKey: number = 0, userPositionsData?: any[], pri
 
         const priceChange24hPctMap: Record<string, number> = {};
         tokenSymbols.forEach(symbol => {
-          const ch = priceData?.[symbol]?.usd_24h_change;
-          if (typeof ch === 'number' && isFinite(ch)) priceChange24hPctMap[symbol] = ch;
+          const s = String(symbol || '').toUpperCase();
+          const base = s.includes('BTC') ? 'BTC' : s.includes('ETH') ? 'ETH' : s.includes('USDC') ? 'USDC' : s.includes('USDT') ? 'USDT' : symbol;
+          const coinData = priceData?.[base] || priceData?.[symbol];
+          const ch = coinData?.usd_24h_change;
+          if (typeof ch === 'number' && isFinite(ch)) {
+            priceChange24hPctMap[symbol] = ch; // original key (e.g., aETH)
+            priceChange24hPctMap[base] = ch;   // base key (ETH) for aggregated views
+          }
         });
 
         setPortfolioData({
@@ -979,17 +979,34 @@ export default function PortfolioPage() {
   const [showWithdrawModal, setShowWithdrawModal] = useState(false);
   const [positionToModify, setPositionToModify] = useState<any | null>(null);
   const [positionToWithdraw, setPositionToWithdraw] = useState<any | null>(null);
-  // Inputs
-  const [increaseAmount0, setIncreaseAmount0] = useState<string>("");
-  const [increaseAmount1, setIncreaseAmount1] = useState<string>("");
+
+  // Fee fetching for modals
+  const allPositionIds = React.useMemo(() => {
+    const ids = new Set<string>();
+    // Add positions from the table
+    if (userPositionsData) {
+      userPositionsData.forEach(pos => ids.add(pos.positionId));
+    }
+    // Add modal positions
+    if (positionToModify?.positionId) ids.add(positionToModify.positionId);
+    if (positionToWithdraw?.positionId) ids.add(positionToWithdraw.positionId);
+    return Array.from(ids).filter(Boolean);
+  }, [userPositionsData, positionToModify?.positionId, positionToWithdraw?.positionId]);
+
+  const { data: batchFeesData } = useUncollectedFeesBatch(allPositionIds, 60_000);
+
+  // Extract individual fee data from batch result
+  const getFeesForPosition = React.useCallback((positionId: string) => {
+    if (!batchFeesData || !positionId) return null;
+    return batchFeesData.find(fee => fee.positionId === positionId) || null;
+  }, [batchFeesData]);
+
+  // Extract fees for specific use cases
+  const feesForIncrease = getFeesForPosition(positionToModify?.positionId || '');
+  const feesForWithdraw = getFeesForPosition(positionToWithdraw?.positionId || '');
+  // Withdraw state variables (kept for future use)
   const [withdrawAmount0, setWithdrawAmount0] = useState<string>("");
   const [withdrawAmount1, setWithdrawAmount1] = useState<string>("");
-  const [isIncreaseCalculating, setIsIncreaseCalculating] = useState(false);
-  const [isWithdrawCalculating, setIsWithdrawCalculating] = useState(false);
-  const [increaseActiveInputSide, setIncreaseActiveInputSide] = useState<'amount0' | 'amount1' | null>(null);
-  const [withdrawActiveInputSide, setWithdrawActiveInputSide] = useState<'amount0' | 'amount1' | null>(null);
-  const [increasePercentage, setIncreasePercentage] = useState<number>(0);
-  const [isIncreaseAmountValid, setIsIncreaseAmountValid] = useState(true);
   const [withdrawPercentage, setWithdrawPercentage] = useState<number>(0);
   const [isFullWithdraw, setIsFullWithdraw] = useState(false);
   const lastDecreaseWasFullRef = useRef<boolean>(false);
@@ -997,16 +1014,6 @@ export default function PortfolioPage() {
   const [walletBalances, setWalletBalances] = useState<Array<{ symbol: string; balance: number; usdValue: number; color: string }>>([]);
   const [isLoadingWalletBalances, setIsLoadingWalletBalances] = useState<boolean>(false);
 
-  const withdrawProductiveSide = useMemo<null | 'amount0' | 'amount1'>(() => {
-    if (!positionToWithdraw || positionToWithdraw.isInRange) return null;
-    const poolKey = String(positionToWithdraw?.poolId || '').toLowerCase();
-    const tick = poolDataByPoolId[poolKey]?.tick;
-    const below = tick !== null ? tick < positionToWithdraw.tickLower : false;
-    const above = tick !== null ? tick > positionToWithdraw.tickUpper : false;
-    if (below) return 'amount0';
-    if (above) return 'amount1';
-    return null;
-  }, [positionToWithdraw, poolDataByPoolId]);
 
   // Helpers
   const formatTokenDisplayAmount = (amount: string) => {
@@ -1022,31 +1029,11 @@ export default function PortfolioPage() {
     return getTokenCfg(symbol)?.icon || '/placeholder-logo.svg';
   };
 
-  // Balances for add-liquidity modal
-  const token0SymForBalance = (positionToModify?.token0?.symbol || '') as TokenSymbol;
-  const token1SymForBalance = (positionToModify?.token1?.symbol || '') as TokenSymbol;
-  const addr0ForBalance = TOKEN_DEFINITIONS[token0SymForBalance]?.address as `0x${string}` | undefined;
-  const addr1ForBalance = TOKEN_DEFINITIONS[token1SymForBalance]?.address as `0x${string}` | undefined;
-  const { data: token0BalanceData } = useBalance({
-    address: accountAddress,
-    token: addr0ForBalance && addr0ForBalance !== '0x0000000000000000000000000000000000000000' ? addr0ForBalance : undefined,
-    chainId: currentChainId,
-    query: { enabled: !!accountAddress && !!currentChainId && !!addr0ForBalance },
-  });
-  const { data: token1BalanceData } = useBalance({
-    address: accountAddress,
-    token: addr1ForBalance && addr1ForBalance !== '0x0000000000000000000000000000000000000000' ? addr1ForBalance : undefined,
-    chainId: currentChainId,
-    query: { enabled: !!accountAddress && !!currentChainId && !!addr1ForBalance },
-  });
-
-  const displayToken0Balance = token0BalanceData?.formatted ? formatTokenDisplayAmount(token0BalanceData.formatted) : '~';
-  const displayToken1Balance = token1BalanceData?.formatted ? formatTokenDisplayAmount(token1BalanceData.formatted) : '~';
 
   // After-confirmation refresh using the same centralized prefetch hook as pool page
-  const bumpPositionsRefresh = useCallback(() => {
+  const bumpPositionsRefresh = useCallback(() => { // Refresh positions after add/withdraw
     try {
-      if (accountAddress) prefetchService.requestPositionsRefresh({ owner: accountAddress });
+      if (accountAddress) prefetchService.notifyPositionsRefresh(accountAddress, 'manual_refresh');
     } catch {}
     setPositionsRefresh((k) => k + 1);
   }, [accountAddress]);
@@ -1107,102 +1094,10 @@ export default function PortfolioPage() {
     }
     bumpPositionsRefresh();
   }, [bumpPositionsRefresh]);
-  const { decreaseLiquidity, compoundFees, claimFees, isLoading: isDecreasingLiquidity } = useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected });
+  const { decreaseLiquidity, claimFees, isLoading: isDecreasingLiquidity } = useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected });
 
   const isCompoundInProgressRef = useRef(false);
 
-  // Sticky slider stops helper (copied behavior)
-  const snapToStickyStops = (value: number): number => {
-    const stickyStops = [25, 50, 75, 100];
-    const snapZone = 3;
-    for (const stop of stickyStops) {
-      if (Math.abs(value - stop) <= snapZone) return stop;
-    }
-    return value;
-  };
-
-  // Increase slider % and amount sync
-  const handleIncreasePercentageChange = (newPercentage: number) => {
-    const next = newPercentage >= 99.9 ? 100 : snapToStickyStops(newPercentage);
-    setIncreasePercentage(next);
-    if (positionToModify) {
-      if (next === 100) {
-        const full0 = token0BalanceData?.formatted || '0';
-        setIncreaseAmount0(full0);
-        setIncreaseActiveInputSide('amount0');
-        if (parseFloat(full0) > 0) calculateIncreaseAmount(full0, 'amount0', positionToModify); else setIncreaseAmount1('');
-      } else {
-        const balance0 = parseFloat(token0BalanceData?.formatted || '0');
-        const percentage = next / 100;
-        const displayDecimals0 = TOKEN_DEFINITIONS[positionToModify.token0.symbol as TokenSymbol]?.displayDecimals ?? 4;
-        const calculatedAmount0 = (balance0 * percentage).toFixed(displayDecimals0);
-        setIncreaseAmount0(calculatedAmount0);
-        setIncreaseActiveInputSide('amount0');
-        if (parseFloat(calculatedAmount0) > 0) calculateIncreaseAmount(calculatedAmount0, 'amount0', positionToModify); else setIncreaseAmount1('');
-      }
-    }
-  };
-
-  const handleIncreaseAmountChange = (newAmount: string, tokenSide: 'amount0' | 'amount1') => {
-    if (tokenSide === 'amount0') {
-      setIncreaseAmount0(newAmount);
-      setIncreaseActiveInputSide('amount0');
-    } else {
-      setIncreaseAmount1(newAmount);
-      setIncreaseActiveInputSide('amount1');
-    }
-    if (positionToModify && newAmount) {
-      const maxAmount = tokenSide === 'amount0' ? parseFloat(token0BalanceData?.formatted || '0') : parseFloat(token1BalanceData?.formatted || '0');
-      const currentAmount = parseFloat(newAmount);
-      if (maxAmount > 0 && !isNaN(currentAmount)) {
-        const percentage = Math.min(100, Math.max(0, (currentAmount / maxAmount) * 100));
-        const pct = percentage >= 99.5 ? 100 : Math.round(percentage);
-        setIncreasePercentage(pct);
-        setIsIncreaseAmountValid(currentAmount <= maxAmount);
-      } else {
-        setIsIncreaseAmountValid(true);
-      }
-    } else {
-      setIsIncreaseAmountValid(true);
-    }
-  };
-
-  // Withdraw slider % and amount sync
-  const handleWithdrawPercentageChange = (newPercentage: number) => {
-    const next = newPercentage >= 99.9 ? 100 : snapToStickyStops(newPercentage);
-    setWithdrawPercentage(next);
-    if (positionToWithdraw) {
-      if (next === 100) {
-        setWithdrawAmount0(positionToWithdraw.token0.amount);
-        setWithdrawAmount1(positionToWithdraw.token1.amount);
-        setWithdrawActiveInputSide('amount0');
-        setIsFullWithdraw(true);
-      } else {
-        const amount0 = parseFloat(positionToWithdraw.token0.amount);
-        const percentage = next / 100;
-        const displayDecimals0 = TOKEN_DEFINITIONS[positionToWithdraw.token0.symbol as TokenSymbol]?.displayDecimals ?? 4;
-        const calculatedAmount0 = (amount0 * percentage).toFixed(displayDecimals0);
-        setWithdrawAmount0(calculatedAmount0);
-        setWithdrawActiveInputSide('amount0');
-        setIsFullWithdraw(next === 100);
-        if (parseFloat(calculatedAmount0) > 0) calculateWithdrawAmount(calculatedAmount0, 'amount0', positionToWithdraw); else setWithdrawAmount1('');
-      }
-    }
-  };
-
-  const handleWithdrawAmountChange = (newAmount: string, tokenSide: 'amount0' | 'amount1') => {
-    if (tokenSide === 'amount0') setWithdrawAmount0(newAmount); else setWithdrawAmount1(newAmount);
-    if (positionToWithdraw && newAmount) {
-      const maxAmount = tokenSide === 'amount0' ? parseFloat(positionToWithdraw.token0.amount) : parseFloat(positionToWithdraw.token1.amount);
-      const currentAmount = parseFloat(newAmount);
-      if (maxAmount > 0 && !isNaN(currentAmount)) {
-        const percentage = Math.min(100, Math.max(0, (currentAmount / maxAmount) * 100));
-        const pct = percentage >= 99.5 ? 100 : Math.round(percentage);
-        setWithdrawPercentage(pct);
-        setIsFullWithdraw(pct === 100);
-      }
-    }
-  };
   
   // Provided by top-level const above
 
@@ -1370,10 +1265,11 @@ export default function PortfolioPage() {
         const priceChangeMap: Record<string, number> = {};
         symbols.forEach((symbol) => {
           const coinId = coinGeckoIds[symbol];
-          const px = coinId && priceData[coinId]?.usd;
+          const coinData = coinId && priceData[coinId];
+          const px = coinData?.usd;
           if (px) priceMap.set(symbol, px);
           else if (symbol.includes('USDC') || symbol.includes('USDT')) priceMap.set(symbol, 1.0);
-          const ch = coinId ? priceData[coinId]?.usd_24h_change : undefined;
+          const ch = coinData?.usd_24h_change;
           if (typeof ch === 'number' && isFinite(ch)) priceChangeMap[symbol] = ch;
         });
 
@@ -1604,43 +1500,14 @@ export default function PortfolioPage() {
     setExpandedPools(prev => ({ ...prev, [poolId]: !prev[poolId] }));
   };
 
+
   // Wire up menu actions
   const openAddLiquidity = useCallback((pos: any) => {
     setPositionToModify(pos);
-    setIncreaseAmount0("");
-    setIncreaseAmount1("");
-    setIncreasePercentage(0);
-    // OOR single-sided enforcement on open
-    try {
-      const poolKey = String(pos?.poolId || '').toLowerCase();
-      const ct = poolDataByPoolId[poolKey]?.tick;
-      if (typeof ct === 'number') {
-        const below = ct < pos.tickLower; // token0 productive
-        const above = ct > pos.tickUpper; // token1 productive
-        if (below) {
-          setIncreaseActiveInputSide('amount0');
-          setIncreaseAmount1('0');
-        } else if (above) {
-          setIncreaseActiveInputSide('amount1');
-          setIncreaseAmount0('0');
-        } else {
-    setIncreaseActiveInputSide(null);
-        }
-      } else {
-        setIncreaseActiveInputSide(null);
-      }
-    } catch {
-      setIncreaseActiveInputSide(null);
-    }
     setShowIncreaseModal(true);
-  }, [poolDataByPoolId]);
+  }, []);
   const openWithdraw = useCallback((pos: any) => {
     setPositionToWithdraw(pos);
-    setWithdrawAmount0("");
-    setWithdrawAmount1("");
-    setWithdrawPercentage(0);
-    setIsFullWithdraw(false);
-    setWithdrawActiveInputSide(null);
     setShowWithdrawModal(true);
   }, []);
 
@@ -1653,102 +1520,9 @@ export default function PortfolioPage() {
     };
   };
 
-  // Calculate other side for increase
-  const calculateIncreaseAmount = useCallback(
-    debounce(async (inputAmount: string, inputSide: 'amount0' | 'amount1', pos: any) => {
-      if (!pos || !inputAmount || parseFloat(inputAmount) <= 0) {
-        if (inputSide === 'amount0') setIncreaseAmount1("");
-        else setIncreaseAmount0("");
-        return;
-      }
-      setIsIncreaseCalculating(true);
-      try {
-        // For out-of-range, single-sided
-        if (!pos.isInRange) {
-          if (inputSide === 'amount0') setIncreaseAmount1('0'); else setIncreaseAmount0('0');
-          setIsIncreaseCalculating(false);
-          return;
-        }
-        const resp = await fetch('/api/liquidity/calculate-liquidity-parameters', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            token0Symbol: pos.token0.symbol,
-            token1Symbol: pos.token1.symbol,
-            inputAmount,
-            inputTokenSymbol: inputSide === 'amount0' ? pos.token0.symbol : pos.token1.symbol,
-            userTickLower: pos.tickLower,
-            userTickUpper: pos.tickUpper,
-            chainId: currentChainId,
-          }),
-        });
-        if (!resp.ok) throw new Error((await resp.json())?.message || 'Failed to calculate');
-        const data = await resp.json();
-        if (inputSide === 'amount0') {
-          const dec = TOKEN_DEFINITIONS[pos.token1.symbol as TokenSymbol]?.decimals || 18;
-          setIncreaseAmount1(formatTokenDisplayAmount(viemFormatUnits(BigInt(data.amount1), dec)));
-        } else {
-          const dec = TOKEN_DEFINITIONS[pos.token0.symbol as TokenSymbol]?.decimals || 18;
-          setIncreaseAmount0(formatTokenDisplayAmount(viemFormatUnits(BigInt(data.amount0), dec)));
-        }
-      } catch (e: any) {
-        toast.error('Calculation Error', { description: e?.message || 'Could not calculate corresponding amount.', icon: <OctagonX className="h-4 w-4 text-red-500" /> });
-        if (inputSide === 'amount0') setIncreaseAmount1(""); else setIncreaseAmount0("");
-      } finally {
-        setIsIncreaseCalculating(false);
-      }
-    }, 400),
-    [currentChainId]
-  );
 
   // Claim Fees handled via useDecreaseLiquidity.onFeesCollected
 
-  // Calculate other side for withdraw
-  const calculateWithdrawAmount = useCallback(
-    debounce(async (inputAmount: string, inputSide: 'amount0' | 'amount1', pos: any) => {
-      if (!pos || !inputAmount || parseFloat(inputAmount) <= 0) {
-        if (inputSide === 'amount0') setWithdrawAmount1("");
-        else setWithdrawAmount0("");
-        return;
-      }
-      setIsWithdrawCalculating(true);
-      try {
-        if (!pos.isInRange) {
-          if (inputSide === 'amount0') setWithdrawAmount1('0'); else setWithdrawAmount0('0');
-          setIsWithdrawCalculating(false);
-          return;
-        }
-        const resp = await fetch('/api/liquidity/calculate-liquidity-parameters', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            token0Symbol: pos.token0.symbol,
-            token1Symbol: pos.token1.symbol,
-            inputAmount,
-            inputTokenSymbol: inputSide === 'amount0' ? pos.token0.symbol : pos.token1.symbol,
-            userTickLower: pos.tickLower,
-            userTickUpper: pos.tickUpper,
-            chainId: currentChainId,
-          }),
-        });
-        if (!resp.ok) throw new Error((await resp.json())?.message || 'Failed to calculate');
-        const data = await resp.json();
-        if (inputSide === 'amount0') {
-          const dec = TOKEN_DEFINITIONS[pos.token1.symbol as TokenSymbol]?.decimals || 18;
-          setWithdrawAmount1(formatTokenDisplayAmount(viemFormatUnits(BigInt(data.amount1), dec)));
-        } else {
-          const dec = TOKEN_DEFINITIONS[pos.token0.symbol as TokenSymbol]?.decimals || 18;
-          setWithdrawAmount0(formatTokenDisplayAmount(viemFormatUnits(BigInt(data.amount0), dec)));
-        }
-      } catch (e: any) {
-        toast.error('Calculation Error', { description: e?.message || 'Could not calculate corresponding amount.', icon: <OctagonX className="h-4 w-4 text-red-500" /> });
-        if (inputSide === 'amount0') setWithdrawAmount1(""); else setWithdrawAmount0("");
-      } finally {
-        setIsWithdrawCalculating(false);
-      }
-    }, 400),
-    [currentChainId]
-  );
 
   useEffect(() => {
     let cancelled = false;
@@ -2473,7 +2247,7 @@ export default function PortfolioPage() {
             </div>
             </div>
             {isIntegrateBalances && selectedSection === 'Balances' ? (
-              <div className="rounded-lg bg-muted/30 border border-sidebar-border/60">
+              <div className={`rounded-lg bg-muted/30 border border-sidebar-border/60 ${showSkeletonFor.table ? 'animate-pulse' : ''}`}>
                 <div className="flex items-center justify-between pl-6 pr-6 py-3 border-b border-sidebar-border/60 text-xs text-muted-foreground">
                   <span className="tracking-wider font-mono font-bold">TOKEN</span>
                   <div className="group inline-flex items-center">
@@ -2520,7 +2294,7 @@ export default function PortfolioPage() {
                     Balances
                   </button>
                 </div>
-                <div className="rounded-lg bg-muted/30 border border-sidebar-border/60">
+                <div className={`rounded-lg bg-muted/30 border border-sidebar-border/60 ${showSkeletonFor.table ? 'animate-pulse' : ''}`}>
                   <div className="flex items-center justify-between pl-6 pr-6 py-3 border-b border-sidebar-border/60 text-xs text-muted-foreground">
                     <span className="tracking-wider font-mono font-bold">TOKEN</span>
                     <div className="group inline-flex items-center">
@@ -2593,9 +2367,18 @@ export default function PortfolioPage() {
                               ) : (
                                 <ArrowDownRight className="h-3 w-3 text-red-500" />
                               )}
-                              <span className={`${isPos ? 'text-green-500' : 'text-red-500'} font-medium`}>
-                                {formatPercent(Math.abs(pnl24hPct || 0), { min: 2, max: 2 })}
-                </span>
+                              <TooltipProvider delayDuration={0}>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <span className={`${isPos ? 'text-green-500' : 'text-red-500'} font-medium cursor-default`}>
+                                      {formatPercent(Math.abs(pnl24hPct || 0), { min: 2, max: 2 })}
+                                    </span>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
+                                    24h Performance
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
               </div>
             </div>
                         );
@@ -2707,7 +2490,7 @@ export default function PortfolioPage() {
               </div>
             ) : (
               <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4">
-                <div className="flex items-center justify-between gap-4 cursor-pointer" onClick={() => setIsMobileVisOpen(v => !v)}>
+                <div className="flex items-center justify-between gap-4">
                   {/* Left: CURRENT VALUE */}
                   <div className="flex-1 min-w-0">
                     <h1 className="text-xs tracking-wider text-muted-foreground font-mono font-bold mb-3">CURRENT VALUE</h1>
@@ -2738,9 +2521,18 @@ export default function PortfolioPage() {
                                   ) : (
                                     <ArrowDownRight className="h-3 w-3 text-red-500" />
                                   )}
-                                  <span className={`${isPos ? 'text-green-500' : 'text-red-500'} font-medium`}>
-                                    {formatPercent(Math.abs(pnl24hPct || 0), { min: 2, max: 2 })}
-                                  </span>
+                              <TooltipProvider delayDuration={0}>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <span className={`${isPos ? 'text-green-500' : 'text-red-500'} font-medium cursor-default`}>
+                                      {formatPercent(Math.abs(pnl24hPct || 0), { min: 2, max: 2 })}
+                                    </span>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
+                                    24h Performance
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
                 </div>
               </div>
                             );
@@ -2789,55 +2581,152 @@ export default function PortfolioPage() {
                       </div>
                     </div>
                   </div>
-                  {/* Chevron */}
-                  <div className="flex items-center self-center pl-3">
-                  <svg
-                    width={20}
-                    height={20}
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth={2}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="transition-transform duration-200"
-                    style={{ transform: isMobileVisOpen ? 'rotate(180deg)' : 'none' }}
-                  >
-                    <path d="m6 9 6 6 6-6" />
-                  </svg>
                 </div>
               </div>
-
-                {/* Unfold section */}
-                <div className="transition-[max-height] duration-300 ease-out" style={{ maxHeight: isMobileVisOpen ? collapseMaxHeight : 0 }}>
-                  <div ref={blockVisContainerRef} className="pt-3">
-                {isMobileVisOpen && (
-                    <PortfolioTickBar
-                      composition={composition}
-                      onHover={setHoveredSegment}
-                      hoveredSegment={hoveredSegment}
-                      containerRef={blockVisContainerRef}
-                      netApyRef={blockVisContainerRef}
-                      layout="block"
-                      handleRestClick={handleRestClick}
-                      setIsRestCycling={setIsRestCycling}
-                      isRestCycling={isRestCycling}
-                      restCycleIndex={restCycleIndex}
-                      forceHideLabels={forceHideLabels}
-                      onHoverToken={setHoveredTokenLabel}
-                        activeTokenFilter={activeTokenFilter}
-                        setActiveTokenFilter={setActiveTokenFilter}
-                    />
-                )}
-                  </div>
-              </div>
-            </div>
           )}
           </div>
         )}
 
         {/* NEW: Portfolio sections with selector + right Balances aside */}
         <div className="mt-6 flex flex-col lg:flex-row" style={{ gap: `${getColumnGapPx(viewportWidth)}px` }}>
+          {/* Mobile: Show Balances first */}
+          {isMobile && !isIntegrateBalances && (
+            <aside className="lg:flex-none" style={{ width: viewportWidth >= 1024 ? '450px' : '100%' }}>
+              <div className="mb-2 flex items-center gap-2 justify-between">
+                <button
+                  type="button"
+                  className="px-2 py-1 text-xs rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-foreground brightness-110"
+                  style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+                >
+                  Balances
+                </button>
+                {/* Claim Faucet button aligned to the right, styled like selector (hidden when no balances) */}
+                {(() => {
+                  // Use synced cached last claim ts to mirror sidebar behavior
+                  // -1 (unknown) should render a neutral disabled state (no active claim button)
+                  const last = faucetLastClaimTs < 0 ? -1 : Number(faucetLastClaimTs || 0);
+                  const now = Math.floor(Date.now() / 1000);
+                  // If we have onchain timestamp, prefer it for gating
+                  const onchainLast = faucetLastCalledOnchain ? Number(faucetLastCalledOnchain) : null;
+                  const effectiveLast = onchainLast && onchainLast > 0 ? onchainLast : (last >= 0 ? last : -1);
+                  const canClaim = isConnected && currentChainId === baseSepolia.id && effectiveLast >= 0 && (effectiveLast === 0 || now - effectiveLast >= 24 * 60 * 60);
+                  const isPortfolioEmpty = (walletBalances.length || 0) === 0 && !isLoadingWalletBalances;
+                  if (isPortfolioEmpty) return null;
+                  const handleClick = async () => {
+                    if (!canClaim) {
+                      toast.error('Can only claim once per day', { icon: <OctagonX className="h-4 w-4 text-red-500" /> });
+                      return;
+                    }
+                    try {
+                      setIsFaucetBusy(true);
+                      const res = await fetch('/api/misc/faucet', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userAddress: accountAddress, chainId: baseSepolia.id }) });
+                      const data = await res.json();
+                      if (!res.ok) {
+                        const msg = (data?.errorDetails || data?.message || '').toLowerCase();
+                        if (msg.includes('once per day')) {
+                          toast.error('Can only claim once per day', { icon: <OctagonX className="h-4 w-4 text-red-500" /> });
+                        } else {
+                          toast.error(data?.errorDetails || data?.message || 'API Error', { icon: <OctagonX className="h-4 w-4 text-red-500" /> });
+                        }
+                        setIsFaucetBusy(false);
+                        return;
+                      }
+                      toast.info('Sending faucet transaction to wallet...');
+                      // Prompt wallet just like sidebar
+                      writeContract({
+                        address: data.to as `0x${string}`,
+                        abi: faucetAbi,
+                        functionName: 'faucet',
+                        args: [],
+                      });
+                    } catch (err: any) {
+                      console.error('[Portfolio] Faucet error:', err);
+                      toast.error(err?.message || 'Transaction failed', { icon: <OctagonX className="h-4 w-4 text-red-500" /> });
+                      setIsFaucetBusy(false);
+                    }
+                  };
+                  // Disable only when processing/confirming, like sidebar
+                  const disabled = Boolean(isFaucetBusy || isFaucetConfirming);
+                  const className = canClaim
+                    ? `px-2 py-1 text-xs rounded-md border border-sidebar-primary bg-[#3d271b] text-sidebar-primary transition-colors ${disabled ? 'opacity-70 cursor-not-allowed' : 'hover:bg-[#4a2f22]'}`
+                    : `px-2 py-1 text-xs rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-muted-foreground transition-colors ${disabled || last < 0 ? 'opacity-70 cursor-not-allowed' : 'hover:bg-muted/60'}`;
+                  const style = canClaim ? undefined : { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } as React.CSSProperties;
+                  return (
+                    <button type="button" onClick={handleClick} className={className} style={style} disabled={disabled || last < 0}>
+                      {disabled ? 'Processing…' : (last < 0 ? '—' : 'Claim Faucet')}
+                    </button>
+                  );
+                })()}
+              </div>
+              <div className={`rounded-lg bg-muted/30 border border-sidebar-border/60 ${showSkeletonFor.table ? 'animate-pulse' : ''}`}>
+                {showSkeletonFor.table ? (
+                  <BalancesListSkeleton />
+                ) : (!isConnected) ? (
+                  <div className="border border-dashed rounded-lg bg-muted/10 p-8 w-full flex items-center justify-center">
+                    <div className="text-sm text-white/75">Connect Wallet to view Balances</div>
+                  </div>
+                ) : (walletBalances.length === 0 && !isLoadingWalletBalances) ? (
+                  <div className="border border-dashed rounded-lg bg-muted/10 p-8 w-full flex items-center justify-center">
+                    <div className="text-sm text-white/75">No Balances</div>
+                  </div>
+                ) : (
+                  <div className="overflow-hidden">
+                    <div className="flex items-center justify-between pl-6 pr-6 py-3 border-b border-sidebar-border/60 text-xs text-muted-foreground">
+                      <span className="tracking-wider font-mono font-bold">TOKEN</span>
+                      <button type="button" className="group inline-flex items-center" onClick={() => setBalancesSortDir((d) => d === 'desc' ? 'asc' : 'desc')}>
+                        <span className="uppercase tracking-wider font-mono font-bold group-hover:text-foreground">VALUE</span>
+                        {renderSortIcon(balancesSortDir)}
+                      </button>
+                    </div>
+                    <div className="p-0">
+                  <div className="flex flex-col divide-y divide-sidebar-border/60">
+                    {(() => {
+                      const sorted = [...walletBalances].sort((a, b) => balancesSortDir === 'asc' ? a.usdValue - b.usdValue : b.usdValue - a.usdValue);
+                      return sorted;
+                    })().map((tb) => {
+                      const tokenInfo = getToken(tb.symbol) as any;
+                      const iconSrc = tokenInfo?.icon || '/placeholder.svg';
+                      const ch = walletPriceChange24hPctMap?.[tb.symbol] ?? 0;
+                      const deltaUsd = (() => {
+                        const c = tb.usdValue || 0;
+                        const denom = 1 + (isFinite(ch) ? ch : 0) / 100;
+                        if (denom === 0) return 0;
+                        return c - c / denom;
+                      })();
+                      const isUp = deltaUsd >= 0;
+                      const amountDisplayDecimals = typeof tokenInfo?.displayDecimals === 'number' ? tokenInfo.displayDecimals : 4;
+                      return (
+                        <div key={tb.symbol} className="flex items-center justify-between h-[64px] pl-6 pr-6 group">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <div className="w-6 h-6 rounded-full overflow-hidden bg-background flex-shrink-0">
+                              <Image src={iconSrc} alt={tb.symbol} width={24} height={24} className="w-full h-full object-cover" />
+                            </div>
+                            <div className="flex flex-col min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-medium truncate max-w-[140px]">{tb.symbol}</span>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex flex-col items-end whitespace-nowrap pl-2 gap-1">
+                            {/* Top line: current USD (always visible) */}
+                            <span className="text-sm text-foreground font-medium leading-none">{formatUSD(tb.usdValue)}</span>
+                            <div className="flex items-center gap-2 leading-none" style={{ marginTop: 2 }}>
+                              <span className="text-xs text-muted-foreground">
+                                {formatNumber(tb.balance, { min: amountDisplayDecimals, max: amountDisplayDecimals })}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </aside>
+          )}
+
           <div className="flex-1 min-w-0">
           {/* Section selector above the container */}
           <div className="flex items-center gap-2 mb-2 justify-between">
@@ -3028,7 +2917,6 @@ export default function PortfolioPage() {
                                         openWithdraw={openWithdraw}
                                         openAddLiquidity={openAddLiquidity}
                                         claimFees={claimFees}
-                                        compoundFees={compoundFees}
                                         toast={toast}
                                         openPositionMenuKey={openPositionMenuKey}
                                         setOpenPositionMenuKey={setOpenPositionMenuKey}
@@ -3141,6 +3029,13 @@ export default function PortfolioPage() {
                                         if (s.includes('BTC')) return 8;
                                         return 18;
                                       };
+                                      const getDisplayDecimals = (symbol: string) => {
+                                        const s = (symbol || '').toUpperCase();
+                                        if (s.includes('USDC') || s.includes('USDT')) return 2;
+                                        if (s.includes('ETH')) return 4;
+                                        if (s.includes('BTC')) return 6;
+                                        return 4;
+                                      };
                                       const getSafeDecimals = (symbol: string, dec?: number) => {
                                         const n = Number(dec);
                                         if (Number.isInteger(n) && n >= 1 && n <= 36) return n;
@@ -3148,8 +3043,11 @@ export default function PortfolioPage() {
                                       };
                                       const dec0 = getSafeDecimals(sym0, d0?.decimals);
                                       const dec1 = getSafeDecimals(sym1, d1?.decimals);
-                                      const isNeg0 = String(it.amount0 || '').startsWith('-');
-                                      const isNeg1 = String(it.amount1 || '').startsWith('-');
+                                      const isNeg0Raw = String(it.amount0 || '').startsWith('-');
+                                      const isNeg1Raw = String(it.amount1 || '').startsWith('-');
+                                      // Uniswap v4 inversion semantics
+                                      const isNeg0 = !isNeg0Raw;
+                                      const isNeg1 = !isNeg1Raw;
                                       const asReadable = (raw: any, dec: number) => {
                                         const sRaw = String(raw ?? '0');
                                         const s = sRaw.replace(/,/g, '');
@@ -3171,11 +3069,11 @@ export default function PortfolioPage() {
                                       const amt0 = asReadable(it.amount0, dec0);
                                       const amt1 = asReadable(it.amount1, dec1);
                                       const negPart = isNeg0
-                                        ? `${formatNumber(Number(amt0), { max: d0?.displayDecimals ?? 4 })} ${sym0}`
-                                        : `${formatNumber(Number(amt1), { max: d1?.displayDecimals ?? 4 })} ${sym1}`;
+                                        ? `${formatNumber(Math.abs(Number(amt0)), { max: getDisplayDecimals(sym0) })} ${sym0}`
+                                        : `${formatNumber(Math.abs(Number(amt1)), { max: getDisplayDecimals(sym1) })} ${sym1}`;
                                       const posPart = isNeg0
-                                        ? `${formatNumber(Number(amt1), { max: d1?.displayDecimals ?? 4 })} ${sym1}`
-                                        : `${formatNumber(Number(amt0), { max: d0?.displayDecimals ?? 4 })} ${sym0}`;
+                                        ? `${formatNumber(Math.abs(Number(amt1)), { max: getDisplayDecimals(sym1) })} ${sym1}`
+                                        : `${formatNumber(Math.abs(Number(amt0)), { max: getDisplayDecimals(sym0) })} ${sym0}`;
                                       return (
                                         <span className="inline-flex items-center gap-1">
                                           <span>{negPart}</span>
@@ -3184,55 +3082,25 @@ export default function PortfolioPage() {
                                         </span>
                                       );
                                     }
-                                    const parts: string[] = [];
-                                    if (it.amount0 || it.amount1) {
-                                      const sym0 = (it.poolSymbols || '').split('/')[0] || '';
-                                      const sym1 = (it.poolSymbols || '').split('/')[1] || '';
-                                      const d0 = getTokenCfg(sym0);
-                                      const d1 = getTokenCfg(sym1);
-                                      const inferDecimalsFromSymbol = (symbol: string) => {
-                                        const s = (symbol || '').toUpperCase();
-                                        if (s.includes('USDC') || s.includes('USDT')) return 6;
-                                        if (s.includes('BTC')) return 8;
-                                        return 18;
-                                      };
-                                      const getSafeDecimals = (symbol: string, dec?: number) => {
-                                        const n = Number(dec);
-                                        if (Number.isInteger(n) && n >= 1 && n <= 36) return n;
-                                        return inferDecimalsFromSymbol(symbol);
-                                      };
-                                      const dec0 = getSafeDecimals(sym0, d0?.decimals);
-                                      const dec1 = getSafeDecimals(sym1, d1?.decimals);
-                                      const asReadable = (raw: any, dec: number) => {
-                                        const sRaw = String(raw ?? '0');
-                                        const s = sRaw.replace(/,/g, '');
-                                        const neg = s.startsWith('-');
-                                        const abs = neg ? s.slice(1) : s;
-
-                                        if (abs.includes('.')) {
-                                          return s;
-                                        }
-
-                                        try {
-                                          const val = viemFormatUnits(BigInt(abs), dec);
-                                          return neg ? `-${val}` : val;
-                                        } catch (e) {
-                                          console.error(`Could not parse amount: ${sRaw}`, e);
-                                          return sRaw;
-                                        }
-                                      };
-                                      if (it.amount0) {
-                                        const a0 = asReadable(it.amount0, dec0);
-                                        parts.push(`${formatNumber(Number(a0), { max: d0?.displayDecimals ?? 4 })} ${sym0}`);
+                                    // Determine if it's mint/burn vs addition/removal based on position existence
+                                    const isAdd = it.type === 'Add';
+                                    const isWithdraw = it.type === 'Withdraw';
+                                    
+                                    if (isAdd || isWithdraw) {
+                                      // Check if this position (tickLower, tickUpper, poolId) exists in current positions
+                                      const currentPositionExists = activePositions.some((pos: any) => 
+                                        pos.tickLower === it.tickLower && 
+                                        pos.tickUpper === it.tickUpper && 
+                                        pos.poolId === it.poolId
+                                      );
+                                      
+                                      if (isAdd) {
+                                        return currentPositionExists ? 'Added to Position' : 'Position Created';
+                                      } else {
+                                        return currentPositionExists ? 'Withdrawn from Position' : 'Position Burned';
                                       }
-                                      if (it.amount1) {
-                                        const a1 = asReadable(it.amount1, dec1);
-                                        parts.push(`${formatNumber(Number(a1), { max: d1?.displayDecimals ?? 4 })} ${sym1}`);
-                                      }
-                                      return parts.join(' + ');
                                     }
-                                    if (it.tickLower || it.tickUpper) parts.push(`ticks ${it.tickLower} – ${it.tickUpper}`);
-                                    return parts.join(' · ');
+                                    return '';
                                   })()}
                                 </div>
                                 {/* Time */}
@@ -3327,7 +3195,7 @@ export default function PortfolioPage() {
               {/* Balances as a tab when integrated (desktop/tablet only) */}
               {isIntegrateBalances && selectedSection === 'Balances' && (
                 <div>
-                  <div className={isIntegrateBalances && selectedSection === 'Balances' && (walletBalances.length || 0) === 0 && !isLoadingWalletBalances ? "" : "rounded-lg bg-muted/30 border border-sidebar-border/60"}>
+                  <div className={`${isIntegrateBalances && selectedSection === 'Balances' && (walletBalances.length || 0) === 0 && !isLoadingWalletBalances ? "" : "rounded-lg bg-muted/30 border border-sidebar-border/60"} ${isLoadingWalletBalances ? 'animate-pulse' : ''}`}>
                     <div className={(walletBalances.length || 0) === 0 && !isLoadingWalletBalances ? "hidden" : "flex items-center justify-between pl-6 pr-6 py-3 border-b border-sidebar-border/60 text-xs text-muted-foreground"}>
                       <span className="tracking-wider font-mono font-bold">TOKEN</span>
                       <button type="button" className="group inline-flex items-center" onClick={() => setBalancesSortDir((d) => d === 'desc' ? 'asc' : 'desc')}>
@@ -3393,7 +3261,7 @@ export default function PortfolioPage() {
           </div>
           </div>
           {/* Right-side: Balances (desktop only) */}
-           {!isIntegrateBalances && (
+           {!isIntegrateBalances && !isMobile && (
              <aside className="lg:flex-none" style={{ width: viewportWidth >= 1024 ? '450px' : '100%' }}>
             <div className="mb-2 flex items-center gap-2 justify-between">
               <button
@@ -3467,7 +3335,7 @@ export default function PortfolioPage() {
                 );
               })()}
             </div>
-            <div className={(walletBalances.length || 0) === 0 && !isLoadingWalletBalances ? "" : "rounded-lg bg-muted/30 border border-sidebar-border/60"}>
+            <div className={`${(walletBalances.length || 0) === 0 && !isLoadingWalletBalances ? "" : "rounded-lg bg-muted/30 border border-sidebar-border/60"} ${isLoadingWalletBalances ? 'animate-pulse' : ''}`}>
               <div className={(walletBalances.length || 0) === 0 && !isLoadingWalletBalances ? "hidden" : "flex items-center justify-between pl-6 pr-6 py-3 border-b border-sidebar-border/60 text-xs text-muted-foreground"}>
                 <span className="tracking-wider font-mono font-bold">TOKEN</span>
                 <button type="button" className="group inline-flex items-center" onClick={() => setBalancesSortDir((d) => d === 'desc' ? 'asc' : 'desc')}>
@@ -3533,357 +3401,45 @@ export default function PortfolioPage() {
         {/* no third state below 1100px */}
       </div>
         {/* Add Liquidity Modal */}
-        <Dialog open={showIncreaseModal} onOpenChange={(open) => {
-          if (isIncreasingLiquidity || isIncreaseCalculating) return;
-          setShowIncreaseModal(open);
-        }}>
-          <DialogContent className="w-[calc(100%-2rem)] sm:w-full max-w-lg border border-border shadow-lg [&>button]:hidden" style={{ backgroundColor: 'var(--modal-background)' }}>
-            <DialogHeader>
-              <DialogTitle className="sr-only">Add Liquidity</DialogTitle>
-              <DialogDescription className="sr-only">Add more liquidity to your existing position.</DialogDescription>
-            </DialogHeader>
-            {positionToModify && (
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium">Current Position</span>
-                  {!positionToModify.isInRange && (
-                    <div className="flex items-center justify-center h-5 rounded-md px-2 text-xs leading-none bg-red-500/20 text-red-500">
-                      Out of Range
-                    </div>
-                  )}
-                </div>
-                <div className="p-3 border border-dashed rounded-md bg-muted/10 space-y-2">
-                  <div className="flex justify-between items-center">
-                    <div className="flex items-center gap-2">
-                      <Image src={getTokenIconSrc(positionToModify.token0.symbol)} alt={positionToModify.token0.symbol} width={20} height={20} className="rounded-full" />
-                      <span className="text-sm font-medium">{positionToModify.token0.symbol}</span>
-                    </div>
-                    <span className="text-sm font-medium">{formatTokenDisplayAmount(positionToModify.token0.amount)}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <div className="flex items-center gap-2">
-                      <Image src={getTokenIconSrc(positionToModify.token1.symbol)} alt={positionToModify.token1.symbol} width={20} height={20} className="rounded-full" />
-                      <span className="text-sm font-medium">{positionToModify.token1.symbol}</span>
-                    </div>
-                    <span className="text-sm font-medium">{formatTokenDisplayAmount(positionToModify.token1.amount)}</span>
-                  </div>
-                </div>
-
-                {/* Percentage Slider (Add Liquidity) */}
-                <div className="space-y-2">
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="range"
-                      min="0"
-                      max="100"
-                      step="1"
-                      value={increasePercentage}
-                      onChange={(e) => handleIncreasePercentageChange(parseInt(e.target.value))}
-                      className="flex-1 h-2 rounded-lg appearance-none cursor-pointer slider focus:outline-none focus:ring-0 focus:ring-offset-0"
-                      style={{
-                        background:
-                          increasePercentage > 0
-                            ? `linear-gradient(to right, #f45502 0%, #f45502 ${increasePercentage}%, rgb(41 41 41 / 0.3) ${increasePercentage}%, rgb(41 41 41 / 0.3) 100%)`
-                            : 'rgb(41 41 41 / 0.3)'
-                      }}
-                    />
-                    <span className="text-sm text-muted-foreground min-w-[3rem] text-right">{increasePercentage}%</span>
-                  </div>
-                </div>
-
-                <div className="space-y-3">
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <Label htmlFor="increase-amount0" className="text-sm font-medium">Add</Label>
-                      <Button variant="ghost" className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent" onClick={() => {
-                        const bal = token0BalanceData?.formatted || '0';
-                        setIncreaseAmount0(bal);
-                        setIncreaseActiveInputSide('amount0');
-                        if (parseFloat(bal) > 0) calculateIncreaseAmount(bal, 'amount0', positionToModify); else setIncreaseAmount1('');
-                      }} disabled={(function(){
-                        const poolKey = String(positionToModify?.poolId || '').toLowerCase();
-                        const ct = poolDataByPoolId[poolKey]?.tick;
-                        const above = typeof ct === 'number' ? ct > positionToModify.tickUpper : false;
-                        return isIncreasingLiquidity || isIncreaseCalculating || above;
-                      })()}>
-                        Balance: {displayToken0Balance} {positionToModify.token0.symbol}
-                      </Button>
-                    </div>
-                    <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4">
-                      <div className="flex items-center gap-2">
-                        <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
-                          <Image src={getTokenIconSrc(positionToModify.token0.symbol)} alt={positionToModify.token0.symbol} width={20} height={20} className="rounded-full" />
-                          <span className="text-sm font-medium">{positionToModify.token0.symbol}</span>
-                        </div>
-                        <div className="flex-1">
-                          <Input id="increase-amount0" placeholder="0.0" value={increaseAmount0} onChange={(e) => {
-                            const poolKey = String(positionToModify?.poolId || '').toLowerCase();
-                            const ct = poolDataByPoolId[poolKey]?.tick;
-                            const above = typeof ct === 'number' ? ct > positionToModify.tickUpper : false; // token1 productive only
-                            if (above) return; // block non-productive manual input
-                            const v = e.target.value;
-                            handleIncreaseAmountChange(v, 'amount0');
-                            if (v && parseFloat(v) > 0) calculateIncreaseAmount(v, 'amount0', positionToModify); else setIncreaseAmount1('');
-                          }} disabled={(function(){
-                            const poolKey = String(positionToModify?.poolId || '').toLowerCase();
-                            const ct = poolDataByPoolId[poolKey]?.tick;
-                            const above = typeof ct === 'number' ? ct > positionToModify.tickUpper : false;
-                            return (isIncreaseCalculating && increaseActiveInputSide === 'amount1') || above;
-                          })()} className="border-0 bg-transparent text-right text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto" />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex justify-center items-center my-2">
-                    <div className="flex items-center justify-center h-8 w-8 rounded-full bg-muted/20">
-                      <PlusIcon className="h-4 w-4 text-muted-foreground" />
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <Label htmlFor="increase-amount1" className="text-sm font-medium">Add</Label>
-                      <Button variant="ghost" className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent" onClick={() => {
-                        const bal = token1BalanceData?.formatted || '0';
-                        setIncreaseAmount1(bal);
-                        setIncreaseActiveInputSide('amount1');
-                        if (parseFloat(bal) > 0) calculateIncreaseAmount(bal, 'amount1', positionToModify);
-                      }} disabled={(function(){
-                        const poolKey = String(positionToModify?.poolId || '').toLowerCase();
-                        const ct = poolDataByPoolId[poolKey]?.tick;
-                        const below = typeof ct === 'number' ? ct < positionToModify.tickLower : false;
-                        return isIncreasingLiquidity || isIncreaseCalculating || below;
-                      })()}>
-                        Balance: {displayToken1Balance} {positionToModify.token1.symbol}
-                      </Button>
-                    </div>
-                    <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4">
-                      <div className="flex items-center gap-2">
-                        <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
-                          <Image src={getTokenIconSrc(positionToModify.token1.symbol)} alt={positionToModify.token1.symbol} width={20} height={20} className="rounded-full" />
-                          <span className="text-sm font-medium">{positionToModify.token1.symbol}</span>
-                        </div>
-                        <div className="flex-1">
-                          <Input id="increase-amount1" placeholder="0.0" value={increaseAmount1} onChange={(e) => {
-                            const poolKey = String(positionToModify?.poolId || '').toLowerCase();
-                            const ct = poolDataByPoolId[poolKey]?.tick;
-                            const below = typeof ct === 'number' ? ct < positionToModify.tickLower : false; // token0 productive only
-                            if (below) return; // block non-productive manual input
-                            const v = e.target.value;
-                            handleIncreaseAmountChange(v, 'amount1');
-                            if (v && parseFloat(v) > 0) calculateIncreaseAmount(v, 'amount1', positionToModify); else setIncreaseAmount0('');
-                          }} disabled={(function(){
-                            const poolKey = String(positionToModify?.poolId || '').toLowerCase();
-                            const ct = poolDataByPoolId[poolKey]?.tick;
-                            const below = typeof ct === 'number' ? ct < positionToModify.tickLower : false;
-                            return (isIncreaseCalculating && increaseActiveInputSide === 'amount0') || below;
-                          })()} className="border-0 bg-transparent text-right text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto" />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-            <DialogFooter className="grid grid-cols-2 gap-3">
-              <Button variant="outline" className="relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75 disabled:opacity-50" onClick={() => { if (isIncreasingLiquidity || isIncreaseCalculating) return; setShowIncreaseModal(false); }} disabled={isIncreasingLiquidity} style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}>
-                Cancel
-              </Button>
-              <Button className={isIncreasingLiquidity || isIncreaseCalculating ? "relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 !opacity-100 cursor-default text-white/75" : "text-sidebar-primary border border-sidebar-primary bg-[#3d271b] hover:bg-[#3d271b]/90"} onClick={() => {
-                if (!positionToModify || (!increaseAmount0 && !increaseAmount1)) { toast.error('Please enter at least one amount to add'); return; }
-                const data: IncreasePositionData = {
-                  tokenId: positionToModify.positionId,
-                  token0Symbol: positionToModify.token0.symbol as TokenSymbol,
-                  token1Symbol: positionToModify.token1.symbol as TokenSymbol,
-                  additionalAmount0: increaseAmount0 || '0',
-                  additionalAmount1: increaseAmount1 || '0',
-                  poolId: positionToModify.poolId,
-                  tickLower: positionToModify.tickLower,
-                  tickUpper: positionToModify.tickUpper,
-                };
-
-                const poolSubgraphId = positionToModify.poolId;
+        <AddLiquidityModal
+          isOpen={showIncreaseModal}
+          onOpenChange={setShowIncreaseModal}
+          onLiquidityAdded={() => {
+            // Handle post-addition logic for portfolio page
+            const poolSubgraphId = positionToModify?.poolId;
+            if (poolSubgraphId) {
                 const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === poolSubgraphId.toLowerCase());
                 if (poolConfig) {
                   modifiedPositionPoolInfoRef.current = { poolId: poolConfig.id, subgraphId: poolSubgraphId };
                 }
-
+            }
                 publicClient.getBlockNumber().then(block => lastTxBlockRef.current = block);
-                increaseLiquidity(data);
-                // keep modal open; will close on success via onLiquidityIncreasedCallback
-              }} disabled={isIncreasingLiquidity || isIncreaseCalculating || ((!increaseAmount0 || parseFloat(increaseAmount0) <= 0) && (!increaseAmount1 || parseFloat(increaseAmount1) <= 0))} style={(isIncreasingLiquidity || isIncreaseCalculating) ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}>
-                {isIncreasingLiquidity ? (<><RefreshCwIcon className="mr-2 h-4 w-4 animate-spin" /><span className="animate-pulse">Adding...</span></>) : ('Add Liquidity')}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+          }}
+          positionToModify={positionToModify}
+          feesForIncrease={feesForIncrease}
+          sdkMinTick={-887272}
+          sdkMaxTick={887272}
+          defaultTickSpacing={60}
+        />
 
         {/* Withdraw Modal */}
-        <Dialog open={showWithdrawModal} onOpenChange={(open) => {
-          if (isDecreasingLiquidity) return;
-          setShowWithdrawModal(open);
-        }}>
-          <DialogContent className="w-[calc(100%-2rem)] sm:w-full max-w-lg border border-border shadow-lg [&>button]:hidden" style={{ backgroundColor: 'var(--modal-background)' }}>
-            <DialogHeader>
-              <DialogTitle className="sr-only">Withdraw Liquidity</DialogTitle>
-              <DialogDescription className="sr-only">Withdraw liquidity from your existing position.</DialogDescription>
-            </DialogHeader>
-            {positionToWithdraw && (
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium">Current Position</span>
-                  {!positionToWithdraw.isInRange && (
-                    <div className="flex items-center justify-center h-5 rounded-md px-2 text-xs leading-none bg-red-500/20 text-red-500">
-                      Out of Range
-                    </div>
-                  )}
-                </div>
-                <div className="p-3 border border-dashed rounded-md bg-muted/10 space-y-2">
-                  <div className="flex justify-between items-center">
-                    <div className="flex items-center gap-2">
-                      <Image src={getTokenIconSrc(positionToWithdraw.token0.symbol)} alt={positionToWithdraw.token0.symbol} width={20} height={20} className="rounded-full" />
-                      <span className="text-sm font-medium">{positionToWithdraw.token0.symbol}</span>
-                    </div>
-                    <span className="text-sm font-medium">{formatTokenDisplayAmount(positionToWithdraw.token0.amount)}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <div className="flex items-center gap-2">
-                      <Image src={getTokenIconSrc(positionToWithdraw.token1.symbol)} alt={positionToWithdraw.token1.symbol} width={20} height={20} className="rounded-full" />
-                      <span className="text-sm font-medium">{positionToWithdraw.token1.symbol}</span>
-                    </div>
-                    <span className="text-sm font-medium">{formatTokenDisplayAmount(positionToWithdraw.token1.amount)}</span>
-                  </div>
-                </div>
-
-                {/* Percentage Slider (Withdraw) */}
-                <div className="space-y-2">
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="range"
-                      min="0"
-                      max="100"
-                      step="1"
-                      value={withdrawPercentage}
-                      onChange={(e) => handleWithdrawPercentageChange(parseInt(e.target.value))}
-                      className="flex-1 h-2 rounded-lg appearance-none cursor-pointer slider focus:outline-none focus:ring-0 focus:ring-offset-0"
-                      style={{
-                        background:
-                          withdrawPercentage > 0
-                            ? `linear-gradient(to right, #f45502 0%, #f45502 ${withdrawPercentage}%, rgb(41 41 41 / 0.3) ${withdrawPercentage}%, rgb(41 41 41 / 0.3) 100%)`
-                            : 'rgb(41 41 41 / 0.3)'
-                      }}
-                    />
-                    <span className="text-sm text-muted-foreground min-w-[3rem] text-right">{withdrawPercentage}%</span>
-                  </div>
-                </div>
-
-                <div className="space-y-3">
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <Label htmlFor="withdraw-amount0" className="text-sm font-medium">Withdraw</Label>
-                      <Button variant="ghost" className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent" onClick={() => {
-                        const max0 = positionToWithdraw.token0.amount;
-                        const max1 = positionToWithdraw.token1.amount;
-                        setWithdrawAmount0(max0);
-                        setWithdrawAmount1(max1);
-                        setWithdrawActiveInputSide('amount0');
-                      }} disabled={isDecreasingLiquidity || withdrawProductiveSide === 'amount1'}>
-                        Balance: {formatTokenDisplayAmount(positionToWithdraw.token0.amount)}
-                      </Button>
-                    </div>
-                    <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4">
-                      <div className="flex items-center gap-2">
-                        <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
-                          <Image src={getTokenIconSrc(positionToWithdraw.token0.symbol)} alt={positionToWithdraw.token0.symbol} width={20} height={20} className="rounded-full" />
-                          <span className="text-sm font-medium">{positionToWithdraw.token0.symbol}</span>
-                        </div>
-                        <div className="flex-1">
-                          <Input id="withdraw-amount0" placeholder="0.0" value={withdrawAmount0} onChange={(e) => {
-                            const v = e.target.value;
-                            const max = parseFloat(positionToWithdraw.token0.amount);
-                            if (parseFloat(v) > max) { handleWithdrawAmountChange(String(max), 'amount0'); return; }
-                            handleWithdrawAmountChange(v, 'amount0');
-                            if (v && parseFloat(v) > 0) calculateWithdrawAmount(v, 'amount0', positionToWithdraw); else setWithdrawAmount1('');
-                          }} disabled={(isWithdrawCalculating && withdrawActiveInputSide === 'amount1') || withdrawProductiveSide === 'amount1'} className="border-0 bg-transparent text-right text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto" />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex justify-center items-center my-2">
-                    <div className="flex items-center justify-center h-8 w-8 rounded-full bg-muted/20">
-                      <PlusIcon className="h-4 w-4 text-muted-foreground" />
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <Label htmlFor="withdraw-amount1" className="text-sm font-medium">Withdraw</Label>
-                      <Button variant="ghost" className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent" onClick={() => {
-                        const max0 = positionToWithdraw.token0.amount;
-                        const max1 = positionToWithdraw.token1.amount;
-                        setWithdrawAmount0(max0);
-                        setWithdrawAmount1(max1);
-                        setWithdrawActiveInputSide('amount1');
-                      }} disabled={isDecreasingLiquidity || withdrawProductiveSide === 'amount0'}>
-                        Balance: {formatTokenDisplayAmount(positionToWithdraw.token1.amount)}
-                      </Button>
-                    </div>
-                    <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4">
-                      <div className="flex items-center gap-2">
-                        <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
-                          <Image src={getTokenIconSrc(positionToWithdraw.token1.symbol)} alt={positionToWithdraw.token1.symbol} width={20} height={20} className="rounded-full" />
-                          <span className="text-sm font-medium">{positionToWithdraw.token1.symbol}</span>
-                        </div>
-                        <div className="flex-1">
-                          <Input id="withdraw-amount1" placeholder="0.0" value={withdrawAmount1} onChange={(e) => {
-                            const v = e.target.value;
-                            const max = parseFloat(positionToWithdraw.token1.amount);
-                            if (parseFloat(v) > max) { handleWithdrawAmountChange(String(max), 'amount1'); return; }
-                            handleWithdrawAmountChange(v, 'amount1');
-                            if (v && parseFloat(v) > 0) calculateWithdrawAmount(v, 'amount1', positionToWithdraw); else setWithdrawAmount0('');
-                          }} disabled={(isWithdrawCalculating && withdrawActiveInputSide === 'amount0') || withdrawProductiveSide === 'amount0'} className="border-0 bg-transparent text-right text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto" />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-            <DialogFooter className="grid grid-cols-2 gap-3">
-              <Button variant="outline" className="relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75 disabled:opacity-50" onClick={() => { if (isDecreasingLiquidity) return; setShowWithdrawModal(false); }} disabled={isDecreasingLiquidity} style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}>
-                Cancel
-              </Button>
-              <Button className="text-sidebar-primary border border-sidebar-primary bg-[#3d271b] hover:bg-[#3d271b]/90" onClick={() => {
-                if (!positionToWithdraw || (!withdrawAmount0 && !withdrawAmount1)) { toast.error('Please enter at least one amount to withdraw'); return; }
-                const data: DecreasePositionData = {
-                  tokenId: positionToWithdraw.positionId,
-                  token0Symbol: positionToWithdraw.token0.symbol as TokenSymbol,
-                  token1Symbol: positionToWithdraw.token1.symbol as TokenSymbol,
-                  decreaseAmount0: withdrawAmount0 || '0',
-                  decreaseAmount1: withdrawAmount1 || '0',
-                  isFullBurn: false,
-                  poolId: positionToWithdraw.poolId,
-                  tickLower: positionToWithdraw.tickLower,
-                  tickUpper: positionToWithdraw.tickUpper,
-                };
-
-                const poolSubgraphId = positionToWithdraw.poolId;
+        <WithdrawLiquidityModal
+          isOpen={showWithdrawModal}
+          onOpenChange={setShowWithdrawModal}
+          position={positionToWithdraw}
+          feesForWithdraw={feesForWithdraw}
+          onLiquidityWithdrawn={() => {
+            const poolSubgraphId = positionToWithdraw?.poolId;
+            if (poolSubgraphId) {
                 const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === poolSubgraphId.toLowerCase());
                 if (poolConfig) {
                   modifiedPositionPoolInfoRef.current = { poolId: poolConfig.id, subgraphId: poolSubgraphId };
                 }
-
+            }
                 publicClient.getBlockNumber().then(block => lastTxBlockRef.current = block);
-                decreaseLiquidity(data, 0);
-                // keep modal open; will close on success via onLiquidityDecreasedCallback
-              }} disabled={isDecreasingLiquidity || ((!withdrawAmount0 || parseFloat(withdrawAmount0) <= 0) && (!withdrawAmount1 || parseFloat(withdrawAmount1) <= 0))}>
-                Withdraw
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+          }}
+        />
+
       </AppLayout>
     </PortfolioFilterContext.Provider>
   );

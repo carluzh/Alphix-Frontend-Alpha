@@ -19,8 +19,11 @@ import { TOKEN_DEFINITIONS, TokenSymbol } from "@/lib/pools-config";
 import { formatUnits, type Hex } from "viem";
 import { Bar, BarChart, Line, LineChart, CartesianGrid, XAxis, YAxis, ResponsiveContainer, ComposedChart, Area, ReferenceLine, ReferenceArea } from "recharts";
 import { getPoolById, getPoolSubgraphId, getToken, getAllTokens } from "@/lib/pools-config";
-import { useBlockRefetch, usePoolState, useAllPrices, useUncollectedFees } from "@/components/data/hooks";
+import { usePoolState, useAllPrices, useUncollectedFees, useUncollectedFeesBatch } from "@/components/data/hooks";
 import { getPoolFeeBps } from "@/lib/client-cache";
+import { SafeStorage } from "@/lib/safe-storage";
+import "@/lib/cache-keys"; // Ensure global CacheKeys is loaded
+import { RetryUtility } from "@/lib/retry-utility";
 import {
   ChartConfig,
   ChartContainer,
@@ -42,11 +45,9 @@ import { position_manager_abi } from '@/lib/abis/PositionManager_abi';
 import { getFromCache, setToCache, getFromCacheWithTtl, getUserPositionsCacheKey, getPoolStatsCacheKey, getPoolDynamicFeeCacheKey, getPoolChartDataCacheKey, loadUserPositionIds, derivePositionsFromIds, invalidateCacheEntry, waitForSubgraphBlock } from "../../../lib/client-cache";
 
 import type { Pool } from "../../../types";
-import { AddLiquidityForm } from "../../../components/liquidity/AddLiquidityForm";
-import {
-  Dialog as AddDialog,
-  DialogContent as AddDialogContent,
-} from "@/components/ui/dialog";
+import { AddLiquidityForm } from "../../../components/liquidity/AddLiquidityForm"; // AddLiquidityForm for right panel
+import { AddLiquidityModal } from "../../../components/liquidity/AddLiquidityModal";
+import { WithdrawLiquidityModal } from "../../../components/liquidity/WithdrawLiquidityModal";
 import React from "react";
 import { useBurnLiquidity, type BurnPositionData } from "@/components/liquidity/useBurnLiquidity";
 import { useIncreaseLiquidity, type IncreasePositionData } from "@/components/liquidity/useIncreaseLiquidity";
@@ -220,29 +221,29 @@ const convertTickToPrice = (tick: number, currentPoolTick: number | null, curren
 
 const AddLiquidityFormMemo = React.memo(AddLiquidityForm);
 
-// Helper function to determine base token for price display (same logic as AddLiquidityForm.tsx)
-const determineBaseTokenForPriceDisplay = (token0: string, token1: string): string => {
-  if (!token0 || !token1) return token0;
+  // Helper function to determine base token for price display (same logic as AddLiquidityForm.tsx)
+  const determineBaseTokenForPriceDisplay = (token0: string, token1: string): string => {
+    if (!token0 || !token1) return token0;
 
-  // Priority order for quote tokens (these should be the base for price display)
-  const quotePriority: Record<string, number> = {
-    'aUSDC': 10,
-    'aUSDT': 9,
-    'USDC': 8,
-    'USDT': 7,
-    'aETH': 6,
-    'ETH': 5,
-    'YUSD': 4,
-    'mUSDT': 3,
+    // Priority order for quote tokens (these should be the base for price display)
+    const quotePriority: Record<string, number> = {
+      'aUSDC': 10,
+      'aUSDT': 9,
+      'USDC': 8,
+      'USDT': 7,
+      'aETH': 6,
+      'ETH': 5,
+      'YUSD': 4,
+      'mUSDT': 3,
+    };
+
+    const token0Priority = quotePriority[token0] || 0;
+    const token1Priority = quotePriority[token1] || 0;
+
+    // Return the token with higher priority (better quote currency)
+    // If priorities are equal, default to token0
+    return token1Priority > token0Priority ? token1 : token0;
   };
-
-  const token0Priority = quotePriority[token0] || 0;
-  const token1Priority = quotePriority[token1] || 0;
-
-  // Return the token with higher priority (better quote currency)
-  // If priorities are equal, default to token0
-  return token1Priority > token0Priority ? token1 : token0;
-};
 
 // Token stack component with independent hover state
 function TokenStack({ position, currentPoolData, getToken }: { position: ProcessedPosition, currentPoolData: any, getToken: any }) {
@@ -381,9 +382,29 @@ function TokenStack({ position, currentPoolData, getToken }: { position: Process
   );
 }
 
-// Fees cell with hooks (precise uncollected fees)
-function FeesCell({ positionId, sym0, sym1, price0, price1 }: { positionId: string; sym0: string; sym1: string; price0: number; price1: number }) {
-  const { data: fees, isLoading } = useUncollectedFees(positionId, 60_000);
+// Fees cell with batch data (precise uncollected fees)
+function FeesCell({
+  positionId,
+  sym0,
+  sym1,
+  price0,
+  price1,
+  batchFeesData
+}: {
+  positionId: string;
+  sym0: string;
+  sym1: string;
+  price0: number;
+  price1: number;
+  batchFeesData?: any[];
+}) {
+  // Find fees for this position from batch data
+  const fees = React.useMemo(() => {
+    if (!batchFeesData || !positionId) return null;
+    return batchFeesData.find(fee => fee.positionId === positionId) || null;
+  }, [batchFeesData, positionId]);
+
+  const isLoading = !batchFeesData;
 
   const fmtUsd = (n: number) => {
     if (!Number.isFinite(n) || n <= 0) return '$0';
@@ -473,6 +494,37 @@ export default function PoolDetailPage() {
   const lastRevalidationRef = useRef<number>(0);
   const lastPositionRefreshRef = useRef<number>(0);
   const handledCollectHashRef = useRef<string | null>(null);
+  // Tombstone store to prevent reappearance of fully withdrawn positions during subgraph lag
+  const tombstonedPositionIdsRef = useRef<Record<string, number>>({});
+  const TOMBSTONE_TTL_MS = 60_000; // 60s
+
+  const addPositionTombstone = useCallback((positionId: string) => {
+    if (!positionId) return;
+    tombstonedPositionIdsRef.current[positionId] = Date.now();
+  }, []);
+
+  const isPositionTombstoned = useCallback((positionId: string) => {
+    const ts = tombstonedPositionIdsRef.current[positionId];
+    if (!ts) return false;
+    if (Date.now() - ts > TOMBSTONE_TTL_MS) {
+      delete tombstonedPositionIdsRef.current[positionId];
+      return false;
+    }
+    return true;
+  }, []);
+
+  const refreshTombstonesFromFetched = useCallback((positions: ProcessedPosition[]) => {
+    try {
+      const present = new Set((positions || []).map(p => p.positionId));
+      for (const id of Object.keys(tombstonedPositionIdsRef.current)) {
+        if (!present.has(id)) delete tombstonedPositionIdsRef.current[id];
+      }
+    } catch {}
+  }, []);
+
+  const applyTombstones = useCallback((positions: ProcessedPosition[]) => {
+    return (positions || []).filter(p => !isPositionTombstoned(p.positionId));
+  }, [isPositionTombstoned]);
   
   // Balance hooks for tokens
   const { data: token0BalanceData, isLoading: isLoadingToken0Balance } = useBalance({
@@ -541,53 +593,36 @@ export default function PoolDetailPage() {
       setCurrentPoolTick(Number(poolState.currentPoolTick));
     }
   }, [poolState]);
-  useBlockRefetch({ poolIds: apiPoolIdToUse ? [apiPoolIdToUse] : [] });
+  // REMOVED: useBlockRefetch causing unnecessary RPC polling to sepolia.base.org
+  // useBlockRefetch({ poolIds: apiPoolIdToUse ? [apiPoolIdToUse] : [] });
 
   const { data: allPrices } = useAllPrices();
   const isLoadingPrices = !allPrices;
+  // Normalize prices that may come as numbers or objects with a `usd` field
+  const extractUsd = (value: unknown, fallback: number): number => {
+    if (typeof value === 'number') return value;
+    if (value && typeof (value as any).usd === 'number') return (value as any).usd as number;
+    return fallback;
+  };
+
   const getUsdPriceForSymbol = useCallback((symbolRaw?: string): number => {
     const symbol = (symbolRaw || '').toUpperCase();
     if (!symbol) return 0;
-    if (['USDC', 'AUSDC', 'USDT', 'AUSDT', 'MUSDT', 'YUSD'].includes(symbol)) return allPrices?.USDC ?? 1;
-    if (['ETH', 'AETH'].includes(symbol)) return allPrices?.ETH ?? 0;
-    if (['BTC', 'ABTC'].includes(symbol)) return allPrices?.BTC ?? 0;
+    if (['USDC', 'AUSDC', 'USDT', 'AUSDT', 'MUSDT', 'YUSD'].includes(symbol)) return extractUsd(allPrices?.USDC as any, 1);
+    if (['ETH', 'AETH'].includes(symbol)) return extractUsd(allPrices?.ETH as any, 0);
+    if (['BTC', 'ABTC'].includes(symbol)) return extractUsd(allPrices?.BTC as any, 0);
     return 0;
   }, [allPrices]);
 
-  // Unified batch pool stats loader (same as pools list): tvlUSD + volume24hUSD
-  const loadPoolStatsFromSubgraph = useCallback(async (apiPoolIdToUse: string, force?: boolean) => {
-    try {
-      // Use existing server batch endpoint (server-only SUBGRAPH_URL; 10m CDN TTL)
-      const attempt = async () => {
-        // Use versioned URL to avoid stale cache
-        const versionResponse = await fetch('/api/cache-version', { cache: 'no-store' as any } as any);
-        const versionData = await versionResponse.json();
-        const resp = await fetch(versionData.cacheUrl, { cache: 'no-store' as any } as any);
-        if (!resp.ok) return null;
-        const data = await resp.json();
-        if (!data?.success || !Array.isArray(data?.pools)) return null;
-        const poolIdLc = String(apiPoolIdToUse || '').toLowerCase();
-        const match = data.pools.find((p: any) => String(p.poolId || '').toLowerCase() === poolIdLc);
-        if (!match) return null;
-        return {
-          tvlUSD: Number(match.tvlUSD) || 0,
-          volume24hUSD: Number(match.volume24hUSD) || 0,
-          tvlYesterdayUSD: Number(match.tvlYesterdayUSD) || 0,
-          volumePrev24hUSD: Number(match.volumePrev24hUSD) || 0,
-        } as Partial<Pool> & { tvlUSD: number; volume24hUSD: number };
-      };
+  // Determine if denomination should be flipped (same logic as InteractiveRangeChart)
+  const shouldFlipDenomination = useMemo(() => {
+    if (!currentPrice) return false;
+    const currentPriceNum = parseFloat(currentPrice);
+    if (!isFinite(currentPriceNum) || currentPriceNum <= 0) return false;
+    const inversePrice = 1 / currentPriceNum;
+    return inversePrice > currentPriceNum;
+  }, [currentPrice]);
 
-      let result = await attempt();
-      if (result) return result;
-      // brief retry to smooth transient misses
-      await new Promise(r => setTimeout(r, 250));
-      result = await attempt();
-      return result;
-    } catch (e) {
-      console.error('[PoolDetail] Subgraph load failed:', e);
-      return null;
-    }
-  }, []);
 
   const calculatePositionUsd = useCallback((position: ProcessedPosition): number => {
     if (!position) return 0;
@@ -607,10 +642,32 @@ export default function PoolDetailPage() {
   const [showDecreaseModal, setShowDecreaseModal] = useState(false);
   const [positionToModify, setPositionToModify] = useState<ProcessedPosition | null>(null);
   const [addLiquidityOpen, setAddLiquidityOpen] = useState(false);
+  const [addLiquidityFormOpen, setAddLiquidityFormOpen] = useState(false);
 
-  // Uncollected fees for active modals (used for green "+ X" subtitle)
-  const { data: feesForWithdraw } = useUncollectedFees(positionToBurn?.positionId || '', 60_000);
-  const { data: feesForIncrease } = useUncollectedFees(positionToModify?.positionId || '', 60_000);
+  // Collect all position IDs that need fee data (table positions + modal positions)
+  const allPositionIds = React.useMemo(() => {
+    const ids = new Set<string>();
+    // Add positions from the table
+    userPositions.forEach(pos => ids.add(pos.positionId));
+    // Add modal positions (may be duplicates but Set handles that)
+    if (positionToBurn?.positionId) ids.add(positionToBurn.positionId);
+    if (positionToModify?.positionId) ids.add(positionToModify.positionId);
+    return Array.from(ids).filter(Boolean);
+  }, [userPositions, positionToBurn?.positionId, positionToModify?.positionId]);
+
+  // Batch fetch all uncollected fees (replaces 3 individual calls)
+  const { data: batchFeesData } = useUncollectedFeesBatch(allPositionIds, 60_000);
+
+  // Extract individual fee data from batch result
+  const getFeesForPosition = React.useCallback((positionId: string) => {
+    if (!batchFeesData || !positionId) return null;
+    return batchFeesData.find(fee => fee.positionId === positionId) || null;
+  }, [batchFeesData]);
+
+  // Extract fees for specific use cases
+  const feesForWithdraw = getFeesForPosition(positionToBurn?.positionId || '');
+  const feesForIncrease = getFeesForPosition(positionToModify?.positionId || '');
+
 
   // Token symbols for the current pool (defined after positionToModify)
   const token0Symbol = positionToModify?.token0.symbol as TokenSymbol || 'aUSDC';
@@ -637,40 +694,16 @@ export default function PoolDetailPage() {
   const displayModalToken1Balance = modalToken1BalanceData ? getFormattedDisplayBalance(parseFloat(modalToken1BalanceData.formatted), token1Symbol) : "~";
 
   // Modal input states
-  const [increaseAmount0, setIncreaseAmount0] = useState<string>("");
-  const [increaseAmount1, setIncreaseAmount1] = useState<string>("");
-  const [increaseActiveInputSide, setIncreaseActiveInputSide] = useState<'amount0' | 'amount1' | null>(null);
-  const [isIncreaseCalculating, setIsIncreaseCalculating] = useState(false);
   const [decreaseAmount0, setDecreaseAmount0] = useState<string>("");
   const [decreaseAmount1, setDecreaseAmount1] = useState<string>("");
   const [decreaseActiveInputSide, setDecreaseActiveInputSide] = useState<'amount0' | 'amount1' | null>(null);
   const [isDecreaseCalculating, setIsDecreaseCalculating] = useState(false);
   const [isFullBurn, setIsFullBurn] = useState(false);
-  const [withdrawAmount0, setWithdrawAmount0] = useState<string>("");
-  const [withdrawAmount1, setWithdrawAmount1] = useState<string>("");
-  const [withdrawActiveInputSide, setWithdrawActiveInputSide] = useState<'amount0' | 'amount1' | null>(null);
-  const [isFullWithdraw, setIsFullWithdraw] = useState(false);
-  const [withdrawPercentage, setWithdrawPercentage] = useState<number>(0);
-  const [increasePercentage, setIncreasePercentage] = useState<number>(0);
 
 
   const isMobile = useIsMobile();
 
-  const withdrawProductiveSide = useMemo<null | 'amount0' | 'amount1'>(() => {
-    if (!positionToBurn || positionToBurn.isInRange) return null;
-    // Prefer actual balances to determine productive side when out of range
-    const amt0 = Number.parseFloat(positionToBurn.token0?.amount || '0');
-    const amt1 = Number.parseFloat(positionToBurn.token1?.amount || '0');
-    if (amt0 > 0 && (!Number.isFinite(amt1) || amt1 <= 0)) return 'amount0';
-    if (amt1 > 0 && (!Number.isFinite(amt0) || amt0 <= 0)) return 'amount1';
-    // Fallback to tick-based inference if both sides are non-zero or unknown
-    const tick = currentPoolTick;
-    const below = tick !== null ? tick < positionToBurn.tickLower : positionToBurn.tickLower > 0;
-    const above = tick !== null ? tick > positionToBurn.tickUpper : positionToBurn.tickUpper < 0;
-    return below ? 'amount0' : above ? 'amount1' : null;
-  }, [positionToBurn, currentPoolTick]);
 
-  const [isIncreaseAmountValid, setIsIncreaseAmountValid] = useState(true);
 
   const [windowWidth, setWindowWidth] = useState<number>(1200);
   // Dynamic overflow detection states
@@ -866,7 +899,8 @@ export default function PoolDetailPage() {
         const poolMatch = subgraphId && String(pos.poolId || '').toLowerCase() === subgraphId;
         return poolMatch;
       });
-      setUserPositions(filtered);
+      refreshTombstonesFromFetched(filtered as any);
+      setUserPositions(applyTombstones(filtered as any));
     } catch (e) {
       console.warn('Refetch positions failed', e);
     }
@@ -894,7 +928,6 @@ export default function PoolDetailPage() {
   // Note: Hook initializations moved after callback definitions
 
   // Track compound intent so we can suppress page-level success toast
-  const isCompoundInProgressRef = useRef(false);
 
   // Silent backoff refresh for positions - only updates when new positions are detected
   const silentBackoffRefreshPositions = useCallback(async (removeSkeletonsWhenFound = false) => {
@@ -913,7 +946,6 @@ export default function PoolDetailPage() {
       const subId = (baseInfo?.subgraphId || '').toLowerCase();
       if (!subId) return;
 
-      const delays = [0, 2000, 5000, 10000, 15000];
       const fingerprint = (arr: ProcessedPosition[]) => {
         try {
           return JSON.stringify(arr.map(p => ({ id: p.positionId, a0: p.token0.amount, a1: p.token1.amount, l: (p as any)?.liquidity, lo: p.tickLower, up: p.tickUpper })));
@@ -921,39 +953,52 @@ export default function PoolDetailPage() {
       };
       const baseline = userPositions || [];
       const baselineFp = fingerprint(baseline);
-      const baselineCount = baseline.length;
+      const baselineIds = new Set(baseline.map(p => p.positionId));
 
       // DO NOT show loading state - this is silent
-      for (let i = 0; i < delays.length; i++) {
-        if (i > 0) await new Promise(r => setTimeout(r, delays[i]));
-        try {
+      await RetryUtility.execute(
+        async () => {
           const res = await fetch(`/api/liquidity/get-positions?ownerAddress=${accountAddress}&bust=${Date.now()}`);
-          if (!res.ok) continue;
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const data = await res.json();
-          if (!Array.isArray(data)) continue;
+          if (!Array.isArray(data)) throw new Error('Invalid response format');
+
           // Update cache for the owner
           try { setToCache(getUserPositionsCacheKey(accountAddress), data); } catch {}
+
           const filtered = data.filter((pos: any) => String(pos?.poolId || '').toLowerCase() === subId);
           const nextFp = fingerprint(filtered);
-          const newCount = filtered.length;
-          
+
           // Check for new position IDs (more reliable than count comparison)
-          const baselineIds = new Set(baseline.map(p => p.positionId));
           const newPositions = filtered.filter(p => !baselineIds.has(p.positionId));
           const hasNewPositions = newPositions.length > 0;
-          
+
           // Only update if we detected new positions (or significant changes after some retries)
-          if (nextFp !== baselineFp && (hasNewPositions || i >= 2)) {
+          if (nextFp !== baselineFp && hasNewPositions) {
             if (removeSkeletonsWhenFound && hasNewPositions) {
-              // Just update positions - skeleton removal will be handled by useEffect watching userPositions
-              setUserPositions(filtered);
+              refreshTombstonesFromFetched(filtered as any);
+              setUserPositions(applyTombstones(filtered as any));
             } else {
-              setUserPositions(filtered);
+              refreshTombstonesFromFetched(filtered as any);
+              setUserPositions(applyTombstones(filtered as any));
             }
-            break;
+            return filtered; // Success
           }
-        } catch {}
-      }
+
+          throw new Error('No new positions detected');
+        },
+        {
+          attempts: 5,
+          backoffStrategy: 'custom',
+          baseDelay: 1000, // Not used with custom delays, but required by interface
+          customDelays: [0, 2000, 5000, 10000, 15000],
+          shouldRetry: (attempt, error) => {
+            // Continue retrying unless we have a fundamental error
+            return !error.message.includes('Invalid response format');
+          },
+          throwOnFailure: false // Silent failure is ok
+        }
+      );
       
       // After trying all delays, remove skeletons anyway to prevent infinite loading
       if (removeSkeletonsWhenFound) {
@@ -981,7 +1026,6 @@ export default function PoolDetailPage() {
       const subId = (baseInfo?.subgraphId || '').toLowerCase();
       if (!subId) return;
 
-      const delays = [0, 2000, 5000, 10000];
       const fingerprint = (arr: ProcessedPosition[]) => {
         try {
           return JSON.stringify(arr.map(p => ({ id: p.positionId, a0: p.token0.amount, a1: p.token1.amount, l: (p as any)?.liquidity, lo: p.tickLower, up: p.tickUpper })));
@@ -993,22 +1037,39 @@ export default function PoolDetailPage() {
       setIsLoadingPositions(true);
       // prevent immediate refetch overwrite for ~1.5s after an authoritative update
       positionsWriteLockRef.current = Date.now() + 1500;
-      for (let i = 0; i < delays.length; i++) {
-        if (i > 0) await new Promise(r => setTimeout(r, delays[i]));
-        try {
+
+      const result = await RetryUtility.execute(
+        async () => {
           const res = await fetch(`/api/liquidity/get-positions?ownerAddress=${accountAddress}&bust=${Date.now()}`);
-          if (!res.ok) continue;
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const data = await res.json();
-          if (!Array.isArray(data)) continue;
+          if (!Array.isArray(data)) throw new Error('Invalid response format');
           // Update cache for the owner
           try { setToCache(getUserPositionsCacheKey(accountAddress), data); } catch {}
           const filtered = data.filter((pos: any) => String(pos?.poolId || '').toLowerCase() === subId);
           const nextFp = fingerprint(filtered);
           if (nextFp !== baselineFp) {
             setUserPositions(filtered);
-            break;
+            return filtered; // Success
           }
-        } catch {}
+          throw new Error('No position changes detected');
+        },
+        {
+          attempts: 4,
+          backoffStrategy: 'custom',
+          baseDelay: 1000, // Not used with custom delays, but required by interface
+          customDelays: [0, 2000, 5000, 10000],
+          shouldRetry: (attempt, error) => {
+            // Continue retrying unless we have a fundamental error
+            return !error.message.includes('Invalid response format');
+          },
+          throwOnFailure: false // Don't throw, just finish
+        }
+      );
+
+      // Handle successful result
+      if (result.success && result.data) {
+        setUserPositions(result.data);
       }
     } finally {
       setIsLoadingPositions(false);
@@ -1023,15 +1084,20 @@ export default function PoolDetailPage() {
   const fetchPageData = useCallback(async (force?: boolean, skipPositions?: boolean, keepLoading?: boolean) => {
     if (!poolId) return;
 
-    // Start loading chart data
-    setIsLoadingChartData(true);
+    // Only show loading on initial load (when no chart data exists)
+    if (apiChartData.length === 0) {
+      setIsLoadingChartData(true);
+    }
+
+    // Declare variables that will be used throughout the function
+    let tvlFromHeader = 0;
     // If a recent swap was recorded for this pool, force a refresh once and clear the hint
     try {
       const hintKey = `recentSwap:${String(poolId).toLowerCase()}`;
-      const hint = localStorage.getItem(hintKey);
+      const hint = SafeStorage.get(hintKey);
       if (hint) {
         force = true;
-        localStorage.removeItem(hintKey);
+        SafeStorage.remove(hintKey);
       }
     } catch {}
     // Load daily series for volume & TVL (excluding today), and fee/targets; then merge
@@ -1044,21 +1110,7 @@ export default function PoolDetailPage() {
 
         const todayKey = new Date().toISOString().split('T')[0];
 
-        // Minimal retry helper to avoid showing the chart until data is truly available
-        const fetchJsonWithRetry = async <T = any>(url: string, validate?: (json: any) => boolean, attempts = 4, delayMs = 700): Promise<T> => {
-          let last: any = null;
-          for (let i = 0; i < attempts; i++) {
-            const res = await fetch(url, { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } as any } as any);
-            if (res.ok) {
-              const json = await res.json();
-              last = json;
-              if (!validate || validate(json)) return json as T;
-            }
-            if (i < attempts - 1) await new Promise(r => setTimeout(r, delayMs));
-          }
-          // If validation fails after retries, throw to keep loading state
-          throw new Error(`Validation failed for ${url}`);
-        };
+        // Centralized retry utility for chart data fetching
 
         // Enhanced validation for chart data to ensure completeness and validity
         const validateChartData = (json: any, dataType: 'tvl' | 'volume' | 'fees'): boolean => {
@@ -1102,19 +1154,52 @@ export default function PoolDetailPage() {
           return true;
         };
 
-        const bust = force ? `&bust=${Date.now()}` : '';
-        const [feeJson, tvlJson, volJson] = await Promise.all([
-          fetchJsonWithRetry(`/api/liquidity/get-historical-dynamic-fees?poolId=${encodeURIComponent(subgraphIdForHist)}&days=${targetDays}${bust}`,
-            (j) => validateChartData(j, 'fees')
-          ),
-          fetchJsonWithRetry(`/api/liquidity/chart-tvl?poolId=${encodeURIComponent(poolId)}&days=${targetDays}${bust}`,
-            (j) => validateChartData(j, 'tvl')
-          ),
-          fetchJsonWithRetry(`/api/liquidity/chart-volume?poolId=${encodeURIComponent(poolId)}&days=${targetDays}${bust}`,
-            (j) => validateChartData(j, 'volume')
-          ),
-        ]);
-        // No ad-hoc quick retries; handled by fetchJsonWithRetry
+        // Use version-based cache busting for chart data
+        let chartVersionParam = '';
+        if (force) {
+          try {
+            const chartVersion = SafeStorage.get('chart-cache-version');
+            chartVersionParam = chartVersion ? `&v=${chartVersion}` : `&bust=${Date.now()}`;
+          } catch {
+            chartVersionParam = `&bust=${Date.now()}`;
+          }
+        }
+
+        // Fetch chart data with centralized retry utility
+        const feeResult = await RetryUtility.fetchJson(
+          `/api/liquidity/get-historical-dynamic-fees?poolId=${encodeURIComponent(subgraphIdForHist)}&days=${targetDays}${chartVersionParam}`,
+          {
+            attempts: 4,
+            baseDelay: 700,
+            validate: (j) => validateChartData(j, 'fees'),
+            throwOnFailure: true
+          }
+        );
+
+        const tvlResult = await RetryUtility.fetchJson(
+          `/api/liquidity/chart-tvl?poolId=${encodeURIComponent(poolId)}&days=${targetDays}${chartVersionParam}`,
+          {
+            attempts: 4,
+            baseDelay: 700,
+            validate: (j) => validateChartData(j, 'tvl'),
+            throwOnFailure: true
+          }
+        );
+
+        const volResult = await RetryUtility.fetchJson(
+          `/api/liquidity/chart-volume?poolId=${encodeURIComponent(poolId)}&days=${targetDays}${chartVersionParam}`,
+          {
+            attempts: 4,
+            baseDelay: 700,
+            validate: (j) => validateChartData(j, 'volume'),
+            throwOnFailure: true
+          }
+        );
+
+        const feeJson = feeResult.data!;
+        const tvlJson = tvlResult.data!;
+        const volJson = volResult.data!;
+        // No ad-hoc quick retries; handled by RetryUtility
 
         // Base date set from separate series (both exclude today)
         const tvlArr: Array<{ date: string; tvlUSD?: number }> = Array.isArray(tvlJson?.data) ? tvlJson.data : [];
@@ -1173,50 +1258,25 @@ export default function PoolDetailPage() {
           } as ChartDataPoint;
         });
 
-        // Enforce today's data append from header stats before unsetting loading
-        // todayKeyLocal already computed above
-        // Get current stats from batch API to ensure today's point is present
-        let tvlFromHeader = 0;
-        try {
-          // Use versioned URL to avoid stale cache
-          const versionResponse = await fetch('/api/cache-version', { cache: 'no-store' as any } as any);
-          const versionData = await versionResponse.json();
-          const resp = await fetch(versionData.cacheUrl, { cache: 'no-store' as any } as any);
-          if (resp.ok) {
-            const data = await resp.json();
-            const poolIdLc = String(subgraphIdForHist || '').toLowerCase();
-            const match = Array.isArray(data?.pools) ? data.pools.find((p: any) => String(p.poolId || '').toLowerCase() === poolIdLc) : null;
-            if (match) {
-              tvlFromHeader = Number(match.tvlUSD) || 0;
-            }
-          }
-        } catch {}
+        // Volume API now includes today's partial data, so merged already has today's volume
         let finalMerged = merged;
+
+        // Update today's TVL with real-time data from header stats
         const hasToday = finalMerged.some(d => d.date === todayKeyLocal);
         const overlayToday = feeByDate.get(todayKeyLocal);
         if (hasToday) {
-          // Update existing today point with current TVL and overlay (keep existing volume)
-          finalMerged = finalMerged.map(d => 
-            d.date === todayKeyLocal 
-              ? { 
-                  ...d, 
+          // Update existing today point with current TVL and overlay
+          finalMerged = finalMerged.map(d =>
+            d.date === todayKeyLocal
+              ? {
+                  ...d,
                   tvlUSD: Number.isFinite(tvlFromHeader) && tvlFromHeader > 0 ? tvlFromHeader : d.tvlUSD,
                   volumeTvlRatio: overlayToday?.ratio ?? d.volumeTvlRatio ?? 0,
                   emaRatio: overlayToday?.ema ?? d.emaRatio ?? 0,
                   dynamicFee: overlayToday?.feePct ?? d.dynamicFee ?? 0,
-                } 
+                }
               : d
           );
-        } else {
-          // Add today point if missing; overlay from latest fee event
-          finalMerged = [...finalMerged, { 
-            date: todayKeyLocal, 
-            volumeUSD: 0,
-            tvlUSD: Number.isFinite(tvlFromHeader) && tvlFromHeader > 0 ? tvlFromHeader : 0, 
-            volumeTvlRatio: overlayToday?.ratio ?? 0, 
-            emaRatio: overlayToday?.ema ?? 0, 
-            dynamicFee: overlayToday?.feePct ?? 0, 
-          }];
         }
         setApiChartData(finalMerged);
         // Keep header TVL strictly in sync with the chart's latest point
@@ -1232,7 +1292,7 @@ export default function PoolDetailPage() {
         if (!keepLoading) setIsLoadingChartData(false);
       } catch (error: any) {
         console.error('Failed to fetch daily chart series:', error);
-        toast.error('Could not load pool chart data.', { description: error?.message || String(error) });
+        toast.error('Chart Data Failed', { icon: <OctagonX className="h-4 w-4 text-red-500" />, description: error?.message || String(error) });
         // End loading unless caller wants to keep spinner (e.g., backoff window)
         if (!keepLoading) setIsLoadingChartData(false);
       }
@@ -1240,7 +1300,7 @@ export default function PoolDetailPage() {
 
     const basePoolInfo = getPoolConfiguration(poolId);
     if (!basePoolInfo) {
-      toast.error("Pool configuration not found for this ID.");
+      toast.error("Pool Not Found", { icon: <OctagonX className="h-4 w-4 text-red-500" />, description: "Pool configuration not found for this ID." });
       router.push('/liquidity');
       return;
     }
@@ -1257,7 +1317,7 @@ export default function PoolDetailPage() {
       if (force) {
         // Try to use cache version first, fallback to bust
         try {
-          const cacheVersion = localStorage.getItem('pools-cache-version');
+          const cacheVersion = SafeStorage.get('pools-cache-version');
           params = cacheVersion ? `?v=${cacheVersion}` : `?bust=${Date.now()}`;
         } catch {
           params = `?bust=${Date.now()}`;
@@ -1267,18 +1327,21 @@ export default function PoolDetailPage() {
       // Use versioned URL to avoid stale cache
       const versionResponse = await fetch('/api/cache-version', { cache: 'no-store' as any } as any);
       const versionData = await versionResponse.json();
-      const resp = await fetch(versionData.cacheUrl, { cache: 'no-store' as any } as any);
+      const resp = await fetch(versionData.cacheUrl); // Allow browser caching for performance
       if (resp.ok) {
         const data = await resp.json();
         const poolIdLc = String(apiPoolIdToUse || '').toLowerCase();
         const match = Array.isArray(data?.pools) ? data.pools.find((p: any) => String(p.poolId || '').toLowerCase() === poolIdLc) : null;
         if (match) {
+          const tvlUSD = Number(match.tvlUSD) || 0;
           poolStats = {
-            tvlUSD: Number(match.tvlUSD) || 0,
+            tvlUSD,
             volume24hUSD: Number(match.volume24hUSD) || 0,
             tvlYesterdayUSD: Number(match.tvlYesterdayUSD) || 0,
             volumePrev24hUSD: Number(match.volumePrev24hUSD) || 0,
           } as any;
+          // Also set tvlFromHeader to avoid the separate call above
+          tvlFromHeader = tvlUSD;
         }
       }
     } catch (error) {
@@ -1342,7 +1405,8 @@ export default function PoolDetailPage() {
     if (token0Symbol && token1Symbol) {
       const skeletonId = `skeleton-${Date.now()}`;
       const createdAt = Date.now();
-      const baselineIds = userPositions.map(p => p.positionId);
+      // Capture current baseline at the time of skeleton creation, not at callback creation
+      const currentBaselineIds = userPositions.map(p => p.positionId);
       
       setPendingNewPositions(prev => {
         const newSkeletons = [...prev, {
@@ -1350,7 +1414,7 @@ export default function PoolDetailPage() {
           token0Symbol,
           token1Symbol,
           createdAt,
-          baselineIds
+          baselineIds: currentBaselineIds
         }];
         return newSkeletons;
       });
@@ -1358,7 +1422,7 @@ export default function PoolDetailPage() {
 
     // 2. Start silent background refresh
     await silentRefreshAfterLiquidityAdded(token0Symbol, token1Symbol);
-  }, [userPositions, pendingNewPositions]);
+  }, [userPositions]); // silentRefreshAfterLiquidityAdded defined below
 
   // Targeted refresh after add: wait for subgraph head, then derive and swap skeletons for real cards
   const silentRefreshAfterLiquidityAdded = useCallback(async (token0Symbol?: string, token1Symbol?: string) => {
@@ -1369,8 +1433,6 @@ export default function PoolDetailPage() {
     const subId = (basePoolInfo.subgraphId || '').toLowerCase();
 
     try {
-      setIsLoadingChartData(true);
-
       const targetBlock = Number(await publicClient.getBlockNumber());
       await waitForSubgraphBlock(targetBlock, { timeoutMs: 15000, minWaitMs: 800, maxIntervalMs: 1000 });
 
@@ -1396,7 +1458,7 @@ export default function PoolDetailPage() {
     } catch (error) {
       // Silent failure - error logged in waitForSubgraphBlock if needed
     } finally {
-              setIsLoadingChartData(false);
+      // No chart loading state needed - chart data handled reactively
     }
   }, [poolId, isConnected, accountAddress]);
 
@@ -1407,29 +1469,6 @@ export default function PoolDetailPage() {
   const setPostMutationWindow = () => { lastMutationAtRef.current = Date.now(); };
   const isInPostMutationWindow = () => Date.now() - lastMutationAtRef.current < 60_000; // 60s window
 
-  // Helper to fetch current header stats deterministically, now defined at a higher scope
-  const loadHeaderStats = useCallback(async (force?: boolean): Promise<{ tvlUSD: number; tvlYesterdayUSD?: number; volume24hUSD: number; volumePrev24hUSD?: number } | null> => {
-    try {
-      const basePoolInfoTmp = getPoolConfiguration(poolId);
-      const apiPoolIdToUseLocal = basePoolInfoTmp?.subgraphId || '';
-      if (!apiPoolIdToUseLocal) return null;
-      // Use versioned URL to avoid stale cache
-      const versionResponse = await fetch('/api/cache-version', { cache: 'no-store' as any } as any);
-      const versionData = await versionResponse.json();
-      const resp = await fetch(versionData.cacheUrl, { cache: 'no-store' as any } as any);
-      if (!resp.ok) return null;
-      const data = await resp.json();
-      const poolIdLc = String(apiPoolIdToUseLocal || '').toLowerCase();
-      const match = Array.isArray(data?.pools) ? data.pools.find((p: any) => String(p.poolId || '').toLowerCase() === poolIdLc) : null;
-      if (!match) return null;
-      return {
-        tvlUSD: Number(match.tvlUSD) || 0,
-        volume24hUSD: Number(match.volume24hUSD) || 0,
-        tvlYesterdayUSD: Number(match.tvlYesterdayUSD) || 0,
-        volumePrev24hUSD: Number(match.volumePrev24hUSD) || 0,
-      };
-    } catch { return null; }
-  }, [poolId]);
 
   // Simple fetch wrapper - no more complex backoff logic
   const fetchWithBackoffIfNeeded = async (force?: boolean, skipPositions?: boolean) => {
@@ -1441,7 +1480,6 @@ export default function PoolDetailPage() {
     if (!poolId || !isConnected || !accountAddress) return;
 
     try {
-      setIsLoadingChartData(true);
       const targetBlock = info?.blockNumber ?? await publicClient.getBlockNumber();
       await waitForSubgraphBlock(Number(targetBlock), { timeoutMs: 30000, minWaitMs: 1000, maxIntervalMs: 2000 });
 
@@ -1453,64 +1491,224 @@ export default function PoolDetailPage() {
         
         // Store cache version for subsequent fetches
         if (revalidateData.cacheVersion) {
-          localStorage.setItem('pools-cache-version', revalidateData.cacheVersion.toString());
+          SafeStorage.set('pools-cache-version', revalidateData.cacheVersion.toString());
         }
         
         // Set hint for list page to refetch
-        localStorage.setItem('cache:pools-batch:invalidated', 'true');
+        SafeStorage.set('cache:pools-batch:invalidated', 'true');
       } catch (error) {
         console.error('[refreshAfterMutation] Failed to revalidate server cache:', error);
       }
 
-      // Also invalidate chart data
-      const base = getPoolConfiguration(poolId);
-      const subId = (base?.subgraphId || '').toLowerCase();
-      try {
-        fetch('/api/internal/revalidate-chart', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ poolId, subgraphId: subId })
-        } as any);
-      } catch {}
+      // No need to revalidate chart data - TVL is handled reactively via the useEffect
+      // Volume only changes from swap page actions, not liquidity operations
+      // Dynamic fees have 6h server-side TTL and don't need frequent revalidation
 
-      // Refresh page data
-      await fetchWithBackoffIfNeeded(true, false);
+      // Refresh positions data only (chart data handled reactively)
+      await fetchWithBackoffIfNeeded(false, false);
+      
+      // Clear any optimistic loading states
+      setUserPositions(prev => prev.map(p => ({ ...p, isOptimisticallyUpdating: undefined })));
       
     } catch (error) {
       console.error('[refreshAfterMutation] failed:', error);
+      
+      // Clear optimistic states on error too
+      setUserPositions(prev => prev.map(p => ({ ...p, isOptimisticallyUpdating: undefined })));
     } finally {
-      setIsLoadingChartData(false);
+      // No chart loading state needed - chart data handled reactively
     }
   }, [poolId, isConnected, accountAddress, fetchWithBackoffIfNeeded]);
 
-  const onLiquidityIncreasedCallback = useCallback((info?: { txHash?: `0x${string}`; blockNumber?: bigint }) => {
-    if (pendingActionRef.current?.type !== 'increase') return;
+  // Refresh only a single position without affecting other positions
+  const refreshSinglePosition = useCallback(async (positionId: string) => {
+    if (!accountAddress) return;
+
+    try {
+      // Fetch updated data for just this position
+      const updatedPositions = await derivePositionsFromIds(accountAddress, [positionId]);
+      const updatedPosition = updatedPositions[0];
+      
+      if (updatedPosition) {
+        // Update only this position in the array, keeping others untouched
+        setUserPositions(prev => prev.map(p => 
+          p.positionId === positionId 
+            ? { ...updatedPosition, isOptimisticallyUpdating: undefined }
+            : p
+        ));
+      } else {
+        // If position not found, just clear loading state
+        setUserPositions(prev => prev.map(p => 
+          p.positionId === positionId
+            ? { ...p, isOptimisticallyUpdating: undefined }
+            : p
+        ));
+      }
+    } catch (error) {
+      console.error('[refreshSinglePosition] failed:', error);
+      // Clear loading state on error
+      setUserPositions(prev => prev.map(p => 
+        p.positionId === positionId
+          ? { ...p, isOptimisticallyUpdating: undefined }
+          : p
+      ));
+    }
+  }, [accountAddress]);
+
+  // Optimized refresh for position increases - only fetches what's needed
+  const refreshAfterIncrease = useCallback(async (info?: { txHash?: `0x${string}`; blockNumber?: bigint }) => {
+    if (!poolId || !isConnected || !accountAddress) return;
+
+    try {
+      const targetBlock = info?.blockNumber ?? await publicClient.getBlockNumber();
+      await waitForSubgraphBlock(Number(targetBlock), { timeoutMs: 30000, minWaitMs: 1000, maxIntervalMs: 2000 });
+
+      // For additions, we only need to:
+      // 1. Trigger server revalidation for TVL (already parallelized)
+      // 2. Refresh the single position data (not all positions)
+      
+      // Trigger server revalidation (same as refreshAfterMutation)
+      try { 
+        const revalidateResp = await fetch('/api/internal/revalidate-pools', { method: 'POST' });
+        const revalidateData = await revalidateResp.json();
+        console.log('[refreshAfterIncrease] Server cache revalidated:', revalidateData);
+        
+        if (revalidateData.cacheVersion) {
+          SafeStorage.set('pools-cache-version', revalidateData.cacheVersion.toString());
+        }
+        SafeStorage.set('cache:pools-batch:invalidated', 'true');
+      } catch (error) {
+        console.error('[refreshAfterIncrease] Failed to revalidate server cache:', error);
+      }
+
+      // Refresh pool stats/TVL and chart (skip positions) to mirror withdrawal behavior without optimism
+      await fetchWithBackoffIfNeeded(false, /* skipPositions */ true);
+
+      // Then, instead of full refetch, only update the specific position that was increased
+      if (positionToModify) {
+        await refreshSinglePosition(positionToModify.positionId);
+      } else {
+        // Fallback to full refetch if we don't have the position ID
+        await fetchWithBackoffIfNeeded(false, false);
+        setUserPositions(prev => prev.map(p => ({ ...p, isOptimisticallyUpdating: undefined })));
+      }
+      
+    } catch (error) {
+      console.error('[refreshAfterIncrease] failed:', error);
+      
+      // Clear optimistic states on error
+      setUserPositions(prev => prev.map(p => ({ ...p, isOptimisticallyUpdating: undefined })));
+    }
+  }, [poolId, isConnected, accountAddress, fetchWithBackoffIfNeeded, publicClient, waitForSubgraphBlock, refreshSinglePosition, positionToModify]);
+
+  const handledIncreaseHashRef = useRef<string | null>(null);
+  const onLiquidityIncreasedCallback = useCallback((info?: { txHash?: `0x${string}`; blockNumber?: bigint, increaseAmounts?: { amount0: string; amount1: string } }) => {
+    console.log('[DEBUG] onLiquidityIncreasedCallback called:', { 
+      pendingActionType: pendingActionRef.current?.type, 
+      txHash: info?.txHash?.slice(0, 10) + '...',
+      hasIncreaseAmounts: !!info?.increaseAmounts 
+    });
+    // Require valid hash to proceed and prevent duplicates
+    if (!info?.txHash) {
+      console.log('[DEBUG] Skipping - missing txHash');
+      return;
+    }
+    if (handledIncreaseHashRef.current === info.txHash) {
+      console.log('[DEBUG] Skipping - already handled this txHash');
+      return;
+    }
+    handledIncreaseHashRef.current = info.txHash;
+
+    if (pendingActionRef.current?.type !== 'increase') {
+      console.log('[DEBUG] Skipping - not increase type');
+      return;
+    }
     const now = Date.now();
-    if (now - lastRevalidationRef.current < 15000) return; // Shorter cooldown
+    if (now - lastRevalidationRef.current < 15000) {
+      console.log('[DEBUG] Skipping - cooldown active');
+      return;
+    }
     lastRevalidationRef.current = now;
 
+    // IMMEDIATE OPTIMISTIC UPDATES (happen with toast) - positions only, not TVL
+    if (positionToModify) {
+      if (info?.increaseAmounts) {
+        // If we have the exact amounts, update optimistically with real values
+        const currentAmount0 = parseFloat(positionToModify.token0.amount || '0');
+        const currentAmount1 = parseFloat(positionToModify.token1.amount || '0');
+        const addedAmount0 = parseFloat(info.increaseAmounts.amount0 || '0');
+        const addedAmount1 = parseFloat(info.increaseAmounts.amount1 || '0');
+        
+        setUserPositions(prev => prev.map(p => 
+          p.positionId === positionToModify.positionId 
+            ? { 
+                ...p, 
+                token0: { ...p.token0, amount: (currentAmount0 + addedAmount0).toString() },
+                token1: { ...p.token1, amount: (currentAmount1 + addedAmount1).toString() },
+                isOptimisticallyUpdating: true 
+              } 
+            : p
+        ));
+      } else {
+        // Fallback to just showing loading state
+        setUserPositions(prev => prev.map(p => 
+          p.positionId === positionToModify.positionId 
+            ? { ...p, isOptimisticallyUpdating: true } 
+            : p
+        ));
+      }
+    }
+
+    // Show toast immediately and close modal
+    console.log('[DEBUG] Transaction successful, clearing pendingActionRef');
     toast.success("Position Increased", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
     setShowIncreaseModal(false);
     pendingActionRef.current = null;
     
-    refreshAfterMutation(info);
-  }, [refreshAfterMutation]);
+    // Background refetch to get updated position data (parallelize with toast/UI updates)
+    // For additions, we only need to refresh the single position, not all data
+    refreshAfterIncrease(info).catch(console.error);
+  }, [refreshAfterIncrease, positionToModify]);
   
-  const onLiquidityDecreasedCallback = useCallback((info?: { txHash?: `0x${string}`; blockNumber?: bigint }) => {
-    if (isCompoundInProgressRef.current) { isCompoundInProgressRef.current = false; return; }
+  const handledDecreaseHashRef = useRef<string | null>(null);
+  const onLiquidityDecreasedCallback = useCallback((info?: { txHash?: `0x${string}`; blockNumber?: bigint; isFullBurn?: boolean }) => {
+    // Require a valid tx hash and dedupe by hash to support rapid successive burns
+    if (!info?.txHash) return;
+    if (handledDecreaseHashRef.current === info.txHash) return;
+    handledDecreaseHashRef.current = info.txHash;
+
     if (pendingActionRef.current?.type !== 'decrease' && pendingActionRef.current?.type !== 'withdraw') return;
 
-    const now = Date.now();
-    if (now - lastRevalidationRef.current < 15000) return; // Shorter cooldown
-    lastRevalidationRef.current = now;
-
-    const closing = isFullBurn || isFullWithdraw;
+    const closing = info?.isFullBurn ?? isFullBurn; // Use info from transaction or fallback to old modal state
+    
+    // IMMEDIATE OPTIMISTIC UPDATES (happen with toast)
+    if (positionToBurn) {
+      if (closing) {
+        // For full burns: immediately remove position from UI
+        const positionValue = calculatePositionUsd(positionToBurn);
+        setUserPositions(prev => prev.filter(p => p.positionId !== positionToBurn.positionId));
+      } else {
+        // For partial withdrawals: show loading state on the position
+        setUserPositions(prev => prev.map(p => 
+          p.positionId === positionToBurn.positionId 
+            ? { ...p, isOptimisticallyUpdating: true } 
+            : p
+        ));
+      }
+    }
+    
     toast.success(closing ? "Position Closed" : "Position Decreased", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
     setShowBurnConfirmDialog(false);
     setPositionToBurn(null);
     pendingActionRef.current = null;
 
-    refreshAfterMutation(info);
-  }, [isFullBurn, isFullWithdraw, refreshAfterMutation]);
+    // Background refetch to correct any optimistic errors (guard with 15s cooldown)
+    const now = Date.now();
+    if (now - lastRevalidationRef.current >= 15000) {
+      lastRevalidationRef.current = now;
+      refreshAfterMutation(info);
+    }
+  }, [isFullBurn, refreshAfterMutation, positionToBurn, calculatePositionUsd, currentPoolData]);
 
   // Initialize the liquidity modification hooks (moved here after callback definitions)
   const { burnLiquidity, isLoading: isBurningLiquidity } = useBurnLiquidity({
@@ -1521,104 +1719,14 @@ export default function PoolDetailPage() {
     onLiquidityIncreased: onLiquidityIncreasedCallback,
   });
 
-  const pendingCompoundRef = useRef<null | { position: ProcessedPosition; raw0: string; raw1: string }>(null);
 
-  const { decreaseLiquidity, compoundFees, isLoading: isDecreasingLiquidity } = useDecreaseLiquidity({
+  const { decreaseLiquidity, isLoading: isDecreasingLiquidity } = useDecreaseLiquidity({
     onLiquidityDecreased: onLiquidityDecreasedCallback,
     onFeesCollected: () => {
-      const pending = pendingCompoundRef.current;
-      if (pending && pending.position && pending.raw0 && pending.raw1) {
-        try {
-          const pos = pending.position;
-          const token0Def = TOKEN_DEFINITIONS[pos.token0.symbol as TokenSymbol];
-          const token1Def = TOKEN_DEFINITIONS[pos.token1.symbol as TokenSymbol];
-          // Strictly round down by reducing 1 wei if non-zero to avoid any rounding up edge cases
-          const raw0 = BigInt(pending.raw0);
-          const raw1 = BigInt(pending.raw1);
-          const raw0Floored = raw0 > 0n ? raw0 - 1n : 0n;
-          const raw1Floored = raw1 > 0n ? raw1 - 1n : 0n;
-          const amt0Str = token0Def ? formatUnits(raw0Floored, token0Def.decimals) : '0';
-          const amt1Str = token1Def ? formatUnits(raw1Floored, token1Def.decimals) : '0';
-
-          const incData: IncreasePositionData = {
-            tokenId: pos.positionId,
-            token0Symbol: pos.token0.symbol as TokenSymbol,
-            token1Symbol: pos.token1.symbol as TokenSymbol,
-            additionalAmount0: amt0Str,
-            additionalAmount1: amt1Str,
-            poolId: pos.poolId,
-            tickLower: pos.tickLower,
-            tickUpper: pos.tickUpper,
-          };
-
-          pendingCompoundRef.current = null;
-          increaseLiquidity(incData);
-          // Only show once per compound flow
-          if (pendingActionRef.current?.type !== 'compound') {
-            pendingActionRef.current = { type: 'compound' };
-          }
-          toast.success("Compounding Fees", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
-        } catch (e) {
-          console.error('Compound follow-up failed:', e);
-          pendingCompoundRef.current = null;
-          toast.error("Failed to compound after collection", { icon: <OctagonX className="h-4 w-4 text-red-500" /> });
-        }
-      } else {
-        if (pendingActionRef.current?.type === 'collect') {
-          toast.success("Fees Collected", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
-          pendingActionRef.current = null;
-        }
-      }
+      toast.success("Fees Collected", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
     },
   });
 
-  // Handle confirmation lifecycle for SDK-based collect (claim fees / compound)
-  useEffect(() => {
-    if (!isCollectConfirmed || !collectHash) return;
-    // de-dupe by tx hash so we don't double-handle on re-render
-    if (handledCollectHashRef.current === collectHash) return;
-    handledCollectHashRef.current = collectHash;
-    const pending = pendingCompoundRef.current;
-    if (pending && pending.position && pending.raw0 && pending.raw1) {
-      try {
-        const pos = pending.position;
-        const token0Def = TOKEN_DEFINITIONS[pos.token0.symbol as TokenSymbol];
-        const token1Def = TOKEN_DEFINITIONS[pos.token1.symbol as TokenSymbol];
-        const raw0 = BigInt(pending.raw0);
-        const raw1 = BigInt(pending.raw1);
-        const raw0Floored = raw0 > 0n ? raw0 - 1n : 0n;
-        const raw1Floored = raw1 > 0n ? raw1 - 1n : 0n;
-        const amt0Str = token0Def ? formatUnits(raw0Floored, token0Def.decimals) : '0';
-        const amt1Str = token1Def ? formatUnits(raw1Floored, token1Def.decimals) : '0';
-        const incData: IncreasePositionData = {
-          tokenId: pos.positionId,
-          token0Symbol: pos.token0.symbol as TokenSymbol,
-          token1Symbol: pos.token1.symbol as TokenSymbol,
-          additionalAmount0: amt0Str,
-          additionalAmount1: amt1Str,
-          poolId: pos.poolId,
-          tickLower: pos.tickLower,
-          tickUpper: pos.tickUpper,
-        };
-        pendingCompoundRef.current = null;
-        increaseLiquidity(incData);
-        if (!isCompoundInProgressRef.current) {
-          toast.success('Compounding Fees', { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
-        }
-      } catch (e) {
-        console.error('Compound follow-up failed (SDK path):', e);
-        pendingCompoundRef.current = null;
-        toast.error('Failed to compound after collection', { icon: <OctagonX className="h-4 w-4 text-red-500" /> });
-
-      }
-    } else {
-      if (pendingActionRef.current?.type === 'collect') {
-        toast.success('Fees Collected', { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
-      }
-    }
-
-    setCollectHash(undefined);
-  }, [isCollectConfirmed, collectHash, increaseLiquidity]);
 
   // Watch for new positions actually appearing compared to baseline captured at skeleton creation
   useEffect(() => {
@@ -1629,21 +1737,27 @@ export default function PoolDetailPage() {
 
     // Determine if any skeleton has its corresponding new ID(s) materialized beyond its baseline
     const shouldRemove = pendingNewPositions.some(skel => {
+      // For skeletons with no baseline (created when no positions existed)
       if (!skel.baselineIds || skel.baselineIds.length === 0) {
-        return userPositions.length > 0;
+        // Only remove if we actually have NEW positions with proper SDK data
+        return userPositions.some(p => 
+          p.token0?.amount !== undefined && p.token1?.amount !== undefined &&
+          p.tickLower !== undefined && p.tickUpper !== undefined
+        );
       }
       
+      // For skeletons with baseline (created when positions already existed)
       // New IDs are those present now but not in baseline
       const newIdsNow = userPositions
         .map(p => p.positionId)
         .filter(id => !skel.baselineIds!.includes(id));
       
       if (newIdsNow.length === 0) return false;
-      // Optional: require minimal SDK fields to be present on at least one new position
+      // Require minimal SDK fields to be present on at least one new position
       const hasSdkData = userPositions.some(p => newIdsNow.includes(p.positionId) &&
         p.token0?.amount !== undefined && p.token1?.amount !== undefined &&
         p.tickLower !== undefined && p.tickUpper !== undefined);
-      return hasSdkData || newIdsNow.length > 0;
+      return hasSdkData;
     });
 
     if (shouldRemove) {
@@ -1654,9 +1768,46 @@ export default function PoolDetailPage() {
     }
   }, [userPositions, pendingNewPositions]);
 
+  // Optimized: Single call per pool load
   useEffect(() => {
-    fetchPageData();
-  }, [poolId, isConnected, accountAddress]); // Depend on stable values instead of fetchPageData function
+    // Only fetch if we have poolId and no chart data yet
+    if (poolId && apiChartData.length === 0) {
+      fetchPageData();
+    }
+  }, [poolId]); // Only depend on poolId to avoid excessive calls
+
+  // Syncs the chart's latest TVL with the header's TVL in real-time
+  useEffect(() => {
+    if (!currentPoolData?.liquidity || apiChartData.length === 0) return;
+
+    // Extract numeric TVL from the formatted string (e.g., "$1,234.56")
+    const latestTvl = parseFloat(String(currentPoolData.liquidity).replace(/[$,]/g, ''));
+
+    if (!Number.isFinite(latestTvl)) return;
+
+    const todayKeyLocal = new Date().toISOString().split('T')[0];
+
+    setApiChartData(prevChartData => {
+      if (!prevChartData || prevChartData.length === 0) return prevChartData;
+
+      const todayIndex = prevChartData.findIndex(d => d.date === todayKeyLocal);
+
+      if (todayIndex !== -1) {
+        const currentChartTvl = prevChartData[todayIndex].tvlUSD;
+        
+        // Only update if the TVL value is different to prevent infinite loops
+        if (Math.abs(currentChartTvl - latestTvl) > 0.01) { // Epsilon for float comparison
+          const newChartData = [...prevChartData];
+          newChartData[todayIndex] = {
+            ...newChartData[todayIndex],
+            tvlUSD: latestTvl,
+          };
+          return newChartData;
+        }
+      }
+      return prevChartData;
+    });
+  }, [currentPoolData]);
 
   // Calculate total liquidity value
   const totalLiquidity = userPositions.reduce((sum, pos) => sum + calculatePositionUsd(pos), 0);
@@ -1664,94 +1815,29 @@ export default function PoolDetailPage() {
   // Handle withdraw position
   const handleBurnPosition = (position: ProcessedPosition) => {
     if (!position.positionId || !position.token0.symbol || !position.token1.symbol) {
-      toast.error("Cannot withdraw position: Missing critical position data (ID or token symbols).");
+      toast.error("Invalid Position", { icon: <OctagonX className="h-4 w-4 text-red-500" />, description: "Missing critical position data (ID or token symbols)." });
       return;
     }
     setPositionToBurn(position);
-    // Reset withdraw state
-    setWithdrawAmount0("");
-    setWithdrawAmount1("");
-    setWithdrawActiveInputSide(null);
-    setIsFullWithdraw(false);
-    setWithdrawPercentage(0);
-    pendingActionRef.current = { type: 'burn' };
+    pendingActionRef.current = { type: 'withdraw' };
     setShowBurnConfirmDialog(true);
   };
 
-  const confirmBurnPosition = () => {
-    if (positionToBurn && positionToBurn.positionId && positionToBurn.token0.symbol && positionToBurn.token1.symbol) {
-      // Map position token addresses to correct token symbols from our configuration
-      const getTokenSymbolByAddress = (address: string): TokenSymbol | null => {
-        const normalizedAddress = address.toLowerCase();
-        for (const [symbol, tokenConfig] of Object.entries(TOKEN_DEFINITIONS)) {
-          if (tokenConfig.address.toLowerCase() === normalizedAddress) {
-            return symbol as TokenSymbol;
-          }
-        }
-        return null;
-      };
-      
-      const token0Symbol = getTokenSymbolByAddress(positionToBurn.token0.address);
-      const token1Symbol = getTokenSymbolByAddress(positionToBurn.token1.address);
-      
-      if (!token0Symbol || !token1Symbol) {
-        toast.error("Token definitions not found for position tokens. Addresses: " + 
-          `${positionToBurn.token0.address}, ${positionToBurn.token1.address}`);
-        return;
-      }
-
-      const burnData: BurnPositionData = {
-        tokenId: positionToBurn.positionId,
-        token0Symbol: token0Symbol,
-        token1Symbol: token1Symbol,
-        poolId: positionToBurn.poolId,
-        tickLower: positionToBurn.tickLower,
-        tickUpper: positionToBurn.tickUpper,
-      };
-      burnLiquidity(burnData);
-    }
-    // Modal will close automatically when transaction completes via onLiquidityBurnedCallback
-  };
 
   // Handle increase position
   const handleIncreasePosition = (position: ProcessedPosition) => {
     if (!position.positionId || !position.token0.symbol || !position.token1.symbol) {
-      toast.error("Cannot increase position: Missing critical position data (ID or token symbols).");
+      toast.error("Invalid Position", { icon: <OctagonX className="h-4 w-4 text-red-500" />, description: "Missing critical position data (ID or token symbols)." });
       return;
     }
     setPositionToModify(position);
-    // Reset increase state
-    setIncreaseAmount0("");
-    setIncreaseAmount1("");
-    // Enforce single-sided on open for out-of-range positions
-    if (!position.isInRange) {
-      // Use live pool tick if available; otherwise infer from ticks
-      const tick = currentPoolTick;
-      const below = tick !== null ? tick < position.tickLower : position.tickLower > 0;
-      const above = tick !== null ? tick > position.tickUpper : position.tickUpper < 0;
-      if (below) {
-        // Only token0 is productive
-        setIncreaseActiveInputSide('amount0');
-        setIncreaseAmount1('0');
-      } else if (above) {
-        // Only token1 is productive
-        setIncreaseActiveInputSide('amount1');
-        setIncreaseAmount0('0');
-      } else {
-        setIncreaseActiveInputSide(null);
-      }
-    } else {
-      setIncreaseActiveInputSide(null);
-    }
-    setIncreasePercentage(0);
-    setIsIncreaseAmountValid(true);
     setShowIncreaseModal(true);
   };
 
   // Handle decrease position
   const handleDecreasePosition = (position: ProcessedPosition) => {
     if (!position.positionId || !position.token0.symbol || !position.token1.symbol) {
-      toast.error("Cannot decrease position: Missing critical position data (ID or token symbols).");
+      toast.error("Invalid Position", { icon: <OctagonX className="h-4 w-4 text-red-500" />, description: "Missing critical position data (ID or token symbols)." });
       return;
     }
     setPositionToModify(position);
@@ -1786,75 +1872,6 @@ export default function PoolDetailPage() {
     return head + tail;
   };
 
-  // Calculate corresponding amount for increase
-  const calculateIncreaseAmount = useCallback(
-    debounce(async (inputAmount: string, inputSide: 'amount0' | 'amount1') => {
-      const version = ++increaseCalcVersionRef.current;
-      if (!positionToModify || !inputAmount || parseFloat(inputAmount) <= 0) {
-        if (inputSide === 'amount0') setIncreaseAmount1("");
-        else setIncreaseAmount0("");
-        return;
-      }
-
-      setIsIncreaseCalculating(true);
-      try {
-        // For out-of-range positions, use single-token approach immediately
-        if (!positionToModify.isInRange) {
-          console.log("Position is out of range, using single-token approach");
-          if (inputSide === 'amount0') {
-            setIncreaseAmount1("0");
-          } else {
-            setIncreaseAmount0("0");
-          }
-          setIsIncreaseCalculating(false);
-          return;
-        }
-
-        // In-range: compute counterpart amount via API for good UX
-        const calcResponse = await fetch('/api/liquidity/calculate-liquidity-parameters', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            token0Symbol: positionToModify.token0.symbol,
-            token1Symbol: positionToModify.token1.symbol,
-            inputAmount: inputAmount,
-            inputTokenSymbol: inputSide === 'amount0' ? positionToModify.token0.symbol : positionToModify.token1.symbol,
-            userTickLower: positionToModify.tickLower,
-            userTickUpper: positionToModify.tickUpper,
-            chainId: chainId,
-          }),
-        });
-
-        if (!calcResponse.ok) {
-          const errorData = await calcResponse.json();
-          throw new Error(errorData.message || 'Failed to calculate parameters.');
-        }
-
-        const result = await calcResponse.json();
-        if (version !== increaseCalcVersionRef.current) return; // stale response, drop
-
-        if (inputSide === 'amount0') {
-          const amount1InWei = result.amount1;
-          const token1Decimals = TOKEN_DEFINITIONS[positionToModify.token1.symbol as TokenSymbol]?.decimals || 18;
-          const formattedAmount1 = formatUnits(BigInt(amount1InWei), token1Decimals);
-          setIncreaseAmount1(formatTokenDisplayAmount(formattedAmount1));
-        } else {
-          const amount0InWei = result.amount0;
-          const token0Decimals = TOKEN_DEFINITIONS[positionToModify.token0.symbol as TokenSymbol]?.decimals || 18;
-          const formattedAmount0 = formatUnits(BigInt(amount0InWei), token0Decimals);
-          setIncreaseAmount0(formatTokenDisplayAmount(formattedAmount0));
-        }
-      } catch (error: any) {
-        console.error("Error calculating increase amount:", error);
-        toast.error("Calculation Error", { description: error.message || "Could not calculate corresponding amount." });
-        if (inputSide === 'amount0') setIncreaseAmount1("");
-        else setIncreaseAmount0("");
-      } finally {
-        setIsIncreaseCalculating(false);
-      }
-    }, 500),
-    [positionToModify, chainId]
-  );
 
   // Calculate corresponding amount for decrease
   const calculateDecreaseAmount = useCallback(
@@ -1912,7 +1929,7 @@ export default function PoolDetailPage() {
         setIsFullBurn(isNearFullBurn);
       } catch (error: any) {
         console.error("Error calculating decrease amount:", error);
-        toast.error("Calculation Error", { description: error.message || "Could not calculate corresponding amount." });
+        toast.error("Calculation Error", { icon: <OctagonX className="h-4 w-4 text-red-500" />, description: error.message || "Could not calculate corresponding amount." });
         if (inputSide === 'amount0') setDecreaseAmount1("");
         else setDecreaseAmount0("");
       } finally {
@@ -1922,89 +1939,6 @@ export default function PoolDetailPage() {
     [positionToModify, chainId, decreaseAmount0, decreaseAmount1]
   );
 
-  // Calculate corresponding amount for withdraw
-  const calculateWithdrawAmount = useCallback(
-    debounce(async (inputAmount: string, inputSide: 'amount0' | 'amount1') => {
-      const version = ++withdrawCalcVersionRef.current;
-      if (!positionToBurn || !inputAmount || parseFloat(inputAmount) <= 0) {
-        if (inputSide === 'amount0') setWithdrawAmount1("");
-        else setWithdrawAmount0("");
-        return;
-      }
-
-      try {
-        // For out-of-range positions, allow single-token withdrawal
-        if (!positionToBurn.isInRange) {
-          console.log("Position is out of range, using single-token withdrawal approach");
-          
-          const maxAmount0 = parseFloat(positionToBurn.token0.amount);
-          const maxAmount1 = parseFloat(positionToBurn.token1.amount);
-          const inputAmountNum = parseFloat(inputAmount);
-          
-          // For out-of-range positions, enforce single-sided and do not auto-fill the other token
-          if (inputSide === 'amount0') {
-            setWithdrawAmount1("0");
-            setIsFullWithdraw(inputAmountNum >= maxAmount0 * 0.99);
-          } else {
-            setWithdrawAmount0("0");
-            setIsFullWithdraw(inputAmountNum >= maxAmount1 * 0.99);
-          }
-          
-          return;
-        }
-
-        // In-range: prefill counterpart amount for UX
-        const calcResponse = await fetch('/api/liquidity/calculate-liquidity-parameters', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            token0Symbol: positionToBurn.token0.symbol,
-            token1Symbol: positionToBurn.token1.symbol,
-            inputAmount: inputAmount,
-            inputTokenSymbol: inputSide === 'amount0' ? positionToBurn.token0.symbol : positionToBurn.token1.symbol,
-            userTickLower: positionToBurn.tickLower,
-            userTickUpper: positionToBurn.tickUpper,
-            chainId: chainId,
-          }),
-        });
-
-        if (!calcResponse.ok) {
-          const errorData = await calcResponse.json();
-          throw new Error(errorData.message || 'Failed to calculate parameters.');
-        }
-
-        const result = await calcResponse.json();
-        if (version !== withdrawCalcVersionRef.current) return; // stale response, drop
-
-        if (inputSide === 'amount0') {
-          const amount1InWei = result.amount1;
-          const token1Decimals = TOKEN_DEFINITIONS[positionToBurn.token1.symbol as TokenSymbol]?.decimals || 18;
-          const formattedAmount1 = formatUnits(BigInt(amount1InWei), token1Decimals);
-          setWithdrawAmount1(formatTokenDisplayAmount(formattedAmount1));
-        } else {
-          const amount0InWei = result.amount0;
-          const token0Decimals = TOKEN_DEFINITIONS[positionToBurn.token0.symbol as TokenSymbol]?.decimals || 18;
-          const formattedAmount0 = formatUnits(BigInt(amount0InWei), token0Decimals);
-          setWithdrawAmount0(formatTokenDisplayAmount(formattedAmount0));
-        }
-
-        // Check if this is effectively a full withdraw
-        const maxAmount0 = parseFloat(positionToBurn.token0.amount);
-        const maxAmount1 = parseFloat(positionToBurn.token1.amount);
-        const inputAmount0 = inputSide === 'amount0' ? parseFloat(inputAmount) : parseFloat(withdrawAmount0);
-        const inputAmount1 = inputSide === 'amount1' ? parseFloat(inputAmount) : parseFloat(withdrawAmount1);
-        
-        const isNearFullWithdraw = (inputAmount0 >= maxAmount0 * 0.99) || (inputAmount1 >= maxAmount1 * 0.99);
-        setIsFullWithdraw(isNearFullWithdraw);
-      } catch (error: any) {
-        console.error("Error calculating withdraw amount:", error);
-        toast.error("Calculation Error", { description: error.message || "Could not calculate corresponding amount." });
-        if (inputSide === 'amount0') setWithdrawAmount1("");
-        else setWithdrawAmount0("");
-      }
-    }, 500),
-    [positionToBurn, chainId, withdrawAmount0, withdrawAmount1]
-  );
 
   // Handle max button clicks for decrease
   const handleMaxDecrease = (tokenSide: 'amount0' | 'amount1') => {
@@ -2021,336 +1955,17 @@ export default function PoolDetailPage() {
     setIsFullBurn(true);
   };
 
-  // Handle max button clicks for withdraw
-  const handleMaxWithdraw = (tokenSide: 'amount0' | 'amount1') => {
-    if (!positionToBurn) return;
-    
-    if (tokenSide === 'amount0') {
-      setWithdrawAmount0(positionToBurn.token0.amount);
-      setWithdrawAmount1(positionToBurn.token1.amount);
-    } else {
-      setWithdrawAmount1(positionToBurn.token1.amount);
-      setWithdrawAmount0(positionToBurn.token0.amount);
-    }
-    setWithdrawActiveInputSide(tokenSide);
-    setIsFullWithdraw(true);
-    // Update slider to 100% when using max
-    setWithdrawPercentage(100);
-  };
 
-  // Handle use full balance
-  const handleUseFullBalance = (balanceString: string, tokenSymbolForDecimals: TokenSymbol, isToken0: boolean) => { 
-    try {
-      const numericBalance = parseFloat(balanceString);
-      if (isNaN(numericBalance) || numericBalance <= 0) return;
 
-      const formattedBalance = numericBalance.toFixed(TOKEN_DEFINITIONS[tokenSymbolForDecimals]?.decimals || 18);
 
-      if (isToken0) {
-        setIncreaseAmount0(formattedBalance);
-        setIncreaseActiveInputSide('amount0');
-        // Trigger calculation for the other side
-        calculateIncreaseAmount(formattedBalance, 'amount0');
-      } else { 
-        setIncreaseAmount1(formattedBalance);
-        setIncreaseActiveInputSide('amount1');
-        // Trigger calculation for the other side
-        calculateIncreaseAmount(formattedBalance, 'amount1');
-      }
-      // Update slider to 100% when using full balance
-      setIncreasePercentage(100);
-    } catch (error) {
-      // Handle error
-    }
-  };
 
-  // Helper function to snap to sticky stops
-  const snapToStickyStops = (value: number): number => {
-    const stickyStops = [25, 50, 75, 100];
-    const snapZone = 3; // 3% snap zone around each stop
-    
-    for (const stop of stickyStops) {
-      if (Math.abs(value - stop) <= snapZone) {
-        return stop;
-      }
-    }
-    return value;
-  };
 
-  // Clean slider handlers
-  const handleWithdrawPercentageChange = (newPercentage: number) => {
-    const snappedPercentage = snapToStickyStops(newPercentage);
-    setWithdrawPercentage(snappedPercentage);
-    
-    if (positionToBurn) {
-      const amount0 = parseFloat(positionToBurn.token0.amount);
-      const amount1 = parseFloat(positionToBurn.token1.amount);
-      const percentage = snappedPercentage / 100; // percentage of max
 
-      // Special-case: 100% must map to exact full position amounts (no rounding)
-      if (snappedPercentage === 100) {
-        setIsFullWithdraw(true);
-        if (!positionToBurn.isInRange) {
-          // Single-sided UX when out of range
-          if (withdrawProductiveSide === 'amount0') {
-            setWithdrawAmount0(positionToBurn.token0.amount);
-            setWithdrawAmount1('0');
-            setWithdrawActiveInputSide('amount0');
-          } else if (withdrawProductiveSide === 'amount1') {
-            setWithdrawAmount1(positionToBurn.token1.amount);
-            setWithdrawAmount0('0');
-            setWithdrawActiveInputSide('amount1');
-          } else {
-            // Fallback if unknown: preserve current side behavior
-            setWithdrawAmount0(positionToBurn.token0.amount);
-            setWithdrawAmount1(positionToBurn.token1.amount);
-            setWithdrawActiveInputSide('amount0');
-          }
-          return;
-        }
-        if (amount0 > 0 && amount1 > 0) {
-          setWithdrawAmount0(positionToBurn.token0.amount);
-          setWithdrawAmount1(positionToBurn.token1.amount);
-          setWithdrawActiveInputSide('amount0');
-        } else if (amount0 > 0) {
-          setWithdrawAmount0(positionToBurn.token0.amount);
-          setWithdrawAmount1('0');
-          setWithdrawActiveInputSide('amount0');
-        } else if (amount1 > 0) {
-          setWithdrawAmount1(positionToBurn.token1.amount);
-          setWithdrawAmount0('0');
-          setWithdrawActiveInputSide('amount1');
-        } else {
-          setWithdrawAmount0('');
-          setWithdrawAmount1('');
-        }
-        return;
-      }
-
-      setIsFullWithdraw(snappedPercentage >= 99);
-
-      if (amount0 > 0 && amount1 > 0) {
-        const displayDecimals0 = TOKEN_DEFINITIONS[positionToBurn.token0.symbol as TokenSymbol]?.displayDecimals ?? 4;
-        const calculatedAmount0 = (amount0 * percentage).toFixed(displayDecimals0);
-        setWithdrawAmount0(calculatedAmount0);
-        setWithdrawActiveInputSide('amount0');
-        if (parseFloat(calculatedAmount0) > 0) {
-          calculateWithdrawAmount(calculatedAmount0, 'amount0');
-        } else {
-          setWithdrawAmount1('');
-        }
-      } else if (amount1 > 0) {
-        const displayDecimals1 = TOKEN_DEFINITIONS[positionToBurn.token1.symbol as TokenSymbol]?.displayDecimals ?? 4;
-        const calculatedAmount1 = (amount1 * percentage).toFixed(displayDecimals1);
-        setWithdrawAmount1(calculatedAmount1);
-        setWithdrawActiveInputSide('amount1');
-        setWithdrawAmount0('0');
-        if (parseFloat(calculatedAmount1) > 0) {
-          calculateWithdrawAmount(calculatedAmount1, 'amount1');
-        } else {
-          setWithdrawAmount0('');
-        }
-      } else if (amount0 > 0) {
-        const displayDecimals0 = TOKEN_DEFINITIONS[positionToBurn.token0.symbol as TokenSymbol]?.displayDecimals ?? 4;
-        const calculatedAmount0 = (amount0 * percentage).toFixed(displayDecimals0);
-        setWithdrawAmount0(calculatedAmount0);
-        setWithdrawActiveInputSide('amount0');
-        setWithdrawAmount1('0');
-        if (parseFloat(calculatedAmount0) > 0) {
-          calculateWithdrawAmount(calculatedAmount0, 'amount0');
-        } else {
-          setWithdrawAmount1('');
-        }
-      } else {
-        setWithdrawAmount0('');
-        setWithdrawAmount1('');
-      }
-    }
-  };
-
-  const handleWithdrawAmountChange = (newAmount: string, tokenSide: 'amount0' | 'amount1') => {
-    if (tokenSide === 'amount0') {
-      setWithdrawAmount0(newAmount);
-    } else {
-      setWithdrawAmount1(newAmount);
-    }
-    
-    if (positionToBurn && newAmount) {
-      const maxAmount = tokenSide === 'amount0' 
-        ? parseFloat(positionToBurn.token0.amount)
-        : parseFloat(positionToBurn.token1.amount);
-      
-      const currentAmount = parseFloat(newAmount);
-      if (maxAmount > 0 && !isNaN(currentAmount)) {
-        const percentage = Math.min(100, Math.max(0, (currentAmount / maxAmount) * 100));
-        setWithdrawPercentage(Math.round(percentage));
-        setIsFullWithdraw(percentage >= 99);
-      }
-    }
-  };
-
-  const handleIncreasePercentageChange = (newPercentage: number) => {
-    const snappedPercentage = snapToStickyStops(newPercentage);
-    setIncreasePercentage(snappedPercentage);
-    
-    const balance0 = parseFloat(token0BalanceData?.formatted || "0");
-    const balance1 = parseFloat(token1BalanceData?.formatted || "0");
-    const percentage = snappedPercentage / 100;
-
-    // Special-case: 100% must map to exact full wallet balance on the anchor side
-    if (snappedPercentage === 100) {
-      if (balance0 > 0 && balance1 > 0) {
-        const full0 = token0BalanceData?.formatted || '0';
-        setIncreaseAmount0(full0);
-        setIncreaseActiveInputSide('amount0');
-        if (parseFloat(full0) > 0) {
-          calculateIncreaseAmount(full0, 'amount0');
-        } else {
-          setIncreaseAmount1('');
-        }
-      } else if (balance1 > 0) {
-        const full1 = token1BalanceData?.formatted || '0';
-        setIncreaseAmount1(full1);
-        setIncreaseActiveInputSide('amount1');
-        setIncreaseAmount0('0');
-        if (parseFloat(full1) > 0) {
-          calculateIncreaseAmount(full1, 'amount1');
-        } else {
-          setIncreaseAmount0('');
-        }
-      } else if (balance0 > 0) {
-        const full0 = token0BalanceData?.formatted || '0';
-        setIncreaseAmount0(full0);
-        setIncreaseActiveInputSide('amount0');
-        setIncreaseAmount1('0');
-        if (parseFloat(full0) > 0) {
-          calculateIncreaseAmount(full0, 'amount0');
-        } else {
-          setIncreaseAmount1('');
-        }
-      } else {
-        setIncreaseAmount0('');
-        setIncreaseAmount1('');
-      }
-      return;
-    }
-
-    if (balance0 > 0 && balance1 > 0) {
-      const displayDecimals0 = TOKEN_DEFINITIONS[positionToModify?.token0.symbol as TokenSymbol]?.displayDecimals ?? 4;
-      const calculatedAmount0 = (balance0 * percentage).toFixed(displayDecimals0);
-      setIncreaseAmount0(calculatedAmount0);
-      setIncreaseActiveInputSide('amount0');
-      if (parseFloat(calculatedAmount0) > 0) {
-        calculateIncreaseAmount(calculatedAmount0, 'amount0');
-      } else {
-        setIncreaseAmount1("");
-      }
-    } else if (balance1 > 0) {
-      const displayDecimals1 = TOKEN_DEFINITIONS[positionToModify?.token1.symbol as TokenSymbol]?.displayDecimals ?? 4;
-      const calculatedAmount1 = (balance1 * percentage).toFixed(displayDecimals1);
-      setIncreaseAmount1(calculatedAmount1);
-      setIncreaseActiveInputSide('amount1');
-      setIncreaseAmount0('0');
-      if (parseFloat(calculatedAmount1) > 0) {
-        calculateIncreaseAmount(calculatedAmount1, 'amount1');
-      } else {
-        setIncreaseAmount0('');
-      }
-    } else if (balance0 > 0) {
-      const displayDecimals0 = TOKEN_DEFINITIONS[positionToModify?.token0.symbol as TokenSymbol]?.displayDecimals ?? 4;
-      const calculatedAmount0 = (balance0 * percentage).toFixed(displayDecimals0);
-      setIncreaseAmount0(calculatedAmount0);
-      setIncreaseActiveInputSide('amount0');
-      setIncreaseAmount1('0');
-      if (parseFloat(calculatedAmount0) > 0) {
-        calculateIncreaseAmount(calculatedAmount0, 'amount0');
-      } else {
-        setIncreaseAmount1('');
-      }
-    } else {
-      setIncreaseAmount0('');
-      setIncreaseAmount1('');
-    }
-  };
-
-  const handleIncreaseAmountChange = (newAmount: string, tokenSide: 'amount0' | 'amount1') => {
-    if (tokenSide === 'amount0') {
-      setIncreaseAmount0(newAmount);
-      setIncreaseActiveInputSide('amount0');
-    } else {
-      setIncreaseAmount1(newAmount);
-      setIncreaseActiveInputSide('amount1');
-    }
-    
-    // Out-of-range: prohibit input on the non-active token
-    if (positionToModify && !positionToModify.isInRange) {
-      if (tokenSide === 'amount0') {
-        setIncreaseAmount1('0');
-      } else {
-        setIncreaseAmount0('0');
-      }
-    }
-
-    if (newAmount) {
-      const maxAmount = tokenSide === 'amount0' 
-        ? parseFloat(token0BalanceData?.formatted || "0")
-        : parseFloat(token1BalanceData?.formatted || "0");
-      
-      const currentAmount = parseFloat(newAmount);
-      if (maxAmount > 0 && !isNaN(currentAmount)) {
-        const percentage = Math.min(100, Math.max(0, (currentAmount / maxAmount) * 100));
-        setIncreasePercentage(Math.round(percentage));
-        setIsIncreaseAmountValid(currentAmount <= maxAmount);
-      } else {
-        setIsIncreaseAmountValid(true);
-      }
-    } else {
-      setIsIncreaseAmountValid(true);
-    }
-  };
-
-  // Handle increase transaction
-  const handleConfirmIncrease = () => {
-    if (!positionToModify || (!increaseAmount0 && !increaseAmount1)) {
-      toast.error("Please enter at least one amount to add");
-      return;
-    }
-    
-    // For out-of-range positions, ensure at least one amount is greater than 0
-    if (!positionToModify.isInRange) {
-      const amount0Num = parseFloat(increaseAmount0 || "0");
-      const amount1Num = parseFloat(increaseAmount1 || "0");
-      if (amount0Num <= 0 && amount1Num <= 0) {
-        toast.error("Please enter a valid amount to add");
-        return;
-      }
-      // Enforce only one side (single-sided) when out-of-range
-      if (amount0Num > 0 && amount1Num > 0) {
-        if (increaseActiveInputSide === 'amount0') setIncreaseAmount1('0');
-        else setIncreaseAmount0('0');
-      }
-    }
-
-    const increaseData: IncreasePositionData = {
-      tokenId: positionToModify.positionId,
-      token0Symbol: positionToModify.token0.symbol as TokenSymbol,
-      token1Symbol: positionToModify.token1.symbol as TokenSymbol,
-      additionalAmount0: increaseAmount0 || "0",
-      additionalAmount1: increaseAmount1 || "0",
-      poolId: positionToModify.poolId,
-      tickLower: positionToModify.tickLower,
-      tickUpper: positionToModify.tickUpper,
-    };
-
-    pendingActionRef.current = { type: 'increase' };
-    increaseLiquidity(increaseData);
-    // Keep modal open until success/failure callback closes it
-  };
 
   // Handle decrease transaction
   const handleConfirmDecrease = () => {
     if (!positionToModify || (!decreaseAmount0 && !decreaseAmount1)) {
-      toast.error("Please enter at least one amount to remove");
+      toast.error("Missing Amount", { icon: <OctagonX className="h-4 w-4 text-red-500" />, description: "Please enter at least one amount to remove." });
       return;
     }
     
@@ -2359,7 +1974,7 @@ export default function PoolDetailPage() {
       const amount0Num = parseFloat(decreaseAmount0 || "0");
       const amount1Num = parseFloat(decreaseAmount1 || "0");
       if (amount0Num <= 0 && amount1Num <= 0) {
-        toast.error("Please enter a valid amount to remove");
+        toast.error("Invalid Amount", { icon: <OctagonX className="h-4 w-4 text-red-500" />, description: "Please enter a valid amount to remove." });
         return;
       }
     }
@@ -2379,8 +1994,7 @@ export default function PoolDetailPage() {
     const token1Symbol = getTokenSymbolByAddress(positionToModify.token1.address);
     
     if (!token0Symbol || !token1Symbol) {
-      toast.error("Token definitions not found for position tokens. Addresses: " + 
-        `${positionToModify.token0.address}, ${positionToModify.token1.address}`);
+      toast.error("Token Configuration Error", { icon: <OctagonX className="h-4 w-4 text-red-500" />, description: `Token definitions not found for addresses: ${positionToModify.token0.address}, ${positionToModify.token1.address}` });
       return;
     }
 
@@ -2402,87 +2016,6 @@ export default function PoolDetailPage() {
     setShowDecreaseModal(false);
   };
 
-  // Handle withdraw transaction
-  const handleConfirmWithdraw = () => {
-    if (!positionToBurn || (!withdrawAmount0 && !withdrawAmount1)) {
-      toast.error("Please enter at least one amount to withdraw");
-      return;
-    }
-    // Prevent over-withdraw relative to position balances
-    const max0 = parseFloat(positionToBurn.token0.amount || '0');
-    const max1 = parseFloat(positionToBurn.token1.amount || '0');
-    const in0 = parseFloat(withdrawAmount0 || '0');
-    const in1 = parseFloat(withdrawAmount1 || '0');
-    if ((in0 > max0 + 1e-12) || (in1 > max1 + 1e-12)) {
-      toast.error("Invalid Withdraw Amount", { description: "Amount exceeds position balance." });
-      return;
-    }
-    
-    // For out-of-range positions, ensure at least one amount is greater than 0
-    if (!positionToBurn.isInRange) {
-      const amount0Num = parseFloat(withdrawAmount0 || "0");
-      const amount1Num = parseFloat(withdrawAmount1 || "0");
-      if (amount0Num <= 0 && amount1Num <= 0) {
-        toast.error("Please enter a valid amount to withdraw");
-        return;
-      }
-    }
-
-    // Map position token addresses to correct token symbols from our configuration
-    const getTokenSymbolByAddress = (address: string): TokenSymbol | null => {
-      const normalizedAddress = address.toLowerCase();
-      for (const [symbol, tokenConfig] of Object.entries(TOKEN_DEFINITIONS)) {
-        if (tokenConfig.address.toLowerCase() === normalizedAddress) {
-          return symbol as TokenSymbol;
-        }
-      }
-      return null;
-    };
-    
-    const token0Symbol = getTokenSymbolByAddress(positionToBurn.token0.address);
-    const token1Symbol = getTokenSymbolByAddress(positionToBurn.token1.address);
-    
-    if (!token0Symbol || !token1Symbol) {
-      toast.error("Token definitions not found for position tokens. Addresses: " + 
-        `${positionToBurn.token0.address}, ${positionToBurn.token1.address}`);
-      return;
-    }
-
-    // Compute effective percentage and full-burn intent from current inputs (authoritative)
-    const amt0 = parseFloat(withdrawAmount0 || '0');
-    const amt1 = parseFloat(withdrawAmount1 || '0');
-    const max0Eff = parseFloat(positionToBurn.token0.amount || '0');
-    const max1Eff = parseFloat(positionToBurn.token1.amount || '0');
-    const pct0 = max0Eff > 0 ? amt0 / max0Eff : 0;
-    const pct1 = max1Eff > 0 ? amt1 / max1Eff : 0;
-    const effectivePct = Math.max(pct0, pct1) * 100;
-    const nearFull0 = max0Eff > 0 ? pct0 >= 0.99 : true;
-    const nearFull1 = max1Eff > 0 ? pct1 >= 0.99 : true;
-    const isBurnAllEffective = positionToBurn.isInRange ? (nearFull0 && nearFull1) : (pct0 >= 0.99 || pct1 >= 0.99);
-
-    const withdrawData: DecreasePositionData = {
-      tokenId: positionToBurn.positionId,
-      token0Symbol: token0Symbol,
-      token1Symbol: token1Symbol,
-      decreaseAmount0: withdrawAmount0 || "0",
-      decreaseAmount1: withdrawAmount1 || "0",
-      isFullBurn: isBurnAllEffective,
-      poolId: positionToBurn.poolId,
-      tickLower: positionToBurn.tickLower,
-      tickUpper: positionToBurn.tickUpper,
-      enteredSide: withdrawActiveInputSide === 'amount0' ? 'token0' : withdrawActiveInputSide === 'amount1' ? 'token1' : undefined,
-    };
-
-    // In-range: use percentage flow (SDK), OOR: amounts mode
-    pendingActionRef.current = { type: 'withdraw' };
-    if (positionToBurn.isInRange) {
-      const pctRounded = isBurnAllEffective ? 100 : Math.max(0, Math.min(100, Math.round(effectivePct)));
-      decreaseLiquidity(withdrawData, pctRounded);
-    } else {
-      decreaseLiquidity(withdrawData, 0);
-    }
-    // Modal will close automatically when transaction completes via onLiquidityDecreasedCallback
-  };
 
   // Early return for loading state AFTER all hooks have been called
   if (!poolId || !currentPoolData) return (
@@ -2514,7 +2047,7 @@ export default function PoolDetailPage() {
           {/* Header: Token info container + Stats in dotted container */}
           <div className="mt-3 sm:mt-0">
             {windowWidth < 768 ? (
-              <div className="space-y-3 overflow-x-hidden mb-6">
+              <div className="space-y-3 overflow-x-hidden mb-2">
                 {/* Identification above for mobile */}
                 <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 cursor-pointer"
                      onClick={() => router.push('/liquidity')}
@@ -2558,7 +2091,7 @@ export default function PoolDetailPage() {
                   </div>
                 </div>
                 {/* Dotted container grid 2x2 */}
-                <div className="rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 p-4 mb-4 w-full">
+                <div className="rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 p-4 mb-2 w-full">
                   <div className="grid grid-cols-2 gap-3">
                     {/* Volume */}
                     <div className="rounded-lg bg-muted/30 border border-sidebar-border/60">
@@ -3394,7 +2927,7 @@ export default function PoolDetailPage() {
           </div>
           
           {/* Your Positions Section (Full width below the columns) */}
-          <div className="space-y-3 lg:space-y-4 mt-6 mb-3 lg:mt-6 lg:mb-0"> {/* Mobile: top margin double bottom; desktop unchanged */}
+          <div className="space-y-3 lg:space-y-4 mt-2 mb-3 lg:mt-6 lg:mb-0"> {/* Mobile: top margin double bottom; desktop unchanged */}
             {/* Static title - always visible */}
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-medium">Your Positions</h3>
@@ -3402,7 +2935,7 @@ export default function PoolDetailPage() {
                 <a
                   onClick={(e) => {
                     e.stopPropagation();
-                    setAddLiquidityOpen(true);
+                    setAddLiquidityFormOpen(true);
                   }}
                   className="flex h-9 cursor-pointer items-center justify-center gap-2 rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30"
                   style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
@@ -3442,14 +2975,26 @@ export default function PoolDetailPage() {
                     return (
                                                     <Card
                             key={position.positionId}
-                            className="bg-muted/30 border border-sidebar-border/60 transition-all duration-300 group"
+                            className="bg-muted/30 border border-sidebar-border/60 transition-all duration-300 group relative"
                           >
+                            {/* Loading overlay for optimistic updates */}
+                            {(position as any).isOptimisticallyUpdating && (
+                              <div className="absolute inset-0 bg-muted/20 backdrop-blur-sm rounded-lg flex items-center justify-center z-10">
+                                <Image 
+                                  src="/LogoIconWhite.svg" 
+                                  alt="Updating..." 
+                                  width={24}
+                                  height={24}
+                                  className="animate-pulse opacity-75"
+                                />
+                              </div>
+                            )}
                             <CardContent className="p-3 sm:p-4 group">
                             {/* Grid layout on non-mobile; stacked on mobile */}
                               <div
                                 className="grid sm:items-center"
                                 style={{
-                                  gridTemplateColumns: 'min-content max-content max-content max-content 1fr 5.5rem',
+                                  gridTemplateColumns: 'min-content max-content max-content 1fr 5.5rem',
                                   columnGap: '1.25rem', // slightly increased equal gaps between columns
                                 }}
                               >
@@ -3458,19 +3003,7 @@ export default function PoolDetailPage() {
                                 <TokenStack position={position} currentPoolData={currentPoolData} getToken={getToken} />
                               </div>
 
-                              {/* Column 2: Liquidity - hide amounts on mobile to prevent width growth */}
-                              <div className="flex flex-col min-w-0 items-start truncate pr-2">
-                                <div className="hidden sm:flex flex-col text-xs text-muted-foreground whitespace-nowrap">
-                                  <span className="truncate leading-tight">
-                                    {formatTokenDisplayAmount(position.token0.amount)} {position.token0.symbol}
-                                  </span>
-                                  <span className="truncate leading-tight">
-                                    {formatTokenDisplayAmount(position.token1.amount)} {position.token1.symbol}
-                                  </span>
-                                </div>
-                              </div>
-
-                              {/* Column 3: Position Value - left-bound, size-to-content */}
+                              {/* Column 2: Position Value - left-bound, size-to-content */}
                               <div className="flex items-start pr-2">
                                 <div className="flex flex-col gap-1 items-start">
                                   <div className="text-xs text-muted-foreground">Position Value</div>
@@ -3488,7 +3021,7 @@ export default function PoolDetailPage() {
                                 </div>
                               </div>
 
-                              {/* Column 4: Fees - left-bound, size-to-content */}
+                              {/* Column 3: Fees - left-bound, size-to-content */}
                               <div className="flex items-start pr-2">
                                 <div className="flex flex-col gap-1 items-start">
                                   <div className="flex items-center gap-1">
@@ -3511,17 +3044,17 @@ export default function PoolDetailPage() {
                                       sym1={position.token1.symbol || 'T1'}
                                       price0={getUsdPriceForSymbol(position.token0.symbol)}
                                       price1={getUsdPriceForSymbol(position.token1.symbol)}
-                                      // refreshKey removed; fees now on TTL + explicit invalidation
+                                      batchFeesData={batchFeesData}
                                     />
                                   </div>
                                 </div>
                               </div>
 
-                              {/* Column 5: Flexible spacer to push Withdraw; absorbs surplus width */}
+                              {/* Column 4: Flexible spacer to push Withdraw; absorbs surplus width */}
                               <div />
 
-                              {/* Column 6: Actions - Static Withdraw button */}
-                              <div className="hidden sm:flex items-center justify-end gap-2 w-[5.5rem] flex-none">
+                              {/* Column 5: Actions - Static Withdraw button */}
+                              <div className="flex items-center justify-end gap-2 w-[5.5rem] flex-none">
                                 <a
                                   onClick={(e) => {
                                     e.stopPropagation();
@@ -3547,13 +3080,19 @@ export default function PoolDetailPage() {
                                 <TooltipProvider delayDuration={0}>
                                   <Tooltip>
                                     <TooltipTrigger asChild>
-                                      <span className="font-mono tabular-nums flex items-center gap-1.5 cursor-default">
+                                        <span className="font-mono tabular-nums flex items-center gap-1.5 cursor-default">
                                         <ChevronsLeftRight className="h-3 w-3 text-muted-foreground" aria-hidden />
                                         {(() => {
-                                          const baseTokenForPriceDisplay = determineBaseTokenForPriceDisplay(
+                                          // Use flipped denomination logic (same as InteractiveRangeChart)
+                                          const optimalBase = determineBaseTokenForPriceDisplay(
                                             position.token0.symbol || '',
                                             position.token1.symbol || ''
                                           );
+                                          // When flipped, use the opposite token as base to show ascending prices
+                                          const baseTokenForPriceDisplay = shouldFlipDenomination 
+                                            ? (optimalBase === position.token0.symbol ? position.token1.symbol : position.token0.symbol)
+                                            : optimalBase;
+                                            
                                           const minPrice = convertTickToPrice(
                                             position.tickLower,
                                             currentPoolTick,
@@ -3570,6 +3109,13 @@ export default function PoolDetailPage() {
                                             position.token0.symbol || '',
                                             position.token1.symbol || ''
                                           );
+                                          
+                                          // Ensure ascending display order regardless of base/inversion
+                                          const minNum = parseFloat(minPrice);
+                                          const maxNum = parseFloat(maxPrice);
+                                          if (Number.isFinite(minNum) && Number.isFinite(maxNum) && minNum > maxNum) {
+                                            return `${maxPrice} - ${minPrice}`;
+                                          }
                                           return `${minPrice} - ${maxPrice}`;
                                         })()}
                                       </span>
@@ -3712,7 +3258,7 @@ export default function PoolDetailPage() {
                                                   try {
                                                     tokenId = BigInt(tokenIdStr);
                                                   } catch {
-                                                    toast.error('Invalid tokenId');
+                                                    toast.error('Invalid Token ID', { icon: <OctagonX className="h-4 w-4 text-red-500" />, description: 'The position token ID is invalid.' });
                                                     return;
                                                   }
                                                   const { buildCollectFeesCall } = await import('@/lib/liquidity-utils');
@@ -3730,60 +3276,12 @@ export default function PoolDetailPage() {
                                                   } as any);
                                                 } catch (err: any) {
                                                   console.error('Collect via SDK failed:', err);
-                                                  toast.error('Collect failed', { description: err?.message });
+                                                  toast.error('Collect Failed', { icon: <OctagonX className="h-4 w-4 text-red-500" />, description: err?.message });
                                                 }
                                               })();
                                             }}
                                           >
                                             Claim Fees
-                                          </button>
-                                          <button
-                                            type="button"
-                                            className="px-2 py-1 text-xs rounded text-left transition-colors text-muted-foreground hover:bg-muted/30"
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              setShowPositionMenu(null);
-                                              // New single-tx compound: fetch fees, then call compoundFees (modifyLiquidities)
-                                              (async () => {
-                                                try {
-                                                  const resp = await fetch('/api/liquidity/get-uncollected-fees', {
-                                                    method: 'POST',
-                                                    headers: { 'Content-Type': 'application/json' },
-                                                    body: JSON.stringify({ positionId: position.positionId }),
-                                                  });
-                                                  const json = await resp.json();
-                                                  if (!resp.ok || !json?.success) {
-                                                    throw new Error(json?.error || 'Failed to fetch fees');
-                                                  }
-                                                  if (!position.isInRange) { 
-                                                    toast.error('Cannot Compound Out of Range Position', { icon: <OctagonX className="h-4 w-4 text-red-500" /> });
-                                                    return; 
-                                                  }
-                                                  let raw0: string = json.amount0 || '0';
-                                                  let raw1: string = json.amount1 || '0';
-                                                  // Strictly floor by 1 wei to avoid rounding edge cases
-                                                  try { const b0 = BigInt(raw0); raw0 = (b0 > 0n ? b0 - 1n : 0n).toString(); } catch {}
-                                                  try { const b1 = BigInt(raw1); raw1 = (b1 > 0n ? b1 - 1n : 0n).toString(); } catch {}
-                                                  if (raw0 === '0' && raw1 === '0') { toast.info('No fees to compound'); return; }
-                                                  isCompoundInProgressRef.current = true;
-                                                  await compoundFees({
-                                                    tokenId: position.positionId,
-                                                    token0Symbol: position.token0.symbol as TokenSymbol,
-                                                    token1Symbol: position.token1.symbol as TokenSymbol,
-                                                    poolId: position.poolId,
-                                                    tickLower: position.tickLower,
-                                                    tickUpper: position.tickUpper,
-                                                  }, raw0, raw1);
-                                                  // Success toast will show after on-chain confirmation from the hook
-                                                } catch (err: any) {
-                                                  console.error('Compound (single-tx) failed:', err);
-                                                  toast.error('Compound failed', { description: err?.message });
-                                                  isCompoundInProgressRef.current = false;
-                                                }
-                                              })();
-                                            }}
-                                          >
-                                            Compound Fees
                                           </button>
                                         </div>
                                       </motion.div>
@@ -3809,905 +3307,90 @@ export default function PoolDetailPage() {
         </div>
       </div>
 
-      {/* Withdraw Position Dialog */}
-      <Dialog open={showBurnConfirmDialog} onOpenChange={(open) => {
+      {/* Withdraw Position Modal */}
+      <WithdrawLiquidityModal
+        isOpen={showBurnConfirmDialog}
+        onOpenChange={(open) => {
         // Only allow closing if not currently processing transaction
         if (!isBurningLiquidity && !isDecreasingLiquidity) {
           setShowBurnConfirmDialog(open);
         }
-      }}>
-        <DialogContent className="w-[calc(100%-2rem)] sm:w-full max-w-lg border border-border shadow-lg [&>button]:hidden" style={{ backgroundColor: 'var(--modal-background)' }}>
+        }}
+        position={positionToBurn}
+        feesForWithdraw={feesForWithdraw}
+        onLiquidityWithdrawn={() => {
+          // Handle successful withdrawal
+          setShowBurnConfirmDialog(false);
+          setPositionToBurn(null);
+          pendingActionRef.current = null;
+        }}
+        // Connect to parent's refetching flow
+        decreaseLiquidity={decreaseLiquidity}
+        isWorking={isDecreasingLiquidity}
+      />
+
+      {/* Add Liquidity Modal - for position card submenu */}
+      <AddLiquidityModal
+        isOpen={addLiquidityOpen || showIncreaseModal}
+        onOpenChange={(open) => {
+          if (showIncreaseModal) {
+            setShowIncreaseModal(open);
+          } else {
+            setAddLiquidityOpen(open);
+          }
+        }}
+        selectedPoolId={poolId}
+        sdkMinTick={SDK_MIN_TICK}
+        sdkMaxTick={SDK_MAX_TICK}
+        defaultTickSpacing={getPoolById(poolId)?.tickSpacing || DEFAULT_TICK_SPACING}
+        poolApr={currentPoolData?.apr}
+        positionToModify={showIncreaseModal ? positionToModify : null}
+        feesForIncrease={showIncreaseModal ? feesForIncrease : null}
+        increaseLiquidity={showIncreaseModal ? (data) => {
+          console.log('[DEBUG] Page: Setting pendingActionRef to increase and calling increaseLiquidity');
+          pendingActionRef.current = { type: 'increase' };
+          increaseLiquidity(data);
+        } : undefined}
+        isIncreasingLiquidity={showIncreaseModal ? isIncreasingLiquidity : undefined}
+        onLiquidityAdded={() => {
+          if (showIncreaseModal) {
+            // For increase operations, do nothing here - let the transaction callback handle everything
+            // This prevents premature toasts and modal closure
+            console.log('[DEBUG] Page: Modal onLiquidityAdded called for increase - doing nothing');
+          } else {
+            console.log('[DEBUG] Page: Modal onLiquidityAdded called for new position');
+            setAddLiquidityOpen(false);
+            refreshAfterLiquidityAddedWithSkeleton();
+          }
+        }}
+      />
+
+      {/* Add Liquidity Form Modal - for top button */}
+      <Dialog open={addLiquidityFormOpen} onOpenChange={setAddLiquidityFormOpen}>
+        <DialogContent className="w-[calc(100%-2rem)] sm:w-full max-w-2xl max-h-[90vh] overflow-y-auto" style={{ backgroundColor: 'var(--modal-background)' }}>
           <DialogHeader>
-            <DialogTitle className="sr-only">Withdraw Position</DialogTitle>
+            <DialogTitle>Add Liquidity</DialogTitle>
+            <DialogDescription>
+              Add liquidity to the {currentPoolData?.pair} pool
+            </DialogDescription>
           </DialogHeader>
-          {positionToBurn && (
-            <div className="space-y-4">
-              {/* Current Position - moved out of striped container */}
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">Current Position</span>
-                {!positionToBurn.isInRange && (
-                  <div className="flex items-center justify-center h-5 rounded-md px-2 text-xs leading-none bg-red-500/20 text-red-500">
-                    Out of Range
-                  </div>
-                )}
-              </div>
-              <div className="p-3 border border-dashed rounded-md bg-muted/10 space-y-2">
-                <div className="flex justify-between items-center">
-                  <div className="flex items-center gap-2">
-                    <Image 
-                      src={getTokenIcon(positionToBurn.token0.symbol)} 
-                      alt={positionToBurn.token0.symbol} 
-                      width={20} 
-                      height={20} 
-                      className="rounded-full"
-                    />
-                    <span className="text-sm font-medium">{positionToBurn.token0.symbol}</span>
-                  </div>
-                  <span className="text-sm font-medium">
-                    {formatTokenDisplayAmount(positionToBurn.token0.amount)}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <div className="flex items-center gap-2">
-                    <Image 
-                      src={getTokenIcon(positionToBurn.token1.symbol)} 
-                      alt={positionToBurn.token1.symbol} 
-                      width={20} 
-                      height={20} 
-                      className="rounded-full"
-                    />
-                    <span className="text-sm font-medium">{positionToBurn.token1.symbol}</span>
-                  </div>
-                  <span className="text-sm font-medium">
-                    {formatTokenDisplayAmount(positionToBurn.token1.amount)}
-                  </span>
-                </div>
-              </div>
-
-              {/* Percentage Slider */}
-              <div className="space-y-2">
-                <div className="flex items-center gap-3">
-                  <input
-                    type="range"
-                    min="0"
-                    max="100"
-                    step="1"
-                    value={withdrawPercentage}
-                    onChange={(e) => handleWithdrawPercentageChange(parseInt(e.target.value))}
-                    className="flex-1 h-2 rounded-lg appearance-none cursor-pointer slider focus:outline-none focus:ring-0 focus:ring-offset-0"
-                    style={{
-                      background: withdrawPercentage > 0 
-                        ? `linear-gradient(to right, #f45502 0%, #f45502 ${withdrawPercentage}%, rgb(41 41 41 / 0.3) ${withdrawPercentage}%, rgb(41 41 41 / 0.3) 100%)`
-                        : 'rgb(41 41 41 / 0.3)'
-                    }}
-                  />
-                  <span className="text-sm text-muted-foreground min-w-[3rem] text-right">
-                    {withdrawPercentage}%
-                  </span>
-                </div>
-              </div>
-
-              {/* Withdraw Amounts */}
-              <div className="space-y-3">
-                {positionToBurn.isInRange ? (
-                  <>
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <Label htmlFor="withdraw-amount0" className="text-sm font-medium">
-                          Withdraw
-                        </Label>
-                        <Button 
-                          variant="ghost" 
-                          className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent" 
-                          onClick={() => {
-                            if (withdrawProductiveSide === 'amount1') return;
-                            handleMaxWithdraw('amount0');
-                          }}
-                          disabled={isBurningLiquidity || withdrawProductiveSide === 'amount1'}
-                        >  
-                          Balance: {formatTokenDisplayAmount(positionToBurn.token0.amount)}
-                        </Button>
-                      </div>
-                      <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4">
-                        <div className="flex items-center gap-2">
-                          <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
-                            <Image 
-                              src={getTokenIcon(positionToBurn.token0.symbol)} 
-                              alt={positionToBurn.token0.symbol} 
-                              width={20} 
-                              height={20} 
-                              className="rounded-full"
-                            />
-                            <span className="text-sm font-medium">{positionToBurn.token0.symbol}</span>
-                          </div>
-                          <div className="flex-1">
-                            <Input
-                              id="withdraw-amount0"
-                              placeholder="0.0"
-                              value={withdrawAmount0}
-                              autoComplete="off"
-                              autoCorrect="off"
-                              spellCheck={false}
-                              inputMode="decimal"
-                              enterKeyHint="done"
-                              onChange={(e) => {
-                                const newValue = sanitizeDecimalInput(e.target.value);
-                                handleWithdrawAmountChange(newValue, 'amount0');
-                                setWithdrawActiveInputSide('amount0');
-                                if (newValue && parseFloat(newValue) > 0) {
-                                  calculateWithdrawAmount(newValue, 'amount0');
-                                } else {
-                                  setWithdrawAmount1("");
-                                  setIsFullWithdraw(false);
-                                }
-                              }}
-                              disabled={(withdrawProductiveSide === 'amount1') || isBurningLiquidity}
-                              className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
-                            />
-                            {positionToBurn && feesForWithdraw?.amount0 && (() => {
-                              try {
-                                const d0 = TOKEN_DEFINITIONS[positionToBurn.token0.symbol as TokenSymbol]?.decimals ?? 18;
-                                const displayDecimals0 = TOKEN_DEFINITIONS[positionToBurn.token0.symbol as TokenSymbol]?.displayDecimals ?? 4;
-                                const n0 = parseFloat(formatUnits(BigInt(feesForWithdraw.amount0), d0));
-                                if (!Number.isFinite(n0) || n0 <= 0) return null;
-                                const s0 = n0 > 0 && n0 < 0.001 ? '< 0.001' : n0.toFixed(displayDecimals0);
-                                return (
-                                  <TooltipProvider delayDuration={0}>
-                                    <Tooltip>
-                                      <TooltipTrigger asChild>
-                                        <div className="text-right text-xs text-muted-foreground">{`+ ${s0}`}</div>
-                                      </TooltipTrigger>
-                                      <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
-                                        Fees are claimed automatically
-                                      </TooltipContent>
-                                    </Tooltip>
-                                  </TooltipProvider>
-                                );
-                              } catch {
-                                return null;
-                              }
-                            })()}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex justify-center items-center my-2">
-                      <div className="flex items-center justify-center h-8 w-8 rounded-full bg-muted/20">
-                        <PlusIcon className="h-4 w-4 text-muted-foreground" />
-                      </div>
-                    </div>
-
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <Label htmlFor="withdraw-amount1" className="text-sm font-medium">
-                          Withdraw
-                        </Label>
-                        <Button 
-                          variant="ghost" 
-                          className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent" 
-                          onClick={() => {
-                            if (withdrawProductiveSide === 'amount0') return;
-                            handleMaxWithdraw('amount1');
-                          }}
-                          disabled={isBurningLiquidity || withdrawProductiveSide === 'amount0'}
-                        >  
-                          Balance: {formatTokenDisplayAmount(positionToBurn.token1.amount)}
-                        </Button>
-                      </div>
-                      <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4">
-                        <div className="flex items-center gap-2">
-                          <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
-                            <Image 
-                              src={getTokenIcon(positionToBurn.token1.symbol)} 
-                              alt={positionToBurn.token1.symbol} 
-                              width={20} 
-                              height={20} 
-                              className="rounded-full"
-                            />
-                            <span className="text-sm font-medium">{positionToBurn.token1.symbol}</span>
-                          </div>
-                          <div className="flex-1">
-                            <Input
-                              id="withdraw-amount1"
-                              placeholder="0.0"
-                              value={withdrawAmount1}
-                              autoComplete="off"
-                              autoCorrect="off"
-                              spellCheck={false}
-                              inputMode="decimal"
-                              enterKeyHint="done"
-                              onChange={(e) => {
-                                const newValue = sanitizeDecimalInput(e.target.value);
-                                handleWithdrawAmountChange(newValue, 'amount1');
-                                setWithdrawActiveInputSide('amount1');
-                                if (newValue && parseFloat(newValue) > 0) {
-                                  calculateWithdrawAmount(newValue, 'amount1');
-                                } else {
-                                  setWithdrawAmount0("");
-                                  setIsFullWithdraw(false);
-                                }
-                              }}
-                              disabled={(withdrawProductiveSide === 'amount0') || isBurningLiquidity}
-                              className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
-                            />
-                            {positionToBurn && feesForWithdraw?.amount1 && (() => {
-                              try {
-                                const d1 = TOKEN_DEFINITIONS[positionToBurn.token1.symbol as TokenSymbol]?.decimals ?? 18;
-                                const displayDecimals1 = TOKEN_DEFINITIONS[positionToBurn.token1.symbol as TokenSymbol]?.displayDecimals ?? 4;
-                                const n1 = parseFloat(formatUnits(BigInt(feesForWithdraw.amount1), d1));
-                                if (!Number.isFinite(n1) || n1 <= 0) return null;
-                                const s1 = n1 > 0 && n1 < 0.001 ? '< 0.001' : n1.toFixed(displayDecimals1);
-                                return (
-                                  <TooltipProvider delayDuration={0}>
-                                    <Tooltip>
-                                      <TooltipTrigger asChild>
-                                        <div className="text-right text-xs text-muted-foreground">{`+ ${s1}`}</div>
-                                      </TooltipTrigger>
-                                      <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
-                                        Fees are claimed automatically
-                                      </TooltipContent>
-                                    </Tooltip>
-                                  </TooltipProvider>
-                                );
-                              } catch {
-                                return null;
-                              }
-                            })()}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    {withdrawProductiveSide === 'amount0' ? (
-                      <div>
-                        <div className="flex items-center justify-between mb-2">
-                          <Label htmlFor="withdraw-amount0" className="text-sm font-medium">
-                            Withdraw
-                          </Label>
-                          <Button 
-                            variant="ghost" 
-                            className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent" 
-                            onClick={() => handleMaxWithdraw('amount0')}
-                            disabled={isBurningLiquidity}
-                          >  
-                            Balance: {formatTokenDisplayAmount(positionToBurn.token0.amount)}
-                          </Button>
-                        </div>
-                        <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4">
-                          <div className="flex items-center gap-2">
-                            <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
-                              <Image 
-                                src={getTokenIcon(positionToBurn.token0.symbol)} 
-                                alt={positionToBurn.token0.symbol} 
-                                width={20} 
-                                height={20} 
-                                className="rounded-full"
-                              />
-                              <span className="text-sm font-medium">{positionToBurn.token0.symbol}</span>
-                            </div>
-                            <div className="flex-1">
-                              <Input
-                                id="withdraw-amount0"
-                                placeholder="0.0"
-                                value={withdrawAmount0}
-                                autoComplete="off"
-                                autoCorrect="off"
-                                spellCheck={false}
-                                inputMode="decimal"
-                                enterKeyHint="done"
-                                onChange={(e) => {
-                                  const newValue = sanitizeDecimalInput(e.target.value);
-                                  handleWithdrawAmountChange(newValue, 'amount0');
-                                  setWithdrawActiveInputSide('amount0');
-                                  if (newValue && parseFloat(newValue) > 0) {
-                                    calculateWithdrawAmount(newValue, 'amount0');
-                                  } else {
-                                    setIsFullWithdraw(false);
-                                  }
-                                }}
-                                disabled={isBurningLiquidity}
-                                className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
-                              />
-                              {positionToBurn && feesForWithdraw?.amount0 && (() => {
-                                try {
-                                  const d0 = TOKEN_DEFINITIONS[positionToBurn.token0.symbol as TokenSymbol]?.decimals ?? 18;
-                                  const displayDecimals0 = TOKEN_DEFINITIONS[positionToBurn.token0.symbol as TokenSymbol]?.displayDecimals ?? 4;
-                                  const n0 = parseFloat(formatUnits(BigInt(feesForWithdraw.amount0), d0));
-                                  if (!Number.isFinite(n0) || n0 <= 0) return null;
-                                  const s0 = n0 > 0 && n0 < 0.001 ? '< 0.001' : n0.toFixed(displayDecimals0);
-                                  return (
-                                    <TooltipProvider delayDuration={0}>
-                                      <Tooltip>
-                                        <TooltipTrigger asChild>
-                                          <div className="text-right text-xs text-muted-foreground">{`+ ${s0}`}</div>
-                                        </TooltipTrigger>
-                                        <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
-                                          Fees are claimed automatically
-                                        </TooltipContent>
-                                      </Tooltip>
-                                    </TooltipProvider>
-                                  );
-                                } catch {
-                                  return null;
-                                }
-                              })()}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    ) : withdrawProductiveSide === 'amount1' ? (
-                      <div>
-                        <div className="flex items-center justify-between mb-2">
-                          <Label htmlFor="withdraw-amount1" className="text-sm font-medium">
-                            Withdraw
-                          </Label>
-                          <Button 
-                            variant="ghost" 
-                            className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent" 
-                            onClick={() => handleMaxWithdraw('amount1')}
-                            disabled={isBurningLiquidity}
-                          >  
-                            Balance: {formatTokenDisplayAmount(positionToBurn.token1.amount)}
-                          </Button>
-                        </div>
-                        <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4">
-                          <div className="flex items-center gap-2">
-                            <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
-                              <Image 
-                                src={getTokenIcon(positionToBurn.token1.symbol)} 
-                                alt={positionToBurn.token1.symbol} 
-                                width={20} 
-                                height={20} 
-                                className="rounded-full"
-                              />
-                              <span className="text-sm font-medium">{positionToBurn.token1.symbol}</span>
-                            </div>
-                            <div className="flex-1">
-                              <Input
-                                id="withdraw-amount1"
-                                placeholder="0.0"
-                                value={withdrawAmount1}
-                                autoComplete="off"
-                                autoCorrect="off"
-                                spellCheck={false}
-                                inputMode="decimal"
-                                enterKeyHint="done"
-                                onChange={(e) => {
-                                  const newValue = sanitizeDecimalInput(e.target.value);
-                                  handleWithdrawAmountChange(newValue, 'amount1');
-                                  setWithdrawActiveInputSide('amount1');
-                                  if (newValue && parseFloat(newValue) > 0) {
-                                    calculateWithdrawAmount(newValue, 'amount1');
-                                  } else {
-                                    setIsFullWithdraw(false);
-                                  }
-                                }}
-                                disabled={isBurningLiquidity}
-                                className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
-                              />
-                              {positionToBurn && feesForWithdraw?.amount1 && (() => {
-                                try {
-                                  const d1 = TOKEN_DEFINITIONS[positionToBurn.token1.symbol as TokenSymbol]?.decimals ?? 18;
-                                  const displayDecimals1 = TOKEN_DEFINITIONS[positionToBurn.token1.symbol as TokenSymbol]?.displayDecimals ?? 4;
-                                  const n1 = parseFloat(formatUnits(BigInt(feesForWithdraw.amount1), d1));
-                                  if (!Number.isFinite(n1) || n1 <= 0) return null;
-                                  const s1 = n1 > 0 && n1 < 0.001 ? '< 0.001' : n1.toFixed(displayDecimals1);
-                                  return (
-                                    <TooltipProvider delayDuration={0}>
-                                      <Tooltip>
-                                        <TooltipTrigger asChild>
-                                          <div className="text-right text-xs text-muted-foreground">{`+ ${s1}`}</div>
-                                        </TooltipTrigger>
-                                        <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
-                                          Fees are claimed automatically
-                                        </TooltipContent>
-                                      </Tooltip>
-                                    </TooltipProvider>
-                                  );
-                                } catch {
-                                  return null;
-                                }
-                              })()}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    ) : (
-                      <>
-                        {/* Fallback: if unknown productive side, show both */}
-                        <div>
-                          <div className="flex items-center justify-between mb-2">
-                            <Label htmlFor="withdraw-amount0" className="text-sm font-medium">
-                              Withdraw
-                            </Label>
-                            <Button 
-                              variant="ghost" 
-                              className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent" 
-                              onClick={() => handleMaxWithdraw('amount0')}
-                              disabled={isBurningLiquidity}
-                            >  
-                              Balance: {formatTokenDisplayAmount(positionToBurn.token0.amount)}
-                            </Button>
-                          </div>
-                          <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4">
-                            <div className="flex items-center gap-2">
-                              <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
-                                <Image 
-                                  src={getTokenIcon(positionToBurn.token0.symbol)} 
-                                  alt={positionToBurn.token0.symbol} 
-                                  width={20} 
-                                  height={20} 
-                                  className="rounded-full"
-                                />
-                                <span className="text-sm font-medium">{positionToBurn.token0.symbol}</span>
-                              </div>
-                              <div className="flex-1">
-                                <Input
-                                  id="withdraw-amount0"
-                                  placeholder="0.0"
-                                  value={withdrawAmount0}
-                                  autoComplete="off"
-                                  autoCorrect="off"
-                                  spellCheck={false}
-                                  inputMode="decimal"
-                                  enterKeyHint="done"
-                                  onChange={(e) => {
-                                    const newValue = sanitizeDecimalInput(e.target.value);
-                                    handleWithdrawAmountChange(newValue, 'amount0');
-                                    setWithdrawActiveInputSide('amount0');
-                                    if (newValue && parseFloat(newValue) > 0) {
-                                      calculateWithdrawAmount(newValue, 'amount0');
-                                    } else {
-                                      setIsFullWithdraw(false);
-                                    }
-                                  }}
-                                  disabled={isBurningLiquidity}
-                                  className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
-                                />
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                        <div>
-                          <div className="flex items-center justify-between mb-2">
-                            <Label htmlFor="withdraw-amount1" className="text-sm font-medium">
-                              Withdraw
-                            </Label>
-                            <Button 
-                              variant="ghost" 
-                              className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent" 
-                              onClick={() => handleMaxWithdraw('amount1')}
-                              disabled={isBurningLiquidity}
-                            >  
-                              Balance: {formatTokenDisplayAmount(positionToBurn.token1.amount)}
-                            </Button>
-                          </div>
-                          <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4">
-                            <div className="flex items-center gap-2">
-                              <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
-                                <Image 
-                                  src={getTokenIcon(positionToBurn.token1.symbol)} 
-                                  alt={positionToBurn.token1.symbol} 
-                                  width={20} 
-                                  height={20} 
-                                  className="rounded-full"
-                                />
-                                <span className="text-sm font-medium">{positionToBurn.token1.symbol}</span>
-                              </div>
-                              <div className="flex-1">
-                                <Input
-                                  id="withdraw-amount1"
-                                  placeholder="0.0"
-                                  value={withdrawAmount1}
-                                  autoComplete="off"
-                                  autoCorrect="off"
-                                  spellCheck={false}
-                                  inputMode="decimal"
-                                  enterKeyHint="done"
-                                  onChange={(e) => {
-                                    const newValue = sanitizeDecimalInput(e.target.value);
-                                    handleWithdrawAmountChange(newValue, 'amount1');
-                                    setWithdrawActiveInputSide('amount1');
-                                    if (newValue && parseFloat(newValue) > 0) {
-                                      calculateWithdrawAmount(newValue, 'amount1');
-                                    } else {
-                                      setIsFullWithdraw(false);
-                                    }
-                                  }}
-                                  disabled={isBurningLiquidity}
-                                  className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
-                                />
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      </>
-                    )}
-                  </>
-                )}
-              </div>
-
-            </div>
-          )}
-          <DialogFooter className="grid grid-cols-2 gap-3">
-            <Button 
-              variant="outline"
-              className="relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 text-white/75 disabled:opacity-50"
-              onClick={() => {
-                setShowBurnConfirmDialog(false);
-              }}
-              disabled={isBurningLiquidity || isDecreasingLiquidity}
-              style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
-            >
-              Cancel
-            </Button>
-            <Button 
-              className="text-sidebar-primary border border-sidebar-primary bg-[#3d271b] hover:bg-[#3d271b]/90"
-              onClick={handleConfirmWithdraw}
-              disabled={
-                isBurningLiquidity || isDecreasingLiquidity ||
-                // disallow over-withdraw
-                (parseFloat(withdrawAmount0 || '0') > parseFloat(positionToBurn?.token0.amount || '0')) ||
-                (parseFloat(withdrawAmount1 || '0') > parseFloat(positionToBurn?.token1.amount || '0')) ||
-                (positionToBurn?.isInRange ? 
-                  (!withdrawAmount0 || !withdrawAmount1 || parseFloat(withdrawAmount0) <= 0 || parseFloat(withdrawAmount1) <= 0) :
-                  ((!withdrawAmount0 || parseFloat(withdrawAmount0) <= 0) && (!withdrawAmount1 || parseFloat(withdrawAmount1) <= 0))
-                )
-              }
-            >
-              <span className={(isBurningLiquidity || isDecreasingLiquidity) ? "animate-pulse" : ""}>
-                {(() => {
-                  // Show Withdraw All only if both sides are >= 99% of position amounts (in-range)
-                  if (positionToBurn?.isInRange) {
-                    const max0 = parseFloat(positionToBurn.token0.amount || '0');
-                    const max1 = parseFloat(positionToBurn.token1.amount || '0');
-                    const in0 = parseFloat(withdrawAmount0 || '0');
-                    const in1 = parseFloat(withdrawAmount1 || '0');
-                    const near0 = max0 > 0 ? in0 >= max0 * 0.99 : in0 === 0;
-                    const near1 = max1 > 0 ? in1 >= max1 * 0.99 : in1 === 0;
-                    return (near0 && near1) ? 'Withdraw All' : 'Withdraw';
-                  }
-                  // Out of range: only when the single productive side is near 100%
-                  return 'Withdraw';
-                })()}
-              </span>
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Increase Position Modal */}
-      <Dialog open={showIncreaseModal} onOpenChange={setShowIncreaseModal}>
-        <DialogContent className="w-[calc(100%-2rem)] sm:w-full max-w-lg border border-border shadow-lg [&>button]:hidden" style={{ backgroundColor: 'var(--modal-background)' }}>
-          <DialogHeader>
-            <DialogTitle className="sr-only">Add Liquidity</DialogTitle>
-          </DialogHeader>
-          {positionToModify && (
-            <div className="space-y-4">
-              {/* Current Position - moved out of striped container */}
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">Current Position</span>
-                {!positionToModify.isInRange && (
-                  <div className="flex items-center justify-center h-5 rounded-md px-2 text-xs leading-none bg-red-500/20 text-red-500">
-                    Out of Range
-                  </div>
-                )}
-              </div>
-              <div className="p-3 border border-dashed rounded-md bg-muted/10 space-y-2">
-                <div className="flex justify-between items-center">
-                  <div className="flex items-center gap-2">
-                    <Image 
-                      src={getTokenIcon(positionToModify.token0.symbol)} 
-                      alt={positionToModify.token0.symbol} 
-                      width={20} 
-                      height={20} 
-                      className="rounded-full"
-                    />
-                    <span className="text-sm font-medium">{positionToModify.token0.symbol}</span>
-                  </div>
-                  <span className="text-sm font-medium">
-                    {formatTokenDisplayAmount(positionToModify.token0.amount)}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <div className="flex items-center gap-2">
-                    <Image 
-                      src={getTokenIcon(positionToModify.token1.symbol)} 
-                      alt={positionToModify.token1.symbol} 
-                      width={20} 
-                      height={20} 
-                      className="rounded-full"
-                    />
-                    <span className="text-sm font-medium">{positionToModify.token1.symbol}</span>
-                  </div>
-                  <span className="text-sm font-medium">
-                    {formatTokenDisplayAmount(positionToModify.token1.amount)}
-                  </span>
-                </div>
-              </div>
-
-              {/* Percentage Slider */}
-              <div className="space-y-2">
-                <div className="flex items-center gap-3">
-                  <input
-                    type="range"
-                    min="0"
-                    max="100"
-                    step="1"
-                    value={increasePercentage}
-                    onChange={(e) => handleIncreasePercentageChange(parseInt(e.target.value))}
-                    className="flex-1 h-2 rounded-lg appearance-none cursor-pointer slider focus:outline-none focus:ring-0 focus:ring-offset-0"
-                    style={{
-                      background: increasePercentage > 0 
-                        ? `linear-gradient(to right, #f45502 0%, #f45502 ${increasePercentage}%, rgb(41 41 41 / 0.3) ${increasePercentage}%, rgb(41 41 41 / 0.3) 100%)`
-                        : 'rgb(41 41 41 / 0.3)'
-                    }}
-                  />
-                  <span className="text-sm text-muted-foreground min-w-[3rem] text-right">
-                    {increasePercentage}%
-                  </span>
-                </div>
-              </div>
-
-              {/* Additional Amounts */}
-              <div className="space-y-3">
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <Label htmlFor="increase-amount0" className="text-sm font-medium">
-                      Add
-                    </Label>
-                    <Button 
-                      variant="ghost" 
-                      className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent" 
-                      onClick={() => {
-                        if (positionToModify && !positionToModify.isInRange && increaseActiveInputSide === 'amount1') return;
-                        handleUseFullBalance(modalToken0BalanceData?.formatted || "0", token0Symbol, true);
-                      }}
-                      disabled={isIncreasingLiquidity || isIncreaseCalculating}
-                    >  
-                      Balance: {displayModalToken0Balance} {positionToModify.token0.symbol}
-                    </Button>
-                  </div>
-                  <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4">
-                    <div className="flex items-center gap-2">
-                      <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
-                        <Image 
-                          src={getTokenIcon(positionToModify.token0.symbol)} 
-                          alt={positionToModify.token0.symbol} 
-                          width={20} 
-                          height={20} 
-                          className="rounded-full"
-                        />
-                        <span className="text-sm font-medium">{positionToModify.token0.symbol}</span>
-                      </div>
-                      <div className="flex-1">
-                        <Input
-                          id="increase-amount0"
-                          placeholder="0.0"
-                          value={increaseAmount0}
-                          autoComplete="off"
-                          autoCorrect="off"
-                          spellCheck={false}
-                          inputMode="decimal"
-                          enterKeyHint="done"
-                          onChange={(e) => {
-                            const newValue = sanitizeDecimalInput(e.target.value);
-                            handleIncreaseAmountChange(newValue, 'amount0');
-                            if (newValue && parseFloat(newValue) > 0) {
-                              calculateIncreaseAmount(newValue, 'amount0');
-                            } else {
-                              setIncreaseAmount1("");
-                            }
-                          }}
-                          disabled={(positionToModify && !positionToModify.isInRange && increaseActiveInputSide === 'amount1') || (isIncreaseCalculating && increaseActiveInputSide === 'amount1')}
-                          className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
-                        />
-                        {/* Uncollected fee subtitle for token0 (Increase) */}
-                        {positionToModify && feesForIncrease?.amount0 && (() => {
-                          try {
-                            const d0 = TOKEN_DEFINITIONS[positionToModify.token0.symbol as TokenSymbol]?.decimals ?? 18;
-                            const displayDecimals0 = TOKEN_DEFINITIONS[positionToModify.token0.symbol as TokenSymbol]?.displayDecimals ?? 4;
-                            const n0 = parseFloat(formatUnits(BigInt(feesForIncrease.amount0), d0));
-                            if (!Number.isFinite(n0) || n0 <= 0) return null;
-                            const s0 = n0 > 0 && n0 < 0.001 ? '< 0.001' : n0.toFixed(displayDecimals0);
-                            return (
-                              <TooltipProvider delayDuration={0}>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <div className="text-right text-xs text-muted-foreground">{`+ ${s0}`}</div>
-                                  </TooltipTrigger>
-                                  <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
-                                    Fees are compounded automatically
-                                  </TooltipContent>
-                                </Tooltip>
-                              </TooltipProvider>
-                            );
-                          } catch {
-                            return null;
-                          }
-                        })()}
-                      </div>
-                    </div>
-                  </div>
-                  {/* removed calculating hint for cleaner UX */}
-                </div>
-
-                {/* Plus Icon */}
-                <div className="flex justify-center items-center my-2">
-                  <div className="flex items-center justify-center h-8 w-8 rounded-full bg-muted/20">
-                    <PlusIcon className="h-4 w-4 text-muted-foreground" />
-                  </div>
-                </div>
-
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <Label htmlFor="increase-amount1" className="text-sm font-medium">
-                      Add
-                    </Label>
-                    <Button 
-                      variant="ghost" 
-                      className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent" 
-                      onClick={() => {
-                        if (positionToModify && !positionToModify.isInRange && increaseActiveInputSide === 'amount0') return;
-                        handleUseFullBalance(modalToken1BalanceData?.formatted || "0", token1Symbol, false);
-                      }}
-                      disabled={isIncreasingLiquidity || isIncreaseCalculating}
-                    >  
-                      Balance: {displayModalToken1Balance} {positionToModify.token1.symbol}
-                    </Button>
-                  </div>
-                  <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4">
-                    <div className="flex items-center gap-2">
-                      <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
-                        <Image 
-                          src={getTokenIcon(positionToModify.token1.symbol)} 
-                          alt={positionToModify.token1.symbol} 
-                          width={20} 
-                          height={20} 
-                          className="rounded-full"
-                        />
-                        <span className="text-sm font-medium">{positionToModify.token1.symbol}</span>
-                      </div>
-                      <div className="flex-1">
-                        <Input
-                          id="increase-amount1"
-                          placeholder="0.0"
-                          value={increaseAmount1}
-                          autoComplete="off"
-                          autoCorrect="off"
-                          spellCheck={false}
-                          inputMode="decimal"
-                          enterKeyHint="done"
-                          onChange={(e) => {
-                            const newValue = sanitizeDecimalInput(e.target.value);
-                            handleIncreaseAmountChange(newValue, 'amount1');
-                            if (newValue && parseFloat(newValue) > 0) {
-                              calculateIncreaseAmount(newValue, 'amount1');
-                            } else {
-                              setIncreaseAmount0("");
-                            }
-                          }}
-                          disabled={(positionToModify && !positionToModify.isInRange && increaseActiveInputSide === 'amount0') || (isIncreaseCalculating && increaseActiveInputSide === 'amount0')}
-                          className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
-                        />
-                        {/* Uncollected fee subtitle for token1 (Increase) */}
-                        {positionToModify && feesForIncrease?.amount1 && (() => {
-                          try {
-                            const d1 = TOKEN_DEFINITIONS[positionToModify.token1.symbol as TokenSymbol]?.decimals ?? 18;
-                            const displayDecimals1 = TOKEN_DEFINITIONS[positionToModify.token1.symbol as TokenSymbol]?.displayDecimals ?? 4;
-                            const n1 = parseFloat(formatUnits(BigInt(feesForIncrease.amount1), d1));
-                            if (!Number.isFinite(n1) || n1 <= 0) return null;
-                            const s1 = n1 > 0 && n1 < 0.001 ? '< 0.001' : n1.toFixed(displayDecimals1);
-                            return (
-                              <TooltipProvider delayDuration={0}>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <div className="text-right text-xs text-muted-foreground">{`+ ${s1}`}</div>
-                                  </TooltipTrigger>
-                                  <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
-                                    Fees are compounded automatically
-                                  </TooltipContent>
-                                </Tooltip>
-                              </TooltipProvider>
-                            );
-                          } catch {
-                            return null;
-                          }
-                        })()}
-                      </div>
-                    </div>
-                  </div>
-                  {/* removed calculating hint for cleaner UX */}
-                </div>
-              </div>
-            </div>
-          )}
-          <DialogFooter className="grid grid-cols-2 gap-3">
-            <Button 
-              variant="outline"
-              className="relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 text-white/75 disabled:opacity-50"
-              onClick={() => {
-                setShowIncreaseModal(false);
-                setIsIncreaseAmountValid(true);
-              }}
-              disabled={isIncreasingLiquidity}
-              style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
-            >
-              Cancel
-            </Button>
-            <Button 
-              className={isIncreasingLiquidity || isIncreaseCalculating
-                ? "relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 !opacity-100 cursor-default text-white/75"
-                : "text-sidebar-primary border border-sidebar-primary bg-[#3d271b] hover:bg-[#3d271b]/90"
-              }
-              onClick={handleConfirmIncrease}
-              disabled={
-                isIncreasingLiquidity ||
-                isIncreaseCalculating ||
-                !isIncreaseAmountValid ||
-                (positionToModify?.isInRange ? 
-                  // For in-range positions, require both amounts
-                  (!increaseAmount0 || !increaseAmount1 || parseFloat(increaseAmount0) <= 0 || parseFloat(increaseAmount1) <= 0) :
-                  // For out-of-range positions, require at least one amount
-                  ((!increaseAmount0 || parseFloat(increaseAmount0) <= 0) && (!increaseAmount1 || parseFloat(increaseAmount1) <= 0))
-                )
-              }
-              style={(isIncreasingLiquidity || isIncreaseCalculating) 
-                ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } 
-                : undefined
-              }
-            >
-              {isIncreasingLiquidity ? (
-                <>
-                  <RefreshCwIcon className="mr-2 h-4 w-4 animate-spin" />
-                  <span className="animate-pulse">
-                    Adding...
-                  </span>
-                </>
-              ) : (
-                "Add Liquidity"
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Add Liquidity Modal (cloned structure using AddLiquidityForm) */}
-      <AddDialog open={addLiquidityOpen} onOpenChange={setAddLiquidityOpen}>
-        <AddDialogContent className="w-[calc(100%-2rem)] sm:w-full max-w-lg border border-sidebar-border bg-[var(--modal-background)] p-0 overflow-hidden">
-          {/* Top bar with title + X aligned inside the bar */}
-          <div className="flex items-center justify-between px-4 py-2 border-b border-sidebar-border/60">
-            <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">ADD LIQUIDITY</h2>
-            <button
-              aria-label="Close"
-              className="h-7 w-7 inline-flex items-center justify-center rounded-md hover:bg-muted/30"
-              onClick={() => setAddLiquidityOpen(false)}
-            >
-              <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="18" y1="6" x2="6" y2="18"></line>
-                <line x1="6" y1="6" x2="18" y2="18"></line>
-              </svg>
-            </button>
-          </div>
-          <div className="p-3 sm:p-4">
+          <div className="py-4">
             <AddLiquidityFormMemo
               selectedPoolId={poolId}
               poolApr={currentPoolData?.apr}
               onLiquidityAdded={(token0Symbol?: string, token1Symbol?: string) => {
-                setAddLiquidityOpen(false);
-                refreshAfterLiquidityAddedWithSkeleton(token0Symbol, token1Symbol);
+                console.log('[DEBUG] Page: Form onLiquidityAdded called for new position');
+                setAddLiquidityFormOpen(false);
+                refreshAfterLiquidityAddedWithSkeleton();
               }}
               sdkMinTick={SDK_MIN_TICK}
               sdkMaxTick={SDK_MAX_TICK}
               defaultTickSpacing={getPoolById(poolId)?.tickSpacing || DEFAULT_TICK_SPACING}
-              activeTab={'deposit'}
+              activeTab="deposit"
             />
           </div>
-        </AddDialogContent>
-      </AddDialog>
+        </DialogContent>
+      </Dialog>
 
       {/* Decrease Position Modal */}
       <Dialog open={showDecreaseModal} onOpenChange={setShowDecreaseModal}>

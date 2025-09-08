@@ -38,12 +38,18 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
   // State to track if the content is stable and rendered
   const [isContentStable, setIsContentStable] = useState(false);
 
+  // Loading state for chart data fetching
+  const [isChartDataLoading, setIsChartDataLoading] = useState(false);
+
   // Debug state for artificial loading delay
   const [showLoadingSkeleton, setShowLoadingSkeleton] = useState(false);
 
   // Hover state for tooltip
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [portalEl, setPortalEl] = useState<HTMLElement | null>(null);
+
+  // Combined loading state - show skeleton when either parent isLoading or internal isChartDataLoading
+  const isActuallyLoading = isLoading || isChartDataLoading;
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -74,7 +80,10 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
         const cfg = getPoolByTokens(poolInfo.token0Symbol, poolInfo.token1Symbol);
         const subgraphId = (cfg as any)?.subgraphId || (cfg as any)?.id;
         if (!subgraphId) return;
+        
+        setIsChartDataLoading(true);
         setShowLoadingSkeleton(true);
+        
         const resp = await fetch(`/api/liquidity/get-historical-dynamic-fees?poolId=${encodeURIComponent(String(subgraphId))}&days=30`);
         if (!resp.ok) return;
         const events = await resp.json();
@@ -109,17 +118,17 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
         setAutoData(out);
       } catch {}
       finally {
+        setIsChartDataLoading(false);
         setShowLoadingSkeleton(false);
       }
     })();
   }, [poolInfo?.token0Symbol, poolInfo?.token1Symbol, isParentDataUsable]);
 
-
   // No diffing. Keep this preview dead simple and render as soon as we have data
 
   // Effect to signal when content is stable
   useEffect(() => {
-    if (!isLoading && data && data.length > 0) {
+    if (!isActuallyLoading && data && data.length > 0) {
       // Allow a small delay for any internal animations to settle
       const timer = setTimeout(() => {
         setIsContentStable(true);
@@ -134,15 +143,15 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
         onContentStableChange?.(false);
       }
     }
-  }, [isLoading, data, onContentStableChange, isContentStable]);
-
+  }, [isActuallyLoading, data, onContentStableChange, isContentStable]);
+  
   // Debug/UX effect for loading skeleton visibility
   useEffect(() => {
     if (alwaysShowSkeleton) {
       setShowLoadingSkeleton(true);
       return;
     }
-    if (isLoading) {
+    if (isActuallyLoading) {
       setShowLoadingSkeleton(true);
       const timer = setTimeout(() => {
         setShowLoadingSkeleton(false);
@@ -152,7 +161,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
       // Immediately hide skeleton when not loading
       setShowLoadingSkeleton(false);
     }
-  }, [isLoading, alwaysShowSkeleton]);
+  }, [isActuallyLoading, alwaysShowSkeleton]);
 
   // Handle click to navigate to pool page
   const handleClick = () => {
@@ -174,7 +183,13 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
     if (targetId) {
       const href = `/liquidity/${targetId}`;
       if (typeof window !== 'undefined') {
-        window.open(href, '_blank', 'noopener,noreferrer');
+        // On mobile, navigate in same page; on desktop, open new tab
+        const isMobile = window.innerWidth < 768;
+        if (isMobile) {
+          router.push(href);
+        } else {
+          window.open(href, '_blank', 'noopener,noreferrer');
+        }
       } else {
         router.push(href);
       }
@@ -310,7 +325,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
   }
 
   // If no data and not loading, show the empty state. If loading, fall through to the chart card (it shows a skeleton inside).
-  if (!hasData && !isLoading) {
+  if (!hasData && !isActuallyLoading) {
     return (
       <div
         className="w-full rounded-lg bg-muted/30 border border-sidebar-border/60 transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow"
@@ -487,7 +502,9 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
                     strokeWidth={1.5}
                     dot={false}
                     activeDot={false}
-                    isAnimationActive={false}
+                    isAnimationActive={true}
+                    animationDuration={800}
+                    animationEasing="ease-out"
                   />
                   <Line
                     yAxisId="left"
@@ -498,7 +515,9 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
                     strokeDasharray="3 3"
                     dot={false}
                     activeDot={false}
-                    isAnimationActive={false}
+                    isAnimationActive={true}
+                    animationDuration={800}
+                    animationEasing="ease-out"
                   />
                   {/* Base line: orange before hover, grey during hover */}
                   <Line
@@ -510,7 +529,9 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
                     strokeOpacity={hoveredIndex === null ? 1 : 0.6}
                     dot={false}
                     activeDot={false}
-                    isAnimationActive={false}
+                    isAnimationActive={true}
+                    animationDuration={800}
+                    animationEasing="ease-out"
                   />
 
                   {/* Highlight only the hovered horizontal segment using masked data */}

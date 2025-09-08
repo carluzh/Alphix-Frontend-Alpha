@@ -18,6 +18,7 @@ import {
   KeySquareIcon,
   GaugeIcon,
   CoinsIcon,
+  BookTextIcon,
 } from "lucide-react"
 import { ReactSVG } from "react-svg"
 import { useTheme } from "next-themes"
@@ -45,6 +46,8 @@ import { useRouter } from "next/navigation"; // Import useRouter
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { ChevronRight } from "lucide-react"
+import { motion, AnimatePresence } from "framer-motion"
+import { getLatestVersion } from "@/lib/version-log"
 
 const data = {
   user: {
@@ -104,12 +107,20 @@ const data = {
   ],
 }
 
-export function AppSidebar({ variant = "floating", ...props }: React.ComponentProps<typeof Sidebar>) {
+interface AppSidebarProps extends React.ComponentProps<typeof Sidebar> {
+  onBetaClick?: () => void;
+}
+
+export function AppSidebar({ variant = "floating", onBetaClick, ...props }: AppSidebarProps) {
   const isMobile = useIsMobile()
   const { resolvedTheme } = useTheme()
   const router = useRouter(); // Initialize useRouter
   const [showVersionInitial, setShowVersionInitial] = useState(false);
   const [badgeHovered, setBadgeHovered] = useState(false);
+  const [isLinksOpen, setIsLinksOpen] = useState(false);
+  
+  // Get latest version info
+  const latestVersion = getLatestVersion();
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -130,8 +141,8 @@ export function AppSidebar({ variant = "floating", ...props }: React.ComponentPr
       <SidebarHeader className="!pt-2.5">
         <SidebarMenu>
           <SidebarMenuItem className="list-none">
-            <SidebarMenuButton 
-              // onClick={() => router.push('/')} // Remove onClick from button
+            <SidebarMenuButton
+              onClick={(e) => e.stopPropagation()} // Prevent navigation on button click
               className="data-[slot=sidebar-menu-button]:!p-2 !pt-2.5 hover:bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 data-[state=open]:bg-transparent active:bg-transparent"
             >
               <div className="flex items-center w-full justify-between">
@@ -152,23 +163,30 @@ export function AppSidebar({ variant = "floating", ...props }: React.ComponentPr
                     loading="eager"
                   />
                 </a>
-                <div onClick={(e) => e.stopPropagation()}>
+                <div>
                   {/* Show 'Beta' by default; on hover swap to version text without resizing */}
                   <Badge
                     variant="outline"
-                    className="bg-[#3d271b] text-sidebar-primary border-sidebar-primary rounded-md font-normal hover:bg-[#4a2f1f] transition-colors cursor-default inline-block"
+                    className="bg-[#3d271b] text-sidebar-primary border-sidebar-primary rounded-md font-normal hover:bg-[#4a2f1f] transition-colors cursor-pointer inline-block"
                     style={{ fontFamily: 'Consolas, monospace' }}
-                    title="Version 1.0"
+                    title="Click to show update info"
                     onMouseEnter={() => setBadgeHovered(true)}
                     onMouseLeave={() => setBadgeHovered(false)}
                     onFocus={() => setBadgeHovered(true)}
                     onBlur={() => setBadgeHovered(false)}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      console.log('Beta badge clicked!'); // Debug log
+                      console.log('onBetaClick function:', onBetaClick); // Debug log
+                      onBetaClick?.();
+                    }}
                   >
                     {showVersionInitial ? (
-                      <span className="inline-flex items-center justify-center" style={{ minWidth: 28 }}>1.0</span>
+                      <span className="inline-flex items-center justify-center" style={{ minWidth: 28 }}>{latestVersion.version}</span>
                     ) : (
                       <span className="inline-flex items-center justify-center" style={{ minWidth: 28 }}>
-                        {badgeHovered ? '1.0' : 'Beta'}
+                        {badgeHovered ? latestVersion.version : 'Beta'}
                       </span>
                     )}
                   </Badge>
@@ -182,91 +200,78 @@ export function AppSidebar({ variant = "floating", ...props }: React.ComponentPr
         <NavMain items={data.navMain} />
         <NavGovernance items={data.navGovernance} className="mt-4" />
         <div className="mt-auto space-y-2">
-          {/* Resources collapsible (contains Settings + Documentation) */}
-          <Collapsible defaultOpen={false} className="group/resources">
+          {/* Links collapsible (contains Documentation, Twitter, Discord) */}
+          <Collapsible 
+            open={isLinksOpen} 
+            onOpenChange={setIsLinksOpen} 
+            className="group/links"
+          >
             <SidebarGroup>
               <SidebarGroupLabel asChild>
                 <CollapsibleTrigger className="w-full px-3 flex items-center">
-                  Resources
-                  <ChevronRight className="ml-auto transition-transform duration-200 ease-in-out group-data-[state=open]/resources:rotate-90" />
+                  Links
+                  <motion.div
+                    animate={{ rotate: isLinksOpen ? 90 : 0 }}
+                    transition={{ duration: 0.2, ease: "easeInOut" }}
+                    className="ml-auto"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </motion.div>
                 </CollapsibleTrigger>
               </SidebarGroupLabel>
-              <CollapsibleContent
-                className="overflow-hidden data-[state=closed]:max-h-0 data-[state=open]:max-h-[6rem] transition-[max-height,opacity,transform] duration-200 ease-out data-[state=closed]:opacity-0 data-[state=open]:opacity-100 data-[state=closed]:-translate-y-1 data-[state=open]:translate-y-0"
-                style={{ willChange: 'maxHeight, opacity, transform' }}
-              >
-                <SidebarGroupContent className="pl-3">
-                  <SidebarMenu>
-                    <SidebarMenuItem className="list-none">
-                      <SidebarMenuButton asChild size="sm" className="h-7">
-                        <a href="https://github.com/alphixfi" target="_blank" rel="noopener noreferrer" className="w-full flex items-center">
-                          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <path d="M12 .5C5.73.5.75 5.48.75 11.75c0 4.98 3.22 9.2 7.69 10.69.56.1.77-.24.77-.54 0-.27-.01-1-.02-1.97-3.13.68-3.79-1.51-3.79-1.51-.51-1.3-1.25-1.65-1.25-1.65-1.02-.7.08-.69.08-.69 1.13.08 1.72 1.16 1.72 1.16 1 .72 2.62.51 3.25.39.1-.3.39-.51.71-.63-2.5-.28-5.12-1.25-5.12-5.55 0-1.23.44-2.24 1.16-3.03-.12-.28-.5-1.41.11-2.94 0 0 .95-.3 3.12 1.16.9-.25 1.86-.38 2.82-.38.96 0 1.92.13 2.82.38 2.17-1.46 3.12-1.16 3.12-1.16.61 1.53.23 2.66.11 2.94.72.8 1.16 1.8 1.16 3.03 0 4.31-2.62 5.27-5.12 5.55.4.35.76 1.03.76 2.08 0 1.5-.01 2.71-.01 3.08 0 .3.21.65.78.54 4.47-1.5 7.69-5.72 7.69-10.7C23.25 5.48 18.27.5 12 .5z" fill="currentColor"/>
-                          </svg>
-                          <span>GitHub</span>
-                        </a>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                    <SidebarMenuItem className="list-none">
-                      <SidebarMenuButton asChild size="sm" className="h-7 opacity-80">
-                        <a href="#" className="w-full flex items-center">
-                          <HelpCircleIcon className="h-4 w-4" />
-                          <span>Documentation</span>
-                        </a>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  </SidebarMenu>
-                </SidebarGroupContent>
+              <CollapsibleContent asChild>
+                <AnimatePresence mode="wait">
+                  <motion.div
+                    key={isLinksOpen ? "open" : "closed"}
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: isLinksOpen ? "auto" : 0, opacity: isLinksOpen ? 1 : 0 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ 
+                      duration: 0.3, 
+                      ease: [0.4, 0.0, 0.2, 1],
+                      opacity: { duration: 0.2 }
+                    }}
+                    className="overflow-hidden"
+                  >
+                    {isLinksOpen && (
+                      <SidebarGroupContent className="px-3">
+                        <SidebarMenu>
+                          <SidebarMenuItem className="list-none">
+                            <SidebarMenuButton asChild size="sm" className="h-7 opacity-80">
+                              <a href="#" className="w-full flex items-center">
+                                <BookTextIcon className="h-4 w-4" />
+                                <span>Documentation</span>
+                              </a>
+                            </SidebarMenuButton>
+                          </SidebarMenuItem>
+                          <SidebarMenuItem className="list-none">
+                            <SidebarMenuButton asChild size="sm" className="h-7">
+                              <a href="https://x.com/AlphixFi" target="_blank" rel="noopener noreferrer" className="w-full flex items-center">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                  <path d="M16.9947 2H20.1115L13.5007 9.5L21.2209 20H15.2302L10.5 13.7L5.07938 20H1.96154L9.00025 12L1.60059 2H7.74871L11.9502 7.7L16.9947 2ZM16.0947 18.2L18.0947 18.2L6.89474 3.8L4.79474 3.8L16.0947 18.2Z" fill="currentColor"/>
+                                </svg>
+                                <span>Twitter</span>
+                              </a>
+                            </SidebarMenuButton>
+                          </SidebarMenuItem>
+                          <SidebarMenuItem className="list-none">
+                            <SidebarMenuButton asChild size="sm" className="h-7">
+                              <a href="https://discord.gg/NTXRarFbTr" target="_blank" rel="noopener noreferrer" className="w-full flex items-center">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                  <path d="M20.317 4.3698a19.7913 19.7913 0 00-4.8851-1.5152.0741.0741 0 00-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 00-.0785-.037 19.7363 19.7363 0 00-4.8852 1.515.0699.0699 0 00-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 00.0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 00.0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 00-.0416-.1057c-.6528-.2476-1.2743-.5499-1.8722-.8923a.077.077 0 01-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 01.0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 01.0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 01-.0066.1276 12.2986 12.2986 0 01-1.873.8914.0766.0766 0 00-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 00.0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 00.0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 00-.0312-.0286zM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419-.019 1.3332-.9555 2.4189-2.1569 2.4189zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1568 2.4189Z" fill="currentColor"/>
+                                </svg>
+                                <span>Discord</span>
+                              </a>
+                            </SidebarMenuButton>
+                          </SidebarMenuItem>
+                        </SidebarMenu>
+                      </SidebarGroupContent>
+                    )}
+                  </motion.div>
+                </AnimatePresence>
               </CollapsibleContent>
             </SidebarGroup>
           </Collapsible>
-
-          {/* Socials group (collapsible, at bottom, expands downward, pushes Resources up) */}
-          <Collapsible defaultOpen={false} className="group/collapsible">
-            <SidebarGroup>
-              <SidebarGroupLabel asChild>
-                <CollapsibleTrigger className="w-full px-3 flex items-center">
-                  Socials
-                  <ChevronRight className="ml-auto transition-transform duration-200 ease-in-out group-data-[state=open]/collapsible:rotate-90" />
-                </CollapsibleTrigger>
-              </SidebarGroupLabel>
-              <CollapsibleContent
-                className="overflow-hidden data-[state=closed]:max-h-0 data-[state=open]:max-h-[6rem] transition-[max-height,opacity,transform] duration-200 ease-out data-[state=closed]:opacity-0 data-[state=open]:opacity-100 data-[state=closed]:-translate-y-1 data-[state=open]:translate-y-0"
-                style={{ willChange: 'maxHeight, opacity, transform' }}
-              >
-                <SidebarGroupContent className="pl-3">
-                  <SidebarMenu>
-                    <SidebarMenuItem className="list-none">
-                      <SidebarMenuButton asChild size="sm" className="h-7">
-                        <a href="https://x.com/AlphixFi" target="_blank" rel="noopener noreferrer">
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <path d="M16.9947 2H20.1115L13.5007 9.5L21.2209 20H15.2302L10.5 13.7L5.07938 20H1.96154L9.00025 12L1.60059 2H7.74871L11.9502 7.7L16.9947 2ZM16.0947 18.2L18.0947 18.2L6.89474 3.8L4.79474 3.8L16.0947 18.2Z" fill="currentColor"/>
-                          </svg>
-                          <span>Twitter</span>
-                        </a>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                    <SidebarMenuItem className="list-none">
-                      <SidebarMenuButton asChild size="sm" className="h-7">
-                        <a href="https://discord.gg/NTXRarFbTr" target="_blank" rel="noopener noreferrer">
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <path d="M20.317 4.3698a19.7913 19.7913 0 00-4.8851-1.5152.0741.0741 0 00-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 00-.0785-.037 19.7363 19.7363 0 00-4.8852 1.515.0699.0699 0 00-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 00.0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 00.0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 00-.0416-.1057c-.6528-.2476-1.2743-.5499-1.8722-.8923a.077.077 0 01-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 01.0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 01.0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 01-.0066.1276 12.2986 12.2986 0 01-1.873.8914.0766.0766 0 00-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 00.0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 00.0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 00-.0312-.0286zM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419-.019 1.3332-.9555 2.4189-2.1569 2.4189zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1568 2.4189Z" fill="currentColor"/>
-                          </svg>
-                          <span>Discord</span>
-                        </a>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  </SidebarMenu>
-                </SidebarGroupContent>
-              </CollapsibleContent>
-            </SidebarGroup>
-          </Collapsible>
-          {/* Resources/Settings area is nudged up when Socials opens to make room */}
-          <div className="transition-transform duration-200 transform-gpu" style={{ willChange: 'transform' }}>
-            <div className="group-data-[state=open]/collapsible:-translate-y-2 transition-transform duration-200 ease-in-out">
-              {/* keep other secondary nav items if any; Resources already includes Settings/Docs */}
-            </div>
-          </div>
         </div>
       </SidebarContent>
       <SidebarFooter className="p-2">

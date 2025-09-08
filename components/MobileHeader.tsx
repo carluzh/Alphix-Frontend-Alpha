@@ -14,7 +14,8 @@ export function MobileHeader() {
   const isMobile = useIsMobile();
   const { resolvedTheme } = useTheme();
 
-  if (!isMobile) {
+  // Don't render until we know the mobile state to avoid hydration issues
+  if (isMobile === undefined || !isMobile) {
     return null;
   }
 
