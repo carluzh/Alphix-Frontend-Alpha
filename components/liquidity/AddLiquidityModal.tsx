@@ -243,21 +243,37 @@ export function AddLiquidityModal({
   // Reset all modal state when modal is closed
   useEffect(() => {
     if (!isOpen) {
+      // Reset all step flags
       setShowYouWillReceive(false);
       setShowTransactionOverview(false);
       setShowSuccessView(false);
-      setIncreaseAmount0("");
-      setIncreaseAmount1("");
-      setActiveInputSide(null);
+      
+      // Reset all input amounts and states
+      if (isExistingPosition) {
+        setIncreaseAmount0("");
+        setIncreaseAmount1("");
+        setIncreaseActiveInputSide(null);
+        setIncreasePercentage(0);
+      } else {
+        setAmount0("");
+        setAmount1("");
+        setActiveInputSide(null);
+      }
+      
+      // Reset animation states
+      setBalanceWiggleCount0(0);
+      setBalanceWiggleCount1(0);
+      
+      // Reset transaction tracking
       setTxStarted(false);
       setWasIncreasingLiquidity(false);
+      setCurrentSessionTxHash(null);
+      
+      // Reset allowance states
       setHasToken0Allowance(null);
       setHasToken1Allowance(null);
-      setCurrentSessionTxHash(null);
     }
-  }, [isOpen]);
-  
-  // Versioning for calculation debounce
+  }, [isOpen, isExistingPosition]);
   const increaseCalcVersionRef = useRef(0);
   
   // Token selection state
@@ -459,12 +475,11 @@ export function AddLiquidityModal({
   // Show success view ONLY when transaction is confirmed with hash AND was started in current session
   useEffect(() => {
     // Only show success if we have a confirmed transaction hash that matches our current session
-    // AND ensure we haven't already shown success to prevent duplicate success views
-    if (txHash && isTransactionSuccess && showTransactionOverview && txStarted && currentSessionTxHash === txHash && !showSuccessView) {
+    if (txHash && isTransactionSuccess && showTransactionOverview && txStarted && currentSessionTxHash === txHash) {
       console.log('[DEBUG] Transaction confirmed with hash, showing success view. txHash:', txHash?.slice(0, 10) + '...');
       setShowSuccessView(true);
     }
-  }, [txHash, isTransactionSuccess, showTransactionOverview, txStarted, currentSessionTxHash, showSuccessView]);
+  }, [txHash, isTransactionSuccess, showTransactionOverview, txStarted, currentSessionTxHash]);
 
   // Reset parent success states when modal opens to prevent premature success view
   useEffect(() => {
