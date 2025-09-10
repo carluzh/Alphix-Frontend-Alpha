@@ -1,31 +1,34 @@
 export interface VersionEntry {
   version: string;
   title: string;
-  bulletPoints: string[];
+  newFeatures: string[];
+  improvements: string[];
   releaseDate: string;
 }
 
 export const VERSION_LOG: VersionEntry[] = [
   {
     version: "1.1",
-    title: "New Update - 1.1",
-    bulletPoints: [
-      "Improved Portfolio Page UX",
-      "Mobile Support", 
-      "Improved Data Flow",
-      "Pool Page Performance Improvements"
+    title: "Beta Update - v1.1 What's New",
+    newFeatures: [
+      "Mobile Support"
+    ],
+    improvements: [
+      "Portfolio Page Layout",
+      "Data Fetching",
+      "Range Selection Performance"
     ],
     releaseDate: "2025-09-09"
   },
   {
     version: "1.0",
     title: "New Update - 1.0 ", 
-    bulletPoints: [
-      "Initial beta release",
-      "Core swap functionality",
-      "Liquidity provision features",
-      "Portfolio tracking"
+    newFeatures: [
+      "Core Swap Functionality",
+      "Liquidity Provision",
+      "Portfolio Tracking"
     ],
+    improvements: [],
     releaseDate: "2025-01-01"
   }
 ];

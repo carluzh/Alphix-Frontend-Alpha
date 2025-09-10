@@ -175,7 +175,7 @@ export default function Home() {
               >
                 <Badge variant="default" className="flex items-center bg-[#1e1d1b] text-white pl-1.5 pr-3 py-1 transition-all duration-300 hover:bg-[#2a2928]" style={{ fontFamily: 'Inter, sans-serif', fontWeight: 450 }}>
                   <PulsatingDot color="#22c55e" size={2.5} pulseBaseRadius={4} className="mr-1" />
-                  Private Alpha
+                  Closed Beta
                 </Badge>
               </motion.div>
               

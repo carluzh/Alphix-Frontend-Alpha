@@ -68,10 +68,13 @@ export const getTokenIcon = (symbol?: string) => {
 
 export const sanitizeDecimalInput = (input: string) => {
   if (!input) return '';
-  const cleaned = input.replace(/[^0-9.]/g, '');
+  // Treat commas as dots first
+  const normalized = input.replace(/,/g, '.');
+  // Allow only digits and dots
+  const cleaned = normalized.replace(/[^0-9.]/g, '');
   const firstDot = cleaned.indexOf('.');
   if (firstDot === -1) return cleaned;
-  // keep first dot, remove subsequent dots
+  // Keep first dot, remove subsequent dots
   const head = cleaned.slice(0, firstDot + 1);
   const tail = cleaned.slice(firstDot + 1).replace(/\./g, '');
   return head + tail;

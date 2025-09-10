@@ -27,6 +27,31 @@ const appCache: Record<string, CacheEntry<any>> = {};
 // Request deduplication: track ongoing requests to prevent duplicates
 const ongoingRequests = new Map<string, Promise<any>>();
 
+// Indexing barriers: gate fresh fetches until subgraph head reaches tx block
+const indexingBarriers = new Map<string, Promise<boolean>>();
+
+export function setIndexingBarrier(ownerAddress: string, barrier: Promise<boolean>): void {
+  const key = (ownerAddress || '').toLowerCase();
+  indexingBarriers.set(key, barrier);
+  // IMPORTANT: If a fresh barrier is set, do not allow any in-flight IDs request to complete and poison cache.
+  // Purge the ongoing request for this owner's position IDs so subsequent callers won't reuse a pre-barrier promise.
+  try {
+    const idsKey = `userPositionIds_${key}`;
+    ongoingRequests.delete(idsKey);
+  } catch {}
+  barrier.finally(() => {
+    // Auto-cleanup when barrier resolves
+    if (indexingBarriers.get(key) === barrier) {
+      indexingBarriers.delete(key);
+    }
+  });
+}
+
+export function getIndexingBarrier(ownerAddress: string): Promise<boolean> | null {
+  const key = (ownerAddress || '').toLowerCase();
+  return indexingBarriers.get(key) || null;
+}
+
 export function getFromCache<T>(key: string): T | null {
   const entry = appCache[key];
   if (entry && (Date.now() - entry.timestamp < CACHE_DURATION_MS)) {
@@ -344,38 +369,40 @@ export async function loadUserPositionIds(ownerAddress: string): Promise<string[
     }
   }
   // Keep retained; harmless even if not used
-  if (stored && stored.length > 0) {
+  const barrierEarly = getIndexingBarrier(ownerAddress);
+  if (stored && stored.length > 0 && !barrierEarly) {
     setToCache(key, stored);
     return stored;
   }
   const cached = getFromCacheWithTtl<string[]>(key, IDS_TTL_MS);
-  if (cached) return cached;
-  const ongoing = getOngoingRequest<string[]>(key);
-  if (ongoing) return ongoing;
+  const barrierEarly2 = getIndexingBarrier(ownerAddress);
+  if (cached && !barrierEarly2) return cached;
+  // Only reuse an ongoing request if no barrier is present.
+  // If a barrier exists, we must not attach to a pre-barrier promise which could return stale data.
+  const barrierPresentForOngoing = getIndexingBarrier(ownerAddress);
+  if (!barrierPresentForOngoing) {
+    const ongoing = getOngoingRequest<string[]>(key);
+    if (ongoing) return ongoing;
+  } else {
+    // Best-effort: drop any pre-existing ongoing promise for safety.
+    try { ongoingRequests.delete(key); } catch {}
+  }
 
   const promise = (async () => {
-    // Check if a position was recently created (within last 5 minutes)
-    const recentPositionHintKey = `recentPositionCreated:${ownerAddress.toLowerCase()}`;
-    let expectedNewPositionId: string | null = null;
-    let recentCreationTime = 0;
-    let expectNewPosition = false;
-
+    // If an indexing barrier exists, wait for it before doing a fresh fetch
     try {
-      const hint = SafeStorage.get(recentPositionHintKey);
-      if (hint) {
-        const parsed = JSON.parse(hint);
-        expectedNewPositionId = parsed.positionId;
-        recentCreationTime = parsed.timestamp || 0;
-        expectNewPosition = parsed.action === 'create';
-        // Clean up old hints (older than 10 minutes)
-        if (Date.now() - recentCreationTime > 10 * 60 * 1000) {
-          SafeStorage.remove(recentPositionHintKey);
-          expectedNewPositionId = null;
-          recentCreationTime = 0;
-          expectNewPosition = false;
+      const barrier = getIndexingBarrier(ownerAddress);
+      if (barrier) {
+        const ok = await barrier;
+        if (!ok) {
+          // Subgraph timed out. Do not write potentially stale results; prefer previously cached values.
+          const fallback = getFromCacheWithTtl<string[]>(key, IDS_TTL_MS) || stored || [];
+          return fallback;
         }
       }
     } catch {}
+
+    // Hints removed: single authority is the indexing barrier
 
     // Get previously cached positions to compare
     let previousPositionCount = 0;
@@ -388,9 +415,7 @@ export async function loadUserPositionIds(ownerAddress: string): Promise<string[
 
     const result = await RetryUtility.execute(
       async () => {
-        // Add cache busting for new position detection
-        const bustParam = expectNewPosition ? `&_t=${Date.now()}` : '';
-        const res = await fetch(`/api/liquidity/get-positions?ownerAddress=${ownerAddress}&idsOnly=1&withCreatedAt=1${bustParam}` as any, { cache: 'no-store' as any } as any);
+        const res = await fetch(`/api/liquidity/get-positions?ownerAddress=${ownerAddress}&idsOnly=1&withCreatedAt=1` as any, { cache: 'no-store' as any } as any);
 
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
@@ -433,41 +458,9 @@ export async function loadUserPositionIds(ownerAddress: string): Promise<string[
         return { ids, itemsPersist };
       },
       {
-        attempts: expectedNewPositionId || expectNewPosition ? 8 : 1,
-        backoffStrategy: 'exponential',
-        baseDelay: 1500,
-        maxDelay: 5000,
-        shouldRetry: (attempt, error, result) => {
-          if (!result) return true; // Network error, retry
-
-          const { ids, itemsPersist } = result;
-
-          // Check if we have the expected conditions for proceeding with caching
-          if (expectedNewPositionId && !ids.includes(expectedNewPositionId)) {
-            return true; // Specific position ID expected but not found, retry
-          }
-
-          if (expectNewPosition) {
-            // Look for positions created since the hint was set (with 30s buffer for transaction time)
-            const now = Date.now() / 1000;
-            const hintBuffer = 30; // seconds
-            const recentPositions = itemsPersist.filter(item =>
-              item.createdAt && (item.createdAt >= (recentCreationTime / 1000) - hintBuffer)
-            );
-
-            if (recentPositions.length > 0) {
-              console.log(`[Cache] Found ${recentPositions.length} position(s) created since hint was set`);
-              return false; // Success, found new positions
-            }
-
-            return true; // No recent positions found, retry
-          }
-
-          return false; // Conditions met, don't retry
-        },
-        onRetry: (attempt, error) => {
-          console.log(`[Cache] Waiting for new position to be indexed... attempt ${attempt + 1}`);
-        },
+        attempts: 1,
+        backoffStrategy: 'fixed',
+        baseDelay: 500,
         throwOnFailure: false
       }
     );
@@ -481,21 +474,38 @@ export async function loadUserPositionIds(ownerAddress: string): Promise<string[
       itemsPersistForPersist = result.data.itemsPersist;
     }
 
-    // Cache the final result
+    // Final barrier check BEFORE caching: if a barrier exists now, wait for it to resolve to avoid stale writes
+    try {
+      const barrierPost = getIndexingBarrier(ownerAddress);
+      if (barrierPost) {
+        const ok2 = await barrierPost;
+        if (!ok2) {
+          const fallback2 = getFromCacheWithTtl<string[]>(key, IDS_TTL_MS) || stored || [];
+          return fallback2;
+        }
+      }
+    } catch {}
+
+    // CRITICAL: Final barrier check before cache write to prevent race conditions
+    // If a new barrier was set while we were fetching, abort cache write
+    const finalBarrier = getIndexingBarrier(ownerAddress);
+    if (finalBarrier) {
+      // A new transaction started while we were fetching - don't cache potentially stale data
+      const fallback3 = getFromCacheWithTtl<string[]>(key, IDS_TTL_MS) || stored || [];
+      return fallback3;
+    }
+
+    // Cache the final result (only if no barrier exists)
     setToCache(key, lastResult);
     try {
       if (typeof window !== 'undefined') {
-        // Prefer server-provided createdAt/lastTimestamp (seconds). Fallback to hint when unavailable
+        // Prefer server-provided createdAt/lastTimestamp (seconds). Fallback to current timestamp when unavailable
         const toStore = (itemsPersistForPersist.length > 0
           ? itemsPersistForPersist
-          : lastResult.map(id => ({ id, createdAt: Math.floor(recentCreationTime / 1000), lastTimestamp: Math.floor(Date.now() / 1000) }))
+          : lastResult.map(id => ({ id, createdAt: 0, lastTimestamp: Math.floor(Date.now() / 1000) }))
         );
         SafeStorage.set(key, JSON.stringify({ items: toStore, ts: Date.now() }));
-        // Clean up the hint if we successfully found the new position(s)
-        if ((expectedNewPositionId && lastResult.includes(expectedNewPositionId)) ||
-            foundRecentPosition) {
-          SafeStorage.remove(recentPositionHintKey);
-        }
+        // No hint cleanup required
       }
     } catch {}
     return lastResult;

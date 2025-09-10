@@ -42,7 +42,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { getPositionManagerAddress } from '@/lib/pools-config';
 import { position_manager_abi } from '@/lib/abis/PositionManager_abi';
-import { getFromCache, setToCache, getFromCacheWithTtl, getUserPositionsCacheKey, getPoolStatsCacheKey, getPoolDynamicFeeCacheKey, getPoolChartDataCacheKey, loadUserPositionIds, derivePositionsFromIds, invalidateCacheEntry, waitForSubgraphBlock } from "../../../lib/client-cache";
+import { getFromCache, setToCache, getFromCacheWithTtl, getUserPositionsCacheKey, getPoolStatsCacheKey, getPoolDynamicFeeCacheKey, getPoolChartDataCacheKey, loadUserPositionIds, derivePositionsFromIds, invalidateCacheEntry, waitForSubgraphBlock, setIndexingBarrier, invalidateUserPositionIdsCache } from "../../../lib/client-cache";
 
 import type { Pool } from "../../../types";
 import { AddLiquidityForm } from "../../../components/liquidity/AddLiquidityForm"; // AddLiquidityForm for right panel
@@ -958,14 +958,10 @@ export default function PoolDetailPage() {
       // DO NOT show loading state - this is silent
       await RetryUtility.execute(
         async () => {
-          const res = await fetch(`/api/liquidity/get-positions?ownerAddress=${accountAddress}&bust=${Date.now()}`);
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const data = await res.json();
-          if (!Array.isArray(data)) throw new Error('Invalid response format');
-
-          // Update cache for the owner
-          try { setToCache(getUserPositionsCacheKey(accountAddress), data); } catch {}
-
+          if (!accountAddress) throw new Error('Missing account');
+          // Use gated loader to avoid stale cache writes
+          const ids = await loadUserPositionIds(accountAddress);
+          const data = await derivePositionsFromIds(accountAddress, ids);
           const filtered = data.filter((pos: any) => String(pos?.poolId || '').toLowerCase() === subId);
           const nextFp = fingerprint(filtered);
 
@@ -1040,12 +1036,10 @@ export default function PoolDetailPage() {
 
       const result = await RetryUtility.execute(
         async () => {
-          const res = await fetch(`/api/liquidity/get-positions?ownerAddress=${accountAddress}&bust=${Date.now()}`);
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const data = await res.json();
-          if (!Array.isArray(data)) throw new Error('Invalid response format');
-          // Update cache for the owner
-          try { setToCache(getUserPositionsCacheKey(accountAddress), data); } catch {}
+          if (!accountAddress) throw new Error('Missing account');
+          // Use gated loader to avoid stale cache writes
+          const ids = await loadUserPositionIds(accountAddress);
+          const data = await derivePositionsFromIds(accountAddress, ids);
           const filtered = data.filter((pos: any) => String(pos?.poolId || '').toLowerCase() === subId);
           const nextFp = fingerprint(filtered);
           if (nextFp !== baselineFp) {
@@ -1434,7 +1428,10 @@ export default function PoolDetailPage() {
 
     try {
       const targetBlock = Number(await publicClient.getBlockNumber());
-      await waitForSubgraphBlock(targetBlock, { timeoutMs: 15000, minWaitMs: 800, maxIntervalMs: 1000 });
+      // Gate fresh fetches behind subgraph head for this owner
+      const barrier = waitForSubgraphBlock(targetBlock, { timeoutMs: 15000, minWaitMs: 800, maxIntervalMs: 1000 });
+      setIndexingBarrier(accountAddress, barrier);
+      await barrier;
 
       try { fetch('/api/internal/revalidate-pools', { method: 'POST' } as any); } catch {}
       try {
@@ -1444,7 +1441,8 @@ export default function PoolDetailPage() {
         } as any);
       } catch {}
 
-      // Load ids then derive full positions
+      // Canonical refresh: invalidate and load fresh ids post-barrier
+      invalidateUserPositionIdsCache(accountAddress);
       const ids = await loadUserPositionIds(accountAddress);
       const allDerived = await derivePositionsFromIds(accountAddress, ids);
       const filtered = allDerived.filter((pos: any) => String(pos.poolId || '').toLowerCase() === subId);
@@ -1481,7 +1479,9 @@ export default function PoolDetailPage() {
 
     try {
       const targetBlock = info?.blockNumber ?? await publicClient.getBlockNumber();
-      await waitForSubgraphBlock(Number(targetBlock), { timeoutMs: 30000, minWaitMs: 1000, maxIntervalMs: 2000 });
+      const barrier = waitForSubgraphBlock(Number(targetBlock), { timeoutMs: 30000, minWaitMs: 1000, maxIntervalMs: 2000 });
+      if (accountAddress) setIndexingBarrier(accountAddress, barrier);
+      await barrier;
 
       // Trigger server revalidation
       try { 
@@ -1504,8 +1504,15 @@ export default function PoolDetailPage() {
       // Volume only changes from swap page actions, not liquidity operations
       // Dynamic fees have 6h server-side TTL and don't need frequent revalidation
 
-      // Refresh positions data only (chart data handled reactively)
-      await fetchWithBackoffIfNeeded(false, false);
+      // Canonical positions refresh: invalidate and fetch fresh ids
+      if (accountAddress) {
+        invalidateUserPositionIdsCache(accountAddress);
+        const ids = await loadUserPositionIds(accountAddress);
+        const allDerived = await derivePositionsFromIds(accountAddress, ids);
+        const subId = (getPoolConfiguration(poolId)?.subgraphId || '').toLowerCase();
+        const filtered = allDerived.filter((pos: any) => String(pos.poolId || '').toLowerCase() === subId);
+        setUserPositions(filtered);
+      }
       
       // Clear any optimistic loading states
       setUserPositions(prev => prev.map(p => ({ ...p, isOptimisticallyUpdating: undefined })));
@@ -1659,10 +1666,10 @@ export default function PoolDetailPage() {
       }
     }
 
-    // Show toast immediately and close modal
+    // Show toast immediately but let Success View handle modal closure
     console.log('[DEBUG] Transaction successful, clearing pendingActionRef');
     toast.success("Position Increased", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
-    setShowIncreaseModal(false);
+    // Don't close modal here - let the Success View handle it
     pendingActionRef.current = null;
     
     // Background refetch to get updated position data (parallelize with toast/UI updates)
@@ -1698,8 +1705,7 @@ export default function PoolDetailPage() {
     }
     
     toast.success(closing ? "Position Closed" : "Position Decreased", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
-    setShowBurnConfirmDialog(false);
-    setPositionToBurn(null);
+    // Don't close or clear position here - let the modal's success view show
     pendingActionRef.current = null;
 
     // Background refetch to correct any optimistic errors (guard with 15s cooldown)
@@ -1715,12 +1721,12 @@ export default function PoolDetailPage() {
     onLiquidityBurned: onLiquidityBurnedCallback
   });
 
-  const { increaseLiquidity, isLoading: isIncreasingLiquidity } = useIncreaseLiquidity({
+  const { increaseLiquidity, isLoading: isIncreasingLiquidity, isSuccess: isIncreaseSuccess, hash: increaseTxHash } = useIncreaseLiquidity({
     onLiquidityIncreased: onLiquidityIncreasedCallback,
   });
 
 
-  const { decreaseLiquidity, isLoading: isDecreasingLiquidity } = useDecreaseLiquidity({
+  const { decreaseLiquidity, isLoading: isDecreasingLiquidity, isSuccess: isDecreaseSuccess, hash: decreaseTxHash } = useDecreaseLiquidity({
     onLiquidityDecreased: onLiquidityDecreasedCallback,
     onFeesCollected: () => {
       toast.success("Fees Collected", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
@@ -2997,30 +3003,7 @@ export default function PoolDetailPage() {
                                 <TokenStack position={position} currentPoolData={currentPoolData} getToken={getToken} />
                               </div>
 
-                              {/* Column 2: Amount0/Amount1 - Desktop only, left-bound, size-to-content */}
-                              <div className="hidden sm:flex items-start pr-2">
-                                <div className="flex flex-col gap-1 items-start">
-                                  <div className="flex flex-col gap-0.5 text-xs">
-                                    {isLoadingPrices ? (
-                                      <>
-                                        <div className="h-4 w-16 bg-muted/60 rounded animate-pulse" />
-                                        <div className="h-4 w-16 bg-muted/60 rounded animate-pulse" />
-                                      </>
-                                    ) : (
-                                      <>
-                                        <div className="font-mono text-muted-foreground">
-                                          {formatTokenDisplayAmount(position.token0.amount)} {position.token0.symbol}
-                                        </div>
-                                        <div className="font-mono text-muted-foreground">
-                                          {formatTokenDisplayAmount(position.token1.amount)} {position.token1.symbol}
-                                        </div>
-                                      </>
-                                    )}
-                                  </div>
-                                </div>
-                              </div>
-
-                              {/* Column 3: Position Value - left-bound, size-to-content */}
+                              {/* Column 2: Position Value - left-bound, size-to-content */}
                               <div className="flex items-start pr-2">
                                 <div className="flex flex-col gap-1 items-start">
                                   <div className="text-xs text-muted-foreground">Position Value</div>
@@ -3038,7 +3021,7 @@ export default function PoolDetailPage() {
                                 </div>
                               </div>
 
-                              {/* Column 4: Fees - left-bound, size-to-content */}
+                              {/* Column 3: Fees - left-bound, size-to-content */}
                               <div className="flex items-start pr-2">
                                 <div className="flex flex-col gap-1 items-start">
                                   <div className="flex items-center gap-1">
@@ -3063,6 +3046,29 @@ export default function PoolDetailPage() {
                                       price1={getUsdPriceForSymbol(position.token1.symbol)}
                                       batchFeesData={batchFeesData}
                                     />
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Column 4: Amount0/Amount1 - Desktop only, left-bound, size-to-content */}
+                              <div className="hidden sm:flex items-start pr-2">
+                                <div className="flex flex-col gap-1 items-start">
+                                  <div className="flex flex-col gap-0.5 text-xs">
+                                    {isLoadingPrices ? (
+                                      <>
+                                        <div className="h-4 w-16 bg-muted/60 rounded animate-pulse" />
+                                        <div className="h-4 w-16 bg-muted/60 rounded animate-pulse" />
+                                      </>
+                                    ) : (
+                                      <>
+                                        <div className="font-mono text-muted-foreground">
+                                          {formatTokenDisplayAmount(position.token0.amount)} {position.token0.symbol}
+                                        </div>
+                                        <div className="font-mono text-muted-foreground">
+                                          {formatTokenDisplayAmount(position.token1.amount)} {position.token1.symbol}
+                                        </div>
+                                      </>
+                                    )}
                                   </div>
                                 </div>
                               </div>
@@ -3336,14 +3342,15 @@ export default function PoolDetailPage() {
         position={positionToBurn}
         feesForWithdraw={feesForWithdraw}
         onLiquidityWithdrawn={() => {
-          // Handle successful withdrawal
-          setShowBurnConfirmDialog(false);
+          // Handle successful withdrawal - don't close modal, let success view show
           setPositionToBurn(null);
           pendingActionRef.current = null;
         }}
         // Connect to parent's refetching flow
         decreaseLiquidity={decreaseLiquidity}
         isWorking={isDecreasingLiquidity}
+        isDecreaseSuccess={isDecreaseSuccess}
+        decreaseTxHash={decreaseTxHash}
       />
 
       {/* Add Liquidity Modal - for position card submenu */}
@@ -3369,6 +3376,8 @@ export default function PoolDetailPage() {
           increaseLiquidity(data);
         } : undefined}
         isIncreasingLiquidity={showIncreaseModal ? isIncreasingLiquidity : undefined}
+        isIncreaseSuccess={showIncreaseModal ? isIncreaseSuccess : undefined}
+        increaseTxHash={showIncreaseModal ? increaseTxHash : undefined}
         onLiquidityAdded={() => {
           if (showIncreaseModal) {
             // For increase operations, do nothing here - let the transaction callback handle everything

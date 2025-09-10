@@ -78,7 +78,9 @@ export function useUserPositions(ownerAddress: string) {
     queryKey: qk.userPositions(ownerAddress || ''),
     queryFn: async () => {
       const cache = await import('@/lib/client-cache')
-      return cache.loadUserPositions(ownerAddress)
+      // Use barrier-gated position loading to prevent cache poisoning
+      const ids = await cache.loadUserPositionIds(ownerAddress)
+      return cache.derivePositionsFromIds(ownerAddress, ids)
     },
     staleTime: Infinity,
     gcTime: 60 * 60 * 1000,

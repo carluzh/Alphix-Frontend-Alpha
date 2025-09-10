@@ -156,30 +156,7 @@ export function PositionCard({
                 {isLoadingPrices || isLoadingPoolStates ? <div className="h-6 w-10 bg-muted/60 rounded-full animate-pulse" /> : <TokenStack position={position as any} />}
             </div>
 
-            {/* Column 2: Amount0/Amount1 - Desktop only, left-bound, size-to-content */}
-            <div className="hidden sm:flex items-start pr-2">
-                <div className="flex flex-col gap-1 items-start">
-                    <div className="flex flex-col gap-0.5 text-xs">
-                        {isLoadingPrices ? (
-                            <>
-                                <div className="h-4 w-16 bg-muted/60 rounded animate-pulse" />
-                                <div className="h-4 w-16 bg-muted/60 rounded animate-pulse" />
-                            </>
-                        ) : (
-                            <>
-                                <div className="font-mono text-muted-foreground">
-                                    {formatTokenDisplayAmount(position.token0.amount)} {position.token0.symbol}
-                                </div>
-                                <div className="font-mono text-muted-foreground">
-                                    {formatTokenDisplayAmount(position.token1.amount)} {position.token1.symbol}
-                                </div>
-                            </>
-                        )}
-                    </div>
-                </div>
-            </div>
-
-            {/* Column 3: Position Value - left-bound, size-to-content */}
+            {/* Column 2: Position Value - left-bound, size-to-content */}
             <div className="flex items-start pr-2">
                 <div className="flex flex-col gap-1 items-start">
                 <div className="text-xs text-muted-foreground">Position Value</div>
@@ -193,7 +170,7 @@ export function PositionCard({
                 </div>
             </div>
 
-            {/* Column 4: Fees - left-bound, size-to-content */}
+            {/* Column 3: Fees - left-bound, size-to-content */}
             <div className="flex items-start pr-2" onMouseEnter={handleChildEnter} onMouseLeave={handleChildLeave} onClick={handleChildClick}>
                 <div className="flex flex-col gap-1 items-start">
                 <div className="flex items-center gap-1">
@@ -220,6 +197,29 @@ export function PositionCard({
                       prefetchedRaw1={(position as any)?.unclaimedRaw1}
                     />
                 </div>
+                </div>
+            </div>
+
+            {/* Column 4: Amount0/Amount1 - Desktop only, left-bound, size-to-content */}
+            <div className="hidden sm:flex items-start pr-2">
+                <div className="flex flex-col gap-1 items-start">
+                    <div className="flex flex-col gap-0.5 text-xs">
+                        {isLoadingPrices ? (
+                            <>
+                                <div className="h-4 w-16 bg-muted/60 rounded animate-pulse" />
+                                <div className="h-4 w-16 bg-muted/60 rounded animate-pulse" />
+                            </>
+                        ) : (
+                            <>
+                                <div className="font-mono text-muted-foreground">
+                                    {formatTokenDisplayAmount(position.token0.amount)} {position.token0.symbol}
+                                </div>
+                                <div className="font-mono text-muted-foreground">
+                                    {formatTokenDisplayAmount(position.token1.amount)} {position.token1.symbol}
+                                </div>
+                            </>
+                        )}
+                    </div>
                 </div>
             </div>
 

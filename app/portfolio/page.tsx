@@ -18,6 +18,7 @@ import { ethers } from "ethers";
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract } from "wagmi";
 import { useUserPositions, useActivity, useAllPrices, useUncollectedFeesBatch } from "@/components/data/hooks";
 import { prefetchService } from "@/lib/prefetch-service";
+import { setIndexingBarrier, invalidateUserPositionIdsCache } from "@/lib/client-cache";
 import { baseSepolia } from "@/lib/wagmiConfig";
 import { toast } from "sonner";
 import { FAUCET_CONTRACT_ADDRESS, faucetContractAbi } from "@/pages/api/misc/faucet";
@@ -26,6 +27,7 @@ import { ChevronUpIcon, ChevronDownIcon, ChevronsUpDownIcon, ChevronRight, Octag
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { PortfolioTickBar } from "@/components/portfolio/PortfolioTickBar";
+import { ConnectWalletButton } from "@/components/ConnectWalletButton";
 import { TOKEN_DEFINITIONS, type TokenSymbol, getToken as getTokenCfg } from "@/lib/pools-config";
 import { formatUnits as viemFormatUnits } from "viem";
 import { useIncreaseLiquidity } from "@/components/liquidity/useIncreaseLiquidity";
@@ -1082,7 +1084,9 @@ export default function PortfolioPage() {
 
     try {
       const targetBlock = info?.blockNumber ?? await publicClient.getBlockNumber();
-      await waitForSubgraphBlock(Number(targetBlock), { timeoutMs: 30000, minWaitMs: 1000, maxIntervalMs: 2000 });
+      const barrier = waitForSubgraphBlock(Number(targetBlock), { timeoutMs: 30000, minWaitMs: 1000, maxIntervalMs: 2000 });
+      if (accountAddress) setIndexingBarrier(accountAddress, barrier);
+      await barrier;
 
       // Trigger server revalidation
       try { 
@@ -1093,8 +1097,12 @@ export default function PortfolioPage() {
         console.error('[Portfolio refreshAfterMutation] Failed to revalidate server cache:', error);
       }
 
-      // Refresh positions data
-      bumpPositionsRefresh();
+      // Canonical positions refresh: invalidate and fetch fresh ids
+      if (accountAddress) {
+        invalidateUserPositionIdsCache(accountAddress);
+        const ids = await loadUserPositionIds(accountAddress);
+        // Let existing code paths that watch refresh keys update UI; we ensure cache is fresh now
+      }
       
       // Clear any optimistic loading states
       setActivePositions(prev => prev.map(p => ({ ...p, isOptimisticallyUpdating: undefined })));
@@ -1356,7 +1364,7 @@ export default function PortfolioPage() {
     console.log('[Portfolio] Legacy onLiquidityDecreased called - doing nothing to prevent folding');
   }, []);
   // Enhanced liquidity hooks with proper callbacks
-  const { increaseLiquidity, isLoading: isIncreasingLiquidity } = useIncreaseLiquidity({ 
+  const { increaseLiquidity, isLoading: isIncreasingLiquidity, isSuccess: isIncreaseSuccess, hash: increaseTxHash } = useIncreaseLiquidity({ 
     onLiquidityIncreased: onLiquidityIncreasedCallback 
   });
   
@@ -1370,7 +1378,7 @@ export default function PortfolioPage() {
     // bumpPositionsRefresh();
   }, []);
   
-  const { decreaseLiquidity, claimFees, isLoading: isDecreasingLiquidity } = useDecreaseLiquidity({ 
+  const { decreaseLiquidity, claimFees, isLoading: isDecreasingLiquidity, isSuccess: isDecreaseSuccess, hash: decreaseTxHash } = useDecreaseLiquidity({ 
     onLiquidityDecreased: onLiquidityDecreasedCallback, 
     onFeesCollected 
   });
@@ -2976,7 +2984,9 @@ export default function PortfolioPage() {
                   <BalancesListSkeleton />
                 ) : (!isConnected) ? (
                   <div className="border border-dashed rounded-lg bg-muted/10 p-8 w-full flex items-center justify-center">
-                    <div className="text-sm text-white/75">Connect Wallet to view Balances</div>
+                    <div className="w-48">
+                      <ConnectWalletButton />
+                    </div>
                   </div>
                 ) : (walletBalances.length === 0 && !isLoadingWalletBalances) ? (
                   <div className="border border-dashed rounded-lg bg-muted/10 p-8 w-full flex items-center justify-center">
@@ -3093,11 +3103,13 @@ export default function PortfolioPage() {
                     {showSkeletonFor.table ? (
                       <ActivePositionsSkeleton />
                     ) : (!isConnected) ? (
-                      <div className="border border-dashed rounded-lg bg-muted/10 p-8 w-full flex items-center justify-center">
-                        <div className="text-sm text-white/75">Connect Wallet to see Positions</div>
+                      <div className="border border-dashed rounded-lg bg-muted/10 p-6 w-full flex items-center justify-center">
+                        <div className="w-48">
+                          <ConnectWalletButton />
+                        </div>
                       </div>
                     ) : showSkeletonFor.table === false && activePositions.length === 0 ? (
-                      <div className="border border-dashed rounded-lg bg-muted/10 p-8 w-full flex items-center justify-center">
+                      <div className="border border-dashed rounded-lg bg-muted/10 p-6 w-full flex items-center justify-center">
                         <div className="text-sm text-white/75">No active positions.</div>
                       </div>
                     ) : (
@@ -3263,7 +3275,9 @@ export default function PortfolioPage() {
               {selectedSection === 'Activity' && (
                 !isConnected ? (
                   <div className="border border-dashed rounded-lg bg-muted/10 p-8 w-full flex items-center justify-center">
-                    <div className="text-sm text-white/75">Connect Wallet to view Activity</div>
+                    <div className="w-48">
+                      <ConnectWalletButton />
+                    </div>
                   </div>
                 ) : (filteredActivityItems.length === 0 && !isLoadingActivityLocal) ? (
                   <div className="border border-dashed rounded-lg bg-muted/10 p-8 w-full flex items-center justify-center">
@@ -3736,6 +3750,8 @@ export default function PortfolioPage() {
           feesForIncrease={feesForIncrease}
           increaseLiquidity={increaseLiquidity}
           isIncreasingLiquidity={isIncreasingLiquidity}
+          isIncreaseSuccess={isIncreaseSuccess}
+          increaseTxHash={increaseTxHash}
           sdkMinTick={-887272}
           sdkMaxTick={887272}
           defaultTickSpacing={60}
@@ -3749,6 +3765,8 @@ export default function PortfolioPage() {
           feesForWithdraw={feesForWithdraw}
           decreaseLiquidity={decreaseLiquidity}
           isWorking={isDecreasingLiquidity}
+          isDecreaseSuccess={isDecreaseSuccess}
+          decreaseTxHash={decreaseTxHash}
           onLiquidityWithdrawn={() => {
             // This will only be called for internal transactions (fallback)
             console.log('[Portfolio] Modal onLiquidityWithdrawn called (fallback)');

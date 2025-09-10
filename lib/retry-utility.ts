@@ -32,7 +32,7 @@ export class RetryUtility {
   ): Promise<RetryResult<T>> {
 
     let lastError: any;
-    let lastResult: T;
+    let lastResult: T | undefined;
 
     for (let attempt = 0; attempt < config.attempts; attempt++) {
       try {
@@ -72,10 +72,10 @@ export class RetryUtility {
 
     return {
       success: false,
-      data: lastResult,
+      ...(lastResult !== undefined ? { data: lastResult } : {}),
       attempts: config.attempts,
       error: lastError
-    };
+    } as RetryResult<T>;
   }
 
   /**

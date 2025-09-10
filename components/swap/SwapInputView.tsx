@@ -310,7 +310,7 @@ export function SwapInputView({
             </span>
         </div>
         <div 
-          className="rounded-lg bg-[var(--token-container-background)] p-4 border border-transparent"
+          className="rounded-lg bg-[var(--token-container-background)] p-4 border border-transparent transition-colors hover:border-[var(--token-container-border-hover)]"
         >
           <div className="flex items-center gap-2">
             <TokenSelector
@@ -338,7 +338,7 @@ export function SwapInputView({
               )}>
                 {(() => {
                   const amount = parseFloat(toAmount || "");
-                  if (!toAmount || isNaN(amount)) return "";
+                  if (!toAmount || isNaN(amount)) return "$0.00";
                   return formatCurrency((amount * displayToToken.usdPrice).toString());
                 })()}
               </div>
@@ -453,6 +453,7 @@ export function SwapInputView({
                       <motion.div
                         className="relative"
                         style={{ height: iconSize }}
+                        initial={{ width: animatedWidth }}
                         animate={{ width: animatedWidth }}
                         transition={{ type: "spring", stiffness: 300, damping: 30 }}
                       >
