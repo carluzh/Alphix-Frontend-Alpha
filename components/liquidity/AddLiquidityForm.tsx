@@ -2159,8 +2159,21 @@ export function AddLiquidityForm({
                       <div className="text-right text-xs text-muted-foreground">
                         {(() => {
                           const usdPrice = getUSDPriceForSymbol(token0Symbol);
-                          const numeric = parseDisplayAmount(amount0);
-                          return formatUSD(numeric * usdPrice);
+                          
+                          // Use precise backend data when available, fallback to display amount
+                          if (calculatedData && calculatedData.amount0) {
+                            try {
+                              const preciseAmount = parseFloat(viemFormatUnits(BigInt(calculatedData.amount0), TOKEN_DEFINITIONS[token0Symbol]?.decimals || 18));
+                              return formatUSD(preciseAmount * usdPrice);
+                            } catch {
+                              // Fallback to display amount if parsing fails
+                              const numeric = parseDisplayAmount(amount0);
+                              return formatUSD(numeric * usdPrice);
+                            }
+                          } else {
+                            const numeric = parseDisplayAmount(amount0);
+                            return formatUSD(numeric * usdPrice);
+                          }
                         })()}
                       </div>
                     </div>
@@ -2226,8 +2239,21 @@ export function AddLiquidityForm({
                       <div className="text-right text-xs text-muted-foreground">
                         {(() => {
                           const usdPrice = getUSDPriceForSymbol(token1Symbol);
-                          const numeric = parseDisplayAmount(amount1);
-                          return formatUSD(numeric * usdPrice);
+                          
+                          // Use precise backend data when available, fallback to display amount
+                          if (calculatedData && calculatedData.amount1) {
+                            try {
+                              const preciseAmount = parseFloat(viemFormatUnits(BigInt(calculatedData.amount1), TOKEN_DEFINITIONS[token1Symbol]?.decimals || 18));
+                              return formatUSD(preciseAmount * usdPrice);
+                            } catch {
+                              // Fallback to display amount if parsing fails
+                              const numeric = parseDisplayAmount(amount1);
+                              return formatUSD(numeric * usdPrice);
+                            }
+                          } else {
+                            const numeric = parseDisplayAmount(amount1);
+                            return formatUSD(numeric * usdPrice);
+                          }
                         })()}
                       </div>
                     </div>

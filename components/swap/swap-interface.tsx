@@ -790,7 +790,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       }
       
       if (!isLoadingFromTokenBalance && isConnected && prevToken.balance !== displayBalance) {
-        return { ...prevToken, balance: displayBalance, value: "$0.00" };
+        return { ...prevToken, balance: displayBalance, value: `~$${(numericBalance * prevToken.usdPrice).toFixed(2)}` };
       }
       
       if (!isConnected && prevToken.balance !== "~") {
@@ -826,7 +826,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       }
       
       if (!isLoadingToTokenBalance && isConnected && prevToken.balance !== displayBalance) {
-        return { ...prevToken, balance: displayBalance, value: "$0.00" };
+        return { ...prevToken, balance: displayBalance, value: `~$${(numericBalance * prevToken.usdPrice).toFixed(2)}` };
       }
       
       if (!isConnected && prevToken.balance !== "~") {
@@ -2442,6 +2442,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     ETH: 3500,  // Default fallback price
   });
   
+  
   // Effect to fetch token prices periodically
   useEffect(() => {
     if (!isMounted) return;
@@ -2455,7 +2456,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
         }
         
         const data = await response.json();
-
         
         setTokenPrices(data);
       } catch (error) {
@@ -2482,7 +2482,8 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     // Update fromToken price, only if it changes
     setFromToken(prev => {
       const priceType = getTokenPriceMapping(prev.symbol);
-      const newPrice = tokenPrices[priceType]?.usd ?? prev.usdPrice;
+      const priceData = tokenPrices[priceType];
+      const newPrice = (typeof priceData === 'object' && priceData?.usd) ? priceData.usd : (typeof priceData === 'number' ? priceData : prev.usdPrice);
       if (prev.usdPrice === newPrice) return prev;
       return { ...prev, usdPrice: newPrice };
     });
@@ -2490,7 +2491,8 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     // Update toToken price, only if it changes
     setToToken(prev => {
       const priceType = getTokenPriceMapping(prev.symbol);
-      const newPrice = tokenPrices[priceType]?.usd ?? prev.usdPrice;
+      const priceData = tokenPrices[priceType];
+      const newPrice = (typeof priceData === 'object' && priceData?.usd) ? priceData.usd : (typeof priceData === 'number' ? priceData : prev.usdPrice);
       if (prev.usdPrice === newPrice) return prev;
       return { ...prev, usdPrice: newPrice };
     });
@@ -2499,9 +2501,11 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     setTokenList(prevList => 
       prevList.map(token => {
         const priceType = getTokenPriceMapping(token.symbol);
+        const priceData = tokenPrices[priceType];
+        const newPrice = (typeof priceData === 'object' && priceData?.usd) ? priceData.usd : (typeof priceData === 'number' ? priceData : token.usdPrice);
         return {
           ...token,
-          usdPrice: tokenPrices[priceType]?.usd ?? token.usdPrice
+          usdPrice: newPrice
         };
       })
     );

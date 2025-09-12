@@ -577,20 +577,90 @@ export function useAddLiquidityTransaction({
         // Mark token as completed and prepare final mint transaction
         const checkNextStep = async () => {
           setIsWorking(true);
-          setTokenCompletionStatus(prev => ({ ...prev, [currentPermitTokenSymbol]: true }));
           
-          // Clear stale prepared data to avoid UI showing old needsApproval flags
-          setPreparedTxData(null);
+          // For PermitBatch, mark ALL tokens in the batch as completed, not just the approvalTokenSymbol
+          if (permit2SignatureRequest?.message?.details) {
+            const updatedStatus: Record<string, boolean> = {};
+            const details = permit2SignatureRequest.message.details;
+            
+            console.log('[DEBUG] PermitBatch completion - details:', details);
+            console.log('[DEBUG] Available tokens:', { token0Symbol, token1Symbol });
+            
+            // If details is an array (PermitBatch), mark all tokens as completed
+            if (Array.isArray(details)) {
+              // Map token addresses back to symbols
+              details.forEach((detail: any) => {
+                const tokenAddress = detail.token?.toLowerCase();
+                console.log('[DEBUG] Checking token address:', tokenAddress);
+                
+                // Find the matching token symbol
+                [token0Symbol, token1Symbol].forEach(symbol => {
+                  const tokenDef = TOKEN_DEFINITIONS[symbol];
+                  if (tokenDef) {
+                    console.log('[DEBUG] Comparing with', symbol, ':', tokenDef.address.toLowerCase());
+                    if (tokenDef.address.toLowerCase() === tokenAddress) {
+                      console.log('[DEBUG] Marking', symbol, 'as completed');
+                      updatedStatus[symbol] = true;
+                    }
+                  }
+                });
+              });
+            } else {
+              // Single permit - just mark the current token
+              updatedStatus[currentPermitTokenSymbol] = true;
+            }
+            
+            console.log('[DEBUG] Final updatedStatus:', updatedStatus);
+            setTokenCompletionStatus(prev => ({ ...prev, ...updatedStatus }));
+            
+            // Clear stale prepared data to avoid UI showing old needsApproval flags
+            setPreparedTxData(null);
 
-          // Re-prepare transaction without permit data since permit is now on-chain
-          const nextPrepData = await handlePrepareMintInternal(true, currentPermitTokenSymbol);
-          if (nextPrepData) {
-            if (!nextPrepData.needsApproval) {
-              setStep('mint');
+            // Check if all tokens are now completed
+            const currentStatus = { ...tokenCompletionStatus, ...updatedStatus };
+            const allTokensCompleted = [token0Symbol, token1Symbol].every(symbol => currentStatus[symbol]);
+            
+            console.log('[DEBUG] All tokens completed after PermitBatch:', allTokensCompleted);
+            
+            if (allTokensCompleted) {
+              // All permits done, go straight to mint
+              console.log('[DEBUG] All tokens completed, preparing final mint transaction');
+              const nextPrepData = await handlePrepareMintInternal(true, currentPermitTokenSymbol);
+              if (nextPrepData && !nextPrepData.needsApproval) {
+                setStep('mint');
+              }
+            } else {
+              // Some tokens still need processing
+              console.log('[DEBUG] Some tokens still need processing, re-preparing transaction');
+              const nextPrepData = await handlePrepareMintInternal(true, currentPermitTokenSymbol);
+              if (nextPrepData) {
+                if (!nextPrepData.needsApproval) {
+                  setStep('mint');
+                }
+              } else {
+                setStep('input');
+                setPreparedTxData(null);
+              }
             }
           } else {
-            setStep('input');
+            // Fallback to old behavior
+            setTokenCompletionStatus(prev => ({ ...prev, [currentPermitTokenSymbol]: true }));
+            
+            // Clear stale prepared data to avoid UI showing old needsApproval flags
             setPreparedTxData(null);
+
+            // Re-prepare transaction without permit data since permit is now on-chain
+            console.log('[DEBUG] Re-preparing transaction after PermitBatch, tokenJustProcessed:', currentPermitTokenSymbol);
+            console.log('[DEBUG] Current tokenCompletionStatus before API call:', tokenCompletionStatus);
+            const nextPrepData = await handlePrepareMintInternal(true, currentPermitTokenSymbol);
+            if (nextPrepData) {
+              if (!nextPrepData.needsApproval) {
+                setStep('mint');
+              }
+            } else {
+              setStep('input');
+              setPreparedTxData(null);
+            }
           }
           setIsWorking(false);
         };

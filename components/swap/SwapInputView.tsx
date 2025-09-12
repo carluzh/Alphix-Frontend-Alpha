@@ -287,7 +287,7 @@ export function SwapInputView({
                 disabled={!isConnected || isAttemptingSwitch}
               />
               <div className="text-right text-xs text-muted-foreground">
-                {formatCurrency((parseFloat(fromAmount || "0") * displayFromToken.usdPrice).toString())}
+                {formatCurrency((parseFloat(fromAmount || "0") * (displayFromToken.usdPrice || 0)).toString())}
               </div>
             </div>
           </div>
@@ -339,7 +339,7 @@ export function SwapInputView({
                 {(() => {
                   const amount = parseFloat(toAmount || "");
                   if (!toAmount || isNaN(amount)) return "$0.00";
-                  return formatCurrency((amount * displayToToken.usdPrice).toString());
+                  return formatCurrency((amount * (displayToToken.usdPrice || 0)).toString());
                 })()}
               </div>
             </div>

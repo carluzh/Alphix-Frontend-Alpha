@@ -323,7 +323,8 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
   if (alwaysShowSkeleton) {
     return (
       <div
-        className="w-full rounded-lg bg-muted/30 border border-sidebar-border/60 transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow"
+        className="w-full rounded-lg border border-sidebar-border/60 transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow"
+        style={{ backgroundColor: '#161616' }}
         onClick={handleClick}
         onMouseEnter={(e) => {
           const arrow = e.currentTarget.querySelector('[data-arrow]') as HTMLElement;
@@ -377,7 +378,8 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
   if (!hasData && !isActuallyLoading) {
     return (
       <div
-        className="w-full rounded-lg bg-muted/30 border border-sidebar-border/60 transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow"
+        className="w-full rounded-lg border border-sidebar-border/60 transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow"
+        style={{ backgroundColor: '#161616' }}
         onClick={handleClick}
         onMouseEnter={(e) => {
           const arrow = e.currentTarget.querySelector('[data-arrow]') as HTMLElement;
@@ -433,7 +435,8 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
 
     return (
       <div
-        className="w-full rounded-lg bg-muted/30 border border-sidebar-border/60 transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow"
+        className="w-full rounded-lg border border-sidebar-border/60 transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow"
+        style={{ backgroundColor: '#161616' }}
         onClick={handleClick}
         onMouseEnter={(e) => {
           const arrow = e.currentTarget.querySelector('[data-arrow]') as HTMLElement;
