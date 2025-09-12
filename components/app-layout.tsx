@@ -22,17 +22,7 @@ export function AppLayout({ children }: AppLayoutProps) {
   const [showUpdatesNotification, setShowUpdatesNotification] = useState(false);
 
   const handleBetaClick = () => {
-    console.log('handleBetaClick called!'); // Debug log
-    // Only trigger if not already showing
-    if (!showUpdatesNotification) {
-      console.log('Setting showUpdatesNotification to true'); // Debug log
-      setShowUpdatesNotification(true);
-      // Reset after a short delay to allow re-triggering if needed
-      setTimeout(() => {
-        console.log('Resetting showUpdatesNotification to false'); // Debug log
-        setShowUpdatesNotification(false);
-      }, 100);
-    }
+    setShowUpdatesNotification(v => !v);
   };
 
   return (
@@ -47,7 +37,7 @@ export function AppLayout({ children }: AppLayoutProps) {
         </div>
       </SidebarInset>
       <BetaNotification />
-      <UpdatesNotification forceShow={showUpdatesNotification} />
+      <UpdatesNotification open={showUpdatesNotification} onClose={() => setShowUpdatesNotification(false)} />
     </SidebarProvider>
   );
 } 

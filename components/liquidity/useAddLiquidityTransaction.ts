@@ -281,6 +281,11 @@ export function useAddLiquidityTransaction({
             setStep('input');
             return null;
           }
+          // Add 1-second delay before setting up the next Permit2 signature to give wallets time to process
+          if (isCalledAfterApprovalOrPermit) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
+          
           setPermit2SignatureRequest({
             domain: data.signatureDetails.domain,
             types: data.signatureDetails.types,
@@ -388,15 +393,20 @@ export function useAddLiquidityTransaction({
     }
   }, [accountAddress, chainId, preparedTxData, approveERC20Async, resetApproveWriteContract]);
 
+  // Simple mutex to serialize Permit2 signature prompts across re-renders
+  const permitSignChainRef = React.useRef<Promise<any>>(Promise.resolve());
+
   // Function to handle Permit2 signing and separate submission to Permit2 contract
   const handleSignAndSubmitPermit2 = useCallback(async () => {
     // Guard against re-entry / wrong step
-    if (isWorking || isPermit2SendPending || isPermit2Confirming || step !== 'permit2Sign') return;
+    if (isPermit2SendPending || isPermit2Confirming || step !== 'permit2Sign') return;
     if (!permit2SignatureRequest || !accountAddress || !chainId) {
       toast.error("Permit2 Error: Missing data for Permit2 signature.");
       return;
     }
 
+    // Serialize globally in this hook to avoid parallel prompts
+    if (isWorking) return;
     setIsWorking(true);
 
     try {
@@ -431,13 +441,23 @@ export function useAddLiquidityTransaction({
         };
       }
 
-      const signature = await signTypedDataAsync({
-        domain,
-        types,
-        primaryType,
-        message: typedMessage,
-        account: accountAddress,
+      // Serialize signatures: chain this signing after any in-progress sign
+      const chainedSignaturePromise = permitSignChainRef.current.then(async () => {
+        // Flat delay to avoid back-to-back wallet prompts
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        return signTypedDataAsync({
+          domain,
+          types,
+          primaryType,
+          message: typedMessage,
+          account: accountAddress,
+        });
       });
+      // Update the chain to continue after this completes (success or fail)
+      permitSignChainRef.current = chainedSignaturePromise.then(() => {}).catch(() => {});
+
+      const signature = await chainedSignaturePromise;
+      
 
       // Now submit the permit separately to Permit2 contract
       // Prepare permit transaction data

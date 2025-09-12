@@ -470,7 +470,7 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
         if (req.body?.swapType === 'ExactOut') {
           errorMessage = 'Route not available for this amount';
         } else {
-          errorMessage = 'Smart contract error';
+          errorMessage = 'Not enough liquidity';
         }
       }
       // Check for actual liquidity depth errors (be more specific)

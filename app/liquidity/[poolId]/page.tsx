@@ -1339,9 +1339,11 @@ export default function PoolDetailPage() {
       }
 
       // Use versioned URL to avoid stale cache
+      console.log('[PoolDetail] Fetching versioned batch for header stats...');
       const versionResponse = await fetch('/api/cache-version', { cache: 'no-store' as any } as any);
       const versionData = await versionResponse.json();
-      const resp = await fetch(versionData.cacheUrl); // Allow browser caching for performance
+      const resp = await fetch(versionData.cacheUrl);
+      console.log('[PoolDetail] Batch URL', versionData.cacheUrl, 'status', resp.status);
       if (resp.ok) {
         const data = await resp.json();
         const poolIdLc = String(apiPoolIdToUse || '').toLowerCase();

@@ -46,9 +46,7 @@ export function SwapSuccessView({
     try { if (accountAddress) invalidateActivityCache(accountAddress); } catch {}
     // Trigger pool stats revalidate (best-effort)
     (async () => {
-      try {
-        await fetch('/api/internal/revalidate-pools', { method: 'POST' } as any);
-      } catch {}
+      // Pool batch revalidation moved earlier in the flow (right after tx submission)
       // Also revalidate shared chart caches for the swapped pool (volume/TVL)
       try {
         const pools = getAllPools?.() || [];

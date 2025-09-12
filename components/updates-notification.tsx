@@ -1,38 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { X } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { getLatestVersion } from "@/lib/version-log";
 
-export function UpdatesNotification({ forceShow = false }: { forceShow?: boolean }) {
-  const [isVisible, setIsVisible] = useState(false);
-  const [isDismissed, setIsDismissed] = useState(false);
-  const [isToggled, setIsToggled] = useState(false);
-  
+export function UpdatesNotification({ open = false, onClose }: { open?: boolean; onClose?: () => void }) {
   // Get latest version info
   const latestVersion = getLatestVersion();
 
-  useEffect(() => {
-    // Only show when explicitly triggered by Beta badge click
-    if (forceShow) {
-      setIsToggled(true);
-      setIsVisible(!isVisible); // Toggle visibility
-    }
-  }, [forceShow]);
-
-  const handleDismiss = () => {
-    setIsVisible(false);
-    setIsDismissed(true);
-    // No cookies needed since it only shows on manual trigger
-  };
-
-  if (!isVisible || isDismissed) return null;
-
   return (
     <AnimatePresence>
-      {(isVisible && !isDismissed) && (
+      {open && (
         <motion.div
           initial={{ y: 24, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
@@ -65,7 +44,7 @@ export function UpdatesNotification({ forceShow = false }: { forceShow?: boolean
                 variant="ghost"
                 className="group -my-1 -me-1 size-8 p-0 hover:bg-transparent"
                 aria-label="Close notification"
-                onClick={handleDismiss}
+                onClick={() => onClose?.()}
               >
                 <X size={16} strokeWidth={2} className="opacity-100" />
               </Button>
