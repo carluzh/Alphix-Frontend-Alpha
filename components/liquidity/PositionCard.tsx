@@ -7,7 +7,7 @@ import { formatUnits } from "viem";
 import { Card, CardContent, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Info, Clock3, ChevronsLeftRight, EllipsisVertical } from "lucide-react";
+import { Info, Clock3, ChevronsLeftRight, EllipsisVertical, OctagonX } from "lucide-react";
 import { TokenStack } from "./TokenStack";
 import { FeesCell } from "./FeesCell";
 import { TOKEN_DEFINITIONS, TokenSymbol, getToken as getTokenConfig } from '@/lib/pools-config';
@@ -72,7 +72,7 @@ interface PositionCardProps {
     formatTokenDisplayAmount: (amount: string) => string;
     formatAgeShort: (seconds: number | undefined) => string;
     openWithdraw: (position: any) => void;
-    openAddLiquidity: (position: any) => void;
+    openAddLiquidity: (position: any, onModalClose?: () => void) => void;
     claimFees: (positionId: string) => Promise<void>;
     toast: any;
     openPositionMenuKey: string | null;
@@ -484,8 +484,25 @@ export function PositionCard({
                             }}
                         >
                             <div className="p-1 grid gap-1">
-                            <button type="button" className="px-2 py-1 text-xs rounded text-left transition-colors text-muted-foreground hover:bg-muted/30" onClick={(e) => { e.stopPropagation(); openAddLiquidity(position); setOpenPositionMenuKey(null); }}>Add Liquidity</button>
-                            <button type="button" className="px-2 py-1 text-xs rounded text-left transition-colors text-muted-foreground hover:bg-muted/30" onClick={async (e) => { e.stopPropagation(); setOpenPositionMenuKey(null); try { await claimFees(position.positionId); } catch (err: any) { toast.error('Collect failed', { description: err?.message }); } }}>Claim Fees</button>
+                            <button type="button" className="px-2 py-1 text-xs rounded text-left transition-colors text-muted-foreground hover:bg-muted/30" onClick={(e) => { e.stopPropagation(); openAddLiquidity(position, () => setOpenPositionMenuKey(null)); }}>Add Liquidity</button>
+                            <button type="button" className="px-2 py-1 text-xs rounded text-left transition-colors text-muted-foreground hover:bg-muted/30" onClick={async (e) => { 
+                              e.stopPropagation(); 
+                              
+                              // Check if fees are zero before attempting to claim
+                              if (hasZeroFees) {
+                                toast.error('No Fees To Claim', { 
+                                  icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" })
+                                });
+                                return;
+                              }
+                              
+                              try { 
+                                await claimFees(position.positionId); 
+                                setOpenPositionMenuKey(null); // Close menu after successful claim
+                              } catch (err: any) { 
+                                toast.error('Collect failed', { description: err?.message }); 
+                              } 
+                            }}>Claim Fees</button>
                             </div>
                         </motion.div>
                         )}

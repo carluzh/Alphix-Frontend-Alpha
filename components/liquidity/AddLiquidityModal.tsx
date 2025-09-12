@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { PlusIcon, RefreshCwIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, SearchIcon, XIcon, OctagonX, ActivityIcon, MinusIcon, CircleCheck } from "lucide-react"; // Updated imports
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,7 +15,7 @@ import {
   DialogTitle
 } from "@/components/ui/dialog";
 import Image from "next/image";
-import { useAccount, useBalance } from "wagmi";
+import { useAccount, useBalance, useSignTypedData, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { toast } from "sonner";
 import { TOKEN_DEFINITIONS, TokenSymbol, getToken, getAllTokens, getPoolById } from "@/lib/pools-config";
 import { useAddLiquidityTransaction } from "./useAddLiquidityTransaction";
@@ -26,12 +26,14 @@ import { readContract, getBalance } from '@wagmi/core';
 import { erc20Abi } from 'viem';
 import { config } from '@/lib/wagmiConfig';
 import { CHAIN_ID } from "@/lib/pools-config";
-import { formatUnits as viemFormatUnits, parseUnits as viemParseUnits } from "viem";
+import { formatUnits as viemFormatUnits, parseUnits as viemParseUnits, getAddress } from "viem";
 import type { ProcessedPosition } from "../../pages/api/liquidity/get-positions";
 import { useAllPrices } from "@/components/data/hooks";
 import { formatUSD } from "@/lib/format";
 import { sanitizeDecimalInput, debounce, getTokenSymbolByAddress, formatUncollectedFee } from "@/lib/utils";
 import { formatUnits } from "viem";
+import { preparePermit2BatchForNewPosition } from '@/lib/liquidity-utils';
+import { providePreSignedIncreaseBatchPermit } from './useIncreaseLiquidity';
 
 // Utility functions
 const formatTokenDisplayAmount = (amount: string) => {
@@ -109,6 +111,9 @@ export function AddLiquidityModal({
   increaseTxHash: parentIncreaseTxHash
 }: AddLiquidityModalProps) {
   const { address: accountAddress, chainId, isConnected } = useAccount();
+  const { signTypedDataAsync } = useSignTypedData();
+  const { data: incApproveHash, writeContractAsync: approveERC20Async, reset: resetIncreaseApprove } = useWriteContract();
+  const { isLoading: isIncreaseApproving, isSuccess: isIncreaseApproved } = useWaitForTransactionReceipt({ hash: incApproveHash });
   const { data: allPrices } = useAllPrices();
   
   // Determine if this is for an existing position or new position
@@ -214,9 +219,19 @@ export function AddLiquidityModal({
   
   // Track the transaction hash when we actually start the transaction in this session
   const [currentSessionTxHash, setCurrentSessionTxHash] = useState<string | null>(null);
+  
+  // Track batch permit signing for existing positions (mimic new position flow)
+  const [increaseBatchPermitSigned, setIncreaseBatchPermitSigned] = useState(false);
+  const [signedBatchPermit, setSignedBatchPermit] = useState<null | { owner: `0x${string}`; permitBatch: any; signature: string }>(null);
 
   // Determine if we should use internal hook or parent hook (moved up before useEffect)
   const shouldUseInternalHook = !parentIncreaseLiquidity;
+
+  // State for tracking increase liquidity transaction flow (like useAddLiquidityTransaction)
+  const [increaseStep, setIncreaseStep] = useState<'input' | 'approve' | 'permit' | 'deposit'>('input');
+  const [increasePreparedTxData, setIncreasePreparedTxData] = useState<any>(null);
+  const [increaseNeedsERC20Approvals, setIncreaseNeedsERC20Approvals] = useState<TokenSymbol[]>([]);
+  const [increaseIsWorking, setIncreaseIsWorking] = useState(false);
 
   // Reset transaction state when modal opens
   useEffect(() => {
@@ -227,6 +242,13 @@ export function AddLiquidityModal({
       setHasToken0Allowance(null);
       setHasToken1Allowance(null);
       setCurrentSessionTxHash(null);
+      setIncreaseBatchPermitSigned(false);
+      setSignedBatchPermit(null);
+      // Reset increase transaction flow states
+      setIncreaseStep('input');
+      setIncreasePreparedTxData(null);
+      setIncreaseNeedsERC20Approvals([]);
+      setIncreaseIsWorking(false);
       // Hard reset per-open to prevent reusing previous flow state
       setShowYouWillReceive(false);
       setShowTransactionOverview(false);
@@ -279,6 +301,7 @@ export function AddLiquidityModal({
       setTxStarted(false);
       setWasIncreasingLiquidity(false);
       setCurrentSessionTxHash(null);
+      setIncreaseBatchPermitSigned(false);
       
       // Reset allowance states
       setHasToken0Allowance(null);
@@ -320,9 +343,10 @@ export function AddLiquidityModal({
     isWorking,
     step,
     preparedTxData,
-    permit2SignatureRequest,
     involvedTokensCount,
-    completedTokensCount,
+    completedERC20ApprovalsCount,
+    needsERC20Approvals,
+    batchPermitSigned,
     isApproveWritePending,
     isApproving,
     isMintSendPending,
@@ -330,7 +354,6 @@ export function AddLiquidityModal({
     isMintSuccess,
     handlePrepareMint,
     handleApprove,
-    handleSignAndSubmitPermit2,
     handleMint,
     resetTransactionState,
   } = useAddLiquidityTransaction({
@@ -361,6 +384,12 @@ export function AddLiquidityModal({
   const isIncreasingLiquidity = shouldUseInternalHook ? internalHookResult.isLoading : parentIsIncreasingLiquidity ?? false;
   const txHash = shouldUseInternalHook ? internalHookResult.hash : parentIncreaseTxHash;
   const isTransactionSuccess = shouldUseInternalHook ? internalHookResult.isSuccess : parentIsIncreaseSuccess ?? false;
+
+  // Check what ERC20 approvals are needed for increase liquidity (similar to form)
+  const checkIncreaseApprovals = useCallback(async (): Promise<TokenSymbol[]> => {
+    // For increase flow we rely on Permit2 batch permit; no ERC20 approval step needed.
+    return [];
+  }, []);
   
   const handleConfirmIncrease = () => {
     if (!positionToModify) {
@@ -390,28 +419,204 @@ export function AddLiquidityModal({
 
   const [txStarted, setTxStarted] = useState(false);
 
-  const handleExecuteTransaction = () => {
+  // Prepare increase transaction (similar to handlePrepareMint in form)
+  const handlePrepareIncrease = useCallback(async () => {
+    setIncreaseIsWorking(true);
+    try {
+      // Check what ERC20 approvals are needed
+      const needsApprovals = await checkIncreaseApprovals();
+      setIncreaseNeedsERC20Approvals(needsApprovals);
+      
+      if (needsApprovals.length > 0) {
+        setIncreaseStep('approve');
+        setIncreasePreparedTxData({
+          needsApproval: true,
+          approvalType: 'ERC20_TO_PERMIT2',
+          approvalTokenSymbol: needsApprovals[0], // Show first token needing approval
+          approvalTokenAddress: TOKEN_DEFINITIONS[needsApprovals[0]]?.address,
+          approvalAmount: "115792089237316195423570985008687907853269984665640564039457584007913129639935", // max uint256
+          approveToAddress: "0x000000000022D473030F116dDEE9F6B43aC78BA3", // PERMIT2_ADDRESS
+        });
+      } else {
+        setIncreaseStep('permit');
+        setIncreasePreparedTxData({ needsApproval: false });
+      }
+    } catch (error: any) {
+      console.error('Prepare increase error:', error);
+      toast.error("Preparation Error", { description: error.message || "Failed to prepare transaction" });
+    } finally {
+      setIncreaseIsWorking(false);
+    }
+  }, [checkIncreaseApprovals]);
+
+  // Handle ERC20 approvals for increase (similar to form)
+  const handleIncreaseApprove = useCallback(async () => {
+    if (!increasePreparedTxData?.needsApproval || increasePreparedTxData.approvalType !== 'ERC20_TO_PERMIT2') return;
+
+    setIncreaseIsWorking(true);
+
+    try {
+      const tokenAddress = increasePreparedTxData.approvalTokenAddress as `0x${string}` | undefined;
+      if (!tokenAddress) throw new Error('Missing token address for approval');
+      await approveERC20Async({
+        address: tokenAddress,
+        abi: erc20Abi,
+        functionName: 'approve',
+        args: ["0x000000000022D473030F116dDEE9F6B43aC78BA3" as `0x${string}`, BigInt(increasePreparedTxData.approvalAmount || '0')],
+      });
+      // Wait for receipt via hook; state advance handled in effect below
+    } catch (error: any) {
+      toast.error("Approval Error", { description: error?.shortMessage || error?.message || "Failed to approve token." });
+      setIncreaseIsWorking(false);
+      resetIncreaseApprove();
+    }
+  }, [increasePreparedTxData, approveERC20Async, resetIncreaseApprove]);
+
+  // Advance approval step when tx confirms
+  useEffect(() => {
+    if (!isIncreaseApproved || !increasePreparedTxData) return;
+    // Remove the approved token from the needs list
+    setIncreaseNeedsERC20Approvals(prev => prev.filter(token => token !== increasePreparedTxData.approvalTokenSymbol));
+    const remaining = increaseNeedsERC20Approvals.filter(token => token !== increasePreparedTxData.approvalTokenSymbol);
+    if (remaining.length > 0) {
+      setIncreasePreparedTxData({
+        needsApproval: true,
+        approvalType: 'ERC20_TO_PERMIT2',
+        approvalTokenSymbol: remaining[0],
+        approvalTokenAddress: TOKEN_DEFINITIONS[remaining[0]]?.address,
+        approvalAmount: "115792089237316195423570985008687907853269984665640564039457584007913129639935",
+        approveToAddress: "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+      });
+      setIncreaseStep('approve');
+    } else {
+      setIncreasePreparedTxData({ needsApproval: false });
+      setIncreaseStep('permit');
+    }
+    setIncreaseIsWorking(false);
+    resetIncreaseApprove();
+  }, [isIncreaseApproved]);
+
+  // Handle permit signature (separate step like in form)
+  const handleIncreasePermit = useCallback(async () => {
+    if (!positionToModify || !accountAddress || !chainId) return;
+    // Idempotency: if already signed or not in permit step, skip
+    if (increaseBatchPermitSigned || increaseStep !== 'permit') return;
+    setIncreaseIsWorking(true);
+    try {
+      // Derive NFT tokenId from composite position id (last part expected to be hex salt)
+      const compositeId = positionToModify.positionId?.toString?.() || '';
+      let tokenIdHex = compositeId.includes('-') ? compositeId.split('-').pop() || '' : compositeId;
+      if (!tokenIdHex) throw new Error('Unable to derive position tokenId');
+      
+      console.log('[modal] TokenId extraction:', {
+        compositeId,
+        tokenIdHex,
+        hasDash: compositeId.includes('-'),
+        parts: compositeId.split('-')
+      });
+      
+      // Ensure proper hex prefix
+      if (!tokenIdHex.startsWith('0x')) tokenIdHex = `0x${tokenIdHex}`;
+      let nftTokenId: bigint;
+      try {
+        nftTokenId = BigInt(tokenIdHex);
+        console.log('[modal] Parsed tokenId:', nftTokenId.toString());
+      } catch {
+        throw new Error('Invalid position tokenId format');
+      }
+
+      const deadline = Math.floor(Date.now() / 1000) + (20 * 60);
+      const prepared = await preparePermit2BatchForNewPosition(
+        positionToModify.token0.symbol,
+        positionToModify.token1.symbol,
+        accountAddress as `0x${string}`,
+        chainId,
+        deadline
+      );
+
+      if (!prepared?.message?.details || prepared.message.details.length === 0) {
+        // No batch permit required. Consider the step satisfied.
+        setIncreaseBatchPermitSigned(true);
+        setIncreaseStep('deposit');
+        setIncreaseIsWorking(false);
+        return;
+      }
+
+      const signature = await signTypedDataAsync({
+        domain: prepared.domain as any,
+        types: prepared.types as any,
+        primaryType: prepared.primaryType,
+        message: prepared.message as any,
+      });
+
+      // Provide pre-signed batch permit to the increase hook via in-memory store
+      const payload = { owner: accountAddress as `0x${string}`, permitBatch: prepared.message, signature };
+      providePreSignedIncreaseBatchPermit(positionToModify.positionId, payload);
+      setSignedBatchPermit(payload);
+
+      setIncreaseBatchPermitSigned(true);
+      setIncreaseStep('deposit');
+    } catch (error: any) {
+      const description = (error?.message || '').includes('User rejected') ? 'Permit signature was rejected.' : (error?.message || 'Failed to sign permit');
+      toast.error('Permit Error', { description });
+    } finally {
+      setIncreaseIsWorking(false);
+    }
+  }, [positionToModify, accountAddress, chainId, signTypedDataAsync, increaseBatchPermitSigned, increaseStep]);
+
+  // Handle final deposit transaction
+  const handleExecuteTransaction = async () => {
     if (!positionToModify) return;
     
-    console.log('[DEBUG] Modal: handleExecuteTransaction called, shouldUseInternalHook:', shouldUseInternalHook);
+    console.log('[DEBUG] Modal: handleExecuteTransaction called, step:', increaseStep, 'shouldUseInternalHook:', shouldUseInternalHook);
     
-    const data: IncreasePositionData = {
-      tokenId: positionToModify.positionId,
-      token0Symbol: positionToModify.token0.symbol as TokenSymbol,
-      token1Symbol: positionToModify.token1.symbol as TokenSymbol,
-      additionalAmount0: increaseAmount0 || '0',
-      additionalAmount1: increaseAmount1 || '0',
-      poolId: positionToModify.poolId,
-      tickLower: positionToModify.tickLower,
-      tickUpper: positionToModify.tickUpper,
-      feesForIncrease: feesForIncrease,
-    };
+    if (increaseStep === 'input') {
+      // Step 1: Prepare transaction
+      await handlePrepareIncrease();
+    } else if (increaseStep === 'approve') {
+      // Step 2: Handle approvals
+      await handleIncreaseApprove();
+    } else if (increaseStep === 'permit') {
+      // Step 3: Handle permit signature
+      await handleIncreasePermit();
+    } else if (increaseStep === 'deposit') {
+      // Step 4: Execute final transaction - just call the hook directly like the form does
+      const data: IncreasePositionData = {
+        tokenId: positionToModify.positionId,
+        token0Symbol: positionToModify.token0.symbol as TokenSymbol,
+        token1Symbol: positionToModify.token1.symbol as TokenSymbol,
+        additionalAmount0: increaseAmount0 || '0',
+        additionalAmount1: increaseAmount1 || '0',
+        poolId: positionToModify.poolId,
+        tickLower: positionToModify.tickLower,
+        tickUpper: positionToModify.tickUpper,
+        feesForIncrease: feesForIncrease,
+      };
 
-    // For internal hook usage, onLiquidityAdded will be called by the hook's callback
-    // For parent hook usage, the parent page handles all the callbacks
-    increaseLiquidity(data);
-    setTxStarted(true);
+      console.log('[modal] Executing increase with data:', data);
+      console.log('[modal] signedBatchPermit:', signedBatchPermit ? 'present' : 'none');
+
+      // For internal hook usage, onLiquidityAdded will be called by the hook's callback
+      // For parent hook usage, the parent page handles all the callbacks
+      // Pass pre-signed batch permit to avoid re-prompting at deposit
+      try {
+        // @ts-ignore opts supported by hook
+        increaseLiquidity(data, signedBatchPermit ? { batchPermit: signedBatchPermit } : undefined);
+      } catch (e) {
+        console.error('[modal] increaseLiquidity call threw before send', e);
+      }
+      setTxStarted(true);
+    }
   };
+
+  // Auto-prepare when entering Transaction Overview to mirror form UX
+  useEffect(() => {
+    if (showTransactionOverview && isExistingPosition) {
+      if (increaseStep === 'input' && !increaseIsWorking) {
+        handlePrepareIncrease();
+      }
+    }
+  }, [showTransactionOverview, isExistingPosition, increaseStep, increaseIsWorking, handlePrepareIncrease]);
 
   // Check allowances when Transaction Overview is shown
   useEffect(() => {
@@ -505,12 +710,16 @@ export function AddLiquidityModal({
       setShowSuccessView(true);
       
       // Call the success callback to notify parent component
-      if (onLiquidityAdded) {
-        console.log('[DEBUG] Calling onLiquidityAdded callback');
+      // Only call this when NOT using internal hook (i.e., for increase operations)
+      // For new positions using internal hook, the useAddLiquidityTransaction handles the callback
+      if (onLiquidityAdded && !shouldUseInternalHook) {
+        console.log('[DEBUG] Calling onLiquidityAdded callback for increase operation');
         onLiquidityAdded();
+      } else if (shouldUseInternalHook) {
+        console.log('[DEBUG] Skipping modal onLiquidityAdded - internal hook will handle it');
       }
     }
-  }, [txHash, isTransactionSuccess, showTransactionOverview, txStarted, currentSessionTxHash, onLiquidityAdded]);
+  }, [txHash, isTransactionSuccess, showTransactionOverview, txStarted, currentSessionTxHash, onLiquidityAdded, shouldUseInternalHook]);
 
   // Reset parent success states when modal opens to prevent premature success view
   // BUT only if we don't have an active transaction in progress
@@ -877,6 +1086,75 @@ export function AddLiquidityModal({
     setTokenChooserOpen(null);
     setTokenSearchTerm('');
   };
+
+  // Determine button text based on current state (for new positions)
+  const getButtonText = () => {
+    if (step === 'approve') {
+      if (isApproveWritePending || isApproving) {
+        return `Approve ${preparedTxData?.approvalTokenSymbol || 'Tokens'}`;
+      }
+      return `Approve ${preparedTxData?.approvalTokenSymbol || 'Tokens'}`;
+    } else if (step === 'mint') {
+      if (!batchPermitSigned) {
+        if (isMintSendPending || isWorking) {
+          return 'Sign';
+        }
+        return 'Sign';
+      } else {
+        if (isMintSendPending || isMintConfirming) {
+          return 'Deposit';
+        }
+        return 'Deposit';
+      }
+    } else {
+      // step === 'input'
+      return 'Add Liquidity';
+    }
+  };
+
+  // Determine button text for existing positions based on transaction state (like form)
+  const getIncreaseButtonText = () => {
+    if (!showTransactionOverview) {
+      return 'Confirm';
+    }
+    
+    if (increaseStep === 'approve') {
+      if (increaseIsWorking) {
+        return `Approve ${increasePreparedTxData?.approvalTokenSymbol || 'Tokens'}`;
+      }
+      return `Approve ${increasePreparedTxData?.approvalTokenSymbol || 'Tokens'}`;
+    } else if (increaseStep === 'permit') {
+      if (increaseIsWorking || isIncreasingLiquidity) {
+        return 'Sign';
+      }
+      return 'Sign';
+    } else if (increaseStep === 'deposit') {
+      if (isIncreasingLiquidity) {
+        return 'Deposit';
+      }
+      return 'Deposit';
+    } else {
+      // increaseStep === 'input'
+      return 'Add Liquidity';
+    }
+  };
+
+  // Calculate involved tokens count and completed approvals for increase (like form)
+  const increaseInvolvedTokensCount = useMemo(() => {
+    if (!positionToModify) return 0;
+    const tokens: TokenSymbol[] = [];
+    if (TOKEN_DEFINITIONS[positionToModify.token0.symbol as TokenSymbol]?.address !== "0x0000000000000000000000000000000000000000") {
+      tokens.push(positionToModify.token0.symbol as TokenSymbol);
+    }
+    if (TOKEN_DEFINITIONS[positionToModify.token1.symbol as TokenSymbol]?.address !== "0x0000000000000000000000000000000000000000") {
+      tokens.push(positionToModify.token1.symbol as TokenSymbol);
+    }
+    return tokens.length;
+  }, [positionToModify]);
+
+  const increaseCompletedERC20ApprovalsCount = useMemo(() => {
+    return increaseInvolvedTokensCount - increaseNeedsERC20Approvals.length;
+  }, [increaseInvolvedTokensCount, increaseNeedsERC20Approvals.length]);
 
 
   return (
@@ -1383,34 +1661,39 @@ export function AddLiquidityModal({
                         <div className="flex items-center justify-between text-xs text-muted-foreground">
                           <span>Token Approvals</span>
                           <span>
-                            {hasToken0Allowance === null || hasToken1Allowance === null ? (
-                              <span className="text-xs font-mono text-muted-foreground">
-                                --/2
-                              </span>
+                            {(increaseStep === 'approve' && increaseIsWorking) ? (
+                              <RefreshCwIcon className="h-4 w-4 animate-spin" />
                             ) : (
-                              <span className={`text-xs font-mono ${(hasToken0Allowance && hasToken1Allowance) ? 'text-green-500' : 'text-muted-foreground'}`}>
-                                {(hasToken0Allowance ? 1 : 0) + (hasToken1Allowance ? 1 : 0)}/2
+                              <span className={`text-xs font-mono ${increaseCompletedERC20ApprovalsCount === increaseInvolvedTokensCount && increaseInvolvedTokensCount > 0 ? 'text-green-500' : 'text-muted-foreground'}`}>
+                                {`${increaseCompletedERC20ApprovalsCount}/${increaseInvolvedTokensCount > 0 ? increaseInvolvedTokensCount : '-'}`}
                               </span>
                             )}
                           </span>
                         </div>
                         <div className="flex items-center justify-between text-xs text-muted-foreground">
-                          <span>Signatures</span>
+                          <span>Permit Signature</span>
                           <span>
-                            {txStarted && isIncreasingLiquidity ? (
+                            {(increaseStep === 'permit' && increaseIsWorking) ? (
                               <RefreshCwIcon className="h-4 w-4 animate-spin" />
-                            ) : txStarted ? (
-                              <span className="text-xs font-mono text-green-500">
-                                2/2
-                              </span>
                             ) : (
-                              <span className="text-xs font-mono text-muted-foreground">
-                                0/2
+                              <span className={`text-xs font-mono ${increaseBatchPermitSigned ? 'text-green-500' : 'text-muted-foreground'}`}>
+                                {increaseBatchPermitSigned ? '1/1' : '0/1'}
                               </span>
                             )}
                           </span>
                         </div>
-                        {/* Removed the extra Add Liquidity step per requirements */}
+                        <div className="flex items-center justify-between text-xs text-muted-foreground">
+                          <span>Deposit Transaction</span>
+                          <span>
+                            {(increaseStep === 'deposit' && isIncreasingLiquidity) ? (
+                              <ActivityIcon className="h-4 w-4 animate-pulse text-muted-foreground" />
+                            ) : isTransactionSuccess ? (
+                              <CheckIcon className="h-4 w-4 text-green-500" />
+                            ) : (
+                              <MinusIcon className="h-4 w-4" />
+                            )}
+                          </span>
+                        </div>
                       </div>
                     )}
 
@@ -1427,7 +1710,7 @@ export function AddLiquidityModal({
                             setShowYouWillReceive(false);
                           }
                         }} 
-                        disabled={isWorking || isIncreasingLiquidity}
+                        disabled={increaseIsWorking || isIncreasingLiquidity}
                         style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
                       >
                         Back
@@ -1436,10 +1719,10 @@ export function AddLiquidityModal({
                       <Button
                         className="text-sidebar-primary border border-sidebar-primary bg-[#3d271b] hover:bg-[#3d271b]/90"
                         onClick={showTransactionOverview ? handleExecuteTransaction : handleFinalConfirmIncrease}
-                        disabled={isIncreasingLiquidity || isIncreaseCalculating}
+                        disabled={increaseIsWorking || isIncreasingLiquidity || isIncreaseCalculating}
                       >
-                        <span className={isIncreasingLiquidity ? "animate-pulse" : ""}>
-                          Confirm
+                        <span className={increaseIsWorking || isIncreasingLiquidity || isIncreaseCalculating ? "animate-pulse" : ""}>
+                          {getIncreaseButtonText()}
                         </span>
                       </Button>
                     </div>
@@ -1454,6 +1737,55 @@ export function AddLiquidityModal({
             <div className="text-center text-muted-foreground text-sm">
               Select tokens and amounts to add liquidity
             </div>
+            
+            {/* Transaction Steps Display */}
+            {step !== 'input' && (
+              <div className="p-3 border border-dashed rounded-md bg-muted/10 mb-4">
+                <p className="text-sm font-medium mb-2 text-foreground/80">Transaction Steps</p>
+                <div className="space-y-1.5 text-xs text-muted-foreground">
+                    {/* ERC20 Approvals to Permit2 */}
+                    <div className="flex items-center justify-between">
+                        <span>Token Approvals</span>
+                        <span>
+                          { (step === 'approve' && (isApproveWritePending || isApproving))
+                            ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
+                            : (
+                              <span className={`text-xs font-mono ${completedERC20ApprovalsCount === involvedTokensCount && involvedTokensCount > 0 ? 'text-green-500' : ''}`}>
+                                {`${completedERC20ApprovalsCount}/${involvedTokensCount > 0 ? involvedTokensCount : '-'}`}
+                              </span>
+                            )
+                          }
+                        </span>
+                    </div>
+                    
+                    {/* Permit2 Signature */}
+                    <div className="flex items-center justify-between">
+                        <span>Permit Signature</span>
+                        <span>
+                          { (step === 'mint' && !batchPermitSigned && (isMintSendPending || isWorking))
+                            ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
+                            : (
+                              <span className={`text-xs font-mono ${batchPermitSigned ? 'text-green-500' : ''}`}>
+                                {batchPermitSigned ? '1/1' : '0/1'}
+                              </span>
+                            )
+                          }
+                        </span>
+                    </div>
+                    
+                    {/* Final Deposit Transaction */}
+                    <div className="flex items-center justify-between">
+                        <span>Deposit Transaction</span> 
+                        <span>
+                            {(step === 'mint' && batchPermitSigned && (isMintConfirming || isMintSendPending)) ? 
+                              <ActivityIcon className="h-4 w-4 animate-pulse text-muted-foreground" />
+                             : isMintSuccess ? <CheckIcon className="h-4 w-4 text-green-500" />
+                             : <MinusIcon className="h-4 w-4" />}
+                        </span>
+                    </div>
+                </div>
+              </div>
+            )}
             
             {/* Token Selection */}
             <div className="space-y-3">
@@ -1551,17 +1883,18 @@ export function AddLiquidityModal({
               </Button>
 
               <Button
-                className={isWorking ? "relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 !opacity-100 cursor-default text-white/75" : "text-sidebar-primary border border-sidebar-primary bg-[#3d271b] hover:bg-[#3d271b]/90"}
+                className={(isWorking || isCalculating || !token0Symbol || !token1Symbol || (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0"))) ? "relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 !opacity-100 cursor-default text-white/75" : "text-sidebar-primary border border-sidebar-primary bg-[#3d271b] hover:bg-[#3d271b]/90"}
                 onClick={() => {
                   if (step === 'input') handlePrepareMint();
                   else if (step === 'approve') handleApprove();
-                  else if (step === 'permit2Sign') handleSignAndSubmitPermit2();
                   else if (step === 'mint') handleMint();
                 }}
                 disabled={isWorking || isCalculating || !token0Symbol || !token1Symbol || (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0"))}
-                style={isWorking ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
+                style={(isWorking || isCalculating || !token0Symbol || !token1Symbol || (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0"))) ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
               >
-                {isWorking ? 'Processing...' : 'Add Liquidity'}
+                <span className={(step === 'approve' && (isApproveWritePending || isApproving)) || (step === 'mint' && (isMintSendPending || isMintConfirming || (!batchPermitSigned && isWorking))) || (step === 'input' && isWorking) ? "animate-pulse" : ""}>
+                  {getButtonText()}
+                </span>
               </Button>
           </div>
         </div>
@@ -1766,3 +2099,4 @@ export function AddLiquidityModal({
     </Dialog>
   );
 }
+

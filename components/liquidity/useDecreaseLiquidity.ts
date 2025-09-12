@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import React from 'react';
 import { OctagonX } from 'lucide-react';
 import { useAccount, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
+import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { V4PositionPlanner, V4PositionManager, Pool as V4Pool, Position as V4Position } from '@uniswap/v4-sdk';
 import { TickMath } from '@uniswap/v3-sdk';
@@ -12,7 +13,8 @@ import { baseSepolia } from '@/lib/wagmiConfig';
 import { getAddress, type Hex, BaseError, parseUnits, encodeAbiParameters, keccak256, formatUnits } from 'viem';
 import { getPositionDetails, getPoolState } from '@/lib/liquidity-utils';
 import { prefetchService } from '@/lib/prefetch-service';
-import { invalidateActivityCache, invalidateUserPositionsCache, invalidateUserPositionIdsCache } from '@/lib/client-cache';
+import { invalidateActivityCache, invalidateUserPositionsCache, invalidateUserPositionIdsCache, refreshFeesAfterTransaction } from '@/lib/client-cache';
+import { invalidateAfterTx } from '@/lib/invalidation';
 import { clearBatchDataCache } from '@/lib/cache-version';
 import { publicClient } from '@/lib/viemClient';
 
@@ -55,6 +57,7 @@ export interface DecreasePositionData {
 type DecreaseOptions = { slippageBps?: number; deadlineSeconds?: number };
 
 export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: UseDecreaseLiquidityProps) {
+  const queryClient = useQueryClient();
   const { address: accountAddress, chainId } = useAccount();
   const { data: hash, writeContract, isPending: isDecreaseSendPending, error: decreaseSendError, reset: resetWriteContract } = useWriteContract();
   const { isLoading: isDecreaseConfirming, isSuccess: isDecreaseConfirmed, error: decreaseConfirmError, status: waitForTxStatus } = useWaitForTransactionReceipt({ hash });
@@ -62,8 +65,10 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
   // (debug logging removed)
 
   const [isDecreasing, setIsDecreasing] = useState(false);
+  const currentDecreasePositionRef = React.useRef<DecreasePositionData | null>(null);
   const lastWasCollectOnly = useRef(false);
   const lastIsFullBurn = useRef(false);
+  const lastDecreaseData = useRef<DecreasePositionData | null>(null);
   const processedTransactions = useRef(new Set<string>());
 
   // Helper function to get the NFT token ID from position parameters
@@ -102,10 +107,14 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
       toast.error("Configuration Error", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Position Manager address not set." });
       return;
     }
+    
+    // Store position data for fee refresh after transaction
+    currentDecreasePositionRef.current = positionData;
 
     setIsDecreasing(true);
     const actionName = positionData.isFullBurn ? "burn" : (positionData.collectOnly ? "collect" : "decrease");
     lastWasCollectOnly.current = !!positionData.collectOnly;
+    lastDecreaseData.current = positionData;
     lastIsFullBurn.current = !!positionData.isFullBurn;
 
     try {
@@ -639,10 +648,32 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
         } else {
           onLiquidityDecreased({ txHash: hash as `0x${string}`, blockNumber, isFullBurn: lastIsFullBurn.current } as any);
         }
+        
+        // Refresh fee data for this position
+        try {
+          const decreasePosition = currentDecreasePositionRef.current;
+          if (decreasePosition?.tokenId) {
+            refreshFeesAfterTransaction(decreasePosition.tokenId.toString(), queryClient);
+          }
+        } catch {}
         // CRITICAL: Invalidate global batch cache after liquidity decrease
         try {
           clearBatchDataCache();
           fetch('/api/internal/revalidate-pools', { method: 'POST' }).catch(() => {});
+        } catch {}
+        
+        // CRITICAL: Invalidate React Query caches including fee data
+        try {
+          if (accountAddress) {
+            const currentPositionId = lastDecreaseData.current?.tokenId;
+            const poolId = lastDecreaseData.current?.poolId;
+            invalidateAfterTx(queryClient, {
+              owner: accountAddress,
+              poolId: poolId,
+              positionIds: currentPositionId ? [String(currentPositionId)] : undefined,
+              reason: lastWasCollectOnly.current ? 'collect' : 'decrease'
+            }).catch(() => {});
+          }
         } catch {}
       })();
       try { if (accountAddress) prefetchService.notifyPositionsRefresh(accountAddress, lastWasCollectOnly.current ? 'collect' : 'decrease'); } catch {}

@@ -90,10 +90,6 @@ export const PERMIT_TYPES = {
         { name: 'details', type: 'PermitDetails' }, { name: 'spender', type: 'address' },
         { name: 'sigDeadline', type: 'uint256' },
     ],
-    PermitBatch: [
-        { name: 'details', type: 'PermitDetails[]' }, { name: 'spender', type: 'address' },
-        { name: 'sigDeadline', type: 'uint256' },
-    ],
 } as const;
 
 // --- ABI Definitions ---

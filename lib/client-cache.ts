@@ -223,6 +223,45 @@ export function invalidateUncollectedFeesCache(positionId: string): void {
   invalidateCacheEntry(getUncollectedFeesCacheKey(positionId));
 }
 
+// Centralized fee refresh for transactions that affect unclaimed fees
+export function refreshFeesAfterTransaction(positionIds: string | string[], queryClient?: any): void {
+  const ids = Array.isArray(positionIds) ? positionIds : [positionIds];
+  
+  // Clear individual position fee caches
+  ids.forEach(id => {
+    if (id) invalidateUncollectedFeesCache(id);
+  });
+  
+  // Clear any batch caches that might contain these positions
+  // Since batch keys are based on sorted position arrays, we can't target specific ones
+  // So we clear all batch caches by iterating through the cache
+  try {
+    const cachePrefix = 'uncollectedFeesBatch_';
+    Object.keys(appCache).forEach(key => {
+      if (key.startsWith(cachePrefix)) {
+        invalidateCacheEntry(key);
+      }
+    });
+  } catch {}
+  
+  // CRITICAL: Also invalidate React Query cache to force immediate refetch
+  if (queryClient) {
+    try {
+      // Invalidate individual fee queries using correct query key format
+      ids.forEach(id => {
+        if (id) {
+          queryClient.invalidateQueries({ queryKey: ['user', 'uncollectedFees', id] });
+        }
+      });
+      
+      // Invalidate all batch fee queries since we don't know which batches contain these positions
+      queryClient.invalidateQueries({ queryKey: ['user', 'uncollectedFeesBatch'] });
+    } catch (error) {
+      console.warn('Failed to invalidate React Query fee caches:', error);
+    }
+  }
+}
+
 // Cache TTL: keep short (e.g., 60s) to avoid stale UX while still preventing spam on toggle
 export async function loadUncollectedFees(positionId: string, ttlMs: number = 60 * 1000): Promise<{ amount0: string; amount1: string } | null> {
   const key = getUncollectedFeesCacheKey(positionId);

@@ -1,4 +1,5 @@
 import { encodeFunctionData, parseUnits, type Address, type Hex, getAddress, encodeAbiParameters, keccak256 } from 'viem';
+import { getToken } from './pools-config';
 
 // Helper function to safely parse amounts and prevent scientific notation errors
 const safeParseUnits = (amount: string, decimals: number): bigint => {
@@ -399,6 +400,73 @@ export async function preparePermit2BatchForPosition(
     const detailEntries: Permit2Details[] = [];
     for (const t of tokens) {
         try {
+            const allowance = (await publicClient.readContract({
+                address: PERMIT2_ADDRESS,
+                abi: Permit2Abi_allowance,
+                functionName: 'allowance',
+                args: [getAddress(userAddress), getAddress(t), getAddress(pm)],
+            })) as readonly [bigint, bigint, bigint]; // amount, expiration, nonce
+
+            const nonce = allowance?.[2] ?? 0n;
+            detailEntries.push({
+                token: getAddress(t),
+                amount: (2n ** 160n - 1n).toString(),
+                expiration: BigInt(sigDeadlineSeconds).toString(),
+                nonce: nonce.toString(),
+            });
+        } catch {
+            // If token is native (no ERC20 at this address) or call fails, skip
+        }
+    }
+
+    const message = {
+        details: detailEntries,
+        spender: pm,
+        sigDeadline: BigInt(sigDeadlineSeconds).toString(),
+    };
+
+    const domain = { name: PERMIT2_DOMAIN_NAME, chainId, verifyingContract: PERMIT2_ADDRESS } as const;
+
+    return {
+        domain: domain as unknown as { name: string; chainId: number; verifyingContract: Address },
+        types: PERMIT2_TYPES,
+        primaryType: 'PermitBatch',
+        message,
+    };
+}
+
+/**
+ * Builds EIP-712 Permit2 batch data for new liquidity positions with specified token symbols.
+ * Similar to preparePermit2BatchForPosition but for new positions where we specify tokens directly.
+ */
+export async function preparePermit2BatchForNewPosition(
+    token0Symbol: string,
+    token1Symbol: string,
+    userAddress: Address,
+    chainId: number,
+    sigDeadlineSeconds: number,
+): Promise<PreparedPermit2Batch> {
+    const pm = getPositionManagerAddress() as Address;
+    
+    // Get token definitions
+    const token0Def = getToken(token0Symbol);
+    const token1Def = getToken(token1Symbol);
+    
+    if (!token0Def || !token1Def) {
+        throw new Error(`Token definitions not found for ${token0Symbol} or ${token1Symbol}`);
+    }
+
+    const tokens: Address[] = [getAddress(token0Def.address), getAddress(token1Def.address)];
+
+    // Query Permit2 allowance tuples to get current nonces
+    const detailEntries: Permit2Details[] = [];
+    for (const t of tokens) {
+        try {
+            // Skip native ETH
+            if (t === getAddress('0x0000000000000000000000000000000000000000')) {
+                continue;
+            }
+
             const allowance = (await publicClient.readContract({
                 address: PERMIT2_ADDRESS,
                 abi: Permit2Abi_allowance,

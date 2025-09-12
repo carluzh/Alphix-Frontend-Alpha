@@ -19,6 +19,11 @@ export async function invalidateAfterTx(qc: QueryClient, params: Params) {
       qc.invalidateQueries({ queryKey: qk.uncollectedFeesBatch(key) })
       for (const id of params.positionIds) {
         qc.invalidateQueries({ queryKey: qk.uncollectedFees(id) })
+        // Also invalidate client-side cache to prevent stale fee data
+        try {
+          const { invalidateCacheEntry } = await import('@/lib/client-cache')
+          invalidateCacheEntry(`uncollectedFees_${id}`)
+        } catch {}
       }
     }
 
@@ -37,14 +42,23 @@ export async function invalidateAfterTx(qc: QueryClient, params: Params) {
     // Activity data - invalidate when any user action occurs
     qc.invalidateQueries({ queryKey: qk.activity(ownerLc, 50) })
 
+    // Force refresh fee data by clearing client-side cache
+    if (params.positionIds && params.positionIds.length > 0) {
+      try {
+        const { invalidateCacheEntry } = await import('@/lib/client-cache')
+        // Clear all fee-related cache entries
+        for (const id of params.positionIds) {
+          invalidateCacheEntry(`uncollectedFees_${id}`)
+        }
+        // Clear batch cache entries
+        invalidateCacheEntry(`uncollectedFeesBatch_${params.positionIds.slice().sort().join(',')}`)
+      } catch {}
+    }
+    
     // Back-compat: existing prefetch bus
-    prefetchService.requestPositionsRefresh({
-      owner: ownerLc,
-      reason: params.reason || 'tx_confirmed',
-      poolIds: params.poolId ? [params.poolId] : undefined,
-      tokenIds: params.positionIds,
-      debounceMs: 100,
-    })
+    try {
+      prefetchService.notifyPositionsRefresh(ownerLc, params.reason || 'tx_confirmed');
+    } catch {}
   } catch {}
 }
 

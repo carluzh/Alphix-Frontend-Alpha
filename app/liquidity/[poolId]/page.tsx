@@ -40,9 +40,10 @@ import {
 } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useWriteContract, useWaitForTransactionReceipt } from "wagmi";
+import { useQueryClient } from '@tanstack/react-query';
 import { getPositionManagerAddress } from '@/lib/pools-config';
 import { position_manager_abi } from '@/lib/abis/PositionManager_abi';
-import { getFromCache, setToCache, getFromCacheWithTtl, getUserPositionsCacheKey, getPoolStatsCacheKey, getPoolDynamicFeeCacheKey, getPoolChartDataCacheKey, loadUserPositionIds, derivePositionsFromIds, invalidateCacheEntry, waitForSubgraphBlock, setIndexingBarrier, invalidateUserPositionIdsCache } from "../../../lib/client-cache";
+import { getFromCache, setToCache, getFromCacheWithTtl, getUserPositionsCacheKey, getPoolStatsCacheKey, getPoolDynamicFeeCacheKey, getPoolChartDataCacheKey, loadUserPositionIds, derivePositionsFromIds, invalidateCacheEntry, waitForSubgraphBlock, setIndexingBarrier, invalidateUserPositionIdsCache, refreshFeesAfterTransaction } from "../../../lib/client-cache";
 
 import type { Pool } from "../../../types";
 import { AddLiquidityForm } from "../../../components/liquidity/AddLiquidityForm"; // AddLiquidityForm for right panel
@@ -473,6 +474,7 @@ export default function PoolDetailPage() {
   const router = useRouter();
   const params = useParams<{ poolId: string }>();
   const poolId = params?.poolId || '';
+  const queryClient = useQueryClient();
   const [userPositions, setUserPositions] = useState<ProcessedPosition[]>([]);
   const [pendingNewPositions, setPendingNewPositions] = useState<Array<{
     id: string, 
@@ -489,7 +491,20 @@ export default function PoolDetailPage() {
   const { address: accountAddress, isConnected, chainId } = useAccount();
   const { writeContract } = useWriteContract();
   const [collectHash, setCollectHash] = useState<`0x${string}` | undefined>(undefined);
+  const [lastCollectPositionId, setLastCollectPositionId] = useState<string | null>(null);
   const { isLoading: isCollectConfirming, isSuccess: isCollectConfirmed } = useWaitForTransactionReceipt({ hash: collectHash });
+  
+  // Handle collect success
+  useEffect(() => {
+    if (isCollectConfirmed && collectHash && lastCollectPositionId) {
+      toast.success("Fees Collected", { 
+        icon: <BadgeCheck className="h-4 w-4 text-green-500" /> 
+      });
+      
+      // Refresh fee data for the collected position
+      refreshFeesAfterTransaction(lastCollectPositionId, queryClient);
+    }
+  }, [isCollectConfirmed, collectHash, lastCollectPositionId, queryClient]);
   // Guard to prevent duplicate toasts and unintended modal closes across re-renders
   const pendingActionRef = useRef<null | { type: 'increase' | 'decrease' | 'withdraw' | 'burn' | 'collect' | 'compound' }>(null);
   const lastRevalidationRef = useRef<number>(0);
@@ -1973,13 +1988,18 @@ export default function PoolDetailPage() {
 
 
   // Handle increase position
-  const handleIncreasePosition = (position: ProcessedPosition) => {
+  const handleIncreasePosition = (position: ProcessedPosition, onModalClose?: () => void) => {
     if (!position.positionId || !position.token0.symbol || !position.token1.symbol) {
       toast.error("Invalid Position", { icon: <OctagonX className="h-4 w-4 text-red-500" />, description: "Missing critical position data (ID or token symbols)." });
       return;
     }
     setPositionToModify(position);
     setShowIncreaseModal(true);
+    
+    // TODO: Implement menu close callback when modal architecture supports it
+    // if (onModalClose) {
+    //   setMenuCloseCallback(() => onModalClose);
+    // }
   };
 
   // Handle decrease position
@@ -2050,6 +2070,7 @@ export default function PoolDetailPage() {
       const { buildCollectFeesCall } = await import('@/lib/liquidity-utils');
       const { calldata, value } = await buildCollectFeesCall({ tokenId, userAddress: accountAddress as `0x${string}` });
       pendingActionRef.current = { type: 'collect' };
+      setLastCollectPositionId(positionId); // Store position ID for fee refresh
       writeContract({
         address: getPositionManagerAddress() as `0x${string}`,
         abi: position_manager_abi as any,

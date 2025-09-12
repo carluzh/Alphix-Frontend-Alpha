@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, useSignTypedData } from 'wagmi';
+import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { V4PositionPlanner, V4PositionManager, Pool as V4Pool, Position as V4Position } from '@uniswap/v4-sdk';
 import { TickMath } from '@uniswap/v3-sdk';
@@ -11,6 +12,8 @@ import { getAddress, type Hex, BaseError, parseUnits, formatUnits, encodeAbiPara
 import { getPositionDetails, getPoolState, preparePermit2BatchForPosition } from '@/lib/liquidity-utils';
 import { publicClient } from '@/lib/viemClient';
 import { prefetchService } from '@/lib/prefetch-service';
+import { refreshFeesAfterTransaction } from '@/lib/client-cache';
+import { invalidateAfterTx } from '@/lib/invalidation';
 import { invalidateActivityCache, invalidateUserPositionsCache, invalidateUserPositionIdsCache } from '@/lib/client-cache';
 import { clearBatchDataCache } from '@/lib/cache-version';
 import { OctagonX } from 'lucide-react';
@@ -22,6 +25,15 @@ const safeParseUnits = (amount: string, decimals: number): bigint => {
   return parseUnits(cleaned, decimals);
 };
 import JSBI from 'jsbi';
+
+// In-memory store to provide pre-signed batch permits from UI flows (e.g., Modal "Sign" step)
+type BatchPermitPayload = { owner: `0x${string}`; permitBatch: any; signature: string };
+const preSignedIncreaseBatchPermitByTokenId = new Map<string, BatchPermitPayload>();
+
+export function providePreSignedIncreaseBatchPermit(tokenId: string | number | bigint, payload: BatchPermitPayload) {
+  const key = typeof tokenId === 'bigint' ? tokenId.toString() : tokenId.toString();
+  preSignedIncreaseBatchPermitByTokenId.set(key, payload);
+}
 
 interface UseIncreaseLiquidityProps {
   onLiquidityIncreased: (info?: { txHash?: `0x${string}`; blockNumber?: bigint; increaseAmounts?: { amount0: string; amount1: string } | null }) => void;
@@ -42,9 +54,18 @@ export interface IncreasePositionData {
   feesForIncrease?: { amount0: string; amount1: string; } | null;
 }
 
-type IncreaseOptions = { slippageBps?: number; deadlineSeconds?: number };
+type IncreaseOptions = { 
+  slippageBps?: number; 
+  deadlineSeconds?: number;
+  batchPermit?: {
+    owner: `0x${string}`;
+    permitBatch: any;
+    signature: string;
+  };
+};
 
 export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquidityProps) {
+  const queryClient = useQueryClient();
   const { address: accountAddress, chainId } = useAccount();
   const { data: hash, writeContract, isPending: isIncreaseSendPending, error: increaseSendError, reset: resetWriteContract } = useWriteContract();
   const { isLoading: isIncreaseConfirming, isSuccess: isIncreaseConfirmed, error: increaseConfirmError, status: waitForTxStatus } = useWaitForTransactionReceipt({ hash });
@@ -61,6 +82,7 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
   const [isIncreasing, setIsIncreasing] = useState(false);
   // Ensure we only invoke onLiquidityIncreased once per tx hash
   const handledIncreaseHashRef = React.useRef<string | null>(null);
+  const currentPositionIdRef = React.useRef<string | null>(null);
 
   // Helper function to get the NFT token ID from position parameters
   const getTokenIdFromPosition = useCallback(async (positionData: IncreasePositionData): Promise<bigint> => {
@@ -98,6 +120,9 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
       toast.error("Configuration Error", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Position Manager address not set." });
       return;
     }
+    
+    // Store position ID for fee refresh after transaction
+    currentPositionIdRef.current = positionData.tokenId.toString();
 
     // Add unclaimed fees to amounts - user wants to spend their input amount PLUS use available fees
     // CRITICAL: Use exact BigInt arithmetic to prevent any rounding errors that cause DeltaNotNegative
@@ -322,49 +347,67 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
 
       // Check existing Permit2 allowances; only sign batch if needed (poolKey order)
       let addOptionsBatch: any = {};
-      try {
-        const now = Math.floor(Date.now() / 1000);
-        let needPermit = false;
-        // token0 ERC20 check
-        if (!isNativeC0 && amountC0Raw > 0n) {
-          const [amt, exp] = (await publicClient.readContract({
-            address: PERMIT2_ADDRESS,
-            abi: Permit2Abi_allowance,
-            functionName: 'allowance',
-            args: [accountAddress as `0x${string}`, getAddress(defC0.address), V4_POSITION_MANAGER_ADDRESS as `0x${string}`],
-          }) as readonly [bigint, bigint, bigint]).slice(0,2) as unknown as [bigint, bigint];
-          if (!(amt >= amountC0Raw && Number(exp) > now)) needPermit = true;
-        }
-        // token1 ERC20 check
-        if (amountC1Raw > 0n) {
-          const [amt, exp] = (await publicClient.readContract({
-            address: PERMIT2_ADDRESS,
-            abi: Permit2Abi_allowance,
-            functionName: 'allowance',
-            args: [accountAddress as `0x${string}`, getAddress(defC1.address), V4_POSITION_MANAGER_ADDRESS as `0x${string}`],
-          }) as readonly [bigint, bigint, bigint]).slice(0,2) as unknown as [bigint, bigint];
-          if (!(amt >= amountC1Raw && Number(exp) > now)) needPermit = true;
-        }
-        if (needPermit) {
-          const prepared = await preparePermit2BatchForPosition(nftTokenId, accountAddress as `0x${string}`, chainId, deadline);
-          if (prepared?.message?.details && prepared.message.details.length > 0) {
-            const signature = await signTypedDataAsync({
-              domain: prepared.domain as any,
-              types: prepared.types as any,
-              primaryType: prepared.primaryType,
-              message: prepared.message as any,
-            });
-            addOptionsBatch = {
-              batchPermit: {
-                owner: accountAddress,
-                permitBatch: prepared.message,
-                signature,
-              },
-            };
+      // First preference: a globally provided pre-signed permit from UI layer by tokenId
+      const preSignedKey = positionData.tokenId?.toString?.() ?? '';
+      const preSignedFromStore = preSignedKey ? preSignedIncreaseBatchPermitByTokenId.get(preSignedKey) : undefined;
+      if (preSignedFromStore) {
+        addOptionsBatch = { batchPermit: preSignedFromStore };
+        console.log('[increase] Using pre-signed batch permit from store', {
+          owner: preSignedFromStore.owner,
+          detailsCount: preSignedFromStore.permitBatch?.details?.length ?? 0,
+        });
+      } else if (opts?.batchPermit) {
+        // Use pre-signed batch permit provided by caller (Modal's Sign step)
+        addOptionsBatch = { batchPermit: opts.batchPermit };
+        console.log('[increase] Using pre-signed batch permit from opts', {
+          owner: opts.batchPermit.owner,
+          detailsCount: opts.batchPermit.permitBatch?.details?.length ?? 0,
+        });
+      } else {
+        try {
+          const now = Math.floor(Date.now() / 1000);
+          let needPermit = false;
+          // token0 ERC20 check
+          if (!isNativeC0 && amountC0Raw > 0n) {
+            const [amt, exp] = (await publicClient.readContract({
+              address: PERMIT2_ADDRESS,
+              abi: Permit2Abi_allowance,
+              functionName: 'allowance',
+              args: [accountAddress as `0x${string}`, getAddress(defC0.address), V4_POSITION_MANAGER_ADDRESS as `0x${string}`],
+            }) as readonly [bigint, bigint, bigint]).slice(0,2) as unknown as [bigint, bigint];
+            if (!(amt >= amountC0Raw && Number(exp) > now)) needPermit = true;
           }
+          // token1 ERC20 check
+          if (amountC1Raw > 0n) {
+            const [amt, exp] = (await publicClient.readContract({
+              address: PERMIT2_ADDRESS,
+              abi: Permit2Abi_allowance,
+              functionName: 'allowance',
+              args: [accountAddress as `0x${string}`, getAddress(defC1.address), V4_POSITION_MANAGER_ADDRESS as `0x${string}`],
+            }) as readonly [bigint, bigint, bigint]).slice(0,2) as unknown as [bigint, bigint];
+            if (!(amt >= amountC1Raw && Number(exp) > now)) needPermit = true;
+          }
+          if (needPermit) {
+            const prepared = await preparePermit2BatchForPosition(nftTokenId, accountAddress as `0x${string}`, chainId, deadline);
+            if (prepared?.message?.details && prepared.message.details.length > 0) {
+              const signature = await signTypedDataAsync({
+                domain: prepared.domain as any,
+                types: prepared.types as any,
+                primaryType: prepared.primaryType,
+                message: prepared.message as any,
+              });
+              addOptionsBatch = {
+                batchPermit: {
+                  owner: accountAddress,
+                  permitBatch: prepared.message,
+                  signature,
+                },
+              };
+            }
+          }
+        } catch (e) {
+          // continue without batch permit
         }
-      } catch (e) {
-        // continue without batch permit
       }
       const addOptions: any = {
         slippageTolerance: slippage,
@@ -383,7 +426,8 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
         finalAmounts: { amount0: finalAdditionalAmount0, amount1: finalAdditionalAmount1 },
         mappedAmounts: { amountC0Raw: amountC0Raw.toString(), amountC1Raw: amountC1Raw.toString() },
         valueToSend: value?.toString(),
-        calldataLength: calldata.length
+        calldataLength: calldata.length,
+        hasBatchPermit: Boolean((addOptions as any)?.batchPermit),
       });
 
       resetWriteContract();
@@ -414,6 +458,7 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
     if (increaseSendError) {
       const message = increaseSendError instanceof BaseError ? increaseSendError.shortMessage : increaseSendError.message;
       toast.error("Increase Failed", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: message });
+      try { console.error('[increase] send error', increaseSendError); } catch {}
       setIsIncreasing(false);
     }
   }, [increaseSendError]);
@@ -435,6 +480,14 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
           blockNumber, 
           increaseAmounts: increaseAmountsRef.current 
         });
+        
+        // Refresh fee data for this position
+        try {
+          const positionId = currentPositionIdRef.current;
+          if (positionId) {
+            refreshFeesAfterTransaction(positionId, queryClient);
+          }
+        } catch {}
       })();
       try { if (accountAddress) prefetchService.notifyPositionsRefresh(accountAddress, 'liquidity-added'); } catch {}
       try { if (accountAddress) invalidateActivityCache(accountAddress); } catch {}
@@ -442,6 +495,20 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
       try {
         clearBatchDataCache();
         fetch('/api/internal/revalidate-pools', { method: 'POST' }).catch(() => {});
+      } catch {}
+      
+      // CRITICAL: Invalidate React Query caches including fee data
+      try {
+        if (accountAddress) {
+          (async () => {
+            try {
+              await invalidateAfterTx(queryClient, {
+                owner: accountAddress,
+                reason: 'liquidity-added'
+              });
+            } catch {}
+          })();
+        }
       } catch {}
       try { if (accountAddress) { invalidateUserPositionsCache(accountAddress); invalidateUserPositionIdsCache(accountAddress); } } catch {}
       // Removed hook-level revalidate to avoid duplicates; page handles revalidation after subgraph sync
@@ -453,6 +520,7 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
         icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
         description: message
       });
+      try { console.error('[increase] confirm error', increaseConfirmError); } catch {}
       setIsIncreasing(false);
     }
   }, [isIncreaseConfirmed, increaseConfirmError, hash, onLiquidityIncreased, accountAddress]);

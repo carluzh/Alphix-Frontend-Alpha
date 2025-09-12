@@ -254,9 +254,10 @@ export function AddLiquidityForm({
     isWorking,
     step,
     preparedTxData,
-    permit2SignatureRequest,
     involvedTokensCount, 
-    completedTokensCount,
+    completedERC20ApprovalsCount,
+    needsERC20Approvals,
+    batchPermitSigned,
     
     isApproveWritePending,
     isApproving,
@@ -266,7 +267,6 @@ export function AddLiquidityForm({
     
     handlePrepareMint,
     handleApprove,
-    handleSignAndSubmitPermit2,
     handleMint,
     resetTransactionState,
   } = useAddLiquidityTransaction({
@@ -1073,11 +1073,10 @@ export function AddLiquidityForm({
     
     if (preparedTxData) {
       if (step === 'approve') handleApprove();
-      else if (step === 'permit2Sign') handleSignAndSubmitPermit2();
       else if (step === 'mint') handleMint();
     } else {
       // Check if all involved tokens have been approved
-      const allTokensCompleted = completedTokensCount === involvedTokensCount && involvedTokensCount > 0;
+      const allTokensCompleted = completedERC20ApprovalsCount === involvedTokensCount && involvedTokensCount > 0;
       
       if (allTokensCompleted) {
         // All approvals complete, go straight to mint
@@ -1089,6 +1088,31 @@ export function AddLiquidityForm({
         // Start the approval process
         await handlePrepareMint();
       }
+    }
+  };
+
+  // Determine button text based on current state
+  const getButtonText = () => {
+    if (step === 'approve') {
+      if (isApproveWritePending || isApproving) {
+        return `Approve ${preparedTxData?.approvalTokenSymbol || 'Tokens'}`;
+      }
+      return `Approve ${preparedTxData?.approvalTokenSymbol || 'Tokens'}`;
+    } else if (step === 'mint') {
+      if (!batchPermitSigned) {
+        if (isMintSendPending || isWorking) {
+          return 'Sign';
+        }
+        return 'Sign';
+      } else {
+        if (isMintSendPending || isMintConfirming) {
+          return 'Deposit';
+        }
+        return 'Deposit';
+      }
+    } else {
+      // step === 'input'
+      return 'Deposit';
     }
   };
 
@@ -2545,24 +2569,41 @@ export function AddLiquidityForm({
                 <div className="p-3 border border-dashed rounded-md bg-muted/10 mb-4">
                   <p className="text-sm font-medium mb-2 text-foreground/80">Transaction Steps</p>
                   <div className="space-y-1.5 text-xs text-muted-foreground">
+                      {/* ERC20 Approvals to Permit2 */}
                       <div className="flex items-center justify-between">
                           <span>Token Approvals</span>
                           <span>
-                            { (step === 'approve' && (isApproveWritePending || isApproving)) || 
-                              (step === 'permit2Sign' && isWorking) 
+                            { (step === 'approve' && (isApproveWritePending || isApproving))
                               ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
                               : (
-                                <span className={`text-xs font-mono ${completedTokensCount === involvedTokensCount && involvedTokensCount > 0 ? 'text-green-500' : ''}`}>
-                                  {`${completedTokensCount}/${involvedTokensCount > 0 ? involvedTokensCount : '-'}`}
+                                <span className={`text-xs font-mono ${completedERC20ApprovalsCount === involvedTokensCount && involvedTokensCount > 0 ? 'text-green-500' : ''}`}>
+                                  {`${completedERC20ApprovalsCount}/${involvedTokensCount > 0 ? involvedTokensCount : '-'}`}
                                 </span>
                               )
                             }
                           </span>
                       </div>
+                      
+                      {/* Permit2 Signature */}
                       <div className="flex items-center justify-between">
-                          <span>Send Mint Transaction</span> 
+                          <span>Permit Signature</span>
                           <span>
-                              {isMintConfirming || isMintSendPending ? 
+                            { (step === 'mint' && !batchPermitSigned && (isMintSendPending || isWorking))
+                              ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
+                              : (
+                                <span className={`text-xs font-mono ${batchPermitSigned ? 'text-green-500' : ''}`}>
+                                  {batchPermitSigned ? '1/1' : '0/1'}
+                                </span>
+                              )
+                            }
+                          </span>
+                      </div>
+                      
+                      {/* Final Deposit Transaction */}
+                      <div className="flex items-center justify-between">
+                          <span>Deposit Transaction</span> 
+                          <span>
+                              {(step === 'mint' && batchPermitSigned && (isMintConfirming || isMintSendPending)) ? 
                                 <ActivityIcon className="h-4 w-4 animate-pulse text-muted-foreground" />
                                : isMintSuccess ? <CheckIcon className="h-4 w-4 text-green-500" />
                                : <MinusIcon className="h-4 w-4" />}
@@ -2597,7 +2638,6 @@ export function AddLiquidityForm({
                   onClick={() => {
                     if (step === 'input') handlePrepareAndSubmit();
                     else if (step === 'approve') handleApprove();
-                    else if (step === 'permit2Sign') handleSignAndSubmitPermit2();
                     else if (step === 'mint') handleMint();
                   }}
                   disabled={isWorking || 
@@ -2614,18 +2654,13 @@ export function AddLiquidityForm({
                 >
                                     <span className={cn(
                     (step === 'approve' && (isApproveWritePending || isApproving)) ||
-                    (step === 'permit2Sign' && isWorking) ||
-                    (step === 'mint' && (isMintSendPending || isMintConfirming)) ||
+                    (step === 'mint' && (isMintSendPending || isMintConfirming || (!batchPermitSigned && isWorking))) ||
                     (step === 'input' && isWorking) ||
                     isPoolStateLoading
                       ? "animate-pulse"
                       : ""
                   )}>
-                    {step === 'approve' ? `Approve ${preparedTxData?.approvalTokenSymbol || 'Tokens'}`
-                      : step === 'permit2Sign' ? 'Sign'
-                      : step === 'mint' ? 'Deposit'
-                      : 'Deposit'
-                    }
+                    {getButtonText()}
                   </span>
                 </Button>
               )}
