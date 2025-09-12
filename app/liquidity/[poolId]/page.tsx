@@ -1430,8 +1430,19 @@ export default function PoolDetailPage() {
     }
   }, [poolId, isConnected, accountAddress, router]);
 
-  // Enhanced refresh function that adds skeleton immediately and does silent background refresh
+  // Simple refresh function that adds skeleton and starts aggressive position polling
   const refreshAfterLiquidityAddedWithSkeleton = useCallback(async (token0Symbol?: string, token1Symbol?: string) => {
+    console.log(`[SKELETON] refreshAfterLiquidityAddedWithSkeleton called with tokens:`, token0Symbol, token1Symbol);
+    
+    // Prevent duplicate calls within 2 seconds
+    const now = Date.now();
+    const timeSinceLastCall = now - (refreshAfterLiquidityAddedWithSkeleton as any).lastCallTime;
+    if ((refreshAfterLiquidityAddedWithSkeleton as any).lastCallTime && timeSinceLastCall < 2000) {
+      console.log(`[SKELETON] SKIPPED - duplicate call within ${timeSinceLastCall}ms`);
+      return;
+    }
+    (refreshAfterLiquidityAddedWithSkeleton as any).lastCallTime = now;
+    
     // 1. Immediately add skeleton if we have token info
     if (token0Symbol && token1Symbol) {
       const skeletonId = `skeleton-${Date.now()}`;
@@ -1447,55 +1458,101 @@ export default function PoolDetailPage() {
           createdAt,
           baselineIds: currentBaselineIds
         }];
+        console.log(`[SKELETON] ADDED skeleton ${skeletonId}. Total skeletons: ${prev.length} -> ${newSkeletons.length}`);
         return newSkeletons;
       });
     }
 
-    // 2. Start silent background refresh
-    await silentRefreshAfterLiquidityAdded(token0Symbol, token1Symbol);
-  }, [userPositions]); // silentRefreshAfterLiquidityAdded defined below
+    // 2. Start aggressive position polling with retries and guaranteed invalidation
+    aggressivePositionRefresh();
+  }, [userPositions]);
 
-  // Targeted refresh after add: wait for subgraph head, then derive and swap skeletons for real cards
-  const silentRefreshAfterLiquidityAdded = useCallback(async (token0Symbol?: string, token1Symbol?: string) => {
+  // Aggressive position refresh with guaranteed cache invalidation and retries
+  const aggressivePositionRefresh = useCallback(async () => {
     if (!poolId || !isConnected || !accountAddress) return;
 
     const basePoolInfo = getPoolConfiguration(poolId);
     if (!basePoolInfo) return;
     const subId = (basePoolInfo.subgraphId || '').toLowerCase();
+    const baselineCount = userPositions.length;
 
     try {
-      const targetBlock = Number(await publicClient.getBlockNumber());
-      // Gate fresh fetches behind subgraph head for this owner
-      const barrier = waitForSubgraphBlock(targetBlock, { timeoutMs: 15000, minWaitMs: 800, maxIntervalMs: 1000 });
-      setIndexingBarrier(accountAddress, barrier);
-      await barrier;
-
-      try { fetch('/api/internal/revalidate-pools', { method: 'POST' } as any); } catch {}
-      try {
-        fetch('/api/internal/revalidate-chart', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ poolId, subgraphId: subId })
-        } as any);
-      } catch {}
-
-      // Canonical refresh: invalidate and load fresh ids post-barrier
+      // Immediate cache invalidation to prevent stale data
       invalidateUserPositionIdsCache(accountAddress);
-      const ids = await loadUserPositionIds(accountAddress);
-      const allDerived = await derivePositionsFromIds(accountAddress, ids);
-      const filtered = allDerived.filter((pos: any) => String(pos.poolId || '').toLowerCase() === subId);
-
-      setUserPositions(filtered);
-      // Remove skeletons only once we have derived positions ready
+      
+      // Poll with retries until we get NEW positions
+      let attempts = 0;
+      const maxAttempts = 10;
+      const pollInterval = 1500; // 1.5s between attempts
+      
+      const pollForNewPositions = async (): Promise<boolean> => {
+        attempts++;
+        console.log(`[AggressiveRefresh] Attempt ${attempts}/${maxAttempts}`);
+        
+        try {
+          // Force fresh cache invalidation each attempt
+          invalidateUserPositionIdsCache(accountAddress);
+          
+          // Load fresh position IDs
+          const ids = await loadUserPositionIds(accountAddress);
+          console.log(`[AggressiveRefresh] Loaded ${ids.length} position IDs`);
+          
+          // Derive position data
+          const allDerived = await derivePositionsFromIds(accountAddress, ids);
+          const filtered = allDerived.filter((pos: any) => String(pos.poolId || '').toLowerCase() === subId);
+          
+          console.log(`[AggressiveRefresh] Found ${filtered.length} positions for pool (baseline: ${baselineCount})`);
+          
+          // Success condition: we have MORE positions than baseline OR we have validated new position data
+          const hasNewPosition = filtered.length > baselineCount;
+          const hasValidatedNewPosition = filtered.some(p => 
+            !userPositions.some(existing => existing.positionId === p.positionId) &&
+            p.token0?.amount !== undefined && 
+            p.token1?.amount !== undefined &&
+            p.tickLower !== undefined && 
+            p.tickUpper !== undefined
+          );
+          
+          if (hasNewPosition || hasValidatedNewPosition) {
+            console.log(`[AggressiveRefresh] SUCCESS: Found new position!`);
+            setUserPositions(filtered);
+            // Clear skeletons immediately when we have real data
+            console.log(`[SKELETON] CLEARED by AggressiveRefresh - found new positions`);
+            setPendingNewPositions([]);
+            return true;
+          }
+          
+          return false;
+        } catch (error) {
+          console.warn(`[AggressiveRefresh] Attempt ${attempts} failed:`, error);
+          return false;
+        }
+      };
+      
+      // Initial attempt
+      const success = await pollForNewPositions();
+      if (success) return;
+      
+      // Retry polling if initial attempt failed
+      for (let i = 1; i < maxAttempts; i++) {
+        await new Promise(resolve => setTimeout(resolve, pollInterval));
+        const success = await pollForNewPositions();
+        if (success) return;
+      }
+      
+      // Fallback: clear skeletons even if we didn't find new positions
+      console.warn(`[AggressiveRefresh] Max attempts reached, clearing skeletons anyway`);
+      console.log(`[SKELETON] CLEARED by AggressiveRefresh - max attempts reached`);
       setPendingNewPositions([]);
-
-      // NEW: Actively refetch chart + header stats after revalidation (skip positions)
-      await fetchPageData(true, /* skipPositions */ true, /* keepLoading */ false);
+      
     } catch (error) {
-      // Silent failure - error logged in waitForSubgraphBlock if needed
-    } finally {
-      // No chart loading state needed - chart data handled reactively
+      console.error('[AggressiveRefresh] Complete failure:', error);
+      // Always clear skeletons on complete failure
+      console.log(`[SKELETON] CLEARED by AggressiveRefresh - complete failure`);
+      setPendingNewPositions([]);
     }
-  }, [poolId, isConnected, accountAddress]);
+  }, [poolId, isConnected, accountAddress, userPositions]);
+
 
   // Post-mutation window to treat zero-like responses as transient
   const lastMutationAtRef = useRef<number>(0);
@@ -1891,45 +1948,23 @@ export default function PoolDetailPage() {
     }
   }, [showIncreaseModal, resetIncreaseLiquidity]);
 
-  // Watch for new positions actually appearing compared to baseline captured at skeleton creation
+  // Backup skeleton removal - only if aggressive refresh hasn't cleared them after 20 seconds
   useEffect(() => {
     if (pendingNewPositions.length === 0) return;
 
-    // Build a set of current IDs for fast lookup
-    const currentIds = new Set(userPositions.map(p => p.positionId));
+    // Find the oldest pending skeleton
+    const oldestSkeleton = pendingNewPositions.reduce((oldest, current) => 
+      current.createdAt < oldest.createdAt ? current : oldest
+    );
 
-    // Determine if any skeleton has its corresponding new ID(s) materialized beyond its baseline
-    const shouldRemove = pendingNewPositions.some(skel => {
-      // For skeletons with no baseline (created when no positions existed)
-      if (!skel.baselineIds || skel.baselineIds.length === 0) {
-        // Only remove if we actually have NEW positions with proper SDK data
-        return userPositions.some(p => 
-          p.token0?.amount !== undefined && p.token1?.amount !== undefined &&
-          p.tickLower !== undefined && p.tickUpper !== undefined
-        );
-      }
-      
-      // For skeletons with baseline (created when positions already existed)
-      // New IDs are those present now but not in baseline
-      const newIdsNow = userPositions
-        .map(p => p.positionId)
-        .filter(id => !skel.baselineIds!.includes(id));
-      
-      if (newIdsNow.length === 0) return false;
-      // Require minimal SDK fields to be present on at least one new position
-      const hasSdkData = userPositions.some(p => newIdsNow.includes(p.positionId) &&
-        p.token0?.amount !== undefined && p.token1?.amount !== undefined &&
-        p.tickLower !== undefined && p.tickUpper !== undefined);
-      return hasSdkData;
-    });
-
-    if (shouldRemove) {
-      // Defer one paint to ensure the DOM has committed the new cards
-      requestAnimationFrame(() => {
-            setPendingNewPositions([]);
-      });
+    // If oldest skeleton is more than 20 seconds old, clear all skeletons as backup
+    const age = Date.now() - oldestSkeleton.createdAt;
+    if (age > 20000) { // 20 seconds
+      console.warn('[SkeletonBackup] Clearing stale skeletons after 20s timeout');
+      console.log(`[SKELETON] CLEARED by backup timeout (20s)`);
+      setPendingNewPositions([]);
     }
-  }, [userPositions, pendingNewPositions]);
+  }, [pendingNewPositions]);
 
   // Optimized: Single call per pool load
   useEffect(() => {
@@ -3191,6 +3226,10 @@ export default function PoolDetailPage() {
                 {/* Replace Table with individual position segments */}
                 <div className="grid gap-3 lg:gap-4 min-[1360px]:grid-cols-2 min-[1360px]:gap-4 responsive-grid">
                   {/* Render pending position skeletons first */}
+                  {(() => {
+                    console.log(`[SKELETON] RENDER: ${pendingNewPositions.length} skeletons, ${userPositions.length} positions`);
+                    return null;
+                  })()}
                   {pendingNewPositions.map((pendingPos) => (
                     <PositionSkeleton
                       key={pendingPos.id}

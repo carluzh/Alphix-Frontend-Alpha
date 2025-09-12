@@ -378,6 +378,9 @@ export function useAddLiquidityTransaction({
         } else {
           onLiquidityAdded(token0Symbol, token1Symbol);
         }
+        
+        // Reset immediately after callback to prevent double loading states
+        resetTransactionState();
       })();
       
       // Simple cache invalidation (matching other hooks pattern)
@@ -401,7 +404,6 @@ export function useAddLiquidityTransaction({
         }
       } catch {}
       
-      resetTransactionState();
       onOpenChange(false);
     }
     
