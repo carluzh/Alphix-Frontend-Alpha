@@ -160,9 +160,7 @@ export function WithdrawLiquidityModal({
   const [txStarted, setTxStarted] = useState(false);
   const [wasDecreasingLiquidity, setWasDecreasingLiquidity] = useState(false);
   
-  // State for tracking allowances
-  const [hasToken0Allowance, setHasToken0Allowance] = useState<boolean | null>(null);
-  const [hasToken1Allowance, setHasToken1Allowance] = useState<boolean | null>(null);
+  // State for tracking allowances - removed since withdraw doesn't need approval steps
   
   // Track the transaction hash when we actually start the transaction in this session
   const [currentSessionTxHash, setCurrentSessionTxHash] = useState<string | null>(null);
@@ -235,8 +233,6 @@ export function WithdrawLiquidityModal({
       console.log('[DEBUG] Modal opened, resetting all states');
       setTxStarted(false);
       setWasDecreasingLiquidity(false);
-      setHasToken0Allowance(null);
-      setHasToken1Allowance(null);
       setCurrentSessionTxHash(null);
       // Hard reset user inputs and step flags to avoid carrying over prior session state
       setShowYouWillReceive(false);
@@ -279,10 +275,6 @@ export function WithdrawLiquidityModal({
       setTxStarted(false);
       setWasDecreasingLiquidity(false);
       setCurrentSessionTxHash(null);
-      
-      // Reset allowance states
-      setHasToken0Allowance(null);
-      setHasToken1Allowance(null);
     }
   }, [isOpen]);
 
@@ -331,58 +323,7 @@ export function WithdrawLiquidityModal({
   }, [txHash, isTransactionSuccess, showTransactionOverview, txStarted, currentSessionTxHash, onLiquidityWithdrawn]);
 
 
-  // Check allowances when Transaction Overview is shown
-  useEffect(() => {
-    if (showTransactionOverview && position && accountAddress) {
-      const checkAllowances = async () => {
-        try {
-          const PERMIT2_ADDRESS = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
-          
-          // Check token0 allowance
-          const token0Address = position.token0.address;
-          const token0Amount = parseFloat(withdrawAmount0 || "0");
-          
-          if (token0Amount > 0 && token0Address !== "0x0000000000000000000000000000000000000000") {
-            const allowance0 = await readContract(config, {
-              address: token0Address as `0x${string}`,
-              abi: erc20Abi,
-              functionName: 'allowance',
-              args: [accountAddress, PERMIT2_ADDRESS],
-            });
-            
-            const requiredAmount0 = viemParseUnits(withdrawAmount0, TOKEN_DEFINITIONS[position.token0.symbol as TokenSymbol]?.decimals || 18);
-            setHasToken0Allowance(allowance0 >= requiredAmount0);
-          } else {
-            setHasToken0Allowance(true); // No approval needed if amount is 0 or ETH
-          }
-          
-          // Check token1 allowance
-          const token1Address = position.token1.address;
-          const token1Amount = parseFloat(withdrawAmount1 || "0");
-          
-          if (token1Amount > 0 && token1Address !== "0x0000000000000000000000000000000000000000") {
-            const allowance1 = await readContract(config, {
-              address: token1Address as `0x${string}`,
-              abi: erc20Abi,
-              functionName: 'allowance',
-              args: [accountAddress, PERMIT2_ADDRESS],
-            });
-            
-            const requiredAmount1 = viemParseUnits(withdrawAmount1, TOKEN_DEFINITIONS[position.token1.symbol as TokenSymbol]?.decimals || 18);
-            setHasToken1Allowance(allowance1 >= requiredAmount1);
-          } else {
-            setHasToken1Allowance(true); // No approval needed if amount is 0 or ETH
-          }
-        } catch (error) {
-          console.error("Error checking allowances:", error);
-          setHasToken0Allowance(false);
-          setHasToken1Allowance(false);
-        }
-      };
-      
-      checkAllowances();
-    }
-  }, [showTransactionOverview, position, accountAddress, withdrawAmount0, withdrawAmount1]);
+  // Allowance checking removed - withdraw operations don't require approval steps
 
   // Calculate withdraw amounts based on percentage
   const calculateWithdrawAmount = useCallback(
@@ -1161,8 +1102,8 @@ export function WithdrawLiquidityModal({
                         );
                       })()}
 
-                      {/* Additional Info Rows - Conditional Content */}
-                      {!showTransactionOverview ? (
+                      {/* Additional Info Rows */}
+                      {!showTransactionOverview && (
                         <div className="space-y-1.5">
                         <div className="flex items-center justify-between text-xs text-muted-foreground">
                           <span>Current Price:</span>
@@ -1223,39 +1164,6 @@ export function WithdrawLiquidityModal({
                             <Image src={getTokenIcon(position.token1.symbol)} alt={position.token1.symbol} width={12} height={12} className="rounded-full" />
                           </div>
                         </div>
-                        </div>
-                      ) : (
-                        <div className="space-y-1.5">
-                          <div className="flex items-center justify-between text-xs text-muted-foreground">
-                            <span>Token Approvals</span>
-                            <span>
-                              {hasToken0Allowance === null || hasToken1Allowance === null ? (
-                                <span className="text-xs font-mono text-muted-foreground">
-                                  --/2
-                                </span>
-                              ) : (
-                                <span className={`text-xs font-mono ${(hasToken0Allowance && hasToken1Allowance) ? 'text-green-500' : 'text-muted-foreground'}`}>
-                                  {(hasToken0Allowance ? 1 : 0) + (hasToken1Allowance ? 1 : 0)}/2
-                                </span>
-                              )}
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between text-xs text-muted-foreground">
-                            <span>Signatures</span>
-                            <span>
-                              {txStarted && isWorking ? (
-                                <RefreshCwIcon className="h-4 w-4 animate-spin" />
-                              ) : txStarted ? (
-                                <span className="text-xs font-mono text-green-500">
-                                  2/2
-                                </span>
-                              ) : (
-                                <span className="text-xs font-mono text-muted-foreground">
-                                  0/2
-                                </span>
-                              )}
-                            </span>
-                          </div>
                         </div>
                       )}
 

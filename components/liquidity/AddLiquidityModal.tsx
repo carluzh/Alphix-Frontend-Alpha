@@ -224,6 +224,10 @@ export function AddLiquidityModal({
   const [increaseBatchPermitSigned, setIncreaseBatchPermitSigned] = useState(false);
   const [signedBatchPermit, setSignedBatchPermit] = useState<null | { owner: `0x${string}`; permitBatch: any; signature: string }>(null);
 
+  // Wiggle animation for insufficient approvals
+  const [approvalWiggleCount, setApprovalWiggleCount] = useState(0);
+  const approvalWiggleControls = useAnimation();
+
   // Determine if we should use internal hook or parent hook (moved up before useEffect)
   const shouldUseInternalHook = !parentIncreaseLiquidity;
 
@@ -366,6 +370,9 @@ export function AddLiquidityModal({
     activeInputSide,
     calculatedData,
     onLiquidityAdded,
+    onApprovalInsufficient: () => {
+      setApprovalWiggleCount(prev => prev + 1);
+    },
     onOpenChange,
   });
 
@@ -387,9 +394,40 @@ export function AddLiquidityModal({
 
   // Check what ERC20 approvals are needed for increase liquidity (similar to form)
   const checkIncreaseApprovals = useCallback(async (): Promise<TokenSymbol[]> => {
-    // For increase flow we rely on Permit2 batch permit; no ERC20 approval step needed.
-    return [];
-  }, []);
+    if (!accountAddress || !chainId || !positionToModify) return [];
+
+    const needsApproval: TokenSymbol[] = [];
+    const tokens = [
+      { symbol: positionToModify.token0.symbol as TokenSymbol, amount: increaseAmount0 },
+      { symbol: positionToModify.token1.symbol as TokenSymbol, amount: increaseAmount1 }
+    ];
+
+    for (const token of tokens) {
+      if (!token.amount || parseFloat(token.amount) <= 0) continue;
+      
+      const tokenDef = TOKEN_DEFINITIONS[token.symbol];
+      if (!tokenDef || tokenDef.address === "0x0000000000000000000000000000000000000000") continue;
+
+      try {
+        // Check ERC20 allowance to Permit2 (same logic as form)
+        const allowance = await readContract(config, {
+          address: tokenDef.address as `0x${string}`,
+          abi: erc20Abi,
+          functionName: 'allowance',
+          args: [accountAddress, "0x000000000022D473030F116dDEE9F6B43aC78BA3"] // PERMIT2_ADDRESS
+        });
+
+        const requiredAmount = viemParseUnits(token.amount, tokenDef.decimals);
+        if (allowance < requiredAmount) {
+          needsApproval.push(token.symbol);
+        }
+      } catch (error) {
+        console.error(`Error checking allowance for ${token.symbol}:`, error);
+      }
+    }
+
+    return needsApproval;
+  }, [accountAddress, chainId, positionToModify, increaseAmount0, increaseAmount1]);
   
   const handleConfirmIncrease = () => {
     if (!positionToModify) {
@@ -475,26 +513,110 @@ export function AddLiquidityModal({
   // Advance approval step when tx confirms
   useEffect(() => {
     if (!isIncreaseApproved || !increasePreparedTxData) return;
-    // Remove the approved token from the needs list
-    setIncreaseNeedsERC20Approvals(prev => prev.filter(token => token !== increasePreparedTxData.approvalTokenSymbol));
-    const remaining = increaseNeedsERC20Approvals.filter(token => token !== increasePreparedTxData.approvalTokenSymbol);
-    if (remaining.length > 0) {
-      setIncreasePreparedTxData({
-        needsApproval: true,
-        approvalType: 'ERC20_TO_PERMIT2',
-        approvalTokenSymbol: remaining[0],
-        approvalTokenAddress: TOKEN_DEFINITIONS[remaining[0]]?.address,
-        approvalAmount: "115792089237316195423570985008687907853269984665640564039457584007913129639935",
-        approveToAddress: "0x000000000022D473030F116dDEE9F6B43aC78BA3",
-      });
-      setIncreaseStep('approve');
-    } else {
-      setIncreasePreparedTxData({ needsApproval: false });
-      setIncreaseStep('permit');
-    }
-    setIncreaseIsWorking(false);
-    resetIncreaseApprove();
-  }, [isIncreaseApproved]);
+    
+    // Re-check actual allowances after each approval transaction
+    const recheckAllowances = async () => {
+      try {
+        // Wait a bit for the blockchain state to update
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        console.log(`[Modal Approval Check] Re-checking actual allowances after ${increasePreparedTxData.approvalTokenSymbol} approval`);
+        
+        // Check actual allowances vs required amounts for both tokens
+        const stillNeedsApprovals: TokenSymbol[] = [];
+        const tokens = [
+          { symbol: positionToModify?.token0.symbol as TokenSymbol, amount: increaseAmount0 },
+          { symbol: positionToModify?.token1.symbol as TokenSymbol, amount: increaseAmount1 }
+        ];
+
+        for (const token of tokens) {
+          if (!token.amount || parseFloat(token.amount) <= 0) continue;
+          
+          const tokenDef = TOKEN_DEFINITIONS[token.symbol];
+          if (!tokenDef || !accountAddress) continue;
+
+          try {
+            const allowance = await readContract(config, {
+              address: tokenDef.address as `0x${string}`,
+              abi: erc20Abi,
+              functionName: 'allowance',
+              args: [accountAddress, "0x000000000022D473030F116dDEE9F6B43aC78BA3" as `0x${string}`],
+              blockTag: 'latest'
+            });
+
+            const requiredAmount = viemParseUnits(token.amount, tokenDef.decimals);
+            
+            if (allowance < requiredAmount) {
+              stillNeedsApprovals.push(token.symbol);
+            }
+          } catch (error) {
+            console.error(`Error checking allowance for ${token.symbol}:`, error);
+            stillNeedsApprovals.push(token.symbol); // Be safe, assume needs approval
+          }
+        }
+        
+        console.log(`[Modal Approval Check] Tokens still needing approval:`, stillNeedsApprovals);
+        
+        if (stillNeedsApprovals.length > 0) {
+          // Still need approvals - trigger wiggle if this token still needs approval
+          if (stillNeedsApprovals.includes(increasePreparedTxData.approvalTokenSymbol as TokenSymbol)) {
+            setApprovalWiggleCount(prev => prev + 1);
+            toast.error("Insufficient Approval", { 
+              icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" })
+            });
+          } else {
+            toast.success(`${increasePreparedTxData.approvalTokenSymbol} Approved`, { 
+              icon: React.createElement(CheckIcon, { className: "h-4 w-4 text-green-500" })
+            });
+          }
+          
+          // Update the needs approval list and set up next approval with exact amount needed
+          setIncreaseNeedsERC20Approvals(stillNeedsApprovals);
+          
+          // Calculate exact amount needed for the first token that needs approval
+          const nextTokenSymbol = stillNeedsApprovals[0];
+          const nextTokenDef = TOKEN_DEFINITIONS[nextTokenSymbol];
+          const nextTokenAmount = nextTokenSymbol === positionToModify?.token0.symbol ? increaseAmount0 : increaseAmount1;
+          const exactAmountNeeded = viemParseUnits(nextTokenAmount || '0', nextTokenDef.decimals);
+          
+          // Round up by 1 smallest decimal unit
+          const buffer = BigInt(Math.pow(10, Math.max(0, nextTokenDef.decimals - 6))); // 1 micro-unit
+          const roundedUpAmount = exactAmountNeeded + buffer;
+          
+          setIncreasePreparedTxData({
+            needsApproval: true,
+            approvalType: 'ERC20_TO_PERMIT2',
+            approvalTokenSymbol: nextTokenSymbol,
+            approvalTokenAddress: nextTokenDef.address,
+            approvalAmount: roundedUpAmount.toString(),
+            approveToAddress: "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+          });
+          setIncreaseStep('approve');
+        } else {
+          // All approvals done
+          console.log(`[Modal Approval Check] ✅ All approvals complete!`);
+          toast.success(`${increasePreparedTxData.approvalTokenSymbol} Approved`, { 
+            icon: React.createElement(CheckIcon, { className: "h-4 w-4 text-green-500" })
+          });
+          setIncreaseNeedsERC20Approvals([]);
+          setIncreasePreparedTxData({ needsApproval: false });
+          setIncreaseStep('permit');
+        }
+        
+        setIncreaseIsWorking(false);
+        resetIncreaseApprove();
+      } catch (error) {
+        console.error('Error re-checking allowances:', error);
+        toast.error("Approval Check Failed", { 
+          icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" })
+        });
+        setIncreaseIsWorking(false);
+        resetIncreaseApprove();
+      }
+    };
+
+    recheckAllowances();
+  }, [isIncreaseApproved, increasePreparedTxData, accountAddress, positionToModify, increaseAmount0, increaseAmount1, resetIncreaseApprove]);
 
   // Handle permit signature (separate step like in form)
   const handleIncreasePermit = useCallback(async () => {
@@ -754,6 +876,16 @@ export function AddLiquidityModal({
       }).catch(() => {});
     }
   }, [balanceWiggleCount1, wiggleControls1]);
+
+  // Approval wiggle animation effect
+  useEffect(() => {
+    if (approvalWiggleCount > 0) {
+      approvalWiggleControls.start({
+        x: [0, -3, 3, -2, 2, 0],
+        transition: { duration: 0.22, ease: 'easeOut' },
+      }).catch(() => {});
+    }
+  }, [approvalWiggleCount, approvalWiggleControls]);
 
   // Calculate increase amounts based on input (for existing positions)
   const calculateIncreaseAmount = useCallback(
@@ -1664,9 +1796,12 @@ export function AddLiquidityModal({
                             {(increaseStep === 'approve' && increaseIsWorking) ? (
                               <RefreshCwIcon className="h-4 w-4 animate-spin" />
                             ) : (
-                              <span className={`text-xs font-mono ${increaseCompletedERC20ApprovalsCount === increaseInvolvedTokensCount && increaseInvolvedTokensCount > 0 ? 'text-green-500' : 'text-muted-foreground'}`}>
+                              <motion.span 
+                                animate={approvalWiggleControls}
+                                className={`text-xs font-mono ${increaseCompletedERC20ApprovalsCount === increaseInvolvedTokensCount && increaseInvolvedTokensCount > 0 ? 'text-green-500' : approvalWiggleCount > 0 ? 'text-red-500' : 'text-muted-foreground'}`}
+                              >
                                 {`${increaseCompletedERC20ApprovalsCount}/${increaseInvolvedTokensCount > 0 ? increaseInvolvedTokensCount : '-'}`}
-                              </span>
+                              </motion.span>
                             )}
                           </span>
                         </div>
@@ -1679,18 +1814,6 @@ export function AddLiquidityModal({
                               <span className={`text-xs font-mono ${increaseBatchPermitSigned ? 'text-green-500' : 'text-muted-foreground'}`}>
                                 {increaseBatchPermitSigned ? '1/1' : '0/1'}
                               </span>
-                            )}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between text-xs text-muted-foreground">
-                          <span>Deposit Transaction</span>
-                          <span>
-                            {(increaseStep === 'deposit' && isIncreasingLiquidity) ? (
-                              <ActivityIcon className="h-4 w-4 animate-pulse text-muted-foreground" />
-                            ) : isTransactionSuccess ? (
-                              <CheckIcon className="h-4 w-4 text-green-500" />
-                            ) : (
-                              <MinusIcon className="h-4 w-4" />
                             )}
                           </span>
                         </div>
@@ -1750,9 +1873,12 @@ export function AddLiquidityModal({
                           { (step === 'approve' && (isApproveWritePending || isApproving))
                             ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
                             : (
-                              <span className={`text-xs font-mono ${completedERC20ApprovalsCount === involvedTokensCount && involvedTokensCount > 0 ? 'text-green-500' : ''}`}>
+                              <motion.span 
+                                animate={approvalWiggleControls}
+                                className={`text-xs font-mono ${completedERC20ApprovalsCount === involvedTokensCount && involvedTokensCount > 0 ? 'text-green-500' : approvalWiggleCount > 0 ? 'text-red-500' : 'text-muted-foreground'}`}
+                              >
                                 {`${completedERC20ApprovalsCount}/${involvedTokensCount > 0 ? involvedTokensCount : '-'}`}
-                              </span>
+                              </motion.span>
                             )
                           }
                         </span>
@@ -1773,16 +1899,6 @@ export function AddLiquidityModal({
                         </span>
                     </div>
                     
-                    {/* Final Deposit Transaction */}
-                    <div className="flex items-center justify-between">
-                        <span>Deposit Transaction</span> 
-                        <span>
-                            {(step === 'mint' && batchPermitSigned && (isMintConfirming || isMintSendPending)) ? 
-                              <ActivityIcon className="h-4 w-4 animate-pulse text-muted-foreground" />
-                             : isMintSuccess ? <CheckIcon className="h-4 w-4 text-green-500" />
-                             : <MinusIcon className="h-4 w-4" />}
-                        </span>
-                    </div>
                 </div>
               </div>
             )}

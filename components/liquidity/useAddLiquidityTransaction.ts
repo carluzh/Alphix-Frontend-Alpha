@@ -21,6 +21,9 @@ import { TokenSymbol } from "@/lib/pools-config";
 import { preparePermit2BatchForNewPosition, type PreparedPermit2Batch } from "@/lib/liquidity-utils";
 import { publicClient } from "@/lib/viemClient";
 import { PERMIT2_ADDRESS } from "@/lib/swap-constants";
+import { readContract } from '@wagmi/core';
+import { erc20Abi } from 'viem';
+import { config } from '@/lib/wagmiConfig';
 
 // Helper function to safely parse amounts
 const safeParseUnits = (amount: string, decimals: number): bigint => {
@@ -57,6 +60,7 @@ export interface UseAddLiquidityTransactionProps {
   activeInputSide: 'amount0' | 'amount1' | null;
   calculatedData: any;
   onLiquidityAdded: (token0Symbol?: string, token1Symbol?: string, txInfo?: { txHash: `0x${string}`; blockNumber?: bigint }) => void;
+  onApprovalInsufficient?: () => void;
   onOpenChange: (isOpen: boolean) => void;
 }
 
@@ -70,6 +74,7 @@ export function useAddLiquidityTransaction({
   activeInputSide,
   calculatedData,
   onLiquidityAdded,
+  onApprovalInsufficient,
   onOpenChange
 }: UseAddLiquidityTransactionProps) {
   const queryClient = useQueryClient();
@@ -323,31 +328,103 @@ export function useAddLiquidityTransaction({
 
   // Update states when approve transaction is completed
   useEffect(() => {
-    if (isApproved) {
-      // Remove the approved token from the needs approval list
-      setNeedsERC20Approvals(prev => prev.filter(token => token !== preparedTxData?.approvalTokenSymbol));
-      
-      // Check if more approvals are needed
-      const remainingApprovals = needsERC20Approvals.filter(token => token !== preparedTxData?.approvalTokenSymbol);
-      
-      if (remainingApprovals.length > 0) {
-        // More approvals needed
-        setPreparedTxData({
-          needsApproval: true,
-          approvalType: 'ERC20_TO_PERMIT2',
-          approvalTokenSymbol: remainingApprovals[0],
-          approvalTokenAddress: TOKEN_DEFINITIONS[remainingApprovals[0]]?.address,
-          approvalAmount: "115792089237316195423570985008687907853269984665640564039457584007913129639935",
-          approveToAddress: PERMIT2_ADDRESS,
-        });
-      } else {
-        // All approvals done, ready to mint
-        setStep('mint');
-        setPreparedTxData({ needsApproval: false });
-      }
-      
-      setIsWorking(false);
-      resetApproveWriteContract();
+    if (isApproved && preparedTxData) {
+      // Re-check actual allowances after each approval transaction
+      const recheckAllowances = async () => {
+        try {
+          // Wait a bit for the blockchain state to update
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          
+          console.log(`[Approval Check] Re-checking actual allowances after ${preparedTxData.approvalTokenSymbol} approval`);
+          console.log(`[Approval Check] Input amounts: ${token0Symbol}=${amount0}, ${token1Symbol}=${amount1}`);
+          
+          // Check actual allowances vs required amounts for both tokens
+          const stillNeedsApprovals: TokenSymbol[] = [];
+          const tokens = [
+            { symbol: token0Symbol, amount: amount0 },
+            { symbol: token1Symbol, amount: amount1 }
+          ];
+
+          for (const token of tokens) {
+            if (!token.amount || parseFloat(token.amount) <= 0) continue;
+            
+            const tokenDef = TOKEN_DEFINITIONS[token.symbol];
+            if (!tokenDef || !accountAddress) continue;
+
+            try {
+              const allowance = await readContract(config, {
+                address: tokenDef.address as `0x${string}`,
+                abi: erc20Abi,
+                functionName: 'allowance',
+                args: [accountAddress, PERMIT2_ADDRESS as `0x${string}`],
+                blockTag: 'latest'
+              });
+
+              const requiredAmount = parseUnits(token.amount, tokenDef.decimals);
+              
+              if (allowance < requiredAmount) {
+                stillNeedsApprovals.push(token.symbol);
+              }
+            } catch (error) {
+              console.error(`Error checking allowance for ${token.symbol}:`, error);
+              stillNeedsApprovals.push(token.symbol); // Be safe, assume needs approval
+            }
+          }
+          
+          console.log(`[Approval Check] Tokens still needing approval:`, stillNeedsApprovals);
+          
+          if (stillNeedsApprovals.length > 0) {
+            // Still need approvals - trigger wiggle if this token still needs approval
+            if (stillNeedsApprovals.includes(preparedTxData.approvalTokenSymbol as TokenSymbol)) {
+              if (onApprovalInsufficient) {
+                onApprovalInsufficient();
+              }
+              toast.error("Insufficient Approval");
+            } else {
+              toast.success(`${preparedTxData.approvalTokenSymbol} Approved`);
+            }
+            
+            // Update the needs approval list and set up next approval with exact amount needed
+            setNeedsERC20Approvals(stillNeedsApprovals);
+            
+            // Calculate exact amount needed for the first token that needs approval
+            const nextTokenSymbol = stillNeedsApprovals[0];
+            const nextTokenDef = TOKEN_DEFINITIONS[nextTokenSymbol];
+            const nextTokenAmount = nextTokenSymbol === token0Symbol ? amount0 : amount1;
+            const exactAmountNeeded = parseUnits(nextTokenAmount || '0', nextTokenDef.decimals);
+            
+            // Round up by 1 smallest decimal unit
+            const buffer = BigInt(Math.pow(10, Math.max(0, nextTokenDef.decimals - 6))); // 1 micro-unit
+            const roundedUpAmount = exactAmountNeeded + buffer;
+            
+            setPreparedTxData({
+              needsApproval: true,
+              approvalType: 'ERC20_TO_PERMIT2',
+              approvalTokenSymbol: nextTokenSymbol,
+              approvalTokenAddress: nextTokenDef.address,
+              approvalAmount: roundedUpAmount.toString(),
+              approveToAddress: PERMIT2_ADDRESS,
+            });
+          } else {
+            // All approvals done
+            console.log(`[Approval Check] ✅ All approvals complete!`);
+            toast.success(`${preparedTxData.approvalTokenSymbol} Approved`);
+            setNeedsERC20Approvals([]);
+            setStep('mint');
+            setPreparedTxData({ needsApproval: false });
+          }
+          
+          setIsWorking(false);
+          resetApproveWriteContract();
+        } catch (error) {
+          console.error('Error re-checking allowances:', error);
+          toast.error("Approval Check Failed");
+          setIsWorking(false);
+          resetApproveWriteContract();
+        }
+      };
+
+      recheckAllowances();
     }
     
     if (approveWriteError || approveReceiptError) {
@@ -356,7 +433,7 @@ export function useAddLiquidityTransaction({
       setIsWorking(false);
       resetApproveWriteContract();
     }
-  }, [isApproved, approveWriteError, approveReceiptError, preparedTxData, needsERC20Approvals, resetApproveWriteContract]);
+  }, [isApproved, approveWriteError, approveReceiptError, preparedTxData, accountAddress, token0Symbol, token1Symbol, amount0, amount1, onApprovalInsufficient, resetApproveWriteContract]);
 
   // Update states when mint transaction is completed
   useEffect(() => {

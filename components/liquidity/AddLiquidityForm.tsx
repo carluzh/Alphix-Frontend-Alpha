@@ -36,7 +36,7 @@ const safeParseUnits = (amount: string, decimals: number): bigint => {
   return viemParseUnits(finalString, decimals);
 };
 import { useAddLiquidityTransaction } from "./useAddLiquidityTransaction";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useAnimation } from "framer-motion";
 import { InteractiveRangeChart } from "./InteractiveRangeChart";
 import {
   Tooltip,
@@ -194,6 +194,10 @@ export function AddLiquidityForm({
   const [xDomain, setXDomain] = useState<[number, number]>([-120000, 120000]);
   const [currentPriceLine, setCurrentPriceLine] = useState<number | null>(null);
   const [isPanning, setIsPanning] = useState(false);
+  
+  // Wiggle animation for insufficient approvals
+  const [approvalWiggleCount, setApprovalWiggleCount] = useState(0);
+  const approvalWiggleControls = useAnimation();
   const panStartXRef = useRef<number | null>(null);
   const panStartDomainRef = useRef<[number, number] | null>(null);
   const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -279,6 +283,9 @@ export function AddLiquidityForm({
     activeInputSide,
     calculatedData,
     onLiquidityAdded,
+    onApprovalInsufficient: () => {
+      setApprovalWiggleCount(prev => prev + 1);
+    },
     onOpenChange: () => {},
   });
 
@@ -338,6 +345,16 @@ export function AddLiquidityForm({
       document.head.removeChild(style);
     };
   }, []);
+
+  // Approval wiggle animation effect
+  useEffect(() => {
+    if (approvalWiggleCount > 0) {
+      approvalWiggleControls.start({
+        x: [0, -3, 3, -2, 2, 0],
+        transition: { duration: 0.22, ease: 'easeOut' },
+      }).catch(() => {});
+    }
+  }, [approvalWiggleCount, approvalWiggleControls]);
 
   // Set initial state based on props
   useEffect(() => {
@@ -2576,9 +2593,12 @@ export function AddLiquidityForm({
                             { (step === 'approve' && (isApproveWritePending || isApproving))
                               ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
                               : (
-                                <span className={`text-xs font-mono ${completedERC20ApprovalsCount === involvedTokensCount && involvedTokensCount > 0 ? 'text-green-500' : ''}`}>
+                                <motion.span 
+                                  animate={approvalWiggleControls}
+                                  className={`text-xs font-mono ${completedERC20ApprovalsCount === involvedTokensCount && involvedTokensCount > 0 ? 'text-green-500' : approvalWiggleCount > 0 ? 'text-red-500' : 'text-muted-foreground'}`}
+                                >
                                   {`${completedERC20ApprovalsCount}/${involvedTokensCount > 0 ? involvedTokensCount : '-'}`}
-                                </span>
+                                </motion.span>
                               )
                             }
                           </span>
@@ -2599,16 +2619,6 @@ export function AddLiquidityForm({
                           </span>
                       </div>
                       
-                      {/* Final Deposit Transaction */}
-                      <div className="flex items-center justify-between">
-                          <span>Deposit Transaction</span> 
-                          <span>
-                              {(step === 'mint' && batchPermitSigned && (isMintConfirming || isMintSendPending)) ? 
-                                <ActivityIcon className="h-4 w-4 animate-pulse text-muted-foreground" />
-                               : isMintSuccess ? <CheckIcon className="h-4 w-4 text-green-500" />
-                               : <MinusIcon className="h-4 w-4" />}
-                          </span>
-                      </div>
                   </div>
                 </div>
               )}
