@@ -267,9 +267,11 @@ const getUncollectedFeesBatchCacheKey = (positionIds: string[]) => `uncollectedF
 export async function loadUncollectedFeesBatch(positionIds: string[], ttlMs: number = 60 * 1000): Promise<UncollectedFeesItem[]> {
   const ids = (positionIds || []).map(String).filter(Boolean);
   if (ids.length === 0) return [];
+
   const key = getUncollectedFeesBatchCacheKey(ids);
   const cached = getFromCacheWithTtl<UncollectedFeesItem[]>(key, ttlMs);
   if (cached) return cached;
+
   const ongoing = getOngoingRequest<UncollectedFeesItem[]>(key);
   if (ongoing) return ongoing;
 
@@ -281,8 +283,13 @@ export async function loadUncollectedFeesBatch(positionIds: string[], ttlMs: num
         body: JSON.stringify({ positionIds: ids }),
       } as any);
       const json = await resp.json();
-      if (!resp.ok || !json?.success || !Array.isArray(json?.items)) return [] as UncollectedFeesItem[];
+
+      if (!resp.ok || !json?.success || !Array.isArray(json?.items)) {
+        return [] as UncollectedFeesItem[];
+      }
+
       const items = json.items as UncollectedFeesItem[];
+
       // Also warm individual per-id caches
       try {
         for (const it of items) {

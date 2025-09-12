@@ -7,9 +7,9 @@ import { V4PositionPlanner, V4PositionManager, Pool as V4Pool, Position as V4Pos
 import { TickMath } from '@uniswap/v3-sdk';
 import { Token, Percent } from '@uniswap/sdk-core';
 import { V4_POSITION_MANAGER_ADDRESS, EMPTY_BYTES, V4_POSITION_MANAGER_ABI } from '@/lib/swap-constants';
-import { getToken, TokenSymbol, getTokenSymbolByAddress } from '@/lib/pools-config';
+import { getToken, TokenSymbol, getTokenSymbolByAddress, TOKEN_DEFINITIONS } from '@/lib/pools-config';
 import { baseSepolia } from '@/lib/wagmiConfig';
-import { getAddress, type Hex, BaseError, parseUnits, encodeAbiParameters, keccak256 } from 'viem';
+import { getAddress, type Hex, BaseError, parseUnits, encodeAbiParameters, keccak256, formatUnits } from 'viem';
 import { getPositionDetails, getPoolState } from '@/lib/liquidity-utils';
 import { prefetchService } from '@/lib/prefetch-service';
 import { invalidateActivityCache, invalidateUserPositionsCache, invalidateUserPositionIdsCache } from '@/lib/client-cache';
@@ -48,6 +48,8 @@ export interface DecreasePositionData {
   positionToken1Amount?: string;
   // Which side the user actually edited in the UI: 'token0' or 'token1'
   enteredSide?: 'token0' | 'token1';
+  // Fee data to add to amounts - CRITICAL: NO ROUNDING UP ALLOWED
+  feesForWithdraw?: { amount0: string; amount1: string; } | null;
 }
 
 type DecreaseOptions = { slippageBps?: number; deadlineSeconds?: number };
@@ -107,15 +109,55 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
     lastIsFullBurn.current = !!positionData.isFullBurn;
 
     try {
+      // Add unclaimed fees to amounts - CRITICAL: NO ROUNDING UP ALLOWED
+      let finalDecreaseAmount0 = positionData.decreaseAmount0 || '0';
+      let finalDecreaseAmount1 = positionData.decreaseAmount1 || '0';
+
+      if (positionData.feesForWithdraw) {
+        try {
+          // Use the token symbols we already have from positionData
+          const token0Decimals = TOKEN_DEFINITIONS[positionData.token0Symbol]?.decimals || 18;
+          const token1Decimals = TOKEN_DEFINITIONS[positionData.token1Symbol]?.decimals || 18;
+
+          // Convert fee amounts to display units (no rounding)
+          const fee0Amount = formatUnits(BigInt(positionData.feesForWithdraw.amount0 || '0'), token0Decimals);
+          const fee1Amount = formatUnits(BigInt(positionData.feesForWithdraw.amount1 || '0'), token1Decimals);
+
+          // Convert current decrease amounts to BigInt for precise addition
+          const currentDecrease0Raw = safeParseUnits(positionData.decreaseAmount0 || '0', token0Decimals);
+          const currentDecrease1Raw = safeParseUnits(positionData.decreaseAmount1 || '0', token1Decimals);
+          const fee0Raw = safeParseUnits(fee0Amount, token0Decimals);
+          const fee1Raw = safeParseUnits(fee1Amount, token1Decimals);
+
+          // Add fees to decrease amounts - ensure NO ROUNDING by working in raw units
+          const totalDecrease0Raw = currentDecrease0Raw + fee0Raw;
+          const totalDecrease1Raw = currentDecrease1Raw + fee1Raw;
+
+          // Convert back to display format without rounding
+          finalDecreaseAmount0 = formatUnits(totalDecrease0Raw, token0Decimals);
+          finalDecreaseAmount1 = formatUnits(totalDecrease1Raw, token1Decimals);
+        } catch (error) {
+          console.warn('Failed to add fees to decrease amounts, using original amounts:', error);
+          // Fall back to original amounts if fee addition fails
+        }
+      }
+
+      // Update positionData with fee-adjusted amounts
+      const adjustedPositionData = {
+        ...positionData,
+        decreaseAmount0: finalDecreaseAmount0,
+        decreaseAmount1: finalDecreaseAmount1,
+      };
+
       // Only use percentage path if user did NOT specify explicit token amounts
       const userSpecifiedAmounts = (
-        (positionData.decreaseAmount0 && parseFloat(positionData.decreaseAmount0) > 0) ||
-        (positionData.decreaseAmount1 && parseFloat(positionData.decreaseAmount1) > 0)
+        (adjustedPositionData.decreaseAmount0 && parseFloat(adjustedPositionData.decreaseAmount0) > 0) ||
+        (adjustedPositionData.decreaseAmount1 && parseFloat(adjustedPositionData.decreaseAmount1) > 0)
       );
       const isPercentage = (decreasePercentage > 0 && decreasePercentage <= 100) && !userSpecifiedAmounts;
       
-      const token0Def = getToken(positionData.token0Symbol);
-      const token1Def = getToken(positionData.token1Symbol);
+      const token0Def = getToken(adjustedPositionData.token0Symbol);
+      const token1Def = getToken(adjustedPositionData.token1Symbol);
 
       if (!token0Def || !token1Def) {
         throw new Error("Token definitions not found for one or both tokens in the position.");
@@ -135,7 +177,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
       
       // Get the actual NFT token ID with timeout
       const nftTokenId = await Promise.race([
-        getTokenIdFromPosition(positionData),
+        getTokenIdFromPosition(adjustedPositionData),
         new Promise<never>((_, reject) => 
           setTimeout(() => reject(new Error('Failed to resolve token ID. Please try again.')), 10000)
         )
@@ -198,8 +240,8 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
 
           // 4) Options: use percentage and burn flag; include slippage/deadline
           // Derive an accurate percentage from desired amounts at current price (ceil to avoid under-delivery)
-          const desired0Raw = safeParseUnits(positionData.decreaseAmount0 || '0', token0Def.decimals);
-          const desired1Raw = safeParseUnits(positionData.decreaseAmount1 || '0', token1Def.decimals);
+          const desired0Raw = safeParseUnits(adjustedPositionData.decreaseAmount0 || '0', token0Def.decimals);
+          const desired1Raw = safeParseUnits(adjustedPositionData.decreaseAmount1 || '0', token1Def.decimals);
           // Build sqrt ratios for full-withdraw math
           const sqrtP = JSBI.BigInt(state.sqrtPriceX96.toString());
           const sqrtA = TickMath.getSqrtRatioAtTick(details.tickLower);
@@ -242,9 +284,9 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
             pctBpsJSBI = JSBI.BigInt(bps.toString());
           } else {
             // derive from desired token amounts
-            if (positionData.enteredSide === 'token0') {
+            if (adjustedPositionData.enteredSide === 'token0') {
               pctBpsJSBI = ceilRatioToBps(desiredPool0Raw, amount0Full);
-            } else if (positionData.enteredSide === 'token1') {
+            } else if (adjustedPositionData.enteredSide === 'token1') {
               pctBpsJSBI = ceilRatioToBps(desiredPool1Raw, amount1Full);
             } else {
               const r0 = ceilRatioToBps(desiredPool0Raw, amount0Full);
@@ -266,7 +308,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
             hookData: '0x' as Hex,
             tokenId: nftTokenId.toString(),
             liquidityPercentage,
-            burnToken: pctBps === 10000 && !!positionData.isFullBurn,
+            burnToken: pctBps === 10000 && !!adjustedPositionData.isFullBurn,
           } as const;
 
           // (debug logging removed)
@@ -290,7 +332,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
 
       // Case B REMOVED: for explicit amounts we use planner path below to honor min-outs on entered side.
 
-      if (positionData.isFullBurn) {
+      if (adjustedPositionData.isFullBurn) {
         // Fallback full burn via planner
         const amount0MinJSBI = JSBI.BigInt(0);
         const amount1MinJSBI = JSBI.BigInt(0);
@@ -300,7 +342,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
         // fallback to server calc if needed
         let liquidityJSBI: JSBI;
 
-        if (positionData.collectOnly) {
+        if (adjustedPositionData.collectOnly) {
           liquidityJSBI = JSBI.BigInt(0);
         } else {
           // In-range: compute required liquidity from desired token amounts using current pool state; OOR: server calc
@@ -356,8 +398,8 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
               }
 
               // Map desired to pool sides
-              const userDesired0Raw = safeParseUnits(positionData.decreaseAmount0 || '0', token0Def.decimals);
-              const userDesired1Raw = safeParseUnits(positionData.decreaseAmount1 || '0', token1Def.decimals);
+              const userDesired0Raw = safeParseUnits(adjustedPositionData.decreaseAmount0 || '0', token0Def.decimals);
+              const userDesired1Raw = safeParseUnits(adjustedPositionData.decreaseAmount1 || '0', token1Def.decimals);
               const poolC0 = getAddress(details.poolKey.currency0);
               const uiT0Addr = getAddress(token0Def.address);
               const desiredPool0Raw = uiT0Addr === poolC0 ? userDesired0Raw : userDesired1Raw;
@@ -375,10 +417,10 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
               }
               let ratio = r0; // default to token0 side
               const uiT0AddrLocal = getAddress(token0Def.address);
-              const enteredIsPool0 = positionData.enteredSide === 'token0' ? (uiT0AddrLocal === poolC0) : (uiT0AddrLocal !== poolC0);
-              if (positionData.enteredSide === 'token1') {
+              const enteredIsPool0 = adjustedPositionData.enteredSide === 'token0' ? (uiT0AddrLocal === poolC0) : (uiT0AddrLocal !== poolC0);
+              if (adjustedPositionData.enteredSide === 'token1') {
                 ratio = r1;
-              } else if (positionData.enteredSide === 'token0') {
+              } else if (adjustedPositionData.enteredSide === 'token0') {
                 ratio = r0;
               } else {
                 // if no entered side, fall back to max to satisfy both
@@ -393,22 +435,22 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
               }
             } else {
               // OOR: use stable server calc
-              const inputSide = (positionData.decreaseAmount0 && parseFloat(positionData.decreaseAmount0) > 0)
-                ? { amount: positionData.decreaseAmount0, symbol: positionData.token0Symbol }
-                : (positionData.decreaseAmount1 && parseFloat(positionData.decreaseAmount1) > 0)
-                  ? { amount: positionData.decreaseAmount1, symbol: positionData.token1Symbol }
+              const inputSide = (adjustedPositionData.decreaseAmount0 && parseFloat(adjustedPositionData.decreaseAmount0) > 0)
+                ? { amount: adjustedPositionData.decreaseAmount0, symbol: adjustedPositionData.token0Symbol }
+                : (adjustedPositionData.decreaseAmount1 && parseFloat(adjustedPositionData.decreaseAmount1) > 0)
+                  ? { amount: adjustedPositionData.decreaseAmount1, symbol: adjustedPositionData.token1Symbol }
                   : null;
               if (!inputSide) throw new Error('No non-zero decrease amount specified');
               const calcResponse = await fetch('/api/liquidity/calculate-liquidity-parameters', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                  token0Symbol: positionData.token0Symbol,
-                  token1Symbol: positionData.token1Symbol,
+                  token0Symbol: adjustedPositionData.token0Symbol,
+                  token1Symbol: adjustedPositionData.token1Symbol,
                   inputAmount: inputSide.amount,
                   inputTokenSymbol: inputSide.symbol,
-                  userTickLower: positionData.tickLower,
-                  userTickUpper: positionData.tickUpper,
+                  userTickLower: adjustedPositionData.tickLower,
+                  userTickUpper: adjustedPositionData.tickUpper,
                   chainId: chainId,
                 }),
               });
@@ -418,8 +460,8 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
             }
           } catch (e2) {
             console.error('Amounts-mode decrease calc failed; conservative fallback:', e2);
-            const amount0Raw = safeParseUnits(positionData.decreaseAmount0 || '0', token0Def.decimals);
-            const amount1Raw = safeParseUnits(positionData.decreaseAmount1 || '0', token1Def.decimals);
+            const amount0Raw = safeParseUnits(adjustedPositionData.decreaseAmount0 || '0', token0Def.decimals);
+            const amount1Raw = safeParseUnits(adjustedPositionData.decreaseAmount1 || '0', token1Def.decimals);
             const maxAmountRaw = amount0Raw > amount1Raw ? amount0Raw : amount1Raw;
             const estimated = JSBI.divide(JSBI.BigInt(maxAmountRaw.toString()), JSBI.BigInt(10));
             liquidityJSBI = JSBI.greaterThan(estimated, JSBI.BigInt(1)) ? estimated : JSBI.BigInt(1);
@@ -457,8 +499,8 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
         } catch {}
 
         // Map user-entered desired amounts to poolKey token sides
-        const userDesired0Raw = safeParseUnits(positionData.decreaseAmount0 || '0', token0Def.decimals);
-        const userDesired1Raw = safeParseUnits(positionData.decreaseAmount1 || '0', token1Def.decimals);
+        const userDesired0Raw = safeParseUnits(adjustedPositionData.decreaseAmount0 || '0', token0Def.decimals);
+        const userDesired1Raw = safeParseUnits(adjustedPositionData.decreaseAmount1 || '0', token1Def.decimals);
         const { poolKey } = await getPositionDetails(nftTokenId);
         const poolC0 = getAddress(poolKey.currency0);
         const poolC1 = getAddress(poolKey.currency1);
@@ -487,7 +529,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
           minPool1Raw = applyTolerance(desiredPool1Raw);
         } else {
           // In-range: enforce only the user-entered side if provided
-          if (positionData.enteredSide === 'token0') {
+          if (adjustedPositionData.enteredSide === 'token0') {
             const enteredDesired = uiT0Addr === poolC0 ? desiredPool0Raw : desiredPool1Raw;
             if (enteredDesired > 0n) {
               if (uiT0Addr === poolC0) {
@@ -498,7 +540,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
                 minPool0Raw = 0n;
               }
             }
-          } else if (positionData.enteredSide === 'token1') {
+          } else if (adjustedPositionData.enteredSide === 'token1') {
             const enteredDesired = uiT0Addr === poolC0 ? desiredPool1Raw : desiredPool0Raw;
             if (enteredDesired > 0n) {
               if (uiT0Addr === poolC0) {
@@ -603,7 +645,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
           fetch('/api/internal/revalidate-pools', { method: 'POST' }).catch(() => {});
         } catch {}
       })();
-      try { if (accountAddress) prefetchService.requestPositionsRefresh({ owner: accountAddress, reason: lastWasCollectOnly.current ? 'collect' : 'decrease' }); } catch {}
+      try { if (accountAddress) prefetchService.notifyPositionsRefresh(accountAddress, lastWasCollectOnly.current ? 'collect' : 'decrease'); } catch {}
       try { if (accountAddress) invalidateActivityCache(accountAddress); } catch {}
       try { if (accountAddress) { invalidateUserPositionsCache(accountAddress); invalidateUserPositionIdsCache(accountAddress); } } catch {}
       // Removed hook-level revalidate to avoid duplicates; page handles revalidation after subgraph sync
@@ -700,6 +742,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
     isSuccess: isDecreaseConfirmed,
     error: decreaseSendError || decreaseConfirmError,
     hash,
+    reset: resetWriteContract,
   };
 } 
 

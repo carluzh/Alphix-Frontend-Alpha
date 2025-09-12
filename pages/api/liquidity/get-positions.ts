@@ -65,6 +65,7 @@ interface ProcessedPositionToken {
 
 export interface ProcessedPosition { // Export for frontend type usage
     positionId: string;
+    owner: string;
     poolId: string;
     token0: ProcessedPositionToken;
     token1: ProcessedPositionToken;
@@ -72,7 +73,7 @@ export interface ProcessedPosition { // Export for frontend type usage
     tickUpper: number;
     liquidityRaw: string;
     ageSeconds: number;
-    blockTimestamp: string;
+    blockTimestamp: number;
     isInRange: boolean;
 }
 
@@ -198,6 +199,7 @@ async function fetchAndProcessUserPositionsForApi(ownerAddress: string): Promise
                         const lastTs = Number(r.lastTimestamp || 0);
                         processed.push({
                             positionId: r.id || '',
+                            owner: r.owner,
                             poolId: poolIdStr,
                             token0: { address: t0.address, symbol: t0.symbol || 'T0', amount: ethers.utils.formatUnits(raw0, t0.decimals), rawAmount: raw0 },
                             token1: { address: t1.address, symbol: t1.symbol || 'T1', amount: ethers.utils.formatUnits(raw1, t1.decimals), rawAmount: raw1 },
@@ -205,7 +207,7 @@ async function fetchAndProcessUserPositionsForApi(ownerAddress: string): Promise
                             tickUpper: Number((r as any).tickUpper ?? details.tickUpper),
                             liquidityRaw: ((r as any).liquidity ?? details.liquidity.toString()).toString(),
                             ageSeconds: Math.max(0, Math.floor(Date.now()/1000) - createdTs),
-                            blockTimestamp: String(createdTs || '0'),
+                            blockTimestamp: createdTs || 0,
                             isInRange: state.tick >= details.tickLower && state.tick < details.tickUpper,
                         });
                     } catch (e: any) {

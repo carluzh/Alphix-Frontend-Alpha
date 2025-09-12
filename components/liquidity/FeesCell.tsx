@@ -116,14 +116,14 @@ export function FeesCell({
       <span className="inline-block h-3 w-12 rounded bg-muted/40 animate-pulse align-middle" />
     );
   if (raw0 === null || raw1 === null)
-    return (
-      <span
-        className="text-muted-foreground"
-        title={lastError ? `Fees unavailable: ${lastError}` : undefined}
-      >
-        N/A
-      </span>
-    );
+  return (
+    <span
+      className="text-[11px] text-muted-foreground"
+      title={lastError ? `Fees unavailable: ${lastError}` : undefined}
+    >
+      N/A
+    </span>
+  );
 
   const d0 = TOKEN_DEFINITIONS?.[sym0 as keyof typeof TOKEN_DEFINITIONS]?.decimals ?? 18;
   const d1 = TOKEN_DEFINITIONS?.[sym1 as keyof typeof TOKEN_DEFINITIONS]?.decimals ?? 18;
@@ -146,13 +146,10 @@ export function FeesCell({
     : (priceOverrides[sym1U] ?? (stable(sym1U) ? 1 : 0));
   const usd = amt0 * (effPrice0 || 0) + amt1 * (effPrice1 || 0);
 
-  // Debug logging for all positions
-  console.log(`[FeesCell DEBUG] Position ${positionId}: ${sym0}=${amt0} * $${effPrice0} + ${sym1}=${amt1} * $${effPrice1} = $${usd.toFixed(4)}`);
-
   // If there are no raw amounts, show plain text without hover
   if (BigInt(raw0) <= 0n && BigInt(raw1) <= 0n) {
     return (
-      <span className="whitespace-nowrap text-muted-foreground">
+      <span className="whitespace-nowrap text-[11px] text-muted-foreground">
         $0
       </span>
     );
@@ -162,33 +159,8 @@ export function FeesCell({
   const showLessThanMin = !Number.isFinite(usd) || usd < 0.01;
 
   return (
-    <HoverCard>
-      <HoverCardTrigger asChild>
-        <span className="whitespace-nowrap cursor-default hover:text-foreground transition-colors">
-          {showLessThanMin ? "< $0.01" : fmtUsd(usd)}
-        </span>
-      </HoverCardTrigger>
-      <HoverCardContent
-        side="top"
-        align="center"
-        sideOffset={8}
-        className="w-48 p-2 border border-sidebar-border bg-[#0f0f0f] text-xs shadow-lg rounded-lg"
-      >
-        <div className="grid gap-1">
-          <div className="flex items-center justify-between">
-            <span className="text-muted-foreground">{sym0}</span>
-            <span className="font-mono tabular-nums">
-              {formatTokenAmount(amt0)}
-            </span>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-muted-foreground">{sym1}</span>
-            <span className="font-mono tabular-nums">
-              {formatTokenAmount(amt1)}
-            </span>
-          </div>
-        </div>
-      </HoverCardContent>
-    </HoverCard>
+    <span className="whitespace-nowrap text-[11px] font-medium">
+      {showLessThanMin ? "< $0.01" : fmtUsd(usd)}
+    </span>
   );
 }

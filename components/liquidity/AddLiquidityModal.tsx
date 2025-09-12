@@ -215,9 +215,13 @@ export function AddLiquidityModal({
   // Track the transaction hash when we actually start the transaction in this session
   const [currentSessionTxHash, setCurrentSessionTxHash] = useState<string | null>(null);
 
+  // Determine if we should use internal hook or parent hook (moved up before useEffect)
+  const shouldUseInternalHook = !parentIncreaseLiquidity;
+
   // Reset transaction state when modal opens
   useEffect(() => {
     if (isOpen) {
+      console.log('[DEBUG] Modal opened, resetting all states');
       setTxStarted(false);
       setWasIncreasingLiquidity(false);
       setHasToken0Allowance(null);
@@ -237,8 +241,15 @@ export function AddLiquidityModal({
         setAmount1("");
         setActiveInputSide(null);
       }
+      
+      // Force reset of parent transaction states if using parent hook
+      if (!shouldUseInternalHook) {
+        console.log('[DEBUG] Using parent hook, forcing parent state reset');
+        // The parent should reset its transaction states when modal opens
+        // This will be handled by the parent component
+      }
     }
-  }, [isOpen]);
+  }, [isOpen, shouldUseInternalHook]);
 
   // Reset all modal state when modal is closed
   useEffect(() => {
@@ -336,7 +347,6 @@ export function AddLiquidityModal({
   });
 
   // Always call the hook to maintain hook order, but disable callback when parent exists
-  const shouldUseInternalHook = !parentIncreaseLiquidity;
   
   const internalHookResult = useIncreaseLiquidity({
     onLiquidityIncreased: (info) => {
@@ -394,6 +404,7 @@ export function AddLiquidityModal({
       poolId: positionToModify.poolId,
       tickLower: positionToModify.tickLower,
       tickUpper: positionToModify.tickUpper,
+      feesForIncrease: feesForIncrease,
     };
 
     // For internal hook usage, onLiquidityAdded will be called by the hook's callback
@@ -474,16 +485,37 @@ export function AddLiquidityModal({
 
   // Show success view ONLY when transaction is confirmed with hash AND was started in current session
   useEffect(() => {
+    // Only run this effect if we actually have transaction data
+    if (!txHash && !isTransactionSuccess) {
+      return; // Exit early if no transaction data
+    }
+    
+    console.log('[DEBUG] Success effect triggered:', {
+      txHash: txHash?.slice(0, 10) + '...',
+      isTransactionSuccess,
+      showTransactionOverview,
+      txStarted,
+      currentSessionTxHash: currentSessionTxHash?.slice(0, 10) + '...',
+      hashesMatch: txHash === currentSessionTxHash
+    });
+    
     // Only show success if we have a confirmed transaction hash that matches our current session
     if (txHash && isTransactionSuccess && showTransactionOverview && txStarted && currentSessionTxHash === txHash) {
       console.log('[DEBUG] Transaction confirmed with hash, showing success view. txHash:', txHash?.slice(0, 10) + '...');
       setShowSuccessView(true);
+      
+      // Call the success callback to notify parent component
+      if (onLiquidityAdded) {
+        console.log('[DEBUG] Calling onLiquidityAdded callback');
+        onLiquidityAdded();
+      }
     }
-  }, [txHash, isTransactionSuccess, showTransactionOverview, txStarted, currentSessionTxHash]);
+  }, [txHash, isTransactionSuccess, showTransactionOverview, txStarted, currentSessionTxHash, onLiquidityAdded]);
 
   // Reset parent success states when modal opens to prevent premature success view
+  // BUT only if we don't have an active transaction in progress
   useEffect(() => {
-    if (isOpen && !shouldUseInternalHook && parentIsIncreaseSuccess) {
+    if (isOpen && !shouldUseInternalHook && parentIsIncreaseSuccess && !currentSessionTxHash) {
       console.log('[DEBUG] Modal opened with parent success true, resetting by clearing state variables');
       // Reset the current session tracking to prevent immediate success view
       setCurrentSessionTxHash(null);
@@ -493,7 +525,7 @@ export function AddLiquidityModal({
       setTxStarted(false);
       setWasIncreasingLiquidity(false);
     }
-  }, [isOpen, shouldUseInternalHook, parentIsIncreaseSuccess]);
+  }, [isOpen, shouldUseInternalHook, parentIsIncreaseSuccess, currentSessionTxHash]);
 
   // Wiggle animation effect
   useEffect(() => {
@@ -1136,37 +1168,73 @@ export function AddLiquidityModal({
                       <span className="text-sm font-medium">You Will Add</span>
                     </div>
 
-                    {/* Main Position Section */}
-                    <div className="rounded-lg bg-[var(--token-container-background)] p-4 border border-sidebar-border/60">
-                      {/* Token Amounts with Large Icons - 2 Column Layout */}
-                      <div className="space-y-4">
-                        <div className="flex justify-between items-start">
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-2">
-                              <div className="text-xl font-medium">{formatTokenDisplayAmount(increaseAmount0 || "0")}</div>
-                              <span className="text-sm text-muted-foreground">{positionToModify.token0.symbol}</span>
+                      {/* Main Position Section */}
+                      <div className="rounded-lg bg-[var(--token-container-background)] p-4 border border-sidebar-border/60">
+                        {/* Token Amounts with Large Icons - 2 Column Layout */}
+                        <div className="space-y-4">
+                          <div className="flex justify-between items-start">
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <div className="text-xl font-medium">
+                                  {(() => {
+                                    const baseAmount = parseFloat(increaseAmount0 || "0");
+                                    if (!feesForIncrease) return formatTokenDisplayAmount(baseAmount.toString());
+                                    
+                                    const decimals = getTokenSymbolByAddress(positionToModify.token0.address) ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(positionToModify.token0.address)!]?.decimals || 18 : 18;
+                                    const feeAmount = parseFloat(formatUnits(BigInt(feesForIncrease.amount0 || '0'), decimals));
+                                    const totalAmount = baseAmount + feeAmount;
+                                    return formatTokenDisplayAmount(totalAmount.toString());
+                                  })()}
+                                </div>
+                                <span className="text-sm text-muted-foreground">{positionToModify.token0.symbol}</span>
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {(() => {
+                                  const baseAmount = parseFloat(increaseAmount0 || "0");
+                                  if (!feesForIncrease) return formatUSD(baseAmount * getUSDPriceForSymbol(positionToModify.token0.symbol));
+                                  
+                                  const decimals = getTokenSymbolByAddress(positionToModify.token0.address) ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(positionToModify.token0.address)!]?.decimals || 18 : 18;
+                                  const feeAmount = parseFloat(formatUnits(BigInt(feesForIncrease.amount0 || '0'), decimals));
+                                  const totalAmount = baseAmount + feeAmount;
+                                  return formatUSD(totalAmount * getUSDPriceForSymbol(positionToModify.token0.symbol));
+                                })()}
+                              </div>
                             </div>
-                            <div className="text-xs text-muted-foreground">
-                              {formatUSD(parseFloat(increaseAmount0 || "0") * getUSDPriceForSymbol(positionToModify.token0.symbol))}
-                            </div>
+                            <Image src={getTokenIcon(positionToModify.token0.symbol)} alt={positionToModify.token0.symbol} width={40} height={40} className="rounded-full" />
                           </div>
-                          <Image src={getTokenIcon(positionToModify.token0.symbol)} alt={positionToModify.token0.symbol} width={40} height={40} className="rounded-full" />
-                        </div>
-                        
-                        <div className="flex justify-between items-start">
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-2">
-                              <div className="text-xl font-medium">{formatTokenDisplayAmount(increaseAmount1 || "0")}</div>
-                              <span className="text-sm text-muted-foreground">{positionToModify.token1.symbol}</span>
+
+                          <div className="flex justify-between items-start">
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <div className="text-xl font-medium">
+                                  {(() => {
+                                    const baseAmount = parseFloat(increaseAmount1 || "0");
+                                    if (!feesForIncrease) return formatTokenDisplayAmount(baseAmount.toString());
+                                    
+                                    const decimals = getTokenSymbolByAddress(positionToModify.token1.address) ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(positionToModify.token1.address)!]?.decimals || 18 : 18;
+                                    const feeAmount = parseFloat(formatUnits(BigInt(feesForIncrease.amount1 || '0'), decimals));
+                                    const totalAmount = baseAmount + feeAmount;
+                                    return formatTokenDisplayAmount(totalAmount.toString());
+                                  })()}
+                                </div>
+                                <span className="text-sm text-muted-foreground">{positionToModify.token1.symbol}</span>
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {(() => {
+                                  const baseAmount = parseFloat(increaseAmount1 || "0");
+                                  if (!feesForIncrease) return formatUSD(baseAmount * getUSDPriceForSymbol(positionToModify.token1.symbol));
+                                  
+                                  const decimals = getTokenSymbolByAddress(positionToModify.token1.address) ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(positionToModify.token1.address)!]?.decimals || 18 : 18;
+                                  const feeAmount = parseFloat(formatUnits(BigInt(feesForIncrease.amount1 || '0'), decimals));
+                                  const totalAmount = baseAmount + feeAmount;
+                                  return formatUSD(totalAmount * getUSDPriceForSymbol(positionToModify.token1.symbol));
+                                })()}
+                              </div>
                             </div>
-                            <div className="text-xs text-muted-foreground">
-                              {formatUSD(parseFloat(increaseAmount1 || "0") * getUSDPriceForSymbol(positionToModify.token1.symbol))}
-                            </div>
+                            <Image src={getTokenIcon(positionToModify.token1.symbol)} alt={positionToModify.token1.symbol} width={40} height={40} className="rounded-full" />
                           </div>
-                          <Image src={getTokenIcon(positionToModify.token1.symbol)} alt={positionToModify.token1.symbol} width={40} height={40} className="rounded-full" />
                         </div>
                       </div>
-                    </div>
 
                     {/* Fees Section with Striped Border - Only show if there are actual fees */}
                     {(() => {
@@ -1203,7 +1271,7 @@ export function AddLiquidityModal({
                                     ? '< 0.0001' 
                                     : feeNumber.toFixed(4).replace(/\.?0+$/, '');
                                   
-                                  return formattedFee;
+                                  return `+${formattedFee}`;
                                 })()}
                               </div>
                               <div className="text-xs text-muted-foreground">
@@ -1232,7 +1300,7 @@ export function AddLiquidityModal({
                                     ? '< 0.0001' 
                                     : feeNumber.toFixed(4).replace(/\.?0+$/, '');
                                   
-                                  return formattedFee;
+                                  return `+${formattedFee}`;
                                 })()}
                               </div>
                               <div className="text-xs text-muted-foreground">
@@ -1252,13 +1320,12 @@ export function AddLiquidityModal({
                       <div className="space-y-1.5">
                         <div className="flex items-center justify-between text-xs text-muted-foreground">
                           <span>Current Price:</span>
-                          <span className="text-foreground/80 font-medium">
+                          <span className="text-xs text-muted-foreground">
                             {(() => {
                               const price0 = getUSDPriceForSymbol(positionToModify.token0.symbol);
                               const price1 = getUSDPriceForSymbol(positionToModify.token1.symbol);
                               if (price0 === 0 || price1 === 0) return "N/A";
                               const ratio = price0 / price1;
-                              // Use same decimals as SwapInputView.tsx
                               const decimals = ratio < 0.1 ? 3 : 2;
                               return `1 ${positionToModify.token0.symbol} = ${ratio.toFixed(decimals)} ${positionToModify.token1.symbol}`;
                             })()}
@@ -1267,16 +1334,48 @@ export function AddLiquidityModal({
                         
                         <div className="flex items-center justify-between text-xs text-muted-foreground">
                           <span>New {positionToModify.token0.symbol} position:</span>
-                          <span className="text-foreground/80 font-medium">
-                            {formatTokenDisplayAmount((parseFloat(positionToModify.token0.amount) + parseFloat(increaseAmount0 || "0")).toString())}
-                          </span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-foreground/80 font-medium">
+                              {formatTokenDisplayAmount((() => {
+                                // Calculate new position: original + (increase + fees)
+                                const originalAmount = parseFloat(positionToModify.token0.amount);
+                                const increaseAmount = parseFloat(increaseAmount0 || "0");
+                                let totalIncrease = increaseAmount;
+
+                                if (feesForIncrease) {
+                                  const decimals = getTokenSymbolByAddress(positionToModify.token0.address) ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(positionToModify.token0.address)!]?.decimals || 18 : 18;
+                                  const feeAmount = parseFloat(formatUnits(BigInt(feesForIncrease.amount0 || '0'), decimals));
+                                  totalIncrease += feeAmount;
+                                }
+
+                                return (originalAmount + totalIncrease).toString();
+                              })())}
+                            </span>
+                            <Image src={getTokenIcon(positionToModify.token0.symbol)} alt={positionToModify.token0.symbol} width={12} height={12} className="rounded-full" />
+                          </div>
                         </div>
-                        
+
                         <div className="flex items-center justify-between text-xs text-muted-foreground">
                           <span>New {positionToModify.token1.symbol} position:</span>
-                          <span className="text-foreground/80 font-medium">
-                            {formatTokenDisplayAmount((parseFloat(positionToModify.token1.amount) + parseFloat(increaseAmount1 || "0")).toString())}
-                          </span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-foreground/80 font-medium">
+                              {formatTokenDisplayAmount((() => {
+                                // Calculate new position: original + (increase + fees)
+                                const originalAmount = parseFloat(positionToModify.token1.amount);
+                                const increaseAmount = parseFloat(increaseAmount1 || "0");
+                                let totalIncrease = increaseAmount;
+
+                                if (feesForIncrease) {
+                                  const decimals = getTokenSymbolByAddress(positionToModify.token1.address) ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(positionToModify.token1.address)!]?.decimals || 18 : 18;
+                                  const feeAmount = parseFloat(formatUnits(BigInt(feesForIncrease.amount1 || '0'), decimals));
+                                  totalIncrease += feeAmount;
+                                }
+
+                                return (originalAmount + totalIncrease).toString();
+                              })())}
+                            </span>
+                            <Image src={getTokenIcon(positionToModify.token1.symbol)} alt={positionToModify.token1.symbol} width={12} height={12} className="rounded-full" />
+                          </div>
                         </div>
                       </div>
                     ) : (
@@ -1543,11 +1642,27 @@ export function AddLiquidityModal({
                 <Image src={getTokenIcon(positionToModify?.token0.symbol || '')} alt={positionToModify?.token0.symbol || ''} width={32} height={32} className="rounded-full"/>
                 <div className="text-left flex flex-col">
                   <div className="font-medium flex items-baseline">
-                    <span className="text-sm">{formatTokenDisplayAmount(increaseAmount0 || "0")}</span>
+                    <span className="text-sm">{formatTokenDisplayAmount((() => {
+                      // Calculate amount with fees added
+                      const currentIncrease = increaseAmount0 || "0";
+                      if (!feesForIncrease) return currentIncrease;
+                      const decimals = getTokenSymbolByAddress(positionToModify?.token0.address || '') ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(positionToModify?.token0.address || '')!]?.decimals || 18 : 18;
+                      const feeAmount = formatUnits(BigInt(feesForIncrease.amount0 || '0'), decimals);
+                      const totalAmount = parseFloat(currentIncrease) + parseFloat(feeAmount);
+                      return totalAmount.toString();
+                    })())}</span>
                     <span className="ml-1 text-xs text-muted-foreground">{positionToModify?.token0.symbol}</span>
                   </div>
                   <div className="text-xs text-muted-foreground">
-                    {formatUSD(parseFloat(increaseAmount0 || "0") * getUSDPriceForSymbol(positionToModify?.token0.symbol || ''))}
+                    {formatUSD((() => {
+                      // Calculate USD value with fees added
+                      const currentIncrease = increaseAmount0 || "0";
+                      if (!feesForIncrease) return parseFloat(currentIncrease) * getUSDPriceForSymbol(positionToModify?.token0.symbol || '');
+                      const decimals = getTokenSymbolByAddress(positionToModify?.token0.address || '') ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(positionToModify?.token0.address || '')!]?.decimals || 18 : 18;
+                      const feeAmount = formatUnits(BigInt(feesForIncrease.amount0 || '0'), decimals);
+                      const totalAmount = parseFloat(currentIncrease) + parseFloat(feeAmount);
+                      return totalAmount * getUSDPriceForSymbol(positionToModify?.token0.symbol || '');
+                    })())}
                   </div>
                 </div>
               </div>
@@ -1557,11 +1672,27 @@ export function AddLiquidityModal({
               <div className="flex items-center gap-3">
                 <div className="text-right flex flex-col">
                   <div className="font-medium flex items-baseline">
-                    <span className="text-sm">{formatTokenDisplayAmount(increaseAmount1 || "0")}</span>
+                    <span className="text-sm">{formatTokenDisplayAmount((() => {
+                      // Calculate amount with fees added
+                      const currentIncrease = increaseAmount1 || "0";
+                      if (!feesForIncrease) return currentIncrease;
+                      const decimals = getTokenSymbolByAddress(positionToModify?.token1.address || '') ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(positionToModify?.token1.address || '')!]?.decimals || 18 : 18;
+                      const feeAmount = formatUnits(BigInt(feesForIncrease.amount1 || '0'), decimals);
+                      const totalAmount = parseFloat(currentIncrease) + parseFloat(feeAmount);
+                      return totalAmount.toString();
+                    })())}</span>
                     <span className="ml-1 text-xs text-muted-foreground">{positionToModify?.token1.symbol}</span>
                   </div>
                   <div className="text-xs text-muted-foreground">
-                    {formatUSD(parseFloat(increaseAmount1 || "0") * getUSDPriceForSymbol(positionToModify?.token1.symbol || ''))}
+                    {formatUSD((() => {
+                      // Calculate USD value with fees added
+                      const currentIncrease = increaseAmount1 || "0";
+                      if (!feesForIncrease) return parseFloat(currentIncrease) * getUSDPriceForSymbol(positionToModify?.token1.symbol || '');
+                      const decimals = getTokenSymbolByAddress(positionToModify?.token1.address || '') ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(positionToModify?.token1.address || '')!]?.decimals || 18 : 18;
+                      const feeAmount = formatUnits(BigInt(feesForIncrease.amount1 || '0'), decimals);
+                      const totalAmount = parseFloat(currentIncrease) + parseFloat(feeAmount);
+                      return totalAmount * getUSDPriceForSymbol(positionToModify?.token1.symbol || '');
+                    })())}
                   </div>
                 </div>
                 <Image src={getTokenIcon(positionToModify?.token1.symbol || '')} alt={positionToModify?.token1.symbol || ''} width={32} height={32} className="rounded-full"/>
@@ -1583,7 +1714,23 @@ export function AddLiquidityModal({
               <div className="text-center">
                 <h3 className="text-lg font-medium">Liquidity Added</h3>
                 <p className="text-muted-foreground mt-1">
-                  {formatTokenDisplayAmount(increaseAmount0 || "0")} {positionToModify?.token0.symbol} and {formatTokenDisplayAmount(increaseAmount1 || "0")} {positionToModify?.token1.symbol}
+                  {formatTokenDisplayAmount((() => {
+                    // Calculate amount with fees added for token0
+                    const currentIncrease = increaseAmount0 || "0";
+                    if (!feesForIncrease) return currentIncrease;
+                    const decimals = getTokenSymbolByAddress(positionToModify?.token0.address || '') ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(positionToModify?.token0.address || '')!]?.decimals || 18 : 18;
+                    const feeAmount = formatUnits(BigInt(feesForIncrease.amount0 || '0'), decimals);
+                    const totalAmount = parseFloat(currentIncrease) + parseFloat(feeAmount);
+                    return totalAmount.toString();
+                  })())} {positionToModify?.token0.symbol} and {formatTokenDisplayAmount((() => {
+                    // Calculate amount with fees added for token1
+                    const currentIncrease = increaseAmount1 || "0";
+                    if (!feesForIncrease) return currentIncrease;
+                    const decimals = getTokenSymbolByAddress(positionToModify?.token1.address || '') ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(positionToModify?.token1.address || '')!]?.decimals || 18 : 18;
+                    const feeAmount = formatUnits(BigInt(feesForIncrease.amount1 || '0'), decimals);
+                    const totalAmount = parseFloat(currentIncrease) + parseFloat(feeAmount);
+                    return totalAmount.toString();
+                  })())} {positionToModify?.token1.symbol}
                 </p>
               </div>
             </div>

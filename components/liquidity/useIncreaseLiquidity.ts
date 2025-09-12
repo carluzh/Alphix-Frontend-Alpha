@@ -5,9 +5,9 @@ import { V4PositionPlanner, V4PositionManager, Pool as V4Pool, Position as V4Pos
 import { TickMath } from '@uniswap/v3-sdk';
 import { Token, Ether, CurrencyAmount, Percent } from '@uniswap/sdk-core';
 import { V4_POSITION_MANAGER_ADDRESS, EMPTY_BYTES, V4_POSITION_MANAGER_ABI, PERMIT2_ADDRESS, Permit2Abi_allowance } from '@/lib/swap-constants';
-import { getToken, TokenSymbol, getTokenSymbolByAddress } from '@/lib/pools-config';
+import { getToken, TokenSymbol, getTokenSymbolByAddress, TOKEN_DEFINITIONS } from '@/lib/pools-config';
 import { baseSepolia } from '@/lib/wagmiConfig';
-import { getAddress, type Hex, BaseError, parseUnits, encodeAbiParameters, keccak256 } from 'viem';
+import { getAddress, type Hex, BaseError, parseUnits, formatUnits, encodeAbiParameters, keccak256 } from 'viem';
 import { getPositionDetails, getPoolState, preparePermit2BatchForPosition } from '@/lib/liquidity-utils';
 import { publicClient } from '@/lib/viemClient';
 import { prefetchService } from '@/lib/prefetch-service';
@@ -38,6 +38,8 @@ export interface IncreasePositionData {
   tickLower: number;
   tickUpper: number;
   salt?: string;
+  // Fee data to add to amounts - CRITICAL: NO ROUNDING UP ALLOWED
+  feesForIncrease?: { amount0: string; amount1: string; } | null;
 }
 
 type IncreaseOptions = { slippageBps?: number; deadlineSeconds?: number };
@@ -97,10 +99,61 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
       return;
     }
 
-    // Store the amounts for the callback
+    // Add unclaimed fees to amounts - user wants to spend their input amount PLUS use available fees
+    // CRITICAL: Use exact BigInt arithmetic to prevent any rounding errors that cause DeltaNotNegative
+    let finalAdditionalAmount0 = positionData.additionalAmount0 || '0';
+    let finalAdditionalAmount1 = positionData.additionalAmount1 || '0';
+
+    if (positionData.feesForIncrease) {
+      try {
+        // Use the token symbols we already have from positionData  
+        const token0Decimals = TOKEN_DEFINITIONS[positionData.token0Symbol]?.decimals || 18;
+        const token1Decimals = TOKEN_DEFINITIONS[positionData.token1Symbol]?.decimals || 18;
+
+        // Work entirely in raw units to avoid any precision loss
+        const userAmount0Raw = safeParseUnits(positionData.additionalAmount0 || '0', token0Decimals);
+        const userAmount1Raw = safeParseUnits(positionData.additionalAmount1 || '0', token1Decimals);
+        
+        // Fees are already in raw units (wei), use them directly
+        const fee0Raw = BigInt(positionData.feesForIncrease.amount0 || '0');
+        const fee1Raw = BigInt(positionData.feesForIncrease.amount1 || '0');
+
+        // Add fees to user amounts - this is exact BigInt arithmetic, no rounding possible
+        const totalAmount0Raw = userAmount0Raw + fee0Raw;
+        const totalAmount1Raw = userAmount1Raw + fee1Raw;
+
+        // Convert back to display format - formatUnits handles this precisely
+        finalAdditionalAmount0 = formatUnits(totalAmount0Raw, token0Decimals);
+        finalAdditionalAmount1 = formatUnits(totalAmount1Raw, token1Decimals);
+
+        console.log('[DEBUG] Fee addition details:', {
+          user0: positionData.additionalAmount0,
+          user1: positionData.additionalAmount1,
+          fee0Wei: positionData.feesForIncrease.amount0,
+          fee1Wei: positionData.feesForIncrease.amount1,
+          userAmount0Raw: userAmount0Raw.toString(),
+          userAmount1Raw: userAmount1Raw.toString(),
+          fee0Raw: fee0Raw.toString(),
+          fee1Raw: fee1Raw.toString(),
+          totalAmount0Raw: totalAmount0Raw.toString(),
+          totalAmount1Raw: totalAmount1Raw.toString(),
+          total0: finalAdditionalAmount0,
+          total1: finalAdditionalAmount1,
+          token0Decimals,
+          token1Decimals
+        });
+      } catch (error) {
+        console.error('Error adding fees to increase amounts:', error);
+        // Fall back to original amounts if fee calculation fails
+        finalAdditionalAmount0 = positionData.additionalAmount0 || '0';
+        finalAdditionalAmount1 = positionData.additionalAmount1 || '0';
+      }
+    }
+
+    // Store the user input amounts for the callback (fees will be auto-compounded by v4)
     increaseAmountsRef.current = {
-      amount0: positionData.additionalAmount0,
-      amount1: positionData.additionalAmount1
+      amount0: finalAdditionalAmount0,
+      amount1: finalAdditionalAmount1
     };
 
     setIsIncreasing(true);
@@ -165,8 +218,8 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
         state.tick,
       );
 
-      let amount0RawUser = safeParseUnits(positionData.additionalAmount0 || '0', token0Def.decimals);
-      let amount1RawUser = safeParseUnits(positionData.additionalAmount1 || '0', token1Def.decimals);
+      let amount0RawUser = safeParseUnits(finalAdditionalAmount0, token0Def.decimals);
+      let amount1RawUser = safeParseUnits(finalAdditionalAmount1, token1Def.decimals);
       const outOfRangeBelow = state.tick < details.tickLower;
       const outOfRangeAbove = state.tick > details.tickUpper;
       if (outOfRangeBelow) {
@@ -182,8 +235,18 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
         return;
       }
       // Map user-entered amounts to poolKey order
-      let amountC0Raw = positionData.token0Symbol === symC0 ? amount0RawUser : amount1RawUser;
-      let amountC1Raw = positionData.token1Symbol === symC1 ? amount1RawUser : amount0RawUser;
+      let amountC0Raw: bigint, amountC1Raw: bigint;
+      if (positionData.token0Symbol === symC0 && positionData.token1Symbol === symC1) {
+        // Same order: token0->currency0, token1->currency1
+        amountC0Raw = amount0RawUser;
+        amountC1Raw = amount1RawUser;
+      } else if (positionData.token0Symbol === symC1 && positionData.token1Symbol === symC0) {
+        // Swapped order: token0->currency1, token1->currency0
+        amountC0Raw = amount1RawUser;
+        amountC1Raw = amount0RawUser;
+      } else {
+        throw new Error(`Token mapping error: position has ${positionData.token0Symbol}/${positionData.token1Symbol} but pool has ${symC0}/${symC1}`);
+      }
 
       // Ensure the non-active side cannot be the binding constraint in-range by bumping it to the required minimum
       try {
@@ -314,6 +377,15 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
 
       const { calldata, value } = V4PositionManager.addCallParameters(position, addOptions) as { calldata: Hex; value: string | number | bigint };
 
+      console.log('[DEBUG] Final transaction parameters:', {
+        positionTokenId: nftTokenId,
+        currencyOrder: { currency0: currency0.symbol, currency1: currency1.symbol },
+        finalAmounts: { amount0: finalAdditionalAmount0, amount1: finalAdditionalAmount1 },
+        mappedAmounts: { amountC0Raw: amountC0Raw.toString(), amountC1Raw: amountC1Raw.toString() },
+        valueToSend: value?.toString(),
+        calldataLength: calldata.length
+      });
+
       resetWriteContract();
       writeContract({
         address: V4_POSITION_MANAGER_ADDRESS as Hex,
@@ -364,7 +436,7 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
           increaseAmounts: increaseAmountsRef.current 
         });
       })();
-      try { if (accountAddress) prefetchService.requestPositionsRefresh({ owner: accountAddress, reason: 'increase' }); } catch {}
+      try { if (accountAddress) prefetchService.notifyPositionsRefresh(accountAddress, 'liquidity-added'); } catch {}
       try { if (accountAddress) invalidateActivityCache(accountAddress); } catch {}
       // CRITICAL: Invalidate global batch cache after liquidity increase
       try {
@@ -391,5 +463,6 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
     isSuccess: isIncreaseConfirmed,
     error: increaseSendError || increaseConfirmError,
     hash,
+    reset: resetWriteContract,
   };
 } 

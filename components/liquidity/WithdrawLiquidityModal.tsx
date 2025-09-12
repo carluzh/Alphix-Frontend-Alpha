@@ -10,7 +10,7 @@ import { toast } from "@/hooks/use-toast";
 import { useAccount } from "wagmi";
 import { formatUnits } from "viem";
 import Image from "next/image";
-import { motion, useAnimation } from "framer-motion";
+import { motion, useAnimation, AnimatePresence } from "framer-motion";
 import { PlusIcon, RefreshCwIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, SearchIcon, XIcon, OctagonX, ActivityIcon, MinusIcon, CircleCheck } from "lucide-react";
 import { readContract, getBalance } from '@wagmi/core';
 import { erc20Abi } from 'viem';
@@ -173,6 +173,7 @@ export function WithdrawLiquidityModal({
   const wiggleControls0 = useAnimation();
   const wiggleControls1 = useAnimation();
 
+
   // Calculate which side is productive for out-of-range positions
   let withdrawProductiveSide: null | 'amount0' | 'amount1' = null;
   try {
@@ -227,9 +228,11 @@ export function WithdrawLiquidityModal({
     }
   }, [balanceWiggleCount1, wiggleControls1]);
 
+
   // Reset transaction state when modal opens
   useEffect(() => {
     if (isOpen) {
+      console.log('[DEBUG] Modal opened, resetting all states');
       setTxStarted(false);
       setWasDecreasingLiquidity(false);
       setHasToken0Allowance(null);
@@ -239,12 +242,20 @@ export function WithdrawLiquidityModal({
       setShowYouWillReceive(false);
       setShowTransactionOverview(false);
       setShowSuccessView(false);
+      // Reset withdrawal amounts to prevent showing old data
       setWithdrawAmount0("");
       setWithdrawAmount1("");
       setWithdrawActiveInputSide(null);
       setIsFullWithdraw(false);
+      
+      // Force reset of parent transaction states if using parent hook
+      if (!shouldUseInternalHook) {
+        console.log('[DEBUG] Using parent hook, forcing parent state reset');
+        // The parent should reset its transaction states when modal opens
+        // This will be handled by the parent component
+      }
     }
-  }, [isOpen]);
+  }, [isOpen, shouldUseInternalHook]);
 
   // Reset all modal state when modal is closed
   useEffect(() => {
@@ -291,26 +302,34 @@ export function WithdrawLiquidityModal({
 
   // Show success view ONLY when transaction is confirmed with hash AND was started in current session
   useEffect(() => {
+    // Only run this effect if we actually have transaction data
+    if (!txHash && !isTransactionSuccess) {
+      return; // Exit early if no transaction data
+    }
+    
+    console.log('[DEBUG] Success effect triggered:', {
+      txHash: txHash?.slice(0, 10) + '...',
+      isTransactionSuccess,
+      showTransactionOverview,
+      txStarted,
+      currentSessionTxHash: currentSessionTxHash?.slice(0, 10) + '...',
+      hashesMatch: txHash === currentSessionTxHash
+    });
+    
     // Only show success if we have a confirmed transaction hash that matches our current session
     if (txHash && isTransactionSuccess && showTransactionOverview && txStarted && currentSessionTxHash === txHash) {
       console.log('[DEBUG] Transaction confirmed with hash, showing success view. txHash:', txHash?.slice(0, 10) + '...');
       setShowSuccessView(true);
+      
+      // Call the success callback to notify parent component (but don't let it close the modal)
+      // The parent should handle data refresh but not close the modal
+      if (onLiquidityWithdrawn) {
+        console.log('[DEBUG] Calling onLiquidityWithdrawn callback');
+        onLiquidityWithdrawn();
+      }
     }
-  }, [txHash, isTransactionSuccess, showTransactionOverview, txStarted, currentSessionTxHash]);
+  }, [txHash, isTransactionSuccess, showTransactionOverview, txStarted, currentSessionTxHash, onLiquidityWithdrawn]);
 
-  // Reset parent success states when modal opens to prevent premature success view
-  useEffect(() => {
-    if (isOpen && !shouldUseInternalHook && parentIsDecreaseSuccess) {
-      console.log('[DEBUG] Modal opened with parent success true, resetting by clearing state variables');
-      // Reset the current session tracking to prevent immediate success view
-      setCurrentSessionTxHash(null);
-      setShowSuccessView(false);
-      setShowTransactionOverview(false);
-      setShowYouWillReceive(false);
-      setTxStarted(false);
-      setWasDecreasingLiquidity(false);
-    }
-  }, [isOpen, shouldUseInternalHook, parentIsDecreaseSuccess]);
 
   // Check allowances when Transaction Overview is shown
   useEffect(() => {
@@ -1002,24 +1021,60 @@ export function WithdrawLiquidityModal({
                           <div className="flex justify-between items-start">
                             <div className="space-y-1">
                               <div className="flex items-center gap-2">
-                                <div className="text-xl font-medium">{formatTokenDisplayAmount(withdrawAmount0 || "0")}</div>
+                                <div className="text-xl font-medium">
+                                  {(() => {
+                                    const baseAmount = parseFloat(withdrawAmount0 || "0");
+                                    if (!feesForWithdraw) return formatTokenDisplayAmount(baseAmount.toString());
+                                    
+                                    const decimals = getTokenSymbolByAddress(position.token0.address) ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(position.token0.address)!]?.decimals || 18 : 18;
+                                    const feeAmount = parseFloat(formatUnits(BigInt(feesForWithdraw.amount0 || '0'), decimals));
+                                    const totalAmount = baseAmount + feeAmount;
+                                    return formatTokenDisplayAmount(totalAmount.toString());
+                                  })()}
+                                </div>
                                 <span className="text-sm text-muted-foreground">{position.token0.symbol}</span>
                               </div>
                               <div className="text-xs text-muted-foreground">
-                                {formatUSD(parseFloat(withdrawAmount0 || "0") * getUSDPriceForSymbol(position.token0.symbol))}
+                                {(() => {
+                                  const baseAmount = parseFloat(withdrawAmount0 || "0");
+                                  if (!feesForWithdraw) return formatUSD(baseAmount * getUSDPriceForSymbol(position.token0.symbol));
+                                  
+                                  const decimals = getTokenSymbolByAddress(position.token0.address) ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(position.token0.address)!]?.decimals || 18 : 18;
+                                  const feeAmount = parseFloat(formatUnits(BigInt(feesForWithdraw.amount0 || '0'), decimals));
+                                  const totalAmount = baseAmount + feeAmount;
+                                  return formatUSD(totalAmount * getUSDPriceForSymbol(position.token0.symbol));
+                                })()}
                               </div>
                             </div>
                             <Image src={getTokenIcon(position.token0.symbol)} alt={position.token0.symbol} width={40} height={40} className="rounded-full" />
                           </div>
-                          
+
                           <div className="flex justify-between items-start">
                             <div className="space-y-1">
                               <div className="flex items-center gap-2">
-                                <div className="text-xl font-medium">{formatTokenDisplayAmount(withdrawAmount1 || "0")}</div>
+                                <div className="text-xl font-medium">
+                                  {(() => {
+                                    const baseAmount = parseFloat(withdrawAmount1 || "0");
+                                    if (!feesForWithdraw) return formatTokenDisplayAmount(baseAmount.toString());
+                                    
+                                    const decimals = getTokenSymbolByAddress(position.token1.address) ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(position.token1.address)!]?.decimals || 18 : 18;
+                                    const feeAmount = parseFloat(formatUnits(BigInt(feesForWithdraw.amount1 || '0'), decimals));
+                                    const totalAmount = baseAmount + feeAmount;
+                                    return formatTokenDisplayAmount(totalAmount.toString());
+                                  })()}
+                                </div>
                                 <span className="text-sm text-muted-foreground">{position.token1.symbol}</span>
                               </div>
                               <div className="text-xs text-muted-foreground">
-                                {formatUSD(parseFloat(withdrawAmount1 || "0") * getUSDPriceForSymbol(position.token1.symbol))}
+                                {(() => {
+                                  const baseAmount = parseFloat(withdrawAmount1 || "0");
+                                  if (!feesForWithdraw) return formatUSD(baseAmount * getUSDPriceForSymbol(position.token1.symbol));
+                                  
+                                  const decimals = getTokenSymbolByAddress(position.token1.address) ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(position.token1.address)!]?.decimals || 18 : 18;
+                                  const feeAmount = parseFloat(formatUnits(BigInt(feesForWithdraw.amount1 || '0'), decimals));
+                                  const totalAmount = baseAmount + feeAmount;
+                                  return formatUSD(totalAmount * getUSDPriceForSymbol(position.token1.symbol));
+                                })()}
                               </div>
                             </div>
                             <Image src={getTokenIcon(position.token1.symbol)} alt={position.token1.symbol} width={40} height={40} className="rounded-full" />
@@ -1034,74 +1089,74 @@ export function WithdrawLiquidityModal({
                         const token1Symbol = getTokenSymbolByAddress(position.token1.address);
                         const token0Decimals = token0Symbol ? TOKEN_DEFINITIONS[token0Symbol]?.decimals || 18 : 18;
                         const token1Decimals = token1Symbol ? TOKEN_DEFINITIONS[token1Symbol]?.decimals || 18 : 18;
-                        
+
                         const fee0Amount = parseFloat(formatUnits(BigInt(feesForWithdraw?.amount0 || '0'), token0Decimals));
                         const fee1Amount = parseFloat(formatUnits(BigInt(feesForWithdraw?.amount1 || '0'), token1Decimals));
-                        
+
                         // Only show if at least one fee is greater than 0
                         if (fee0Amount <= 0 && fee1Amount <= 0) return null;
-                        
+
                         return (
                           <div className="p-3 border border-dashed rounded-md bg-muted/10 space-y-2">
                             <div className="text-xs font-medium text-muted-foreground mb-2">Includes uncollected fees:</div>
-                            
-                            <div className="flex justify-between items-center">
-                              <div className="flex items-center gap-2">
-                                <Image src={getTokenIcon(position.token0.symbol)} alt={position.token0.symbol} width={16} height={16} className="rounded-full" />
-                                <span className="text-xs text-muted-foreground">{position.token0.symbol} Fees</span>
-                              </div>
-                              <div className="text-right">
-                                <div className="text-xs font-medium">
-                                  {(() => {
-                                    const feeAmountDisplay = formatUnits(BigInt(feesForWithdraw?.amount0 || '0'), token0Decimals);
-                                    const feeNumber = parseFloat(feeAmountDisplay);
-                                    
-                                    if (feeNumber === 0) return '0';
-                                    
-                                    const formattedFee = feeNumber > 0 && feeNumber < 0.0001 
-                                      ? '< 0.0001' 
-                                      : feeNumber.toFixed(4).replace(/\.?0+$/, '');
-                                    
-                                    return formattedFee;
-                                  })()}
-                                </div>
-                                <div className="text-xs text-muted-foreground">
-                                  {(() => {
-                                    const feeAmount = parseFloat(formatUnits(BigInt(feesForWithdraw?.amount0 || '0'), token0Decimals));
-                                    return formatUSD(feeAmount * getUSDPriceForSymbol(position.token0.symbol));
-                                  })()}
-                                </div>
-                              </div>
+                          
+                          <div className="flex justify-between items-center">
+                            <div className="flex items-center gap-2">
+                              <Image src={getTokenIcon(position.token0.symbol)} alt={position.token0.symbol} width={16} height={16} className="rounded-full" />
+                              <span className="text-xs text-muted-foreground">{position.token0.symbol} Fees</span>
                             </div>
+                            <div className="text-right">
+                              <div className="text-xs font-medium">
+                                {(() => {
+                                  const feeAmountDisplay = formatUnits(BigInt(feesForWithdraw?.amount0 || '0'), token0Decimals);
+                                  const feeNumber = parseFloat(feeAmountDisplay);
 
-                            <div className="flex justify-between items-center">
-                              <div className="flex items-center gap-2">
-                                <Image src={getTokenIcon(position.token1.symbol)} alt={position.token1.symbol} width={16} height={16} className="rounded-full" />
-                                <span className="text-xs text-muted-foreground">{position.token1.symbol} Fees</span>
+                                  if (feeNumber === 0) return '0';
+
+                                  const formattedFee = feeNumber > 0 && feeNumber < 0.0001
+                                    ? '< 0.0001'
+                                    : feeNumber.toFixed(4).replace(/\.?0+$/, '');
+
+                                  return `+${formattedFee}`;
+                                })()}
                               </div>
-                              <div className="text-right">
-                                <div className="text-xs font-medium">
-                                  {(() => {
-                                    const feeAmountDisplay = formatUnits(BigInt(feesForWithdraw?.amount1 || '0'), token1Decimals);
-                                    const feeNumber = parseFloat(feeAmountDisplay);
-                                    
-                                    if (feeNumber === 0) return '0';
-                                    
-                                    const formattedFee = feeNumber > 0 && feeNumber < 0.0001 
-                                      ? '< 0.0001' 
-                                      : feeNumber.toFixed(4).replace(/\.?0+$/, '');
-                                    
-                                    return formattedFee;
-                                  })()}
-                                </div>
-                                <div className="text-xs text-muted-foreground">
-                                  {(() => {
-                                    const feeAmount = parseFloat(formatUnits(BigInt(feesForWithdraw?.amount1 || '0'), token1Decimals));
-                                    return formatUSD(feeAmount * getUSDPriceForSymbol(position.token1.symbol));
-                                  })()}
-                                </div>
+                              <div className="text-xs text-muted-foreground">
+                                {(() => {
+                                  const feeAmount = parseFloat(formatUnits(BigInt(feesForWithdraw?.amount0 || '0'), token0Decimals));
+                                  return formatUSD(feeAmount * getUSDPriceForSymbol(position.token0.symbol));
+                                })()}
                               </div>
                             </div>
+                          </div>
+
+                          <div className="flex justify-between items-center">
+                            <div className="flex items-center gap-2">
+                              <Image src={getTokenIcon(position.token1.symbol)} alt={position.token1.symbol} width={16} height={16} className="rounded-full" />
+                              <span className="text-xs text-muted-foreground">{position.token1.symbol} Fees</span>
+                            </div>
+                            <div className="text-right">
+                              <div className="text-xs font-medium">
+                                {(() => {
+                                  const feeAmountDisplay = formatUnits(BigInt(feesForWithdraw?.amount1 || '0'), token1Decimals);
+                                  const feeNumber = parseFloat(feeAmountDisplay);
+
+                                  if (feeNumber === 0) return '0';
+
+                                  const formattedFee = feeNumber > 0 && feeNumber < 0.0001
+                                    ? '< 0.0001'
+                                    : feeNumber.toFixed(4).replace(/\.?0+$/, '');
+
+                                  return `+${formattedFee}`;
+                                })()}
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {(() => {
+                                  const feeAmount = parseFloat(formatUnits(BigInt(feesForWithdraw?.amount1 || '0'), token1Decimals));
+                                  return formatUSD(feeAmount * getUSDPriceForSymbol(position.token1.symbol));
+                                })()}
+                              </div>
+                            </div>
+                          </div>
                           </div>
                         );
                       })()}
@@ -1109,33 +1164,65 @@ export function WithdrawLiquidityModal({
                       {/* Additional Info Rows - Conditional Content */}
                       {!showTransactionOverview ? (
                         <div className="space-y-1.5">
-                          <div className="flex items-center justify-between text-xs text-muted-foreground">
-                            <span>Current Price:</span>
-                            <span className="text-foreground/80 font-medium">
-                              {(() => {
-                                const price0 = getUSDPriceForSymbol(position.token0.symbol);
-                                const price1 = getUSDPriceForSymbol(position.token1.symbol);
-                                if (price0 === 0 || price1 === 0) return "N/A";
-                                const ratio = price0 / price1;
-                                const decimals = ratio < 0.1 ? 3 : 2;
-                                return `1 ${position.token0.symbol} = ${ratio.toFixed(decimals)} ${position.token1.symbol}`;
-                              })()}
-                            </span>
-                          </div>
+                        <div className="flex items-center justify-between text-xs text-muted-foreground">
+                          <span>Current Price:</span>
+                          <span className="text-xs text-muted-foreground">
+                            {(() => {
+                              const price0 = getUSDPriceForSymbol(position.token0.symbol);
+                              const price1 = getUSDPriceForSymbol(position.token1.symbol);
+                              if (price0 === 0 || price1 === 0) return "N/A";
+                              const ratio = price0 / price1;
+                              const decimals = ratio < 0.1 ? 3 : 2;
+                              return `1 ${position.token0.symbol} = ${ratio.toFixed(decimals)} ${position.token1.symbol}`;
+                            })()}
+                          </span>
+                        </div>
                           
-                          <div className="flex items-center justify-between text-xs text-muted-foreground">
-                            <span>New {position.token0.symbol} position:</span>
+                        <div className="flex items-center justify-between text-xs text-muted-foreground">
+                          <span>New {position.token0.symbol} position:</span>
+                          <div className="flex items-center gap-2">
                             <span className="text-foreground/80 font-medium">
-                              {formatTokenDisplayAmount((parseFloat(position.token0.amount) - parseFloat(withdrawAmount0 || "0")).toString())}
+                              {formatTokenDisplayAmount((() => {
+                                // Calculate new position: original - (withdraw + fees)
+                                const originalAmount = parseFloat(position.token0.amount);
+                                const withdrawAmount = parseFloat(withdrawAmount0 || "0");
+                                let totalWithdraw = withdrawAmount;
+
+                                if (feesForWithdraw) {
+                                  const decimals = getTokenSymbolByAddress(position.token0.address) ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(position.token0.address)!]?.decimals || 18 : 18;
+                                  const feeAmount = parseFloat(formatUnits(BigInt(feesForWithdraw.amount0 || '0'), decimals));
+                                  totalWithdraw += feeAmount;
+                                }
+
+                                return (originalAmount - totalWithdraw).toString();
+                              })())}
                             </span>
+                            <Image src={getTokenIcon(position.token0.symbol)} alt={position.token0.symbol} width={12} height={12} className="rounded-full" />
                           </div>
-                          
-                          <div className="flex items-center justify-between text-xs text-muted-foreground">
-                            <span>New {position.token1.symbol} position:</span>
+                        </div>
+
+                        <div className="flex items-center justify-between text-xs text-muted-foreground">
+                          <span>New {position.token1.symbol} position:</span>
+                          <div className="flex items-center gap-2">
                             <span className="text-foreground/80 font-medium">
-                              {formatTokenDisplayAmount((parseFloat(position.token1.amount) - parseFloat(withdrawAmount1 || "0")).toString())}
+                              {formatTokenDisplayAmount((() => {
+                                // Calculate new position: original - (withdraw + fees)
+                                const originalAmount = parseFloat(position.token1.amount);
+                                const withdrawAmount = parseFloat(withdrawAmount1 || "0");
+                                let totalWithdraw = withdrawAmount;
+
+                                if (feesForWithdraw) {
+                                  const decimals = getTokenSymbolByAddress(position.token1.address) ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(position.token1.address)!]?.decimals || 18 : 18;
+                                  const feeAmount = parseFloat(formatUnits(BigInt(feesForWithdraw.amount1 || '0'), decimals));
+                                  totalWithdraw += feeAmount;
+                                }
+
+                                return (originalAmount - totalWithdraw).toString();
+                              })())}
                             </span>
+                            <Image src={getTokenIcon(position.token1.symbol)} alt={position.token1.symbol} width={12} height={12} className="rounded-full" />
                           </div>
+                        </div>
                         </div>
                       ) : (
                         <div className="space-y-1.5">
@@ -1224,11 +1311,27 @@ export function WithdrawLiquidityModal({
                 <Image src={getTokenIcon(position?.token0.symbol || '')} alt={position?.token0.symbol || ''} width={32} height={32} className="rounded-full"/>
                 <div className="text-left flex flex-col">
                   <div className="font-medium flex items-baseline">
-                    <span className="text-sm">{formatTokenDisplayAmount(withdrawAmount0 || "0")}</span>
+                    <span className="text-sm">{formatTokenDisplayAmount((() => {
+                      // Calculate amount with fees added
+                      const currentWithdraw = withdrawAmount0 || "0";
+                      if (!feesForWithdraw) return currentWithdraw;
+                      const decimals = getTokenSymbolByAddress(position?.token0.address || '') ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(position?.token0.address || '')!]?.decimals || 18 : 18;
+                      const feeAmount = formatUnits(BigInt(feesForWithdraw.amount0 || '0'), decimals);
+                      const totalAmount = parseFloat(currentWithdraw) + parseFloat(feeAmount);
+                      return totalAmount.toString();
+                    })())}</span>
                     <span className="ml-1 text-xs text-muted-foreground">{position?.token0.symbol}</span>
                   </div>
                   <div className="text-xs text-muted-foreground">
-                    {formatUSD(parseFloat(withdrawAmount0 || "0") * getUSDPriceForSymbol(position?.token0.symbol || ''))}
+                    {formatUSD((() => {
+                      // Calculate USD value with fees added
+                      const currentWithdraw = withdrawAmount0 || "0";
+                      if (!feesForWithdraw) return parseFloat(currentWithdraw) * getUSDPriceForSymbol(position?.token0.symbol || '');
+                      const decimals = getTokenSymbolByAddress(position?.token0.address || '') ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(position?.token0.address || '')!]?.decimals || 18 : 18;
+                      const feeAmount = formatUnits(BigInt(feesForWithdraw.amount0 || '0'), decimals);
+                      const totalAmount = parseFloat(currentWithdraw) + parseFloat(feeAmount);
+                      return totalAmount * getUSDPriceForSymbol(position?.token0.symbol || '');
+                    })())}
                   </div>
                 </div>
               </div>
@@ -1238,11 +1341,27 @@ export function WithdrawLiquidityModal({
               <div className="flex items-center gap-3">
                 <div className="text-right flex flex-col">
                   <div className="font-medium flex items-baseline">
-                    <span className="text-sm">{formatTokenDisplayAmount(withdrawAmount1 || "0")}</span>
+                    <span className="text-sm">{formatTokenDisplayAmount((() => {
+                      // Calculate amount with fees added
+                      const currentWithdraw = withdrawAmount1 || "0";
+                      if (!feesForWithdraw) return currentWithdraw;
+                      const decimals = getTokenSymbolByAddress(position?.token1.address || '') ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(position?.token1.address || '')!]?.decimals || 18 : 18;
+                      const feeAmount = formatUnits(BigInt(feesForWithdraw.amount1 || '0'), decimals);
+                      const totalAmount = parseFloat(currentWithdraw) + parseFloat(feeAmount);
+                      return totalAmount.toString();
+                    })())}</span>
                     <span className="ml-1 text-xs text-muted-foreground">{position?.token1.symbol}</span>
                   </div>
                   <div className="text-xs text-muted-foreground">
-                    {formatUSD(parseFloat(withdrawAmount1 || "0") * getUSDPriceForSymbol(position?.token1.symbol || ''))}
+                    {formatUSD((() => {
+                      // Calculate USD value with fees added
+                      const currentWithdraw = withdrawAmount1 || "0";
+                      if (!feesForWithdraw) return parseFloat(currentWithdraw) * getUSDPriceForSymbol(position?.token1.symbol || '');
+                      const decimals = getTokenSymbolByAddress(position?.token1.address || '') ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(position?.token1.address || '')!]?.decimals || 18 : 18;
+                      const feeAmount = formatUnits(BigInt(feesForWithdraw.amount1 || '0'), decimals);
+                      const totalAmount = parseFloat(currentWithdraw) + parseFloat(feeAmount);
+                      return totalAmount * getUSDPriceForSymbol(position?.token1.symbol || '');
+                    })())}
                   </div>
                 </div>
                 <Image src={getTokenIcon(position?.token1.symbol || '')} alt={position?.token1.symbol || ''} width={32} height={32} className="rounded-full"/>
@@ -1264,7 +1383,23 @@ export function WithdrawLiquidityModal({
               <div className="text-center">
                 <h3 className="text-lg font-medium">Liquidity Withdrawn</h3>
                 <p className="text-muted-foreground mt-1">
-                  {formatTokenDisplayAmount(withdrawAmount0 || "0")} {position?.token0.symbol} and {formatTokenDisplayAmount(withdrawAmount1 || "0")} {position?.token1.symbol}
+                  {formatTokenDisplayAmount((() => {
+                    // Calculate amount with fees added for token0
+                    const currentWithdraw = withdrawAmount0 || "0";
+                    if (!feesForWithdraw) return currentWithdraw;
+                    const decimals = getTokenSymbolByAddress(position?.token0.address || '') ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(position?.token0.address || '')!]?.decimals || 18 : 18;
+                    const feeAmount = formatUnits(BigInt(feesForWithdraw.amount0 || '0'), decimals);
+                    const totalAmount = parseFloat(currentWithdraw) + parseFloat(feeAmount);
+                    return totalAmount.toString();
+                  })())} {position?.token0.symbol} and {formatTokenDisplayAmount((() => {
+                    // Calculate amount with fees added for token1
+                    const currentWithdraw = withdrawAmount1 || "0";
+                    if (!feesForWithdraw) return currentWithdraw;
+                    const decimals = getTokenSymbolByAddress(position?.token1.address || '') ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(position?.token1.address || '')!]?.decimals || 18 : 18;
+                    const feeAmount = formatUnits(BigInt(feesForWithdraw.amount1 || '0'), decimals);
+                    const totalAmount = parseFloat(currentWithdraw) + parseFloat(feeAmount);
+                    return totalAmount.toString();
+                  })())} {position?.token1.symbol}
                 </p>
               </div>
             </div>

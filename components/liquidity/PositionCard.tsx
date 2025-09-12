@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
+import { formatUnits } from "viem";
 import { Card, CardContent, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -84,6 +85,9 @@ interface PositionCardProps {
     // New props for ascending range logic
     currentPrice?: string | null;
     currentPoolTick?: number | null;
+    // Prefetched fee data to avoid loading states
+    prefetchedRaw0?: string | null;
+    prefetchedRaw1?: string | null;
 }
 
 const SDK_MIN_TICK = -887272;
@@ -112,12 +116,26 @@ export function PositionCard({
     isLoadingPoolStates,
     currentPrice,
     currentPoolTick,
+    prefetchedRaw0,
+    prefetchedRaw1,
 }: PositionCardProps) {
     const [isHoverDisabled, setIsHoverDisabled] = useState(false);
 
     const handleChildEnter = () => setIsHoverDisabled(true);
     const handleChildLeave = () => setIsHoverDisabled(false);
     const handleChildClick = (e: React.MouseEvent) => e.stopPropagation();
+
+    // Helper to determine if fees are zero (same logic as FeesCell)
+    const hasZeroFees = React.useMemo(() => {
+        if (prefetchedRaw0 === null || prefetchedRaw1 === null) return false; // Loading, show container
+        try {
+            const raw0 = (position as any)?.unclaimedRaw0 || prefetchedRaw0 || '0';
+            const raw1 = (position as any)?.unclaimedRaw1 || prefetchedRaw1 || '0';
+            return BigInt(raw0) <= 0n && BigInt(raw1) <= 0n;
+        } catch {
+            return false; // Error parsing, show container
+        }
+    }, [prefetchedRaw0, prefetchedRaw1, position]);
 
     // Determine if denomination should be flipped (same logic as pool page)
     const shouldFlipDenomination = React.useMemo(() => {
@@ -150,7 +168,12 @@ export function PositionCard({
               </div>
             )}
             <CardContent className="p-3 sm:p-4 group">
-            <div className="grid sm:items-center grid-cols-[min-content_max-content_max-content_1fr_5.5rem] sm:grid-cols-[min-content_max-content_max-content_max-content_1fr_5.5rem] gap-5">
+            <div className={cn(
+                "grid sm:items-center gap-5",
+                hasZeroFees 
+                    ? "grid-cols-[min-content_max-content_max-content_1fr_7rem] sm:grid-cols-[min-content_max-content_max-content_1fr_7rem]"
+                    : "grid-cols-[min-content_max-content_max-content_min-content_1fr_7rem] sm:grid-cols-[min-content_max-content_max-content_min-content_1fr_7rem]"
+            )}>
             {/* Column 1: Token Icons - Very narrow */}
             <div className="flex items-center min-w-0 flex-none gap-0">
                 {isLoadingPrices || isLoadingPoolStates ? <div className="h-6 w-10 bg-muted/60 rounded-full animate-pulse" /> : <TokenStack position={position as any} />}
@@ -170,37 +193,7 @@ export function PositionCard({
                 </div>
             </div>
 
-            {/* Column 3: Fees - left-bound, size-to-content */}
-            <div className="flex items-start pr-2" onMouseEnter={handleChildEnter} onMouseLeave={handleChildLeave} onClick={handleChildClick}>
-                <div className="flex flex-col gap-1 items-start">
-                <div className="flex items-center gap-1">
-                    <div className="text-xs text-muted-foreground">Fees</div>
-                    <TooltipProvider delayDuration={0}>
-                        <Tooltip>
-                        <TooltipTrigger asChild>
-                            <Info className="h-3 w-3 text-muted-foreground/50 hover:text-muted-foreground" />
-                        </TooltipTrigger>
-                        <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs max-w-48">
-                            <p>Unclaimed Fees</p>
-                        </TooltipContent>
-                        </Tooltip>
-                    </TooltipProvider>
-                </div>
-                <div className="flex items-center gap-2 text-xs">
-                    <FeesCell
-                      positionId={position.positionId}
-                      sym0={position.token0.symbol || 'T0'}
-                      sym1={position.token1.symbol || 'T1'}
-                      price0={getUsdPriceForSymbol(position.token0.symbol)}
-                      price1={getUsdPriceForSymbol(position.token1.symbol)}
-                      prefetchedRaw0={(position as any)?.unclaimedRaw0}
-                      prefetchedRaw1={(position as any)?.unclaimedRaw1}
-                    />
-                </div>
-                </div>
-            </div>
-
-            {/* Column 4: Amount0/Amount1 - Desktop only, left-bound, size-to-content */}
+            {/* Column 3: Position Amounts - Desktop only, left-bound, size-to-content */}
             <div className="hidden sm:flex items-start pr-2">
                 <div className="flex flex-col gap-1 items-start">
                     <div className="flex flex-col gap-0.5 text-xs">
@@ -223,17 +216,79 @@ export function PositionCard({
                 </div>
             </div>
 
-            {/* Column 5: Flexible spacer to push Withdraw; absorbs surplus width */}
+            {/* Column 4: Fees Container - wider (only show if fees > 0) */}
+            {!hasZeroFees && (
+                <div className="flex items-start">
+                    <div className="pt-1 pb-1 pr-2 pl-1.5 rounded-lg border border-sidebar-border/60 bg-muted/20" style={{ minWidth: '220px' }}>
+                        <div className="grid grid-cols-2 gap-2 items-start">
+                            {/* Column 1: Fees Label + Amount */}
+                            <div className="flex flex-col gap-0">
+                                <div className="text-[11px] text-muted-foreground">Fees</div>
+                                <div className="text-[11px] font-medium">
+                                    <FeesCell
+                                      positionId={position.positionId}
+                                      sym0={position.token0.symbol || 'T0'}
+                                      sym1={position.token1.symbol || 'T1'}
+                                      price0={getUsdPriceForSymbol(position.token0.symbol)}
+                                      price1={getUsdPriceForSymbol(position.token1.symbol)}
+                                      prefetchedRaw0={prefetchedRaw0}
+                                      prefetchedRaw1={prefetchedRaw1}
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Column 2: Token Amounts - Desktop only */}
+                            <div className="hidden sm:flex flex-col gap-0 text-right">
+                                {isLoadingPrices || prefetchedRaw0 === null || prefetchedRaw1 === null ? (
+                                    <>
+                                        <div className="h-3 w-16 bg-muted/60 rounded animate-pulse ml-auto" />
+                                        <div className="h-3 w-16 bg-muted/60 rounded animate-pulse ml-auto" />
+                                    </>
+                                ) : (
+                                    <>
+                                        <div className="font-mono text-muted-foreground text-[11px]">
+                                            {(() => {
+                                                try {
+                                                    const raw0 = (position as any)?.unclaimedRaw0 || '0';
+                                                    const d0 = TOKEN_DEFINITIONS?.[position.token0.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals ?? 18;
+                                                    const amt = parseFloat(formatUnits(BigInt(raw0), d0));
+                                                    return amt < 0.001 && amt > 0 ? "< 0.001" : amt.toLocaleString("en-US", { maximumFractionDigits: 6, minimumFractionDigits: 0 });
+                                                } catch {
+                                                    return "0";
+                                                }
+                                            })()} {position.token0.symbol}
+                                        </div>
+                                        <div className="font-mono text-muted-foreground text-[11px]">
+                                            {(() => {
+                                                try {
+                                                    const raw1 = (position as any)?.unclaimedRaw1 || '0';
+                                                    const d1 = TOKEN_DEFINITIONS?.[position.token1.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals ?? 18;
+                                                    const amt = parseFloat(formatUnits(BigInt(raw1), d1));
+                                                    return amt < 0.001 && amt > 0 ? "< 0.001" : amt.toLocaleString("en-US", { maximumFractionDigits: 6, minimumFractionDigits: 0 });
+                                                } catch {
+                                                    return "0";
+                                                }
+                                            })()} {position.token1.symbol}
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Column 5/4: Flexible spacer to push Withdraw; absorbs surplus width */}
             <div />
 
-            {/* Column 6: Actions - Static Withdraw button */}
-            <div className="flex items-center justify-end gap-2 w-[5.5rem] flex-none" onMouseEnter={handleChildEnter} onMouseLeave={handleChildLeave} onClick={handleChildClick}>
+            {/* Column 6/5: Actions - Static Withdraw button */}
+            <div className="flex items-center justify-end gap-2 w-[7rem] flex-none" onMouseEnter={handleChildEnter} onMouseLeave={handleChildLeave} onClick={handleChildClick}>
                 <button
                 onClick={(e) => {
                     e.stopPropagation();
                     openWithdraw(position);
                 }}
-                className="flex h-7 cursor-pointer items-center justify-center rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-2 text-xs font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30"
+                className="flex h-9 cursor-pointer items-center justify-center rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-4 py-2 text-xs font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30"
                 style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: '200%', backgroundPosition: 'center' }}
                 >
                 Withdraw
