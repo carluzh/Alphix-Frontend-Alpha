@@ -1817,6 +1817,18 @@ export function AddLiquidityModal({
                             )}
                           </span>
                         </div>
+                        <div className="flex items-center justify-between text-xs text-muted-foreground">
+                          <span>Deposit Transaction</span>
+                          <span>
+                            {(increaseStep === 'deposit' && (isIncreasingLiquidity || parentIsIncreasingLiquidity)) ? (
+                              <RefreshCwIcon className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <span className={`text-xs font-mono ${parentIsIncreaseSuccess ? 'text-green-500' : 'text-muted-foreground'}`}>
+                                {parentIsIncreaseSuccess ? '1/1' : '0/1'}
+                              </span>
+                            )}
+                          </span>
+                        </div>
                       </div>
                     )}
 
@@ -1893,6 +1905,21 @@ export function AddLiquidityModal({
                             : (
                               <span className={`text-xs font-mono ${batchPermitSigned ? 'text-green-500' : ''}`}>
                                 {batchPermitSigned ? '1/1' : '0/1'}
+                              </span>
+                            )
+                          }
+                        </span>
+                    </div>
+                    
+                    {/* Deposit Transaction */}
+                    <div className="flex items-center justify-between">
+                        <span>Deposit Transaction</span>
+                        <span>
+                          { (step === 'mint' && batchPermitSigned && (isMintSendPending || isMintConfirming))
+                            ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
+                            : (
+                              <span className={`text-xs font-mono ${isMintSuccess ? 'text-green-500' : ''}`}>
+                                {isMintSuccess ? '1/1' : '0/1'}
                               </span>
                             )
                           }

@@ -124,6 +124,8 @@ export function LoginForm({
                     "bg-muted/30",
                     hasError ? "border-red-500 border" : "border-none"
                   )}
+                  autoComplete="off"
+                  data-lpignore="true"
                 />
               </motion.div>
             </div>
