@@ -1,106 +1,79 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { PlusIcon, RefreshCwIcon, XIcon, CheckIcon, MinusIcon, InfinityIcon, InfoIcon, ActivityIcon, ChevronDownIcon, SearchIcon } from "lucide-react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { PlusIcon, RefreshCwIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, SearchIcon, XIcon, OctagonX, ActivityIcon, MinusIcon, CircleCheck } from "lucide-react"; // Updated imports
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { 
-  Dialog, 
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
   DialogFooter,
-  DialogPortal,
-  DialogOverlay,
+  DialogHeader,
   DialogTitle
 } from "@/components/ui/dialog";
-import * as RadixDialogPrimitive from "@radix-ui/react-dialog";
-import { cn } from "@/lib/utils";
 import Image from "next/image";
-import { 
-    useAccount, 
-    useBalance
-} from "wagmi";
+import { useAccount, useBalance, useSignTypedData, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { toast } from "sonner";
-import { V4_POOL_FEE, V4_POOL_TICK_SPACING, V4_POOL_HOOKS } from "@/lib/swap-constants";
-import { TOKEN_DEFINITIONS, TokenSymbol, getAllTokens, CHAIN_ID } from "@/lib/pools-config";
-import { baseSepolia } from "@/lib/wagmiConfig";
-import { getPoolById, getToken } from "@/lib/pools-config";
-import poolsConfig from "../../config/pools.json";
-import { type Hex, formatUnits as viemFormatUnits, getAddress, parseUnits as viemParseUnits } from "viem"; 
-import { Token } from '@uniswap/sdk-core'; 
-import { Pool as V4PoolSDK, Position as V4PositionSDK } from "@uniswap/v4-sdk";
-import JSBI from "jsbi"; 
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import { 
-  ResponsiveContainer, 
-  ComposedChart, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip as RechartsTooltip, 
-  ReferenceArea, 
-  ReferenceLine, 
-  Label as RechartsChartLabel, 
-  Bar,
-  Cell,
-  Area
-} from 'recharts';
-import { motion } from "framer-motion";
+import { TOKEN_DEFINITIONS, TokenSymbol, getToken, getAllTokens, getPoolById } from "@/lib/pools-config";
 import { useAddLiquidityTransaction } from "./useAddLiquidityTransaction";
-import { TokenSelector, TokenSelectorToken } from "../swap/TokenSelector";
-import { AnimatePresence } from "framer-motion";
+import { useIncreaseLiquidity, type IncreasePositionData } from "./useIncreaseLiquidity";
+import { TokenSelectorToken } from "../swap/TokenSelector";
+import { AnimatePresence, motion, useAnimation } from "framer-motion";
 import { readContract, getBalance } from '@wagmi/core';
 import { erc20Abi } from 'viem';
 import { config } from '@/lib/wagmiConfig';
+import { CHAIN_ID } from "@/lib/pools-config";
+import { formatUnits as viemFormatUnits, parseUnits as viemParseUnits, getAddress } from "viem";
+import type { ProcessedPosition } from "../../pages/api/liquidity/get-positions";
+import { useAllPrices } from "@/components/data/hooks";
+import { formatUSD } from "@/lib/format";
+import { sanitizeDecimalInput, debounce, getTokenSymbolByAddress, formatUncollectedFee } from "@/lib/utils";
+import { formatUnits } from "viem";
+import { preparePermit2BatchForNewPosition } from '@/lib/liquidity-utils';
+import { providePreSignedIncreaseBatchPermit } from './useIncreaseLiquidity';
 
-// Chart data interfaces from AddLiquidityForm
-interface DepthChartDataPoint {
-  tick: number;
-  token0Depth: number;
-  normToken0Depth?: number;
-  token1Depth?: number;
-  unifiedValue?: number;
-  normUnifiedValue?: number;
-  isUserPosition?: boolean;
-  price?: number;
-  value?: number;
-  cumulativeUnifiedValue?: number;
-  displayCumulativeValue?: number;
-}
-
-// Utility function (copied from app/liquidity/page.tsx)
+// Utility functions
 const formatTokenDisplayAmount = (amount: string) => {
   const num = parseFloat(amount);
   if (isNaN(num)) return amount;
   if (num === 0) return "0.00";
-  
-  // Ensure very small positive values always show "< 0.0001" instead of "0.0000"
-  if (num > 0 && num < 0.0001) {
-    return "< 0.0001";
-  }
-  
+  if (num > 0 && num < 0.0001) return "< 0.0001";
   return num.toFixed(4);
 };
 
-// Debounce function
-function debounce<F extends (...args: any[]) => any>(func: F, waitFor: number) {
-  let timeout: NodeJS.Timeout | null = null;
+const getTokenIcon = (symbol?: string) => {
+  if (!symbol) return "/placeholder-logo.svg";
+  const tokenConfig = getToken(symbol);
+  return tokenConfig?.icon || "/placeholder-logo.svg";
+};
 
-  const debounced = (...args: Parameters<F>) => {
-    if (timeout !== null) {
-      clearTimeout(timeout);
-      timeout = null;
-    }
-    timeout = setTimeout(() => func(...args), waitFor);
-  };
-
-  return debounced as (...args: Parameters<F>) => ReturnType<F> | void;
-}
+// Reusable fee display component with error boundary
+const FeeDisplay = ({ feeAmount, tokenSymbol }: { feeAmount: string; tokenSymbol: TokenSymbol }) => {
+  try {
+    const formattedFee = formatUncollectedFee(feeAmount, tokenSymbol);
+    
+    if (!formattedFee) return null;
+    
+    return (
+      <TooltipProvider delayDuration={0}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div className="text-right text-xs text-muted-foreground">{`+ ${formattedFee}`}</div>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="bg-popover border border-border text-popover-foreground">
+            <p className="text-xs">Fees Compounded on Addition</p>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    );
+  } catch (error) {
+    console.error("Error displaying fee:", error);
+    return null;
+  }
+};
 
 export interface AddLiquidityModalProps {
   isOpen: boolean;
@@ -110,91 +83,283 @@ export interface AddLiquidityModalProps {
   sdkMinTick: number;
   sdkMaxTick: number;
   defaultTickSpacing: number;
-  poolApr?: string; // New prop for pool APR
+  poolApr?: string;
+  // For existing position mode
+  positionToModify?: ProcessedPosition | null;
+  feesForIncrease?: { amount0: string; amount1: string; } | null;
+  // Pass down the page's increaseLiquidity function to avoid duplicate hooks
+  increaseLiquidity?: (data: IncreasePositionData) => void;
+  isIncreasingLiquidity?: boolean;
+  isIncreaseSuccess?: boolean;
+  increaseTxHash?: `0x${string}`;
 }
 
-export function AddLiquidityModal({ 
-  isOpen, 
-  onOpenChange, 
+export function AddLiquidityModal({
+  isOpen,
+  onOpenChange,
   onLiquidityAdded, 
   selectedPoolId,
   sdkMinTick,
   sdkMaxTick,
   defaultTickSpacing,
-  poolApr // Destructure new prop
+  poolApr,
+  positionToModify,
+  feesForIncrease,
+  increaseLiquidity: parentIncreaseLiquidity,
+  isIncreasingLiquidity: parentIsIncreasingLiquidity,
+  isIncreaseSuccess: parentIsIncreaseSuccess,
+  increaseTxHash: parentIncreaseTxHash
 }: AddLiquidityModalProps) {
-  const { address: accountAddress, chainId, isConnected } = useAccount(); // Added isConnected
+  const { address: accountAddress, chainId, isConnected } = useAccount();
+  const { signTypedDataAsync } = useSignTypedData();
+  const { data: incApproveHash, writeContractAsync: approveERC20Async, reset: resetIncreaseApprove } = useWriteContract();
+  const { isLoading: isIncreaseApproving, isSuccess: isIncreaseApproved } = useWaitForTransactionReceipt({ hash: incApproveHash });
+  const { data: allPrices } = useAllPrices();
+  
+  // Determine if this is for an existing position or new position
+  const isExistingPosition = !!positionToModify;
 
-
-
-  // Initialize tokens based on selected pool
-  const getInitialTokens = () => {
-    if (selectedPoolId) {
-      const poolConfig = getPoolById(selectedPoolId);
-      if (poolConfig) {
-        return {
-          token0: poolConfig.currency0.symbol as TokenSymbol,
-          token1: poolConfig.currency1.symbol as TokenSymbol
-        };
-      }
-    }
-    // Start with empty tokens - no pre-chosen pair
-    return { token0: '' as TokenSymbol, token1: '' as TokenSymbol };
+  // Map any token symbol to a USD price
+  const extractUsd = (value: unknown, fallback: number): number => {
+    if (typeof value === 'number') return value;
+    if (value && typeof (value as any).usd === 'number') return (value as any).usd as number;
+    return fallback;
   };
 
-  const initialTokens = getInitialTokens();
-  const [token0Symbol, setToken0Symbol] = useState<TokenSymbol>(initialTokens.token0);
-  const [token1Symbol, setToken1Symbol] = useState<TokenSymbol>(initialTokens.token1);
+  const getUSDPriceForSymbol = useCallback((symbol?: string): number => {
+    if (!symbol) return 0;
+    const s = symbol.toUpperCase();
+    if (s.includes('BTC')) return allPrices?.BTC?.usd ?? 0;
+    if (s.includes('ETH')) return allPrices?.ETH?.usd ?? 0;
+    if (s.includes('USDC')) return allPrices?.USDC?.usd ?? 1;
+    if (s.includes('USDT')) return allPrices?.USDT?.usd ?? 1;
+    return 0;
+  }, [allPrices]);
+
+
+  // Format calculated input values (non-USD) with max 9 decimals
+  const formatCalculatedInput = useCallback((value: string): string => {
+    if (!value) return value;
+
+    const [integerPart, decimalPart] = value.split('.');
+
+    if (!decimalPart || decimalPart.length <= 9) {
+      return value;
+    }
+
+    // Truncate to 9 decimals (no ellipsis for input fields)
+    return `${integerPart}.${decimalPart.substring(0, 9)}`;
+  }, []);
+
+  // Format calculated amounts with max 9 decimals and ellipsis for overflow
+  const formatCalculatedAmount = useCallback((value: number): React.ReactNode => {
+    if (!Number.isFinite(value) || value <= 0) return formatUSD(0);
+    
+    const formatted = formatUSD(value);
+    
+    // Extract the numeric part and check decimal places
+    const match = formatted.match(/\$([0-9,]+\.?[0-9]*)/);
+    if (!match) return formatted;
+    
+    const [, numericPart] = match;
+    const [integerPart, decimalPart] = numericPart.split('.');
+    
+    if (!decimalPart || decimalPart.length <= 9) {
+      return formatted;
+    }
+    
+    // Truncate to 9 decimals and add ellipsis
+    const truncatedDecimal = decimalPart.substring(0, 9);
+    const truncatedFormatted = `$${integerPart}.${truncatedDecimal}`;
+    
+    return (
+      <span>
+        {truncatedFormatted}
+        <span className="text-muted-foreground">...</span>
+      </span>
+    );
+  }, []);
+  
+  // For new positions: token selection and range setting
+  const [token0Symbol, setToken0Symbol] = useState<TokenSymbol>('');
+  const [token1Symbol, setToken1Symbol] = useState<TokenSymbol>('');
   const [amount0, setAmount0] = useState<string>("");
   const [amount1, setAmount1] = useState<string>("");
   const [tickLower, setTickLower] = useState<string>(sdkMinTick.toString());
   const [tickUpper, setTickUpper] = useState<string>(sdkMaxTick.toString());
-  const [currentPoolTick, setCurrentPoolTick] = useState<number | null>(null);
   const [activeInputSide, setActiveInputSide] = useState<'amount0' | 'amount1' | null>(null);
   const [isCalculating, setIsCalculating] = useState(false);
-  const [calculatedData, setCalculatedData] = useState<{
-    liquidity: string;
-    finalTickLower: number;
-    finalTickUpper: number;
-    amount0: string; 
-    amount1: string; 
-    currentPoolTick?: number; 
-    currentPrice?: string;    
-    priceAtTickLower?: string;
-    priceAtTickUpper?: string;
-  } | null>(null);
-  const [currentPrice, setCurrentPrice] = useState<string | null>(null);
-  const [priceAtTickLower, setPriceAtTickLower] = useState<string | null>(null);
-  const [priceAtTickUpper, setPriceAtTickUpper] = useState<string | null>(null);
+  const [calculatedData, setCalculatedData] = useState<any>(null);
   
-  // Use the transaction hook
+  // For existing positions: percentage-based increase
+  const [increaseAmount0, setIncreaseAmount0] = useState<string>("");
+  const [increaseAmount1, setIncreaseAmount1] = useState<string>("");
+  const [increaseActiveInputSide, setIncreaseActiveInputSide] = useState<'amount0' | 'amount1' | null>(null);
+  const [increasePercentage, setIncreasePercentage] = useState<number>(0);
+  const [isIncreaseCalculating, setIsIncreaseCalculating] = useState(false);
+  
+  // Animation states for balance wiggle
+  const [balanceWiggleCount0, setBalanceWiggleCount0] = useState(0);
+  const [balanceWiggleCount1, setBalanceWiggleCount1] = useState(0);
+  const wiggleControls0 = useAnimation();
+  const wiggleControls1 = useAnimation();
+  
+  // State for showing "You Will Receive" section
+  const [showYouWillReceive, setShowYouWillReceive] = useState(false);
+  
+  // State for showing transaction overview
+  const [showTransactionOverview, setShowTransactionOverview] = useState(false);
+  
+  // State for showing success view
+  const [showSuccessView, setShowSuccessView] = useState(false);
+  
+  // State for tracking allowances
+  const [hasToken0Allowance, setHasToken0Allowance] = useState<boolean | null>(null);
+  const [hasToken1Allowance, setHasToken1Allowance] = useState<boolean | null>(null);
+  
+  // Track the transaction hash when we actually start the transaction in this session
+  const [currentSessionTxHash, setCurrentSessionTxHash] = useState<string | null>(null);
+  
+  // Track batch permit signing for existing positions (mimic new position flow)
+  const [increaseBatchPermitSigned, setIncreaseBatchPermitSigned] = useState(false);
+  const [signedBatchPermit, setSignedBatchPermit] = useState<null | { owner: `0x${string}`; permitBatch: any; signature: string }>(null);
+
+  // Wiggle animation for insufficient approvals
+  const [approvalWiggleCount, setApprovalWiggleCount] = useState(0);
+  const approvalWiggleControls = useAnimation();
+
+  // Determine if we should use internal hook or parent hook (moved up before useEffect)
+  const shouldUseInternalHook = !parentIncreaseLiquidity;
+
+  // State for tracking increase liquidity transaction flow (like useAddLiquidityTransaction)
+  const [increaseStep, setIncreaseStep] = useState<'input' | 'approve' | 'permit' | 'deposit'>('input');
+  const [increasePreparedTxData, setIncreasePreparedTxData] = useState<any>(null);
+  const [increaseNeedsERC20Approvals, setIncreaseNeedsERC20Approvals] = useState<TokenSymbol[]>([]);
+  const [increaseIsWorking, setIncreaseIsWorking] = useState(false);
+
+  // Reset transaction state when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      console.log('[DEBUG] Modal opened, resetting all states');
+      setTxStarted(false);
+      setWasIncreasingLiquidity(false);
+      setHasToken0Allowance(null);
+      setHasToken1Allowance(null);
+      setCurrentSessionTxHash(null);
+      setIncreaseBatchPermitSigned(false);
+      setSignedBatchPermit(null);
+      // Reset increase transaction flow states
+      setIncreaseStep('input');
+      setIncreasePreparedTxData(null);
+      setIncreaseNeedsERC20Approvals([]);
+      setIncreaseIsWorking(false);
+      // Hard reset per-open to prevent reusing previous flow state
+      setShowYouWillReceive(false);
+      setShowTransactionOverview(false);
+      setShowSuccessView(false);
+      if (isExistingPosition) {
+        setIncreaseAmount0("");
+        setIncreaseAmount1("");
+        setIncreaseActiveInputSide(null);
+        setIncreasePercentage(0);
+      } else {
+        setAmount0("");
+        setAmount1("");
+        setActiveInputSide(null);
+      }
+      
+      // Force reset of parent transaction states if using parent hook
+      if (!shouldUseInternalHook) {
+        console.log('[DEBUG] Using parent hook, forcing parent state reset');
+        // The parent should reset its transaction states when modal opens
+        // This will be handled by the parent component
+      }
+    }
+  }, [isOpen, shouldUseInternalHook]);
+
+  // Reset all modal state when modal is closed
+  useEffect(() => {
+    if (!isOpen) {
+      // Reset all step flags
+      setShowYouWillReceive(false);
+      setShowTransactionOverview(false);
+      setShowSuccessView(false);
+      
+      // Reset all input amounts and states
+      if (isExistingPosition) {
+        setIncreaseAmount0("");
+        setIncreaseAmount1("");
+        setIncreaseActiveInputSide(null);
+        setIncreasePercentage(0);
+      } else {
+        setAmount0("");
+        setAmount1("");
+        setActiveInputSide(null);
+      }
+      
+      // Reset animation states
+      setBalanceWiggleCount0(0);
+      setBalanceWiggleCount1(0);
+      
+      // Reset transaction tracking
+      setTxStarted(false);
+      setWasIncreasingLiquidity(false);
+      setCurrentSessionTxHash(null);
+      setIncreaseBatchPermitSigned(false);
+      
+      // Reset allowance states
+      setHasToken0Allowance(null);
+      setHasToken1Allowance(null);
+    }
+  }, [isOpen, isExistingPosition]);
+  const increaseCalcVersionRef = useRef(0);
+  
+  // Token selection state
+  const [tokenChooserOpen, setTokenChooserOpen] = useState<null | 'token0' | 'token1'>(null);
+  const [tokenSearchTerm, setTokenSearchTerm] = useState('');
+  const [availableTokens, setAvailableTokens] = useState<TokenSelectorToken[]>([]);
+  
+  // Get token symbols for balance hooks (handle both new positions and existing positions)
+  const balanceToken0Symbol = isExistingPosition ? positionToModify?.token0.symbol : token0Symbol;
+  const balanceToken1Symbol = isExistingPosition ? positionToModify?.token1.symbol : token1Symbol;
+
+  // Balance data
+  const { data: token0BalanceData, isLoading: isLoadingToken0Balance } = useBalance({
+    address: accountAddress,
+    token: TOKEN_DEFINITIONS[balanceToken0Symbol]?.address === "0x0000000000000000000000000000000000000000" 
+      ? undefined 
+      : TOKEN_DEFINITIONS[balanceToken0Symbol]?.address as `0x${string}` | undefined,
+    chainId,
+    query: { enabled: !!accountAddress && !!chainId && !!TOKEN_DEFINITIONS[balanceToken0Symbol] },
+  });
+
+  const { data: token1BalanceData, isLoading: isLoadingToken1Balance } = useBalance({
+    address: accountAddress,
+    token: TOKEN_DEFINITIONS[balanceToken1Symbol]?.address === "0x0000000000000000000000000000000000000000" 
+      ? undefined 
+      : TOKEN_DEFINITIONS[balanceToken1Symbol]?.address as `0x${string}` | undefined,
+    chainId,
+    query: { enabled: !!accountAddress && !!chainId && !!TOKEN_DEFINITIONS[balanceToken1Symbol] },
+  });
+
+  // Transaction hooks
   const {
     isWorking,
     step,
     preparedTxData,
-    permit2SignatureRequest,
-    // Remove tokenApprovalStatus, tokensRequiringApproval, permit2StepsCompletedCount, maxPermit2StepsInCurrentTx
-    // tokenApprovalStatus, 
-    // tokensRequiringApproval, 
-    // permit2StepsCompletedCount, 
-    // maxPermit2StepsInCurrentTx,
-    involvedTokensCount, // NEW
-    completedTokensCount, // NEW
-    
+    involvedTokensCount,
+    completedERC20ApprovalsCount,
+    needsERC20Approvals,
+    batchPermitSigned,
     isApproveWritePending,
     isApproving,
     isMintSendPending,
     isMintConfirming,
-    
+    isMintSuccess,
     handlePrepareMint,
     handleApprove,
-    handleSignAndSubmitPermit2,
     handleMint,
     resetTransactionState,
-    
-    // Remove setTokensRequiringApproval, setMaxPermit2StepsInCurrentTx
-    // setTokensRequiringApproval, 
-    // setMaxPermit2StepsInCurrentTx, 
   } = useAddLiquidityTransaction({
     token0Symbol,
     token1Symbol,
@@ -205,476 +370,702 @@ export function AddLiquidityModal({
     activeInputSide,
     calculatedData,
     onLiquidityAdded,
+    onApprovalInsufficient: () => {
+      setApprovalWiggleCount(prev => prev + 1);
+    },
     onOpenChange,
   });
 
-  const prevCalculationDeps = useRef({
-    amount0,
-    amount1,
-    tickLower,
-    tickUpper,
-    activeInputSide
+  // Always call the hook to maintain hook order, but disable callback when parent exists
+  
+  const internalHookResult = useIncreaseLiquidity({
+    onLiquidityIncreased: (info) => {
+      console.log('[DEBUG] Modal internal hook callback fired, shouldUseInternal:', shouldUseInternalHook, 'txHash:', info?.txHash?.slice(0, 10) + '...');
+      // Don't set success view here - let the useEffect handle it based on confirmed state
+      // This prevents premature success view before transaction confirmation
+    },
   });
+  
+  // Use parent hook if provided, otherwise use internal hook
+  const increaseLiquidity = shouldUseInternalHook ? internalHookResult.increaseLiquidity : parentIncreaseLiquidity!;
+  const isIncreasingLiquidity = shouldUseInternalHook ? internalHookResult.isLoading : parentIsIncreasingLiquidity ?? false;
+  const txHash = shouldUseInternalHook ? internalHookResult.hash : parentIncreaseTxHash;
+  const isTransactionSuccess = shouldUseInternalHook ? internalHookResult.isSuccess : parentIsIncreaseSuccess ?? false;
 
-  const [isInsufficientBalance, setIsInsufficientBalance] = useState(false);
+  // Check what ERC20 approvals are needed for increase liquidity (similar to form)
+  const checkIncreaseApprovals = useCallback(async (): Promise<TokenSymbol[]> => {
+    if (!accountAddress || !chainId || !positionToModify) return [];
 
-  const [activePreset, setActivePreset] = useState<string | null>("±15%");
-  const [baseTokenForPriceDisplay, setBaseTokenForPriceDisplay] = useState<TokenSymbol>(token0Symbol);
+    const needsApproval: TokenSymbol[] = [];
+    const tokens = [
+      { symbol: positionToModify.token0.symbol as TokenSymbol, amount: increaseAmount0 },
+      { symbol: positionToModify.token1.symbol as TokenSymbol, amount: increaseAmount1 }
+    ];
 
-  // Token selection state
-  const [availableTokens, setAvailableTokens] = useState<TokenSelectorToken[]>([]);
+    for (const token of tokens) {
+      if (!token.amount || parseFloat(token.amount) <= 0) continue;
+      
+      const tokenDef = TOKEN_DEFINITIONS[token.symbol];
+      if (!tokenDef || tokenDef.address === "0x0000000000000000000000000000000000000000") continue;
 
-  // --- BEGIN New Chart State ---
-  const [xDomain, setXDomain] = useState<[number, number]>([-120000, 120000]); // Default wide tick range
-  const [currentPriceLine, setCurrentPriceLine] = useState<number | null>(null);
-  const [mockSelectedPriceRange, setMockSelectedPriceRange] = useState<[number, number] | null>(null);
-  // --- END New Chart State ---
+      try {
+        // Check ERC20 allowance to Permit2 (same logic as form)
+        const allowance = await readContract(config, {
+          address: tokenDef.address as `0x${string}`,
+          abi: erc20Abi,
+          functionName: 'allowance',
+          args: [accountAddress, "0x000000000022D473030F116dDEE9F6B43aC78BA3"] // PERMIT2_ADDRESS
+        });
 
-  // --- BEGIN Custom X-Axis Tick State ---
-  interface CustomAxisLabel {
-    tickValue: number;    // The actual tick value for positioning or data mapping
-    displayLabel: string; // The string to display (price)
-  }
-  const [customXAxisTicks, setCustomXAxisTicks] = useState<CustomAxisLabel[]>([]);
-  // --- END Custom X-Axis Tick State ---
-
-
-
-  // --- BEGIN Panning State ---
-  const [isPanning, setIsPanning] = useState(false);
-  const panStartXRef = useRef<number | null>(null);
-  const panStartDomainRef = useRef<[number, number] | null>(null);
-  const chartContainerRef = useRef<HTMLDivElement>(null); // Ref for the chart container
-  // --- END Panning State ---
-
-  const [chartData, setChartData] = useState<DepthChartDataPoint[]>([]);
-  const [isChartDataLoading, setIsChartDataLoading] = useState(false);
-
-  const [minPriceInputString, setMinPriceInputString] = useState<string>("");
-  const [maxPriceInputString, setMaxPriceInputString] = useState<string>("");
-
-  const [isPoolStateLoading, setIsPoolStateLoading] = useState<boolean>(false);
-
-  const [derivedPoolId, setDerivedPoolId] = useState<string | undefined>(selectedPoolId);
-
-  useEffect(() => {
-    if (token0Symbol && token1Symbol) {
-        const poolConfig = poolsConfig.pools.find(p =>
-            ((p.currency0.symbol === token0Symbol && p.currency1.symbol === token1Symbol) ||
-             (p.currency0.symbol === token1Symbol && p.currency1.symbol === token0Symbol)) &&
-            p.enabled
-        );
-        setDerivedPoolId(poolConfig?.id);
-    } else {
-        setDerivedPoolId(undefined);
+        const requiredAmount = viemParseUnits(token.amount, tokenDef.decimals);
+        if (allowance < requiredAmount) {
+          needsApproval.push(token.symbol);
+        }
+      } catch (error) {
+        console.error(`Error checking allowance for ${token.symbol}:`, error);
+      }
     }
-  }, [token0Symbol, token1Symbol]);
 
-  // State for capital efficiency enhanced APR
-  const [capitalEfficiencyFactor, setCapitalEfficiencyFactor] = useState<number>(1);
-  const [enhancedAprDisplay, setEnhancedAprDisplay] = useState<string>(poolApr || "Yield N/A");
+    return needsApproval;
+  }, [accountAddress, chainId, positionToModify, increaseAmount0, increaseAmount1]);
+  
+  const handleConfirmIncrease = () => {
+    if (!positionToModify) {
+      toast.error('Missing Position', { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: 'No position selected for modification.' });
+      return;
+    }
+    
+    const amount0Num = parseFloat(increaseAmount0 || "0");
+    const amount1Num = parseFloat(increaseAmount1 || "0");
+    
+    if (amount0Num <= 0 && amount1Num <= 0) {
+      toast.error('Missing Amount', { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: 'Please enter at least one amount to add.' });
+      return;
+    }
+    
+    // Show "You Will Receive" section first
+    setShowYouWillReceive(true);
+  };
 
-  // --- BEGIN Liquidity Depth Data State ---
-  interface HookPosition {
-    tickLower: number;
-    tickUpper: number;
-    liquidity: string;
-  }
-  const [rawHookPositions, setRawHookPositions] = useState<HookPosition[] | null>(null);
-  const [isFetchingLiquidityDepth, setIsFetchingLiquidityDepth] = useState<boolean>(false);
-  // --- END Liquidity Depth Data State ---
+  const handleFinalConfirmIncrease = () => {
+    if (!positionToModify) return;
+    
+    // Show transaction overview first
+    setShowTransactionOverview(true);
+    // Don't call handlePrepareMint here as it's for new positions, not increases
+  };
 
-  // --- BEGIN Liquidity Delta Events State ---
-  interface Token0DepthDeltaEvent { // Renamed interface
-    tick: number;
-    change: bigint; // Using JavaScript BigInt for amount0 equivalent
-  }
-  const [token0DepthDeltaEvents, setToken0DepthDeltaEvents] = useState<Token0DepthDeltaEvent[] | null>(null); // Renamed state
-  // --- END Liquidity Delta Events State ---
+  const [txStarted, setTxStarted] = useState(false);
 
-  // --- BEGIN Aggregated & Sorted Tick States ---
-  const [aggregatedToken0ChangesByTick, setAggregatedToken0ChangesByTick] = useState<Map<number, bigint> | null>(null);
-  const [sortedUniqueTicksWithToken0Changes, setSortedUniqueTicksWithToken0Changes] = useState<number[] | null>(null);
-  // --- END Aggregated & Sorted Tick States ---
+  // Prepare increase transaction (similar to handlePrepareMint in form)
+  const handlePrepareIncrease = useCallback(async () => {
+    setIncreaseIsWorking(true);
+    try {
+      // Check what ERC20 approvals are needed
+      const needsApprovals = await checkIncreaseApprovals();
+      setIncreaseNeedsERC20Approvals(needsApprovals);
+      
+      if (needsApprovals.length > 0) {
+        setIncreaseStep('approve');
+        setIncreasePreparedTxData({
+          needsApproval: true,
+          approvalType: 'ERC20_TO_PERMIT2',
+          approvalTokenSymbol: needsApprovals[0], // Show first token needing approval
+          approvalTokenAddress: TOKEN_DEFINITIONS[needsApprovals[0]]?.address,
+          approvalAmount: "115792089237316195423570985008687907853269984665640564039457584007913129639935", // max uint256
+          approveToAddress: "0x000000000022D473030F116dDEE9F6B43aC78BA3", // PERMIT2_ADDRESS
+        });
+      } else {
+        setIncreaseStep('permit');
+        setIncreasePreparedTxData({ needsApproval: false });
+      }
+    } catch (error: any) {
+      console.error('Prepare increase error:', error);
+      toast.error("Preparation Error", { description: error.message || "Failed to prepare transaction" });
+    } finally {
+      setIncreaseIsWorking(false);
+    }
+  }, [checkIncreaseApprovals]);
 
-  // --- BEGIN Simplified Chart Plot Data ---
-  const [simplifiedChartPlotData, setSimplifiedChartPlotData] = useState<Array<{ tick: number; cumulativeUnifiedValue: number }> | null>(null);
-  // --- END Simplified Chart Plot Data ---
+  // Handle ERC20 approvals for increase (similar to form)
+  const handleIncreaseApprove = useCallback(async () => {
+    if (!increasePreparedTxData?.needsApproval || increasePreparedTxData.approvalType !== 'ERC20_TO_PERMIT2') return;
 
-  // --- BEGIN Processed Position Details State ---
-  interface ProcessedPositionDetail {
-    tickLower: number;
-    tickUpper: number;
-    liquidity: string;
-    amount0: string;
-    amount1: string;
-    numericAmount0: number;
-    numericAmount1: number;
-    unifiedValueInToken0: number; 
-  }
-  const [processedPositions, setProcessedPositions] = useState<ProcessedPositionDetail[] | null>(null);
-  // --- END Processed Position Details State ---
+    setIncreaseIsWorking(true);
 
-  // --- BEGIN Unified Value Delta Events State ---
-  interface UnifiedValueDeltaEvent {
-    tick: number;
-    changeInUnifiedValue: number;
-  }
-  const [unifiedValueDeltaEvents, setUnifiedValueDeltaEvents] = useState<UnifiedValueDeltaEvent[] | null>(null);
-  // --- END Unified Value Delta Events State ---
+    try {
+      const tokenAddress = increasePreparedTxData.approvalTokenAddress as `0x${string}` | undefined;
+      if (!tokenAddress) throw new Error('Missing token address for approval');
+      await approveERC20Async({
+        address: tokenAddress,
+        abi: erc20Abi,
+        functionName: 'approve',
+        args: ["0x000000000022D473030F116dDEE9F6B43aC78BA3" as `0x${string}`, BigInt(increasePreparedTxData.approvalAmount || '0')],
+      });
+      // Wait for receipt via hook; state advance handled in effect below
+    } catch (error: any) {
+      toast.error("Approval Error", { description: error?.shortMessage || error?.message || "Failed to approve token." });
+      setIncreaseIsWorking(false);
+      resetIncreaseApprove();
+    }
+  }, [increasePreparedTxData, approveERC20Async, resetIncreaseApprove]);
 
-  // --- BEGIN Aggregated & Sorted Unified Value Changes States ---
-  const [aggregatedUnifiedValueChangesByTick, setAggregatedUnifiedValueChangesByTick] = useState<Map<number, number> | null>(null);
-  const [sortedNetUnifiedValueChanges, setSortedNetUnifiedValueChanges] = useState<Array<{ tick: number; netUnifiedToken0Change: number }> | null>(null);
-  // --- END Aggregated & Sorted Unified Value Changes States ---
-
-  // --- BEGIN Derived Pool Tokens (for labels/formatting) ---
-  const { poolToken0, poolToken1 } = useMemo(() => {
-    if (!token0Symbol || !token1Symbol || !chainId) return { poolToken0: null, poolToken1: null };
-      const currentToken0Def = TOKEN_DEFINITIONS[token0Symbol!]; // Renamed to avoid conflict
-  const currentToken1Def = TOKEN_DEFINITIONS[token1Symbol!]; // Renamed to avoid conflict
-    if (!currentToken0Def || !currentToken1Def) return { poolToken0: null, poolToken1: null };
-
-    // Create SDK Token instances using the modal's currently selected token0Symbol and token1Symbol
-    const sdkBaseToken0 = new Token(chainId, getAddress(currentToken0Def.address), currentToken0Def.decimals, currentToken0Def.symbol);
-    const sdkBaseToken1 = new Token(chainId, getAddress(currentToken1Def.address), currentToken1Def.decimals, currentToken1Def.symbol);
-
-    // Sort them to get the canonical poolToken0 and poolToken1
-    const [pt0, pt1] = sdkBaseToken0.sortsBefore(sdkBaseToken1)
-      ? [sdkBaseToken0, sdkBaseToken1]
-      : [sdkBaseToken1, sdkBaseToken0];
-    return { poolToken0: pt0, poolToken1: pt1 };
-  }, [token0Symbol, token1Symbol, chainId]);
-  // --- END Derived Pool Tokens ---
-
-  // --- BEGIN useEffect to calculate custom X-axis ticks ---
+  // Advance approval step when tx confirms
   useEffect(() => {
-    if (xDomain && xDomain[0] !== undefined && xDomain[1] !== undefined && token0Symbol && token1Symbol && poolToken0 && poolToken1) {
-      const [minTickDomain, maxTickDomain] = xDomain;
-      const desiredTickCount = 3; 
-      const newLabels: CustomAxisLabel[] = [];
+    if (!isIncreaseApproved || !increasePreparedTxData) return;
+    
+    // Re-check actual allowances after each approval transaction
+    const recheckAllowances = async () => {
+      try {
+        // Wait a bit for the blockchain state to update
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        console.log(`[Modal Approval Check] Re-checking actual allowances after ${increasePreparedTxData.approvalTokenSymbol} approval`);
+        
+        // Check actual allowances vs required amounts for both tokens
+        const stillNeedsApprovals: TokenSymbol[] = [];
+        const tokens = [
+          { symbol: positionToModify?.token0.symbol as TokenSymbol, amount: increaseAmount0 },
+          { symbol: positionToModify?.token1.symbol as TokenSymbol, amount: increaseAmount1 }
+        ];
 
-      const token0Def = TOKEN_DEFINITIONS[token0Symbol];
-      const token1Def = TOKEN_DEFINITIONS[token1Symbol];
-      const displayDecimals = baseTokenForPriceDisplay === token0Symbol 
-        ? (token0Def?.displayDecimals ?? (token0Symbol === 'aBTC' ? 8 : 4)) 
-        : (token1Def?.displayDecimals ?? (token1Symbol === 'aBTC' ? 8 : 4));
+        for (const token of tokens) {
+          if (!token.amount || parseFloat(token.amount) <= 0) continue;
+          
+          const tokenDef = TOKEN_DEFINITIONS[token.symbol];
+          if (!tokenDef || !accountAddress) continue;
 
-      if (!token0Def || !token1Def) {
-        setCustomXAxisTicks([]);
+          try {
+            const allowance = await readContract(config, {
+              address: tokenDef.address as `0x${string}`,
+              abi: erc20Abi,
+              functionName: 'allowance',
+              args: [accountAddress, "0x000000000022D473030F116dDEE9F6B43aC78BA3" as `0x${string}`],
+              blockTag: 'latest'
+            });
+
+            const requiredAmount = viemParseUnits(token.amount, tokenDef.decimals);
+            
+            if (allowance < requiredAmount) {
+              stillNeedsApprovals.push(token.symbol);
+            }
+          } catch (error) {
+            console.error(`Error checking allowance for ${token.symbol}:`, error);
+            stillNeedsApprovals.push(token.symbol); // Be safe, assume needs approval
+          }
+        }
+        
+        console.log(`[Modal Approval Check] Tokens still needing approval:`, stillNeedsApprovals);
+        
+        if (stillNeedsApprovals.length > 0) {
+          // Still need approvals - trigger wiggle if this token still needs approval
+          if (stillNeedsApprovals.includes(increasePreparedTxData.approvalTokenSymbol as TokenSymbol)) {
+            setApprovalWiggleCount(prev => prev + 1);
+            toast.error("Insufficient Approval", { 
+              icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" })
+            });
+          } else {
+            toast.success(`${increasePreparedTxData.approvalTokenSymbol} Approved`, { 
+              icon: React.createElement(CheckIcon, { className: "h-4 w-4 text-green-500" })
+            });
+          }
+          
+          // Update the needs approval list and set up next approval with exact amount needed
+          setIncreaseNeedsERC20Approvals(stillNeedsApprovals);
+          
+          // Calculate exact amount needed for the first token that needs approval
+          const nextTokenSymbol = stillNeedsApprovals[0];
+          const nextTokenDef = TOKEN_DEFINITIONS[nextTokenSymbol];
+          const nextTokenAmount = nextTokenSymbol === positionToModify?.token0.symbol ? increaseAmount0 : increaseAmount1;
+          const exactAmountNeeded = viemParseUnits(nextTokenAmount || '0', nextTokenDef.decimals);
+          
+          // Round up by 1 smallest decimal unit
+          const buffer = BigInt(Math.pow(10, Math.max(0, nextTokenDef.decimals - 6))); // 1 micro-unit
+          const roundedUpAmount = exactAmountNeeded + buffer;
+          
+          setIncreasePreparedTxData({
+            needsApproval: true,
+            approvalType: 'ERC20_TO_PERMIT2',
+            approvalTokenSymbol: nextTokenSymbol,
+            approvalTokenAddress: nextTokenDef.address,
+            approvalAmount: roundedUpAmount.toString(),
+            approveToAddress: "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+          });
+          setIncreaseStep('approve');
+        } else {
+          // All approvals done
+          console.log(`[Modal Approval Check] ✅ All approvals complete!`);
+          toast.success(`${increasePreparedTxData.approvalTokenSymbol} Approved`, { 
+            icon: React.createElement(CheckIcon, { className: "h-4 w-4 text-green-500" })
+          });
+          setIncreaseNeedsERC20Approvals([]);
+          setIncreasePreparedTxData({ needsApproval: false });
+          setIncreaseStep('permit');
+        }
+        
+        setIncreaseIsWorking(false);
+        resetIncreaseApprove();
+      } catch (error) {
+        console.error('Error re-checking allowances:', error);
+        toast.error("Approval Check Failed", { 
+          icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" })
+        });
+        setIncreaseIsWorking(false);
+        resetIncreaseApprove();
+      }
+    };
+
+    recheckAllowances();
+  }, [isIncreaseApproved, increasePreparedTxData, accountAddress, positionToModify, increaseAmount0, increaseAmount1, resetIncreaseApprove]);
+
+  // Handle permit signature (separate step like in form)
+  const handleIncreasePermit = useCallback(async () => {
+    if (!positionToModify || !accountAddress || !chainId) return;
+    // Idempotency: if already signed or not in permit step, skip
+    if (increaseBatchPermitSigned || increaseStep !== 'permit') return;
+    setIncreaseIsWorking(true);
+    try {
+      // Derive NFT tokenId from composite position id (last part expected to be hex salt)
+      const compositeId = positionToModify.positionId?.toString?.() || '';
+      let tokenIdHex = compositeId.includes('-') ? compositeId.split('-').pop() || '' : compositeId;
+      if (!tokenIdHex) throw new Error('Unable to derive position tokenId');
+      
+      console.log('[modal] TokenId extraction:', {
+        compositeId,
+        tokenIdHex,
+        hasDash: compositeId.includes('-'),
+        parts: compositeId.split('-')
+      });
+      
+      // Ensure proper hex prefix
+      if (!tokenIdHex.startsWith('0x')) tokenIdHex = `0x${tokenIdHex}`;
+      let nftTokenId: bigint;
+      try {
+        nftTokenId = BigInt(tokenIdHex);
+        console.log('[modal] Parsed tokenId:', nftTokenId.toString());
+      } catch {
+        throw new Error('Invalid position tokenId format');
+      }
+
+      const deadline = Math.floor(Date.now() / 1000) + (20 * 60);
+      const prepared = await preparePermit2BatchForNewPosition(
+        positionToModify.token0.symbol,
+        positionToModify.token1.symbol,
+        accountAddress as `0x${string}`,
+        chainId,
+        deadline
+      );
+
+      if (!prepared?.message?.details || prepared.message.details.length === 0) {
+        // No batch permit required. Consider the step satisfied.
+        setIncreaseBatchPermitSigned(true);
+        setIncreaseStep('deposit');
+        setIncreaseIsWorking(false);
         return;
       }
 
-      // Use the same corrected logic as tooltip and min/max prices
-      const isUserOrderMatchingCanonical = poolToken0.address.toLowerCase() === token0Def.address.toLowerCase();
-      const canonicalToken0Decimals = poolToken0.decimals;
-      const canonicalToken1Decimals = poolToken1.decimals;
+      const signature = await signTypedDataAsync({
+        domain: prepared.domain as any,
+        types: prepared.types as any,
+        primaryType: prepared.primaryType,
+        message: prepared.message as any,
+      });
 
-      // Helper function to calculate price from tick using corrected logic
-      const calculatePriceFromTick = (tick: number): number => {
-        if (baseTokenForPriceDisplay === token0Symbol) {
-          // User wants to see price of token1 in terms of token0
-          let finalDecimalAdjFactor: number;
-          let priceCalculationFunc: (tick: number) => number;
-          
-          if (isUserOrderMatchingCanonical) {
-            // token0=canonicalToken0, token1=canonicalToken1
-            finalDecimalAdjFactor = Math.pow(10, canonicalToken1Decimals - canonicalToken0Decimals);
-            priceCalculationFunc = (tick) => Math.pow(1.0001, -tick);
-          } else {
-            // token0=canonicalToken1, token1=canonicalToken0
-            finalDecimalAdjFactor = Math.pow(10, canonicalToken0Decimals - canonicalToken1Decimals);
-            priceCalculationFunc = (tick) => 1 / Math.pow(1.0001, -tick);
-          }
-          
-          return priceCalculationFunc(tick) * finalDecimalAdjFactor;
-        } else {
-          // User wants to see price of token0 in terms of token1
-          let finalDecimalAdjFactor: number;
-          let priceCalculationFunc: (tick: number) => number;
-          
-          if (isUserOrderMatchingCanonical) {
-            // token0=canonicalToken0, token1=canonicalToken1
-            finalDecimalAdjFactor = Math.pow(10, canonicalToken0Decimals - canonicalToken1Decimals);
-            priceCalculationFunc = (tick) => 1 / Math.pow(1.0001, -tick);
-          } else {
-            // token0=canonicalToken1, token1=canonicalToken0
-            finalDecimalAdjFactor = Math.pow(10, canonicalToken1Decimals - canonicalToken0Decimals);
-            priceCalculationFunc = (tick) => Math.pow(1.0001, -tick);
-          }
-          
-          return priceCalculationFunc(tick) * finalDecimalAdjFactor;
-        }
+      // Provide pre-signed batch permit to the increase hook via in-memory store
+      const payload = { owner: accountAddress as `0x${string}`, permitBatch: prepared.message, signature };
+      providePreSignedIncreaseBatchPermit(positionToModify.positionId, payload);
+      setSignedBatchPermit(payload);
+
+      setIncreaseBatchPermitSigned(true);
+      setIncreaseStep('deposit');
+    } catch (error: any) {
+      const description = (error?.message || '').includes('User rejected') ? 'Permit signature was rejected.' : (error?.message || 'Failed to sign permit');
+      toast.error('Permit Error', { description });
+    } finally {
+      setIncreaseIsWorking(false);
+    }
+  }, [positionToModify, accountAddress, chainId, signTypedDataAsync, increaseBatchPermitSigned, increaseStep]);
+
+  // Handle final deposit transaction
+  const handleExecuteTransaction = async () => {
+    if (!positionToModify) return;
+    
+    console.log('[DEBUG] Modal: handleExecuteTransaction called, step:', increaseStep, 'shouldUseInternalHook:', shouldUseInternalHook);
+    
+    if (increaseStep === 'input') {
+      // Step 1: Prepare transaction
+      await handlePrepareIncrease();
+    } else if (increaseStep === 'approve') {
+      // Step 2: Handle approvals
+      await handleIncreaseApprove();
+    } else if (increaseStep === 'permit') {
+      // Step 3: Handle permit signature
+      await handleIncreasePermit();
+    } else if (increaseStep === 'deposit') {
+      // Step 4: Execute final transaction - just call the hook directly like the form does
+      const data: IncreasePositionData = {
+        tokenId: positionToModify.positionId,
+        token0Symbol: positionToModify.token0.symbol as TokenSymbol,
+        token1Symbol: positionToModify.token1.symbol as TokenSymbol,
+        additionalAmount0: increaseAmount0 || '0',
+        additionalAmount1: increaseAmount1 || '0',
+        poolId: positionToModify.poolId,
+        tickLower: positionToModify.tickLower,
+        tickUpper: positionToModify.tickUpper,
+        feesForIncrease: feesForIncrease,
       };
 
-      if (minTickDomain === maxTickDomain) {
-        // Simplified: just show one label if domain is a single point
-        const priceAtTick = calculatePriceFromTick(minTickDomain);
-        newLabels.push({ 
-          tickValue: minTickDomain, 
-          displayLabel: isNaN(priceAtTick) ? minTickDomain.toString() : priceAtTick.toLocaleString('en-US', { maximumFractionDigits: displayDecimals, minimumFractionDigits: 2 })
-        });
-      } else if (isFinite(minTickDomain) && isFinite(maxTickDomain)) {
-        const range = maxTickDomain - minTickDomain;
-        const step = range / (desiredTickCount > 1 ? desiredTickCount - 1 : 1);
-        
-        for (let i = 0; i < desiredTickCount; i++) {
-          const tickVal = Math.round(minTickDomain + (i * step));
-          const priceAtTick = calculatePriceFromTick(tickVal);
-          
-          newLabels.push({ 
-            tickValue: tickVal, 
-            displayLabel: isNaN(priceAtTick) ? tickVal.toString() : priceAtTick.toLocaleString('en-US', { maximumFractionDigits: displayDecimals, minimumFractionDigits: Math.min(2, displayDecimals) }) 
-          });
-        }
-      } 
-      setCustomXAxisTicks(newLabels);
-    } else {
-      // Handle non-finite domains if necessary, for now, clear ticks
-      setCustomXAxisTicks([]);
-      return;
-    }
-  }, [xDomain, baseTokenForPriceDisplay, token0Symbol, token1Symbol, poolToken0, poolToken1]);
-  // --- END useEffect to calculate custom X-axis ticks ---
+      console.log('[modal] Executing increase with data:', data);
+      console.log('[modal] signedBatchPermit:', signedBatchPermit ? 'present' : 'none');
 
-  // --- BEGIN State for Pool's Current SqrtPriceX96 ---
-  // TODO: This state needs to be populated reliably, ideally from the same source as currentPoolTick (e.g., get-pool-state API call)
-  const [currentPoolSqrtPriceX96, setCurrentPoolSqrtPriceX96] = useState<string | null>(null); // Store as string, convert to JSBI when used
-  // --- END State for Pool's Current SqrtPriceX96 ---
-
-  // Define Subgraph URL - consider moving to a constants file if used elsewhere
-  const SUBGRAPH_URL = "https://api.studio.thegraph.com/query/111443/alphix-test/version/latest";
-
-  // Helper function to get the canonical on-chain pool ID (Bytes! string)
-  const getDerivedOnChainPoolId = useCallback((): string | null => {
-    if (!token0Symbol || !token1Symbol || !chainId) return null;
-
-    const token0Def = TOKEN_DEFINITIONS[token0Symbol];
-    const token1Def = TOKEN_DEFINITIONS[token1Symbol];
-
-    if (!token0Def || !token1Def) return null;
-
-    try {
-      const sdkToken0 = new Token(chainId, getAddress(token0Def.address), token0Def.decimals);
-      const sdkToken1 = new Token(chainId, getAddress(token1Def.address), token1Def.decimals);
-
-      const [sortedSdkToken0, sortedSdkToken1] = sdkToken0.sortsBefore(sdkToken1)
-        ? [sdkToken0, sdkToken1]
-        : [sdkToken1, sdkToken0];
-      
-      // Find the pool config for the selected tokens to get fee, tickSpacing, and hooks
-      const poolConfig = poolsConfig.pools.find(p =>
-        (p.currency0.symbol === token0Symbol && p.currency1.symbol === token1Symbol) ||
-        (p.currency0.symbol === token1Symbol && p.currency1.symbol === token0Symbol)
-      );
-
-      if (!poolConfig) {
-        console.warn(`[AddLiquidityModal] No pool config found for tokens: ${token0Symbol}/${token1Symbol}`);
-        return null;
+      // For internal hook usage, onLiquidityAdded will be called by the hook's callback
+      // For parent hook usage, the parent page handles all the callbacks
+      // Pass pre-signed batch permit to avoid re-prompting at deposit
+      try {
+        // @ts-ignore opts supported by hook
+        increaseLiquidity(data, signedBatchPermit ? { batchPermit: signedBatchPermit } : undefined);
+      } catch (e) {
+        console.error('[modal] increaseLiquidity call threw before send', e);
       }
-      
-      const poolIdBytes32 = V4PoolSDK.getPoolId(
-        sortedSdkToken0,
-        sortedSdkToken1,
-        poolConfig.fee,
-        poolConfig.tickSpacing,
-        poolConfig.hooks as Hex
-      );
-      return poolIdBytes32.toLowerCase();
-    } catch (error) {
-      console.error("[AddLiquidityModal] Error deriving on-chain pool ID:", error);
-      return null;
+      setTxStarted(true);
     }
-  }, [token0Symbol, token1Symbol, chainId]);
-
-  const getTokenIcon = (symbol?: string) => {
-    if (!symbol) return "/placeholder-logo.svg";
-    const tokenConfig = getToken(symbol);
-    return tokenConfig?.icon || "/placeholder-logo.svg";
   };
 
-  const { data: token0BalanceData, isLoading: isLoadingToken0Balance } = useBalance({
-    address: accountAddress,
-    token: TOKEN_DEFINITIONS[token0Symbol]?.address as `0x${string}` | undefined,
-    chainId,
-    query: { enabled: !!accountAddress && !!chainId && !!TOKEN_DEFINITIONS[token0Symbol]?.address && !!token0Symbol },
-  });
-
-  const { data: token1BalanceData, isLoading: isLoadingToken1Balance } = useBalance({
-    address: accountAddress,
-    token: TOKEN_DEFINITIONS[token1Symbol]?.address as `0x${string}` | undefined,
-    chainId,
-    query: { enabled: !!accountAddress && !!chainId && !!TOKEN_DEFINITIONS[token1Symbol]?.address && !!token1Symbol },
-  });
-
-  const [initialDefaultApplied, setInitialDefaultApplied] = useState(false);
-
-  // Helper function to determine the better base token for price display
-  const determineBaseTokenForPriceDisplay = useCallback((token0: TokenSymbol, token1: TokenSymbol): TokenSymbol => {
-    if (!token0 || !token1) return token0;
-
-    // Priority order for quote tokens (these should be the base for price display)
-    const quotePriority: Record<string, number> = {
-      'aUSDC': 10,
-      'aUSDT': 9,
-      'USDC': 8,
-      'USDT': 7,
-      'aETH': 6,
-      'ETH': 5,
-      'YUSD': 4,
-      'mUSDT': 3,
-    };
-
-    const token0Priority = quotePriority[token0] || 0;
-    const token1Priority = quotePriority[token1] || 0;
-
-    // Return the token with higher priority (better quote currency)
-    // If priorities are equal, default to token0
-    return token1Priority > token0Priority ? token1 : token0;
-  }, []);
-
+  // Auto-prepare when entering Transaction Overview to mirror form UX
   useEffect(() => {
-    if (token0Symbol && token1Symbol) {
-      const bestBaseToken = determineBaseTokenForPriceDisplay(token0Symbol, token1Symbol);
-      setBaseTokenForPriceDisplay(bestBaseToken);
-    } else if (token0Symbol) {
-    setBaseTokenForPriceDisplay(token0Symbol); 
-    }
-  }, [token0Symbol, token1Symbol, determineBaseTokenForPriceDisplay]);
-
-  useEffect(() => {
-    if (isOpen && selectedPoolId) {
-      // Get pool configuration from pools.json
-      const poolConfig = getPoolById(selectedPoolId);
-      if (poolConfig) {
-        const token0Config = getToken(poolConfig.currency0.symbol);
-        const token1Config = getToken(poolConfig.currency1.symbol);
-        
-        if (token0Config && token1Config) {
-          const t0 = token0Config.symbol as TokenSymbol;
-          const t1 = token1Config.symbol as TokenSymbol;
-          
-          setToken0Symbol(t0);
-          setToken1Symbol(t1);
-          setAmount0("");
-          setAmount1("");
-          setTickLower(sdkMinTick.toString());
-          setTickUpper(sdkMaxTick.toString());
-          setCurrentPoolTick(null);
-          setCalculatedData(null);
-          setActiveInputSide(null);
-          setCurrentPrice(null); 
-          setPriceAtTickLower(null); 
-          setPriceAtTickUpper(null);
-          setInitialDefaultApplied(false);
-          setActivePreset("±15%"); // Reset preset on pool change
-          // Base token for price display will be set by the useEffect
-          // Reset chart specific states too
-          setXDomain([-120000, 120000]);
-          setCurrentPriceLine(null);
-          setMockSelectedPriceRange(null);
-          // Do not reset xDomain here, allow it to be driven by new data or reset explicitly if needed
-        }
+    if (showTransactionOverview && isExistingPosition) {
+      if (increaseStep === 'input' && !increaseIsWorking) {
+        handlePrepareIncrease();
       }
     }
-  }, [isOpen, selectedPoolId, sdkMinTick, sdkMaxTick]);
+  }, [showTransactionOverview, isExistingPosition, increaseStep, increaseIsWorking, handlePrepareIncrease]);
+
+  // Check allowances when Transaction Overview is shown
+  useEffect(() => {
+    if (showTransactionOverview && positionToModify && accountAddress) {
+      const checkAllowances = async () => {
+        try {
+          const PERMIT2_ADDRESS = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
+          
+          // Check token0 allowance
+          const token0Address = positionToModify.token0.address;
+          const token0Amount = parseFloat(increaseAmount0 || "0");
+          
+          if (token0Amount > 0 && token0Address !== "0x0000000000000000000000000000000000000000") {
+            const allowance0 = await readContract(config, {
+              address: token0Address as `0x${string}`,
+              abi: erc20Abi,
+              functionName: 'allowance',
+              args: [accountAddress, PERMIT2_ADDRESS],
+            });
+            
+            const requiredAmount0 = viemParseUnits(increaseAmount0, TOKEN_DEFINITIONS[positionToModify.token0.symbol as TokenSymbol]?.decimals || 18);
+            setHasToken0Allowance(allowance0 >= requiredAmount0);
+          } else {
+            setHasToken0Allowance(true); // No approval needed if amount is 0 or ETH
+          }
+          
+          // Check token1 allowance
+          const token1Address = positionToModify.token1.address;
+          const token1Amount = parseFloat(increaseAmount1 || "0");
+          
+          if (token1Amount > 0 && token1Address !== "0x0000000000000000000000000000000000000000") {
+            const allowance1 = await readContract(config, {
+              address: token1Address as `0x${string}`,
+              abi: erc20Abi,
+              functionName: 'allowance',
+              args: [accountAddress, PERMIT2_ADDRESS],
+            });
+            
+            const requiredAmount1 = viemParseUnits(increaseAmount1, TOKEN_DEFINITIONS[positionToModify.token1.symbol as TokenSymbol]?.decimals || 18);
+            setHasToken1Allowance(allowance1 >= requiredAmount1);
+          } else {
+            setHasToken1Allowance(true); // No approval needed if amount is 0 or ETH
+          }
+        } catch (error) {
+          console.error("Error checking allowances:", error);
+          setHasToken0Allowance(false);
+          setHasToken1Allowance(false);
+        }
+      };
+      
+      checkAllowances();
+    }
+  }, [showTransactionOverview, positionToModify, accountAddress, increaseAmount0, increaseAmount1]);
+
+  // Track when transaction was actively running
+  const [wasIncreasingLiquidity, setWasIncreasingLiquidity] = useState(false);
+  
+  // Track when liquidity increase starts
+  useEffect(() => {
+    if (isIncreasingLiquidity) {
+      setWasIncreasingLiquidity(true);
+    }
+  }, [isIncreasingLiquidity]);
+
+  // Track when transaction hash becomes available in the current session
+  useEffect(() => {
+    if (txHash && txStarted && !currentSessionTxHash) {
+      setCurrentSessionTxHash(txHash);
+    }
+  }, [txHash, txStarted, currentSessionTxHash]);
+
+  // Show success view ONLY when transaction is confirmed with hash AND was started in current session
+  useEffect(() => {
+    // Only run this effect if we actually have transaction data
+    if (!txHash && !isTransactionSuccess) {
+      return; // Exit early if no transaction data
+    }
+    
+    console.log('[DEBUG] Success effect triggered:', {
+      txHash: txHash?.slice(0, 10) + '...',
+      isTransactionSuccess,
+      showTransactionOverview,
+      txStarted,
+      currentSessionTxHash: currentSessionTxHash?.slice(0, 10) + '...',
+      hashesMatch: txHash === currentSessionTxHash
+    });
+    
+    // Only show success if we have a confirmed transaction hash that matches our current session
+    if (txHash && isTransactionSuccess && showTransactionOverview && txStarted && currentSessionTxHash === txHash) {
+      console.log('[DEBUG] Transaction confirmed with hash, showing success view. txHash:', txHash?.slice(0, 10) + '...');
+      setShowSuccessView(true);
+      
+      // Call the success callback to notify parent component
+      // Only call this when NOT using internal hook (i.e., for increase operations)
+      // For new positions using internal hook, the useAddLiquidityTransaction handles the callback
+      if (onLiquidityAdded && !shouldUseInternalHook) {
+        console.log('[DEBUG] Calling onLiquidityAdded callback for increase operation');
+        onLiquidityAdded();
+      } else if (shouldUseInternalHook) {
+        console.log('[DEBUG] Skipping modal onLiquidityAdded - internal hook will handle it');
+      }
+    }
+  }, [txHash, isTransactionSuccess, showTransactionOverview, txStarted, currentSessionTxHash, onLiquidityAdded, shouldUseInternalHook]);
+
+  // Reset parent success states when modal opens to prevent premature success view
+  // BUT only if we don't have an active transaction in progress
+  useEffect(() => {
+    if (isOpen && !shouldUseInternalHook && parentIsIncreaseSuccess && !currentSessionTxHash) {
+      console.log('[DEBUG] Modal opened with parent success true, resetting by clearing state variables');
+      // Reset the current session tracking to prevent immediate success view
+      setCurrentSessionTxHash(null);
+      setShowSuccessView(false);
+      setShowTransactionOverview(false);
+      setShowYouWillReceive(false);
+      setTxStarted(false);
+      setWasIncreasingLiquidity(false);
+    }
+  }, [isOpen, shouldUseInternalHook, parentIsIncreaseSuccess, currentSessionTxHash]);
+
+  // Wiggle animation effect
+  useEffect(() => {
+    if (balanceWiggleCount0 > 0) {
+      wiggleControls0.start({
+        x: [0, -3, 3, -2, 2, 0],
+        transition: { duration: 0.22, ease: 'easeOut' },
+      }).catch(() => {});
+    }
+  }, [balanceWiggleCount0, wiggleControls0]);
 
   useEffect(() => {
-    setInitialDefaultApplied(false);
-    setTickLower(sdkMinTick.toString());
-    setTickUpper(sdkMaxTick.toString());
-    setAmount0("");
-    setAmount1("");
-    setCalculatedData(null);
-    setCurrentPoolTick(null); 
-    setPriceAtTickLower(null);
-    setPriceAtTickUpper(null);
-    setCurrentPrice(null);
-    setActivePreset("±15%"); // Reset preset on token/chain change
-    // Base token for price display will be set by the useEffect
-    // Reset chart specific states too
-    setXDomain([-120000, 120000]);
-    setCurrentPriceLine(null);
-    setMockSelectedPriceRange(null);
-  }, [token0Symbol, token1Symbol, chainId, sdkMinTick, sdkMaxTick]);
+    if (balanceWiggleCount1 > 0) {
+      wiggleControls1.start({
+        x: [0, -3, 3, -2, 2, 0],
+        transition: { duration: 0.22, ease: 'easeOut' },
+      }).catch(() => {});
+    }
+  }, [balanceWiggleCount1, wiggleControls1]);
 
-  // Effect to fetch initial pool state (current price and tick)
+  // Approval wiggle animation effect
   useEffect(() => {
-    const fetchPoolState = async () => {
-      if (!token0Symbol || !token1Symbol || !chainId || !isOpen) return;
+    if (approvalWiggleCount > 0) {
+      approvalWiggleControls.start({
+        x: [0, -3, 3, -2, 2, 0],
+        transition: { duration: 0.22, ease: 'easeOut' },
+      }).catch(() => {});
+    }
+  }, [approvalWiggleCount, approvalWiggleControls]);
 
-      setIsPoolStateLoading(true);
+  // Calculate increase amounts based on input (for existing positions)
+  const calculateIncreaseAmount = useCallback(
+    debounce(async (inputAmount: string, inputSide: 'amount0' | 'amount1') => {
+      const version = ++increaseCalcVersionRef.current;
+      
+      if (!positionToModify || !inputAmount || parseFloat(inputAmount) <= 0) {
+        if (inputSide === 'amount0') setIncreaseAmount1("");
+        else setIncreaseAmount0("");
+        return;
+      }
+
+      setIsIncreaseCalculating(true);
+      
       try {
-        const response = await fetch('/api/liquidity/get-pool-state', {
+        // For out-of-range positions, don't calculate corresponding amount
+        if (!positionToModify.isInRange) {
+          if (inputSide === 'amount0') {
+            setIncreaseAmount1("0");
+          } else {
+            setIncreaseAmount0("0");
+          }
+          setIsIncreaseCalculating(false);
+          return;
+        }
+
+        // For in-range positions, use liquidity calculation API
+        const token0Symbol = getTokenSymbolByAddress(positionToModify.token0.address);
+        const token1Symbol = getTokenSymbolByAddress(positionToModify.token1.address);
+        
+        if (!token0Symbol || !token1Symbol) {
+          // Fallback to simple ratio if token mapping fails
+          const amount0Total = parseFloat(positionToModify.token0.amount);
+          const amount1Total = parseFloat(positionToModify.token1.amount);
+          const inputAmountNum = parseFloat(inputAmount);
+
+          if (inputSide === 'amount0') {
+            // Only update the calculated field, not the user input field
+            const ratio = inputAmountNum / amount0Total;
+            const calculatedAmount1 = amount1Total * ratio;
+            if (version === increaseCalcVersionRef.current) {
+              setIncreaseAmount1(calculatedAmount1.toString());
+            }
+          } else {
+            // Only update the calculated field, not the user input field
+            const ratio = inputAmountNum / amount1Total;
+            const calculatedAmount0 = amount0Total * ratio;
+            if (version === increaseCalcVersionRef.current) {
+              setIncreaseAmount0(calculatedAmount0.toString());
+            }
+          }
+          return;
+        }
+
+        // Use proper API calculation for in-range positions
+        const response = await fetch('/api/liquidity/calculate-liquidity-parameters', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            token0Symbol,
-            token1Symbol,
-            chainId,
+            token0Symbol: token0Symbol,
+            token1Symbol: token1Symbol,
+            inputAmount: inputAmount,
+            inputTokenSymbol: inputSide === 'amount0' ? token0Symbol : token1Symbol,
+            userTickLower: positionToModify.tickLower,
+            userTickUpper: positionToModify.tickUpper,
+            chainId: 8453, // Base chain
           }),
         });
-        
+
         if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.message || "Failed to fetch initial pool state.");
+          throw new Error(`API error: ${response.status}`);
         }
-        const poolState = await response.json();
 
-        if (poolState.currentPrice && typeof poolState.currentPoolTick === 'number') {
-          setCurrentPrice(poolState.currentPrice); 
-          setCurrentPoolTick(poolState.currentPoolTick);
-
-          if (poolState.sqrtPriceX96) { 
-            setCurrentPoolSqrtPriceX96(poolState.sqrtPriceX96.toString()); 
+        const result = await response.json();
+        
+        if (version === increaseCalcVersionRef.current) {
+          if (inputSide === 'amount0') {
+            // Only update the calculated field, not the user input field
+            const token1Symbol = getTokenSymbolByAddress(positionToModify.token1.address);
+            const token1Decimals = token1Symbol ? TOKEN_DEFINITIONS[token1Symbol]?.decimals || 18 : 18;
+            const amount1Display = formatUnits(BigInt(result.amount1 || '0'), token1Decimals);
+            setIncreaseAmount1(formatCalculatedInput(amount1Display));
           } else {
-            setCurrentPoolSqrtPriceX96(null); 
+            // Only update the calculated field, not the user input field
+            const token0Symbol = getTokenSymbolByAddress(positionToModify.token0.address);
+            const token0Decimals = token0Symbol ? TOKEN_DEFINITIONS[token0Symbol]?.decimals || 18 : 18;
+            const amount0Display = formatUnits(BigInt(result.amount0 || '0'), token0Decimals);
+            setIncreaseAmount0(formatCalculatedInput(amount0Display));
           }
-          
-          const numericCurrentPrice = parseFloat(poolState.currentPrice);
-          if (!isNaN(numericCurrentPrice)) {
-              setCurrentPriceLine(numericCurrentPrice);
-              if (typeof poolState.currentPoolTick === 'number') {
-                const centerTick = poolState.currentPoolTick;
-                const percentage = 0.30;
-                const tickDeltaUpper = Math.log(1 + percentage) / Math.log(1.0001);
-                const tickDeltaLower = Math.log(1 - percentage) / Math.log(1.0001);
-                const domainTickLower = Math.round(centerTick + tickDeltaLower);
-                const domainTickUpper = Math.round(centerTick + tickDeltaUpper);
-                setXDomain([domainTickLower, domainTickUpper]);
-              } else {
-                setXDomain([numericCurrentPrice * 0.5, numericCurrentPrice * 1.5]); 
-              }
-          } else {
-              setCurrentPriceLine(null);
-              setXDomain([-120000, 120000]); 
-          }
-        } else {
-          setCurrentPriceLine(null);
-          setCurrentPoolSqrtPriceX96(null);
-          throw new Error("Pool state data is incomplete.");
         }
-      } catch (error: any) {
-        toast.error("Pool Data Error", { description: error.message });
-        setCurrentPriceLine(null);
-        setCurrentPoolSqrtPriceX96(null);
+      } catch (error) {
+        console.error("Error calculating increase amount:", error);
+        
+        // Fallback to simple ratio calculation on API error
+        try {
+          const amount0Total = parseFloat(positionToModify.token0.amount);
+          const amount1Total = parseFloat(positionToModify.token1.amount);
+          const inputAmountNum = parseFloat(inputAmount);
+
+          if (version === increaseCalcVersionRef.current) {
+            if (inputSide === 'amount0') {
+              // Only update the calculated field, not the user input field
+              const ratio = inputAmountNum / amount0Total;
+              const calculatedAmount1 = amount1Total * ratio;
+              setIncreaseAmount1(formatCalculatedInput(calculatedAmount1.toString()));
+            } else {
+              // Only update the calculated field, not the user input field
+              const ratio = inputAmountNum / amount1Total;
+              const calculatedAmount0 = amount0Total * ratio;
+              setIncreaseAmount0(formatCalculatedInput(calculatedAmount0.toString()));
+            }
+          }
+        } catch (fallbackError) {
+          console.error("Fallback calculation also failed:", fallbackError);
+        }
       } finally {
-        setIsPoolStateLoading(false);
+        if (version === increaseCalcVersionRef.current) {
+          setIsIncreaseCalculating(false);
+        }
       }
-    };
+    }, 300),
+    [positionToModify]
+  );
 
-    if (derivedPoolId) {
-      fetchPoolState();
-    } else {
-      // If no pool is derived (e.g., one token cleared), reset relevant state
-      setCurrentPrice(null);
-      setCurrentPoolTick(null);
-      setCurrentPriceLine(null);
-      setCurrentPoolSqrtPriceX96(null);
+  // Helper functions
+  const getFormattedDisplayBalance = (numericBalance: number | undefined, tokenSymbolForDecimals: TokenSymbol): string => {
+    if (numericBalance === undefined || isNaN(numericBalance)) {
+      numericBalance = 0;
     }
-  }, [isOpen, derivedPoolId, token0Symbol, token1Symbol, chainId]);
+    if (numericBalance === 0) {
+      return "0.000";
+    } else if (numericBalance > 0 && numericBalance < 0.001) {
+      return "< 0.001";
+    } else {
+      const displayDecimals = TOKEN_DEFINITIONS[tokenSymbolForDecimals]?.displayDecimals ?? 4;
+      return numericBalance.toFixed(displayDecimals);
+    }
+  };
 
-  // Effect to populate available tokens for selection
+  const displayToken0Balance = !balanceToken0Symbol ? "~" : (isLoadingToken0Balance ? "Loading..." : (token0BalanceData ? getFormattedDisplayBalance(parseFloat(token0BalanceData.formatted), balanceToken0Symbol) : "~"));
+  const displayToken1Balance = !balanceToken1Symbol ? "~" : (isLoadingToken1Balance ? "Loading..." : (token1BalanceData ? getFormattedDisplayBalance(parseFloat(token1BalanceData.formatted), balanceToken1Symbol) : "~"));
+
+  // Calculate which side is productive for out-of-range positions
+  let increaseProductiveSide: null | 'amount0' | 'amount1' = null;
+  try {
+    if (positionToModify && !positionToModify.isInRange) {
+      // Prefer actual balances to determine productive side when out of range
+      const amt0 = Number.parseFloat(positionToModify.token0?.amount || '0');
+      const amt1 = Number.parseFloat(positionToModify.token1?.amount || '0');
+      if (amt0 > 0 && (!Number.isFinite(amt1) || amt1 <= 0)) increaseProductiveSide = 'amount0';
+      else if (amt1 > 0 && (!Number.isFinite(amt0) || amt0 <= 0)) increaseProductiveSide = 'amount1';
+      // If both sides have amounts, return null to show both
+    }
+  } catch (error) {
+    console.error("Error calculating productive side:", error);
+  }
+
+  // Initialize tokens based on selected pool
+  useEffect(() => {
+    if (isOpen && selectedPoolId && !isExistingPosition) {
+      const poolConfig = getPoolById(selectedPoolId);
+      if (poolConfig) {
+        setToken0Symbol(poolConfig.currency0.symbol as TokenSymbol);
+        setToken1Symbol(poolConfig.currency1.symbol as TokenSymbol);
+      }
+    }
+  }, [isOpen, selectedPoolId, isExistingPosition]);
+
+  // Initialize existing position state when modal opens
+  useEffect(() => {
+    if (isOpen && isExistingPosition && positionToModify) {
+      // Reset amounts when modal opens
+      setIncreaseAmount0("");
+      setIncreaseAmount1("");
+      setIncreaseActiveInputSide(null);
+      setIncreasePercentage(0);
+    }
+  }, [isOpen, isExistingPosition, positionToModify]);
+
+  // Populate available tokens
   useEffect(() => {
     if (isOpen) {
       const tokensRecord = getAllTokens();
@@ -684,11 +1075,11 @@ export function AddLiquidityModal({
         name: token.name,
         decimals: token.decimals,
         icon: token.icon,
-        usdPrice: 1 // Default price, will be updated by TokenSelector
+        usdPrice: getUSDPriceForSymbol(token.symbol)
       }));
       setAvailableTokens(tokenSelectorTokens);
     }
-  }, [isOpen]);
+  }, [isOpen, getUSDPriceForSymbol]);
 
   // Token selection handlers
   const handleToken0Select = (token: TokenSelectorToken) => {
@@ -707,1156 +1098,116 @@ export function AddLiquidityModal({
     setActiveInputSide(null);
   };
 
-  // --- BEGIN Panning Handlers ---
-  const handlePanMouseDown = (e: any) => {
-    if (e && e.chartX) { // e.chartX is provided by Recharts
-      setIsPanning(true);
-      panStartXRef.current = e.chartX;
-      panStartDomainRef.current = [...xDomain] as [number, number]; // Store current domain
-      if (chartContainerRef.current) chartContainerRef.current.style.cursor = 'grabbing';
+  const handleUseFullBalance = (balanceString: string, tokenSymbolForDecimals: TokenSymbol, isToken0: boolean) => {
+    try {
+      const numericBalance = parseFloat(balanceString);
+      if (isNaN(numericBalance) || numericBalance <= 0) return;
+
+      const formattedBalance = numericBalance.toFixed(TOKEN_DEFINITIONS[tokenSymbolForDecimals]?.decimals || 18);
+
+      if (isExistingPosition) {
+        // For existing positions
+        if (isToken0) {
+          setIncreaseAmount0(formattedBalance);
+          setIncreaseActiveInputSide('amount0');
+          // Trigger calculation for the corresponding amount
+          if (formattedBalance && parseFloat(formattedBalance) > 0) {
+            calculateIncreaseAmount(formattedBalance, 'amount0');
+          }
+        } else {
+          setIncreaseAmount1(formattedBalance);
+          setIncreaseActiveInputSide('amount1');
+          // Trigger calculation for the corresponding amount
+          if (formattedBalance && parseFloat(formattedBalance) > 0) {
+            calculateIncreaseAmount(formattedBalance, 'amount1');
+          }
+        }
+      } else {
+        // For new positions
+        if (isToken0) {
+          setAmount0(formattedBalance);
+          setActiveInputSide('amount0');
+        } else {
+          setAmount1(formattedBalance);
+          setActiveInputSide('amount1');
+        }
+      }
+    } catch (error) {
+      // Handle error silently
     }
   };
 
-  const handlePanMouseMove = (e: any) => {
-    if (isPanning && e && e.chartX && panStartXRef.current !== null && panStartDomainRef.current !== null) {
-      const currentChartX = e.chartX;
-      const dxChartPixels = currentChartX - panStartXRef.current;
-
-      // Estimate chart plot area width
-      const chartWidthInPixels = chartContainerRef.current?.clientWidth || 400;
-      const startDomainRange = panStartDomainRef.current[1] - panStartDomainRef.current[0];
-      
-      // Calculate domain shift based on pixel movement
-      const domainShift = (dxChartPixels / chartWidthInPixels) * startDomainRange;
-      
-      // Standard behavior - dragging right shifts view right (decreases domain values)
-      let newMin = panStartDomainRef.current[0] - domainShift;
-      let newMax = panStartDomainRef.current[1] - domainShift;
-
-      // Ensure min is not greater than max
-      if (newMin >= newMax) {
-        const safetyGap = 0.1;
-        newMax = newMin + safetyGap;
+  // Handle amount input change with balance capping and wiggle animation
+  const handleIncreaseAmountChangeWithWiggle = useCallback((e: React.ChangeEvent<HTMLInputElement>, tokenSide: 'amount0' | 'amount1'): string => {
+    if (!isExistingPosition || !positionToModify) return e.target.value;
+    
+    const newAmount = sanitizeDecimalInput(e.target.value);
+    
+    const balanceData = tokenSide === 'amount0' ? token0BalanceData : token1BalanceData;
+    const maxAmount = balanceData ? parseFloat(balanceData.formatted) : 0;
+    
+    const inputAmount = parseFloat(newAmount || "0");
+    const prevAmount = tokenSide === 'amount0' 
+      ? parseFloat(increaseAmount0 || "0")
+      : parseFloat(increaseAmount1 || "0");
+    
+    // Check if going over balance to trigger wiggle
+    const wasOver = Number.isFinite(prevAmount) && Number.isFinite(maxAmount) ? prevAmount > maxAmount : false;
+    const isOver = Number.isFinite(inputAmount) && Number.isFinite(maxAmount) ? inputAmount > maxAmount : false;
+    
+    if (isOver && !wasOver) {
+      if (tokenSide === 'amount0') {
+        setBalanceWiggleCount0(c => c + 1);
+      } else {
+        setBalanceWiggleCount1(c => c + 1);
       }
-
-      setXDomain([newMin, newMax]);
     }
+    
+    // Cap the amount to max balance if exceeded
+    const finalAmount = isOver ? maxAmount.toString() : newAmount;
+    
+    if (tokenSide === 'amount0') {
+      setIncreaseAmount0(finalAmount);
+    } else {
+      setIncreaseAmount1(finalAmount);
+    }
+    
+    return finalAmount;
+  }, [isExistingPosition, positionToModify, token0BalanceData, token1BalanceData, increaseAmount0, increaseAmount1]);
+
+
+  // Reset form when modal closes
+  const resetForm = () => {
+    if (!isExistingPosition) {
+      setToken0Symbol('');
+      setToken1Symbol('');
+      setAmount0("");
+      setAmount1("");
+      setTickLower(sdkMinTick.toString());
+      setTickUpper(sdkMaxTick.toString());
+      setActiveInputSide(null);
+      setCalculatedData(null);
+    } else {
+      setIncreaseAmount0("");
+      setIncreaseAmount1("");
+      setIncreaseActiveInputSide(null);
+      setIncreasePercentage(0);
+    }
+    setTokenChooserOpen(null);
+    setTokenSearchTerm('');
+    resetTransactionState();
   };
-
-  const handlePanMouseUpOrLeave = () => {
-    if (isPanning) {
-      setIsPanning(false);
-      panStartXRef.current = null;
-      panStartDomainRef.current = null;
-      if (chartContainerRef.current) chartContainerRef.current.style.cursor = 'grab';
-    }
-  };
-  // --- END Panning Handlers ---
-
-  // Effect to update mock selected price range based on activePreset and currentPriceLine/xDomain
-  useEffect(() => {
-    if (!currentPriceLine) return; // Don't calculate if no current price
-
-    let newRange: [number, number] | null = null;
-    const base = currentPriceLine;
-
-    switch (activePreset) {
-      case "Full Range":
-        // Use a significant portion of the current xDomain or a wider fixed range
-        newRange = [xDomain[0] + (xDomain[1] - xDomain[0]) * 0.05, xDomain[1] - (xDomain[1] - xDomain[0]) * 0.05];
-        break;
-      case "±3%":
-        newRange = [base * 0.97, base * 1.03];
-        break;
-      case "±8%":
-        newRange = [base * 0.92, base * 1.08];
-        break;
-      case "±15%":
-        newRange = [base * 0.85, base * 1.15];
-        break;
-      default:
-        // If no preset or an unknown one, clear the mock range or use last known priceAtTickLower/Upper
-        // For now, let's try to use priceAtTickLower/Upper if they are valid
-        const ptl = parseFloat(priceAtTickLower || "");
-        const ptu = parseFloat(priceAtTickUpper || "");
-        if (!isNaN(ptl) && !isNaN(ptu) && ptl < ptu && ptu < 1e10 && ptl > 1e-10) { // Added sanity check for extreme values
-            newRange = [ptl, ptu];
-        } else {
-            newRange = null; // Or set to a default small range if needed
-        }
-        break;
-    }
-    if (newRange && newRange[0] >= newRange[1]) newRange = null; // Ensure min < max
-
-    setMockSelectedPriceRange(newRange);
-
-  }, [activePreset, currentPriceLine, xDomain, priceAtTickLower, priceAtTickUpper]);
-
-  // Debug useEffect for actual priceAtTickLower/Upper changes (can be removed later)
-  useEffect(() => {
-    const ptlNum = parseFloat(priceAtTickLower || "");
-    const ptuNum = parseFloat(priceAtTickUpper || "");
-    if (!isNaN(ptlNum) && !isNaN(ptuNum) && ptlNum < ptuNum) {
-      
-    }
-  }, [priceAtTickLower, priceAtTickUpper, xDomain]);
-
-  // Custom shape for ReferenceArea with rounded top corners
-  const RoundedTopReferenceArea = (props: any) => {
-    const { x, y, width, height, fill, fillOpacity, strokeOpacity } = props;
-    
-    // Validate all required numeric props
-    if (
-      typeof x !== 'number' || isNaN(x) ||
-      typeof y !== 'number' || isNaN(y) ||
-      typeof width !== 'number' || isNaN(width) ||
-      typeof height !== 'number' || isNaN(height) ||
-      width <= 0 || height <= 0
-    ) {
-      console.warn("[RoundedTopReferenceArea] Invalid props received:", { x, y, width, height });
-      return null;
-    }
-
-    const r = 6;
-
-    const path = `
-      M ${x},${y + height} 
-      L ${x + width},${y + height}
-      L ${x + width},${y + r}
-      Q ${x + width},${y} ${x + width - r},${y}
-      L ${x + r},${y}
-      Q ${x},${y} ${x},${y + r}
-      Z
-    `;
-
-    // Fallback for very small widths where arcs might look weird
-    if (width < 2 * r) {
-        return <rect x={x} y={y} width={width} height={height} fill={fill} fillOpacity={fillOpacity} strokeOpacity={strokeOpacity} />;
-    }
-
-    return <path d={path} fill={fill} fillOpacity={fillOpacity} strokeOpacity={strokeOpacity} />;
-  };
-
-  // --- BEGIN Effect to fetch Pool APR data (currently 24h fees) ---
-  // This effect is no longer needed as APR is passed as a prop.
-  // It can be removed or commented out if there's a chance it might be re-enabled for other fee data.
-  /*
-  useEffect(() => {
-    if (isOpen && selectedPoolId && token0Symbol && token1Symbol && chainId) {
-      const fetchPoolFeeData = async () => {
-        setPoolAPR("Loading APR...");
-        setPoolDailyFeesUSD(null);
-        try {
-          const token0Def = TOKEN_DEFINITIONS[token0Symbol];
-          const token1Def = TOKEN_DEFINITIONS[token1Symbol];
-
-          if (!token0Def || !token1Def) {
-            
-            setPoolAPR("APR N/A");
-            return;
-          }
-
-                  const sdkToken0 = new Token(chainId, getAddress(token0Def.address), token0Def.decimals);
-        const sdkToken1 = new Token(chainId, getAddress(token1Def.address), token1Def.decimals);
-
-          const [sortedSdkToken0, sortedSdkToken1] = sdkToken0.sortsBefore(sdkToken1)
-            ? [sdkToken0, sdkToken1]
-            : [sdkToken1, sdkToken0];
-          
-          const poolIdBytes32 = V4PoolSDK.getPoolId(
-            sortedSdkToken0,
-            sortedSdkToken1,
-            V4_POOL_FEE,
-            V4_POOL_TICK_SPACING,
-            V4_POOL_HOOKS
-          );
-
-          const response = await fetch(`/api/liquidity/get-rolling-volume-fees?poolId=${poolIdBytes32}&days=1`);
-          if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.message || "Failed to fetch 24h fee data");
-          }
-          const feeData = await response.json();
-          
-          const fees24h = parseFloat(feeData.feesUSD);
-          if (!isNaN(fees24h)) {
-            setPoolDailyFeesUSD(fees24h.toLocaleString('en-US', { style: 'currency', currency: 'USD' }));
-            
-            setPoolAPR("APR (TVL N/A)"); // Placeholder until TVL is implemented
-          } else {
-            setPoolAPR("Fees N/A");
-          }
-
-        } catch (error: any) {
-          
-          setPoolAPR("APR Error");
-          setPoolDailyFeesUSD(null);
-        }
-      };
-
-      fetchPoolFeeData();
-    }
-  }, [isOpen, selectedPoolId, token0Symbol, token1Symbol, chainId]);
-  */
-  // --- END Effect to fetch Pool APR data ---
-
-  // Effect to calculate Capital Efficiency and Enhanced APR
-  useEffect(() => {
-    // Initialize or reset if poolApr is not valid or not yet loaded
-    if (!poolApr || ["Loading APR...", "APR N/A", "APR Error", "Yield N/A", "Fees N/A"].includes(poolApr)) {
-      setEnhancedAprDisplay(poolApr || "Yield N/A");
-      setCapitalEfficiencyFactor(1);
-      return;
-    }
-
-    const tl = parseInt(tickLower);
-    const tu = parseInt(tickUpper);
-    // Ensure currentPoolTick is also treated as an integer for comparison
-    const cPt = currentPoolTick !== null ? Math.round(Number(currentPoolTick)) : null;
-
-    const numericBaseApr = parseFloat(poolApr.replace("%", ""));
-    if (isNaN(numericBaseApr)) {
-        setEnhancedAprDisplay(poolApr); // Fallback if APR parsing fails
-        setCapitalEfficiencyFactor(1);
-        return;
-    }
-
-    if (isNaN(tl) || isNaN(tu) || tl >= tu) {
-      setCapitalEfficiencyFactor(1);
-      // If range is invalid, display base APR if in range (or no current price), or 0% if out of range.
-      // For an invalid range, it's always out of range conceptually unless it's full range.
-      if (activePreset === "Full Range") { // Keep full range APR if invalid ticks occur in full range mode
-         setEnhancedAprDisplay(poolApr);
-      } else { // For any other invalid range, it's out of range.
-         setEnhancedAprDisplay("0.00% (Out of Range)");
-      }
-      return;
-    }
-
-    let M = 1;
-    let concentrationMethod = 'Full Range'; // For logging
-
-    // Calculate M based on active preset or manual ticks
-    if (activePreset === "Full Range" || (tl <= sdkMinTick && tu >= sdkMaxTick)) {
-      M = 1;
-      concentrationMethod = 'Full Range';
-    } else if (activePreset && ["±3%", "±8%", "±15%"].includes(activePreset)) {
-        // Use the new simplified formula for percentage presets
-        let percentage = 0;
-        if (activePreset === "±3%") percentage = 0.03;
-        else if (activePreset === "±8%") percentage = 0.08;
-        else if (activePreset === "±15%") percentage = 0.15;
-
-        if (percentage > 0) {
-             M = 1 / (2 * percentage);
-             concentrationMethod = `Preset ${activePreset} (Formula)`;
-        } else {
-             M = 1; // Should not happen with current presets, but as a safety
-             concentrationMethod = 'Preset Zero Range?';
-        }
-         M = Math.min(M, 500); // Apply the same cap as the tick-based method
-    }
-     else {
-      // Use the existing tick-based calculation for manual ranges (activePreset is null)
-      const P_lower = Math.pow(1.0001, tl);
-      const P_upper = Math.pow(1.0001, tu);
-
-      concentrationMethod = 'Manual Range (Tick Formula)';
-
-      if (P_lower <= 0 || !isFinite(P_upper) || P_lower >= P_upper) {
-        M = 1; // Invalid range for concentration formula
-      } else {
-        const priceRatio = P_upper / P_lower;
-        const ratio_pow_025 = Math.pow(priceRatio, 0.25);
-
-        if (Math.abs(ratio_pow_025 - 1) < 1e-9) { // Pu is extremely close to Pl
-            M = 500; // Cap for extremely narrow ranges
-        } else {
-            const denominator = ratio_pow_025 - (1 / ratio_pow_025);
-            if (Math.abs(denominator) < 1e-9) {
-                M = 500; // Denominator too small, cap M
-            } else {
-                M = 2 / denominator;
-            }
-        }
-      }
-      M = Math.max(1, M); // Ensure factor is at least 1 (should be, unless P_lower > P_upper was missed)
-      M = Math.min(M, 500); // General cap for sanity, adjustable
-    }
-    setCapitalEfficiencyFactor(parseFloat(M.toFixed(2)));
-
-    // If not full range, and current price is outside the selected ticks, APR is 0
-    if (activePreset !== "Full Range" && !(tl <= sdkMinTick && tu >= sdkMaxTick) && cPt !== null && (cPt < tl || cPt > tu)) {
-        setEnhancedAprDisplay("0.00% (Out of Range)");
-    } else {
-        const boostedNumericApr = numericBaseApr * M;
-         // Apply a cap to the displayed APR for very narrow ranges, matching the M cap
-        const cappedBoostedNumericApr = Math.min(boostedNumericApr, numericBaseApr * 500); 
-        setEnhancedAprDisplay(`${cappedBoostedNumericApr.toFixed(2)}%`);
-    }
-
-  }, [poolApr, activePreset, tickLower, tickUpper, sdkMinTick, sdkMaxTick, currentPoolTick]);
-
-  // Effect to update price input strings when underlying ticks or base display token changes
-  // REFACTORED: Now properly handles token order - ensures consistent calculations regardless of user selection order
-  useEffect(() => {
-    const numTickLower = parseInt(tickLower);
-    const numTickUpper = parseInt(tickUpper);
-
-    let valForMinInput: number | null = null;
-    let valForMaxInput: number | null = null;
-
-          const decimalsForToken0Display = TOKEN_DEFINITIONS[token0Symbol]?.displayDecimals ?? (token0Symbol === 'aBTC' ? 8 : 4);
-      const decimalsForToken1Display = TOKEN_DEFINITIONS[token1Symbol]?.displayDecimals ?? (token1Symbol === 'aBTC' ? 8 : 4);
-
-    const rawApiPriceAtTickLower = calculatedData?.priceAtTickLower ? parseFloat(calculatedData.priceAtTickLower) : null;
-    const rawApiPriceAtTickUpper = calculatedData?.priceAtTickUpper ? parseFloat(calculatedData.priceAtTickUpper) : null;
-
-    // Get token definitions and check canonical order
-    const token0Def = TOKEN_DEFINITIONS[token0Symbol];
-    const token1Def = TOKEN_DEFINITIONS[token1Symbol];
-
-    if (!token0Def || !token1Def || !poolToken0 || !poolToken1) {
-      setMinPriceInputString("");
-      setMaxPriceInputString("");
-      return;
-    }
-
-    // Check if user's token order matches canonical pool order
-    const isUserOrderMatchingCanonical = poolToken0.address.toLowerCase() === token0Def.address.toLowerCase();
-    
-    // Calculate prices based on canonical pool order, then display appropriately
-    // Always work with canonical pool tokens for consistent tick interpretation
-    const canonicalToken0Decimals = poolToken0.decimals;
-    const canonicalToken1Decimals = poolToken1.decimals;
-    
-    // Token order and decimals are now properly handled using canonical pool order
-    
-    if (baseTokenForPriceDisplay === token0Symbol) {
-        // User wants to see price of token1 in terms of token0
-        let finalDecimalAdjFactor: number;
-        let priceCalculationFunc: (tick: number) => number;
-        
-        if (isUserOrderMatchingCanonical) {
-            // token0=canonicalToken0, token1=canonicalToken1
-            // Want price of canonicalToken1 in canonicalToken0 terms
-            finalDecimalAdjFactor = Math.pow(10, canonicalToken1Decimals - canonicalToken0Decimals);
-            priceCalculationFunc = (tick) => Math.pow(1.0001, -tick);
-            console.log(`[Decimal Factor] Matching case: 10^(${canonicalToken1Decimals}-${canonicalToken0Decimals}) = ${finalDecimalAdjFactor}`);
-        } else {
-            // token0=canonicalToken1, token1=canonicalToken0
-            // Want price of canonicalToken0 in canonicalToken1 terms = 1 / (price of canonicalToken1 in canonicalToken0)
-            finalDecimalAdjFactor = Math.pow(10, canonicalToken0Decimals - canonicalToken1Decimals);
-            priceCalculationFunc = (tick) => 1 / Math.pow(1.0001, -tick);
-            console.log(`[Decimal Factor] Non-matching case: 10^(${canonicalToken0Decimals}-${canonicalToken1Decimals}) = ${finalDecimalAdjFactor}`);
-        }
-        
-        if (rawApiPriceAtTickLower !== null) {
-            valForMaxInput = rawApiPriceAtTickLower * finalDecimalAdjFactor;
-        } else if (!isNaN(numTickLower)) {
-            valForMaxInput = priceCalculationFunc(numTickLower) * finalDecimalAdjFactor;
-        }
-        
-        if (rawApiPriceAtTickUpper !== null) {
-            valForMinInput = rawApiPriceAtTickUpper * finalDecimalAdjFactor;
-        } else if (!isNaN(numTickUpper)) {
-            valForMinInput = priceCalculationFunc(numTickUpper) * finalDecimalAdjFactor;
-        }
-    } else {
-        // User wants to see price of token0 in terms of token1
-        let finalDecimalAdjFactor: number;
-        let priceCalculationFunc: (tick: number) => number;
-        
-        if (isUserOrderMatchingCanonical) {
-            // token0=canonicalToken0, token1=canonicalToken1
-            // Want price of canonicalToken0 in canonicalToken1 terms = 1 / (price of canonicalToken1 in canonicalToken0)
-            finalDecimalAdjFactor = Math.pow(10, canonicalToken0Decimals - canonicalToken1Decimals);
-            priceCalculationFunc = (tick) => 1 / Math.pow(1.0001, -tick);
-        } else {
-            // token0=canonicalToken1, token1=canonicalToken0
-            // Want price of canonicalToken1 in canonicalToken0 terms
-            finalDecimalAdjFactor = Math.pow(10, canonicalToken1Decimals - canonicalToken0Decimals);
-            priceCalculationFunc = (tick) => Math.pow(1.0001, -tick);
-        }
-        
-        if (rawApiPriceAtTickLower !== null) {
-            valForMinInput = (1 / rawApiPriceAtTickLower) * finalDecimalAdjFactor;
-        } else if (!isNaN(numTickLower)) {
-            valForMinInput = priceCalculationFunc(numTickLower) * finalDecimalAdjFactor;
-        }
-        
-        if (rawApiPriceAtTickUpper !== null) {
-            valForMaxInput = (1 / rawApiPriceAtTickUpper) * finalDecimalAdjFactor;
-        } else if (!isNaN(numTickUpper)) {
-            valForMaxInput = priceCalculationFunc(numTickUpper) * finalDecimalAdjFactor;
-        }
-    }
-
-    let finalMinPriceString = "";
-    let finalMaxPriceString = "";
-    const displayDecimals = baseTokenForPriceDisplay === token0Symbol ? decimalsForToken0Display : decimalsForToken1Display;
-
-    // Formatting for Min Price String
-    if (valForMinInput !== null && !isNaN(valForMinInput)) {
-        if (valForMinInput >= 0 && valForMinInput < 1e-11) {
-            finalMinPriceString = "0";
-        } else if (!isFinite(valForMinInput) || valForMinInput > 1e30) {
-            finalMinPriceString = "∞";
-        } else {
-            finalMinPriceString = valForMinInput.toFixed(displayDecimals);
-        }
-    } else {
-        finalMinPriceString = ""; // Show empty for null/NaN values
-    }
-
-    // Formatting for Max Price String
-    if (valForMaxInput !== null && !isNaN(valForMaxInput)) {
-        if (valForMaxInput >= 0 && valForMaxInput < 1e-11) {
-            finalMaxPriceString = "0";
-        } else if (!isFinite(valForMaxInput) || valForMaxInput > 1e30) {
-            finalMaxPriceString = "∞";
-        } else {
-            finalMaxPriceString = valForMaxInput.toFixed(displayDecimals);
-        }
-    } else {
-        finalMaxPriceString = ""; // Show empty for null/NaN values
-    }
-
-    // --- BEGIN USER REQUESTED LOG ---
-    // Corrected variable names for logging
-    const logTickUpper = numTickUpper; // Use numTickUpper
-    const logCurrentPoolTick = currentPoolTick !== null ? Number(currentPoolTick) : null; // Use currentPoolTick
-
-    const token0Decimals_forLog = TOKEN_DEFINITIONS[token0Symbol]?.decimals ?? 18;
-    const token1Decimals_forLog = TOKEN_DEFINITIONS[token1Symbol]?.decimals ?? 18;
-    const decimalAdjustmentFactor_forLog = Math.pow(10, token1Decimals_forLog - token0Decimals_forLog);
-
-    const pTickAtCurrent_forLog = logCurrentPoolTick !== null ? Math.pow(1.0001, logCurrentPoolTick) : null;
-    const pTickAtUpper_forLog = !isNaN(logTickUpper) ? Math.pow(1.0001, logTickUpper) : null;
-
-    const actualPriceT1perT0AtCurrentPoolTick_forLog = pTickAtCurrent_forLog !== null ? pTickAtCurrent_forLog * decimalAdjustmentFactor_forLog : null;
-    const actualPriceT1perT0AtUpperTick_forLog = pTickAtUpper_forLog !== null ? pTickAtUpper_forLog * decimalAdjustmentFactor_forLog : null;
-
-    const displayDecimalsForT0_forLog = TOKEN_DEFINITIONS[token0Symbol]?.displayDecimals ?? 2;
-
-    // Debug log to verify calculated prices
-    console.log(`[Price Display] Min: ${finalMinPriceString}, Max: ${finalMaxPriceString} (denominated in ${baseTokenForPriceDisplay})`);
-
-    setMinPriceInputString(finalMinPriceString);
-    setMaxPriceInputString(finalMaxPriceString);
-
-  }, [tickLower, tickUpper, baseTokenForPriceDisplay, token0Symbol, token1Symbol, sdkMinTick, sdkMaxTick, calculatedData, currentPoolTick, poolToken0, poolToken1]); // Added currentPoolTick, poolToken0, poolToken1 to dependencies
-  // Effect to auto-apply active percentage preset when currentPrice changes OR when activePreset changes
-  useEffect(() => {
-    // Ensure currentPrice is valid and we have a preset that requires calculation
-    //MODIFIED: Now bases off currentPoolTick if available, falling back to currentPrice only if tick is null.
-    if (activePreset && ["±3%", "±8%", "±15%"].includes(activePreset)) {
-        let percentage = 0;
-        if (activePreset === "±3%") percentage = 0.03;
-        else if (activePreset === "±8%") percentage = 0.08;
-        else if (activePreset === "±15%") percentage = 0.15;
-
-        let newTickLower: number;
-        let newTickUpper: number;
-
-        if (currentPoolTick !== null) {
-            // Calculate based on currentPoolTick
-            const priceRatioUpper = 1 + percentage;
-            const priceRatioLower = 1 - percentage;
-
-            const tickDeltaUpper = Math.round(Math.log(priceRatioUpper) / Math.log(1.0001));
-            const tickDeltaLower = Math.round(Math.log(priceRatioLower) / Math.log(1.0001)); // Will be negative
-
-            newTickLower = currentPoolTick + tickDeltaLower;
-            newTickUpper = currentPoolTick + tickDeltaUpper;
-        } else if (currentPrice) {
-            // Fallback to currentPrice if currentPoolTick is not yet available
-            const numericCurrentPrice = parseFloat(currentPrice);
-            if (isNaN(numericCurrentPrice)) {
-                toast.error("Preset Error", { description: "Cannot apply preset: current price is invalid and pool tick unavailable." });
-                return;
-            }
-            const priceLowerTarget = numericCurrentPrice * (1 - percentage);
-            const priceUpperTarget = numericCurrentPrice * (1 + percentage);
-
-            newTickLower = Math.log(priceLowerTarget) / Math.log(1.0001);
-            newTickUpper = Math.log(priceUpperTarget) / Math.log(1.0001);
-        } else {
-            // Cannot apply preset yet, waiting for pool data
-            // toast.info("Preset Info", { description: "Waiting for pool data to apply preset." }); // Optional: can be noisy
-            return;
-        }
-
-        // Align and clamp
-        newTickLower = Math.ceil(newTickLower / defaultTickSpacing) * defaultTickSpacing;
-        newTickUpper = Math.floor(newTickUpper / defaultTickSpacing) * defaultTickSpacing;
-
-        newTickLower = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTickLower));
-        newTickUpper = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTickUpper));
-
-        if (newTickUpper - newTickLower >= defaultTickSpacing) {
-            if (newTickLower.toString() !== tickLower || newTickUpper.toString() !== tickUpper) {
-                if (preparedTxData) resetTransactionState();
-                setTickLower(newTickLower.toString());
-                setTickUpper(newTickUpper.toString());
-                setInitialDefaultApplied(true); 
-            }
-        } else {
-             toast.info("Preset Range Too Narrow", { description: "Selected preset results in an invalid range after tick alignment. Try a wider preset or manual range."});
-        }
-    } else if (activePreset === "Full Range") {
-        if (tickLower !== sdkMinTick.toString() || tickUpper !== sdkMaxTick.toString()) {
-            if (preparedTxData) resetTransactionState();
-            setTickLower(sdkMinTick.toString());
-            setTickUpper(sdkMaxTick.toString());
-            setInitialDefaultApplied(true); 
-        }
-    }
-  }, [currentPrice, currentPoolTick, activePreset, defaultTickSpacing, sdkMinTick, sdkMaxTick, token0Symbol, token1Symbol, tickLower, tickUpper, preparedTxData, resetTransactionState]);
-
-  // --- BEGIN Fetch Liquidity Depth Data ---
-  useEffect(() => {
-    const fetchLiquidityDepthData = async () => {
-      if (!isOpen || !derivedPoolId || !chainId || currentPoolTick === null) {
-        // Clear previous data if conditions are not met (e.g., modal closed, pool changed before tick loaded)
-        setRawHookPositions(null);
-        return;
-      }
-
-      const derivedOnChainPoolId = getDerivedOnChainPoolId();
-      if (!derivedOnChainPoolId) {
-        console.warn("[AddLiquidityModal] Could not derive on-chain pool ID. Skipping liquidity depth fetch.");
-        setRawHookPositions(null);
-        return;
-      }
-
-      setIsFetchingLiquidityDepth(true);
-      setIsChartDataLoading(true);
-
-      try {
-        const graphqlQuery = {
-          query: `
-            query GetAllHookPositionsForDepth {
-              hookPositions(first: 1000, orderBy: liquidity, orderDirection: desc) { # Fetches top 1000 by liquidity
-                pool # Fetch pool ID string directly
-                tickLower
-                tickUpper
-                liquidity
-              }
-            }
-          `,
-          // No variables needed for this broad query
-        };
-
-        const queryPayload = { query: graphqlQuery.query };
-
-        const response = await fetch(SUBGRAPH_URL, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(queryPayload),
-        });
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(`Network response was not ok: ${response.status} ${response.statusText}. Details: ${errorText}`);
-        }
-
-        const result = await response.json();
-
-        if (result.errors) {
-          console.error("[AddLiquidityModal] GraphQL errors from subgraph:", result.errors);
-          throw new Error(`GraphQL error: ${result.errors.map((e: any) => e.message).join(', ')}`);
-        }
-
-        if (result.data && result.data.hookPositions) {
-          // Adjust type hint for allFetchedPositions
-          const allFetchedPositions = result.data.hookPositions as Array<HookPosition & { pool: string }>; 
-          console.log(`[AddLiquidityModal] Subgraph returned ${allFetchedPositions.length} total hookPositions before client-side filtering.`);
-          
-          // Filter client-side using pos.pool directly
-          const relevantPositions = allFetchedPositions.filter(
-            pos => pos.pool && pos.pool.toLowerCase().trim() === derivedOnChainPoolId.trim()
-          );
-
-          setRawHookPositions(relevantPositions);
-        } else {
-          setRawHookPositions([]);
-          console.warn("[AddLiquidityModal] No hookPositions found in GraphQL response or unexpected data structure.");
-          toast.info("No liquidity depth data found.", { id: "liquidity-depth-fetch" });
-        }
-
-      } catch (error: any) {
-        console.error("[AddLiquidityModal] Error fetching liquidity depth data:", error);
-        toast.error("Liquidity Depth Error", { id: "liquidity-depth-fetch", description: error.message });
-        setRawHookPositions(null); // Clear data on error
-        generateFallbackChartData();
-      } finally {
-        setIsFetchingLiquidityDepth(false);
-        setIsChartDataLoading(false);
-        // Ensure toast is dismissed if it wasn't replaced by success/error/info
-        if (toast.dismiss && document.querySelector('[data-sonner-toast][data-id="liquidity-depth-fetch"]')) {
-            toast.dismiss("liquidity-depth-fetch");
-        }
-      }
-    };
-
-    if (token0Symbol && token1Symbol && token0Symbol !== '' && token1Symbol !== '') {
-      fetchLiquidityDepthData();
-    }
-  }, [isOpen, derivedPoolId, chainId, currentPoolTick, token0Symbol, token1Symbol, getDerivedOnChainPoolId]); // Dependencies ensure re-fetch on pool change when modal is open and tick is known
-  // --- END Fetch Liquidity Depth Data ---
-
-  // Generate simplified fallback chart data when API fails
-  const generateFallbackChartData = () => {
-    if (currentPoolTick === null) return;
-    
-    const simpleData: DepthChartDataPoint[] = [];
-    const centerTick = currentPoolTick;
-    
-    simpleData.push({ tick: centerTick - 20000, token0Depth: 0, normToken0Depth: 0, value: 0 });
-    simpleData.push({ tick: centerTick - 10000, token0Depth: 50, normToken0Depth: 0.5, value: 0.5 });
-    simpleData.push({ tick: centerTick, token0Depth: 100, normToken0Depth: 1, value: 1 });
-    simpleData.push({ tick: centerTick + 10000, token0Depth: 50, normToken0Depth: 0.5, value: 0.5 });
-    simpleData.push({ tick: centerTick + 20000, token0Depth: 0, normToken0Depth: 0, value: 0 });
-    
-    simpleData.sort((a, b) => a.tick - b.tick);
-    
-    setChartData(simpleData);
-  };
-
-  // --- BEGIN Process Raw Positions into Token0 Depth Delta Events ---
-  useEffect(() => {
-    if (
-      rawHookPositions && rawHookPositions.length > 0 &&
-      currentPoolTick !== null &&
-      currentPoolSqrtPriceX96 !== null && // Ensure sqrtPriceX96 is available
-      token0Symbol && token1Symbol && chainId &&
-      poolToken0 && poolToken1 && // Ensure poolToken0 and poolToken1 are available for decimal formatting
-      token0Symbol !== '' && token1Symbol !== '' // Ensure both tokens are selected
-    ) {
-      const newProcessedPositions: ProcessedPositionDetail[] = [];
-
-      const token0Def = TOKEN_DEFINITIONS[token0Symbol];
-      const token1Def = TOKEN_DEFINITIONS[token1Symbol];
-
-      if (!token0Def || !token1Def) {
-        setProcessedPositions(null);
-        return;
-      }
-
-      const poolConfig = poolsConfig.pools.find(p =>
-        ((p.currency0.symbol === token0Symbol && p.currency1.symbol === token1Symbol) ||
-         (p.currency0.symbol === token1Symbol && p.currency1.symbol === token0Symbol)) &&
-        p.enabled
-      );
-
-      if (!poolConfig) {
-        console.error(`[AddLiquidityModal] Could not find pool config for processing positions: ${token0Symbol}/${token1Symbol}`);
-        setProcessedPositions(null);
-        return;
-      }
-
-      try {
-        const sdkBaseToken0 = new Token(chainId, getAddress(token0Def.address), token0Def.decimals);
-        const sdkBaseToken1 = new Token(chainId, getAddress(token1Def.address), token1Def.decimals);
-        const [sdkSortedToken0, sdkSortedToken1] = sdkBaseToken0.sortsBefore(sdkBaseToken1) 
-            ? [sdkBaseToken0, sdkBaseToken1] 
-            : [sdkBaseToken1, sdkBaseToken0];
-
-        // Convert currentPoolSqrtPriceX96 string to JSBI for the SDK
-        const poolSqrtPriceX96JSBI = JSBI.BigInt(currentPoolSqrtPriceX96);
-
-        const poolForCalculations = new V4PoolSDK(
-          sdkSortedToken0,
-          sdkSortedToken1,
-          poolConfig.fee,
-          poolConfig.tickSpacing,
-          poolConfig.hooks as Hex,
-          poolSqrtPriceX96JSBI, 
-          JSBI.BigInt(0), // Placeholder liquidity for the pool object
-          currentPoolTick
-        );
-
-        for (const position of rawHookPositions) {
-          if (Number(position.tickLower) >= Number(position.tickUpper)) {
-            console.warn("[AddLiquidityModal] Skipping position with invalid tick ordering:", position);
-            continue;
-          }
-          if (position.tickLower !== undefined && position.tickUpper !== undefined && position.liquidity !== undefined) {
-            const v4Position = new V4PositionSDK({
-              pool: poolForCalculations,
-              tickLower: Number(position.tickLower),
-              tickUpper: Number(position.tickUpper),
-              liquidity: JSBI.BigInt(position.liquidity)
-            });
-
-            // amount0 and amount1 from the SDK are for the sorted pool tokens
-            const calculatedAmount0_JSBI = v4Position.amount0.quotient;
-            const calculatedAmount1_JSBI = v4Position.amount1.quotient;
-
-            // Format them into strings using the correct decimals
-            // poolToken0 and poolToken1 from useMemo are already sorted correctly.
-            const formattedAmount0 = viemFormatUnits(BigInt(calculatedAmount0_JSBI.toString()), poolToken0.decimals);
-            const formattedAmount1 = viemFormatUnits(BigInt(calculatedAmount1_JSBI.toString()), poolToken1.decimals);
-            
-            const numericAmount0 = parseFloat(formattedAmount0);
-            const numericAmount1 = parseFloat(formattedAmount1);
-
-            let unifiedValue = numericAmount0;
-            if (currentPrice && numericAmount1 > 0) {
-              const price = parseFloat(currentPrice);
-              if (!isNaN(price) && price > 0) {
-                // currentPrice is price of T0 in T1. To convert T1 amount to T0 equivalent, we use this directly.
-                // If currentPrice were price of T1 in T0, we would divide by price.
-                unifiedValue += numericAmount1 * price; 
-              }
-            }
-
-            newProcessedPositions.push({
-              tickLower: Number(position.tickLower),
-              tickUpper: Number(position.tickUpper),
-              liquidity: position.liquidity,
-              amount0: formattedAmount0,
-              amount1: formattedAmount1,
-              numericAmount0: numericAmount0,
-              numericAmount1: numericAmount1,
-              unifiedValueInToken0: unifiedValue,
-            });
-          } else {
-            console.warn("[AddLiquidityModal] Skipping position due to undefined tickLower, tickUpper, or liquidity:", position);
-          }
-        }
-        setProcessedPositions(newProcessedPositions);
-      } catch (error) {
-        console.error("[AddLiquidityModal] Error processing positions into ProcessedPositionDetail:", error);
-        setProcessedPositions(null);
-      }
-    } else if (rawHookPositions === null) {
-      setProcessedPositions(null); 
-    } else if (rawHookPositions && rawHookPositions.length === 0) {
-        setProcessedPositions([]);
-        console.log("[AddLiquidityModal] No raw positions to process into ProcessedPositionDetail.");
-    }
-     // If prerequisites are not met, allow previous data to persist until new valid data is processed or rawHookPositions becomes null.
-
-  }, [rawHookPositions, currentPoolTick, currentPoolSqrtPriceX96, token0Symbol, token1Symbol, chainId, poolToken0, poolToken1, currentPrice]); // Added poolToken0, poolToken1, currentPrice
-  // --- END Process Raw Positions into Token0 Depth Delta Events ---
-
-  // --- BEGIN Process Unified Values from Positions (Delta Events, Aggregation, Sorting) ---
-  useEffect(() => {
-    if (processedPositions && processedPositions.length > 0) {
-      const newDeltaEvents: UnifiedValueDeltaEvent[] = [];
-      for (const pos of processedPositions) {
-        if (pos.unifiedValueInToken0 !== 0) { // Only create events if there's a non-zero change
-          newDeltaEvents.push({ tick: pos.tickLower, changeInUnifiedValue: pos.unifiedValueInToken0 });
-          newDeltaEvents.push({ tick: pos.tickUpper, changeInUnifiedValue: -pos.unifiedValueInToken0 });
-        }
-      }
-      setUnifiedValueDeltaEvents(newDeltaEvents);
-
-      // Step 2: Aggregate Unified Value Changes per Tick
-      const newAggregatedChanges = new Map<number, number>();
-      for (const event of newDeltaEvents) {
-        const currentChangeForTick = newAggregatedChanges.get(event.tick) || 0;
-        newAggregatedChanges.set(event.tick, currentChangeForTick + event.changeInUnifiedValue);
-      }
-      setAggregatedUnifiedValueChangesByTick(newAggregatedChanges);
-      // Log the map entries for verification
-      const aggregatedMapEntriesForLog = Array.from(newAggregatedChanges.entries()).map(([tick, change]) => ({ tick, netChange: change.toFixed(8) }));
-
-      // Step 3: Sort Unique Ticks with Aggregated Changes
-      const sortedTicks = Array.from(newAggregatedChanges.keys()).sort((a, b) => a - b);
-      const newSortedNetChanges: Array<{ tick: number; netUnifiedToken0Change: number }> = sortedTicks.map(tick => ({
-        tick: tick,
-        netUnifiedToken0Change: newAggregatedChanges.get(tick) || 0
-      }));
-      setSortedNetUnifiedValueChanges(newSortedNetChanges);
-
-    } else if (processedPositions === null) {
-      setUnifiedValueDeltaEvents(null);
-      setAggregatedUnifiedValueChangesByTick(null);
-      setSortedNetUnifiedValueChanges(null);
-    } else { // processedPositions is an empty array
-      setUnifiedValueDeltaEvents([]);
-      setAggregatedUnifiedValueChangesByTick(new Map());
-      setSortedNetUnifiedValueChanges([]);
-    }
-  }, [processedPositions]);
-  // --- END Process Unified Values from Positions ---
-
-  // --- BEGIN Create Simplified Plot Data (Tick vs. Cumulative Unified Value) ---
-  useEffect(() => {
-    if (sortedNetUnifiedValueChanges && sortedNetUnifiedValueChanges.length > 0 && poolToken0) {
-      
-      let newData: DepthChartDataPoint[] = [];
-      let currentCumulativeValue = 0;
-
-      for (const { tick, netUnifiedToken0Change } of sortedNetUnifiedValueChanges) {
-        currentCumulativeValue += netUnifiedToken0Change;
-        const normalizedCumulativeValue = Math.max(0, currentCumulativeValue);
-        const displayValue = normalizedCumulativeValue > 0 ? normalizedCumulativeValue : undefined;
-        
-        newData.push({
-          tick,
-          token0Depth: normalizedCumulativeValue,
-          normToken0Depth: normalizedCumulativeValue > 0 ? 1 : 0,
-          cumulativeUnifiedValue: normalizedCumulativeValue,
-          displayCumulativeValue: displayValue,
-          value: normalizedCumulativeValue
-        });
-      }
-      
-      setSimplifiedChartPlotData(newData as any);
-      setChartData(newData);
-    } else if (sortedNetUnifiedValueChanges === null) {
-      setSimplifiedChartPlotData(null);
-    } else {
-      setSimplifiedChartPlotData([]);
-      generateFallbackChartData();
-    }
-  }, [sortedNetUnifiedValueChanges, poolToken0, currentPoolTick, defaultTickSpacing]);
-  // --- END Create Simplified Plot Data (Tick vs. Cumulative Unified Value) ---
-
-
-  // Helper function to convert display price to canonical tick
-  // This ensures consistent calculations regardless of user's token selection order
-  const convertDisplayPriceToCanonicalTick = useCallback((displayPrice: number): number => {
-    if (!poolToken0 || !poolToken1) return NaN;
-    
-    const token0Def = TOKEN_DEFINITIONS[token0Symbol];
-    const token1Def = TOKEN_DEFINITIONS[token1Symbol];
-    if (!token0Def || !token1Def) return NaN;
-
-    const isUserOrderMatchingCanonical = poolToken0.address.toLowerCase() === token0Def.address.toLowerCase();
-    
-    // Convert display price back to canonical tick
-    let rawPrice: number;
-    
-    if (baseTokenForPriceDisplay === token0Symbol) {
-      // Display price is token1 in terms of token0
-      let decimalAdjFactor = Math.pow(10, token1Def.decimals - token0Def.decimals);
-      
-      if (isUserOrderMatchingCanonical) {
-        // Want: tick where Math.pow(1.0001, -tick) * decimalAdjFactor = displayPrice
-        rawPrice = displayPrice / decimalAdjFactor;
-        return -Math.log(rawPrice) / Math.log(1.0001);
-      } else {
-        // Want: tick where (1 / Math.pow(1.0001, tick)) * decimalAdjFactor = displayPrice  
-        rawPrice = displayPrice / decimalAdjFactor;
-        return Math.log(1 / rawPrice) / Math.log(1.0001);
-      }
-    } else {
-      // Display price is token0 in terms of token1
-      let decimalAdjFactor = Math.pow(10, token0Def.decimals - token1Def.decimals);
-      
-      if (isUserOrderMatchingCanonical) {
-        // Want: tick where Math.pow(1.0001, tick) * decimalAdjFactor = displayPrice
-        rawPrice = displayPrice / decimalAdjFactor;
-        return Math.log(rawPrice) / Math.log(1.0001);
-      } else {
-        // Want: tick where (1 / Math.pow(1.0001, -tick)) * decimalAdjFactor = displayPrice
-        rawPrice = displayPrice / decimalAdjFactor;
-        return -Math.log(1 / rawPrice) / Math.log(1.0001);
-      }
-    }
-  }, [token0Symbol, token1Symbol, baseTokenForPriceDisplay, poolToken0, poolToken1]);
-
-  // Debounced function to update tickLower from minPriceInputString
-  const debouncedUpdateTickLower = useCallback(
-    debounce((priceStr: string) => {
-      if (!poolToken0 || !poolToken1) return;
-
-        if (priceStr.trim() === "0") {
-        // Handle zero price case
-        const newTick = baseTokenForPriceDisplay === token0Symbol ? sdkMinTick : sdkMaxTick;
-        const targetTickFn = baseTokenForPriceDisplay === token0Symbol ? setTickLower : setTickUpper;
-        const comparisonTick = baseTokenForPriceDisplay === token0Symbol ? parseInt(tickUpper) : parseInt(tickLower);
-        const isValidRange = baseTokenForPriceDisplay === token0Symbol ? newTick < comparisonTick : newTick > comparisonTick;
-
-        if (isValidRange) {
-          targetTickFn(newTick.toString());
-            setInitialDefaultApplied(true);
-          } else {
-          toast.error("Invalid Range", { description: "Min price results in an invalid range." });
-          }
-          return;
-        }
-
-      const numericPrice = parseFloat(priceStr);
-      if (isNaN(numericPrice) || numericPrice <= 0) return;
-
-      let newTick = convertDisplayPriceToCanonicalTick(numericPrice);
-      if (isNaN(newTick)) return;
-
-      // Apply tick spacing alignment
-      if (baseTokenForPriceDisplay === token0Symbol) {
-        // This affects the max price display, which corresponds to tickUpper
-        newTick = Math.floor(newTick / defaultTickSpacing) * defaultTickSpacing;
-        newTick = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTick));
-          if (newTick > parseInt(tickLower)) {
-            setTickUpper(newTick.toString());
-            setInitialDefaultApplied(true);
-          } else {
-          toast.error("Invalid Range", { description: "Min price must result in a valid range." });
-          }
-      } else {
-        // This affects the min price display, which corresponds to tickLower
-        newTick = Math.ceil(newTick / defaultTickSpacing) * defaultTickSpacing;
-        newTick = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTick));
-        if (newTick < parseInt(tickUpper)) {
-          setTickLower(newTick.toString());
-          setInitialDefaultApplied(true);
-        } else {
-          toast.error("Invalid Range", { description: "Min price must result in a valid range." });
-        }
-      }
-    }, 750), 
-    [baseTokenForPriceDisplay, token0Symbol, token1Symbol, defaultTickSpacing, sdkMinTick, sdkMaxTick, tickLower, tickUpper, setTickLower, setTickUpper, setInitialDefaultApplied, poolToken0, poolToken1, convertDisplayPriceToCanonicalTick]
-  );
-
-  // Debounced function to update tickUpper from maxPriceInputString
-  const debouncedUpdateTickUpper = useCallback(
-    debounce((priceStr: string) => {
-      if (!poolToken0 || !poolToken1) return;
-
-      const isInfinityInput = priceStr.trim().toLowerCase() === "∞" || priceStr.trim().toLowerCase() === "infinity" || priceStr.trim().toLowerCase() === "infinite";
-
-        if (isInfinityInput) {
-        // Handle infinity price case
-        const newTick = baseTokenForPriceDisplay === token0Symbol ? sdkMaxTick : sdkMinTick;
-        const targetTickFn = baseTokenForPriceDisplay === token0Symbol ? setTickUpper : setTickLower;
-        const comparisonTick = baseTokenForPriceDisplay === token0Symbol ? parseInt(tickLower) : parseInt(tickUpper);
-        const isValidRange = baseTokenForPriceDisplay === token0Symbol ? newTick > comparisonTick : newTick < comparisonTick;
-
-        if (isValidRange) {
-          targetTickFn(newTick.toString());
-            setInitialDefaultApplied(true);
-          } else {
-          toast.error("Invalid Range", { description: "Max price results in an invalid range." });
-          }
-          return;
-        }
-
-      const numericPrice = parseFloat(priceStr);
-      if (isNaN(numericPrice) || numericPrice <= 0) return;
-
-      let newTick = convertDisplayPriceToCanonicalTick(numericPrice);
-      if (isNaN(newTick)) return;
-
-      // Apply tick spacing alignment
-      if (baseTokenForPriceDisplay === token0Symbol) {
-        // This affects the min price display, which corresponds to tickLower
-        newTick = Math.ceil(newTick / defaultTickSpacing) * defaultTickSpacing;
-        newTick = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTick));
-          if (newTick < parseInt(tickUpper)) {
-            setTickLower(newTick.toString());
-            setInitialDefaultApplied(true);
-          } else {
-          toast.error("Invalid Range", { description: "Max price must result in a valid range." });
-          }
-      } else {
-        // This affects the max price display, which corresponds to tickUpper
-        newTick = Math.floor(newTick / defaultTickSpacing) * defaultTickSpacing;
-        newTick = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTick));
-        if (newTick > parseInt(tickLower)) {
-          setTickUpper(newTick.toString());
-          setInitialDefaultApplied(true);
-        } else {
-          toast.error("Invalid Range", { description: "Max price must result in a valid range." });
-        }
-      }
-    }, 750),
-    [baseTokenForPriceDisplay, token0Symbol, token1Symbol, defaultTickSpacing, sdkMinTick, sdkMaxTick, tickLower, tickUpper, setTickLower, setTickUpper, setInitialDefaultApplied, poolToken0, poolToken1, convertDisplayPriceToCanonicalTick]
-  );
-
-  // --- BEGIN Custom Recharts Tooltip (Updated for Cumulative) ---
-  const CustomTooltip = ({ active, payload, label, poolToken0Symbol, token0, token1, baseTokenForPrice }: any) => { 
-    if (active && payload && payload.length && token0 && token1) {
-      const tooltipData = payload[0].payload; 
-      const currentTick = tooltipData.tick; // 'label' is often the same, but payload.tick is more direct
-      const formattedTickLabel = currentTick ? currentTick.toLocaleString() : 'N/A'; 
-      const cumulativeValue = tooltipData.cumulativeUnifiedValue ? tooltipData.cumulativeUnifiedValue.toLocaleString('en-US', {maximumFractionDigits: 8}) : 'N/A';
-      const displayPoolTokenSymbol = poolToken0Symbol || '';
-
-      let priceAtTickDisplay = "Price N/A";
-      const token0Def = TOKEN_DEFINITIONS[token0 as TokenSymbol];
-      const token1Def = TOKEN_DEFINITIONS[token1 as TokenSymbol];
-
-      if (token0Def && token1Def && typeof currentTick === 'number' && poolToken0 && poolToken1) {
-        let price = NaN;
-        let quoteTokenSymbol = "";
-        let priceOfTokenSymbol = "";
-
-        // Use the same logic as the main price calculation
-        const isUserOrderMatchingCanonical = poolToken0.address.toLowerCase() === token0Def.address.toLowerCase();
-        const canonicalToken0Decimals = poolToken0.decimals;
-        const canonicalToken1Decimals = poolToken1.decimals;
-
-        if (baseTokenForPrice === token0) {
-          // User wants to see price of token1 in terms of token0
-          quoteTokenSymbol = token0;
-          priceOfTokenSymbol = token1;
-          
-          let finalDecimalAdjFactor: number;
-          let priceCalculationFunc: (tick: number) => number;
-          
-          if (isUserOrderMatchingCanonical) {
-            // token0=canonicalToken0, token1=canonicalToken1
-            // Want price of canonicalToken1 in canonicalToken0 terms
-            finalDecimalAdjFactor = Math.pow(10, canonicalToken1Decimals - canonicalToken0Decimals);
-            priceCalculationFunc = (tick) => Math.pow(1.0001, -tick);
-          } else {
-            // token0=canonicalToken1, token1=canonicalToken0
-            // Want price of canonicalToken0 in canonicalToken1 terms = 1 / (price of canonicalToken1 in canonicalToken0)
-            finalDecimalAdjFactor = Math.pow(10, canonicalToken0Decimals - canonicalToken1Decimals);
-            priceCalculationFunc = (tick) => 1 / Math.pow(1.0001, -tick);
-          }
-          
-          price = priceCalculationFunc(currentTick) * finalDecimalAdjFactor;
-        } else {
-          // User wants to see price of token0 in terms of token1
-          quoteTokenSymbol = token1;
-          priceOfTokenSymbol = token0;
-          
-          let finalDecimalAdjFactor: number;
-          let priceCalculationFunc: (tick: number) => number;
-          
-          if (isUserOrderMatchingCanonical) {
-            // token0=canonicalToken0, token1=canonicalToken1
-            // Want price of canonicalToken0 in canonicalToken1 terms = 1 / (price of canonicalToken1 in canonicalToken0)
-            finalDecimalAdjFactor = Math.pow(10, canonicalToken0Decimals - canonicalToken1Decimals);
-            priceCalculationFunc = (tick) => 1 / Math.pow(1.0001, -tick);
-          } else {
-            // token0=canonicalToken1, token1=canonicalToken0
-            // Want price of canonicalToken1 in canonicalToken0 terms
-            finalDecimalAdjFactor = Math.pow(10, canonicalToken1Decimals - canonicalToken0Decimals);
-            priceCalculationFunc = (tick) => Math.pow(1.0001, -tick);
-          }
-          
-          price = priceCalculationFunc(currentTick) * finalDecimalAdjFactor;
-        }
-
-        if (!isNaN(price)) {
-          const displayDecimals = TOKEN_DEFINITIONS[quoteTokenSymbol as TokenSymbol]?.displayDecimals || 4;
-          if (price === Infinity) priceAtTickDisplay = "∞";
-          else if (price < 1e-8 && price > 0) priceAtTickDisplay = "<0.00000001";
-          else if (price === 0) priceAtTickDisplay = "0";
-          else priceAtTickDisplay = price.toLocaleString('en-US', { maximumFractionDigits: displayDecimals, minimumFractionDigits: Math.min(2, displayDecimals) });
-          priceAtTickDisplay += ` ${priceOfTokenSymbol}/${quoteTokenSymbol}`;
-        } else {
-            priceAtTickDisplay = "Price Calc Error";
-        }
-      } else {
-        priceAtTickDisplay = "Price Data Missing";
-      }
-
-      return (
-        <div className="bg-background border border-border shadow-lg p-2 rounded-md text-xs">
-          <p className="font-semibold text-foreground/90">{`Tick: ${formattedTickLabel}`}</p>
-          <p style={{ color: payload[0].fill }}>
-            {`Cumulative Liquidity (${displayPoolTokenSymbol}): ${cumulativeValue}`}
-          </p>
-          <p className="text-foreground/80 mt-0.5">{`Price: ${priceAtTickDisplay}`}</p>
-        </div>
-      );
-    }
-    return null;
-  };
-  // --- END Custom Recharts Tooltip (Updated for Cumulative) ---
-
-  // Remove the custom LiquidityTokenSelector and add state for chooser
-  const [tokenChooserOpen, setTokenChooserOpen] = useState<null | 'token0' | 'token1'>(null);
-  const [tokenSearchTerm, setTokenSearchTerm] = useState('');
-
-  // Move these above the return so they are always defined
-  const getFormattedDisplayBalance = (numericBalance: number | undefined, tokenSymbolForDecimals: TokenSymbol): string => {
-    if (numericBalance === undefined || isNaN(numericBalance)) {
-      numericBalance = 0;
-    }
-    if (numericBalance === 0) {
-      return "0.000";
-    } else if (numericBalance > 0 && numericBalance < 0.001) {
-      return "< 0.001";
-    } else {
-      const displayDecimals = TOKEN_DEFINITIONS[tokenSymbolForDecimals]?.displayDecimals ?? 4;
-      return numericBalance.toFixed(displayDecimals);
-    }
-  };
-  const displayToken0Balance = !token0Symbol ? "~" : (isLoadingToken0Balance ? "Loading..." : (token0BalanceData ? getFormattedDisplayBalance(parseFloat(token0BalanceData.formatted), token0Symbol) : "~"));
-  const displayToken1Balance = !token1Symbol ? "~" : (isLoadingToken1Balance ? "Loading..." : (token1BalanceData ? getFormattedDisplayBalance(parseFloat(token1BalanceData.formatted), token1Symbol) : "~"));
-
-  // Get available tokens for a given token based on existing pools
-  const getAvailableTokensForToken = useCallback((tokenSymbol: string): TokenSelectorToken[] => {
-    if (!tokenSymbol) return availableTokens; // If no token selected, show all tokens
-    
-    // Get all enabled pools
-    const enabledPools = poolsConfig.pools.filter(pool => pool.enabled);
-    
-    // Find pools that contain the selected token
-    const poolsWithToken = enabledPools.filter(pool => 
-      pool.currency0.symbol === tokenSymbol || pool.currency1.symbol === tokenSymbol
-    );
-    
-    // Extract the other token from each pool
-    const availableTokenSymbols = new Set<string>();
-    poolsWithToken.forEach(pool => {
-      if (pool.currency0.symbol === tokenSymbol) {
-        availableTokenSymbols.add(pool.currency1.symbol);
-      } else {
-        availableTokenSymbols.add(pool.currency0.symbol);
-      }
-    });
-    
-    // Return tokens that have pools with the selected token
-    const availableTokensForSelection = availableTokens.filter(token => availableTokenSymbols.has(token.symbol));
-    
-    // Debug logging
-    console.log(`[AddLiquidityModal] Token selection for ${tokenSymbol}:`, {
-      enabledPools: enabledPools.length,
-      poolsWithToken: poolsWithToken.length,
-      availableTokenSymbols: Array.from(availableTokenSymbols),
-      availableTokensForSelection: availableTokensForSelection.map(t => t.symbol)
-    });
-    
-    return availableTokensForSelection;
-  }, [availableTokens]);
 
   // Filter tokens for the chooser
-  const filteredTokens = useMemo(() => {
-    if (!tokenChooserOpen) return [];
-    
-    const otherTokenSymbol = tokenChooserOpen === 'token0' ? token1Symbol : token0Symbol;
-    
-    // If the other token is selected, show only tokens that have pools with it
-    // If no other token is selected, show all tokens
-    const availableTokensForSelection = otherTokenSymbol ? 
-      getAvailableTokensForToken(otherTokenSymbol) : 
-      availableTokens;
-    
-    const filtered = availableTokensForSelection
-      .filter(token => token.symbol !== otherTokenSymbol) // Exclude the other selected token
-      .filter(token => {
-        if (!tokenSearchTerm) return true;
-        const search = tokenSearchTerm.toLowerCase();
-        return (
-          token.symbol.toLowerCase().includes(search) ||
-          token.name.toLowerCase().includes(search) ||
-          token.address.toLowerCase().includes(search)
-        );
-      });
-    
-    // Debug logging
-    console.log(`[AddLiquidityModal] Filtered tokens for ${tokenChooserOpen}:`, {
-      otherTokenSymbol,
-      availableTokensForSelection: availableTokensForSelection.map(t => t.symbol),
-      filtered: filtered.map(t => t.symbol),
-      searchTerm: tokenSearchTerm
-    });
-    
-    return filtered;
-  }, [availableTokens, tokenChooserOpen, tokenSearchTerm, token0Symbol, token1Symbol, getAvailableTokensForToken]);
+  const filteredTokens = availableTokens.filter(token => {
+    if (!tokenSearchTerm) return true;
+    const search = tokenSearchTerm.toLowerCase();
+    return (
+      token.symbol.toLowerCase().includes(search) ||
+      token.name.toLowerCase().includes(search) ||
+      token.address.toLowerCase().includes(search)
+    );
+  });
 
   const handleTokenSelect = (token: TokenSelectorToken) => {
     if (tokenChooserOpen === 'token0') {
@@ -1868,132 +1219,75 @@ export function AddLiquidityModal({
     setTokenSearchTerm('');
   };
 
-  // Add back missing functions
-  const resetForm = () => {
-    setToken0Symbol('');
-    setToken1Symbol('');
-    setAmount0("");
-    setAmount1("");
-    setTickLower(sdkMinTick.toString());
-    setTickUpper(sdkMaxTick.toString());
-    setCurrentPoolTick(null);
-    setActiveInputSide(null);
-    setCalculatedData(null);
-    setCurrentPrice(null); 
-    setPriceAtTickLower(null); 
-    setPriceAtTickUpper(null);
-    resetTransactionState();
-    setInitialDefaultApplied(false);
-    setActivePreset("±15%");
-    // Base token for price display will be reset when tokens are cleared
-  };
-
-  const handleSetFullRange = () => {
-    if (preparedTxData) resetTransactionState();
-    setTickLower(sdkMinTick.toString());
-    setTickUpper(sdkMaxTick.toString());
-    setInitialDefaultApplied(true);
-  };
-
-  const handleUseFullBalance = (balanceString: string, tokenSymbolForDecimals: TokenSymbol, isToken0: boolean) => { 
-    try {
-      const numericBalance = parseFloat(balanceString);
-      if (isNaN(numericBalance) || numericBalance <= 0) return;
-
-      const formattedBalance = numericBalance.toFixed(TOKEN_DEFINITIONS[tokenSymbolForDecimals]?.decimals || 18);
-
-      if (isToken0) {
-        setAmount0(formattedBalance);
-        setActiveInputSide('amount0');
-      } else { 
-        setAmount1(formattedBalance);
-        setActiveInputSide('amount1');
+  // Determine button text based on current state (for new positions)
+  const getButtonText = () => {
+    if (step === 'approve') {
+      if (isApproveWritePending || isApproving) {
+        return `Approve ${preparedTxData?.approvalTokenSymbol || 'Tokens'}`;
       }
-    } catch (error) {
-      // Handle error silently
-    }
-  };
-
-  // Real balance fetching for token chooser using wagmi core
-  const [tokenBalances, setTokenBalances] = useState<Record<string, { balance: string; usdValue: number; isLoading: boolean }>>({});
-
-  useEffect(() => {
-    if (!tokenChooserOpen || !isConnected || chainId !== CHAIN_ID || !accountAddress) {
-      // Reset balances when not ready
-      const resetBalances: Record<string, { balance: string; usdValue: number; isLoading: boolean }> = {};
-      filteredTokens.forEach(token => {
-        resetBalances[token.address] = {
-          balance: "~",
-          usdValue: 0,
-          isLoading: false
-        };
-      });
-      setTokenBalances(resetBalances);
-      return;
-    }
-
-    // Set loading state
-    const loadingBalances: Record<string, { balance: string; usdValue: number; isLoading: boolean }> = {};
-    filteredTokens.forEach(token => {
-      loadingBalances[token.address] = {
-        balance: "Loading...",
-        usdValue: 0,
-        isLoading: true
-      };
-    });
-    setTokenBalances(loadingBalances);
-
-    // Fetch balances for all tokens
-    const fetchBalances = async () => {
-      const newBalances: Record<string, { balance: string; usdValue: number; isLoading: boolean }> = {};
-
-      for (const token of filteredTokens) {
-        try {
-          let balance = '0';
-          
-          if (token.address === "0x0000000000000000000000000000000000000000") {
-            // Native ETH balance
-            const ethBalance = await getBalance(config, {
-              address: accountAddress,
-              chainId: CHAIN_ID,
-            });
-            balance = viemFormatUnits(ethBalance.value, 18); // ETH has 18 decimals
-          } else {
-            // ERC20 token
-            const result = await readContract(config, {
-              address: token.address,
-              abi: erc20Abi,
-              functionName: 'balanceOf',
-              args: [accountAddress],
-              chainId: CHAIN_ID,
-            });
-            
-            balance = viemFormatUnits(result, token.decimals);
-          }
-
-          const numericBalance = parseFloat(balance);
-          const usdValue = numericBalance * (token.usdPrice || 1);
-
-          newBalances[token.address] = {
-            balance: getFormattedDisplayBalance(numericBalance, token.symbol as TokenSymbol),
-            usdValue,
-            isLoading: false
-          };
-        } catch (error) {
-          console.error(`Error fetching balance for ${token.symbol}:`, error);
-          newBalances[token.address] = {
-            balance: "Error",
-            usdValue: 0,
-            isLoading: false
-          };
+      return `Approve ${preparedTxData?.approvalTokenSymbol || 'Tokens'}`;
+    } else if (step === 'mint') {
+      if (!batchPermitSigned) {
+        if (isMintSendPending || isWorking) {
+          return 'Sign';
         }
+        return 'Sign';
+      } else {
+        if (isMintSendPending || isMintConfirming) {
+          return 'Deposit';
+        }
+        return 'Deposit';
       }
+    } else {
+      // step === 'input'
+      return 'Add Liquidity';
+    }
+  };
 
-      setTokenBalances(newBalances);
-    };
+  // Determine button text for existing positions based on transaction state (like form)
+  const getIncreaseButtonText = () => {
+    if (!showTransactionOverview) {
+      return 'Confirm';
+    }
+    
+    if (increaseStep === 'approve') {
+      if (increaseIsWorking) {
+        return `Approve ${increasePreparedTxData?.approvalTokenSymbol || 'Tokens'}`;
+      }
+      return `Approve ${increasePreparedTxData?.approvalTokenSymbol || 'Tokens'}`;
+    } else if (increaseStep === 'permit') {
+      if (increaseIsWorking || isIncreasingLiquidity) {
+        return 'Sign';
+      }
+      return 'Sign';
+    } else if (increaseStep === 'deposit') {
+      if (isIncreasingLiquidity) {
+        return 'Deposit';
+      }
+      return 'Deposit';
+    } else {
+      // increaseStep === 'input'
+      return 'Add Liquidity';
+    }
+  };
 
-    fetchBalances();
-  }, [tokenChooserOpen, isConnected, chainId, accountAddress, filteredTokens]);
+  // Calculate involved tokens count and completed approvals for increase (like form)
+  const increaseInvolvedTokensCount = useMemo(() => {
+    if (!positionToModify) return 0;
+    const tokens: TokenSymbol[] = [];
+    if (TOKEN_DEFINITIONS[positionToModify.token0.symbol as TokenSymbol]?.address !== "0x0000000000000000000000000000000000000000") {
+      tokens.push(positionToModify.token0.symbol as TokenSymbol);
+    }
+    if (TOKEN_DEFINITIONS[positionToModify.token1.symbol as TokenSymbol]?.address !== "0x0000000000000000000000000000000000000000") {
+      tokens.push(positionToModify.token1.symbol as TokenSymbol);
+    }
+    return tokens.length;
+  }, [positionToModify]);
+
+  const increaseCompletedERC20ApprovalsCount = useMemo(() => {
+    return increaseInvolvedTokensCount - increaseNeedsERC20Approvals.length;
+  }, [increaseInvolvedTokensCount, increaseNeedsERC20Approvals.length]);
+
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => { 
@@ -2002,594 +1296,950 @@ export function AddLiquidityModal({
             resetForm();
         }
     }}>
-      <DialogPortal>
-        <DialogOverlay />
-        <RadixDialogPrimitive.Content
-          aria-label="Add Liquidity"
-          className={cn(
-            "fixed left-[50%] top-[50%] z-50 grid w-[calc(100%-2rem)] sm:w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%] sm:rounded-lg",
-            "sm:max-w-4xl" // Keep the larger modal size
-          )}
-        >
-          <DialogTitle className="sr-only">Add Liquidity</DialogTitle>
-          <div className="flex flex-col md:flex-row gap-6">
-            <div className="w-full md:w-1/2 flex flex-col space-y-3">
-              <Card className="w-full card-gradient border-0 shadow-none flex-grow">
-                <CardContent className="px-4 pt-4 pb-4 flex flex-col space-y-4">
-                  <div className="flex justify-between items-center">
-                    <div className="flex items-center">
-                      <Button
-                          key="Full Range"
-                          variant={activePreset === "Full Range" ? "secondary" : "outline"}
-                          size="sm"
-                          className="h-8 px-2 text-xs rounded-md"
-                          onClick={() => {
-                            if (preparedTxData) resetTransactionState();
-                            setActivePreset("Full Range");
-                            handleSetFullRange();
-                          }}
-                        >
-                          Full Range
-                        </Button>
-                        <div className="h-5 w-px bg-border ml-2 mr-2" />
-                      {["±3%", "±8%", "±15%"].map((preset, index) => (
-                        <Button
-                          key={preset}
-                          variant={activePreset === preset ? "secondary" : "outline"}
-                          size="sm"
-                          className={`h-8 px-2 text-xs rounded-md ${index === 0 ? '' : 'ml-1'}`}
-                          onClick={() => {
-                            if (preparedTxData) resetTransactionState();
-                            setActivePreset(preset); 
-                          }}
-                        >
-                          {preset}
-                        </Button>
-                      ))}
-                    </div>
-                    <TooltipProvider delayDuration={100}>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <span className="h-8 flex items-center bg-green-500/20 text-green-500 px-2 py-0.5 rounded-sm text-xs font-medium cursor-help">
-                            {enhancedAprDisplay}
-                          </span>
-                        </TooltipTrigger>
-                        <TooltipContent side="top" className="max-w-xs">
-                          <p className="text-sm font-medium mb-1">Predicted APR</p>
-                          <p className="text-xs text-muted-foreground">
-                            Calculated using current volume and adjusted by a capital efficiency factor of 
-                            <span className="font-semibold text-foreground"> {capitalEfficiencyFactor.toLocaleString('en-US', {minimumFractionDigits: 1, maximumFractionDigits: 2})}x</span>. Actual returns might deviate.
-                            {activePreset !== "Full Range" && !(parseInt(tickLower) <= sdkMinTick && parseInt(tickUpper) >= sdkMaxTick)}
-                          </p>
-                          {poolApr && !["Loading APR...", "APR N/A", "APR Error", "Yield N/A", "Fees N/A"].includes(poolApr) && enhancedAprDisplay !== poolApr && enhancedAprDisplay !== "0.00% (Out of Range)" &&
-                            <p className="text-xs text-muted-foreground mt-1.5">
-                              Base Pool APR: <span className="font-semibold text-foreground">{poolApr}</span>
-                            </p>
-                          }
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  </div>
-
-                  {/* --- BEGIN Recharts Graph --- */}
-                  <div className="w-full h-52 relative rounded-md border bg-muted/30" ref={chartContainerRef} style={{ cursor: isPanning ? 'grabbing' : 'grab' }}>
-                    {isPoolStateLoading || isChartDataLoading ? (
-                        <div className="absolute inset-0 flex items-center justify-center bg-muted/50 z-20">
-                            <Image 
-                              src="/LogoIconWhite.svg" 
-                              alt="Loading..." 
-                              width={32}
-                              height={32}
-                              className="animate-pulse opacity-75"
-                            />
-                        </div>
-                    ) : !isPoolStateLoading && currentPriceLine === null ? (
-                        <div className="absolute inset-0 flex items-center justify-center bg-muted/50 z-20">
-                            <span className="text-muted-foreground text-sm px-4 text-center" style={{ fontFamily: 'Consolas, monospace' }}>
-                                {!isConnected ? "No Wallet Connected" : 
-                                 (!token0Symbol || !token1Symbol || token0Symbol === '' || token1Symbol === '') ? "Select tokens to view chart." :
-                                 "Pool data unavailable for chart."}
-                            </span>
-                        </div>
-                    ) : null}
-                    <ResponsiveContainer width="100%" height="100%">
-                      <ComposedChart 
-                        data={simplifiedChartPlotData || (chartData.length > 0 ? chartData : [])} 
-                        margin={{ top: 2, right: 5, bottom: 5, left: 5 }}
-                        onMouseDown={handlePanMouseDown}
-                        onMouseMove={handlePanMouseMove}
-                        onMouseUp={handlePanMouseUpOrLeave}
-                        onMouseLeave={handlePanMouseUpOrLeave}
+      <DialogContent className="p-0 border-0 bg-transparent shadow-none max-w-lg w-[calc(100%-2rem)] sm:w-full [&>button]:hidden">
+        {!showSuccessView ? (
+          <div className="space-y-6">
+        {isExistingPosition ? (
+          <>
+            {/* Addition Logic Container with Buttons */}
+            <div className="border rounded-lg p-6 space-y-4" style={{ backgroundColor: 'var(--modal-background)' }}>
+              {/* Amount Inputs: only show in Step 1 (showYouWillReceive === false) */}
+              {!showYouWillReceive && (
+              <div className="space-y-3">
+              {positionToModify.isInRange ? (
+                <>
+                  {/* In-range: Both token inputs */}
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <Label htmlFor="increase-amount0" className="text-sm font-medium">Add</Label>
+                      <button
+                        type="button"
+                        className="text-xs text-muted-foreground hover:text-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed border-0"
+                        onClick={() => handleUseFullBalance(token0BalanceData?.formatted || "0", positionToModify.token0.symbol as TokenSymbol, true)}
+                        disabled={isIncreasingLiquidity}
                       >
-                        <XAxis 
-                          dataKey="tick" 
-                          type="number" 
-                          domain={xDomain} 
-                          allowDataOverflow 
-                          tick={false}
-                          axisLine={false}
-                          height={1}
-                          tickMargin={0} 
-                        />
-                        <YAxis 
-                          hide={true}
-                          yAxisId="leftAxis" 
-                          orientation="left"
-                          dataKey={simplifiedChartPlotData ? "cumulativeUnifiedValue" : "normToken0Depth"} 
-                          type="number"
-                          domain={[0, 'auto']}
-                          allowDecimals={true}
-                          tick={{ fontSize: 10 }}
-                          axisLine={{ stroke: "#a1a1aa", strokeOpacity: 0.5 }}
-                          tickLine={{ stroke: "#a1a1aa", strokeOpacity: 0.5 }}
-                        />
-                        
-                        {simplifiedChartPlotData ? (
-                          <Area 
-                            type="stepAfter" 
-                            dataKey="displayCumulativeValue"
-                            yAxisId="leftAxis"
-                            name={poolToken0 ? `Cumulative Liquidity (in ${poolToken0.symbol})` : "Cumulative Unified Liquidity"}
-                            stroke="hsl(var(--chart-2, #a1a1aa))" 
-                            fill="hsl(var(--chart-2, #a1a1aa))"    
-                            fillOpacity={0.2}
-                            strokeWidth={1.5}
-                          />
-                        ) : (
-                          <Area
-                            type="stepAfter"
-                            dataKey="normToken0Depth"
-                            stroke="#a1a1aa"
-                            fill="#a1a1aa"
-                            fillOpacity={0.2}
-                            strokeWidth={1.5}
-                            strokeOpacity={0.4}
-                            yAxisId="leftAxis"
-                          />
-                        )}
-                        
-                        {currentPoolTick !== null && (
-                          <ReferenceLine 
-                            x={currentPoolTick} 
-                            stroke="#e85102"
-                            strokeWidth={1.5} 
-                            ifOverflow="extendDomain"
-                            yAxisId="leftAxis"
-                          />
-                        )}
-                        
-                        {isOpen && !isPoolStateLoading && parseInt(tickLower) < parseInt(tickUpper) && isFinite(parseInt(tickLower)) && isFinite(parseInt(tickUpper)) && (
-                          <ReferenceArea 
-                            x1={parseInt(tickLower)} 
-                            x2={parseInt(tickUpper)} 
-                            yAxisId="leftAxis"
-                            strokeOpacity={0} 
-                            fill="#e85102" 
-                            fillOpacity={0.25} 
-                            ifOverflow="extendDomain"
-                            shape={<RoundedTopReferenceArea />}
-                          />
-                        )}
-                        
-                        <RechartsTooltip
-                          content={
-                            <CustomTooltip 
-                              poolToken0Symbol={poolToken0?.symbol}
-                              token0={token0Symbol}
-                              token1={token1Symbol}
-                              baseTokenForPrice={baseTokenForPriceDisplay}
-                            />
-                          }
-                        />
-                      </ComposedChart>
-                    </ResponsiveContainer>
-                  </div>
-                  {/* --- END Recharts Graph --- */}
-
-                  {/* --- BEGIN Custom X-Axis Labels Div --- */}
-                  <div className="flex justify-between w-full px-[5px] box-border !mt-1">
-                    {customXAxisTicks.map((labelItem, index) => (
-                      <span key={index} className="text-xs text-muted-foreground">
-                        {labelItem.displayLabel}
-                      </span>
-                    ))}
-                  </div>
-                  {/* --- END Custom X-Axis Labels Div --- */}
-
-                  <TooltipProvider delayDuration={100}>
-                    <div className="space-y-1">
-                      <div className="flex justify-between items-center">
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <span className="text-xs text-muted-foreground cursor-default hover:underline">Min Price</span>
-                          </TooltipTrigger>
-                          <TooltipContent side="top" className="max-w-xs">
-                            <p className="text-xs text-muted-foreground">The minimum price at which your position earns fees. Below this point, your position converts fully to {token1Symbol}.</p>
-                          </TooltipContent>
-                        </Tooltip>
-                        {isPoolStateLoading ? (
-                          <div className="h-5 w-24 bg-muted/40 rounded-md animate-pulse ml-auto"></div>
-                        ) : (
-                           <span className="w-28 border-0 bg-transparent text-right text-sm leading-5 font-medium text-foreground shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto no-arrows cursor-default">
-                             {minPriceInputString || "0.00"}
-                           </span>
-                        )}
-                      </div>
-                      <div className="flex justify-between items-center">
-                         <Tooltip>
-                          <TooltipTrigger asChild>
-                            <span className="text-xs text-muted-foreground cursor-default hover:underline">Max Price</span>
-                          </TooltipTrigger>
-                          <TooltipContent side="bottom" className="max-w-xs">
-                            <p className="text-xs text-muted-foreground">The maximum price at which your position earns fees. Beyond this point, your position converts fully to {token0Symbol}.</p>
-                          </TooltipContent>
-                        </Tooltip>
-                        {isPoolStateLoading ? (
-                          <div className="h-5 w-24 bg-muted/40 rounded-md animate-pulse ml-auto"></div>
-                        ) : (
-                           <span className="w-28 border-0 bg-transparent text-right text-sm leading-5 font-medium text-foreground shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto no-arrows cursor-default">
-                             {maxPriceInputString || "0.00"}
-                           </span>
-                        )}
-                      </div>
+                        Balance: {displayToken0Balance} {positionToModify.token0.symbol}
+                      </button>
                     </div>
-                  </TooltipProvider>
-
-                  <div className="pt-2">
-                    <div className="border-t border-border/70 my-2" />
-                    <div className="flex justify-between items-center space-x-2">
-                      <span className="text-xs text-muted-foreground">
-                        {!token0Symbol || !token1Symbol || token0Symbol === '' || token1Symbol === '' ? (
-                          <div className="h-4 w-40 bg-muted/40 rounded animate-pulse"></div>
-                        ) : isPoolStateLoading ? (
-                          <div className="h-4 w-40 bg-muted/40 rounded animate-pulse"></div>
-                        ) : currentPrice && !isCalculating ? (
-                          baseTokenForPriceDisplay === token0Symbol ? (
-                            `1 ${token1Symbol} = ${(1 / parseFloat(currentPrice)).toLocaleString('en-US', { 
-                              minimumFractionDigits: TOKEN_DEFINITIONS[token0Symbol]?.displayDecimals || 2, 
-                              maximumFractionDigits: TOKEN_DEFINITIONS[token0Symbol]?.displayDecimals || 4
-                            })} ${token0Symbol}`
-                          ) : (
-                            `1 ${token0Symbol} = ${parseFloat(currentPrice).toLocaleString('en-US', { 
-                              minimumFractionDigits: TOKEN_DEFINITIONS[token1Symbol]?.displayDecimals || 2,
-                              maximumFractionDigits: TOKEN_DEFINITIONS[token1Symbol]?.displayDecimals || 4
-                            })} ${token1Symbol}`
-                          )
-                        ) : isCalculating ? (
-                          "Calculating price..."
-                        ) : (
-                          "Price unavailable"
-                        )
-                        }
-                      </span>
-                      <div className="flex space-x-1">
-                        {!token0Symbol || token0Symbol === '' ? (
-                          <div className="h-7 w-16 bg-muted/40 rounded animate-pulse"></div>
-                        ) : (
-                          <Button
-                            variant={baseTokenForPriceDisplay === token0Symbol ? "secondary" : "outline"}
-                            size="sm"
-                            className="h-7 px-2 text-xs rounded-md"
-                            onClick={() => setBaseTokenForPriceDisplay(token0Symbol)}
-                          >
-                            {token0Symbol}
-                          </Button>
-                        )}
-                        {!token1Symbol || token1Symbol === '' ? (
-                          <div className="h-7 w-16 bg-muted/40 rounded animate-pulse"></div>
-                        ) : (
-                          <Button
-                            variant={baseTokenForPriceDisplay === token1Symbol ? "secondary" : "outline"}
-                            size="sm"
-                            className="h-7 px-2 text-xs rounded-md"
-                            onClick={() => setBaseTokenForPriceDisplay(token1Symbol)}
-                          >
-                            {token1Symbol}
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-
-            <div className="w-full md:w-1/2 flex flex-col space-y-3">
-              {tokenChooserOpen ? (
-                <Card className="w-full card-gradient border-0 shadow-none flex-grow">
-                  <CardContent className="px-4 pt-4 pb-4">
-                    {/* Header */}
-                    <div className="flex items-center justify-between mb-4">
-                      <h2 className="text-sm font-medium">Select Token</h2>
+                    <motion.div 
+                      className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4"
+                      animate={wiggleControls0}
+                    >
                       <div className="flex items-center gap-2">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 px-2 text-xs rounded-md"
-                          onClick={() => {
-                            resetForm();
-                            setTokenChooserOpen(null);
-                            setTokenSearchTerm('');
-                          }}
-                        >
-                          Clear
-                        </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6 rounded-full"
-                        onClick={() => {
-                          setTokenChooserOpen(null);
-                          setTokenSearchTerm('');
-                        }}
+                        <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
+                          <Image src={getTokenIcon(positionToModify.token0.symbol)} alt={positionToModify.token0.symbol} width={20} height={20} className="rounded-full" />
+                          <span className="text-sm font-medium">{positionToModify.token0.symbol}</span>
+                        </div>
+                        <div className="flex-1">
+                          <Input
+                            id="increase-amount0"
+                            placeholder="0.0"
+                            value={increaseAmount0}
+                            autoComplete="off"
+                            autoCorrect="off"
+                            spellCheck={false}
+                            inputMode="decimal"
+                            enterKeyHint="done"
+                            onChange={(e) => {
+                              const cappedAmount = handleIncreaseAmountChangeWithWiggle(e, 'amount0');
+                              setIncreaseActiveInputSide('amount0');
+                              if (cappedAmount && parseFloat(cappedAmount) > 0) {
+                                calculateIncreaseAmount(cappedAmount, 'amount0');
+                              } else {
+                                setIncreaseAmount1("");
+                              }
+                            }}
+                            disabled={isIncreasingLiquidity}
+                            className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
+                          />
+                          <div className="text-right text-xs text-muted-foreground">
+                            {(() => {
+                              const usdPrice = getUSDPriceForSymbol(positionToModify.token0.symbol);
+                              const numeric = parseFloat(increaseAmount0 || "0");
+                              return formatCalculatedAmount(numeric * usdPrice);
+                            })()}
+                          </div>
+                        </div>
+                      </div>
+                    </motion.div>
+                  </div>
+
+                  <div className="flex justify-center items-center my-2">
+                    <div className="flex items-center justify-center h-8 w-8 rounded-full bg-muted/20">
+                      <PlusIcon className="h-4 w-4 text-muted-foreground" />
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <Label htmlFor="increase-amount1" className="text-sm font-medium">Add</Label>
+                      <button
+                        type="button"
+                        className="text-xs text-muted-foreground hover:text-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed border-0"
+                        onClick={() => handleUseFullBalance(token1BalanceData?.formatted || "0", positionToModify.token1.symbol as TokenSymbol, false)}
+                        disabled={isIncreasingLiquidity}
                       >
-                        <XIcon className="h-3 w-3" />
-                      </Button>
-                      </div>
+                        Balance: {displayToken1Balance} {positionToModify.token1.symbol}
+                      </button>
                     </div>
-
-                    {/* Search Input */}
-                    <div className="mb-4">
-                      <div className="relative">
-                        <SearchIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                        <Input
-                          placeholder="Search tokens..."
-                          value={tokenSearchTerm}
-                          onChange={(e) => setTokenSearchTerm(e.target.value)}
-                          className="pl-9 rounded-lg bg-muted/30 border-0 focus-visible:ring-1 focus-visible:ring-muted-foreground/30 h-10 text-sm"
-                          autoFocus
-                        />
-                      </div>
-                    </div>
-
-                    {/* Token List */}
-                    <div className="overflow-y-auto" style={{ maxHeight: '400px' }}>
-                      {filteredTokens.length === 0 ? (
-                        <div className="p-6 text-center text-muted-foreground text-sm">
-                          No tokens found matching "{tokenSearchTerm}"
+                    <motion.div 
+                      className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4"
+                      animate={wiggleControls1}
+                    >
+                      <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
+                          <Image src={getTokenIcon(positionToModify.token1.symbol)} alt={positionToModify.token1.symbol} width={20} height={20} className="rounded-full" />
+                          <span className="text-sm font-medium">{positionToModify.token1.symbol}</span>
                         </div>
-                      ) : (
-                        <div className="space-y-1">
-                          {filteredTokens.map((token) => {
-                            const isSelected = token.symbol === (tokenChooserOpen === 'token0' ? token0Symbol : token1Symbol);
-                            
-                            return (
-                              <button
-                                key={token.address}
-                                className={cn(
-                                  "w-full flex items-center gap-3 px-4 py-3 hover:bg-muted/50 transition-colors text-left rounded-lg",
-                                  {
-                                    "bg-muted/30": isSelected
-                                  }
-                                )}
-                                onClick={() => handleTokenSelect(token)}
-                              >
-                                <Image 
-                                  src={token.icon} 
-                                  alt={token.symbol} 
-                                  width={28} 
-                                  height={28} 
-                                  className="rounded-full"
-                                />
-                                <div className="flex-1">
-                                  <div className="flex items-center justify-between">
-                                    <div className="flex flex-col">
-                                      <div className="flex items-center gap-2">
-                                        <span className="text-sm font-medium">{token.symbol}</span>
-                                        {isSelected && (
-                                          <CheckIcon className="h-3 w-3 text-primary" />
-                                        )}
-                                      </div>
-                                      <div className="text-xs text-muted-foreground font-mono">
-                                        {token.address.slice(0, 6)}...{token.address.slice(-4)}
-                                      </div>
-                                    </div>
-                                    <div className="text-right">
-                                      <div className="text-sm font-medium">
-                                        {tokenBalances[token.address]?.isLoading ? (
-                                          <div className="h-4 w-16 bg-muted/60 rounded animate-pulse"></div>
-                                        ) : (
-                                          tokenBalances[token.address]?.balance || "~"
-                                        )}
-                                      </div>
-                                      <div className="text-xs text-muted-foreground">
-                                        {tokenBalances[token.address]?.isLoading ? (
-                                          <div className="h-3 w-12 bg-muted/60 rounded animate-pulse"></div>
-                                        ) : (
-                                          `$${tokenBalances[token.address]?.usdValue.toFixed(2) || "0.00"}`
-                                        )}
-                                      </div>
-                                    </div>
-                                  </div>
-                                </div>
-                              </button>
-                            );
-                          })}
+                        <div className="flex-1">
+                          <Input
+                            id="increase-amount1"
+                            placeholder="0.0"
+                            value={increaseAmount1}
+                            autoComplete="off"
+                            autoCorrect="off"
+                            spellCheck={false}
+                            inputMode="decimal"
+                            enterKeyHint="done"
+                            onChange={(e) => {
+                              const cappedAmount = handleIncreaseAmountChangeWithWiggle(e, 'amount1');
+                              setIncreaseActiveInputSide('amount1');
+                              if (cappedAmount && parseFloat(cappedAmount) > 0) {
+                                calculateIncreaseAmount(cappedAmount, 'amount1');
+                              } else {
+                                setIncreaseAmount0("");
+                              }
+                            }}
+                            disabled={isIncreasingLiquidity}
+                            className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
+                          />
+                          <div className="text-right text-xs text-muted-foreground">
+                            {(() => {
+                              const usdPrice = getUSDPriceForSymbol(positionToModify.token1.symbol);
+                              const numeric = parseFloat(increaseAmount1 || "0");
+                              return formatCalculatedAmount(numeric * usdPrice);
+                            })()}
+                          </div>
                         </div>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
+                      </div>
+                    </motion.div>
+                  </div>
+                </>
               ) : (
-                <Card className="w-full card-gradient border-0 shadow-none flex-grow">
-                  <CardContent className="px-4 pt-4 pb-4">
-                                          <div className="mb-4">
-                        <div className="flex items-center justify-between mb-2">
-                          <Label htmlFor="amount0" className="text-sm font-medium">Amount</Label>
-                          <div className="flex items-center gap-1">
-                            {token0Symbol ? (
-                              <Button variant="ghost" className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent" onClick={() => handleUseFullBalance(token0BalanceData?.formatted || "0", token0Symbol, true)} disabled={isWorking || isCalculating}>  
-                                Balance: {displayToken0Balance} {token0Symbol}
-                              </Button>
-                            ) : (
-                              <span className="text-xs text-muted-foreground">Balance: ~</span>
-                            )}
-                          </div>
-                        </div>
-                        <div className="rounded-lg bg-muted/30 p-4">
-                          <div className="flex items-center gap-2">
-                            <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2 cursor-pointer" onClick={() => setTokenChooserOpen('token0')}>
-                              {token0Symbol ? (
-                                <Image src={getTokenIcon(token0Symbol)} alt={token0Symbol} width={20} height={20} className="rounded-full"/>
-                              ) : (
-                                <div className="w-5 h-5 rounded-full bg-muted-foreground/30"></div>
-                              )}
-                              <span className="text-sm font-medium">{token0Symbol || "Select"}</span>
-                              <ChevronDownIcon className="h-4 w-4 text-muted-foreground" />
-                            </div>
-                            <div className="flex-1">
-                              <Input
-                                id="amount0"
-                                placeholder="0.0"
-                                value={amount0}
-                                onChange={(e) => { 
-                                  const newValue = e.target.value; 
-                                  if (preparedTxData) { resetTransactionState(); } 
-                                  setAmount0(newValue); 
-                                  setActiveInputSide('amount0'); 
-                                }} 
-                                type={amount0.startsWith('<') ? "text" : "number"}
-                                disabled={isWorking || isCalculating && activeInputSide === 'amount1'}
-                                className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto no-arrows"
-                              />
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    <div className="flex justify-center items-center mb-2">
-                      <div className="flex items-center justify-center h-8 w-8 rounded-full bg-muted/20">
-                        <PlusIcon className="h-4 w-4 text-muted-foreground" />
-                      </div>
-                    </div>
-                    <div className="mb-4">
+                <>
+                  {/* Out-of-range: Single-sided inputs based on available liquidity */}
+                  {(!increaseProductiveSide || increaseProductiveSide === 'amount0') && parseFloat(positionToModify.token0.amount) >= 0 && (
+                    <div>
                       <div className="flex items-center justify-between mb-2">
-                        <Label htmlFor="amount1" className="text-sm font-medium">Amount</Label>
-                        <div className="flex items-center gap-1">
-                          {token1Symbol ? (
-                            <Button variant="ghost" className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent" onClick={() => handleUseFullBalance(token1BalanceData?.formatted || "0", token1Symbol, false)} disabled={isWorking || isCalculating}> 
-                              Balance: {displayToken1Balance} {token1Symbol}
-                            </Button>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">Balance: ~</span>
-                          )}
-                        </div>
+                        <Label htmlFor="increase-amount0-oor" className="text-sm font-medium">
+                          Add {positionToModify.token0.symbol}
+                        </Label>
+                        <button
+                          type="button"
+                          className="text-xs text-muted-foreground hover:text-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed border-0"
+                          onClick={() => handleUseFullBalance(token0BalanceData?.formatted || "0", positionToModify.token0.symbol as TokenSymbol, true)}
+                          disabled={isIncreasingLiquidity}
+                        >
+                          Balance: {displayToken0Balance} {positionToModify.token0.symbol}
+                        </button>
                       </div>
-                      <div className="rounded-lg bg-muted/30 p-4">
+                      <motion.div 
+                        className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4"
+                        animate={wiggleControls0}
+                      >
                         <div className="flex items-center gap-2">
-                          <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2 cursor-pointer" onClick={() => setTokenChooserOpen('token1')}>
-                            {token1Symbol ? (
-                              <Image src={getTokenIcon(token1Symbol)} alt={token1Symbol} width={20} height={20} className="rounded-full"/>
-                            ) : (
-                              <div className="w-5 h-5 rounded-full bg-muted-foreground/30"></div>
-                            )}
-                            <span className="text-sm font-medium">{token1Symbol || "Select"}</span>
-                            <ChevronDownIcon className="h-4 w-4 text-muted-foreground" />
+                          <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
+                            <Image src={getTokenIcon(positionToModify.token0.symbol)} alt={positionToModify.token0.symbol} width={20} height={20} className="rounded-full" />
+                            <span className="text-sm font-medium">{positionToModify.token0.symbol}</span>
                           </div>
                           <div className="flex-1">
                             <Input
-                              id="amount1"
+                              id="increase-amount0-oor"
                               placeholder="0.0"
-                              value={amount1}
-                              onChange={(e) => { 
-                                const newValue = e.target.value; 
-                                if (preparedTxData) { resetTransactionState(); } 
-                                setAmount1(newValue); 
-                                setActiveInputSide('amount1'); 
-                              }} 
-                              type={amount1.startsWith('<') ? "text" : "number"}
-                              disabled={isWorking || isCalculating && activeInputSide === 'amount0'}
-                              className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto no-arrows"
+                              value={increaseAmount0}
+                              autoComplete="off"
+                              autoCorrect="off"
+                              spellCheck={false}
+                              inputMode="decimal"
+                              enterKeyHint="done"
+                              onChange={(e) => {
+                                const cappedAmount = handleIncreaseAmountChangeWithWiggle(e, 'amount0');
+                                setIncreaseActiveInputSide('amount0');
+                                // No calculation needed for OOR positions
+                              }}
+                              disabled={isIncreasingLiquidity}
+                              className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
                             />
+                            <div className="text-right text-xs text-muted-foreground">
+                              {(() => {
+                                const usdPrice = getUSDPriceForSymbol(positionToModify.token0.symbol);
+                                const numeric = parseFloat(increaseAmount0 || "0");
+                                return formatCalculatedAmount(numeric * usdPrice);
+                              })()}
+                            </div>
                           </div>
                         </div>
-                      </div>
+                      </motion.div>
                     </div>
-                    <div className="p-3 border border-dashed rounded-md bg-muted/10">
-                      <p className="text-sm font-medium mb-2 text-foreground/80">Transaction Steps</p>
-                      <div className="space-y-1.5 text-xs text-muted-foreground">
-                          <div className="flex items-center justify-between">
-                              <span>Token Approvals</span>
-                              <span>
-                                { (step === 'approve' && (isApproveWritePending || isApproving)) || 
-                                  (step === 'permit2Sign' && isWorking) 
-                                  ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
-                                  : (
-                                    <span className={`text-xs font-mono ${completedTokensCount === involvedTokensCount && involvedTokensCount > 0 ? 'text-green-500' : ''}`}>
-                                      {`${completedTokensCount}/${involvedTokensCount > 0 ? involvedTokensCount : '-'}`}
-                                    </span>
-                                  )
-                                }
-                              </span>
-                          </div>
-                          <div className="flex items-center justify-between">
-                              <span>Send Mint Transaction</span> 
-                              <span>
-                                  {isMintConfirming || isMintSendPending ? 
-                                    <ActivityIcon className="h-4 w-4 animate-pulse text-muted-foreground" />
-                                   : isMintConfirming ? <CheckIcon className="h-4 w-4 text-green-500" />  // Changed from isMintConfirmed
-                                   : <MinusIcon className="h-4 w-4" />}
-                              </span>
-                          </div>
-                      </div>
-                    </div>
-                    <DialogFooter className="grid grid-cols-2 gap-3 mt-4">
-                      <div 
-                        onClick={() => {
-                          if (step === 'approve' || step === 'mint' || step === 'permit2Sign') {
-                            resetTransactionState(); 
-                          } else {
-                            onOpenChange(false);
-                          }
-                        }}
-                        className={`relative flex h-10 cursor-pointer items-center justify-center rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 ${
-                          isCalculating || 
-                          (step ==='approve' && (isApproveWritePending || isApproving)) || 
-                          (step === 'permit2Sign' && isWorking) ||
-                          (step ==='mint' && (isMintSendPending || isMintConfirming)) ? 'opacity-50 cursor-not-allowed' : ''
-                        }`}
-                      >
-                        <span className="relative z-0 pointer-events-none">{step === 'approve' || step === 'mint' || step === 'permit2Sign' ? 'Cancel & Edit' : 'Change Pool'}</span>
-                      </div>
-                      {!isConnected ? (
-                        <div className="relative flex h-10 cursor-pointer items-center justify-center rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30" style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}>
-                          <div className="absolute inset-0 z-10 block h-full w-full cursor-pointer p-0 opacity-0" />
-                          <span className="relative z-0 pointer-events-none">Connect Wallet</span>
-                        </div>
-                      ) : (
-                        <Button
-                          onClick={() => {
-                            if (step === 'input') handlePrepareMint(); // User explicitly clicks to prepare/proceed
-                            else if (step === 'approve') handleApprove();
-                            else if (step === 'permit2Sign') handleSignAndSubmitPermit2();
-                            else if (step === 'mint') handleMint();
-                          }}
-                          disabled={isWorking || 
-                            isCalculating ||
-                            isPoolStateLoading || 
-                            isApproveWritePending ||
-                            isMintSendPending ||
-                            // Disable main button if in input step, no amounts, AND no existing preparedTxData to re-attempt/proceed with.
-                            (step === 'input' && (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0")) && !preparedTxData) ||
-                            (step === 'input' && isInsufficientBalance) // New condition: disable if insufficient balance in input step
-                          }
+                  )}
+
+                  {(!increaseProductiveSide || increaseProductiveSide === 'amount1') && parseFloat(positionToModify.token1.amount) >= 0 && (
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <Label htmlFor="increase-amount1-oor" className="text-sm font-medium">
+                          Add {positionToModify.token1.symbol}
+                        </Label>
+                        <button
+                          type="button"
+                          className="text-xs text-muted-foreground hover:text-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed border-0"
+                          onClick={() => handleUseFullBalance(token1BalanceData?.formatted || "0", positionToModify.token1.symbol as TokenSymbol, false)}
+                          disabled={isIncreasingLiquidity}
                         >
-                          {isPoolStateLoading ? 'Loading Pool...' 
-                            : step === 'input' ? (preparedTxData && (parseFloat(amount0 || "0") > 0 || parseFloat(amount1 || "0") > 0) ? 'Proceed' : 'Prepare Deposit') 
-                            : step === 'approve' ? `Approve ${preparedTxData?.approvalTokenSymbol || 'Token'}` 
-                            : step === 'permit2Sign' ? 'Sign Permission'
-                            : step === 'mint' ? 'Confirm Mint' 
-                            : 'Processing...' 
-                          }
-                        </Button>
-                      )}
-                    </DialogFooter>
-                  </CardContent>
-                </Card>
+                          Balance: {displayToken1Balance} {positionToModify.token1.symbol}
+                        </button>
+                      </div>
+                      <motion.div 
+                        className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4"
+                        animate={wiggleControls1}
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
+                            <Image src={getTokenIcon(positionToModify.token1.symbol)} alt={positionToModify.token1.symbol} width={20} height={20} className="rounded-full" />
+                            <span className="text-sm font-medium">{positionToModify.token1.symbol}</span>
+                          </div>
+                          <div className="flex-1">
+                            <Input
+                              id="increase-amount1-oor"
+                              placeholder="0.0"
+                              value={increaseAmount1}
+                              autoComplete="off"
+                              autoCorrect="off"
+                              spellCheck={false}
+                              inputMode="decimal"
+                              enterKeyHint="done"
+                              onChange={(e) => {
+                                const cappedAmount = handleIncreaseAmountChangeWithWiggle(e, 'amount1');
+                                setIncreaseActiveInputSide('amount1');
+                                // No calculation needed for OOR positions
+                              }}
+                              disabled={isIncreasingLiquidity}
+                              className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
+                            />
+                            <div className="text-right text-xs text-muted-foreground">
+                              {(() => {
+                                const usdPrice = getUSDPriceForSymbol(positionToModify.token1.symbol);
+                                const numeric = parseFloat(increaseAmount1 || "0");
+                                return formatCalculatedAmount(numeric * usdPrice);
+                              })()}
+                            </div>
+                          </div>
+                        </div>
+                      </motion.div>
+                    </div>
+                  )}
+                </>
               )}
             </div>
+              )}
+              
+              {/* Step 1: Input Form */}
+              {!showYouWillReceive ? (
+                <>
+                  {/* Buttons */}
+                  <div className="grid grid-cols-2 gap-3 pt-2">
+                    <Button 
+                      variant="outline" 
+                      className="relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75 disabled:opacity-50" 
+                      onClick={() => onOpenChange(false)} 
+                      disabled={isWorking || isIncreasingLiquidity}
+                      style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+                    >
+                      Cancel
+                    </Button>
+
+                    <Button
+                      className="text-sidebar-primary border border-sidebar-primary bg-[#3d271b] hover:bg-[#3d271b]/90"
+                      onClick={handleConfirmIncrease}
+                      disabled={isIncreasingLiquidity || isIncreaseCalculating || (parseFloat(increaseAmount0 || "0") <= 0 && parseFloat(increaseAmount1 || "0") <= 0)}
+                    >
+                      <span className={isIncreasingLiquidity ? "animate-pulse" : ""}>
+                        Add Liquidity
+                      </span>
+                    </Button>
           </div>
-        </RadixDialogPrimitive.Content>
-      </DialogPortal>
+                </>
+        ) : (
+                <>
+                  {/* You Will Receive Section */}
+          <div className="space-y-4">
+                    {/* Header with Chevron Left */}
+                    <div className="flex items-center gap-2">
+                      <ChevronLeftIcon className="h-4 w-4 text-muted-foreground cursor-pointer hover:text-white transition-colors" onClick={() => setShowYouWillReceive(false)} />
+                      <span className="text-sm font-medium">You Will Add</span>
+                    </div>
+
+                      {/* Main Position Section */}
+                      <div className="rounded-lg bg-[var(--token-container-background)] p-4 border border-sidebar-border/60">
+                        {/* Token Amounts with Large Icons - 2 Column Layout */}
+                        <div className="space-y-4">
+                          <div className="flex justify-between items-start">
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <div className="text-xl font-medium">
+                                  {(() => {
+                                    const baseAmount = parseFloat(increaseAmount0 || "0");
+                                    if (!feesForIncrease) return formatTokenDisplayAmount(baseAmount.toString());
+                                    
+                                    const decimals = getTokenSymbolByAddress(positionToModify.token0.address) ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(positionToModify.token0.address)!]?.decimals || 18 : 18;
+                                    const feeAmount = parseFloat(formatUnits(BigInt(feesForIncrease.amount0 || '0'), decimals));
+                                    const totalAmount = baseAmount + feeAmount;
+                                    return formatTokenDisplayAmount(totalAmount.toString());
+                                  })()}
+                                </div>
+                                <span className="text-sm text-muted-foreground">{positionToModify.token0.symbol}</span>
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {(() => {
+                                  const baseAmount = parseFloat(increaseAmount0 || "0");
+                                  if (!feesForIncrease) return formatUSD(baseAmount * getUSDPriceForSymbol(positionToModify.token0.symbol));
+                                  
+                                  const decimals = getTokenSymbolByAddress(positionToModify.token0.address) ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(positionToModify.token0.address)!]?.decimals || 18 : 18;
+                                  const feeAmount = parseFloat(formatUnits(BigInt(feesForIncrease.amount0 || '0'), decimals));
+                                  const totalAmount = baseAmount + feeAmount;
+                                  return formatUSD(totalAmount * getUSDPriceForSymbol(positionToModify.token0.symbol));
+                                })()}
+                              </div>
+                            </div>
+                            <Image src={getTokenIcon(positionToModify.token0.symbol)} alt={positionToModify.token0.symbol} width={40} height={40} className="rounded-full" />
+                          </div>
+
+                          <div className="flex justify-between items-start">
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <div className="text-xl font-medium">
+                                  {(() => {
+                                    const baseAmount = parseFloat(increaseAmount1 || "0");
+                                    if (!feesForIncrease) return formatTokenDisplayAmount(baseAmount.toString());
+                                    
+                                    const decimals = getTokenSymbolByAddress(positionToModify.token1.address) ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(positionToModify.token1.address)!]?.decimals || 18 : 18;
+                                    const feeAmount = parseFloat(formatUnits(BigInt(feesForIncrease.amount1 || '0'), decimals));
+                                    const totalAmount = baseAmount + feeAmount;
+                                    return formatTokenDisplayAmount(totalAmount.toString());
+                                  })()}
+                                </div>
+                                <span className="text-sm text-muted-foreground">{positionToModify.token1.symbol}</span>
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {(() => {
+                                  const baseAmount = parseFloat(increaseAmount1 || "0");
+                                  if (!feesForIncrease) return formatUSD(baseAmount * getUSDPriceForSymbol(positionToModify.token1.symbol));
+                                  
+                                  const decimals = getTokenSymbolByAddress(positionToModify.token1.address) ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(positionToModify.token1.address)!]?.decimals || 18 : 18;
+                                  const feeAmount = parseFloat(formatUnits(BigInt(feesForIncrease.amount1 || '0'), decimals));
+                                  const totalAmount = baseAmount + feeAmount;
+                                  return formatUSD(totalAmount * getUSDPriceForSymbol(positionToModify.token1.symbol));
+                                })()}
+                              </div>
+                            </div>
+                            <Image src={getTokenIcon(positionToModify.token1.symbol)} alt={positionToModify.token1.symbol} width={40} height={40} className="rounded-full" />
+                          </div>
+                        </div>
+                      </div>
+
+                    {/* Fees Section with Striped Border - Only show if there are actual fees */}
+                    {(() => {
+                      // Check if there are any non-zero fees
+                      const token0Symbol = getTokenSymbolByAddress(positionToModify.token0.address);
+                      const token1Symbol = getTokenSymbolByAddress(positionToModify.token1.address);
+                      const token0Decimals = token0Symbol ? TOKEN_DEFINITIONS[token0Symbol]?.decimals || 18 : 18;
+                      const token1Decimals = token1Symbol ? TOKEN_DEFINITIONS[token1Symbol]?.decimals || 18 : 18;
+                      
+                      const fee0Amount = parseFloat(formatUnits(BigInt(feesForIncrease?.amount0 || '0'), token0Decimals));
+                      const fee1Amount = parseFloat(formatUnits(BigInt(feesForIncrease?.amount1 || '0'), token1Decimals));
+                      
+                      // Only show if at least one fee is greater than 0
+                      if (fee0Amount <= 0 && fee1Amount <= 0) return null;
+                      
+                      return (
+                        <div className="p-3 border border-dashed rounded-md bg-muted/10 space-y-2">
+                          <div className="text-xs font-medium text-muted-foreground mb-2">Includes uncollected fees:</div>
+                          
+                          <div className="flex justify-between items-center">
+                            <div className="flex items-center gap-2">
+                              <Image src={getTokenIcon(positionToModify.token0.symbol)} alt={positionToModify.token0.symbol} width={16} height={16} className="rounded-full" />
+                              <span className="text-xs text-muted-foreground">{positionToModify.token0.symbol} Fees</span>
+                            </div>
+                            <div className="text-right">
+                              <div className="text-xs font-medium">
+                                {(() => {
+                                  const feeAmountDisplay = formatUnits(BigInt(feesForIncrease?.amount0 || '0'), token0Decimals);
+                                  const feeNumber = parseFloat(feeAmountDisplay);
+                                  
+                                  if (feeNumber === 0) return '0';
+                                  
+                                  const formattedFee = feeNumber > 0 && feeNumber < 0.0001 
+                                    ? '< 0.0001' 
+                                    : feeNumber.toFixed(4).replace(/\.?0+$/, '');
+                                  
+                                  return `+${formattedFee}`;
+                                })()}
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {(() => {
+                                  const feeAmount = parseFloat(formatUnits(BigInt(feesForIncrease?.amount0 || '0'), token0Decimals));
+                                  return formatUSD(feeAmount * getUSDPriceForSymbol(positionToModify.token0.symbol));
+                                })()}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex justify-between items-center">
+                            <div className="flex items-center gap-2">
+                              <Image src={getTokenIcon(positionToModify.token1.symbol)} alt={positionToModify.token1.symbol} width={16} height={16} className="rounded-full" />
+                              <span className="text-xs text-muted-foreground">{positionToModify.token1.symbol} Fees</span>
+                            </div>
+                            <div className="text-right">
+                              <div className="text-xs font-medium">
+                                {(() => {
+                                  const feeAmountDisplay = formatUnits(BigInt(feesForIncrease?.amount1 || '0'), token1Decimals);
+                                  const feeNumber = parseFloat(feeAmountDisplay);
+                                  
+                                  if (feeNumber === 0) return '0';
+                                  
+                                  const formattedFee = feeNumber > 0 && feeNumber < 0.0001 
+                                    ? '< 0.0001' 
+                                    : feeNumber.toFixed(4).replace(/\.?0+$/, '');
+                                  
+                                  return `+${formattedFee}`;
+                                })()}
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {(() => {
+                                  const feeAmount = parseFloat(formatUnits(BigInt(feesForIncrease?.amount1 || '0'), token1Decimals));
+                                  return formatUSD(feeAmount * getUSDPriceForSymbol(positionToModify.token1.symbol));
+                                })()}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Additional Info Rows - Conditional Content */}
+                    {!showTransactionOverview ? (
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between text-xs text-muted-foreground">
+                          <span>Current Price:</span>
+                          <span className="text-xs text-muted-foreground">
+                            {(() => {
+                              const price0 = getUSDPriceForSymbol(positionToModify.token0.symbol);
+                              const price1 = getUSDPriceForSymbol(positionToModify.token1.symbol);
+                              if (price0 === 0 || price1 === 0) return "N/A";
+                              const ratio = price0 / price1;
+                              const decimals = ratio < 0.1 ? 3 : 2;
+                              return `1 ${positionToModify.token0.symbol} = ${ratio.toFixed(decimals)} ${positionToModify.token1.symbol}`;
+                            })()}
+                          </span>
+                        </div>
+                        
+                        <div className="flex items-center justify-between text-xs text-muted-foreground">
+                          <span>New {positionToModify.token0.symbol} position:</span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-foreground/80 font-medium">
+                              {formatTokenDisplayAmount((() => {
+                                // Calculate new position: original + (increase + fees)
+                                const originalAmount = parseFloat(positionToModify.token0.amount);
+                                const increaseAmount = parseFloat(increaseAmount0 || "0");
+                                let totalIncrease = increaseAmount;
+
+                                if (feesForIncrease) {
+                                  const decimals = getTokenSymbolByAddress(positionToModify.token0.address) ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(positionToModify.token0.address)!]?.decimals || 18 : 18;
+                                  const feeAmount = parseFloat(formatUnits(BigInt(feesForIncrease.amount0 || '0'), decimals));
+                                  totalIncrease += feeAmount;
+                                }
+
+                                return (originalAmount + totalIncrease).toString();
+                              })())}
+                            </span>
+                            <Image src={getTokenIcon(positionToModify.token0.symbol)} alt={positionToModify.token0.symbol} width={12} height={12} className="rounded-full" />
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between text-xs text-muted-foreground">
+                          <span>New {positionToModify.token1.symbol} position:</span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-foreground/80 font-medium">
+                              {formatTokenDisplayAmount((() => {
+                                // Calculate new position: original + (increase + fees)
+                                const originalAmount = parseFloat(positionToModify.token1.amount);
+                                const increaseAmount = parseFloat(increaseAmount1 || "0");
+                                let totalIncrease = increaseAmount;
+
+                                if (feesForIncrease) {
+                                  const decimals = getTokenSymbolByAddress(positionToModify.token1.address) ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(positionToModify.token1.address)!]?.decimals || 18 : 18;
+                                  const feeAmount = parseFloat(formatUnits(BigInt(feesForIncrease.amount1 || '0'), decimals));
+                                  totalIncrease += feeAmount;
+                                }
+
+                                return (originalAmount + totalIncrease).toString();
+                              })())}
+                            </span>
+                            <Image src={getTokenIcon(positionToModify.token1.symbol)} alt={positionToModify.token1.symbol} width={12} height={12} className="rounded-full" />
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between text-xs text-muted-foreground">
+                          <span>Token Approvals</span>
+                          <span>
+                            {(increaseStep === 'approve' && increaseIsWorking) ? (
+                              <RefreshCwIcon className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <motion.span 
+                                animate={approvalWiggleControls}
+                                className={`text-xs font-mono ${increaseCompletedERC20ApprovalsCount === increaseInvolvedTokensCount && increaseInvolvedTokensCount > 0 ? 'text-green-500' : approvalWiggleCount > 0 ? 'text-red-500' : 'text-muted-foreground'}`}
+                              >
+                                {`${increaseCompletedERC20ApprovalsCount}/${increaseInvolvedTokensCount > 0 ? increaseInvolvedTokensCount : '-'}`}
+                              </motion.span>
+                            )}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-xs text-muted-foreground">
+                          <span>Permit Signature</span>
+                          <span>
+                            {(increaseStep === 'permit' && increaseIsWorking) ? (
+                              <RefreshCwIcon className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <span className={`text-xs font-mono ${increaseBatchPermitSigned ? 'text-green-500' : 'text-muted-foreground'}`}>
+                                {increaseBatchPermitSigned ? '1/1' : '0/1'}
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-xs text-muted-foreground">
+                          <span>Deposit Transaction</span>
+                          <span>
+                            {(increaseStep === 'deposit' && (isIncreasingLiquidity || parentIsIncreasingLiquidity)) ? (
+                              <RefreshCwIcon className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <span className={`text-xs font-mono ${parentIsIncreaseSuccess ? 'text-green-500' : 'text-muted-foreground'}`}>
+                                {parentIsIncreaseSuccess ? '1/1' : '0/1'}
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Final Action Buttons */}
+                    <div className="grid grid-cols-2 gap-3 pt-2">
+                      <Button 
+                        variant="outline" 
+                        className="relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75 disabled:opacity-50" 
+                        onClick={() => {
+                          if (showTransactionOverview) {
+                            setShowTransactionOverview(false);
+                            setTxStarted(false); // Reset transaction state when going back
+                          } else {
+                            setShowYouWillReceive(false);
+                          }
+                        }} 
+                        disabled={increaseIsWorking || isIncreasingLiquidity}
+                        style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+                      >
+                        Back
+                      </Button>
+
+                      <Button
+                        className="text-sidebar-primary border border-sidebar-primary bg-[#3d271b] hover:bg-[#3d271b]/90"
+                        onClick={showTransactionOverview ? handleExecuteTransaction : handleFinalConfirmIncrease}
+                        disabled={increaseIsWorking || isIncreasingLiquidity || isIncreaseCalculating}
+                      >
+                        <span className={increaseIsWorking || isIncreasingLiquidity || isIncreaseCalculating ? "animate-pulse" : ""}>
+                          {getIncreaseButtonText()}
+                        </span>
+                      </Button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </>
+        ) : (
+          // New Position Mode (simplified version)
+          <div className="border rounded-lg p-6 space-y-4" style={{ backgroundColor: 'var(--modal-background)' }}>
+            <div className="text-center text-muted-foreground text-sm">
+              Select tokens and amounts to add liquidity
+            </div>
+            
+            {/* Transaction Steps Display */}
+            {step !== 'input' && (
+              <div className="p-3 border border-dashed rounded-md bg-muted/10 mb-4">
+                <p className="text-sm font-medium mb-2 text-foreground/80">Transaction Steps</p>
+                <div className="space-y-1.5 text-xs text-muted-foreground">
+                    {/* ERC20 Approvals to Permit2 */}
+                    <div className="flex items-center justify-between">
+                        <span>Token Approvals</span>
+                        <span>
+                          { (step === 'approve' && (isApproveWritePending || isApproving))
+                            ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
+                            : (
+                              <motion.span 
+                                animate={approvalWiggleControls}
+                                className={`text-xs font-mono ${completedERC20ApprovalsCount === involvedTokensCount && involvedTokensCount > 0 ? 'text-green-500' : approvalWiggleCount > 0 ? 'text-red-500' : 'text-muted-foreground'}`}
+                              >
+                                {`${completedERC20ApprovalsCount}/${involvedTokensCount > 0 ? involvedTokensCount : '-'}`}
+                              </motion.span>
+                            )
+                          }
+                        </span>
+                    </div>
+                    
+                    {/* Permit2 Signature */}
+                    <div className="flex items-center justify-between">
+                        <span>Permit Signature</span>
+                        <span>
+                          { (step === 'mint' && !batchPermitSigned && (isMintSendPending || isWorking))
+                            ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
+                            : (
+                              <span className={`text-xs font-mono ${batchPermitSigned ? 'text-green-500' : ''}`}>
+                                {batchPermitSigned ? '1/1' : '0/1'}
+                              </span>
+                            )
+                          }
+                        </span>
+                    </div>
+                    
+                    {/* Deposit Transaction */}
+                    <div className="flex items-center justify-between">
+                        <span>Deposit Transaction</span>
+                        <span>
+                          { (step === 'mint' && batchPermitSigned && (isMintSendPending || isMintConfirming))
+                            ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
+                            : (
+                              <span className={`text-xs font-mono ${isMintSuccess ? 'text-green-500' : ''}`}>
+                                {isMintSuccess ? '1/1' : '0/1'}
+                              </span>
+                            )
+                          }
+                        </span>
+                    </div>
+                    
+                </div>
+              </div>
+            )}
+            
+            {/* Token Selection */}
+            <div className="space-y-3">
+              <div>
+                <Label className="text-sm font-medium">Token 0</Label>
+                <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4">
+                  <div className="flex items-center gap-2">
+                    <div 
+                      className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2 cursor-pointer" 
+                      onClick={() => setTokenChooserOpen('token0')}
+                    >
+                      {token0Symbol ? (
+                        <Image src={getTokenIcon(token0Symbol)} alt={token0Symbol} width={20} height={20} className="rounded-full"/>
+                      ) : (
+                        <div className="w-5 h-5 rounded-full bg-muted-foreground/30"></div>
+                      )}
+                      <span className="text-sm font-medium">{token0Symbol || "Select"}</span>
+                      <ChevronDownIcon className="h-4 w-4 text-muted-foreground" />
+                    </div>
+                    <div className="flex-1">
+                      <Input
+                        placeholder="0.0"
+                        value={amount0}
+                        autoComplete="off"
+                        autoCorrect="off"
+                        spellCheck={false}
+                        inputMode="decimal"
+                        enterKeyHint="done"
+                        onChange={(e) => {
+                          setAmount0(e.target.value);
+                          setActiveInputSide('amount0');
+                        }}
+                        disabled={isWorking || isCalculating}
+                        className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-center items-center">
+                <div className="flex items-center justify-center h-8 w-8 rounded-full bg-muted/20">
+                  <PlusIcon className="h-4 w-4 text-muted-foreground" />
+                </div>
+              </div>
+
+              <div>
+                <Label className="text-sm font-medium">Token 1</Label>
+                <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4">
+                  <div className="flex items-center gap-2">
+                    <div 
+                      className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2 cursor-pointer" 
+                      onClick={() => setTokenChooserOpen('token1')}
+                    >
+                      {token1Symbol ? (
+                        <Image src={getTokenIcon(token1Symbol)} alt={token1Symbol} width={20} height={20} className="rounded-full"/>
+                      ) : (
+                        <div className="w-5 h-5 rounded-full bg-muted-foreground/30"></div>
+                      )}
+                      <span className="text-sm font-medium">{token1Symbol || "Select"}</span>
+                      <ChevronDownIcon className="h-4 w-4 text-muted-foreground" />
+                    </div>
+                    <div className="flex-1">
+                      <Input
+                        placeholder="0.0"
+                        value={amount1}
+                        autoComplete="off"
+                        autoCorrect="off"
+                        spellCheck={false}
+                        inputMode="decimal"
+                        enterKeyHint="done"
+                        onChange={(e) => {
+                          setAmount1(e.target.value);
+                          setActiveInputSide('amount1');
+                        }}
+                        disabled={isWorking || isCalculating}
+                        className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            {/* Buttons for New Position */}
+            <div className="grid grid-cols-2 gap-3 pt-2">
+              <Button 
+                variant="outline" 
+                className="relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75 disabled:opacity-50" 
+                onClick={() => onOpenChange(false)} 
+                disabled={isWorking}
+                style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+              >
+                Cancel
+              </Button>
+
+              <Button
+                className={(isWorking || isCalculating || !token0Symbol || !token1Symbol || (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0"))) ? "relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 !opacity-100 cursor-default text-white/75" : "text-sidebar-primary border border-sidebar-primary bg-[#3d271b] hover:bg-[#3d271b]/90"}
+                onClick={() => {
+                  if (step === 'input') handlePrepareMint();
+                  else if (step === 'approve') handleApprove();
+                  else if (step === 'mint') handleMint();
+                }}
+                disabled={isWorking || isCalculating || !token0Symbol || !token1Symbol || (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0"))}
+                style={(isWorking || isCalculating || !token0Symbol || !token1Symbol || (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0"))) ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
+              >
+                <span className={(step === 'approve' && (isApproveWritePending || isApproving)) || (step === 'mint' && (isMintSendPending || isMintConfirming || (!batchPermitSigned && isWorking))) || (step === 'input' && isWorking) ? "animate-pulse" : ""}>
+                  {getButtonText()}
+                </span>
+              </Button>
+          </div>
+        </div>
+        )}
+
+        {/* Token Chooser */}
+        <AnimatePresence>
+          {tokenChooserOpen && (
+            <div className="absolute inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="bg-background border border-border rounded-lg p-4 w-full max-w-md max-h-96 overflow-hidden">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-medium">Select Token</h3>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setTokenChooserOpen(null)}
+                  >
+                    <XIcon className="h-4 w-4" />
+                  </Button>
+                </div>
+                
+                <div className="mb-4">
+                  <div className="relative">
+                    <SearchIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      placeholder="Search tokens..."
+                      value={tokenSearchTerm}
+                      autoComplete="off"
+                      autoCorrect="off"
+                      spellCheck={false}
+                      onChange={(e) => setTokenSearchTerm(e.target.value)}
+                      className="pl-9"
+                    />
+                  </div>
+                </div>
+
+                <div className="overflow-y-auto max-h-64">
+                  {filteredTokens.map((token) => (
+                    <button
+                      key={token.address}
+                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-muted/50 transition-colors text-left rounded-lg"
+                      onClick={() => handleTokenSelect(token)}
+                    >
+                      <Image
+                        src={token.icon} 
+                        alt={token.symbol} 
+                        width={28} 
+                        height={28} 
+                        className="rounded-full"
+                      />
+                      <div className="flex-1">
+                        <div className="font-medium">{token.symbol}</div>
+                        <div className="text-sm text-muted-foreground">{token.name}</div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </AnimatePresence>
+        </div>
+        ) : null}
+
+        {/* Success View */}
+        {showSuccessView && (
+          <div className="border rounded-lg p-6" style={{ backgroundColor: 'var(--modal-background)' }}>
+            {/* Transaction Summary */}
+            <div 
+              className="mb-6 flex items-center justify-between rounded-lg border border-[var(--swap-border)] p-4 hover:bg-muted/30 transition-colors cursor-pointer" 
+              onClick={() => {
+                // Don't call onLiquidityAdded here to prevent auto-close
+                // The callback was already called when transaction confirmed
+                onOpenChange(false);
+              }}
+            >
+              <div className="flex items-center gap-3">
+                <Image src={getTokenIcon(positionToModify?.token0.symbol || '')} alt={positionToModify?.token0.symbol || ''} width={32} height={32} className="rounded-full"/>
+                <div className="text-left flex flex-col">
+                  <div className="font-medium flex items-baseline">
+                    <span className="text-sm">{formatTokenDisplayAmount((() => {
+                      // Calculate amount with fees added
+                      const currentIncrease = increaseAmount0 || "0";
+                      if (!feesForIncrease) return currentIncrease;
+                      const decimals = getTokenSymbolByAddress(positionToModify?.token0.address || '') ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(positionToModify?.token0.address || '')!]?.decimals || 18 : 18;
+                      const feeAmount = formatUnits(BigInt(feesForIncrease.amount0 || '0'), decimals);
+                      const totalAmount = parseFloat(currentIncrease) + parseFloat(feeAmount);
+                      return totalAmount.toString();
+                    })())}</span>
+                    <span className="ml-1 text-xs text-muted-foreground">{positionToModify?.token0.symbol}</span>
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {formatUSD((() => {
+                      // Calculate USD value with fees added
+                      const currentIncrease = increaseAmount0 || "0";
+                      if (!feesForIncrease) return parseFloat(currentIncrease) * getUSDPriceForSymbol(positionToModify?.token0.symbol || '');
+                      const decimals = getTokenSymbolByAddress(positionToModify?.token0.address || '') ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(positionToModify?.token0.address || '')!]?.decimals || 18 : 18;
+                      const feeAmount = formatUnits(BigInt(feesForIncrease.amount0 || '0'), decimals);
+                      const totalAmount = parseFloat(currentIncrease) + parseFloat(feeAmount);
+                      return totalAmount * getUSDPriceForSymbol(positionToModify?.token0.symbol || '');
+                    })())}
+                  </div>
+                </div>
+              </div>
+              <div className="flex justify-center items-center mx-2">
+                <PlusIcon className="h-4 w-4 text-muted-foreground" />
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="text-right flex flex-col">
+                  <div className="font-medium flex items-baseline">
+                    <span className="text-sm">{formatTokenDisplayAmount((() => {
+                      // Calculate amount with fees added
+                      const currentIncrease = increaseAmount1 || "0";
+                      if (!feesForIncrease) return currentIncrease;
+                      const decimals = getTokenSymbolByAddress(positionToModify?.token1.address || '') ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(positionToModify?.token1.address || '')!]?.decimals || 18 : 18;
+                      const feeAmount = formatUnits(BigInt(feesForIncrease.amount1 || '0'), decimals);
+                      const totalAmount = parseFloat(currentIncrease) + parseFloat(feeAmount);
+                      return totalAmount.toString();
+                    })())}</span>
+                    <span className="ml-1 text-xs text-muted-foreground">{positionToModify?.token1.symbol}</span>
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {formatUSD((() => {
+                      // Calculate USD value with fees added
+                      const currentIncrease = increaseAmount1 || "0";
+                      if (!feesForIncrease) return parseFloat(currentIncrease) * getUSDPriceForSymbol(positionToModify?.token1.symbol || '');
+                      const decimals = getTokenSymbolByAddress(positionToModify?.token1.address || '') ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(positionToModify?.token1.address || '')!]?.decimals || 18 : 18;
+                      const feeAmount = formatUnits(BigInt(feesForIncrease.amount1 || '0'), decimals);
+                      const totalAmount = parseFloat(currentIncrease) + parseFloat(feeAmount);
+                      return totalAmount * getUSDPriceForSymbol(positionToModify?.token1.symbol || '');
+                    })())}
+                  </div>
+                </div>
+                <Image src={getTokenIcon(positionToModify?.token1.symbol || '')} alt={positionToModify?.token1.symbol || ''} width={32} height={32} className="rounded-full"/>
+              </div>
+            </div>
+
+            {/* Success Icon and Message */}
+            <div className="my-8 flex flex-col items-center justify-center">
+              <div
+                className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-[var(--sidebar-connect-button-bg)] border border-sidebar-border overflow-hidden"
+                style={{
+                  backgroundImage: 'url(/pattern_wide.svg)',
+                  backgroundSize: 'cover',
+                  backgroundPosition: 'center'
+                }}
+              >
+                <CircleCheck className="h-8 w-8 text-sidebar-primary" />
+              </div>
+              <div className="text-center">
+                <h3 className="text-lg font-medium">Liquidity Added</h3>
+                <p className="text-muted-foreground mt-1">
+                  {formatTokenDisplayAmount((() => {
+                    // Calculate amount with fees added for token0
+                    const currentIncrease = increaseAmount0 || "0";
+                    if (!feesForIncrease) return currentIncrease;
+                    const decimals = getTokenSymbolByAddress(positionToModify?.token0.address || '') ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(positionToModify?.token0.address || '')!]?.decimals || 18 : 18;
+                    const feeAmount = formatUnits(BigInt(feesForIncrease.amount0 || '0'), decimals);
+                    const totalAmount = parseFloat(currentIncrease) + parseFloat(feeAmount);
+                    return totalAmount.toString();
+                  })())} {positionToModify?.token0.symbol} and {formatTokenDisplayAmount((() => {
+                    // Calculate amount with fees added for token1
+                    const currentIncrease = increaseAmount1 || "0";
+                    if (!feesForIncrease) return currentIncrease;
+                    const decimals = getTokenSymbolByAddress(positionToModify?.token1.address || '') ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(positionToModify?.token1.address || '')!]?.decimals || 18 : 18;
+                    const feeAmount = formatUnits(BigInt(feesForIncrease.amount1 || '0'), decimals);
+                    const totalAmount = parseFloat(currentIncrease) + parseFloat(feeAmount);
+                    return totalAmount.toString();
+                  })())} {positionToModify?.token1.symbol}
+                </p>
+              </div>
+            </div>
+
+            {/* View on Explorer Link */}
+            <div className="mb-1 flex items-center justify-center">
+            <Button
+                variant="link"
+                className="text-xs font-normal text-muted-foreground hover:text-muted-foreground/80"
+                onClick={() => window.open(txHash ? `https://sepolia.basescan.org/tx/${txHash}` : `https://sepolia.basescan.org/`, "_blank")}
+              >
+                View on Explorer
+            </Button>
+            </div>
+
+            {/* Action Button */}
+            <Button
+              variant="outline"
+              className="w-full relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 text-white/75"
+              onClick={() => {
+                // Don't call onLiquidityAdded here to prevent auto-close
+                // The callback was already called when transaction confirmed
+                onOpenChange(false);
+              }}
+              style={{ backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+            >
+              Close
+            </Button>
+          </div>
+          )}
+
+      </DialogContent>
     </Dialog>
   );
-} 
+}
+

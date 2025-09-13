@@ -1,21 +1,13 @@
 "use client"
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useAccount, useDisconnect } from 'wagmi'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { LogOutIcon, MoreVerticalIcon, Edit3Icon, CheckIcon, XIcon, HomeIcon, SettingsIcon } from "lucide-react"
+import { LogOutIcon, MoreVerticalIcon, CopyIcon, CheckIcon, XIcon, HomeIcon } from "lucide-react"
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from "@/components/ui/sidebar"
-import { LevelProgress } from "@/components/LevelProgress"
 import { Input } from "@/components/ui/input"
+import { motion, AnimatePresence } from "framer-motion"
 
 // Account Status component
 export function AccountStatus() {
@@ -24,8 +16,9 @@ export function AccountStatus() {
   const { isMobile } = useSidebar() 
 
   const [displayedName, setDisplayedName] = useState("");
-  const [isEditingName, setIsEditingName] = useState(false);
-  const [inputName, setInputName] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [isDisconnectExpanded, setIsDisconnectExpanded] = useState(false);
+  const accountRef = useRef<HTMLDivElement>(null);
 
   // Set display name when address is available
   useEffect(() => {
@@ -33,68 +26,53 @@ export function AccountStatus() {
       const storedName = localStorage.getItem(`walletName_${address}`);
       const newDisplayName = storedName || `${address.slice(0, 6)}...${address.slice(-4)}`;
       setDisplayedName(newDisplayName);
-      setInputName(newDisplayName);
     }
   }, [address]);
 
-  // Cache the display name whenever it changes
+  // Reset expansion state when connection status changes
   useEffect(() => {
-    if (displayedName) {
-      localStorage.setItem('cachedDisplayName', displayedName);
-    }
-  }, [displayedName]);
+    setIsDisconnectExpanded(false);
+  }, [isConnected]);
 
-  const handleNameInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setInputName(e.target.value);
-  };
-
-  const handleSaveName = () => {
-    if (address && inputName.trim() !== "") {
-      localStorage.setItem(`walletName_${address}`, inputName.trim());
-      setDisplayedName(inputName.trim());
-      setIsEditingName(false);
-    } else if (address) {
-      if (localStorage.getItem(`walletName_${address}`)) {
-          localStorage.removeItem(`walletName_${address}`);
+  const handleCopyName = async () => {
+    if (address) {
+      try {
+        await navigator.clipboard.writeText(address);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch (err) {
+        console.error('Failed to copy:', err);
       }
-      const fallbackName = shortAddress; // Changed fallback to wallet address
-      setDisplayedName(fallbackName);
-      setInputName(fallbackName);
-      setIsEditingName(false);
     }
   };
 
-  const handleEditClick = () => {
-    setInputName(displayedName);
-    setIsEditingName(true);
-  }
+  // Click outside to close
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (accountRef.current && !accountRef.current.contains(event.target as Node)) {
+        setIsDisconnectExpanded(false);
+      }
+    };
 
-  const handleCancelEdit = () => {
-    setInputName(displayedName);
-    setIsEditingName(false);
-  }
+    if (isDisconnectExpanded) {
+      // Add a small delay to prevent immediate triggering
+      const timeoutId = setTimeout(() => {
+        document.addEventListener('mousedown', handleClickOutside);
+      }, 100);
+
+      return () => {
+        clearTimeout(timeoutId);
+        document.removeEventListener('mousedown', handleClickOutside);
+      };
+    }
+  }, [isDisconnectExpanded]);
 
   if (!isConnected) {
-    return (
-      <SidebarMenu>
-        <SidebarMenuItem className="list-none"> 
-          <div className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30" style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}>
-            <appkit-button className="absolute inset-0 z-10 block h-full w-full cursor-pointer p-0 opacity-0" />
-            <span className="relative z-0 pointer-events-none">Connect Wallet</span>
-          </div>
-        </SidebarMenuItem>
-      </SidebarMenu>
-      )
+    return null // Connect button is now handled by ConnectWalletButton component
   }
 
   const shortAddress = address ? `${address.slice(0, 6)}...${address.slice(-4)}` : ''
 
-  // Mock data for leveling system
-  const levelData = {
-    currentLevel: 0,
-    currentXP: 0,
-    nextLevelXP: 1000
-  }
 
   // Use wagmi state for render decision
   const shouldShowAccount = isConnected || address;
@@ -102,13 +80,19 @@ export function AccountStatus() {
   return (
     <SidebarMenu>
       <SidebarMenuItem>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <SidebarMenuButton
-              size="lg"
-              className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground focus-visible:ring-0"
-              style={{ opacity: shouldShowAccount ? 1 : 0, pointerEvents: shouldShowAccount ? 'auto' : 'none' }}
-            >
+        <motion.div
+          ref={accountRef}
+          layout
+          className="w-full"
+        >
+              <SidebarMenuButton
+                size="lg"
+                className="data-[state=open]:text-sidebar-accent-foreground data-[state=open]:bg-muted/30 data-[state=open]:hover:bg-muted/30 focus-visible:ring-0 rounded-lg border border-dashed border-sidebar-border/60 hover:bg-muted/30 active:bg-muted/30"
+                style={{ opacity: shouldShowAccount ? 1 : 0, pointerEvents: shouldShowAccount ? 'auto' : 'none' }}
+                onClick={() => {
+                  setIsDisconnectExpanded(!isDisconnectExpanded);
+                }}
+              >
               <Avatar className="h-8 w-8 rounded-lg">
                 <AvatarFallback className="rounded-lg">{displayedName.charAt(0).toUpperCase() || "C"}</AvatarFallback>
               </Avatar>
@@ -125,75 +109,58 @@ export function AccountStatus() {
                   </>
                 )}
               </div>
-              <MoreVerticalIcon className="ml-auto size-4" />
+               {isDisconnectExpanded ? (
+                 <Button 
+                   variant="ghost" 
+                   size="icon" 
+                   onClick={(e) => {
+                     e.preventDefault();
+                     e.stopPropagation();
+                     handleCopyName();
+                   }}
+                   onMouseDown={(e) => {
+                     e.preventDefault();
+                     e.stopPropagation();
+                   }}
+                   className="ml-auto h-6 w-6 p-0"
+                 >
+                   {copied ? (
+                     <CheckIcon className="h-4 w-4 text-green-500" />
+                   ) : (
+                     <CopyIcon className="h-4 w-4 text-muted-foreground" />
+                   )}
+                 </Button>
+               ) : (
+                 <MoreVerticalIcon className="ml-auto size-4" />
+               )}
             </SidebarMenuButton>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent
-            className="w-[--radix-dropdown-menu-trigger-width] min-w-56 rounded-lg border-sidebar-border"
-            side={isMobile ? "bottom" : "right"}
-            align="end"
-            sideOffset={16}
-            style={{ backgroundColor: '#0f0f0f' }}
-          >
-            <DropdownMenuLabel className="p-0 font-normal">
-              <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm group">
-                <Avatar className="h-8 w-8 rounded-lg">
-                  <AvatarFallback className="rounded-lg">{displayedName.charAt(0).toUpperCase() || "C"}</AvatarFallback>
-                </Avatar>
-                <div className="flex flex-1 flex-col text-left text-sm leading-tight min-w-0">
-                  {isEditingName ? (
-                    <div className="flex items-center gap-1">
-                      <Input 
-                        type="text" 
-                        value={inputName} 
-                        onChange={handleNameInputChange}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') handleSaveName();
-                          if (e.key === 'Escape') handleCancelEdit();
-                        }}
-                        onBlur={handleSaveName}
-                        className="h-6 px-1.5 py-1 text-sm rounded-md focus-visible:ring-0 focus-visible:ring-offset-0 border-0 shadow-none bg-transparent focus:outline-none"
-                        autoFocus
-                      />
-                    </div>
-                  ) : (
-                    <div className="relative">
-                      <div className="truncate font-medium pr-6">{displayedName}</div>
-                      {address && (
-                        <Button 
-                          variant="ghost" 
-                          size="icon" 
-                          onClick={handleEditClick} 
-                          className="absolute right-0 top-1/2 h-5 w-5 -translate-y-1/2 opacity-0 transition-opacity group-hover:opacity-100"
-                        >
-                          <Edit3Icon className="h-4 w-4 text-muted-foreground" />
-                        </Button>
-                      )}
-                    </div>
-                  )}
-                  <span className="truncate text-xs text-muted-foreground">Beta Tester</span>
-                </div>
-              </div>
-            </DropdownMenuLabel>
-            <div className="relative px-2 pt-0.5 pb-1.5 flex items-center cursor-pointer group">
-              <LevelProgress {...levelData} className="flex-grow" />
-              <span className="ml-2 text-xs font-medium text-muted-foreground whitespace-nowrap">
-                Lvl {levelData.currentLevel}
-              </span>
-              {/* Hover overlay */}
-              <div className="absolute inset-0 bg-black/60 rounded-sm opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center">
-                <span className="text-xs font-medium text-muted-foreground whitespace-nowrap">
-                  Coming Soon
-                </span>
-              </div>
-            </div>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => disconnect()} className="cursor-pointer">
-              <LogOutIcon className="mr-2 h-4 w-4 text-muted-foreground" /> 
-              Disconnect
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        
+         {/* Animated Disconnect Section */}
+         <AnimatePresence>
+           {isDisconnectExpanded && (
+             <motion.div
+               initial={{ height: 0, opacity: 0 }}
+               animate={{ height: "auto", opacity: 1 }}
+               exit={{ height: 0, opacity: 0 }}
+               transition={{ type: "spring", stiffness: 300, damping: 30 }}
+               className="overflow-hidden"
+             >
+               <div className="mt-2">
+                 <Button
+                   onClick={() => disconnect()}
+                   className="w-full cursor-pointer justify-start py-1.5 rounded-lg border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] hover:bg-accent hover:brightness-110 hover:border-white/30 text-white/75 transition-all duration-200 overflow-hidden"
+                   style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+                 >
+                   <div className="flex items-center w-full">
+                     <LogOutIcon className="h-4 w-4 text-white/75 ml-1" />
+                     <span className="mr-3" style={{ marginLeft: '0.75rem' }}>Disconnect</span>
+                   </div>
+                 </Button>
+               </div>
+             </motion.div>
+           )}
+         </AnimatePresence>
+        </motion.div>
       </SidebarMenuItem>
     </SidebarMenu>
   )

@@ -6,6 +6,7 @@ import Image from 'next/image';
 import {
   ArrowDownIcon,
   ChevronRightIcon,
+  ChevronsRight,
   InfoIcon,
   ChevronDown as ChevronDownIcon,
 } from "lucide-react";
@@ -14,7 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { cn } from "@/lib/utils";
+import { cn, formatTokenAmount } from "@/lib/utils";
 import { Token, FeeDetail, OutlineArcIcon } from './swap-interface';
 import { TokenSelector, TokenSelectorToken } from './TokenSelector';
 import { getToken } from '@/lib/pools-config';
@@ -138,7 +139,8 @@ export function SwapInputView({
   const wiggleControls = useAnimation();
 
   const formatPercentFromBps = React.useCallback((bps: number) => {
-    const percent = bps / 10000; // convert bps to percent
+    // Convert basis points to percentage points: 1 bps = 0.01%
+    const percent = bps / 100;
     const decimals = percent < 0.1 ? 3 : 2;
     return `${percent.toFixed(decimals)}%`;
   }, []);
@@ -285,7 +287,7 @@ export function SwapInputView({
                 disabled={!isConnected || isAttemptingSwitch}
               />
               <div className="text-right text-xs text-muted-foreground">
-                {formatCurrency((parseFloat(fromAmount || "0") * displayFromToken.usdPrice).toString())}
+                {formatCurrency((parseFloat(fromAmount || "0") * (displayFromToken.usdPrice || 0)).toString())}
               </div>
             </div>
           </div>
@@ -308,7 +310,7 @@ export function SwapInputView({
             </span>
         </div>
         <div 
-          className="rounded-lg bg-[var(--token-container-background)] p-4 border border-transparent"
+          className="rounded-lg bg-[var(--token-container-background)] p-4 border border-transparent transition-colors hover:border-[var(--token-container-border-hover)]"
         >
           <div className="flex items-center gap-2">
             <TokenSelector
@@ -336,8 +338,8 @@ export function SwapInputView({
               )}>
                 {(() => {
                   const amount = parseFloat(toAmount || "");
-                  if (!toAmount || isNaN(amount)) return "";
-                  return formatCurrency((amount * displayToToken.usdPrice).toString());
+                  if (!toAmount || isNaN(amount)) return "$0.00";
+                  return formatCurrency((amount * (displayToToken.usdPrice || 0)).toString());
                 })()}
               </div>
             </div>
@@ -388,7 +390,13 @@ export function SwapInputView({
                               const fromSym = routeInfo?.path?.[selectedPoolIndexForChart] ?? displayFromToken.symbol;
                               const toIdx = Math.min((routeInfo?.path?.length || 1) - 1, selectedPoolIndexForChart + 1);
                               const toSym = routeInfo?.path?.[toIdx] ?? displayToToken.symbol;
-                              return `Fee: ${fromSym} › ${toSym}`;
+                              return (
+                                <span className="inline-flex items-center gap-1.5">
+                                  <span>{fromSym}</span>
+                                  <ChevronsRight className="h-3 w-3 text-muted-foreground/70" />
+                                  <span>{toSym}</span>
+                                </span>
+                              );
                             })()}
                           </p>
                         </TooltipContent>
@@ -445,6 +453,7 @@ export function SwapInputView({
                       <motion.div
                         className="relative"
                         style={{ height: iconSize }}
+                        initial={{ width: animatedWidth }}
                         animate={{ width: animatedWidth }}
                         transition={{ type: "spring", stiffness: 300, damping: 30 }}
                       >
@@ -608,7 +617,8 @@ export function SwapInputView({
                       }
                       const totalFeeBps = routeFees.reduce((total, routeFee) => total + routeFee.fee, 0);
                       const inputAmountUSD = parseFloat(fromAmount || "0") * (displayFromToken.usdPrice || 0);
-                      const feeInUSD = inputAmountUSD * (totalFeeBps / 1000000);
+                      // totalFeeBps is in basis points; convert to fraction by dividing by 10,000
+                      const feeInUSD = inputAmountUSD * (totalFeeBps / 10000);
                       const isMultiHop = (routeInfo?.path?.length || 2) > 2;
                       const percentDisplay = formatPercentFromBps(totalFeeBps);
                       const amountDisplay = feeInUSD > 0 && feeInUSD < 0.01 ? "< $0.01" : formatCurrency(feeInUSD.toString());

@@ -18,6 +18,8 @@ interface FeesCellProps {
   price0: number;
   price1: number;
   refreshKey?: number;
+  prefetchedRaw0?: string | null;
+  prefetchedRaw1?: string | null;
 }
 
 export function FeesCell({
@@ -27,6 +29,8 @@ export function FeesCell({
   price0,
   price1,
   refreshKey = 0,
+  prefetchedRaw0,
+  prefetchedRaw1,
 }: FeesCellProps) {
   const { address: accountAddress } = useAccount();
   const [raw0, setRaw0] = React.useState<string | null>(null);
@@ -39,6 +43,16 @@ export function FeesCell({
     let cancelled = false;
     const run = async () => {
       try {
+        // If parent provided prefetched values, use them and skip fetching
+        if (typeof prefetchedRaw0 === 'string' && typeof prefetchedRaw1 === 'string') {
+          if (!cancelled) {
+            setRaw0(prefetchedRaw0);
+            setRaw1(prefetchedRaw1);
+            setLoading(false);
+            setLastError(null);
+          }
+          return;
+        }
         setLoading(true);
         setLastError(null);
         const data = await loadUncollectedFees(positionId, 60 * 1000);
@@ -59,7 +73,7 @@ export function FeesCell({
     return () => {
       cancelled = true;
     };
-  }, [positionId, refreshKey]);
+  }, [positionId, refreshKey, prefetchedRaw0, prefetchedRaw1]);
 
   // Lazy price fallback: if a price is missing/zero, try fetching shared server prices once
   React.useEffect(() => {
@@ -102,14 +116,14 @@ export function FeesCell({
       <span className="inline-block h-3 w-12 rounded bg-muted/40 animate-pulse align-middle" />
     );
   if (raw0 === null || raw1 === null)
-    return (
-      <span
-        className="text-muted-foreground"
-        title={lastError ? `Fees unavailable: ${lastError}` : undefined}
-      >
-        N/A
-      </span>
-    );
+  return (
+    <span
+      className="text-[11px] text-muted-foreground"
+      title={lastError ? `Fees unavailable: ${lastError}` : undefined}
+    >
+      N/A
+    </span>
+  );
 
   const d0 = TOKEN_DEFINITIONS?.[sym0 as keyof typeof TOKEN_DEFINITIONS]?.decimals ?? 18;
   const d1 = TOKEN_DEFINITIONS?.[sym1 as keyof typeof TOKEN_DEFINITIONS]?.decimals ?? 18;
@@ -135,7 +149,7 @@ export function FeesCell({
   // If there are no raw amounts, show plain text without hover
   if (BigInt(raw0) <= 0n && BigInt(raw1) <= 0n) {
     return (
-      <span className="whitespace-nowrap text-muted-foreground">
+      <span className="whitespace-nowrap text-[11px] text-muted-foreground">
         $0
       </span>
     );
@@ -145,33 +159,8 @@ export function FeesCell({
   const showLessThanMin = !Number.isFinite(usd) || usd < 0.01;
 
   return (
-    <HoverCard>
-      <HoverCardTrigger asChild>
-        <span className="whitespace-nowrap cursor-default hover:text-foreground transition-colors">
-          {showLessThanMin ? "< $0.01" : fmtUsd(usd)}
-        </span>
-      </HoverCardTrigger>
-      <HoverCardContent
-        side="top"
-        align="center"
-        sideOffset={8}
-        className="w-40 p-2 border border-sidebar-border bg-[#0f0f0f] text-xs shadow-lg rounded-lg"
-      >
-        <div className="grid gap-1">
-          <div className="flex items-center justify-between">
-            <span className="text-muted-foreground">{sym0}</span>
-            <span className="font-mono tabular-nums">
-              {formatTokenAmount(amt0)}
-            </span>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-muted-foreground">{sym1}</span>
-            <span className="font-mono tabular-nums">
-              {formatTokenAmount(amt1)}
-            </span>
-          </div>
-        </div>
-      </HoverCardContent>
-    </HoverCard>
+    <span className="whitespace-nowrap text-[11px] font-medium">
+      {showLessThanMin ? "< $0.01" : fmtUsd(usd)}
+    </span>
   );
 }

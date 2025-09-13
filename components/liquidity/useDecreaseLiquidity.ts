@@ -2,17 +2,21 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import React from 'react';
 import { OctagonX } from 'lucide-react';
 import { useAccount, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
+import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { V4PositionPlanner, V4PositionManager, Pool as V4Pool, Position as V4Position } from '@uniswap/v4-sdk';
 import { TickMath } from '@uniswap/v3-sdk';
 import { Token, Percent } from '@uniswap/sdk-core';
 import { V4_POSITION_MANAGER_ADDRESS, EMPTY_BYTES, V4_POSITION_MANAGER_ABI } from '@/lib/swap-constants';
-import { getToken, TokenSymbol, getTokenSymbolByAddress } from '@/lib/pools-config';
+import { getToken, TokenSymbol, getTokenSymbolByAddress, TOKEN_DEFINITIONS } from '@/lib/pools-config';
 import { baseSepolia } from '@/lib/wagmiConfig';
-import { getAddress, type Hex, BaseError, parseUnits, encodeAbiParameters, keccak256 } from 'viem';
+import { getAddress, type Hex, BaseError, parseUnits, encodeAbiParameters, keccak256, formatUnits } from 'viem';
 import { getPositionDetails, getPoolState } from '@/lib/liquidity-utils';
 import { prefetchService } from '@/lib/prefetch-service';
-import { invalidateActivityCache, invalidateUserPositionsCache, invalidateUserPositionIdsCache } from '@/lib/client-cache';
+import { invalidateActivityCache, invalidateUserPositionsCache, invalidateUserPositionIdsCache, refreshFeesAfterTransaction } from '@/lib/client-cache';
+import { invalidateAfterTx } from '@/lib/invalidation';
+import { clearBatchDataCache } from '@/lib/cache-version';
+import { publicClient } from '@/lib/viemClient';
 
 // Helper function to safely parse amounts without precision loss
 const safeParseUnits = (amount: string, decimals: number): bigint => {
@@ -23,7 +27,7 @@ const safeParseUnits = (amount: string, decimals: number): bigint => {
 import JSBI from 'jsbi';
 
 interface UseDecreaseLiquidityProps {
-  onLiquidityDecreased: () => void;
+  onLiquidityDecreased: (info?: { txHash?: `0x${string}`; blockNumber?: bigint; isFullBurn?: boolean }) => void;
   onFeesCollected?: () => void;
 }
 
@@ -46,11 +50,14 @@ export interface DecreasePositionData {
   positionToken1Amount?: string;
   // Which side the user actually edited in the UI: 'token0' or 'token1'
   enteredSide?: 'token0' | 'token1';
+  // Fee data to add to amounts - CRITICAL: NO ROUNDING UP ALLOWED
+  feesForWithdraw?: { amount0: string; amount1: string; } | null;
 }
 
 type DecreaseOptions = { slippageBps?: number; deadlineSeconds?: number };
 
 export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: UseDecreaseLiquidityProps) {
+  const queryClient = useQueryClient();
   const { address: accountAddress, chainId } = useAccount();
   const { data: hash, writeContract, isPending: isDecreaseSendPending, error: decreaseSendError, reset: resetWriteContract } = useWriteContract();
   const { isLoading: isDecreaseConfirming, isSuccess: isDecreaseConfirmed, error: decreaseConfirmError, status: waitForTxStatus } = useWaitForTransactionReceipt({ hash });
@@ -58,8 +65,11 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
   // (debug logging removed)
 
   const [isDecreasing, setIsDecreasing] = useState(false);
+  const currentDecreasePositionRef = React.useRef<DecreasePositionData | null>(null);
   const lastWasCollectOnly = useRef(false);
-  const isCompoundRef = useRef(false);
+  const lastIsFullBurn = useRef(false);
+  const lastDecreaseData = useRef<DecreasePositionData | null>(null);
+  const processedTransactions = useRef(new Set<string>());
 
   // Helper function to get the NFT token ID from position parameters
   const getTokenIdFromPosition = useCallback(async (positionData: DecreasePositionData): Promise<bigint> => {
@@ -90,28 +100,73 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
 
   const decreaseLiquidity = useCallback(async (positionData: DecreasePositionData, decreasePercentage: number, opts?: DecreaseOptions) => {
     if (!accountAddress || !chainId) {
-      toast.error("Wallet not connected. Please connect your wallet and try again.");
+      toast.error("Wallet Not Connected", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Please connect your wallet and try again." });
       return;
     }
     if (!V4_POSITION_MANAGER_ADDRESS) {
-      toast.error("Configuration Error: Position Manager address not set.");
+      toast.error("Configuration Error", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Position Manager address not set." });
       return;
     }
+    
+    // Store position data for fee refresh after transaction
+    currentDecreasePositionRef.current = positionData;
 
     setIsDecreasing(true);
     const actionName = positionData.isFullBurn ? "burn" : (positionData.collectOnly ? "collect" : "decrease");
     lastWasCollectOnly.current = !!positionData.collectOnly;
+    lastDecreaseData.current = positionData;
+    lastIsFullBurn.current = !!positionData.isFullBurn;
 
     try {
+      // Add unclaimed fees to amounts - CRITICAL: NO ROUNDING UP ALLOWED
+      let finalDecreaseAmount0 = positionData.decreaseAmount0 || '0';
+      let finalDecreaseAmount1 = positionData.decreaseAmount1 || '0';
+
+      if (positionData.feesForWithdraw) {
+        try {
+          // Use the token symbols we already have from positionData
+          const token0Decimals = TOKEN_DEFINITIONS[positionData.token0Symbol]?.decimals || 18;
+          const token1Decimals = TOKEN_DEFINITIONS[positionData.token1Symbol]?.decimals || 18;
+
+          // Convert fee amounts to display units (no rounding)
+          const fee0Amount = formatUnits(BigInt(positionData.feesForWithdraw.amount0 || '0'), token0Decimals);
+          const fee1Amount = formatUnits(BigInt(positionData.feesForWithdraw.amount1 || '0'), token1Decimals);
+
+          // Convert current decrease amounts to BigInt for precise addition
+          const currentDecrease0Raw = safeParseUnits(positionData.decreaseAmount0 || '0', token0Decimals);
+          const currentDecrease1Raw = safeParseUnits(positionData.decreaseAmount1 || '0', token1Decimals);
+          const fee0Raw = safeParseUnits(fee0Amount, token0Decimals);
+          const fee1Raw = safeParseUnits(fee1Amount, token1Decimals);
+
+          // Add fees to decrease amounts - ensure NO ROUNDING by working in raw units
+          const totalDecrease0Raw = currentDecrease0Raw + fee0Raw;
+          const totalDecrease1Raw = currentDecrease1Raw + fee1Raw;
+
+          // Convert back to display format without rounding
+          finalDecreaseAmount0 = formatUnits(totalDecrease0Raw, token0Decimals);
+          finalDecreaseAmount1 = formatUnits(totalDecrease1Raw, token1Decimals);
+        } catch (error) {
+          console.warn('Failed to add fees to decrease amounts, using original amounts:', error);
+          // Fall back to original amounts if fee addition fails
+        }
+      }
+
+      // Update positionData with fee-adjusted amounts
+      const adjustedPositionData = {
+        ...positionData,
+        decreaseAmount0: finalDecreaseAmount0,
+        decreaseAmount1: finalDecreaseAmount1,
+      };
+
       // Only use percentage path if user did NOT specify explicit token amounts
       const userSpecifiedAmounts = (
-        (positionData.decreaseAmount0 && parseFloat(positionData.decreaseAmount0) > 0) ||
-        (positionData.decreaseAmount1 && parseFloat(positionData.decreaseAmount1) > 0)
+        (adjustedPositionData.decreaseAmount0 && parseFloat(adjustedPositionData.decreaseAmount0) > 0) ||
+        (adjustedPositionData.decreaseAmount1 && parseFloat(adjustedPositionData.decreaseAmount1) > 0)
       );
       const isPercentage = (decreasePercentage > 0 && decreasePercentage <= 100) && !userSpecifiedAmounts;
       
-      const token0Def = getToken(positionData.token0Symbol);
-      const token1Def = getToken(positionData.token1Symbol);
+      const token0Def = getToken(adjustedPositionData.token0Symbol);
+      const token1Def = getToken(adjustedPositionData.token1Symbol);
 
       if (!token0Def || !token1Def) {
         throw new Error("Token definitions not found for one or both tokens in the position.");
@@ -131,7 +186,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
       
       // Get the actual NFT token ID with timeout
       const nftTokenId = await Promise.race([
-        getTokenIdFromPosition(positionData),
+        getTokenIdFromPosition(adjustedPositionData),
         new Promise<never>((_, reject) => 
           setTimeout(() => reject(new Error('Failed to resolve token ID. Please try again.')), 10000)
         )
@@ -194,8 +249,8 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
 
           // 4) Options: use percentage and burn flag; include slippage/deadline
           // Derive an accurate percentage from desired amounts at current price (ceil to avoid under-delivery)
-          const desired0Raw = safeParseUnits(positionData.decreaseAmount0 || '0', token0Def.decimals);
-          const desired1Raw = safeParseUnits(positionData.decreaseAmount1 || '0', token1Def.decimals);
+          const desired0Raw = safeParseUnits(adjustedPositionData.decreaseAmount0 || '0', token0Def.decimals);
+          const desired1Raw = safeParseUnits(adjustedPositionData.decreaseAmount1 || '0', token1Def.decimals);
           // Build sqrt ratios for full-withdraw math
           const sqrtP = JSBI.BigInt(state.sqrtPriceX96.toString());
           const sqrtA = TickMath.getSqrtRatioAtTick(details.tickLower);
@@ -238,9 +293,9 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
             pctBpsJSBI = JSBI.BigInt(bps.toString());
           } else {
             // derive from desired token amounts
-            if (positionData.enteredSide === 'token0') {
+            if (adjustedPositionData.enteredSide === 'token0') {
               pctBpsJSBI = ceilRatioToBps(desiredPool0Raw, amount0Full);
-            } else if (positionData.enteredSide === 'token1') {
+            } else if (adjustedPositionData.enteredSide === 'token1') {
               pctBpsJSBI = ceilRatioToBps(desiredPool1Raw, amount1Full);
             } else {
               const r0 = ceilRatioToBps(desiredPool0Raw, amount0Full);
@@ -262,7 +317,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
             hookData: '0x' as Hex,
             tokenId: nftTokenId.toString(),
             liquidityPercentage,
-            burnToken: pctBps === 10000 && !!positionData.isFullBurn,
+            burnToken: pctBps === 10000 && !!adjustedPositionData.isFullBurn,
           } as const;
 
           // (debug logging removed)
@@ -286,7 +341,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
 
       // Case B REMOVED: for explicit amounts we use planner path below to honor min-outs on entered side.
 
-      if (positionData.isFullBurn) {
+      if (adjustedPositionData.isFullBurn) {
         // Fallback full burn via planner
         const amount0MinJSBI = JSBI.BigInt(0);
         const amount1MinJSBI = JSBI.BigInt(0);
@@ -296,7 +351,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
         // fallback to server calc if needed
         let liquidityJSBI: JSBI;
 
-        if (positionData.collectOnly) {
+        if (adjustedPositionData.collectOnly) {
           liquidityJSBI = JSBI.BigInt(0);
         } else {
           // In-range: compute required liquidity from desired token amounts using current pool state; OOR: server calc
@@ -352,8 +407,8 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
               }
 
               // Map desired to pool sides
-              const userDesired0Raw = safeParseUnits(positionData.decreaseAmount0 || '0', token0Def.decimals);
-              const userDesired1Raw = safeParseUnits(positionData.decreaseAmount1 || '0', token1Def.decimals);
+              const userDesired0Raw = safeParseUnits(adjustedPositionData.decreaseAmount0 || '0', token0Def.decimals);
+              const userDesired1Raw = safeParseUnits(adjustedPositionData.decreaseAmount1 || '0', token1Def.decimals);
               const poolC0 = getAddress(details.poolKey.currency0);
               const uiT0Addr = getAddress(token0Def.address);
               const desiredPool0Raw = uiT0Addr === poolC0 ? userDesired0Raw : userDesired1Raw;
@@ -371,10 +426,10 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
               }
               let ratio = r0; // default to token0 side
               const uiT0AddrLocal = getAddress(token0Def.address);
-              const enteredIsPool0 = positionData.enteredSide === 'token0' ? (uiT0AddrLocal === poolC0) : (uiT0AddrLocal !== poolC0);
-              if (positionData.enteredSide === 'token1') {
+              const enteredIsPool0 = adjustedPositionData.enteredSide === 'token0' ? (uiT0AddrLocal === poolC0) : (uiT0AddrLocal !== poolC0);
+              if (adjustedPositionData.enteredSide === 'token1') {
                 ratio = r1;
-              } else if (positionData.enteredSide === 'token0') {
+              } else if (adjustedPositionData.enteredSide === 'token0') {
                 ratio = r0;
               } else {
                 // if no entered side, fall back to max to satisfy both
@@ -389,22 +444,22 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
               }
             } else {
               // OOR: use stable server calc
-              const inputSide = (positionData.decreaseAmount0 && parseFloat(positionData.decreaseAmount0) > 0)
-                ? { amount: positionData.decreaseAmount0, symbol: positionData.token0Symbol }
-                : (positionData.decreaseAmount1 && parseFloat(positionData.decreaseAmount1) > 0)
-                  ? { amount: positionData.decreaseAmount1, symbol: positionData.token1Symbol }
+              const inputSide = (adjustedPositionData.decreaseAmount0 && parseFloat(adjustedPositionData.decreaseAmount0) > 0)
+                ? { amount: adjustedPositionData.decreaseAmount0, symbol: adjustedPositionData.token0Symbol }
+                : (adjustedPositionData.decreaseAmount1 && parseFloat(adjustedPositionData.decreaseAmount1) > 0)
+                  ? { amount: adjustedPositionData.decreaseAmount1, symbol: adjustedPositionData.token1Symbol }
                   : null;
               if (!inputSide) throw new Error('No non-zero decrease amount specified');
               const calcResponse = await fetch('/api/liquidity/calculate-liquidity-parameters', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                  token0Symbol: positionData.token0Symbol,
-                  token1Symbol: positionData.token1Symbol,
+                  token0Symbol: adjustedPositionData.token0Symbol,
+                  token1Symbol: adjustedPositionData.token1Symbol,
                   inputAmount: inputSide.amount,
                   inputTokenSymbol: inputSide.symbol,
-                  userTickLower: positionData.tickLower,
-                  userTickUpper: positionData.tickUpper,
+                  userTickLower: adjustedPositionData.tickLower,
+                  userTickUpper: adjustedPositionData.tickUpper,
                   chainId: chainId,
                 }),
               });
@@ -414,8 +469,8 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
             }
           } catch (e2) {
             console.error('Amounts-mode decrease calc failed; conservative fallback:', e2);
-            const amount0Raw = safeParseUnits(positionData.decreaseAmount0 || '0', token0Def.decimals);
-            const amount1Raw = safeParseUnits(positionData.decreaseAmount1 || '0', token1Def.decimals);
+            const amount0Raw = safeParseUnits(adjustedPositionData.decreaseAmount0 || '0', token0Def.decimals);
+            const amount1Raw = safeParseUnits(adjustedPositionData.decreaseAmount1 || '0', token1Def.decimals);
             const maxAmountRaw = amount0Raw > amount1Raw ? amount0Raw : amount1Raw;
             const estimated = JSBI.divide(JSBI.BigInt(maxAmountRaw.toString()), JSBI.BigInt(10));
             liquidityJSBI = JSBI.greaterThan(estimated, JSBI.BigInt(1)) ? estimated : JSBI.BigInt(1);
@@ -453,8 +508,8 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
         } catch {}
 
         // Map user-entered desired amounts to poolKey token sides
-        const userDesired0Raw = safeParseUnits(positionData.decreaseAmount0 || '0', token0Def.decimals);
-        const userDesired1Raw = safeParseUnits(positionData.decreaseAmount1 || '0', token1Def.decimals);
+        const userDesired0Raw = safeParseUnits(adjustedPositionData.decreaseAmount0 || '0', token0Def.decimals);
+        const userDesired1Raw = safeParseUnits(adjustedPositionData.decreaseAmount1 || '0', token1Def.decimals);
         const { poolKey } = await getPositionDetails(nftTokenId);
         const poolC0 = getAddress(poolKey.currency0);
         const poolC1 = getAddress(poolKey.currency1);
@@ -483,7 +538,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
           minPool1Raw = applyTolerance(desiredPool1Raw);
         } else {
           // In-range: enforce only the user-entered side if provided
-          if (positionData.enteredSide === 'token0') {
+          if (adjustedPositionData.enteredSide === 'token0') {
             const enteredDesired = uiT0Addr === poolC0 ? desiredPool0Raw : desiredPool1Raw;
             if (enteredDesired > 0n) {
               if (uiT0Addr === poolC0) {
@@ -494,7 +549,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
                 minPool0Raw = 0n;
               }
             }
-          } else if (positionData.enteredSide === 'token1') {
+          } else if (adjustedPositionData.enteredSide === 'token1') {
             const enteredDesired = uiT0Addr === poolC0 ? desiredPool1Raw : desiredPool0Raw;
             if (enteredDesired > 0n) {
               if (uiT0Addr === poolC0) {
@@ -554,6 +609,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
       console.error(`Error preparing ${actionName} transaction:`, error);
       const errorMessage = error.message || `Could not prepare the ${actionName} transaction.`;
       toast.error(`${actionName.charAt(0).toUpperCase() + actionName.slice(1)} Preparation Failed`, { 
+        icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
         description: errorMessage 
       });
       setIsDecreasing(false);
@@ -563,7 +619,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
   useEffect(() => {
     if (decreaseSendError) {
       const message = decreaseSendError instanceof BaseError ? decreaseSendError.shortMessage : decreaseSendError.message;
-      toast.error("Withdraw Failed", { description: message });
+      toast.error("Withdraw Failed", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: message });
       setIsDecreasing(false);
     }
   }, [decreaseSendError]);
@@ -571,62 +627,89 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
   useEffect(() => {
     if (!hash) return;
 
+    // Prevent processing the same transaction multiple times
+    const hashString = hash.toString();
+    if (processedTransactions.current.has(hashString)) {
+      return;
+    }
+
     if (isDecreaseConfirmed) {
-      // Single user-friendly toast depending on whether this was a compound or a decrease/collect
-      if (isCompoundRef.current) {
-        toast.success("Compound Success", {
-          id: hash,
-          description: "Fees added back to your position.",
-          action: baseSepolia?.blockExplorers?.default?.url 
-            ? { label: "View Tx", onClick: () => window.open(`${baseSepolia.blockExplorers.default.url}/tx/${hash}`, '_blank') }
-            : undefined,
-        });
-        onLiquidityDecreased();
-        try { if (accountAddress) prefetchService.requestPositionsRefresh({ owner: accountAddress, reason: 'compound' }); } catch {}
-        isCompoundRef.current = false;
-      } else {
-        // Delegate success toast to page-level logic to avoid duplicates
+      // Mark transaction as processed immediately
+      processedTransactions.current.add(hashString);
+      
+      (async () => {
+        let blockNumber: bigint | undefined = undefined;
+        try {
+          const receipt = await publicClient.getTransactionReceipt({ hash: hash as `0x${string}` });
+          blockNumber = receipt?.blockNumber;
+        } catch {}
         if (lastWasCollectOnly.current && onFeesCollected) {
           onFeesCollected();
         } else {
-          onLiquidityDecreased();
+          onLiquidityDecreased({ txHash: hash as `0x${string}`, blockNumber, isFullBurn: lastIsFullBurn.current } as any);
         }
-      }
-      try { if (accountAddress) prefetchService.requestPositionsRefresh({ owner: accountAddress, reason: lastWasCollectOnly.current ? 'collect' : 'decrease' }); } catch {}
+        
+        // Refresh fee data for this position
+        try {
+          const decreasePosition = currentDecreasePositionRef.current;
+          if (decreasePosition?.tokenId) {
+            refreshFeesAfterTransaction(decreasePosition.tokenId.toString(), queryClient);
+          }
+        } catch {}
+        // CRITICAL: Invalidate global batch cache after liquidity decrease
+        try {
+          clearBatchDataCache();
+          fetch('/api/internal/revalidate-pools', { method: 'POST' }).catch(() => {});
+        } catch {}
+        
+        // CRITICAL: Invalidate React Query caches including fee data
+        try {
+          if (accountAddress) {
+            const currentPositionId = lastDecreaseData.current?.tokenId;
+            const poolId = lastDecreaseData.current?.poolId;
+            invalidateAfterTx(queryClient, {
+              owner: accountAddress,
+              poolId: poolId,
+              positionIds: currentPositionId ? [String(currentPositionId)] : undefined,
+              reason: lastWasCollectOnly.current ? 'collect' : 'decrease'
+            }).catch(() => {});
+          }
+        } catch {}
+      })();
+      try { if (accountAddress) prefetchService.notifyPositionsRefresh(accountAddress, lastWasCollectOnly.current ? 'collect' : 'decrease'); } catch {}
       try { if (accountAddress) invalidateActivityCache(accountAddress); } catch {}
       try { if (accountAddress) { invalidateUserPositionsCache(accountAddress); invalidateUserPositionIdsCache(accountAddress); } } catch {}
-      try { fetch('/api/internal/revalidate-pools', { method: 'POST' } as any).catch(() => {}); } catch {}
+      // Removed hook-level revalidate to avoid duplicates; page handles revalidation after subgraph sync
       setIsDecreasing(false);
     } else if (decreaseConfirmError) {
+      // Mark failed transaction as processed to prevent retry loops
+      processedTransactions.current.add(hashString);
+      
        const message = decreaseConfirmError instanceof BaseError ? decreaseConfirmError.shortMessage : decreaseConfirmError.message;
-      toast.error("Withdraw Failed", {
+      toast.error("Withdraw Failed", { 
         id: hash,
-        description: message,
-        action: baseSepolia?.blockExplorers?.default?.url 
-          ? { label: "View Tx", onClick: () => window.open(`${baseSepolia.blockExplorers.default.url}/tx/${hash}`, '_blank') }
-          : undefined,
+        icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
+        description: message
       });
       setIsDecreasing(false);
-      isCompoundRef.current = false;
     }
-  }, [isDecreaseConfirming, isDecreaseConfirmed, decreaseConfirmError, hash, onLiquidityDecreased, baseSepolia?.blockExplorers?.default?.url]);
+  }, [isDecreaseConfirming, isDecreaseConfirmed, decreaseConfirmError, hash, onLiquidityDecreased, onFeesCollected, accountAddress]);
 
   return {
     decreaseLiquidity,
     // Claim fees only: decrease 0 liquidity, take pair, optional sweep
     claimFees: useCallback(async (tokenIdLike: string | number) => {
       if (!accountAddress || !chainId) {
-        toast.error("Wallet not connected. Please connect your wallet and try again.");
+        toast.error("Wallet Not Connected", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Please connect your wallet and try again." });
         return;
       }
       if (!V4_POSITION_MANAGER_ADDRESS) {
-        toast.error("Configuration Error: Position Manager address not set.");
+        toast.error("Configuration Error", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Position Manager address not set." });
         return;
       }
 
       setIsDecreasing(true);
       lastWasCollectOnly.current = true;
-      isCompoundRef.current = false;
 
       try {
         const nftTokenId = await getTokenIdFromPosition({
@@ -682,166 +765,15 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
           chainId: chainId,
         });
       } catch (e: any) {
-        toast.error('Claim Fees Preparation Failed', { description: e?.message || 'Could not prepare claim-fees transaction.' });
+        toast.error('Claim Fees Preparation Failed', { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: e?.message || 'Could not prepare claim-fees transaction.' });
         setIsDecreasing(false);
-      }
-    }, [accountAddress, chainId, writeContract, resetWriteContract, getTokenIdFromPosition]),
-    // One-shot compound: collect fees then add as liquidity in a single modifyLiquidities call
-    compoundFees: useCallback(async (position: {
-      tokenId: string | number;
-      token0Symbol: TokenSymbol;
-      token1Symbol: TokenSymbol;
-      poolId: string;
-      tickLower: number;
-      tickUpper: number;
-    }, raw0: string, raw1: string) => {
-      if (!accountAddress || !chainId) {
-        toast.error("Wallet not connected. Please connect your wallet and try again.");
-        return;
-      }
-      if (!V4_POSITION_MANAGER_ADDRESS) {
-        toast.error("Configuration Error: Position Manager address not set.");
-        return;
-      }
-
-      setIsDecreasing(true);
-      lastWasCollectOnly.current = false;
-      isCompoundRef.current = true;
-
-      try {
-        const token0Def = getToken(position.token0Symbol);
-        const token1Def = getToken(position.token1Symbol);
-        if (!token0Def || !token1Def || !token0Def.address || !token1Def.address) {
-          throw new Error("Token definitions missing");
-        }
-
-        const sdkToken0 = new Token(chainId, getAddress(token0Def.address), token0Def.decimals, token0Def.symbol);
-        const sdkToken1 = new Token(chainId, getAddress(token1Def.address), token1Def.decimals, token1Def.symbol);
-        const [sortedSdkToken0, sortedSdkToken1] = sdkToken0.sortsBefore(sdkToken1)
-          ? [sdkToken0, sdkToken1]
-          : [sdkToken1, sdkToken0];
-
-        const planner = new V4PositionPlanner();
-
-        // Resolve NFT tokenId (from composite id salt)
-        const nftTokenId = await Promise.race([
-          getTokenIdFromPosition(position as any),
-          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Failed to resolve token ID. Please try again.')), 10000))
-        ]);
-        const tokenIdJSBI = JSBI.BigInt(nftTokenId.toString());
-
-        // Step 1: collect fees via zero-liquidity decrease (keep balances internal; don't take to EOA yet)
-        const zero = JSBI.BigInt(0);
-        planner.addDecrease(tokenIdJSBI, zero, zero, zero, EMPTY_BYTES || '0x');
-        const hasNativeETH = token0Def.address === "0x0000000000000000000000000000000000000000" || 
-                             token1Def.address === "0x0000000000000000000000000000000000000000";
-
-        // Step 3: compute liquidity using both sides and pick the better (maximize added liquidity without swaps)
-        const amt0 = BigInt(raw0 || '0');
-        const amt1 = BigInt(raw1 || '0');
-
-        const token0Decimals = token0Def!.decimals;
-        const token1Decimals = token1Def!.decimals;
-        async function planFromSide(side: 'token0' | 'token1') {
-          const sideSymbol = side === 'token0' ? position.token0Symbol : position.token1Symbol;
-          const sideDecimals = side === 'token0' ? token0Decimals : token1Decimals;
-          const sideRaw = side === 'token0' ? raw0 : raw1;
-          if (!sideRaw || BigInt(sideRaw) === 0n) {
-            return { liquidity: JSBI.BigInt(0), req0: 0n, req1: 0n, max0: JSBI.BigInt(0), max1: JSBI.BigInt(0) };
-          }
-          let liq = JSBI.BigInt(0);
-          let req0: bigint = 0n;
-          let req1: bigint = 0n;
-          try {
-            const human = formatRawToHuman(sideRaw, sideDecimals);
-            const resp = await fetch('/api/liquidity/calculate-liquidity-parameters', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                token0Symbol: position.token0Symbol,
-                token1Symbol: position.token1Symbol,
-                inputAmount: human,
-                inputTokenSymbol: sideSymbol,
-                userTickLower: position.tickLower,
-                userTickUpper: position.tickUpper,
-                chainId: chainId,
-              }),
-            });
-            if (!resp.ok) throw new Error(await resp.text());
-            const r = await resp.json();
-            liq = JSBI.BigInt(r.liquidity);
-            req0 = BigInt(r.amount0);
-            req1 = BigInt(r.amount1);
-          } catch {
-            // conservative fallback
-            const maxRaw = side === 'token0' ? amt0 : amt1;
-            const estimated = JSBI.divide(JSBI.BigInt(maxRaw.toString()), JSBI.BigInt(10));
-            liq = JSBI.greaterThan(estimated, JSBI.BigInt(1)) ? estimated : JSBI.BigInt(1);
-            // approximate proportional requirements assuming other side small; keep reqs at collected
-            req0 = amt0; req1 = amt1;
-          }
-          // Feasibility: Require that the API-required amounts are fully covered by collected amounts.
-          // If not, treat as zero-liquidity plan to avoid requesting unavailable tokens.
-          const feasible = req0 <= amt0 && req1 <= amt1;
-          if (!feasible) {
-            return { liquidity: JSBI.BigInt(0), req0: 0n, req1: 0n, max0: JSBI.BigInt(0), max1: JSBI.BigInt(0) };
-          }
-          // clamp to collected to avoid EOA pull
-          const collectedSorted0Raw = sdkToken0.address === sortedSdkToken0.address ? amt0 : amt1;
-          const collectedSorted1Raw = sdkToken0.address === sortedSdkToken0.address ? amt1 : amt0;
-          const reqSorted0Raw = sdkToken0.address === sortedSdkToken0.address ? req0 : req1;
-          const reqSorted1Raw = sdkToken0.address === sortedSdkToken0.address ? req1 : req0;
-          const out0 = reqSorted0Raw <= collectedSorted0Raw ? reqSorted0Raw : collectedSorted0Raw;
-          const out1 = reqSorted1Raw <= collectedSorted1Raw ? reqSorted1Raw : collectedSorted1Raw;
-          return { liquidity: liq, req0, req1, max0: JSBI.BigInt(out0.toString()), max1: JSBI.BigInt(out1.toString()) };
-        }
-
-        const [plan0, plan1] = await Promise.all([planFromSide('token0'), planFromSide('token1')]);
-        const pickPlan = JSBI.greaterThan(plan0.liquidity, plan1.liquidity) ? plan0 : plan1;
-        if (!JSBI.greaterThan(pickPlan.liquidity, JSBI.BigInt(0)) || (JSBI.equal(pickPlan.max0, JSBI.BigInt(0)) && JSBI.equal(pickPlan.max1, JSBI.BigInt(0)))) {
-          toast.error('Cannot Compound Single Sided Fees', { icon: React.createElement(OctagonX, { className: 'h-4 w-4 text-red-500' }) });
-          setIsDecreasing(false);
-          isCompoundRef.current = false;
-          return;
-        }
-
-        // Step 4: increase using collected tokens (best plan). Since we kept balances internal, no Permit2 settle is needed.
-        planner.addIncrease(tokenIdJSBI, pickPlan.liquidity, pickPlan.max0, pickPlan.max1, EMPTY_BYTES || '0x');
-
-        // Step 5: take any leftover internal balances back to the user (and sweep if native)
-        planner.addTakePair(sortedSdkToken0.wrapped, sortedSdkToken1.wrapped, accountAddress);
-        if (hasNativeETH && getAddress(sortedSdkToken0.address) === '0x0000000000000000000000000000000000000000') {
-          planner.addSweep(sortedSdkToken0.wrapped, accountAddress);
-        } else if (hasNativeETH && getAddress(sortedSdkToken1.address) === '0x0000000000000000000000000000000000000000') {
-          planner.addSweep(sortedSdkToken1.wrapped, accountAddress);
-        }
-
-        // Finalize and submit
-        resetWriteContract();
-        const deadline = Math.floor(Date.now() / 1000) + 600;
-        const unlockData = planner.finalize();
-        // No Permit2 settlement from EOA, keep value at 0
-        let txValue = 0n;
-
-        writeContract({
-          address: V4_POSITION_MANAGER_ADDRESS as Hex,
-          abi: V4_POSITION_MANAGER_ABI,
-          functionName: 'modifyLiquidities',
-          args: [unlockData as Hex, deadline],
-          value: txValue,
-          chainId: chainId,
-        });
-      } catch (error: any) {
-        console.error('Error preparing compound transaction:', error);
-        toast.error('Compound Preparation Failed', { description: error?.message || 'Could not prepare the compound transaction.' });
-        setIsDecreasing(false);
-        isCompoundRef.current = false;
       }
     }, [accountAddress, chainId, writeContract, resetWriteContract, getTokenIdFromPosition]),
     isLoading: isDecreasing || isDecreaseSendPending || isDecreaseConfirming,
     isSuccess: isDecreaseConfirmed,
     error: decreaseSendError || decreaseConfirmError,
     hash,
+    reset: resetWriteContract,
   };
 } 
 

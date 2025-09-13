@@ -5,41 +5,52 @@ import { Button } from "@/components/ui/button";
 import { X } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 
-export function BetaNotification() {
+export function BetaNotification({ forceShow = false }: { forceShow?: boolean }) {
   const [isVisible, setIsVisible] = useState(false);
   const [isDismissed, setIsDismissed] = useState(false);
 
-  // Check if notification was dismissed previously
+  // Check if first login notification was shown before
   useEffect(() => {
     if (typeof window !== 'undefined') {
+      // Check if this is the user's first login ever
+      const firstLoginShown = document.cookie.includes('first_login_shown=true');
+
       let fromLogin = false;
       try {
         const flag = sessionStorage.getItem('came_from_login');
         fromLogin = flag === '1' || flag === 'true';
       } catch {}
 
-      if (fromLogin) {
+      // Force show if requested (from sidebar click)
+      if (forceShow && !firstLoginShown) {
+        setIsVisible(true);
+        return;
+      }
+
+      // Only show beta notification on first login ever
+      if (fromLogin && !firstLoginShown) {
         setIsVisible(true);
         try { sessionStorage.removeItem('came_from_login'); } catch {}
         return;
       }
 
-      const wasDismissed = localStorage.getItem("beta_notification_dismissed") === "true";
-      if (!wasDismissed) {
+      // Don't show if already shown before
+      if (!firstLoginShown) {
         const timer = setTimeout(() => {
           setIsVisible(true);
         }, 2000);
         return () => clearTimeout(timer);
       }
     }
-  }, []);
+  }, [forceShow]);
 
   // Handle dismissing the notification
   const handleDismiss = () => {
     setIsVisible(false);
     setIsDismissed(true);
     if (typeof window !== 'undefined') {
-      localStorage.setItem("beta_notification_dismissed", "true");
+      // Set global lifetime cookie - user will never see beta notification again
+      document.cookie = 'first_login_shown=true; path=/; max-age=31536000'; // 1 year lifetime
     }
   };
 

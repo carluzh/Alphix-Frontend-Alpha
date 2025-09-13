@@ -1,6 +1,7 @@
-import { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract } from 'wagmi';
 import { toast } from 'sonner';
+import { BadgeCheck, OctagonX } from 'lucide-react';
 import { V4PositionPlanner } from '@uniswap/v4-sdk';
 import { Token } from '@uniswap/sdk-core';
 import { V4_POSITION_MANAGER_ADDRESS, EMPTY_BYTES, V4_POSITION_MANAGER_ABI } from '@/lib/swap-constants';
@@ -9,7 +10,10 @@ import { baseSepolia } from '@/lib/wagmiConfig';
 import { getAddress, type Hex, BaseError } from 'viem';
 import JSBI from 'jsbi';
 import { prefetchService } from '@/lib/prefetch-service';
-import { invalidateActivityCache, invalidateUserPositionsCache, invalidateUserPositionIdsCache } from '@/lib/client-cache';
+import { invalidateActivityCache, invalidateUserPositionsCache, invalidateUserPositionIdsCache, refreshFeesAfterTransaction } from '@/lib/client-cache';
+import { useRef } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { clearBatchDataCache } from '@/lib/cache-version';
 
 interface UseBurnLiquidityProps {
   onLiquidityBurned: () => void;
@@ -27,12 +31,14 @@ export interface BurnPositionData {
 }
 
 export function useBurnLiquidity({ onLiquidityBurned }: UseBurnLiquidityProps) {
+  const queryClient = useQueryClient();
   const { address: accountAddress, chainId } = useAccount();
   const { data: hash, writeContract, isPending: isBurnSendPending, error: burnSendError, reset: resetWriteContract } = useWriteContract();
   const { isLoading: isBurnConfirming, isSuccess: isBurnConfirmed, error: burnConfirmError, status: waitForTxStatus } = useWaitForTransactionReceipt({ hash });
 
   const [isBurning, setIsBurning] = useState(false);
   const [positionToQuery, setPositionToQuery] = useState<BurnPositionData | null>(null);
+  const currentBurnPositionRef = useRef<BurnPositionData | null>(null);
 
   // Helper function to get the NFT token ID from position parameters
   const getTokenIdFromPosition = useCallback(async (positionData: BurnPositionData): Promise<bigint> => {
@@ -63,13 +69,16 @@ export function useBurnLiquidity({ onLiquidityBurned }: UseBurnLiquidityProps) {
 
   const burnLiquidity = useCallback(async (positionData: BurnPositionData) => {
     if (!accountAddress || !chainId) {
-      toast.error("Wallet not connected. Please connect your wallet and try again.");
+      toast.error("Wallet Not Connected", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Please connect your wallet and try again." });
       return;
     }
     if (!V4_POSITION_MANAGER_ADDRESS) {
-      toast.error("Configuration Error: Position Manager address not set.");
+      toast.error("Configuration Error", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Position Manager address not set." });
       return;
     }
+    
+    // Store position data for fee refresh after transaction
+    currentBurnPositionRef.current = positionData;
 
     setIsBurning(true);
     // Removed building transaction toast - visual feedback is in the button
@@ -127,7 +136,7 @@ export function useBurnLiquidity({ onLiquidityBurned }: UseBurnLiquidityProps) {
 
     } catch (error: any) {
       console.error("Error preparing burn transaction:", error);
-      toast.error("Burn Preparation Failed", { description: error.message || "Could not prepare the transaction." });
+      toast.error("Burn Preparation Failed", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: error.message || "Could not prepare the transaction." });
       setIsBurning(false);
     }
   }, [accountAddress, chainId, writeContract, resetWriteContract, getTokenIdFromPosition]);
@@ -138,7 +147,7 @@ export function useBurnLiquidity({ onLiquidityBurned }: UseBurnLiquidityProps) {
     } else if (burnSendError) {
       toast.dismiss();
       const message = burnSendError instanceof BaseError ? burnSendError.shortMessage : burnSendError.message;
-      toast.error("Transaction Submission Failed", { description: message });
+      toast.error("Transaction Submission Failed", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: message });
       setIsBurning(false);
     } else if (hash && waitForTxStatus === 'pending' && !isBurnConfirming) {
        toast.loading("Transaction submitted. Waiting for confirmation...", { id: hash });
@@ -151,27 +160,30 @@ export function useBurnLiquidity({ onLiquidityBurned }: UseBurnLiquidityProps) {
     if (isBurnConfirming) {
       toast.loading("Confirming transaction...", { id: hash });
     } else if (isBurnConfirmed) {
-      toast.success("Liquidity Burned!", {
+      toast.success("Position Closed", { 
         id: hash,
-        description: "Your position has been successfully removed.",
-        action: baseSepolia?.blockExplorers?.default?.url 
-          ? { label: "View Tx", onClick: () => window.open(`${baseSepolia.blockExplorers.default.url}/tx/${hash}`, '_blank') }
-          : undefined,
+        icon: React.createElement(BadgeCheck, { className: "h-4 w-4 text-green-500" })
       });
       onLiquidityBurned();
-      try { if (accountAddress) prefetchService.requestPositionsRefresh({ owner: accountAddress, reason: 'burn' }); } catch {}
+      
+      // Refresh fee data for this position
+      try {
+        const burnedPosition = currentBurnPositionRef.current;
+        if (burnedPosition?.tokenId) {
+          refreshFeesAfterTransaction(burnedPosition.tokenId.toString(), queryClient);
+        }
+      } catch {}
+      // Position refresh handled by invalidation utilities below
       try { if (accountAddress) invalidateActivityCache(accountAddress); } catch {}
       try { if (accountAddress) { invalidateUserPositionsCache(accountAddress); invalidateUserPositionIdsCache(accountAddress); } } catch {}
-      try { fetch('/api/internal/revalidate-pools', { method: 'POST' } as any).catch(() => {}); } catch {}
+      try { clearBatchDataCache(); fetch('/api/internal/revalidate-pools', { method: 'POST' } as any).catch(() => {}); } catch {}
       setIsBurning(false);
     } else if (burnConfirmError) {
        const message = burnConfirmError instanceof BaseError ? burnConfirmError.shortMessage : burnConfirmError.message;
-      toast.error("Burn Confirmation Failed", {
+      toast.error("Burn Confirmation Failed", { 
         id: hash,
-        description: message,
-        action: baseSepolia?.blockExplorers?.default?.url 
-          ? { label: "View Tx", onClick: () => window.open(`${baseSepolia.blockExplorers.default.url}/tx/${hash}`, '_blank') }
-          : undefined,
+        icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
+        description: message
       });
       setIsBurning(false);
     }

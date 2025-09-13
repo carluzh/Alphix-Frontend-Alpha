@@ -3,6 +3,7 @@
 import { AppLayout } from "@/components/app-layout"
 import { SwapInterface } from "@/components/swap/swap-interface"
 import { ScrollRevealTransactions } from "@/components/scroll-reveal-transactions"
+import { StarrySkyBackground } from "@/components/StarrySkyBackground"
 import type { Metadata } from 'next'
 import React, { useState, useCallback } from "react"; // Import useState and useCallback
 import { SwapRoute } from "@/lib/routing-engine"; // Import SwapRoute type
@@ -40,6 +41,9 @@ export default function Page() {
 
   return (
     <AppLayout>
+      {/* Starry sky background - sits behind everything */}
+      <StarrySkyBackground />
+      
       <div className="flex flex-1 flex-col relative"> {/* Added relative positioning */}
         <div className="flex flex-1 justify-center py-10 md:py-16">
           <div className="w-full max-w-md px-4">
@@ -50,6 +54,7 @@ export default function Page() {
               setSelectedPoolIndexForChart={setSelectedPoolIndexForChart}
               handleSelectPoolForChart={handleSelectPoolForChart}
             />
+            <div id="swap-fee-hover-container" className="mt-2 flex justify-end pointer-events-none" />
           </div>
         </div>
         {/* REMOVED: Independent Navigation Buttons */}

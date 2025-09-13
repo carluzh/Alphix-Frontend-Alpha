@@ -12,7 +12,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { useAccount } from "wagmi";
 import { useEffect } from "react";
-import { invalidateActivityCache } from "@/lib/client-cache";
+import { invalidateActivityCache, invalidateCacheEntry, getPoolStatsCacheKey } from "@/lib/client-cache";
+import { getAllPools, getPoolSubgraphId } from "@/lib/pools-config";
 import { baseSepolia } from "@/lib/wagmiConfig";
 import { Token, SwapTxInfo } from './swap-interface'; // Assuming types are exported
 
@@ -45,8 +46,110 @@ export function SwapSuccessView({
     try { if (accountAddress) invalidateActivityCache(accountAddress); } catch {}
     // Trigger pool stats revalidate (best-effort)
     (async () => {
+      // Pool batch revalidation moved earlier in the flow (right after tx submission)
+      // Also revalidate shared chart caches for the swapped pool (volume/TVL)
       try {
-        await fetch('/api/internal/revalidate-pools', { method: 'POST' } as any);
+        const pools = getAllPools?.() || [];
+        const symA = (swapTxInfo?.fromSymbol || displayFromToken.symbol || '').toUpperCase();
+        const symB = (swapTxInfo?.toSymbol || displayToToken.symbol || '').toUpperCase();
+        const match = pools.find((p: any) => {
+          const a = String(p?.currency0?.symbol || '').toUpperCase();
+          const b = String(p?.currency1?.symbol || '').toUpperCase();
+          return (a === symA && b === symB) || (a === symB && b === symA);
+        });
+        if (match) {
+          const routeId = String(match.id || `${match.currency0?.symbol}-${match.currency1?.symbol}`).toLowerCase();
+          const subgraphId = (getPoolSubgraphId(routeId) || match.subgraphId || match.id || '').toLowerCase();
+          if (routeId && subgraphId) {
+            // Hint the pool page to force-refresh charts on next visit
+            try { localStorage.setItem(`recentSwap:${routeId}`, String(Date.now())); } catch {}
+            // Invalidate client-side cached pool stats (affects 24h Volume in header)
+            try { invalidateCacheEntry(getPoolStatsCacheKey(subgraphId)); } catch {}
+            fetch('/api/internal/revalidate-chart', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ poolId: routeId, subgraphId })
+            } as any).catch(() => {});
+            // Warm batch stats (volume) server cache too
+            fetch('/api/internal/revalidate-pools', { method: 'POST' } as any).catch(() => {});
+          }
+        }
+
+        // Multi-hop support: if backend provides touchedPools, invalidate each pool's chart + stats
+        const touched = (swapTxInfo as any)?.touchedPools as Array<{ poolId: string; subgraphId?: string } | undefined> | undefined;
+        if (Array.isArray(touched) && touched.length) {
+          touched.forEach((tp) => {
+            if (!tp) return;
+            const pid = String(tp.poolId || '').toLowerCase();
+            const sg = String(tp.subgraphId || getPoolSubgraphId(pid) || pid).toLowerCase();
+            if (!pid || !sg) return;
+            try { localStorage.setItem(`recentSwap:${pid}`, String(Date.now())); } catch {}
+            try { invalidateCacheEntry(getPoolStatsCacheKey(sg)); } catch {}
+            fetch('/api/internal/revalidate-chart', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ poolId: pid, subgraphId: sg })
+            } as any).catch(() => {});
+            fetch('/api/internal/revalidate-pools', { method: 'POST' } as any).catch(() => {});
+          });
+        }
+
+        // Deterministic Volume backoff: wait until 24h Volume changes, then warm server cache
+        try {
+          const delays = [0, 2000, 5000, 10000];
+          // Build target set of pools (single-hop fallback + any multi-hop provided)
+          const targets: Array<{ poolId: string; subId: string }> = [];
+          const singleRouteId = (match && (String(match.id || `${match.currency0?.symbol}-${match.currency1?.symbol}`).toLowerCase())) || '';
+          const singleSub = (singleRouteId && (getPoolSubgraphId(singleRouteId) || match?.subgraphId || match?.id || '')).toLowerCase();
+          if (singleRouteId && singleSub) targets.push({ poolId: singleRouteId, subId: singleSub });
+          if (Array.isArray(touched)) {
+            for (const tp of touched) {
+              if (!tp?.poolId) continue;
+              const pid = String(tp.poolId).toLowerCase();
+              const sg = String(tp.subgraphId || getPoolSubgraphId(pid) || pid).toLowerCase();
+              if (pid && sg && !targets.some(t => t.subId === sg)) targets.push({ poolId: pid, subId: sg });
+            }
+          }
+          if (targets.length) {
+            const getBatch = async () => {
+              // DISABLED: Causing duplicate API calls
+              // const r = await fetch(`/api/liquidity/get-pools-batch?bust=${Date.now()}&noStore=1`);
+              // if (!r.ok) return null;
+              // return r.json();
+              return null; // Disabled to prevent duplicate calls
+            };
+            const readVolumes = (json: any) => {
+              const byId = new Map<string, number>();
+              const pools = Array.isArray(json?.pools) ? json.pools : [];
+              for (const t of targets) {
+                const m = pools.find((p: any) => String(p?.poolId || '').toLowerCase() === t.subId);
+                byId.set(t.subId, Number(m?.volume24hUSD || 0));
+              }
+              return byId;
+            };
+            const baseJson = await getBatch();
+            if (baseJson) {
+              const baseMap = readVolumes(baseJson);
+              for (let i = 0; i < delays.length; i++) {
+                if (i > 0) await new Promise(r => setTimeout(r, delays[i]));
+                // nudge server to recompute; it debounces internally
+                try { fetch('/api/internal/revalidate-pools', { method: 'POST' } as any); } catch {}
+                const nextJson = await getBatch();
+                if (!nextJson) continue;
+                const nextMap = readVolumes(nextJson);
+                let changed = false;
+                for (const [k, v] of nextMap.entries()) {
+                  if (v !== (baseMap.get(k) ?? 0)) { changed = true; break; }
+                }
+                if (changed) {
+                  // Warm the cache now that data changed
+                  try { await fetch('/api/internal/revalidate-pools', { method: 'POST' } as any); } catch {}
+                  break;
+                }
+              }
+            }
+          }
+        } catch {}
       } catch {}
     })();
   }, [accountAddress, swapTxInfo?.hash]);

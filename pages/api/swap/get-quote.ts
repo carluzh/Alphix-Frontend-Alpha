@@ -288,46 +288,38 @@ async function getV4QuoteExactOutputMultiHop(
   amountOutSmallestUnits: bigint,
   chainId: number
 ): Promise<{ amountIn: bigint; gasEstimate: bigint }> {
-  // Encode the multi-hop path (same builder works; currencyOut differs at call site)
-  const pathKeys = encodeMultihopPath(route, chainId);
-
-  const validatedCurrencyOut = getAddress(toToken.address!);
-  const pathTuplesForward = pathKeys.map(pk => [
-    pk.intermediateCurrency,
-    pk.fee,
-    pk.tickSpacing,
-    pk.hooks,
-    pk.hookData
-  ] as const);
-  // For exact output, quoter expects the path in reverse hop order
-  const pathTuples = [...pathTuplesForward].reverse();
-
   try {
     const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL || process.env.RPC_URL || 'https://sepolia.base.org';
     const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
 
-    // Preflight pools exist
-    const stateView = new ethers.Contract(getStateViewAddress(), STATE_VIEW_ABI as any, provider);
-    for (let i = 0; i < route.pools.length; i++) {
-      const hop = route.pools[i];
-      const poolCfg = getPoolById(hop.poolId);
-      if (!poolCfg) throw new Error(`Missing pool config for hop ${i}: ${hop.poolId}`);
-      const poolId = ethers.utils.solidityKeccak256(
-        ['address','address','uint24','int24','address'],
-        [poolCfg.currency0.address, poolCfg.currency1.address, poolCfg.fee, poolCfg.tickSpacing, poolCfg.hooks]
-      );
-      await stateView.callStatic.getSlot0(poolId);
-    }
+    // Stepwise chain ExactOut over each hop (reliable across ABI quirks)
+    let requiredOut = amountOutSmallestUnits; // smallest units of final token
+    let totalGas = 0n;
+    for (let i = route.pools.length - 1; i >= 0; i--) {
+      const outSymbol = route.path[i + 1];
+      const inSymbol = route.path[i];
+      const outTok = createTokenSDK(outSymbol as any, chainId);
+      const inTok = createTokenSDK(inSymbol as any, chainId);
+      if (!outTok || !inTok) throw new Error(`Token SDK missing for hop ${i}: ${inSymbol}->${outSymbol}`);
+      // Prefer resolving by token symbols for robustness
+      let poolCfg = getPoolConfigForTokens(inSymbol as any, outSymbol as any);
+      if (!poolCfg) {
+        // Try reverse ordering if config sorted differently
+        poolCfg = getPoolConfigForTokens(outSymbol as any, inSymbol as any);
+      }
+      if (!poolCfg) throw new Error(`Missing pool config for hop ${i}: ${inSymbol}->${outSymbol}`);
 
-    const quoter = new ethers.Contract(getQuoterAddress(), V4QuoterAbi as any, provider);
-    // Pass as struct tuple for consistency with input variant
-    const quoteParams = [
-      validatedCurrencyOut,
-      pathTuples,
-      amountOutSmallestUnits
-    ] as const;
-    const [amountIn, gasEstimate] = await quoter.callStatic.quoteExactOutput(quoteParams);
-    return { amountIn, gasEstimate };
+      // requiredOut is in outTok decimals already
+      try {
+        const { amountIn, gasEstimate } = await getV4QuoteExactOutputSingle(inTok, outTok, requiredOut, poolCfg);
+        requiredOut = amountIn; // becomes the exact output target for previous hop
+        totalGas += gasEstimate;
+      } catch (hopErr: any) {
+        console.error(`[V4 Quoter] ExactOut hop failed ${inSymbol} -> ${outSymbol} (hop ${i})`, hopErr);
+        throw new Error(`ExactOut hop failed: ${inSymbol} -> ${outSymbol}`);
+      }
+    }
+    return { amountIn: requiredOut, gasEstimate: totalGas };
   } catch (error: any) {
     throw error;
   }
@@ -463,6 +455,54 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
       debug: true
     });
   } catch (error: any) {
-    return res.status(500).json({ success: false, error: 'Failed to get quote' });
+    console.error('[V4 Quoter API] Error:', error);
+    
+    // Check for specific error types
+    let errorMessage = 'Failed to get quote';
+    
+    if (error instanceof Error) {
+      const errorStr = error.message.toLowerCase();
+      
+      // Check for smart contract call exceptions (common in ExactOut multihop)
+      if (errorStr.includes('call_exception') || 
+          errorStr.includes('call revert exception') ||
+          (errorStr.includes('0x6190b2b0') || errorStr.includes('0x486aa307'))) {
+        if (req.body?.swapType === 'ExactOut') {
+          errorMessage = 'Route not available for this amount';
+        } else {
+          errorMessage = 'Not enough liquidity';
+        }
+      }
+      // Check for actual liquidity depth errors (be more specific)
+      else if (errorStr.includes('insufficient liquidity for swap') || 
+               errorStr.includes('not enough liquidity') ||
+               errorStr.includes('pool has no liquidity')) {
+        errorMessage = 'Not enough liquidity';
+      }
+      // Check for slippage-related errors  
+      else if (errorStr.includes('price impact too high') ||
+               errorStr.includes('slippage') ||
+               errorStr.includes('price moved too much')) {
+        errorMessage = 'Price impact too high';
+      }
+      // Generic revert without specific liquidity message
+      else if (errorStr.includes('revert') || errorStr.includes('execution reverted')) {
+        if (req.body?.swapType === 'ExactOut') {
+          errorMessage = 'Cannot fulfill exact output amount';
+        } else {
+          errorMessage = 'Transaction would revert';
+        }
+      }
+      // For ExactOut specific errors
+      else if (req.body?.swapType === 'ExactOut' && (
+        errorStr.includes('exceeds balance') ||
+        errorStr.includes('insufficient balance') ||
+        errorStr.includes('amount too large')
+      )) {
+        errorMessage = 'Amount exceeds available liquidity';
+      }
+    }
+    
+    return res.status(500).json({ success: false, error: errorMessage });
   }
 } 

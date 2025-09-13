@@ -3,6 +3,19 @@ import { publicClient } from '../../../lib/viemClient';
 import { parseUnits } from 'viem';
 import { getAllPools, getAllTokens } from '../../../lib/pools-config';
 
+// Helper function to check if NFT exists for a position
+async function checkNftExists(poolId: string, tickLower: string, tickUpper: string, owner: string): Promise<boolean> {
+  try {
+    // This would need to be implemented based on your NFT contract
+    // For now, we'll use a simple heuristic: if amounts are significant, likely NFT exists
+    // In a real implementation, you'd call the NFT contract's ownerOf or exists function
+    return true; // Placeholder - implement actual NFT checking logic
+  } catch (error) {
+    console.error('Error checking NFT existence:', error);
+    return false;
+  }
+}
+
 type ErrorResponse = { error: string; details?: any };
 
 type Row = {
@@ -21,6 +34,8 @@ type Row = {
   blockNumber?: number;
   token0Addr?: string;
   token1Addr?: string;
+  isNftMint?: boolean;
+  isNftBurn?: boolean;
 };
 
 const getSubgraphUrl = () => process.env.SUBGRAPH_URL as string | undefined;

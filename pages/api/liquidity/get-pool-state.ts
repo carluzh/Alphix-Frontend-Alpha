@@ -1,198 +1,96 @@
-import { Token, Price } from '@uniswap/sdk-core';
-import { Pool as V4Pool, PoolKey } from "@uniswap/v4-sdk";
-import JSBI from 'jsbi';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { parseAbi, type Hex } from 'viem';
+import { getPoolSubgraphId, getAllPools, getStateViewAddress, getToken } from '@/lib/pools-config';
+import { publicClient } from '@/lib/viemClient';
+import { PoolStateSchema, validateApiResponse } from '@/lib/validation';
 
-import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from "../../../lib/abis/state_view_abi";
-import { getToken, TokenSymbol, getStateViewAddress } from "../../../lib/pools-config";
-import { publicClient } from "../../../lib/viemClient";
-import {
-    isAddress,
-    getAddress,
-    parseAbi,
-    type Hex
-} from "viem";
+const stateViewAbi = parseAbi([
+  'function getSlot0(bytes32 poolId) external view returns (uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 lpFee)',
+  'function getLiquidity(bytes32 poolId) external view returns (uint128 liquidity)'
+]);
 
-// Contract addresses from pools config
-const STATE_VIEW_ADDRESS = getStateViewAddress();
+// Simple in-memory server cache for this endpoint
+const serverCache = new Map<string, { data: any; ts: number }>();
+const CACHE_TTL_MS = 15 * 1000; // 15 seconds
 
-interface GetPoolStateRequest extends NextApiRequest {
-    body: {
-        token0Symbol: TokenSymbol;
-        token1Symbol: TokenSymbol;
-        chainId: number;
-    };
-}
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  if (req.method !== 'GET') {
+    res.setHeader('Allow', ['GET']);
+    return res.status(405).json({ message: `Method ${req.method} Not Allowed` });
+  }
 
-interface GetPoolStateResponse {
-    currentPoolTick: number;
-    currentPrice: string; // Price of token1Symbol in terms of token0Symbol
-    sqrtPriceX96: string;
-}
+  const raw = String(req.query.poolId || '');
+  if (!raw) return res.status(400).json({ message: 'poolId is required' });
 
-type ApiResponse = GetPoolStateResponse | { message: string; error?: any };
+  // Accept either friendly route id or subgraph id
+  const all = getAllPools();
+  const maybe = all.find(p => String(p.id).toLowerCase() === raw.toLowerCase());
+  const subgraphId = (maybe?.subgraphId || getPoolSubgraphId(raw) || raw) as string;
+  const cacheKey = `pool-state:${subgraphId}`;
 
-// Helper function to calculate price of tokenB in terms of tokenA from a sqrtPriceX96
-// (Copied and adapted from calculate-liquidity-parameters.ts)
-function calculatePriceString(
-    sqrtPriceX96_JSBI: JSBI,
-    poolSortedToken0: Token,
-    poolSortedToken1: Token,
-    desiredPriceOfToken: Token, // The token WE WANT THE PRICE OF (e.g. original Token1)
-    desiredPriceInToken: Token, // The token WE WANT THE PRICE IN TERMS OF (e.g. original Token0)
-    callContext: string
-): string {
-    // console.log(`\\n[calculatePriceString CALLED - Context: ${callContext}]`);
-    // console.log(`  Input sqrtPriceX96: ${sqrtPriceX96_JSBI.toString()}`);
-    // console.log(`  poolSortedToken0: ${poolSortedToken0.symbol} (Decimals: ${poolSortedToken0.decimals}, Address: ${poolSortedToken0.address})`);
-    // console.log(`  poolSortedToken1: ${poolSortedToken1.symbol} (Decimals: ${poolSortedToken1.decimals}, Address: ${poolSortedToken1.address})`);
-    // console.log(`  desiredPriceOfToken: ${desiredPriceOfToken.symbol} (Decimals: ${desiredPriceOfToken.decimals}, Address: ${desiredPriceOfToken.address})`);
-    // console.log(`  desiredPriceInToken: ${desiredPriceInToken.symbol} (Decimals: ${desiredPriceInToken.decimals}, Address: ${desiredPriceInToken.address})`);
+  try {
+    const poolIdHex = subgraphId as Hex;
+    const address = getStateViewAddress() as `0x${string}`;
 
-    const Q96 = JSBI.exponentiate(JSBI.BigInt(2), JSBI.BigInt(96));
-    const raw_Ratio_Numerator = JSBI.multiply(sqrtPriceX96_JSBI, sqrtPriceX96_JSBI);
-    const raw_Ratio_Denominator = JSBI.multiply(Q96, Q96);
+    const [slot0, liquidity] = await Promise.all([
+      publicClient.readContract({ address, abi: stateViewAbi, functionName: 'getSlot0', args: [poolIdHex] }) as Promise<readonly [bigint, number, number, number]>,
+      publicClient.readContract({ address, abi: stateViewAbi, functionName: 'getLiquidity', args: [poolIdHex] }) as Promise<bigint>,
+    ]);
 
-    const price_Sorted1_Per_Sorted0 = new Price(
-        poolSortedToken0,
-        poolSortedToken1,
-        raw_Ratio_Denominator, // Denominator: raw amount of poolSortedToken0 (base)
-        raw_Ratio_Numerator    // Numerator: raw amount of poolSortedToken1 (quote)
-    );
-    // console.log(`  Intermediate calculated price_Sorted1_Per_Sorted0: ${price_Sorted1_Per_Sorted0.toSignificant(18)}`);
+    const [sqrtPriceX96, tick, protocolFee, lpFee] = slot0;
 
-    let finalPriceObject: Price<Token, Token>;
-
-    if (desiredPriceOfToken.equals(poolSortedToken1) && desiredPriceInToken.equals(poolSortedToken0)) {
-        // We want Price of poolSortedToken1 in terms of poolSortedToken0
-        // console.log("  Branch: Desired Price of poolSortedToken1 in terms of poolSortedToken0. Using direct intermediate price.");
-        finalPriceObject = price_Sorted1_Per_Sorted0;
-    } else if (desiredPriceOfToken.equals(poolSortedToken0) && desiredPriceInToken.equals(poolSortedToken1)) {
-        // We want Price of poolSortedToken0 in terms of poolSortedToken1
-        // console.log("  Branch: Desired Price of poolSortedToken0 in terms of poolSortedToken1. Inverting intermediate price.");
-        finalPriceObject = price_Sorted1_Per_Sorted0.invert();
-    } else {
-        // This case should ideally be handled by ensuring desiredPriceOfToken and desiredPriceInToken
-        // match one of the original tokens passed to the API (e.g. reqToken0Symbol, reqToken1Symbol)
-        // and then mapping them correctly to poolSortedToken0/1.
-        // For this specific API (get-pool-state), we are always calculating price of original reqToken1 in terms of original reqToken0.
-        // The `desiredPriceOfToken` will be the original token1, `desiredPriceInToken` the original token0.
-        // So one of the above branches should always match IF originalToken0/1 correctly map to poolSortedToken0/1.
-
-        // If original token0 was sorted to be poolSortedToken0, and original token1 was poolSortedToken1:
-        // Then desiredPriceOfToken (orig t1) = poolSortedToken1, desiredPriceInToken (orig t0) = poolSortedToken0. (Matches first branch)
-
-        // If original token0 was sorted to be poolSortedToken1, and original token1 was poolSortedToken0:
-        // Then desiredPriceOfToken (orig t1) = poolSortedToken0, desiredPriceInToken (orig t0) = poolSortedToken1. (Matches second branch)
-        
-        console.warn(`  [calculatePriceString - ${callContext}] Desired pair (${desiredPriceOfToken.symbol}/${desiredPriceInToken.symbol}) logic error relative to sorted pool pair (${poolSortedToken0.symbol}/${poolSortedToken1.symbol}).`);
-        return "ErrorInPriceCalcLogic";
-    }
-    
-    const finalResult = finalPriceObject.toSignificant(8); // Using 8 significant digits for display
-    // console.log(`  Final formatted price string (toSignificant(8)): ${finalResult}`);
-    // console.log(`[calculatePriceString END - Context: ${callContext}]\n`);
-    return finalResult;
-}
-
-
-export default async function handler(
-    req: GetPoolStateRequest,
-    res: NextApiResponse<ApiResponse>
-) {
-    if (req.method !== 'POST') {
-        res.setHeader('Allow', ['POST']);
-        return res.status(405).json({ message: `Method ${req.method} Not Allowed` });
-    }
-
-    const stateViewAbiViem = parseAbi(STATE_VIEW_HUMAN_READABLE_ABI);
+    const twoPow96 = 2 ** 96;
+    const sqrtAsNumber = Number(sqrtPriceX96) / twoPow96;
+    let currentPrice = Number.isFinite(sqrtAsNumber) ? (sqrtAsNumber * sqrtAsNumber) : 0;
 
     try {
-        const {
-            token0Symbol, // This is the token the user thinks of as "token0" (e.g. YUSDC)
-            token1Symbol, // This is the token the user thinks of as "token1" (e.g. BTCRL)
-            chainId,
-        } = req.body;
-
-        // --- Input Validation ---
-        const token0Config = getToken(token0Symbol);
-        const token1Config = getToken(token1Symbol);
-
-        if (!token0Config || !token1Config) {
-            return res.status(400).json({ message: "Invalid token symbol(s) provided." });
+      const allPools = getAllPools();
+      const lowerRaw = raw.toLowerCase();
+      const poolCfg = allPools.find(p => String(p.subgraphId).toLowerCase() === String(subgraphId).toLowerCase())
+        || allPools.find(p => String(p.id).toLowerCase() === lowerRaw);
+      if (poolCfg) {
+        const token0Cfg = getToken(poolCfg.currency0.symbol);
+        const token1Cfg = getToken(poolCfg.currency1.symbol);
+        if (token0Cfg && token1Cfg) {
+          const addr0 = token0Cfg.address.toLowerCase();
+          const addr1 = token1Cfg.address.toLowerCase();
+          const sorted0 = addr0 < addr1 ? token0Cfg : token1Cfg;
+          const sorted1 = addr0 < addr1 ? token1Cfg : token0Cfg;
+          const exp = (sorted0.decimals ?? 0) - (sorted1.decimals ?? 0);
+          currentPrice = currentPrice * Math.pow(10, exp);
         }
-        // TODO: Add validation for chainId
-
-        // --- SDK Token Objects (using original symbols from request) ---
-        const sdkToken0Req = new Token(chainId, getAddress(token0Config.address), token0Config.decimals, token0Config.symbol);
-        const sdkToken1Req = new Token(chainId, getAddress(token1Config.address), token1Config.decimals, token1Config.symbol);
-
-        // --- Token Sorting (Crucial for V4 SDK pool key) ---
-        const [sortedSdkToken0, sortedSdkToken1] = sdkToken0Req.sortsBefore(sdkToken1Req)
-            ? [sdkToken0Req, sdkToken1Req]
-            : [sdkToken1Req, sdkToken0Req];
-
-        // Use configured pool ID from pools.json instead of deriving
-        const { getPoolByTokens } = await import('../../../lib/pools-config');
-        const poolConfig = getPoolByTokens(token0Symbol, token1Symbol);
-        
-        if (!poolConfig) {
-            return res.status(400).json({ message: `No pool configuration found for ${token0Symbol}/${token1Symbol}` });
-        }
-        
-        const poolId = poolConfig.subgraphId;
-
-        // --- Fetch Pool Slot0 ---
-        let slot0;
-        try {
-            const slot0DataViem = await publicClient.readContract({
-                address: STATE_VIEW_ADDRESS,
-                abi: stateViewAbiViem,
-                functionName: 'getSlot0',
-                args: [poolId as Hex]
-            }) as readonly [bigint, number, number, number]; // [sqrtPriceX96, tick, protocolFee, lpFee]
-
-            slot0 = {
-                sqrtPriceX96_JSBI: JSBI.BigInt(slot0DataViem[0].toString()),
-                tick: Number(slot0DataViem[1]),
-                // lpFee: Number(slot0DataViem[3]) // Not strictly needed for this API
-            };
-        } catch (error) {
-            console.error("API Error (get-pool-state) fetching pool slot0 data:", error);
-            return res.status(500).json({ message: "Failed to fetch current pool data.", error });
-        }
-
-        // Calculate human-readable price of original/requested token1Symbol in terms of original/requested token0Symbol
-        const priceOfReqToken1InReqToken0 = calculatePriceString(
-            slot0.sqrtPriceX96_JSBI,
-            sortedSdkToken0,      // Pool's sorted token0
-            sortedSdkToken1,      // Pool's sorted token1
-            sdkToken1Req,         // We want the price OF this token (original request token1)
-            sdkToken0Req,         // We want the price IN TERMS OF this token (original request token0)
-            "currentPriceForPoolState"
-        );
-
-        if (priceOfReqToken1InReqToken0 === "ErrorInPriceCalcLogic") {
-            return res.status(500).json({ message: "Internal error calculating price."});
-        }
-
-        console.log("[get-pool-state] API Response:", {
-            currentPoolTick: slot0.tick,
-            currentPrice: priceOfReqToken1InReqToken0,
-            sqrtPriceX96: slot0.sqrtPriceX96_JSBI.toString(),
-        });
-
-        res.status(200).json({
-            currentPoolTick: slot0.tick,
-            currentPrice: priceOfReqToken1InReqToken0,
-            sqrtPriceX96: slot0.sqrtPriceX96_JSBI.toString(),
-        });
-
-    } catch (error: any) {
-        console.error("API Error (get-pool-state):", error);
-        res.status(500).json({
-            message: error.message || "An unexpected error occurred while fetching pool state.",
-            error: process.env.NODE_ENV === 'development' ? error : undefined
-        });
+      }
+    } catch {
+      // ignore decimals adjustment failure; fallback to raw ratio
     }
+    const currentPriceString = String(currentPrice);
+
+    const responseData = {
+      poolId: subgraphId,
+      sqrtPriceX96: sqrtPriceX96.toString(),
+      tick,
+      protocolFee,
+      lpFee,
+      liquidity: liquidity.toString(),
+      currentPoolTick: tick,
+      currentPrice: currentPriceString,
+    };
+
+    const validatedData = validateApiResponse(PoolStateSchema, responseData, 'get-pool-state');
+    
+    // On success, update cache
+    serverCache.set(cacheKey, { data: validatedData, ts: Date.now() });
+
+    res.setHeader('Cache-Control', 'no-store');
+    return res.status(200).json(validatedData);
+  } catch (error: any) {
+    // On failure, try to serve from cache
+    const cached = serverCache.get(cacheKey);
+    if (cached && (Date.now() - cached.ts) < CACHE_TTL_MS) {
+      console.warn(`[get-pool-state] Serving stale state for ${subgraphId} due to fetch error.`);
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(200).json(cached.data);
+    }
+    return res.status(500).json({ message: 'Failed to read pool state', error: String(error?.message || error) });
+  }
 } 

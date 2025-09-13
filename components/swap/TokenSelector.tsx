@@ -148,9 +148,9 @@ export function TokenSelector({
           // Use the existing price service with cache
           const prices = await getAllTokenPrices();
           setTokenPrices({
-            BTC: prices.BTC,
-            USDC: prices.USDC,
-            ETH: prices.ETH || 3500 // fallback
+            BTC: prices.BTC.usd,
+            USDC: prices.USDC.usd,
+            ETH: prices.ETH?.usd || 3500 // fallback
           });
         } catch (error) {
           // Error fetching token prices

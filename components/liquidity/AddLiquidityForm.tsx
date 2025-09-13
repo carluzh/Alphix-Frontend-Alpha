@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { PlusIcon, RefreshCwIcon, MinusIcon, ActivityIcon, CheckIcon, InfoIcon, ArrowLeftIcon } from "lucide-react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { PlusIcon, RefreshCwIcon, MinusIcon, ActivityIcon, CheckIcon, InfoIcon, ArrowLeftIcon, OctagonX } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -36,7 +36,7 @@ const safeParseUnits = (amount: string, decimals: number): bigint => {
   return viemParseUnits(finalString, decimals);
 };
 import { useAddLiquidityTransaction } from "./useAddLiquidityTransaction";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useAnimation } from "framer-motion";
 import { InteractiveRangeChart } from "./InteractiveRangeChart";
 import {
   Tooltip,
@@ -55,6 +55,8 @@ import { Token } from '@uniswap/sdk-core';
 import { Pool as V4PoolSDK, Position as V4PositionSDK } from "@uniswap/v4-sdk";
 import JSBI from "jsbi";
 import poolsConfig from "../../config/pools.json";
+import { useAllPrices } from "@/components/data/hooks";
+import { formatUSD } from "@/lib/format";
 
 // Utility functions
 const getTokenIcon = (symbol?: string) => {
@@ -95,7 +97,7 @@ function debounce<F extends (...args: any[]) => any>(func: F, waitFor: number) {
 // Chart data interfaces - now handled in InteractiveRangeChart
 
 export interface AddLiquidityFormProps {
-  onLiquidityAdded: () => void; 
+  onLiquidityAdded: (token0Symbol?: string, token1Symbol?: string) => void; 
   selectedPoolId?: string;
   sdkMinTick: number;
   sdkMaxTick: number;
@@ -179,6 +181,7 @@ export function AddLiquidityForm({
   const [isInsufficientBalance, setIsInsufficientBalance] = useState(false);
   const [activePreset, setActivePreset] = useState<string | null>("Full Range");
   const [isPoolStateLoading, setIsPoolStateLoading] = useState<boolean>(false);
+  const [isChartLoading, setIsChartLoading] = useState<boolean>(false);
   const [enhancedAprDisplay, setEnhancedAprDisplay] = useState<string>(poolApr || "Yield N/A");
   const [capitalEfficiencyFactor, setCapitalEfficiencyFactor] = useState<number>(1);
   const [initialDefaultApplied, setInitialDefaultApplied] = useState(false);
@@ -191,6 +194,10 @@ export function AddLiquidityForm({
   const [xDomain, setXDomain] = useState<[number, number]>([-120000, 120000]);
   const [currentPriceLine, setCurrentPriceLine] = useState<number | null>(null);
   const [isPanning, setIsPanning] = useState(false);
+  
+  // Wiggle animation for insufficient approvals
+  const [approvalWiggleCount, setApprovalWiggleCount] = useState(0);
+  const approvalWiggleControls = useAnimation();
   const panStartXRef = useRef<number | null>(null);
   const panStartDomainRef = useRef<[number, number] | null>(null);
   const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -212,6 +219,30 @@ export function AddLiquidityForm({
   const [customXAxisTicks, setCustomXAxisTicks] = useState<CustomAxisLabel[]>([]);
   
   const { address: accountAddress, chainId, isConnected } = useAccount();
+  const { data: allPrices } = useAllPrices();
+
+  // Map any token symbol (e.g., aUSDC, aETH) to a USD price
+  const getUSDPriceForSymbol = useCallback((symbol?: string): number => {
+    if (!symbol) return 0;
+    const s = symbol.toUpperCase();
+    if (s.includes('BTC')) return allPrices?.BTC?.usd ?? 0;
+    if (s.includes('ETH')) return allPrices?.ETH?.usd ?? 0;
+    if (s.includes('USDC')) return allPrices?.USDC?.usd ?? 1;
+    if (s.includes('USDT')) return allPrices?.USDT?.usd ?? 1;
+    return 0;
+  }, [allPrices]);
+
+  // Parse displayed token amount strings (handles "< 0.0001" and commas)
+  const parseDisplayAmount = useCallback((value?: string): number => {
+    if (!value) return 0;
+    const trimmed = value.trim();
+    if (trimmed.startsWith('<')) {
+      const approx = parseFloat(trimmed.replace('<', '').trim().replace(/,/g, ''));
+      return Number.isFinite(approx) ? approx : 0;
+    }
+    const n = parseFloat(trimmed.replace(/,/g, ''));
+    return Number.isFinite(n) ? n : 0;
+  }, []);
   
   // Track previous calculation dependencies
   const prevCalculationDeps = useRef({
@@ -227,9 +258,10 @@ export function AddLiquidityForm({
     isWorking,
     step,
     preparedTxData,
-    permit2SignatureRequest,
     involvedTokensCount, 
-    completedTokensCount,
+    completedERC20ApprovalsCount,
+    needsERC20Approvals,
+    batchPermitSigned,
     
     isApproveWritePending,
     isApproving,
@@ -239,7 +271,6 @@ export function AddLiquidityForm({
     
     handlePrepareMint,
     handleApprove,
-    handleSignAndSubmitPermit2,
     handleMint,
     resetTransactionState,
   } = useAddLiquidityTransaction({
@@ -252,6 +283,9 @@ export function AddLiquidityForm({
     activeInputSide,
     calculatedData,
     onLiquidityAdded,
+    onApprovalInsufficient: () => {
+      setApprovalWiggleCount(prev => prev + 1);
+    },
     onOpenChange: () => {},
   });
 
@@ -312,6 +346,16 @@ export function AddLiquidityForm({
     };
   }, []);
 
+  // Approval wiggle animation effect
+  useEffect(() => {
+    if (approvalWiggleCount > 0) {
+      approvalWiggleControls.start({
+        x: [0, -3, 3, -2, 2, 0],
+        transition: { duration: 0.22, ease: 'easeOut' },
+      }).catch(() => {});
+    }
+  }, [approvalWiggleCount, approvalWiggleControls]);
+
   // Set initial state based on props
   useEffect(() => {
     setBaseTokenForPriceDisplay(token0Symbol);
@@ -326,13 +370,8 @@ export function AddLiquidityForm({
     return inverse > currentPriceNum;
   }, [currentPrice]);
 
-  // Inversion state based on current price
-  const isInverted = useMemo(() => {
-    if (!currentPrice) return false;
-    const v = parseFloat(currentPrice);
-    if (!isFinite(v) || v <= 0) return false;
-    return 1 / v > v;
-  }, [currentPrice]);
+  // Inversion state based on current price (same as shouldFlipDenomination for consistency)
+  const isInverted = useMemo(() => shouldFlipDenomination, [shouldFlipDenomination]);
 
   // Keep denomination aligned with inversion (but freeze while editing)
   useEffect(() => {
@@ -433,19 +472,14 @@ export function AddLiquidityForm({
   // Effect to fetch initial pool state (current price and tick)
   useEffect(() => {
     const fetchPoolState = async () => {
-      if (!token0Symbol || !token1Symbol || !chainId) return;
+      if (!selectedPoolId || !chainId) return;
       
       setIsPoolStateLoading(true);
       try {
-        const response = await fetch('/api/liquidity/get-pool-state', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            token0Symbol,
-            token1Symbol,
-            chainId,
-          }),
-        });
+        const poolConfig = getPoolById(selectedPoolId);
+        const poolIdParam = poolConfig?.subgraphId || selectedPoolId;
+
+        const response = await fetch(`/api/liquidity/get-pool-state?poolId=${encodeURIComponent(poolIdParam)}`);
         
         if (!response.ok) {
           const errorData = await response.json();
@@ -497,7 +531,7 @@ export function AddLiquidityForm({
           throw new Error("Pool state data is incomplete.");
         }
       } catch (error: any) {
-        toast.error(`Pool Data Error: ${error.message}`);
+        toast.error("Pool Data Error", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: error.message });
         setCurrentPriceLine(null);
         setCurrentPoolSqrtPriceX96(null);
       } finally {
@@ -508,7 +542,7 @@ export function AddLiquidityForm({
     if (selectedPoolId) {
       fetchPoolState();
     }
-  }, [selectedPoolId, chainId, token0Symbol, token1Symbol]);
+  }, [selectedPoolId, chainId]);
 
   // Effect to update custom X-axis ticks when domain changes
   useEffect(() => {
@@ -819,11 +853,12 @@ export function AddLiquidityForm({
 
   // Helper function to convert price to nearest valid tick
   const convertPriceToValidTick = useCallback((priceStr: string, isMaxPrice: boolean): number | null => {
-    const numericPrice = parseFloat(priceStr);
-    const isInfinityInput = priceStr.trim().toLowerCase() === "∞" || priceStr.trim().toLowerCase() === "infinity" || priceStr.trim().toLowerCase() === "infinite";
+    const normalizedStr = (priceStr || '').replace(/[\s,]/g, '');
+    const numericPrice = parseFloat(normalizedStr);
+    const isInfinityInput = normalizedStr.trim().toLowerCase() === "∞" || normalizedStr.trim().toLowerCase() === "infinity" || normalizedStr.trim().toLowerCase() === "infinite";
 
     // Handle empty or invalid input
-    if (!priceStr.trim() || (isNaN(numericPrice) && !isInfinityInput)) {
+    if (!normalizedStr.trim() || (isNaN(numericPrice) && !isInfinityInput)) {
       return null;
     }
 
@@ -889,25 +924,33 @@ export function AddLiquidityForm({
     let newTickLower = parseInt(tickLower);
     let newTickUpper = parseInt(tickUpper);
     
-    // Map editing sides to actual ticks based on displayed left/right (inversion-aware)
-    // Under inversion, left should update upper and right should update lower
-    const editingMinMapsTo = isInverted ? 'upper' : 'lower';
-    const editingMaxMapsTo = isInverted ? 'lower' : 'upper';
-
-    // Process min price input for the correct underlying tick
+    // Always map 'min' to lower price display and 'max' to higher price display
+    // The convertPriceToValidTick function handles the inversion internally
+    
+    // Process min price input (always for the lower displayed price)
     if (editingMinPrice !== minPriceInputString) {
       const newTick = convertPriceToValidTick(editingMinPrice, false);
       if (newTick !== null) {
-        if (editingMinMapsTo === 'lower') newTickLower = newTick; else newTickUpper = newTick;
+        // When inverted, the "min" display price corresponds to tickUpper
+        if (isInverted) {
+          newTickUpper = newTick;
+        } else {
+          newTickLower = newTick;
+        }
         hasChanges = true;
       }
     }
     
-    // Process max price input for the correct underlying tick
+    // Process max price input (always for the higher displayed price)
     if (editingMaxPrice !== maxPriceInputString) {
       const newTick = convertPriceToValidTick(editingMaxPrice, true);
       if (newTick !== null) {
-        if (editingMaxMapsTo === 'upper') newTickUpper = newTick; else newTickLower = newTick;
+        // When inverted, the "max" display price corresponds to tickLower
+        if (isInverted) {
+          newTickLower = newTick;
+        } else {
+          newTickUpper = newTick;
+        }
         hasChanges = true;
       }
     }
@@ -941,10 +984,13 @@ export function AddLiquidityForm({
   const handleClickToEditPrice = (side: 'min' | 'max') => {
     setShowPresetSelector(false);
     setEditingSide(side);
+    const labels = computeRangeLabels();
     if (side === 'min') {
-      setEditingMinPrice(minPriceInputString);
+      const seed = labels ? labels.left : (minPriceInputString || "");
+      setEditingMinPrice(seed.replace(/,/g, ''));
     } else {
-      setEditingMaxPrice(maxPriceInputString);
+      const seed = labels ? labels.right : (maxPriceInputString || "");
+      setEditingMaxPrice(seed.replace(/,/g, ''));
     }
   };
 
@@ -1033,22 +1079,21 @@ export function AddLiquidityForm({
   // Handle preparation and submission
   const handlePrepareAndSubmit = async () => {
     if (isInsufficientBalance) {
-      toast.error("Insufficient balance");
+      toast.error("Insufficient Balance", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "You don't have enough tokens for this transaction." });
       return;
     }
     
     if (parseFloat(amount0 || "0") <= 0 && parseFloat(amount1 || "0") <= 0) {
-      toast.error("Amount must be greater than 0");
+      toast.error("Invalid Amount", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Amount must be greater than 0." });
       return;
     }
     
     if (preparedTxData) {
       if (step === 'approve') handleApprove();
-      else if (step === 'permit2Sign') handleSignAndSubmitPermit2();
       else if (step === 'mint') handleMint();
     } else {
       // Check if all involved tokens have been approved
-      const allTokensCompleted = completedTokensCount === involvedTokensCount && involvedTokensCount > 0;
+      const allTokensCompleted = completedERC20ApprovalsCount === involvedTokensCount && involvedTokensCount > 0;
       
       if (allTokensCompleted) {
         // All approvals complete, go straight to mint
@@ -1060,6 +1105,31 @@ export function AddLiquidityForm({
         // Start the approval process
         await handlePrepareMint();
       }
+    }
+  };
+
+  // Determine button text based on current state
+  const getButtonText = () => {
+    if (step === 'approve') {
+      if (isApproveWritePending || isApproving) {
+        return `Approve ${preparedTxData?.approvalTokenSymbol || 'Tokens'}`;
+      }
+      return `Approve ${preparedTxData?.approvalTokenSymbol || 'Tokens'}`;
+    } else if (step === 'mint') {
+      if (!batchPermitSigned) {
+        if (isMintSendPending || isWorking) {
+          return 'Sign';
+        }
+        return 'Sign';
+      } else {
+        if (isMintSendPending || isMintConfirming) {
+          return 'Deposit';
+        }
+        return 'Deposit';
+      }
+    } else {
+      // step === 'input'
+      return 'Deposit';
     }
   };
 
@@ -1092,7 +1162,7 @@ export function AddLiquidityForm({
             // Fallback to currentPrice if currentPoolTick is not yet available
             const numericCurrentPrice = parseFloat(currentPrice);
             if (isNaN(numericCurrentPrice)) {
-                toast.error("Cannot apply preset: current price is invalid");
+                toast.error("Invalid Price", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Cannot apply preset: current price is invalid." });
                 return;
             }
             const priceLowerTarget = numericCurrentPrice * (1 - percentage);
@@ -1404,7 +1474,7 @@ export function AddLiquidityForm({
             // Reset viewbox for manual range change
             resetChartViewbox(newTick, parseInt(tickUpper));
           } else {
-            toast.error("Invalid Range: Min price results in a range where min tick >= max tick.");
+            toast.error("Invalid Range", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Min price results in a range where min tick >= max tick." });
           }
           return;
         }
@@ -1430,7 +1500,7 @@ export function AddLiquidityForm({
           setInitialDefaultApplied(true);
           resetChartViewbox(newTick, parseInt(tickUpper));
         } else {
-          toast.error("Invalid Range: Min price must be less than max price.");
+          toast.error("Invalid Range", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Min price must be less than max price." });
         }
       } else { // inverted: left edits upper tick (visual flip)
         if (priceStr.trim() === "0") {
@@ -1441,7 +1511,7 @@ export function AddLiquidityForm({
             // Reset viewbox for manual range change
             resetChartViewbox(parseInt(tickLower), newTick);
           } else {
-            toast.error("Invalid Range: Min price results in a range where max tick <= min tick.");
+            toast.error("Invalid Range", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Min price results in a range where max tick <= min tick." });
           }
           return;
         }
@@ -1467,7 +1537,7 @@ export function AddLiquidityForm({
           setInitialDefaultApplied(true);
           resetChartViewbox(parseInt(tickLower), newTick);
         } else {
-          toast.error("Invalid Range: Min price must result in a max tick greater than min tick.");
+          toast.error("Invalid Range", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Min price must result in a max tick greater than min tick." });
         }
       }
     }, 750), 
@@ -1487,7 +1557,7 @@ export function AddLiquidityForm({
             setTickUpper(newTick.toString());
             setInitialDefaultApplied(true);
           } else {
-            toast.error("Invalid Range: Max price results in a range where max tick <= min tick.");
+            toast.error("Invalid Range", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Max price results in a range where max tick <= min tick." });
           }
           return;
         }
@@ -1501,7 +1571,7 @@ export function AddLiquidityForm({
           setTickUpper(newTick.toString());
           setInitialDefaultApplied(true);
         } else {
-          toast.error("Invalid Range: Max price must be greater than min price.");
+          toast.error("Invalid Range", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Max price must be greater than min price." });
         }
       } else { // inverted: right edits lower tick (visual flip)
         if (isInfinityInput) {
@@ -1512,7 +1582,7 @@ export function AddLiquidityForm({
             // Reset viewbox for manual range change
             resetChartViewbox(newTick, parseInt(tickUpper));
           } else {
-            toast.error("Invalid Range: Max price results in a range where min tick >= max tick.");
+            toast.error("Invalid Range", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Max price results in a range where min tick >= max tick." });
           }
           return;
         }
@@ -1532,7 +1602,7 @@ export function AddLiquidityForm({
           // Reset viewbox for manual range change
           resetChartViewbox(newTick, parseInt(tickUpper));
         } else {
-          toast.error("Invalid Range: Max price must result in a min tick less than max tick.");
+          toast.error("Invalid Range", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Max price must result in a min tick less than max tick." });
         }
       }
     }, 750),
@@ -1633,7 +1703,7 @@ export function AddLiquidityForm({
           } catch (e) {
             console.error('Error formatting amount1:', e);
             setAmount1("Error");
-            toast.error("Calculation Error: Could not parse calculated amount for the other token.");
+            toast.error("Calculation Error", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Could not parse calculated amount for the other token." });
             setCalculatedData(null);
           }
         } else {
@@ -1644,12 +1714,12 @@ export function AddLiquidityForm({
           } catch (e) {
             console.error('Error formatting amount0:', e);
             setAmount0("Error");
-            toast.error("Calculation Error: Could not parse calculated amount for the other token.");
+            toast.error("Calculation Error", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Could not parse calculated amount for the other token." });
             setCalculatedData(null);
           }
         }
       } catch (error: any) {
-        toast.error(`Calculation Error: ${error.message || "Could not estimate amounts."}`);
+        toast.error("Calculation Error", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: error.message || "Could not estimate amounts." });
         setCalculatedData(null);
         setCurrentPrice(null);      
         setCurrentPoolTick(null);   
@@ -1975,11 +2045,14 @@ export function AddLiquidityForm({
     });
     
     if (tickLower === sdkMinTick.toString() && tickUpper === sdkMaxTick.toString()) {
-      return isInverted ? `∞ - 0.00` : `0.00 - ∞`;
+      return `0.00 - ∞`;
     }
 
-    // When inverted, flip the order visually: right is lower, left is upper
-    return isInverted ? `${formattedUpper} - ${formattedLower}` : `${formattedLower} - ${formattedUpper}`;
+    // Always display ascending by price (left = lower price, right = higher price)
+    const lowFirst = priceAtLowerTick <= priceAtUpperTick;
+    const leftVal = lowFirst ? formattedLower : formattedUpper;
+    const rightVal = lowFirst ? formattedUpper : formattedLower;
+    return `${leftVal} - ${rightVal}`;
   }, [currentPoolTick, currentPrice, tickLower, tickUpper, sdkMinTick, sdkMaxTick, token0Symbol, token1Symbol]);
 
   // Compute precise left/right labels to mirror chart axis (ascending by price)
@@ -2025,10 +2098,8 @@ export function AddLiquidityForm({
       return v.toLocaleString('en-US', { maximumFractionDigits: decimals, minimumFractionDigits: Math.min(2, decimals) });
     };
 
-    // When inverted, flip the visual order
-    return isInverted
-      ? { left: formatVal(points[1].price), right: formatVal(points[0].price) }
-      : { left: formatVal(points[0].price), right: formatVal(points[1].price) };
+    // Always display ascending by price: left = lower, right = higher
+    return { left: formatVal(points[0].price), right: formatVal(points[1].price) };
   }, [currentPoolTick, currentPrice, tickLower, tickUpper, token0Symbol, token1Symbol, sdkMinTick, sdkMaxTick, isInverted]);
 
   // const { open } = useWeb3Modal();
@@ -2109,20 +2180,43 @@ export function AddLiquidityForm({
                         id="amount0"
                         placeholder="0.0"
                         value={amount0}
-                        onChange={(e) => { 
-                          const newValue = e.target.value.replace(',', '.'); // Ensure decimal separator is always period
-                          if (preparedTxData) { resetTransactionState(); } 
-                          setAmount0(newValue); 
-                          setActiveInputSide('amount0'); 
-                        }} 
+                        onChange={(e) => {
+                          let newValue = e.target.value.replace(',', '.'); // Ensure decimal separator is always period
+                          // Only allow numbers, one decimal point, and prevent multiple decimal points
+                          newValue = newValue.replace(/[^0-9.]/g, '').replace(/(\..*?)\./g, '$1');
+                          if (preparedTxData) { resetTransactionState(); }
+                          setAmount0(newValue);
+                          setActiveInputSide('amount0');
+                        }}
                         onFocus={() => setIsAmount0Focused(true)}
                         onBlur={() => setIsAmount0Focused(false)}
                         type="text"
                         pattern="[0-9]*\.?[0-9]*"
                         inputMode="decimal"
+                        autoComplete="off"
                         disabled={isWorking || (isCalculating && activeInputSide === 'amount1')}
                         className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
                       />
+                      <div className="text-right text-xs text-muted-foreground">
+                        {(() => {
+                          const usdPrice = getUSDPriceForSymbol(token0Symbol);
+                          
+                          // Use precise backend data when available, fallback to display amount
+                          if (calculatedData && calculatedData.amount0) {
+                            try {
+                              const preciseAmount = parseFloat(viemFormatUnits(BigInt(calculatedData.amount0), TOKEN_DEFINITIONS[token0Symbol]?.decimals || 18));
+                              return formatUSD(preciseAmount * usdPrice);
+                            } catch {
+                              // Fallback to display amount if parsing fails
+                              const numeric = parseDisplayAmount(amount0);
+                              return formatUSD(numeric * usdPrice);
+                            }
+                          } else {
+                            const numeric = parseDisplayAmount(amount0);
+                            return formatUSD(numeric * usdPrice);
+                          }
+                        })()}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -2166,20 +2260,43 @@ export function AddLiquidityForm({
                         id="amount1"
                         placeholder="0.0"
                         value={amount1}
-                        onChange={(e) => { 
-                          const newValue = e.target.value.replace(',', '.'); // Ensure decimal separator is always period
-                          if (preparedTxData) { resetTransactionState(); } 
-                          setAmount1(newValue); 
-                          setActiveInputSide('amount1'); 
-                        }} 
+                        onChange={(e) => {
+                          let newValue = e.target.value.replace(',', '.'); // Ensure decimal separator is always period
+                          // Only allow numbers, one decimal point, and prevent multiple decimal points
+                          newValue = newValue.replace(/[^0-9.]/g, '').replace(/(\..*?)\./g, '$1');
+                          if (preparedTxData) { resetTransactionState(); }
+                          setAmount1(newValue);
+                          setActiveInputSide('amount1');
+                        }}
                         onFocus={() => setIsAmount1Focused(true)}
                         onBlur={() => setIsAmount1Focused(false)}
                         type="text"
                         pattern="[0-9]*\.?[0-9]*"
                         inputMode="decimal"
+                        autoComplete="off"
                         disabled={isWorking || (isCalculating && activeInputSide === 'amount0')}
                         className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
                       />
+                      <div className="text-right text-xs text-muted-foreground">
+                        {(() => {
+                          const usdPrice = getUSDPriceForSymbol(token1Symbol);
+                          
+                          // Use precise backend data when available, fallback to display amount
+                          if (calculatedData && calculatedData.amount1) {
+                            try {
+                              const preciseAmount = parseFloat(viemFormatUnits(BigInt(calculatedData.amount1), TOKEN_DEFINITIONS[token1Symbol]?.decimals || 18));
+                              return formatUSD(preciseAmount * usdPrice);
+                            } catch {
+                              // Fallback to display amount if parsing fails
+                              const numeric = parseDisplayAmount(amount1);
+                              return formatUSD(numeric * usdPrice);
+                            }
+                          } else {
+                            const numeric = parseDisplayAmount(amount1);
+                            return formatUSD(numeric * usdPrice);
+                          }
+                        })()}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -2265,10 +2382,11 @@ export function AddLiquidityForm({
                                   }}
                                   className={cn(
                                     "w-16 h-auto p-0 text-xs text-center bg-transparent border-0 appearance-none focus:outline-none focus:ring-0 focus-visible:ring-offset-0 focus-visible:ring-0 font-sans transition-colors",
-                                    convertPriceToValidTick(editingMinPrice, false) !== null 
-                                      ? "text-white" 
+                                    convertPriceToValidTick(editingMinPrice, false) !== null
+                                      ? "text-white"
                                       : "text-muted-foreground"
                                   )}
+                                  autoComplete="off"
                                   autoFocus
                                 />
                               ) : (
@@ -2294,10 +2412,11 @@ export function AddLiquidityForm({
                                   }}
                                   className={cn(
                                     "w-16 h-auto p-0 text-xs text-center bg-transparent border-0 appearance-none focus:outline-none focus:ring-0 focus-visible:ring-offset-0 focus-visible:ring-0 font-sans transition-colors",
-                                    convertPriceToValidTick(editingMaxPrice, true) !== null 
-                                      ? "text-white" 
+                                    convertPriceToValidTick(editingMaxPrice, true) !== null
+                                      ? "text-white"
                                       : "text-muted-foreground"
                                   )}
+                                  autoComplete="off"
                                   autoFocus
                                 />
                               ) : (
@@ -2331,7 +2450,7 @@ export function AddLiquidityForm({
                                       </span>
                                     </TooltipTrigger>
                                     <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
-                                      Current Price
+                                      Current Pool Price
                                     </TooltipContent>
                                   </Tooltip>
                                 </TooltipProvider>
@@ -2379,7 +2498,7 @@ export function AddLiquidityForm({
                                       </span>
                                     </TooltipTrigger>
                                     <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
-                                      Current Price
+                                      Current Pool Price
                                     </TooltipContent>
                                   </Tooltip>
                                 </TooltipProvider>
@@ -2411,7 +2530,7 @@ export function AddLiquidityForm({
                       />
                     </div>
                   ) : (
-                    <>
+                    <div className="relative">
                       <InteractiveRangeChart
                         selectedPoolId={selectedPoolId}
                         chainId={chainId}
@@ -2443,39 +2562,78 @@ export function AddLiquidityForm({
                         poolToken0={poolToken0}
                         poolToken1={poolToken1}
                         onDragStateChange={(state) => setIsDraggingRange(state)}
+                        onLoadingChange={(loading) => setIsChartLoading(loading)}
                       />
                       
                       {/* Chart labels are now handled internally by InteractiveRangeChart */}
-                    </>
+                      
+                      {/* Loading overlay for chart data using existing pattern */}
+                      {(isChartLoading || isCalculating) && (
+                        <div className="absolute inset-0 flex items-center justify-center bg-muted/20 rounded">
+                          <Image 
+                            src="/LogoIconWhite.svg" 
+                            alt="Loading" 
+                            width={24}
+                            height={24}
+                            className="animate-pulse opacity-75"
+                          />
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
               ) : (
                 <div className="p-3 border border-dashed rounded-md bg-muted/10 mb-4">
                   <p className="text-sm font-medium mb-2 text-foreground/80">Transaction Steps</p>
                   <div className="space-y-1.5 text-xs text-muted-foreground">
+                      {/* ERC20 Approvals to Permit2 */}
                       <div className="flex items-center justify-between">
                           <span>Token Approvals</span>
                           <span>
-                            { (step === 'approve' && (isApproveWritePending || isApproving)) || 
-                              (step === 'permit2Sign' && isWorking) 
+                            { (step === 'approve' && (isApproveWritePending || isApproving))
                               ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
                               : (
-                                <span className={`text-xs font-mono ${completedTokensCount === involvedTokensCount && involvedTokensCount > 0 ? 'text-green-500' : ''}`}>
-                                  {`${completedTokensCount}/${involvedTokensCount > 0 ? involvedTokensCount : '-'}`}
+                                <motion.span 
+                                  animate={approvalWiggleControls}
+                                  className={`text-xs font-mono ${completedERC20ApprovalsCount === involvedTokensCount && involvedTokensCount > 0 ? 'text-green-500' : approvalWiggleCount > 0 ? 'text-red-500' : 'text-muted-foreground'}`}
+                                >
+                                  {`${completedERC20ApprovalsCount}/${involvedTokensCount > 0 ? involvedTokensCount : '-'}`}
+                                </motion.span>
+                              )
+                            }
+                          </span>
+                      </div>
+                      
+                      {/* Permit2 Signature */}
+                      <div className="flex items-center justify-between">
+                          <span>Permit Signature</span>
+                          <span>
+                            { (step === 'mint' && !batchPermitSigned && (isMintSendPending || isWorking))
+                              ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
+                              : (
+                                <span className={`text-xs font-mono ${batchPermitSigned ? 'text-green-500' : ''}`}>
+                                  {batchPermitSigned ? '1/1' : '0/1'}
                                 </span>
                               )
                             }
                           </span>
                       </div>
+                      
+                      {/* Deposit Transaction */}
                       <div className="flex items-center justify-between">
-                          <span>Send Mint Transaction</span> 
+                          <span>Deposit Transaction</span>
                           <span>
-                              {isMintConfirming || isMintSendPending ? 
-                                <ActivityIcon className="h-4 w-4 animate-pulse text-muted-foreground" />
-                               : isMintSuccess ? <CheckIcon className="h-4 w-4 text-green-500" />
-                               : <MinusIcon className="h-4 w-4" />}
+                            { (step === 'mint' && batchPermitSigned && (isMintSendPending || isMintConfirming))
+                              ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
+                              : (
+                                <span className={`text-xs font-mono ${isMintSuccess ? 'text-green-500' : ''}`}>
+                                  {isMintSuccess ? '1/1' : '0/1'}
+                                </span>
+                              )
+                            }
                           </span>
                       </div>
+                      
                   </div>
                 </div>
               )}
@@ -2505,7 +2663,6 @@ export function AddLiquidityForm({
                   onClick={() => {
                     if (step === 'input') handlePrepareAndSubmit();
                     else if (step === 'approve') handleApprove();
-                    else if (step === 'permit2Sign') handleSignAndSubmitPermit2();
                     else if (step === 'mint') handleMint();
                   }}
                   disabled={isWorking || 
@@ -2522,18 +2679,13 @@ export function AddLiquidityForm({
                 >
                                     <span className={cn(
                     (step === 'approve' && (isApproveWritePending || isApproving)) ||
-                    (step === 'permit2Sign' && isWorking) ||
-                    (step === 'mint' && (isMintSendPending || isMintConfirming)) ||
+                    (step === 'mint' && (isMintSendPending || isMintConfirming || (!batchPermitSigned && isWorking))) ||
                     (step === 'input' && isWorking) ||
                     isPoolStateLoading
                       ? "animate-pulse"
                       : ""
                   )}>
-                    {step === 'approve' ? `Approve ${preparedTxData?.approvalTokenSymbol || 'Tokens'}`
-                      : step === 'permit2Sign' ? 'Sign'
-                      : step === 'mint' ? 'Deposit'
-                      : 'Deposit'
-                    }
+                    {getButtonText()}
                   </span>
                 </Button>
               )}

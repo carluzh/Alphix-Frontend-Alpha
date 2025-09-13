@@ -9,6 +9,7 @@ import { ThemeProvider } from "@/components/theme-provider"
 import { Toaster } from "@/components/ui/sonner"
 import { Analytics } from '@vercel/analytics/react'
 import { SpeedInsights } from '@vercel/speed-insights/next'
+import ErrorBoundary from '@/components/ErrorBoundary'
 import type { Metadata } from 'next'
 
 // Load Inter font
@@ -48,7 +49,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           disableTransitionOnChange
         >
           <AppKitProvider cookies={cookie}>
-            {children}
+            <ErrorBoundary>
+              {children}
+            </ErrorBoundary>
           </AppKitProvider>
           <Toaster position="top-right" />
           <Analytics />

@@ -35,6 +35,10 @@ type HookEvent = {
 
 type HookResp = { data?: { alphixHooks?: HookEvent[] }, errors?: any[] };
 
+// Simple in-memory server cache for this endpoint
+const serverCache = new Map<string, { data: any; ts: number }>();
+const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse<HookEvent[] | { message: string; error?: any }>
@@ -44,13 +48,27 @@ export default async function handler(
     return res.status(405).json({ message: `Method ${req.method} Not Allowed` });
   }
 
-  const { poolId } = req.query;
+  const { poolId, v: versionQuery } = req.query as { poolId?: string; v?: string };
   if (!poolId || typeof poolId !== 'string') {
     return res.status(400).json({ message: 'Valid poolId query parameter is required.' });
   }
 
+  const cacheKey = `dynamic-fees:${poolId.toLowerCase()}`;
+
   // CDN: cache for 12h, serve stale for 12h while revalidating
   res.setHeader('Cache-Control', 'public, s-maxage=43200, stale-while-revalidate=43200');
+
+  // Support version-based cache busting
+  const version = versionQuery || '';
+  const shouldBypassCache = version && version !== 'default';
+
+  // Check cache unless we're bypassing it
+  if (!shouldBypassCache) {
+    const cached = serverCache.get(cacheKey);
+    if (cached && (Date.now() - cached.ts) < CACHE_TTL_MS) {
+      return res.status(200).json(cached.data);
+    }
+  }
 
   try {
     const SUBGRAPH_URL = selectSubgraphUrl(req);
@@ -68,12 +86,24 @@ export default async function handler(
       throw new Error(`Subgraph errors: ${JSON.stringify(json.errors)}`);
     }
     const events = Array.isArray(json.data?.alphixHooks) ? json.data!.alphixHooks! : [];
+
+    // On success, update cache
+    serverCache.set(cacheKey, { data: events, ts: Date.now() });
+
     return res.status(200).json(events);
   } catch (error: any) {
     console.error(`Fee events API error for pool ${poolId}:`, error);
+
+    // On failure, try to serve from cache
+    const cached = serverCache.get(cacheKey);
+    if (cached && (Date.now() - cached.ts) < CACHE_TTL_MS) {
+      console.warn(`[dynamic-fees] Serving stale fees for ${poolId} due to fetch error.`);
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(200).json(cached.data);
+    }
+
     const errorMessage = error instanceof Error ? error.message : 'Unknown error fetching fee events';
-    const detailedError = process.env.NODE_ENV === 'development' ? { name: (error as any)?.name, stack: (error as any)?.stack } : {};
-    return res.status(500).json({ message: errorMessage, error: detailedError });
+    return res.status(500).json({ message: errorMessage });
   }
 }
 

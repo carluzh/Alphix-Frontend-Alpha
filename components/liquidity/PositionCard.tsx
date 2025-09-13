@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
+import { formatUnits } from "viem";
 import { Card, CardContent, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -10,8 +11,32 @@ import { Info, Clock3, ChevronsLeftRight, EllipsisVertical, OctagonX } from "luc
 import { TokenStack } from "./TokenStack";
 import { FeesCell } from "./FeesCell";
 import { TOKEN_DEFINITIONS, TokenSymbol, getToken as getTokenConfig } from '@/lib/pools-config';
-import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
+
 import { cn } from "@/lib/utils";
+
+// Helper function to determine base token for price display (same logic as pool page)
+const determineBaseTokenForPriceDisplay = (token0: string, token1: string): string => {
+  if (!token0 || !token1) return token0;
+
+  // Priority order for quote tokens (these should be the base for price display)
+  const quotePriority: Record<string, number> = {
+    'aUSDC': 10,
+    'aUSDT': 9,
+    'USDC': 8,
+    'USDT': 7,
+    'aETH': 6,
+    'ETH': 5,
+    'YUSD': 4,
+    'mUSDT': 3,
+  };
+
+  const token0Priority = quotePriority[token0] || 0;
+  const token1Priority = quotePriority[token1] || 0;
+
+  // Return the token with higher priority (better quote currency)
+  // If priorities are equal, default to token0
+  return token1Priority > token0Priority ? token1 : token0;
+};
 
 type ProcessedPosition = {
     positionId: string;
@@ -47,9 +72,8 @@ interface PositionCardProps {
     formatTokenDisplayAmount: (amount: string) => string;
     formatAgeShort: (seconds: number | undefined) => string;
     openWithdraw: (position: any) => void;
-    openAddLiquidity: (position: any) => void;
+    openAddLiquidity: (position: any, onModalClose?: () => void) => void;
     claimFees: (positionId: string) => Promise<void>;
-    compoundFees: (params: { tokenId: string; token0Symbol: TokenSymbol; token1Symbol: TokenSymbol; poolId: string; tickLower: number; tickUpper: number; }, raw0: string, raw1: string) => Promise<void>;
     toast: any;
     openPositionMenuKey: string | null;
     setOpenPositionMenuKey: (key: string | null) => void;
@@ -58,6 +82,12 @@ interface PositionCardProps {
     onClick: () => void;
     isLoadingPrices: boolean;
     isLoadingPoolStates: boolean;
+    // New props for ascending range logic
+    currentPrice?: string | null;
+    currentPoolTick?: number | null;
+    // Prefetched fee data to avoid loading states
+    prefetchedRaw0?: string | null;
+    prefetchedRaw1?: string | null;
 }
 
 const SDK_MIN_TICK = -887272;
@@ -76,7 +106,6 @@ export function PositionCard({
     openWithdraw,
     openAddLiquidity,
     claimFees,
-    compoundFees,
     toast,
     openPositionMenuKey,
     setOpenPositionMenuKey,
@@ -85,47 +114,105 @@ export function PositionCard({
     onClick,
     isLoadingPrices,
     isLoadingPoolStates,
+    currentPrice,
+    currentPoolTick,
+    prefetchedRaw0,
+    prefetchedRaw1,
 }: PositionCardProps) {
     const [isHoverDisabled, setIsHoverDisabled] = useState(false);
+    const [isPositionValueHovered, setIsPositionValueHovered] = useState(false);
+    const [isFeesHovered, setIsFeesHovered] = useState(false);
 
     const handleChildEnter = () => setIsHoverDisabled(true);
     const handleChildLeave = () => setIsHoverDisabled(false);
     const handleChildClick = (e: React.MouseEvent) => e.stopPropagation();
 
+    // Helper to determine if fees are zero (same logic as FeesCell)
+    const hasZeroFees = React.useMemo(() => {
+        if (prefetchedRaw0 === null || prefetchedRaw1 === null) return false; // Loading, show container
+        try {
+            const raw0 = (position as any)?.unclaimedRaw0 || prefetchedRaw0 || '0';
+            const raw1 = (position as any)?.unclaimedRaw1 || prefetchedRaw1 || '0';
+            return BigInt(raw0) <= 0n && BigInt(raw1) <= 0n;
+        } catch {
+            return false; // Error parsing, show container
+        }
+    }, [prefetchedRaw0, prefetchedRaw1, position]);
+
+    // Calculate total token amounts (position + fees)
+    const totalAmounts = React.useMemo(() => {
+        if (hasZeroFees || prefetchedRaw0 === null || prefetchedRaw1 === null) {
+            return {
+                token0: parseFloat(position.token0.amount),
+                token1: parseFloat(position.token1.amount)
+            };
+        }
+        try {
+            const raw0 = (position as any)?.unclaimedRaw0 || prefetchedRaw0 || '0';
+            const raw1 = (position as any)?.unclaimedRaw1 || prefetchedRaw1 || '0';
+            
+            const d0 = TOKEN_DEFINITIONS?.[position.token0.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals ?? 18;
+            const d1 = TOKEN_DEFINITIONS?.[position.token1.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals ?? 18;
+            
+            const feeAmount0 = parseFloat(formatUnits(BigInt(raw0), d0));
+            const feeAmount1 = parseFloat(formatUnits(BigInt(raw1), d1));
+            
+            return {
+                token0: parseFloat(position.token0.amount) + feeAmount0,
+                token1: parseFloat(position.token1.amount) + feeAmount1
+            };
+        } catch {
+            return {
+                token0: parseFloat(position.token0.amount),
+                token1: parseFloat(position.token1.amount)
+            };
+        }
+    }, [hasZeroFees, prefetchedRaw0, prefetchedRaw1, position]);
+
+    // Determine if denomination should be flipped (same logic as pool page)
+    const shouldFlipDenomination = React.useMemo(() => {
+        if (!currentPrice) return false;
+        const currentPriceNum = parseFloat(currentPrice);
+        if (!isFinite(currentPriceNum) || currentPriceNum <= 0) return false;
+        const inversePrice = 1 / currentPriceNum;
+        return inversePrice > currentPriceNum;
+    }, [currentPrice]);
+
     return (
         <Card
             key={position.positionId}
             className={cn(
-                "bg-muted/30 border border-sidebar-border/60 transition-colors group cursor-pointer",
+                "bg-muted/30 border border-sidebar-border/60 transition-colors group cursor-pointer relative",
                 !isHoverDisabled && "hover:border-sidebar-border"
             )}
             onClick={onClick}
         >
+            {/* Loading overlay for optimistic updates */}
+            {(position as any).isOptimisticallyUpdating && (
+              <div className="absolute inset-0 bg-muted/20 backdrop-blur-sm rounded-lg flex items-center justify-center z-10">
+                <Image 
+                  src="/LogoIconWhite.svg" 
+                  alt="Updating..." 
+                  width={24}
+                  height={24}
+                  className="animate-pulse opacity-75"
+                />
+              </div>
+            )}
             <CardContent className="p-3 sm:p-4 group">
-            <div
-                className="grid sm:items-center"
-                style={{
-                gridTemplateColumns: 'min-content minmax(0, 1.7fr) minmax(0, 1.5fr) minmax(0, 1.5fr) 1fr min-content',
-                columnGap: '1.25rem',
-                }}
-            >
+            <div className="grid sm:items-center gap-5 grid-cols-[min-content_max-content_max-content_1px_max-content_1fr_7rem] sm:grid-cols-[min-content_max-content_max-content_1px_max-content_1fr_7rem]">
+            {/* Column 1: Token Icons - Very narrow */}
             <div className="flex items-center min-w-0 flex-none gap-0">
                 {isLoadingPrices || isLoadingPoolStates ? <div className="h-6 w-10 bg-muted/60 rounded-full animate-pulse" /> : <TokenStack position={position as any} />}
             </div>
 
-            <div className="flex flex-col min-w-0 items-start truncate pr-2">
-                <div className="flex flex-col text-xs text-muted-foreground whitespace-nowrap">
-                <span className="truncate leading-tight">
-                    {formatTokenDisplayAmount(position.token0.amount)} {position.token0.symbol}
-                </span>
-                <span className="truncate leading-tight">
-                    {formatTokenDisplayAmount(position.token1.amount)} {position.token1.symbol}
-                </span>
-                </div>
-            </div>
-
+            {/* Column 2: Position Value - left-bound, size-to-content */}
             <div className="flex items-start pr-2">
-                <div className="flex flex-col gap-1 items-start">
+                <div 
+                    className="flex flex-col gap-1 items-start cursor-pointer"
+                    onMouseEnter={() => setIsPositionValueHovered(true)}
+                    onMouseLeave={() => setIsPositionValueHovered(false)}
+                >
                 <div className="text-xs text-muted-foreground">Position Value</div>
                 <div className="flex items-center gap-2 truncate">
                     {isLoadingPrices ? <div className="h-4 w-16 bg-muted/60 rounded animate-pulse" /> : (
@@ -137,42 +224,132 @@ export function PositionCard({
                 </div>
             </div>
 
-            <div className="flex items-start pr-2" onMouseEnter={handleChildEnter} onMouseLeave={handleChildLeave} onClick={handleChildClick}>
-                <div className="flex flex-col gap-1 items-start">
-                <div className="flex items-center gap-1">
-                    <div className="text-xs text-muted-foreground">Fees</div>
-                    <TooltipProvider delayDuration={0}>
-                        <Tooltip>
-                        <TooltipTrigger asChild>
-                            <Info className="h-3 w-3 text-muted-foreground/50 hover:text-muted-foreground" />
-                        </TooltipTrigger>
-                        <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs max-w-48">
-                            <p>Unclaimed Fees</p>
-                        </TooltipContent>
-                        </Tooltip>
-                    </TooltipProvider>
-                </div>
-                <div className="flex items-center gap-2 text-xs">
-                    <FeesCell
-                    positionId={position.positionId}
-                    sym0={position.token0.symbol || 'T0'}
-                    sym1={position.token1.symbol || 'T1'}
-                    price0={getUsdPriceForSymbol(position.token0.symbol)}
-                    price1={getUsdPriceForSymbol(position.token1.symbol)}
-                    />
+            {/* Column 3: Fees - identical styling to Position Value */}
+            <div className="flex items-start pr-2">
+                <div 
+                    className={`flex flex-col gap-1 items-start ${!hasZeroFees ? 'cursor-pointer' : ''}`}
+                    onMouseEnter={() => !hasZeroFees && setIsFeesHovered(true)}
+                    onMouseLeave={() => !hasZeroFees && setIsFeesHovered(false)}
+                >
+                <div className="text-xs text-muted-foreground">Fees</div>
+                <div className="flex items-center gap-2 truncate">
+                    {hasZeroFees ? (
+                      <div className="text-xs text-muted-foreground truncate">$0.00</div>
+                    ) : isLoadingPrices || prefetchedRaw0 === null || prefetchedRaw1 === null ? (
+                      <div className="h-4 w-16 bg-muted/60 rounded animate-pulse" />
+                    ) : (
+                      <div className="text-xs font-medium truncate">
+                        <FeesCell
+                          positionId={position.positionId}
+                          sym0={position.token0.symbol || 'T0'}
+                          sym1={position.token1.symbol || 'T1'}
+                          price0={getUsdPriceForSymbol(position.token0.symbol)}
+                          price1={getUsdPriceForSymbol(position.token1.symbol)}
+                          prefetchedRaw0={prefetchedRaw0}
+                          prefetchedRaw1={prefetchedRaw1}
+                        />
+                      </div>
+                    )}
                 </div>
                 </div>
             </div>
 
+            {/* Column 4: Vertical Divider */}
+            <div className="w-px h-8 bg-border"></div>
+
+            {/* Column 5: Position Amounts - Desktop only, left-bound, size-to-content */}
+            <div className="hidden sm:flex items-start pr-2">
+                <div className="flex flex-col gap-1 items-start">
+                    <div className="flex flex-col gap-0.5 text-xs">
+                        {isLoadingPrices ? (
+                            <>
+                                <div className="h-4 w-16 bg-muted/60 rounded animate-pulse" />
+                                <div className="h-4 w-16 bg-muted/60 rounded animate-pulse" />
+                            </>
+                        ) : isFeesHovered && !hasZeroFees ? (
+                            // Show fee amounts when fees are hovered
+                            <>
+                                <div className="font-mono text-muted-foreground">
+                                    {(() => {
+                                        try {
+                                            const raw0 = (position as any)?.unclaimedRaw0 || prefetchedRaw0 || '0';
+                                            const d0 = TOKEN_DEFINITIONS?.[position.token0.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals ?? 18;
+                                            const amt = parseFloat(formatUnits(BigInt(raw0), d0));
+                                            return amt < 0.001 && amt > 0 ? "< 0.001" : amt.toLocaleString("en-US", { maximumFractionDigits: 6, minimumFractionDigits: 0 });
+                                        } catch {
+                                            return "0";
+                                        }
+                                    })()} {position.token0.symbol}
+                                </div>
+                                <div className="font-mono text-muted-foreground">
+                                    {(() => {
+                                        try {
+                                            const raw1 = (position as any)?.unclaimedRaw1 || prefetchedRaw1 || '0';
+                                            const d1 = TOKEN_DEFINITIONS?.[position.token1.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals ?? 18;
+                                            const amt = parseFloat(formatUnits(BigInt(raw1), d1));
+                                            return amt < 0.001 && amt > 0 ? "< 0.001" : amt.toLocaleString("en-US", { maximumFractionDigits: 6, minimumFractionDigits: 0 });
+                                        } catch {
+                                            return "0";
+                                        }
+                                    })()} {position.token1.symbol}
+                                </div>
+                            </>
+                        ) : isPositionValueHovered ? (
+                            // Show position amounts only when position value is hovered
+                            <>
+                                <div className="font-mono text-muted-foreground">
+                                    {formatTokenDisplayAmount(position.token0.amount)} {position.token0.symbol}
+                                </div>
+                                <div className="font-mono text-muted-foreground">
+                                    {formatTokenDisplayAmount(position.token1.amount)} {position.token1.symbol}
+                                </div>
+                            </>
+                        ) : (
+                            // Show total amounts (position + fees) by default
+                            <>
+                                <div className="font-mono text-muted-foreground">
+                                    {(() => {
+                                        const amount = totalAmounts.token0;
+                                        if (amount < 0.001 && amount > 0) return "< 0.001";
+                                        
+                                        // If fees are zero, use same formatting as position amounts to avoid precision differences
+                                        if (hasZeroFees) {
+                                            return formatTokenDisplayAmount(position.token0.amount);
+                                        }
+                                        
+                                        return amount.toLocaleString("en-US", { maximumFractionDigits: 6, minimumFractionDigits: 0 });
+                                    })()} {position.token0.symbol}
+                                </div>
+                                <div className="font-mono text-muted-foreground">
+                                    {(() => {
+                                        const amount = totalAmounts.token1;
+                                        if (amount < 0.001 && amount > 0) return "< 0.001";
+                                        
+                                        // If fees are zero, use same formatting as position amounts to avoid precision differences
+                                        if (hasZeroFees) {
+                                            return formatTokenDisplayAmount(position.token1.amount);
+                                        }
+                                        
+                                        return amount.toLocaleString("en-US", { maximumFractionDigits: 6, minimumFractionDigits: 0 });
+                                    })()} {position.token1.symbol}
+                                </div>
+                            </>
+                        )}
+                    </div>
+                </div>
+            </div>
+
+            {/* Column 6: Flexible spacer to push Withdraw; absorbs surplus width */}
             <div />
 
-            <div className="hidden sm:flex items-center justify-end gap-2 flex-none" onMouseEnter={handleChildEnter} onMouseLeave={handleChildLeave} onClick={handleChildClick}>
+            {/* Column 7: Actions - Static Withdraw button */}
+            <div className="flex items-center justify-end gap-2 w-[7rem] flex-none" onMouseEnter={handleChildEnter} onMouseLeave={handleChildLeave} onClick={handleChildClick}>
                 <button
                 onClick={(e) => {
                     e.stopPropagation();
                     openWithdraw(position);
                 }}
-                className="flex h-7 cursor-pointer items-center justify-center rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-2 text-xs font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30"
+                className="flex h-9 cursor-pointer items-center justify-center rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-4 py-2 text-xs font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30"
                 style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: '200%', backgroundPosition: 'center' }}
                 >
                 Withdraw
@@ -190,10 +367,43 @@ export function PositionCard({
                         <span className="font-mono tabular-nums flex items-center gap-1.5 cursor-default">
                             <ChevronsLeftRight className="h-3 w-3 text-muted-foreground" aria-hidden />
                             {isLoadingPoolStates ? <div className="h-4 w-24 bg-muted/60 rounded animate-pulse" /> : (() => {
-                                const baseToken = determineBaseTokenForPriceDisplay(position.token0.symbol, position.token1.symbol);
-                                const currentPriceStr = poolDataByPoolId[poolKey]?.price ? String(poolDataByPoolId[poolKey].price) : null;
-                                const minPrice = convertTickToPrice(position.tickLower, poolDataByPoolId[poolKey]?.tick, currentPriceStr, baseToken, position.token0.symbol, position.token1.symbol);
-                                const maxPrice = convertTickToPrice(position.tickUpper, poolDataByPoolId[poolKey]?.tick, currentPriceStr, baseToken, position.token0.symbol, position.token1.symbol);
+                                // Use flipped denomination logic (same as pool page)
+                                const optimalBase = determineBaseTokenForPriceDisplay(
+                                    position.token0.symbol || '',
+                                    position.token1.symbol || ''
+                                );
+                                // When flipped, use the opposite token as base to show ascending prices
+                                const baseTokenForPriceDisplay = shouldFlipDenomination 
+                                    ? (optimalBase === position.token0.symbol ? position.token1.symbol : position.token0.symbol)
+                                    : optimalBase;
+
+                                const pool = poolDataByPoolId[poolKey] || poolDataByPoolId[String(position.poolId || '').toLowerCase()] || {};
+                                const currentPriceStr = currentPrice || (pool?.price ? String(pool.price) : null);
+                                const tickNow = currentPoolTick !== null ? currentPoolTick : (typeof pool?.tick === 'number' ? pool.tick : null);
+                                
+                                const minPrice = convertTickToPrice(
+                                    position.tickLower,
+                                    tickNow,
+                                    currentPriceStr,
+                                    baseTokenForPriceDisplay,
+                                    position.token0.symbol || '',
+                                    position.token1.symbol || ''
+                                );
+                                const maxPrice = convertTickToPrice(
+                                    position.tickUpper,
+                                    tickNow,
+                                    currentPriceStr,
+                                    baseTokenForPriceDisplay,
+                                    position.token0.symbol || '',
+                                    position.token1.symbol || ''
+                                );
+                                
+                                // Ensure ascending display order regardless of base/inversion
+                                const minNum = parseFloat(minPrice);
+                                const maxNum = parseFloat(maxPrice);
+                                if (Number.isFinite(minNum) && Number.isFinite(maxNum) && minNum > maxNum) {
+                                    return `${maxPrice} - ${minPrice}`;
+                                }
                                 return `${minPrice} - ${maxPrice}`;
                             })()}
                         </span>
@@ -223,60 +433,16 @@ export function PositionCard({
             </div>
             
             <div className="flex items-center gap-1.5">
-                <div onMouseEnter={handleChildEnter} onMouseLeave={handleChildLeave}>
+                <div>
                     {(() => {
                         const isFullRange = position.tickLower === SDK_MIN_TICK && position.tickUpper === SDK_MAX_TICK;
                         const statusText = isFullRange ? 'Full Range' : position.isInRange ? 'In Range' : 'Out of Range';
                         const statusColor = position.isInRange || isFullRange ? 'bg-green-500/20 text-green-500' : 'bg-red-500/20 text-red-500';
 
                         return (
-                            <HoverCard>
-                                <HoverCardTrigger asChild>
-                                    <div className={`flex items-center justify-center h-4 rounded-md px-1.5 text-[10px] leading-none ${statusColor} cursor-default`}>
-                                        {statusText}
-                                    </div>
-                                </HoverCardTrigger>
-                                <HoverCardContent
-                                    side="top"
-                                    align="center"
-                                    sideOffset={8}
-                                    className="w-48 p-2 border border-sidebar-border bg-[#0f0f0f] text-xs shadow-lg rounded-lg"
-                                >
-                                    <div className="grid gap-1">
-                                    <div className="flex items-center justify-between">
-                                        <span className="text-muted-foreground">Min. Price</span>
-                                        <span className="font-mono tabular-nums">
-                                        {convertTickToPrice(position.tickLower, poolDataByPoolId[poolKey]?.tick, poolDataByPoolId[poolKey]?.price, determineBaseTokenForPriceDisplay(position.token0.symbol, position.token1.symbol), position.token0.symbol, position.token1.symbol)}
-                                        </span>
-                                    </div>
-                                    <div className="flex items-center justify-between">
-                                        <span className="text-muted-foreground">Max. Price</span>
-                                        <span className="font-mono tabular-nums">
-                                        {convertTickToPrice(position.tickUpper, poolDataByPoolId[poolKey]?.tick, poolDataByPoolId[poolKey]?.price, determineBaseTokenForPriceDisplay(position.token0.symbol, position.token1.symbol), position.token0.symbol, position.token1.symbol)}
-                                        </span>
-                                    </div>
-                                    <div className="flex items-center justify-between">
-                                        <span className="text-muted-foreground">Current</span>
-                                        <span className="font-mono tabular-nums">
-                                        {(() => {
-                                            const currentPriceStr = poolDataByPoolId[poolKey]?.price ? String(poolDataByPoolId[poolKey]?.price) : null;
-                                            if (!currentPriceStr) return 'N/A';
-                                            const cp = parseFloat(currentPriceStr);
-                                            if (!Number.isFinite(cp) || cp <= 0) return 'N/A';
-                                            const inv = 1 / cp;
-                                            const flip = inv > cp;
-                                            const displaySymbol = flip ? (position.token0.symbol || '') : (position.token1.symbol || '');
-                                            const decimals = TOKEN_DEFINITIONS[displaySymbol as TokenSymbol]?.displayDecimals ?? 4;
-                                            const val = flip ? inv : cp;
-                                            if (!Number.isFinite(val)) return '∞';
-                                            if (val >= 0 && val < 1e-11) return '0';
-                                            return val.toFixed(decimals);
-                                        })()}
-                                        </span>
-                                    </div>
-                                    </div>
-                                </HoverCardContent>
-                            </HoverCard>
+                            <div className={`flex items-center justify-center h-4 rounded-md px-1.5 text-[10px] leading-none ${statusColor}`}>
+                                {statusText}
+                            </div>
                         );
                     })()}
                 </div>
@@ -318,9 +484,25 @@ export function PositionCard({
                             }}
                         >
                             <div className="p-1 grid gap-1">
-                            <button type="button" className="px-2 py-1 text-xs rounded text-left transition-colors text-muted-foreground hover:bg-muted/30" onClick={(e) => { e.stopPropagation(); openAddLiquidity(position); setOpenPositionMenuKey(null); }}>Add Liquidity</button>
-                            <button type="button" className="px-2 py-1 text-xs rounded text-left transition-colors text-muted-foreground hover:bg-muted/30" onClick={async (e) => { e.stopPropagation(); setOpenPositionMenuKey(null); try { await claimFees(position.positionId); } catch (err: any) { toast.error('Collect failed', { description: err?.message }); } }}>Claim Fees</button>
-                            <button type="button" className="px-2 py-1 text-xs rounded text-left transition-colors text-muted-foreground hover:bg-muted/30" onClick={async (e) => { e.stopPropagation(); setOpenPositionMenuKey(null); try { const resp = await fetch('/api/liquidity/get-uncollected-fees', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ positionId: position.positionId }), }); const json = await resp.json(); if (!resp.ok || !json?.success) throw new Error(json?.error || 'Failed to fetch fees'); if (!position.isInRange) { toast.error('Cannot Compound Out of Range Position', { icon: <OctagonX className="h-4 w-4 text-red-500" /> }); return; } let raw0: string = json.amount0 || '0'; let raw1: string = json.amount1 || '0'; try { const b0 = BigInt(raw0); raw0 = (b0 > 0n ? b0 - 1n : 0n).toString(); } catch {} try { const b1 = BigInt(raw1); raw1 = (b1 > 0n ? b1 - 1n : 0n).toString(); } catch {} if (raw0 === '0' && raw1 === '0') { toast.info('No fees to compound'); return; } await compoundFees({ tokenId: position.positionId, token0Symbol: position.token0.symbol as TokenSymbol, token1Symbol: position.token1.symbol as TokenSymbol, poolId: position.poolId, tickLower: position.tickLower, tickUpper: position.tickUpper, }, raw0, raw1); } catch (err: any) { console.error('Compound (single-tx) failed:', err); toast.error('Compound failed', { description: err?.message }); } }}>Compound Fees</button>
+                            <button type="button" className="px-2 py-1 text-xs rounded text-left transition-colors text-muted-foreground hover:bg-muted/30" onClick={(e) => { e.stopPropagation(); openAddLiquidity(position, () => setOpenPositionMenuKey(null)); }}>Add Liquidity</button>
+                            <button type="button" className="px-2 py-1 text-xs rounded text-left transition-colors text-muted-foreground hover:bg-muted/30" onClick={async (e) => { 
+                              e.stopPropagation(); 
+                              
+                              // Check if fees are zero before attempting to claim
+                              if (hasZeroFees) {
+                                toast.error('No Fees To Claim', { 
+                                  icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" })
+                                });
+                                return;
+                              }
+                              
+                              try { 
+                                await claimFees(position.positionId); 
+                                setOpenPositionMenuKey(null); // Close menu after successful claim
+                              } catch (err: any) { 
+                                toast.error('Collect failed', { description: err?.message }); 
+                              } 
+                            }}>Claim Fees</button>
                             </div>
                         </motion.div>
                         )}

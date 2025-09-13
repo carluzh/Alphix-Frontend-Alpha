@@ -1,11 +1,12 @@
 "use client"
 
-import { LineChart, Line, ResponsiveContainer, XAxis, YAxis } from "recharts";
+import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, ReferenceLine, Tooltip, ReferenceArea } from "recharts";
 import { getToken, getPoolByTokens } from "@/lib/pools-config";
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { ArrowUpRight } from "lucide-react";
+import { createPortal } from "react-dom";
 
 interface FeeHistoryPoint {
   timeLabel: string;
@@ -29,14 +30,43 @@ interface DynamicFeeChartPreviewProps {
   activePoolIndex?: number; // which pool is currently selected (kept for compatibility)
 }
 
+
+
 function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = false, onContentStableChange, alwaysShowSkeleton = false }: DynamicFeeChartPreviewProps) {
   const router = useRouter();
-  
+
   // State to track if the content is stable and rendered
   const [isContentStable, setIsContentStable] = useState(false);
-  
-  // Debug state for artificial loading delay
+
+  // Loading state for chart data fetching
+  const [isChartDataLoading, setIsChartDataLoading] = useState(false);
+
+  // Loading skeleton flag (follows actual loading state)
   const [showLoadingSkeleton, setShowLoadingSkeleton] = useState(false);
+
+  // Track if this is the initial load to disable animations
+  const [hasLoadedData, setHasLoadedData] = useState(false);
+  // Track if we've ever loaded data to prevent chart disappearing
+  const [hasEverLoadedData, setHasEverLoadedData] = useState(false);
+  // Simple animation control: animate on first load OR when pool changes
+  const [shouldAnimate, setShouldAnimate] = useState(true);
+  // Track if this is the very first load
+  const [isFirstLoad, setIsFirstLoad] = useState(true);
+
+  // Hover state for tooltip
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  const [portalEl, setPortalEl] = useState<HTMLElement | null>(null);
+  const [isHovering, setIsHovering] = useState(false);
+
+  // Combined loading state - show skeleton when either parent isLoading or internal isChartDataLoading
+  const isActuallyLoading = isLoading || isChartDataLoading;
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const el = document.getElementById('swap-fee-hover-container');
+      setPortalEl(el as HTMLElement | null);
+    }
+  }, []);
 
   // Detect if parent data matches expected shape
   const isParentDataUsable = useMemo(() => {
@@ -60,13 +90,38 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
         const cfg = getPoolByTokens(poolInfo.token0Symbol, poolInfo.token1Symbol);
         const subgraphId = (cfg as any)?.subgraphId || (cfg as any)?.id;
         if (!subgraphId) return;
+        
+        // Check local cache with 60s TTL
+        const cacheKey = `dynamicFeeChart_${subgraphId}_30days`;
+        try {
+          const cachedItem = sessionStorage.getItem(cacheKey);
+          if (cachedItem) {
+            const cached = JSON.parse(cachedItem);
+            const now = Date.now();
+            
+            // Cache expires after 60 seconds (60,000 ms)
+            if (cached.timestamp && (now - cached.timestamp) < 60000 && cached.data) {
+              setAutoData(cached.data);
+              return;
+            } else {
+              sessionStorage.removeItem(cacheKey); // Clean up expired cache
+            }
+          }
+        } catch (error) {
+          console.warn('Failed to load cached dynamic fee chart data:', error);
+          sessionStorage.removeItem(cacheKey); // Clean up corrupted cache
+        }
+        
+        setIsChartDataLoading(true);
         setShowLoadingSkeleton(true);
+        
         const resp = await fetch(`/api/liquidity/get-historical-dynamic-fees?poolId=${encodeURIComponent(String(subgraphId))}&days=30`);
         if (!resp.ok) return;
         const events = await resp.json();
         if (!Array.isArray(events)) return;
+        // Filter to last 30 days from today (not from oldest data)
         const nowSec = Math.floor(Date.now() / 1000);
-        const cutoff = nowSec - 30 * 24 * 60 * 60;
+        const thirtyDaysAgoSec = nowSec - (30 * 24 * 60 * 60);
         const evAsc = events
           .map((e: any) => ({
             ts: Number(e?.timestamp) || 0,
@@ -75,7 +130,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
             // API returns oldTargetRatio (not newTargetRatio). Use oldTargetRatio; fallback to currentTargetRatio.
             ema: e?.oldTargetRatio ?? e?.currentTargetRatio,
           }))
-          .filter((e: any) => e.ts > cutoff)
+          .filter((e: any) => e.ts >= thirtyDaysAgoSec) // Keep only last 30 days
           .sort((a: any, b: any) => a.ts - b.ts);
         const scaleRatio = (val: any): number => {
           const n = typeof val === 'string' ? Number(val) : (typeof val === 'number' ? val : 0);
@@ -91,20 +146,36 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
           emaRatio: scaleRatio(e.ema),
           dynamicFee: (Number.isFinite(e.feeBps) ? e.feeBps : 0) / 10000,
         }));
+        
+        // Cache the processed data
+        if (out && out.length > 0) {
+          try {
+            const cacheData = {
+              data: out,
+              timestamp: Date.now()
+            };
+            sessionStorage.setItem(cacheKey, JSON.stringify(cacheData));
+          } catch (error) {
+            console.warn('Failed to cache dynamic fee chart data:', error);
+          }
+        }
+        
         setAutoData(out);
+        setHasLoadedData(true); // Mark that we've loaded data at least once
+        setHasEverLoadedData(true); // Mark that we've ever loaded data
       } catch {}
       finally {
+        setIsChartDataLoading(false);
         setShowLoadingSkeleton(false);
       }
     })();
   }, [poolInfo?.token0Symbol, poolInfo?.token1Symbol, isParentDataUsable]);
 
-
   // No diffing. Keep this preview dead simple and render as soon as we have data
 
   // Effect to signal when content is stable
   useEffect(() => {
-    if (!isLoading && data && data.length > 0) {
+    if (!isActuallyLoading && data && data.length > 0) {
       // Allow a small delay for any internal animations to settle
       const timer = setTimeout(() => {
         setIsContentStable(true);
@@ -119,25 +190,12 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
         onContentStableChange?.(false);
       }
     }
-  }, [isLoading, data, onContentStableChange, isContentStable]);
-
-  // Debug/UX effect for loading skeleton visibility
+  }, [isActuallyLoading, data, onContentStableChange, isContentStable]);
+  
+  // Keep skeleton visible exactly while loading (or when forced)
   useEffect(() => {
-    if (alwaysShowSkeleton) {
-      setShowLoadingSkeleton(true);
-      return;
-    }
-    if (isLoading) {
-      setShowLoadingSkeleton(true);
-      const timer = setTimeout(() => {
-        setShowLoadingSkeleton(false);
-      }, 1000); // 1 second delay for debugging
-      return () => clearTimeout(timer);
-    } else {
-      // Immediately hide skeleton when not loading
-      setShowLoadingSkeleton(false);
-    }
-  }, [isLoading, alwaysShowSkeleton]);
+    setShowLoadingSkeleton(Boolean(alwaysShowSkeleton || isActuallyLoading));
+  }, [isActuallyLoading, alwaysShowSkeleton]);
 
   // Handle click to navigate to pool page
   const handleClick = () => {
@@ -159,36 +217,103 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
     if (targetId) {
       const href = `/liquidity/${targetId}`;
       if (typeof window !== 'undefined') {
-        window.open(href, '_blank', 'noopener,noreferrer');
+        // On mobile, navigate in same page; on desktop, open new tab
+        const isMobile = window.innerWidth < 768;
+        if (isMobile) {
+          router.push(href);
+        } else {
+          window.open(href, '_blank', 'noopener,noreferrer');
+        }
       } else {
         router.push(href);
       }
     } else {
-      console.warn(`No pool configuration found for ${poolInfo.token0Symbol}/${poolInfo.token1Symbol}`);
+
     }
   };
 
 
   // Build chart data from supplied series (preferred only if usable) or fetched fallback
   const effectiveData = isParentDataUsable ? data : (autoData || []);
+  
+  // Simple animation control: animate only on first load
+  useEffect(() => {
+    if (effectiveData && effectiveData.length > 0) {
+      setHasLoadedData(true);
+      setHasEverLoadedData(true);
+      
+      // Only animate on the very first load
+      if (isFirstLoad) {
+        setShouldAnimate(true);
+        setTimeout(() => setShouldAnimate(false), 600);
+        setIsFirstLoad(false); // Mark that we've done the first load
+      }
+    }
+  }, [effectiveData, isFirstLoad]);
+
+  // Removed in-chart CustomTooltip; using external portal container instead
 
   const chartData = useMemo(() => {
     // Return null if no data
     if (!effectiveData || effectiveData.length === 0) {
       return null;
     }
-    
+
     // When data is available, render the full chart preview
     // Straight mapping: no normalization, 30-day window already applied
     const newChartData = effectiveData.map((point, index) => ({
-      name: point.timeLabel,
-      activity: Number(point.volumeTvlRatio) || 0,
-      target: Number(point.emaRatio) || 0,
-      fee: Number(point.dynamicFee) || 0,
+      name: point?.timeLabel || `Point ${index}`,
+      activity: Number(point?.volumeTvlRatio) || 0,
+      target: Number(point?.emaRatio) || 0,
+      fee: Number(point?.dynamicFee) || 0,
     }));
-    
+
+
     return newChartData;
   }, [effectiveData]);
+
+  // Lock fee Y-axis domain so viewport doesn't change on hover
+  const feeYAxisDomain = useMemo(() => {
+    if (!chartData || chartData.length === 0) return [0, 1] as [number, number];
+    const fees = chartData
+      .map((d) => (Number.isFinite(d.fee) ? Number(d.fee) : null))
+      .filter((v): v is number => v !== null);
+    if (fees.length === 0) return [0, 1] as [number, number];
+    const min = Math.min(...fees);
+    const max = Math.max(...fees);
+    const pad = Math.max((max - min) * 0.1, 0.001);
+    return [Math.max(0, min - pad), max + pad] as [number, number];
+  }, [chartData]);
+
+  // Build masked overlay data to color ONLY the hovered horizontal segment
+  const overlaySegmentData = useMemo(() => {
+    if (!chartData || hoveredIndex === null) return null;
+    const lastIndex = chartData.length - 1;
+    if (hoveredIndex < 0 || hoveredIndex >= lastIndex) return null;
+    const hoveredFee = chartData[hoveredIndex]?.fee ?? null;
+    const result = chartData.map((point, index) => {
+      if (index === hoveredIndex) return { ...point, fee: hoveredFee };
+      if (index === hoveredIndex + 1) return { ...point, fee: hoveredFee };
+      return { ...point, fee: null };
+    });
+    return result;
+  }, [chartData, hoveredIndex]);
+
+  // Footer info: show only on hover
+  const footerDisplay = useMemo(() => {
+    if (!chartData || chartData.length === 0 || hoveredIndex === null) return null;
+    const clampedIdx = Math.max(0, Math.min(hoveredIndex, chartData.length - 1));
+    const point = chartData[clampedIdx];
+    if (!point) return null;
+    const pointName = point.name || `Point ${clampedIdx}`;
+    const pointDate = new Date(String(pointName));
+    const today = new Date();
+    const daysAgo = Math.floor((today.getTime() - pointDate.getTime()) / (1000 * 60 * 60 * 24));
+    const daysAgoLabel = daysAgo === 0 ? "Today" : `${daysAgo}d ago`;
+    const feeValue = Number(point.fee || 0);
+    const pct = `${(feeValue < 0.1 ? feeValue.toFixed(3) : feeValue.toFixed(2))}%`;
+    return { daysAgoLabel, pct };
+  }, [chartData, hoveredIndex]);
 
   // Removed change-point dots per design preference; keep normalization only
 
@@ -198,7 +323,8 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
   if (alwaysShowSkeleton) {
     return (
       <div
-        className="w-full rounded-lg bg-muted/30 border border-sidebar-border/60 transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow"
+        className="w-full rounded-lg border border-sidebar-border/60 transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow"
+        style={{ backgroundColor: '#161616' }}
         onClick={handleClick}
         onMouseEnter={(e) => {
           const arrow = e.currentTarget.querySelector('[data-arrow]') as HTMLElement;
@@ -240,7 +366,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
              <ArrowUpRight aria-hidden="true" data-arrow className="h-4 w-4 text-muted-foreground transition-colors duration-150" />
           </div>
         </div>
-        <div className="px-2 pb-2 pt-2 h-[100px]">
+        <div className="px-2 pb-2 pt-2 h-[100px] relative">
           <div className="w-full h-full bg-muted/40 rounded animate-pulse" />
         </div>
         
@@ -249,10 +375,11 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
   }
 
   // If no data and not loading, show the empty state. If loading, fall through to the chart card (it shows a skeleton inside).
-  if (!hasData && !isLoading) {
+  if (!hasData && !isActuallyLoading) {
     return (
       <div
-        className="w-full rounded-lg bg-muted/30 border border-sidebar-border/60 transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow"
+        className="w-full rounded-lg border border-sidebar-border/60 transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow"
+        style={{ backgroundColor: '#161616' }}
         onClick={handleClick}
         onMouseEnter={(e) => {
           const arrow = e.currentTarget.querySelector('[data-arrow]') as HTMLElement;
@@ -294,7 +421,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
              <ArrowUpRight aria-hidden="true" data-arrow className="h-4 w-4 text-muted-foreground transition-colors duration-150" />
           </div>
         </div>
-        <div className="px-2 pb-2 pt-0 h-[120px]">
+        <div className="px-2 py-2 h-[120px] relative">
           <div className="w-full h-full flex items-center justify-center" />
         </div>
         
@@ -308,7 +435,8 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
 
     return (
       <div
-        className="w-full rounded-lg bg-muted/30 border border-sidebar-border/60 transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow"
+        className="w-full rounded-lg border border-sidebar-border/60 transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow"
+        style={{ backgroundColor: '#161616' }}
         onClick={handleClick}
         onMouseEnter={(e) => {
           const arrow = e.currentTarget.querySelector('[data-arrow]') as HTMLElement;
@@ -350,16 +478,54 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
              <ArrowUpRight aria-hidden="true" data-arrow className="h-4 w-4 text-muted-foreground transition-colors duration-150" />
           </div>
         </div>
-        <div className="px-2 pb-2 pt-0 h-[100px]">
-          <div className="w-full h-full cursor-pointer [&_.recharts-wrapper]:outline-none [&_.recharts-wrapper]:focus:outline-none [&_.recharts-surface]:outline-none">
-            {showLoadingSkeleton && !hasData ? (
-              <div className="w-full h-[92px] bg-muted/40 rounded animate-pulse mt-2"></div>
+        <div className="px-2 py-2 h-[120px] relative">
+          <div
+            className="w-full h-full cursor-pointer [&_.recharts-wrapper]:outline-none [&_.recharts-wrapper]:focus:outline-none [&_.recharts-surface]:outline-none"
+            onMouseMove={(e) => {
+              // Calculate which data point based on mouse position
+              if (chartData && chartData.length > 0) {
+                const rect = e.currentTarget.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const percentage = x / rect.width;
+                const index = Math.floor(percentage * chartData.length);
+                const clampedIndex = Math.max(0, Math.min(index, chartData.length - 1));
+                setHoveredIndex(clampedIndex);
+                setIsHovering(true);
+              }
+            }}
+            onMouseLeave={() => {
+              setHoveredIndex(null);
+              setIsHovering(false);
+            }}
+          >
+            {showLoadingSkeleton && isActuallyLoading ? (
+              <div className="w-full h-full bg-muted/40 rounded flex items-center justify-center">
+                <div className="animate-pulse">
+                  <Image 
+                    src="/LogoIconWhite.svg" 
+                    alt="Loading" 
+                    width={24} 
+                    height={24} 
+                    className="opacity-60"
+                  />
+                </div>
+              </div>
             ) : (
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart 
+                <LineChart
                   data={chartData || []}
-                  margin={{ top: 5, right: 8, bottom: 5, left: 8 }}
+                  margin={{ top: 0, right: 8, bottom: 0, left: 8 }}
                   style={{ cursor: 'pointer' }}
+                  onMouseMove={(e: any) => {
+                    if (e && e.activeTooltipIndex !== undefined && typeof e.activeTooltipIndex === 'number') {
+                      setHoveredIndex(e.activeTooltipIndex);
+                      setIsHovering(true);
+                    }
+                  }}
+                  onMouseLeave={() => {
+                    setHoveredIndex(null);
+                    setIsHovering(false);
+                  }}
                 >
                   <XAxis dataKey="name" hide={true} />
                   <YAxis
@@ -371,8 +537,29 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
                     yAxisId="right"
                     orientation="right"
                     hide={true}
-                    domain={["auto", "auto"]}
+                    domain={feeYAxisDomain as any}
                   />
+                  <defs>
+                    <linearGradient id="hoverFeeShade" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#e85102" stopOpacity={0.12} />
+                      <stop offset="100%" stopColor="#e85102" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <Tooltip
+                    content={() => null}
+                    cursor={{ stroke: 'transparent', strokeWidth: 0 }}
+                  />
+                  {hoveredIndex !== null && chartData && hoveredIndex >= 0 && hoveredIndex < chartData.length - 1 && (
+                    <ReferenceArea
+                      x1={chartData[hoveredIndex]?.name}
+                      x2={chartData[hoveredIndex + 1]?.name}
+                      yAxisId="right"
+                      y1={(feeYAxisDomain as any)[0] ?? 'auto'}
+                      y2={chartData[hoveredIndex]?.fee}
+                      fill="url(#hoverFeeShade)"
+                      strokeOpacity={0}
+                    />
+                  )}
                   <Line
                     yAxisId="left"
                     type="monotone"
@@ -381,6 +568,9 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
                     strokeWidth={1.5}
                     dot={false}
                     activeDot={false}
+                    isAnimationActive={!isHovering && shouldAnimate}
+                    animationDuration={600}
+                    animationEasing="ease-out"
                   />
                   <Line
                     yAxisId="left"
@@ -391,20 +581,54 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
                     strokeDasharray="3 3"
                     dot={false}
                     activeDot={false}
+                    isAnimationActive={!isHovering && shouldAnimate}
+                    animationDuration={600}
+                    animationEasing="ease-out"
                   />
+                  {/* Base line: orange before hover, grey during hover */}
                   <Line
                     yAxisId="right"
                     type="stepAfter"
                     dataKey="fee"
-                    stroke={"#e85102"}
+                    stroke="#e85102"
                     strokeWidth={1.5}
+                    strokeOpacity={hoveredIndex === null ? 1 : 0.6}
                     dot={false}
                     activeDot={false}
+                    isAnimationActive={!isHovering && shouldAnimate}
+                    animationDuration={600}
+                    animationEasing="ease-out"
                   />
+
+                  {/* Highlight only the hovered horizontal segment using masked data */}
+                  {overlaySegmentData && (
+                    <Line
+                      yAxisId="right"
+                      type="stepAfter"
+                      dataKey="fee"
+                      data={overlaySegmentData}
+                      stroke="#e85102"
+                      strokeWidth={1.5}
+                      dot={false}
+                      activeDot={false}
+                      connectNulls={false}
+                      isAnimationActive={false}
+                    />
+                  )}
                 </LineChart>
               </ResponsiveContainer>
             )}
           </div>
+          {/* External portal for hover footer */}
+          {portalEl && footerDisplay && createPortal(
+            <div className="rounded-md border border-sidebar-border bg-[var(--token-container-background)] px-2.5 py-1.5 shadow-sm inline-flex">
+              <div className="flex items-center gap-4 text-[10px] md:text-xs font-mono">
+                <span className="text-muted-foreground">{footerDisplay.daysAgoLabel}</span>
+                <span className="text-[#e85102] font-medium">{footerDisplay.pct}</span>
+              </div>
+            </div>,
+            portalEl
+          )}
         </div>
         
       </div>

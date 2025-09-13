@@ -2,6 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { getToken, getPoolByTokens, getStateViewAddress } from '../../../lib/pools-config';
 import { publicClient } from '../../../lib/viemClient';
 import { parseAbi, type Hex } from 'viem';
+import { DynamicFeeSchema, validateApiResponse } from '../../../lib/validation';
 
 const DEFAULT_DYNAMIC_FEE = 3000; // 0.30% - fallback default
 const STATE_VIEW_ADDRESS = getStateViewAddress();
@@ -32,8 +33,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             return res.status(400).json({ message: `No pool found for token pair ${fromTokenSymbol}/${toTokenSymbol}` });
         }
 
-        // Read the actual dynamic fee from the pool using getSlot0
-        let actualDynamicFee = DEFAULT_DYNAMIC_FEE;
+        // Read the actual dynamic LP fee (in millionths onchain) and convert to bps for consistency
+        let actualDynamicFeeBps = DEFAULT_DYNAMIC_FEE; // default bps 0.30%
         try {
             const stateViewAbi = parseAbi([
                 'function getSlot0(bytes32 poolId) external view returns (uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 lpFee)'
@@ -46,22 +47,33 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 args: [poolConfig.subgraphId as Hex]
             }) as readonly [bigint, number, number, number];
 
-            const [, , , lpFee] = slot0Data;
-            actualDynamicFee = Number(lpFee);
+            const [, , , lpFeeMillionths] = slot0Data;
+            // Convert millionths to basis points (may be fractional): bps = (lpFee / 1_000_000) * 10_000
+            const rawBps = (Number(lpFeeMillionths) / 1_000_000) * 10_000;
+            // Preserve hundredths of a basis point (0.01 bps) to avoid rounding down 4.4 bps -> 4 bps
+            actualDynamicFeeBps = Math.max(0, Math.round(rawBps * 100) / 100);
             
-            console.log(`Read actual dynamic fee ${actualDynamicFee} bps (${(actualDynamicFee / 10000).toFixed(4)}%) for pool ${poolConfig.id} (${poolConfig.name})`);
+            console.log(`Read LP fee ~${actualDynamicFeeBps} bps for pool ${poolConfig.id} (${poolConfig.name})`);
         } catch (error) {
             console.error(`Error reading pool fee for ${poolConfig.id}:`, error);
             console.log(`Falling back to default fee ${DEFAULT_DYNAMIC_FEE} bps for pool ${poolConfig.id}`);
         }
 
-        res.status(200).json({ 
-            dynamicFee: actualDynamicFee.toString(),
+        // Prepare response data
+        const responseData = {
+            dynamicFeeBps: actualDynamicFeeBps,
+            dynamicFee: String(actualDynamicFeeBps), // backward compatible
             poolId: poolConfig.id,
             poolName: poolConfig.name,
+            unit: 'bps',
             isEstimate: false,
-            note: 'This is the actual dynamic fee read from the pool contract.'
-        });
+            note: 'Actual LP fee (bps) derived from onchain millionths.'
+        };
+
+        // Validate response data
+        const validatedData = validateApiResponse(DynamicFeeSchema, responseData, 'get-dynamic-fee');
+
+        res.status(200).json(validatedData);
 
     } catch (error: any) {
         console.error("Error in /api/swap/get-dynamic-fee:", error);
