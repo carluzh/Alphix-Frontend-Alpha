@@ -566,10 +566,8 @@ export default function Home() {
                   Resources
                 </h3>
                 <div className="space-y-3">
-                  <a 
-                    href="https://github.com/alphixfi/alphixv0-core/tree/main/branding-materials/logos" 
-                    target="_blank"
-                    rel="noopener noreferrer"
+                  <a
+                    href="/brand"
                     className="block text-sm text-[#c2c2c1] hover:text-white transition-colors cursor-pointer"
                     style={{ fontFamily: 'Inter, sans-serif' }}
                   >
@@ -655,14 +653,15 @@ function Navbar({
           
           {/* Desktop Navigation Links */}
           <div className="hidden md:flex items-center gap-4">
-            <Button 
-              variant="ghost"
-              className="text-sm px-4 py-2 h-auto bg-transparent hover:bg-[#1e1d1b] text-[#a5a5a5] hover:text-white rounded-md cursor-pointer"
+            <a
+              href="https://alphix.gitbook.io/docs/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-sm px-4 py-2 h-auto bg-transparent hover:bg-[#1e1d1b] text-[#a5a5a5] hover:text-white rounded-md cursor-pointer transition-colors"
               style={{ fontFamily: 'Consolas, monospace', fontWeight: 500 }}
-              onClick={handleComingSoon}
             >
               Documentation
-            </Button>
+            </a>
             <Button 
               variant="ghost"
               className="text-sm px-4 py-2 h-auto bg-transparent hover:bg-[#1e1d1b] text-[#a5a5a5] hover:text-white rounded-md cursor-pointer"
@@ -729,17 +728,16 @@ function Navbar({
             onClick={(e) => e.stopPropagation()}
           >
             <div className="px-4 py-6 space-y-4">
-              <Button 
-                variant="ghost"
-                className="w-full text-left justify-start text-base px-4 py-3 h-auto bg-transparent hover:bg-[#1e1d1b] text-[#a5a5a5] hover:text-white rounded-md cursor-pointer"
+              <a
+                href="https://alphix.gitbook.io/docs/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full text-left justify-start text-base px-4 py-3 h-auto bg-transparent hover:bg-[#1e1d1b] text-[#a5a5a5] hover:text-white rounded-md cursor-pointer transition-colors flex"
                 style={{ fontFamily: 'Consolas, monospace', fontWeight: 500 }}
-                onClick={() => {
-                  setIsMobileMenuOpen(false);
-                  handleComingSoon();
-                }}
+                onClick={() => setIsMobileMenuOpen(false)}
               >
                 Documentation
-              </Button>
+              </a>
               <Button 
                 variant="ghost"
                 className="w-full text-left justify-start text-base px-4 py-3 h-auto bg-transparent hover:bg-[#1e1d1b] text-[#a5a5a5] hover:text-white rounded-md cursor-pointer"

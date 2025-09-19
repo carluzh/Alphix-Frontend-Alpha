@@ -232,19 +232,11 @@ export function AppSidebar({ variant = "floating", onBetaClick, ...props }: AppS
             </div>
             <SidebarMenu className="mt-1 flex flex-col gap-1 px-3">
                 <SidebarMenuItem className="list-none">
-                  <SidebarMenuButton 
-                    onClick={() => handleLockedClick("Documentation")}
-                    size="sm" 
-                    className="h-7 opacity-80"
-                  >
-                    <BookTextIcon className="h-4 w-4" />
-                    <span>Documentation</span>
-                    {lockedItem === "Documentation" && (
-                      <span className="flex items-center ml-auto">
-                        <CustomLockIcon className="h-4 w-4 flex-shrink-0 text-muted-foreground animate-pulse mr-0.5" />
-                        <span className="text-[10px] text-muted-foreground animate-pulse">Soon</span>
-                      </span>
-                    )}
+                  <SidebarMenuButton asChild size="sm" className="h-7">
+                    <a href="https://alphix.gitbook.io/docs/" target="_blank" rel="noopener noreferrer" className="w-full flex items-center">
+                      <BookTextIcon className="h-4 w-4" />
+                      <span>Documentation</span>
+                    </a>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
                 <SidebarMenuItem className="list-none">

@@ -15,15 +15,25 @@ export function middleware(request: NextRequest) {
     return res;
   }
 
+  // Handle subdomain routing
+  const hostname = request.headers.get('host') || '';
+  const url = request.nextUrl.clone();
+
+  // Check if this is a brands subdomain request
+  if (hostname.startsWith('brands.')) {
+    url.pathname = '/brand';
+    return NextResponse.rewrite(url);
+  }
+
   const authToken = request.cookies.get('site_auth_token');
   const { pathname } = request.nextUrl;
   const maintenanceEnabled = process.env.NEXT_PUBLIC_MAINTENANCE === 'true' || process.env.MAINTENANCE === 'true';
 
   console.log(`[MIDDLEWARE] Path: ${pathname}, Auth Token: ${authToken?.value || 'none'}`);
 
-  // ALWAYS allow access to the root path - marketing page should be accessible to everyone
-  if (pathname === '/') {
-    console.log(`[MIDDLEWARE] Allowing root path access`);
+  // ALWAYS allow access to the root path and brand page - marketing pages should be accessible to everyone
+  if (pathname === '/' || pathname === '/brand') {
+    console.log(`[MIDDLEWARE] Allowing public path access: ${pathname}`);
     return NextResponse.next();
   }
 
