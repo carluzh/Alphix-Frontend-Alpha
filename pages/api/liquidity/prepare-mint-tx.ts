@@ -22,14 +22,15 @@ import {
 
 // Constants for Permit2
 import {
-    PERMIT_TYPES,
     PERMIT2_DOMAIN_NAME,
-    PERMIT_EXPIRATION_DURATION_SECONDS, 
-    PERMIT_SIG_DEADLINE_DURATION_SECONDS, 
+    PERMIT_EXPIRATION_DURATION_SECONDS,
+    PERMIT_SIG_DEADLINE_DURATION_SECONDS,
 } from "../../../lib/swap-constants";
+import { PERMIT2_TYPES } from "../../../lib/liquidity-utils";
+import { AllowanceTransfer, permit2Address, PermitBatch, MaxAllowanceTransferAmount, PERMIT2_ADDRESS } from '@uniswap/permit2-sdk';
 
 const POSITION_MANAGER_ADDRESS = getPositionManagerAddress();
-const PERMIT2_ADDRESS = getAddress("0x000000000022D473030F116dDEE9F6B43aC78BA3"); // Permit2 contract address
+// Use PERMIT2_ADDRESS from SDK instead of hardcoded value
 const STATE_VIEW_ADDRESS = getStateViewAddress();
 const ETHERS_ADDRESS_ZERO = "0x0000000000000000000000000000000000000000";
 const SDK_MIN_TICK = -887272;
@@ -61,14 +62,31 @@ interface PrepareMintTxRequest extends NextApiRequest {
         };
         // Optional batch permit data for new batch permit flow
         permitBatchData?: {
-            details: Array<{
+            domain?: {
+                name: string;
+                chainId: number;
+                verifyingContract: string;
+            };
+            types?: any;
+            values?: {
+                details: Array<{
+                    token: string;
+                    amount: string;
+                    expiration: string;
+                    nonce: string;
+                }>;
+                spender: string;
+                sigDeadline: string;
+            };
+            // Legacy format support
+            details?: Array<{
                 token: string;
                 amount: string;
                 expiration: string;
                 nonce: string;
             }>;
-            spender: string;
-            sigDeadline: string;
+            spender?: string;
+            sigDeadline?: string;
         };
     };
 }
@@ -88,30 +106,51 @@ type PermitSingleMessageForAPI = {
     sigDeadline: string; // string representation of uint256
 };
 
-// Updated ApprovalNeededResponse to handle both ERC20 and Permit2 signature steps
+// Updated ApprovalNeededResponse to handle streamlined batch permit flow
 interface ApprovalNeededResponse {
     needsApproval: true;
-    approvalTokenAddress: string; 
-    approvalTokenSymbol: TokenSymbol;
-    approvalType: 'ERC20_TO_PERMIT2' | 'PERMIT2_SIGNATURE_FOR_PM';
+    approvalType: 'ERC20_TO_PERMIT2' | 'PERMIT2_BATCH_SIGNATURE';
 
-    // For ERC20_TO_PERMIT2
+    // For ERC20_TO_PERMIT2 (token approval to Permit2)
+    approvalTokenAddress?: string;
+    approvalTokenSymbol?: TokenSymbol;
     approveToAddress?: string; // Will be PERMIT2_ADDRESS
     approvalAmount?: string; // Will be maxUint256.toString()
 
-    // For PERMIT2_SIGNATURE_FOR_PM
+    // For PERMIT2_BATCH_SIGNATURE (batch permit signature)
+    permitBatchData?: {
+        domain?: never; // unified below
+        types?: any;
+        values?: {
+            details: Array<{
+                token: string;
+                amount: string;
+                expiration: string;
+                nonce: string;
+            }>;
+            spender: string;
+            sigDeadline: string;
+        };
+        // Legacy format support
+        details?: Array<{
+            token: string;
+            amount: string;
+            expiration: string;
+            nonce: string;
+        }>;
+        spender?: string; // Position Manager address
+        sigDeadline?: string;
+    };
     signatureDetails?: {
         domain: {
             name: string;
-            version?: string; // Optional version for EIP-712 domain
             chainId: number;
             verifyingContract: Hex; // PERMIT2_ADDRESS
+            version?: string;
         };
-        types: typeof PERMIT_TYPES; // The actual type definitions for EIP-712
-        primaryType: 'PermitSingle';
-        message: PermitSingleMessageForAPI; 
+        types: typeof PERMIT2_TYPES; // The actual type definitions for EIP-712
+        primaryType: 'PermitBatch';
     };
-    permit2Address?: Hex; // PERMIT2_ADDRESS, for client to call .permit() on
 }
 
 
@@ -355,99 +394,177 @@ export default async function handler(
         const hasNativeETH = sortedToken0.address === ETHERS_ADDRESS_ZERO || sortedToken1.address === ETHERS_ADDRESS_ZERO;
         console.log(`[DEBUG] Pool has native ETH: ${hasNativeETH}`);
 
-        // Check if batch permit data is provided - if so, skip approval checks
+        // Streamlined approval flow - check batch permit data first
         const { permitSignature: batchPermitSignature, permitBatchData } = req.body;
         const hasBatchPermit = batchPermitSignature && permitBatchData;
         console.log(`[DEBUG] Has batch permit: ${hasBatchPermit}`);
 
+        // First check ERC20 allowances to Permit2 (before Permit2 allowances)
         if (!hasBatchPermit) {
-            // Only check approvals if no batch permit provided
-            // First, ensure ERC20 approvals to Permit2 exist (one-time per token)
-        for (const t of tokensToCheck) {
-            if (getAddress(t.sdkToken.address) === ETHERS_ADDRESS_ZERO || t.requiredAmount <= 0n) continue;
-            const erc20AllowanceToPermit2 = await publicClient.readContract({
-                address: getAddress(t.sdkToken.address),
-                abi: parseAbi(['function allowance(address owner, address spender) external view returns (uint256)']),
-                functionName: 'allowance',
-                args: [getAddress(userAddress), PERMIT2_ADDRESS]
-            }) as bigint;
-            if (erc20AllowanceToPermit2 < t.requiredAmount) {
+            // Check ERC20 → Permit2 allowances first
+            for (const t of tokensToCheck) {
+                if (getAddress(t.sdkToken.address) === ETHERS_ADDRESS_ZERO || t.requiredAmount <= 0n) continue;
+
+                const erc20Allowance = await publicClient.readContract({
+                    address: getAddress(t.sdkToken.address) as `0x${string}`,
+                    abi: parseAbi(['function allowance(address,address) view returns (uint256)']),
+                    functionName: 'allowance',
+                    args: [getAddress(userAddress), PERMIT2_ADDRESS]
+                });
+
+                console.log(`[DEBUG] ERC20 allowance check for ${t.symbol}:`, {
+                    currentAllowance: erc20Allowance.toString(),
+                    requiredAmount: t.requiredAmount.toString(),
+                    needsApproval: erc20Allowance < t.requiredAmount
+                });
+
+                if (erc20Allowance < t.requiredAmount) {
+                    console.log(`[DEBUG] ${t.symbol} needs ERC20 approval to Permit2`);
+                    return res.status(200).json({
+                        needsApproval: true,
+                        approvalType: 'ERC20_TO_PERMIT2' as const,
+                        approvalTokenAddress: t.sdkToken.address,
+                        approvalTokenSymbol: t.symbol,
+                        approveToAddress: PERMIT2_ADDRESS,
+                        approvalAmount: maxUint256.toString(),
+                    });
+                }
+            }
+        
+            // If all ERC20 allowances are sufficient, check Permit2 allowances
+            const latestBlockViem = await publicClient.getBlock({ blockTag: 'latest' });
+            if (!latestBlockViem) throw new Error("Failed to get latest block for deadline.");
+
+            const PERMIT_EXPIRATION_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+            const PERMIT_SIG_EXPIRATION_MS = 30 * 60 * 1000; // 30 minutes
+
+            const currentTimestamp = Number(latestBlockViem.timestamp);
+            
+            function toDeadline(expiration: number): number {
+                return currentTimestamp + Math.floor(expiration / 1000);
+            }
+
+            // Collect all tokens that need permits for batch
+            const permitsNeeded: Array<{
+                token: string;
+                amount: string;
+                expiration: string;
+                nonce: string;
+            }> = [];
+
+            for (const t of tokensToCheck) {
+                if (getAddress(t.sdkToken.address) === ETHERS_ADDRESS_ZERO || t.requiredAmount <= 0n) continue;
+
+                const [permitAmt, permitExp, permitNonce] = await publicClient.readContract({
+                    address: PERMIT2_ADDRESS,
+                    abi: iallowance_transfer_abi,
+                    functionName: 'allowance',
+                    args: [getAddress(userAddress), getAddress(t.sdkToken.address), POSITION_MANAGER_ADDRESS]
+                }) as readonly [amount: bigint, expiration: number, nonce: number];
+
+                const currentTime = Number(latestBlockViem.timestamp);
+                const hasValidPermit = permitAmt >= t.requiredAmount && (permitExp === 0 || permitExp > currentTime);
+                
+                console.log(`[DEBUG] Token ${t.symbol} permit check:`, {
+                    currentPermitAmount: permitAmt.toString(),
+                    requiredAmount: t.requiredAmount.toString(),
+                    permitExpiration: permitExp,
+                    currentTime,
+                    hasValidPermit
+                });
+
+                if (!hasValidPermit) {
+                    const futureExpiration = toDeadline(PERMIT_EXPIRATION_MS);
+                    console.log(`[DEBUG] Creating permit for ${t.symbol}:`, {
+                        token: getAddress(t.sdkToken.address),
+                        amount: MAX_UINT_160.toString(),
+                        expiration: futureExpiration,
+                        nonce: permitNonce.toString(),
+                        currentTime: currentTimestamp,
+                        expirationBufferSeconds: futureExpiration - currentTimestamp
+                    });
+                    
+                    permitsNeeded.push({
+                        token: getAddress(t.sdkToken.address),
+                        amount: MAX_UINT_160.toString(),
+                        expiration: futureExpiration.toString(),
+                        nonce: permitNonce.toString(),
+                    });
+                }
+            }
+
+            // If any permits are needed, return batch permit signature request
+            if (permitsNeeded.length > 0) {
+                // Build the permit using the exact same approach as Uniswap's AllowanceTransfer SDK
+                const permit = {
+                    details: permitsNeeded,
+                    spender: POSITION_MANAGER_ADDRESS,
+                    sigDeadline: toDeadline(PERMIT_SIG_EXPIRATION_MS).toString(),
+                };
+
+                // For multiple tokens, we always need a batch permit
+                // Use SDK to get proper EIP-712 data structure - this ensures compatibility
+                const permitData = AllowanceTransfer.getPermitData(
+                    permit,
+                    permit2Address(chainId),
+                    chainId,
+                );
+                
+                // Ensure we're dealing with a PermitBatch
+                if (!('details' in permitData.values) || !Array.isArray(permitData.values.details)) {
+                    throw new Error('Expected PermitBatch data structure for multiple tokens');
+                }
+                
+                const { domain, types, values } = permitData as { 
+                    domain: typeof permitData.domain; 
+                    types: typeof permitData.types; 
+                    values: PermitBatch; 
+                };
+
+                // Construct complete permit data structure like Uniswap does
+                const permitBatchData = {
+                    domain,
+                    types,
+                    // Keep raw values (from SDK) to sign exactly the same data Uniswap signs
+                    valuesRaw: values,
+                    // Provide a sanitized copy for any consumers that expect strings
+                    values: {
+                        details: values.details.map((detail: any) => ({
+                            token: detail.token,
+                            amount: detail.amount.toString(),
+                            expiration: detail.expiration.toString(),
+                            nonce: detail.nonce.toString(),
+                        })),
+                        spender: values.spender,
+                        sigDeadline: values.sigDeadline.toString(),
+                    },
+                } as any;
+
+                console.log(`[DEBUG] Returning batch permit request:`, {
+                    tokensRequiringPermit: permitsNeeded.length,
+                    permitBatchData,
+                    currentTimestamp,
+                    expirationWindow: Math.min(...permitsNeeded.map(p => parseInt(p.expiration))) - currentTimestamp,
+                    usingSDKPermitData: true
+                });
+
                 return res.status(200).json({
                     needsApproval: true,
-                    approvalTokenAddress: t.sdkToken.address,
-                    approvalTokenSymbol: t.symbol as TokenSymbol,
-                    approveToAddress: PERMIT2_ADDRESS,
-                    approvalAmount: maxUint256.toString(),
-                    approvalType: 'ERC20_TO_PERMIT2'
+                    approvalType: 'PERMIT2_BATCH_SIGNATURE' as const,
+                    permitBatchData,
+                    signatureDetails: {
+                        domain: {
+                            name: domain.name || 'Permit2',
+                            chainId: Number(domain.chainId || chainId),
+                            verifyingContract: (domain.verifyingContract || PERMIT2_ADDRESS) as `0x${string}`,
+                        },
+                        // Use our strict Permit2 types for compile-time compatibility
+                        types: PERMIT2_TYPES,
+                        primaryType: 'PermitBatch',
+                    }
                 });
             }
         }
-
-        // Build Permit2 details for non-native tokens (gasless approvals per guide)
-        const latestBlockViem = await publicClient.getBlock({ blockTag: 'latest' });
-        if (!latestBlockViem) throw new Error("Failed to get latest block for deadline.");
-        const deadlineBigInt = latestBlockViem.timestamp + 1200n; // 20 minutes from now
-
-        const permitDetails: { token: Hex; amount: string; expiration: string; nonce: string; symbol: TokenSymbol }[] = [];
-        const currentTime = Number(latestBlockViem.timestamp);
-        for (const t of tokensToCheck) {
-            if (getAddress(t.sdkToken.address) === ETHERS_ADDRESS_ZERO || t.requiredAmount <= 0n) continue;
-            const [permitAmt, permitExp, permitNonce] = await publicClient.readContract({
-                address: PERMIT2_ADDRESS,
-                abi: iallowance_transfer_abi,
-                functionName: 'allowance',
-                args: [getAddress(userAddress), getAddress(t.sdkToken.address), POSITION_MANAGER_ADDRESS]
-            }) as readonly [amount: bigint, expiration: number, nonce: number];
-
-            // Request a new permit only if the existing one is missing/expired/insufficient
-            const hasUnlimitedAndValid = permitAmt >= MAX_UINT_160 && (permitExp === 0 || permitExp > currentTime);
-            const hasEnoughAndValid = permitAmt >= t.requiredAmount && (permitExp === 0 || permitExp > currentTime);
-            const needsPermit = !(hasUnlimitedAndValid || hasEnoughAndValid);
-            if (!needsPermit) continue;
-
-            permitDetails.push({
-                token: getAddress(t.sdkToken.address),
-                amount: MAX_UINT_160.toString(),
-                expiration: deadlineBigInt.toString(),
-                nonce: permitNonce.toString(),
-                symbol: t.symbol as TokenSymbol
-            });
-        }
-
-        if (permitDetails.length > 0 && (!permitSignature || !permitSingleData)) {
-            // Return only the FIRST token that needs a permit (individual permits)
-            const firstTokenNeedingPermit = permitDetails[0];
-            
-            const domain = {
-                name: PERMIT2_DOMAIN_NAME,
-                chainId: Number(chainId),
-                verifyingContract: PERMIT2_ADDRESS,
-            };
-            const messageToSign: PermitSingleMessageForAPI = {
-                details: {
-                    token: firstTokenNeedingPermit.token,
-                    amount: firstTokenNeedingPermit.amount,
-                    expiration: Number(firstTokenNeedingPermit.expiration),
-                    nonce: Number(firstTokenNeedingPermit.nonce)
-                },
-                spender: POSITION_MANAGER_ADDRESS,
-                sigDeadline: deadlineBigInt.toString(),
-            };
-            return res.status(200).json({
-                needsApproval: true,
-                approvalTokenAddress: firstTokenNeedingPermit.token,
-                approvalTokenSymbol: firstTokenNeedingPermit.symbol,
-                approvalType: 'PERMIT2_SIGNATURE_FOR_PM',
-                signatureDetails: {
-                    domain,
-                    types: PERMIT_TYPES,
-                    primaryType: 'PermitSingle',
-                    message: messageToSign,
-                },
-                permit2Address: PERMIT2_ADDRESS,
-            });
-        }
-        } // End of approval checks
         
         // If all checks passed for both tokens, proceed to prepare the transaction using V4PositionManager
         // Calculate deadline for transaction
@@ -465,22 +582,27 @@ export default async function handler(
             useNative: hasNativeETH ? Ether.onChain(Number(chainId)) : undefined
         };
 
-        // Use batch permit data if provided
+        // Apply batch permit to mint options if provided
         if (hasBatchPermit) {
-            // Add batch permit to mint options (similar to useIncreaseLiquidity pattern)
+            // Structure must match what V4PositionManager expects - use the same format as in useIncreaseLiquidity
+            // The permitBatchData should be the complete permit object { domain, types, values }
+            // We pass the values part as permitBatch to the SDK
+            const permitBatchValues = permitBatchData.values || {
+                details: permitBatchData.details || [],
+                spender: permitBatchData.spender || POSITION_MANAGER_ADDRESS,
+                sigDeadline: permitBatchData.sigDeadline || '0'
+            };
+            
             mintOptions = {
                 ...mintOptions,
                 batchPermit: {
                     owner: getAddress(userAddress),
-                    permitBatch: permitBatchData,
+                    permitBatch: permitBatchValues,
                     signature: batchPermitSignature,
                 }
             };
-            console.log(`[DEBUG] Including batch permit with ${permitBatchData.details.length} tokens`);
-        } else {
-            // Individual permits are handled separately - no permit data needed in mint options
-            // The permits have already been submitted to the Permit2 contract before this API call
-            console.log(`[DEBUG] No batch permit provided - using individual permit flow`);
+            
+            console.log(`[DEBUG] Using batch permit for ${permitBatchValues.details.length} tokens`);
         }
 
         // Minimal debug

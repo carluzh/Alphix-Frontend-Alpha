@@ -70,7 +70,7 @@
         "address": "0x9F785fEb65DBd0170bd6Ca1A045EEda44ae9b4dC"
       },
       "currency1": {
-        "symbol": "aETH", 
+        "symbol": "aETH",
         "address": "0xE7711aa6557A69592520Bbe7D704D64438f160e7"
       },
       "fee": 8388608,
@@ -90,7 +90,7 @@
         "address": "0x24429b8f2C8ebA374Dd75C0a72BCf4dF4C545BeD"
       },
       "currency1": {
-        "symbol": "aBTC", 
+        "symbol": "aBTC",
         "address": "0x9d5F910c91E69ADDDB06919825305eFEa5c9c604"
       },
       "fee": 8388608,
@@ -102,7 +102,7 @@
     },
     {
       "id": "ausdc-ausdt",
-      "name": "aUSDC/aUSDT", 
+      "name": "aUSDC/aUSDT",
       "description": "Alphix USDC / Alphix USDT pool",
       "subgraphId": "0xfaa0e80397dda369eb68f6f67c9cd4d4884841f1417078e20844addc11170127",
       "currency0": {
@@ -110,7 +110,7 @@
         "address": "0x24429b8f2C8ebA374Dd75C0a72BCf4dF4C545BeD"
       },
       "currency1": {
-        "symbol": "aUSDT", 
+        "symbol": "aUSDT",
         "address": "0x9F785fEb65DBd0170bd6Ca1A045EEda44ae9b4dC"
       },
       "fee": 8388608,
@@ -126,11 +126,11 @@
       "description": "Ethereum / Alphix USDT pool",
       "subgraphId": "0xe6a2c6909de49149dced232f472247979fdc098cd2de74b0923e3cefb5602c15",
       "currency0": {
-        "symbol": "ETH", 
+        "symbol": "ETH",
         "address": "0x0000000000000000000000000000000000000000"
       },
       "currency1": {
-        "symbol": "aUSDT", 
+        "symbol": "aUSDT",
         "address": "0x9F785fEb65DBd0170bd6Ca1A045EEda44ae9b4dC"
       },
       "fee": 8388608,
@@ -150,7 +150,7 @@
         "address": "0x9d5F910c91E69ADDDB06919825305eFEa5c9c604"
       },
       "currency1": {
-        "symbol": "aETH", 
+        "symbol": "aETH",
         "address": "0xE7711aa6557A69592520Bbe7D704D64438f160e7"
       },
       "fee": 8388608,
