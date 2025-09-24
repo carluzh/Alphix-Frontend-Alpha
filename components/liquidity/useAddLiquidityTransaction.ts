@@ -42,7 +42,7 @@ import { TokenSymbol } from "@/lib/pools-config";
 import { preparePermit2BatchForNewPosition, type PreparedPermit2Batch } from "@/lib/liquidity-utils";
 import { publicClient } from "@/lib/viemClient";
 import { PERMIT2_ADDRESS, V4_POSITION_MANAGER_ADDRESS } from "@/lib/swap-constants";
-import { useEthersSigner } from "@/interface/apps/web/src/hooks/useEthersSigner";
+import { useEthersSigner } from "@/hooks/useEthersSigner";
 
 // Uniswap-compatible signTypedData function for permit signatures
 const signTypedDataSimple = async ({ signer, domain, types, value, primaryType }: any) => {
