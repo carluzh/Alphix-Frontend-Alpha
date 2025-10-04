@@ -7,8 +7,6 @@ function selectSubgraphUrl(_req: NextApiRequest): string {
   return envDefault || LEGACY_SUBGRAPH_URL;
 }
 
-// Minimal query: last 60 hook events for a pool (latest first)
-// Use oldTargetRatio rather than newTargetRatio
 const GET_LAST_HOOK_EVENTS = `
   query GetLastHookEvents($poolId: Bytes!) {
     alphixHooks(
@@ -20,6 +18,7 @@ const GET_LAST_HOOK_EVENTS = `
       timestamp
       newFeeBps
       currentTargetRatio
+      newTargetRatio
       oldTargetRatio
     }
   }
@@ -30,6 +29,7 @@ type HookEvent = {
   newFeeBps?: string;
   newFeeRateBps?: string;
   currentTargetRatio?: string;
+  newTargetRatio?: string;
   oldTargetRatio?: string;
 };
 

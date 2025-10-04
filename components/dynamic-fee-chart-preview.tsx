@@ -118,6 +118,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
         const resp = await fetch(`/api/liquidity/get-historical-dynamic-fees?poolId=${encodeURIComponent(String(subgraphId))}&days=30`);
         if (!resp.ok) return;
         const events = await resp.json();
+        console.log('[DynamicFeeChart] Subgraph events:', events);
         if (!Array.isArray(events)) return;
         // Filter to last 30 days from today (not from oldest data)
         const nowSec = Math.floor(Date.now() / 1000);
@@ -127,8 +128,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
             ts: Number(e?.timestamp) || 0,
             feeBps: Number(e?.newFeeBps ?? e?.newFeeRateBps ?? 0),
             ratio: e?.currentTargetRatio,
-            // API returns oldTargetRatio (not newTargetRatio). Use oldTargetRatio; fallback to currentTargetRatio.
-            ema: e?.oldTargetRatio ?? e?.currentTargetRatio,
+            ema: e?.newTargetRatio,
           }))
           .filter((e: any) => e.ts >= thirtyDaysAgoSec) // Keep only last 30 days
           .sort((a: any, b: any) => a.ts - b.ts);

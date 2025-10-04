@@ -10,9 +10,21 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { Info, Clock3, ChevronsLeftRight, EllipsisVertical, OctagonX } from "lucide-react";
 import { TokenStack } from "./TokenStack";
 import { FeesCell } from "./FeesCell";
+import { PositionRangePreview } from "./PositionRangePreview";
 import { TOKEN_DEFINITIONS, TokenSymbol, getToken as getTokenConfig } from '@/lib/pools-config';
+import { nearestUsableTick } from '@uniswap/v3-sdk';
 
 import { cn } from "@/lib/utils";
+
+// Status indicator circle component inspired by Uniswap
+function StatusIndicatorCircle({ className }: { className?: string }) {
+  return (
+    <svg width="8" height="8" viewBox="0 0 8 8" fill="none" className={className}>
+      <circle cx="4" cy="4" r="4" fill="currentColor" fillOpacity="0.4" />
+      <circle cx="4" cy="4" r="2" fill="currentColor" />
+    </svg>
+  );
+}
 
 // Helper function to determine base token for price display (same logic as pool page)
 const determineBaseTokenForPriceDisplay = (token0: string, token1: string): string => {
@@ -360,7 +372,7 @@ export function PositionCard({
 
             <CardFooter className="flex items-center justify-between py-1.5 px-3 bg-muted/10 border-t border-sidebar-border/30 group/subbar">
             <div className="flex items-center text-xs text-muted-foreground gap-3">
-                <div onMouseEnter={handleChildEnter} onMouseLeave={handleChildLeave}>
+                <div>
                     <TooltipProvider delayDuration={0}>
                     <Tooltip>
                         <TooltipTrigger asChild>
@@ -415,7 +427,7 @@ export function PositionCard({
                     </TooltipProvider>
                 </div>
                 <div className="w-px h-3 bg-border"></div>
-                <div onMouseEnter={handleChildEnter} onMouseLeave={handleChildLeave}>
+                <div>
                     <TooltipProvider delayDuration={0}>
                     <Tooltip>
                         <TooltipTrigger asChild>
@@ -435,15 +447,57 @@ export function PositionCard({
             <div className="flex items-center gap-1.5">
                 <div>
                     {(() => {
-                        const isFullRange = position.tickLower === SDK_MIN_TICK && position.tickUpper === SDK_MAX_TICK;
-                        const statusText = isFullRange ? 'Full Range' : position.isInRange ? 'In Range' : 'Out of Range';
-                        const statusColor = position.isInRange || isFullRange ? 'bg-green-500/20 text-green-500' : 'bg-red-500/20 text-red-500';
+                        // Check if position is full range (ticks near min/max, accounting for tick spacing alignment)
+                        const isFullRange = Math.abs(position.tickLower - SDK_MIN_TICK) < 1000 &&
+                                          Math.abs(position.tickUpper - SDK_MAX_TICK) < 1000;
 
-                        return (
-                            <div className={`flex items-center justify-center h-4 rounded-md px-1.5 text-[10px] leading-none ${statusColor}`}>
-                                {statusText}
+                        // Check if position is at risk (within 2% of bounds for volatile pools only)
+                        let isAtRisk = false;
+                        if (position.isInRange && !isFullRange && currentPoolTick !== null) {
+                            // Get pool type from poolDataByPoolId
+                            const pool = poolDataByPoolId[poolKey] || poolDataByPoolId[String(position.poolId || '').toLowerCase()] || {};
+                            const poolType = pool?.type || 'Volatile'; // Default to Volatile if not specified
+
+                            if (poolType === 'Volatile') {
+                                const tickRange = position.tickUpper - position.tickLower;
+                                const distanceFromLower = currentPoolTick - position.tickLower;
+                                const distanceFromUpper = position.tickUpper - currentPoolTick;
+
+                                // Check if within 2% of either bound
+                                const lowerThreshold = tickRange * 0.02;
+                                const upperThreshold = tickRange * 0.02;
+
+                                isAtRisk = distanceFromLower <= lowerThreshold || distanceFromUpper <= upperThreshold;
+                            }
+                        }
+
+                        const statusText = isFullRange ? 'Full Range' : position.isInRange ? 'In Range' : 'Out of Range';
+                        const statusColor = isFullRange ? 'text-green-500' : isAtRisk ? 'text-yellow-500' : position.isInRange ? 'text-green-500' : 'text-red-500';
+                        const showTooltip = isAtRisk;
+
+                        const content = (
+                            <div className={`flex items-center gap-1.5 ${statusColor} ${showTooltip ? 'cursor-pointer' : ''}`}>
+                                <StatusIndicatorCircle className={statusColor} />
+                                <span className="text-xs font-medium whitespace-nowrap">{statusText}</span>
                             </div>
                         );
+
+                        if (showTooltip) {
+                            return (
+                                <TooltipProvider delayDuration={0}>
+                                    <Tooltip>
+                                        <TooltipTrigger asChild>
+                                            {content}
+                                        </TooltipTrigger>
+                                        <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
+                                            <div className="font-medium text-foreground">Position might move out of range soon.</div>
+                                        </TooltipContent>
+                                    </Tooltip>
+                                </TooltipProvider>
+                            );
+                        }
+
+                        return content;
                     })()}
                 </div>
 
@@ -490,8 +544,10 @@ export function PositionCard({
                               
                               // Check if fees are zero before attempting to claim
                               if (hasZeroFees) {
-                                toast.error('No Fees To Claim', { 
-                                  icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" })
+                                toast.error('No Fees Available', { 
+                                  icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
+                                  description: 'This position has no fees to claim.',
+                                  duration: 4000
                                 });
                                 return;
                               }
@@ -500,7 +556,14 @@ export function PositionCard({
                                 await claimFees(position.positionId); 
                                 setOpenPositionMenuKey(null); // Close menu after successful claim
                               } catch (err: any) { 
-                                toast.error('Collect failed', { description: err?.message }); 
+                                toast.error('Claim Failed', { 
+                                  icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
+                                  description: err?.message || 'Failed to claim fees.',
+                                  action: {
+                                    label: "Copy Error",
+                                    onClick: () => navigator.clipboard.writeText(err?.message || 'Failed to claim fees')
+                                  }
+                                }); 
                               } 
                             }}>Claim Fees</button>
                             </div>

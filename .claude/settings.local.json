@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -X POST \"https://subgraph.satsuma-prod.com/59826817594f/layanss-team--533867/marinita/api\" -H \"Content-Type: application/json\" -d \"{\"\"query\"\":\"\"{ __type(name: \\\"\"AlphixHook\\\"\") { fields { name type { name kind ofType { name kind } } } } }\"\"}\")",
+      "Bash(cat:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

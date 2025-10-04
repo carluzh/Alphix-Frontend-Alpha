@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { PlusIcon, RefreshCwIcon, MinusIcon, ActivityIcon, CheckIcon, InfoIcon, ArrowLeftIcon, OctagonX, CircleCheck } from "lucide-react";
+import { PlusIcon, RefreshCwIcon, MinusIcon, ActivityIcon, CheckIcon, InfoIcon, ArrowLeftIcon, OctagonX, BadgeCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -46,22 +46,24 @@ import {
 } from "@/components/ui/tooltip";
 // import { useWeb3Modal } from '@web3modal/wagmi/react';
 
-// Toast utility functions
-const showErrorToast = (title: string, description?: string) => {
+// Toast utility functions matching swap-interface patterns
+const showErrorToast = (title: string, description?: string, action?: { label: string; onClick: () => void }) => {
   toast.error(title, {
     icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
+    description: description,
+    action: action
+  });
+};
+
+const showSuccessToast = (title: string, description?: string) => {
+  toast.success(title, {
+    icon: React.createElement(BadgeCheck, { className: "h-4 w-4 text-green-500" }),
     description: description
   });
 };
 
-const showSuccessToast = (title: string) => {
-  toast.success(title, {
-    icon: React.createElement(CircleCheck, { className: "h-4 w-4 text-green-500" })
-  });
-};
-
 const showInfoToast = (title: string) => {
-  toast.info(title, {
+  toast(title, {
     icon: React.createElement(InfoIcon, { className: "h-4 w-4" })
   });
 };
@@ -233,6 +235,13 @@ export function AddLiquidityForm({
   // Wiggle animation for insufficient approvals
   const [approvalWiggleCount, setApprovalWiggleCount] = useState(0);
   const approvalWiggleControls = useAnimation();
+
+  // Wiggle animation for balance exceeded
+  const [balanceWiggleCount0, setBalanceWiggleCount0] = useState(0);
+  const [balanceWiggleCount1, setBalanceWiggleCount1] = useState(0);
+  const balanceWiggleControls0 = useAnimation();
+  const balanceWiggleControls1 = useAnimation();
+
   const panStartXRef = useRef<number | null>(null);
   const panStartDomainRef = useRef<[number, number] | null>(null);
   const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -327,21 +336,19 @@ export function AddLiquidityForm({
     onOpenChange: () => {},
   });
 
-  // Balance hooks
-  const { data: token0BalanceData, isLoading: isLoadingToken0Balance } = useBalance({
+  // Balance hooks with refetch
+  const { data: token0BalanceData, isLoading: isLoadingToken0Balance, refetch: refetchToken0Balance } = useBalance({
     address: accountAddress,
-    token: TOKEN_DEFINITIONS[token0Symbol]?.address === "0x0000000000000000000000000000000000000000" 
-      ? undefined 
-      : TOKEN_DEFINITIONS[token0Symbol]?.address as `0x${string}` | undefined,
+    token: TOKEN_DEFINITIONS[token0Symbol]?.address === "0x0000000000000000000000000000000000000000"
+      ? undefined : TOKEN_DEFINITIONS[token0Symbol]?.address as `0x${string}` | undefined,
     chainId,
     query: { enabled: !!accountAddress && !!chainId && !!TOKEN_DEFINITIONS[token0Symbol] },
   });
 
-  const { data: token1BalanceData, isLoading: isLoadingToken1Balance } = useBalance({
+  const { data: token1BalanceData, isLoading: isLoadingToken1Balance, refetch: refetchToken1Balance } = useBalance({
     address: accountAddress,
-    token: TOKEN_DEFINITIONS[token1Symbol]?.address === "0x0000000000000000000000000000000000000000" 
-      ? undefined 
-      : TOKEN_DEFINITIONS[token1Symbol]?.address as `0x${string}` | undefined,
+    token: TOKEN_DEFINITIONS[token1Symbol]?.address === "0x0000000000000000000000000000000000000000"
+      ? undefined : TOKEN_DEFINITIONS[token1Symbol]?.address as `0x${string}` | undefined,
     chainId,
     query: { enabled: !!accountAddress && !!chainId && !!TOKEN_DEFINITIONS[token1Symbol] },
   });
@@ -394,10 +401,44 @@ export function AddLiquidityForm({
     }
   }, [approvalWiggleCount, approvalWiggleControls]);
 
+  // Balance wiggle animation effects
+  useEffect(() => {
+    if (balanceWiggleCount0 > 0) {
+      balanceWiggleControls0.start({
+        x: [0, -3, 3, -2, 2, 0],
+        transition: { duration: 0.22, ease: 'easeOut' },
+      }).catch(() => {});
+    }
+  }, [balanceWiggleCount0, balanceWiggleControls0]);
+
+  useEffect(() => {
+    if (balanceWiggleCount1 > 0) {
+      balanceWiggleControls1.start({
+        x: [0, -3, 3, -2, 2, 0],
+        transition: { duration: 0.22, ease: 'easeOut' },
+      }).catch(() => {});
+    }
+  }, [balanceWiggleCount1, balanceWiggleControls1]);
+
   // Set initial state based on props
   useEffect(() => {
     setBaseTokenForPriceDisplay(token0Symbol);
   }, [token0Symbol]);
+
+  // Listen for balance refresh events
+  useEffect(() => {
+    if (!accountAddress) return;
+    const onRefresh = () => { refetchToken0Balance(); refetchToken1Balance(); };
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === `walletBalancesRefreshAt_${accountAddress}`) onRefresh();
+    };
+    window.addEventListener('walletBalancesRefresh', onRefresh);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener('walletBalancesRefresh', onRefresh);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, [accountAddress, refetchToken0Balance, refetchToken1Balance]);
 
   // Auto flip denomination to match InteractiveRangeChart axis when beneficial
   const shouldFlipDenomination = useMemo(() => {
@@ -1156,6 +1197,11 @@ export function AddLiquidityForm({
 
   // Determine button text based on current state
   const getButtonText = () => {
+    // Check for insufficient balance first (only when in input step)
+    if (step === 'input' && isInsufficientBalance) {
+      return 'Insufficient Balance';
+    }
+
     if (step === 'approve') {
       if (isApproveWritePending || isApproving) {
         return `Approve ${preparedTxData?.approvalTokenSymbol || 'Tokens'}`;
@@ -2236,7 +2282,10 @@ export function AddLiquidityForm({
                     </Button>
                   </div>
                 </div>
-                <div className={cn("rounded-lg bg-muted/30 p-4", { "outline outline-1 outline-muted": isAmount0Focused })}>
+                <motion.div
+                  className={cn("rounded-lg bg-muted/30 p-4", { "outline outline-1 outline-muted": isAmount0Focused })}
+                  animate={balanceWiggleControls0}
+                >
                   <div className="flex items-center gap-2">
                     <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
                       <Image src={getTokenIcon(token0Symbol)} alt={token0Symbol} width={20} height={20} className="rounded-full"/>
@@ -2251,6 +2300,17 @@ export function AddLiquidityForm({
                           let newValue = e.target.value.replace(',', '.'); // Ensure decimal separator is always period
                           // Only allow numbers, one decimal point, and prevent multiple decimal points
                           newValue = newValue.replace(/[^0-9.]/g, '').replace(/(\..*?)\./g, '$1');
+
+                          // Check if going over balance to trigger wiggle
+                          const maxAmount = token0BalanceData ? parseFloat(token0BalanceData.formatted || "0") : 0;
+                          const inputAmount = parseFloat(newValue || "0");
+                          const prevAmount = parseFloat(amount0 || "0");
+                          const wasOver = Number.isFinite(prevAmount) && Number.isFinite(maxAmount) ? prevAmount > maxAmount : false;
+                          const isOver = Number.isFinite(inputAmount) && Number.isFinite(maxAmount) ? inputAmount > maxAmount : false;
+                          if (isOver && !wasOver) {
+                            setBalanceWiggleCount0(c => c + 1);
+                          }
+
                           // Clear full precision when user manually edits
                           setAmount0FullPrecision("");
                           if (preparedTxData) { resetTransactionState(); }
@@ -2301,7 +2361,7 @@ export function AddLiquidityForm({
                       </div>
                     </div>
                   </div>
-                </div>
+                </motion.div>
               </div>
 
               {/* Plus Icon */}
@@ -2331,7 +2391,10 @@ export function AddLiquidityForm({
                     </Button>
                   </div>
                 </div>
-                <div className={cn("rounded-lg bg-muted/30 p-4", { "outline outline-1 outline-muted": isAmount1Focused })}>
+                <motion.div
+                  className={cn("rounded-lg bg-muted/30 p-4", { "outline outline-1 outline-muted": isAmount1Focused })}
+                  animate={balanceWiggleControls1}
+                >
                   <div className="flex items-center gap-2">
                     <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
                       <Image src={getTokenIcon(token1Symbol)} alt={token1Symbol} width={20} height={20} className="rounded-full"/>
@@ -2346,6 +2409,17 @@ export function AddLiquidityForm({
                           let newValue = e.target.value.replace(',', '.'); // Ensure decimal separator is always period
                           // Only allow numbers, one decimal point, and prevent multiple decimal points
                           newValue = newValue.replace(/[^0-9.]/g, '').replace(/(\..*?)\./g, '$1');
+
+                          // Check if going over balance to trigger wiggle
+                          const maxAmount = token1BalanceData ? parseFloat(token1BalanceData.formatted || "0") : 0;
+                          const inputAmount = parseFloat(newValue || "0");
+                          const prevAmount = parseFloat(amount1 || "0");
+                          const wasOver = Number.isFinite(prevAmount) && Number.isFinite(maxAmount) ? prevAmount > maxAmount : false;
+                          const isOver = Number.isFinite(inputAmount) && Number.isFinite(maxAmount) ? inputAmount > maxAmount : false;
+                          if (isOver && !wasOver) {
+                            setBalanceWiggleCount1(c => c + 1);
+                          }
+
                           // Clear full precision when user manually edits
                           setAmount1FullPrecision("");
                           if (preparedTxData) { resetTransactionState(); }
@@ -2396,7 +2470,7 @@ export function AddLiquidityForm({
                       </div>
                     </div>
                   </div>
-                </div>
+                </motion.div>
               </div>
 
               {/* Price Range Label (outside container, matching Amount style) */}

@@ -6,12 +6,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { toast } from "@/hooks/use-toast";
+import { toast } from "sonner";
 import { useAccount } from "wagmi";
 import { formatUnits } from "viem";
 import Image from "next/image";
 import { motion, useAnimation, AnimatePresence } from "framer-motion";
-import { PlusIcon, RefreshCwIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, SearchIcon, XIcon, OctagonX, ActivityIcon, MinusIcon, CircleCheck } from "lucide-react";
+import { PlusIcon, RefreshCwIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, SearchIcon, XIcon, OctagonX, ActivityIcon, MinusIcon, CircleCheck, Info as InfoIcon } from "lucide-react";
 import { readContract, getBalance } from '@wagmi/core';
 import { erc20Abi } from 'viem';
 import { config } from '@/lib/wagmiConfig';
@@ -445,25 +445,25 @@ export function WithdrawLiquidityModal({
   );
 
 
-  // Handle amount input change with balance capping and wiggle animation
-  const handleWithdrawAmountChangeWithWiggle = useCallback((e: React.ChangeEvent<HTMLInputElement>, tokenSide: 'amount0' | 'amount1'): string => {
+  // Handle amount input change with wiggle animation (no capping)
+  const handleWithdrawAmountChangeWithWiggle = useCallback((e: React.ChangeEvent<HTMLInputElement>, tokenSide: 'amount0' | 'amount1') => {
     const newAmount = sanitizeDecimalInput(e.target.value);
-    
-    if (!position) return newAmount;
-    
-    const maxAmount = tokenSide === 'amount0' 
+
+    if (!position) return;
+
+    const maxAmount = tokenSide === 'amount0'
       ? parseFloat(position.token0.amount)
       : parseFloat(position.token1.amount);
-    
+
     const inputAmount = parseFloat(newAmount || "0");
-    const prevAmount = tokenSide === 'amount0' 
+    const prevAmount = tokenSide === 'amount0'
       ? parseFloat(withdrawAmount0 || "0")
       : parseFloat(withdrawAmount1 || "0");
-    
+
     // Check if going over balance to trigger wiggle
     const wasOver = Number.isFinite(prevAmount) && Number.isFinite(maxAmount) ? prevAmount > maxAmount : false;
     const isOver = Number.isFinite(inputAmount) && Number.isFinite(maxAmount) ? inputAmount > maxAmount : false;
-    
+
     if (isOver && !wasOver) {
       if (tokenSide === 'amount0') {
         setBalanceWiggleCount0(c => c + 1);
@@ -471,23 +471,19 @@ export function WithdrawLiquidityModal({
         setBalanceWiggleCount1(c => c + 1);
       }
     }
-    
-    // Cap the amount to max balance if exceeded
-    const finalAmount = isOver ? maxAmount.toString() : newAmount;
-    
+
+    // No capping - allow input to exceed balance
     if (tokenSide === 'amount0') {
-      setWithdrawAmount0(finalAmount);
+      setWithdrawAmount0(newAmount);
     } else {
-      setWithdrawAmount1(finalAmount);
+      setWithdrawAmount1(newAmount);
     }
 
     // Check if this is a full withdraw
-    if (position && finalAmount && parseFloat(finalAmount) > 0) {
-      const percentage = Math.min(100, (parseFloat(finalAmount) / maxAmount) * 100);
+    if (position && newAmount && parseFloat(newAmount) > 0) {
+      const percentage = Math.min(100, (parseFloat(newAmount) / maxAmount) * 100);
       setIsFullWithdraw(percentage >= 99);
     }
-    
-    return finalAmount;
   }, [position, withdrawAmount0, withdrawAmount1]);
 
   // Handle amount input change (non-wiggle version for programmatic changes)
@@ -546,25 +542,61 @@ export function WithdrawLiquidityModal({
     setIsFullWithdraw(percentage === 1);
   }, [position, calculateWithdrawAmount]);
 
+  // Check if user has insufficient balance for withdrawal
+  const checkInsufficientBalanceWithdraw = useCallback(() => {
+    if (!position) return false;
+
+    const max0 = parseFloat(position.token0.amount || '0');
+    const max1 = parseFloat(position.token1.amount || '0');
+    const in0 = parseFloat(withdrawAmount0 || '0');
+    const in1 = parseFloat(withdrawAmount1 || '0');
+
+    return (in0 > max0 + 1e-12) || (in1 > max1 + 1e-12);
+  }, [position, withdrawAmount0, withdrawAmount1]);
+
+  // Get button text based on state
+  const getWithdrawButtonText = useCallback(() => {
+    if (checkInsufficientBalanceWithdraw()) {
+      return 'Insufficient Balance';
+    }
+
+    // Show Withdraw All only if both sides are >= 99% of position amounts (in-range)
+    if (position?.isInRange) {
+      const max0 = parseFloat(position.token0.amount || '0');
+      const max1 = parseFloat(position.token1.amount || '0');
+      const in0 = parseFloat(withdrawAmount0 || '0');
+      const in1 = parseFloat(withdrawAmount1 || '0');
+      const near0 = max0 > 0 ? in0 >= max0 * 0.99 : in0 === 0;
+      const near1 = max1 > 0 ? in1 >= max1 * 0.99 : in1 === 0;
+      return (near0 && near1) ? 'Withdraw All' : 'Withdraw';
+    }
+    // Out of range: check if single productive side is near 100%
+    const max0 = parseFloat(position?.token0.amount || '0');
+    const max1 = parseFloat(position?.token1.amount || '0');
+    const in0 = parseFloat(withdrawAmount0 || '0');
+    const in1 = parseFloat(withdrawAmount1 || '0');
+    const near0 = max0 > 0 ? in0 >= max0 * 0.99 : false;
+    const near1 = max1 > 0 ? in1 >= max1 * 0.99 : false;
+    return (near0 || near1) ? 'Withdraw All' : 'Withdraw';
+  }, [position, withdrawAmount0, withdrawAmount1, checkInsufficientBalanceWithdraw]);
+
   // Handle confirm withdraw - show "You Will Receive" first
   const handleConfirmWithdraw = useCallback(() => {
     if (!position || (!withdrawAmount0 && !withdrawAmount1)) {
-      toast({
-        title: "Enter withdrawal amount",
-        variant: "destructive"
+      toast.error("Invalid Amount", {
+        icon: <OctagonX className="h-4 w-4 text-red-500" />,
+        description: "Please enter an amount to withdraw.",
+        duration: 4000
       });
       return;
     }
 
     // Prevent over-withdraw relative to position balances
-    const max0 = parseFloat(position.token0.amount || '0');
-    const max1 = parseFloat(position.token1.amount || '0');
-    const in0 = parseFloat(withdrawAmount0 || '0');
-    const in1 = parseFloat(withdrawAmount1 || '0');
-    if ((in0 > max0 + 1e-12) || (in1 > max1 + 1e-12)) {
-      toast({
-        title: "Amount exceeds balance",
-        variant: "destructive"
+    if (checkInsufficientBalanceWithdraw()) {
+      toast.error("Insufficient Balance", {
+        icon: <OctagonX className="h-4 w-4 text-red-500" />,
+        description: "Withdrawal amount exceeds position balance.",
+        duration: 4000
       });
       return;
     }
@@ -574,9 +606,10 @@ export function WithdrawLiquidityModal({
       const amount0Num = parseFloat(withdrawAmount0 || "0");
       const amount1Num = parseFloat(withdrawAmount1 || "0");
       if (amount0Num <= 0 && amount1Num <= 0) {
-        toast({
-          title: "Enter amount to withdraw",
-          variant: "destructive"
+        toast.error("Invalid Amount", { 
+          icon: <OctagonX className="h-4 w-4 text-red-500" />,
+          description: "Please enter an amount to withdraw.",
+          duration: 4000
         });
         return;
       }
@@ -603,9 +636,13 @@ export function WithdrawLiquidityModal({
     const token1Symbol = getTokenSymbolByAddress(position.token1.address);
     
     if (!token0Symbol || !token1Symbol) {
-      toast({
-        title: "Token configuration error",
-        variant: "destructive"
+      toast.error("Configuration Error", { 
+        icon: <OctagonX className="h-4 w-4 text-red-500" />,
+        description: "Token configuration is invalid.",
+        action: {
+          label: "Open Ticket",
+          onClick: () => window.open('https://discord.gg/alphix', '_blank')
+        }
       });
       return;
     }
@@ -635,6 +672,11 @@ export function WithdrawLiquidityModal({
       tickUpper: position.tickUpper,
       enteredSide: withdrawActiveInputSide === 'amount0' ? 'token0' : withdrawActiveInputSide === 'amount1' ? 'token1' : undefined,
     };
+
+    // Show default toast
+    toast("Confirm Withdraw", {
+      icon: <InfoIcon className="h-4 w-4" />
+    });
 
     // In-range: use percentage flow (SDK), OOR: amounts mode
     if (position.isInRange) {
@@ -915,32 +957,17 @@ export function WithdrawLiquidityModal({
             Cancel
           </Button>
 
-          <Button 
-            className="text-sidebar-primary border border-sidebar-primary bg-[#3d271b] hover:bg-[#3d271b]/90" 
+          <Button
+            className={checkInsufficientBalanceWithdraw() ?
+              "relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75" :
+              "text-sidebar-primary border border-sidebar-primary bg-[#3d271b] hover:bg-[#3d271b]/90"
+            }
             onClick={handleConfirmWithdraw}
-            disabled={isWorking || !hasValidAmount}
+            disabled={isWorking || !hasValidAmount || checkInsufficientBalanceWithdraw()}
+            style={checkInsufficientBalanceWithdraw() ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
           >
             <span className={isWorking ? "animate-pulse" : ""}>
-              {(() => {
-                // Show Withdraw All only if both sides are >= 99% of position amounts (in-range)
-                if (position?.isInRange) {
-                  const max0 = parseFloat(position.token0.amount || '0');
-                  const max1 = parseFloat(position.token1.amount || '0');
-                  const in0 = parseFloat(withdrawAmount0 || '0');
-                  const in1 = parseFloat(withdrawAmount1 || '0');
-                  const near0 = max0 > 0 ? in0 >= max0 * 0.99 : in0 === 0;
-                  const near1 = max1 > 0 ? in1 >= max1 * 0.99 : in1 === 0;
-                  return (near0 && near1) ? 'Withdraw All' : 'Withdraw';
-                }
-                // Out of range: check if single productive side is near 100%
-                const max0 = parseFloat(position?.token0.amount || '0');
-                const max1 = parseFloat(position?.token1.amount || '0');
-                const in0 = parseFloat(withdrawAmount0 || '0');
-                const in1 = parseFloat(withdrawAmount1 || '0');
-                const near0 = max0 > 0 ? in0 >= max0 * 0.99 : false;
-                const near1 = max1 > 0 ? in1 >= max1 * 0.99 : false;
-                return (near0 || near1) ? 'Withdraw All' : 'Withdraw';
-              })()}
+              {getWithdrawButtonText()}
             </span>
           </Button>
                     </div>

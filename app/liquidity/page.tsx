@@ -27,8 +27,8 @@ import {
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { MobileLiquidityList } from "@/components/MobileLiquidityList";
 import type { ProcessedPosition } from "../../pages/api/liquidity/get-positions";
-import { 
-    useAccount, 
+import {
+    useAccount,
 } from "wagmi";
 import { toast } from "sonner";
 import { getEnabledPools, getToken, getPoolSubgraphId, getPoolById } from "../../lib/pools-config";
@@ -37,7 +37,7 @@ import { getCachedBatchData, setCachedBatchData, clearBatchDataCache } from "../
 import { Pool } from "../../types";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ChevronUpIcon, ChevronDownIcon, ChevronsUpDownIcon, PlusIcon } from "lucide-react";
+import { ChevronUpIcon, ChevronDownIcon, ChevronsUpDownIcon, PlusIcon, BadgeCheck, OctagonX } from "lucide-react";
 import { ArrowUpRight, ArrowDownRight } from "lucide-react";
 import { TOKEN_DEFINITIONS, type TokenSymbol } from "@/lib/pools-config";
 import { useIncreaseLiquidity, type IncreasePositionData } from "@/components/liquidity/useIncreaseLiquidity";
@@ -209,7 +209,14 @@ export default function LiquidityPage() {
 
       } catch (error) {
         console.error("[LiquidityPage] Batch fetch failed:", error);
-        toast.error("Could not load pool data", { description: "Failed to fetch data from the server." });
+        toast.error("Could not load pool data", { 
+          description: "Failed to fetch data from the server.", 
+          icon: <OctagonX className="h-4 w-4 text-red-500" />,
+          action: {
+            label: "Open Ticket",
+            onClick: () => window.open('https://discord.gg/alphix', '_blank')
+          }
+        });
       }
     }, [dynamicPools]);
 
@@ -271,18 +278,18 @@ export default function LiquidityPage() {
 
   const { increaseLiquidity } = useIncreaseLiquidity({
     onLiquidityIncreased: () => {
-      sonnerToast.success("Liquidity Increased");
+      sonnerToast.success("Liquidity Increased", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
       // Consider a targeted position refresh here
     },
   });
 
   const { decreaseLiquidity, claimFees } = useDecreaseLiquidity({
     onLiquidityDecreased: () => {
-      sonnerToast.success("Liquidity Decreased");
+      sonnerToast.success("Liquidity Decreased", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
       // Consider a targeted position refresh here
     },
     onFeesCollected: () => {
-      sonnerToast.success("Fees Collected");
+      sonnerToast.success("Fees Collected", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
       // Consider a targeted position refresh here
     },
   });

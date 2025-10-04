@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { PlusIcon, RefreshCwIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, SearchIcon, XIcon, OctagonX, ActivityIcon, MinusIcon, CircleCheck } from "lucide-react"; // Updated imports
+import { PlusIcon, RefreshCwIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, SearchIcon, XIcon, OctagonX, ActivityIcon, MinusIcon, CircleCheck, Info as InfoIcon, BadgeCheck } from "lucide-react"; // Updated imports
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -481,7 +481,7 @@ export function AddLiquidityModal({
       }
     } catch (error: any) {
       console.error('Prepare increase error:', error);
-      toast.error("Preparation Error", { description: error.message || "Failed to prepare transaction" });
+      toast.error("Preparation Error", { description: error.message || "Failed to prepare transaction", icon: <OctagonX className="h-4 w-4 text-red-500" /> });
     } finally {
       setIncreaseIsWorking(false);
     }
@@ -496,6 +496,12 @@ export function AddLiquidityModal({
     try {
       const tokenAddress = increasePreparedTxData.approvalTokenAddress as `0x${string}` | undefined;
       if (!tokenAddress) throw new Error('Missing token address for approval');
+      
+      // Show default toast
+      toast("Confirm in Wallet", {
+        icon: <InfoIcon className="h-4 w-4" />
+      });
+      
       await approveERC20Async({
         address: tokenAddress,
         abi: erc20Abi,
@@ -504,7 +510,15 @@ export function AddLiquidityModal({
       });
       // Wait for receipt via hook; state advance handled in effect below
     } catch (error: any) {
-      toast.error("Approval Error", { description: error?.shortMessage || error?.message || "Failed to approve token." });
+      const errorMessage = error?.shortMessage || error?.message || "Failed to approve token.";
+      toast.error("Approval Error", {
+        icon: <OctagonX className="h-4 w-4 text-red-500" />,
+        description: errorMessage,
+        action: {
+          label: "Copy Error",
+          onClick: () => navigator.clipboard.writeText(errorMessage)
+        }
+      });
       setIncreaseIsWorking(false);
       resetIncreaseApprove();
     }
@@ -664,6 +678,11 @@ export function AddLiquidityModal({
         return;
       }
 
+      // Show default toast before signing
+      toast("Sign in Wallet", {
+        icon: <InfoIcon className="h-4 w-4" />
+      });
+
       const signature = await signTypedDataAsync({
         domain: prepared.domain as any,
         types: prepared.types as any,
@@ -676,11 +695,31 @@ export function AddLiquidityModal({
       providePreSignedIncreaseBatchPermit(positionToModify.positionId, payload);
       setSignedBatchPermit(payload);
 
+      // Show success toast with rounded duration
+      const durationSeconds = deadline - Math.floor(Date.now() / 1000);
+      let durationFormatted = 'next 20 minutes';
+      if (durationSeconds > 0) {
+        const minutes = Math.ceil(durationSeconds / 60);
+        const hours = Math.ceil(minutes / 60);
+        if (hours >= 1) {
+          durationFormatted = `${hours} hour${hours > 1 ? 's' : ''}`;
+        } else {
+          durationFormatted = `${minutes} minute${minutes > 1 ? 's' : ''}`;
+        }
+      }
+      toast.success("Batch Signature Complete", {
+        icon: <BadgeCheck className="h-4 w-4 text-green-500" />,
+        description: `Batch permit signed successfully for ${durationFormatted}`
+      });
+
       setIncreaseBatchPermitSigned(true);
       setIncreaseStep('deposit');
     } catch (error: any) {
       const description = (error?.message || '').includes('User rejected') ? 'Permit signature was rejected.' : (error?.message || 'Failed to sign permit');
-      toast.error('Permit Error', { description });
+      toast.error('Permit Error', { 
+        icon: <OctagonX className="h-4 w-4 text-red-500" />,
+        description 
+      });
     } finally {
       setIncreaseIsWorking(false);
     }
@@ -1138,23 +1177,23 @@ export function AddLiquidityModal({
   };
 
   // Handle amount input change with balance capping and wiggle animation
-  const handleIncreaseAmountChangeWithWiggle = useCallback((e: React.ChangeEvent<HTMLInputElement>, tokenSide: 'amount0' | 'amount1'): string => {
-    if (!isExistingPosition || !positionToModify) return e.target.value;
-    
+  const handleIncreaseAmountChangeWithWiggle = useCallback((e: React.ChangeEvent<HTMLInputElement>, tokenSide: 'amount0' | 'amount1') => {
+    if (!isExistingPosition || !positionToModify) return;
+
     const newAmount = sanitizeDecimalInput(e.target.value);
-    
+
     const balanceData = tokenSide === 'amount0' ? token0BalanceData : token1BalanceData;
     const maxAmount = balanceData ? parseFloat(balanceData.formatted) : 0;
-    
+
     const inputAmount = parseFloat(newAmount || "0");
-    const prevAmount = tokenSide === 'amount0' 
+    const prevAmount = tokenSide === 'amount0'
       ? parseFloat(increaseAmount0 || "0")
       : parseFloat(increaseAmount1 || "0");
-    
+
     // Check if going over balance to trigger wiggle
     const wasOver = Number.isFinite(prevAmount) && Number.isFinite(maxAmount) ? prevAmount > maxAmount : false;
     const isOver = Number.isFinite(inputAmount) && Number.isFinite(maxAmount) ? inputAmount > maxAmount : false;
-    
+
     if (isOver && !wasOver) {
       if (tokenSide === 'amount0') {
         setBalanceWiggleCount0(c => c + 1);
@@ -1162,17 +1201,13 @@ export function AddLiquidityModal({
         setBalanceWiggleCount1(c => c + 1);
       }
     }
-    
-    // Cap the amount to max balance if exceeded
-    const finalAmount = isOver ? maxAmount.toString() : newAmount;
-    
+
+    // No capping - allow input to exceed balance
     if (tokenSide === 'amount0') {
-      setIncreaseAmount0(finalAmount);
+      setIncreaseAmount0(newAmount);
     } else {
-      setIncreaseAmount1(finalAmount);
+      setIncreaseAmount1(newAmount);
     }
-    
-    return finalAmount;
   }, [isExistingPosition, positionToModify, token0BalanceData, token1BalanceData, increaseAmount0, increaseAmount1]);
 
 
@@ -1244,12 +1279,29 @@ export function AddLiquidityModal({
     }
   };
 
+  // Check if user has insufficient balance for increase
+  const checkInsufficientBalanceIncrease = useCallback(() => {
+    if (!positionToModify || !token0BalanceData || !token1BalanceData) return false;
+
+    const amt0 = parseFloat(increaseAmount0 || "0");
+    const amt1 = parseFloat(increaseAmount1 || "0");
+    const bal0 = parseFloat(token0BalanceData.formatted || "0");
+    const bal1 = parseFloat(token1BalanceData.formatted || "0");
+
+    return (amt0 > bal0) || (amt1 > bal1);
+  }, [positionToModify, increaseAmount0, increaseAmount1, token0BalanceData, token1BalanceData]);
+
   // Determine button text for existing positions based on transaction state (like form)
   const getIncreaseButtonText = () => {
+    // Check for insufficient balance first (only when in input step)
+    if (!showTransactionOverview && checkInsufficientBalanceIncrease()) {
+      return 'Insufficient Balance';
+    }
+
     if (!showTransactionOverview) {
       return 'Confirm';
     }
-    
+
     if (increaseStep === 'approve') {
       if (increaseIsWorking) {
         return `Approve ${increasePreparedTxData?.approvalTokenSymbol || 'Tokens'}`;
@@ -1558,12 +1610,16 @@ export function AddLiquidityModal({
                     </Button>
 
                     <Button
-                      className="text-sidebar-primary border border-sidebar-primary bg-[#3d271b] hover:bg-[#3d271b]/90"
+                      className={checkInsufficientBalanceIncrease() ?
+                        "relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75" :
+                        "text-sidebar-primary border border-sidebar-primary bg-[#3d271b] hover:bg-[#3d271b]/90"
+                      }
                       onClick={handleConfirmIncrease}
-                      disabled={isIncreasingLiquidity || isIncreaseCalculating || (parseFloat(increaseAmount0 || "0") <= 0 && parseFloat(increaseAmount1 || "0") <= 0)}
+                      disabled={isIncreasingLiquidity || isIncreaseCalculating || (parseFloat(increaseAmount0 || "0") <= 0 && parseFloat(increaseAmount1 || "0") <= 0) || checkInsufficientBalanceIncrease()}
+                      style={checkInsufficientBalanceIncrease() ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
                     >
                       <span className={isIncreasingLiquidity ? "animate-pulse" : ""}>
-                        Add Liquidity
+                        {getIncreaseButtonText()}
                       </span>
                     </Button>
           </div>

@@ -69,11 +69,25 @@ export function useBurnLiquidity({ onLiquidityBurned }: UseBurnLiquidityProps) {
 
   const burnLiquidity = useCallback(async (positionData: BurnPositionData) => {
     if (!accountAddress || !chainId) {
-      toast.error("Wallet Not Connected", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Please connect your wallet and try again." });
+      toast.error("Wallet Not Connected", { 
+        icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), 
+        description: "Please connect your wallet and try again.",
+        action: {
+          label: "Open Ticket",
+          onClick: () => window.open('https://discord.gg/alphix', '_blank')
+        }
+      });
       return;
     }
     if (!V4_POSITION_MANAGER_ADDRESS) {
-      toast.error("Configuration Error", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Position Manager address not set." });
+      toast.error("Configuration Error", { 
+        icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), 
+        description: "Position Manager address not set.",
+        action: {
+          label: "Open Ticket",
+          onClick: () => window.open('https://discord.gg/alphix', '_blank')
+        }
+      });
       return;
     }
     
@@ -136,7 +150,15 @@ export function useBurnLiquidity({ onLiquidityBurned }: UseBurnLiquidityProps) {
 
     } catch (error: any) {
       console.error("Error preparing burn transaction:", error);
-      toast.error("Burn Preparation Failed", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: error.message || "Could not prepare the transaction." });
+      const errorMessage = error.message || "Could not prepare the transaction.";
+      toast.error("Preparation Error", { 
+        icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), 
+        description: errorMessage,
+        action: {
+          label: "Copy Error",
+          onClick: () => navigator.clipboard.writeText(errorMessage)
+        }
+      });
       setIsBurning(false);
     }
   }, [accountAddress, chainId, writeContract, resetWriteContract, getTokenIdFromPosition]);
@@ -147,7 +169,14 @@ export function useBurnLiquidity({ onLiquidityBurned }: UseBurnLiquidityProps) {
     } else if (burnSendError) {
       toast.dismiss();
       const message = burnSendError instanceof BaseError ? burnSendError.shortMessage : burnSendError.message;
-      toast.error("Transaction Submission Failed", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: message });
+      toast.error("Transaction Failed", { 
+        icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), 
+        description: message,
+        action: {
+          label: "Copy Error",
+          onClick: () => navigator.clipboard.writeText(message || '')
+        }
+      });
       setIsBurning(false);
     } else if (hash && waitForTxStatus === 'pending' && !isBurnConfirming) {
        toast.loading("Transaction submitted. Waiting for confirmation...", { id: hash });
@@ -180,10 +209,14 @@ export function useBurnLiquidity({ onLiquidityBurned }: UseBurnLiquidityProps) {
       setIsBurning(false);
     } else if (burnConfirmError) {
        const message = burnConfirmError instanceof BaseError ? burnConfirmError.shortMessage : burnConfirmError.message;
-      toast.error("Burn Confirmation Failed", { 
+      toast.error("Transaction Failed", { 
         id: hash,
         icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
-        description: message
+        description: message,
+        action: {
+          label: "Copy Error",
+          onClick: () => navigator.clipboard.writeText(message || '')
+        }
       });
       setIsBurning(false);
     }

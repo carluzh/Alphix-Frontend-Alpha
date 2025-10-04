@@ -10,25 +10,15 @@ import { useQueryClient } from '@tanstack/react-query';
 import { toast } from "sonner";
 import { BadgeCheck, OctagonX, CircleCheck, InfoIcon } from "lucide-react";
 
-// Toast utility functions
+// Toast utility functions with consistent styling
 const showErrorToast = (title: string, description?: string) => {
   toast.error(title, {
     icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
-    description: description
-  });
-};
-
-const showSuccessToast = (title: string, description?: string) => {
-  toast.success(title, {
-    icon: React.createElement(CircleCheck, { className: "h-4 w-4 text-green-500" }),
-    description: description
-  });
-};
-
-const showInfoToast = (title: string, description?: string) => {
-  toast.info(title, {
-    icon: React.createElement(InfoIcon, { className: "h-4 w-4 text-blue-500" }),
-    description: description
+    description: description,
+    action: {
+      label: "Open Ticket",
+      onClick: () => window.open('https://discord.gg/alphix', '_blank')
+    }
   });
 };
 import { TOKEN_DEFINITIONS } from "@/lib/pools-config";
@@ -443,6 +433,11 @@ export function useAddLiquidityTransaction({
     setIsWorking(true);
 
     try {
+      // Inform user about approval request
+      toast("Confirm in Wallet", {
+        icon: React.createElement(InfoIcon, { className: "h-4 w-4" })
+      });
+
       await approveERC20Async({
         address: preparedTxData.approvalTokenAddress as `0x${string}`,
         abi: ERC20_ABI,
@@ -450,7 +445,14 @@ export function useAddLiquidityTransaction({
         args: [PERMIT2_ADDRESS, BigInt(preparedTxData.approvalAmount || "0")],
       });
     } catch (error: any) {
-      showErrorToast("Approval Error", error.shortMessage || error.message || "Failed to approve token.");
+      toast.error("Approval Error", {
+        icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
+        description: error.shortMessage || error.message || "Failed to approve token.",
+        action: {
+          label: "Open Ticket",
+          onClick: () => window.open('https://discord.gg/alphix', '_blank')
+        }
+      });
       setIsWorking(false);
       resetApproveWriteContract();
     }
@@ -505,6 +507,11 @@ export function useAddLiquidityTransaction({
               detailsPreview: valuesToSign?.details?.[0]
             });
 
+            // Inform user about batch signature request
+            toast("Sign in Wallet", {
+              icon: React.createElement(InfoIcon, { className: "h-4 w-4" })
+            });
+
             // Use SDK-generated signature data (identical to Uniswap)
             const domainToUse = preparedTxData.signatureDetails!.domain;
             const typesToUse = preparedTxData.signatureDetails!.types;
@@ -541,15 +548,50 @@ export function useAddLiquidityTransaction({
             
             console.log('[batchPermitSigned] Permit signature stored successfully. Click Deposit again to proceed.');
             
+            // Show batch signature success toast with deadline duration (like swap)
+            const currentTime = Math.floor(Date.now() / 1000);
+            const sigDeadline = valuesToSign?.sigDeadline || valuesToSign?.details?.[0]?.expiration || 0;
+            const durationSeconds = Number(sigDeadline) - currentTime;
+
+            // Format duration in human-readable format (round UP within the chosen unit)
+            let durationFormatted = "";
+            if (durationSeconds >= 31536000) {
+                const years = Math.ceil(durationSeconds / 31536000);
+                durationFormatted = `${years} year${years > 1 ? 's' : ''}`;
+            } else if (durationSeconds >= 2592000) {
+                const months = Math.ceil(durationSeconds / 2592000);
+                durationFormatted = `${months} month${months > 1 ? 's' : ''}`;
+            } else if (durationSeconds >= 604800) {
+                const weeks = Math.ceil(durationSeconds / 604800);
+                durationFormatted = `${weeks} week${weeks > 1 ? 's' : ''}`;
+            } else if (durationSeconds >= 86400) {
+                const days = Math.ceil(durationSeconds / 86400);
+                durationFormatted = `${days} day${days > 1 ? 's' : ''}`;
+            } else if (durationSeconds >= 3600) {
+                const hours = Math.ceil(durationSeconds / 3600);
+                durationFormatted = `${hours} hour${hours > 1 ? 's' : ''}`;
+            } else {
+                const minutes = Math.ceil(durationSeconds / 60);
+                durationFormatted = `${minutes} minute${minutes > 1 ? 's' : ''}`;
+            }
+
+            toast.success("Batch Signature Complete", {
+              icon: React.createElement(BadgeCheck, { className: "h-4 w-4 text-green-500" }),
+              description: `Batch permit signed successfully for ${durationFormatted}`
+            });
+            
             setIsWorking(false);
-            showSuccessToast('Permit Signed Successfully');
             return; // User needs to click Deposit again
           } catch (e) {
             console.log('Batch permit signature failed:', e);
             setBatchPermitSigned(false);
             setIsWorking(false);
             if (e && typeof e === 'object' && 'message' in e && typeof e.message === 'string' && e.message.includes('User rejected')) {
-              showErrorToast('Signature Rejected', 'Permit signature was rejected.');
+              toast.error('Signature Rejected', {
+                icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
+                description: 'The permit signature was rejected in your wallet.',
+                duration: 4000
+              });
             }
             return;
           }
@@ -606,7 +648,7 @@ export function useAddLiquidityTransaction({
               signatureDetails: freshData.signatureDetails,
             });
             setIsWorking(false);
-            showInfoToast('Permit signature required', 'Click Deposit again to sign the permit.');
+            // No toast needed here - user already got proper flow guidance
             return; // User needs to click again
           } else if (!freshData.needsApproval) {
             // Use fresh transaction data
@@ -684,6 +726,11 @@ export function useAddLiquidityTransaction({
         throw new Error(`Invalid API response: ${JSON.stringify(txData)}`);
       }
       
+      // Inform user about deposit transaction request
+      toast("Confirm Deposit", {
+        icon: React.createElement(InfoIcon, { className: "h-4 w-4" })
+      });
+      
       // 3. Send the transaction
       const hash = await sendTransactionAsync({
         to: txData.transaction.to as `0x${string}`,
@@ -698,7 +745,30 @@ export function useAddLiquidityTransaction({
         detailedErrorMessage = err.message;
         if ((err as any).shortMessage) { detailedErrorMessage = (err as any).shortMessage; }
       }
-      showErrorToast("Transaction Failed", detailedErrorMessage);
+      
+      // Check if user rejected the transaction
+      const isUserRejection = detailedErrorMessage.toLowerCase().includes("user rejected") ||
+                              detailedErrorMessage.toLowerCase().includes("request rejected") ||
+                              detailedErrorMessage.toLowerCase().includes("action rejected") ||
+                              (err as any).code === 4001;
+      
+      if (isUserRejection) {
+        toast.error("Transaction Rejected", {
+          icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
+          description: "The request was rejected in your wallet.",
+          duration: 4000
+        });
+      } else {
+        toast.error("Transaction Failed", {
+          icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
+          description: detailedErrorMessage,
+          action: {
+            label: "Copy Error",
+            onClick: () => navigator.clipboard.writeText(detailedErrorMessage)
+          }
+        });
+      }
+      
       setIsWorking(false);
       resetSendTransaction();
     }
@@ -738,7 +808,23 @@ export function useAddLiquidityTransaction({
           
           const approvedToken = preparedTxData.approvalTokenSymbol!;
           console.log(`[Deterministic Flow] ${approvedToken} approved with tx ${approveTxHash}`);
-          showSuccessToast(`${approvedToken} Approved`);
+          
+          // Show approval success toast with transaction link (like swap)
+          const approvalAmount = BigInt(preparedTxData.approvalAmount || "0");
+          const tokenDef = TOKEN_DEFINITIONS[approvedToken];
+          const approvalAmountFormatted = tokenDef ? Number(formatUnits(approvalAmount, tokenDef.decimals)) : 0;
+          const approvalDescription = approvalAmountFormatted >= 100000000
+            ? `Approved infinite ${approvedToken} for liquidity`
+            : `Approved ${approvalAmountFormatted.toLocaleString()} ${approvedToken} for liquidity`;
+
+          toast.success(`${approvedToken} Approved`, {
+            icon: React.createElement(BadgeCheck, { className: "h-4 w-4 text-green-500" }),
+            description: approvalDescription,
+            action: {
+              label: "View Transaction",
+              onClick: () => window.open(`https://sepolia.basescan.org/tx/${approveTxHash}`, '_blank')
+            }
+          });
           
           // Update completed approvals (only if not already completed)
           let updatedCompletedApprovals = completedApprovals;
@@ -868,17 +954,43 @@ export function useAddLiquidityTransaction({
     }
     
     if (approveWriteError || approveReceiptError) {
-      showErrorToast("Approval Failed", "Token approval transaction failed.");
+      toast.error("Approval Failed", {
+        icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
+        description: "Token approval transaction failed.",
+        action: {
+          label: "Open Ticket",
+          onClick: () => window.open('https://discord.gg/alphix', '_blank')
+        }
+      });
       setStep('input');
       setIsWorking(false);
       resetApproveWriteContract();
     }
   }, [isApproved, approveWriteError, approveReceiptError, preparedTxData, accountAddress, token0Symbol, token1Symbol, amount0, amount1, onApprovalInsufficient, resetApproveWriteContract, allRequiredApprovals, completedApprovals, activeInputSide, calculatedData, tickLower, tickUpper, chainId, approveTxHash]);
 
+  // Track processed mint hashes to prevent duplicate toasts
+  const processedMintHashRef = useRef<string | null>(null);
+
   // Update states when mint transaction is completed
   useEffect(() => {
-    if (isMintConfirmed && accountAddress) {
-      showSuccessToast("Position Created");
+    if (isMintConfirmed && accountAddress && mintTxHash) {
+      // Guard against re-processing the same transaction
+      if (processedMintHashRef.current === mintTxHash) {
+        return;
+      }
+      processedMintHashRef.current = mintTxHash;
+
+      // Show success toast & trigger balance refresh
+      toast.success("Position Created", {
+        icon: React.createElement(BadgeCheck, { className: "h-4 w-4 text-green-500" }),
+        description: `Liquidity added to ${token0Symbol}/${token1Symbol} pool successfully`,
+        action: mintTxHash ? {
+          label: "View Transaction",
+          onClick: () => window.open(`https://sepolia.basescan.org/tx/${mintTxHash}`, '_blank')
+        } : undefined
+      });
+      localStorage.setItem(`walletBalancesRefreshAt_${accountAddress}`, String(Date.now()));
+      window.dispatchEvent(new Event('walletBalancesRefresh'));
       
       // Delegate complex refresh logic to parent component (like other hooks do)
       (async () => {
@@ -925,7 +1037,14 @@ export function useAddLiquidityTransaction({
     }
     
     if (mintSendError || mintReceiptError) {
-      showErrorToast("Transaction Failed", "Mint transaction failed.");
+      toast.error("Transaction Failed", {
+        icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
+        description: "Mint transaction failed.",
+        action: {
+          label: "Open Ticket",
+          onClick: () => window.open('https://discord.gg/alphix', '_blank')
+        }
+      });
       setStep('input');
       setIsWorking(false);
       resetSendTransaction();

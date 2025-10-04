@@ -28,7 +28,7 @@ import JSBI from 'jsbi';
 
 interface UseDecreaseLiquidityProps {
   onLiquidityDecreased: (info?: { txHash?: `0x${string}`; blockNumber?: bigint; isFullBurn?: boolean }) => void;
-  onFeesCollected?: () => void;
+  onFeesCollected?: (info?: { txHash?: `0x${string}`; blockNumber?: bigint }) => void;
 }
 
 export interface DecreasePositionData {
@@ -100,11 +100,25 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
 
   const decreaseLiquidity = useCallback(async (positionData: DecreasePositionData, decreasePercentage: number, opts?: DecreaseOptions) => {
     if (!accountAddress || !chainId) {
-      toast.error("Wallet Not Connected", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Please connect your wallet and try again." });
+      toast.error("Wallet Not Connected", { 
+        icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), 
+        description: "Please connect your wallet and try again.",
+        action: {
+          label: "Open Ticket",
+          onClick: () => window.open('https://discord.gg/alphix', '_blank')
+        }
+      });
       return;
     }
     if (!V4_POSITION_MANAGER_ADDRESS) {
-      toast.error("Configuration Error", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Position Manager address not set." });
+      toast.error("Configuration Error", { 
+        icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), 
+        description: "Position Manager address not set.",
+        action: {
+          label: "Open Ticket",
+          onClick: () => window.open('https://discord.gg/alphix', '_blank')
+        }
+      });
       return;
     }
     
@@ -332,6 +346,27 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
             args: [[calldata] as Hex[]],
             value: BigInt(value || 0),
             chainId,
+          } as any, {
+            onError: (error: any) => {
+              // Extract user-friendly error message
+              let errorMessage = 'Transaction rejected';
+              if (error?.shortMessage) {
+                errorMessage = error.shortMessage;
+              } else if (error?.message) {
+                const match = error.message.match(/^([^\.]+\.)(?:\s|Request|Details|Contract|Docs)/);
+                errorMessage = match ? match[1].trim() : error.message.split('\n')[0];
+              }
+
+              toast.error(`${actionName.charAt(0).toUpperCase() + actionName.slice(1)} Failed`, {
+                icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
+                description: errorMessage,
+                action: {
+                  label: "Copy Error",
+                  onClick: () => navigator.clipboard.writeText(error?.message || errorMessage)
+                }
+              });
+              setIsDecreasing(false);
+            }
           } as any);
           return; // Done via removeCallParameters path
         } catch (e) {
@@ -597,20 +632,45 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
       const unlockData = planner.finalize();
       
       // (debug logging removed)
-      
+
       writeContract({
         address: V4_POSITION_MANAGER_ADDRESS as Hex,
         abi: V4_POSITION_MANAGER_ABI,
         functionName: 'modifyLiquidities',
         args: [unlockData as Hex, deadline],
         chainId: chainId,
-      });
+      }, {
+        onError: (error: any) => {
+          // Extract user-friendly error message
+          let errorMessage = 'Transaction rejected';
+          if (error?.shortMessage) {
+            errorMessage = error.shortMessage;
+          } else if (error?.message) {
+            const match = error.message.match(/^([^\.]+\.)(?:\s|Request|Details|Contract|Docs)/);
+            errorMessage = match ? match[1].trim() : error.message.split('\n')[0];
+          }
+
+          toast.error(`${actionName.charAt(0).toUpperCase() + actionName.slice(1)} Failed`, {
+            icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
+            description: errorMessage,
+            action: {
+              label: "Copy Error",
+              onClick: () => navigator.clipboard.writeText(error?.message || errorMessage)
+            }
+          });
+          setIsDecreasing(false);
+        }
+      } as any);
     } catch (error: any) {
       console.error(`Error preparing ${actionName} transaction:`, error);
       const errorMessage = error.message || `Could not prepare the ${actionName} transaction.`;
-      toast.error(`${actionName.charAt(0).toUpperCase() + actionName.slice(1)} Preparation Failed`, { 
+      toast.error("Preparation Error", { 
         icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
-        description: errorMessage 
+        description: errorMessage,
+        action: {
+          label: "Copy Error",
+          onClick: () => navigator.clipboard.writeText(errorMessage)
+        }
       });
       setIsDecreasing(false);
     }
@@ -619,7 +679,14 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
   useEffect(() => {
     if (decreaseSendError) {
       const message = decreaseSendError instanceof BaseError ? decreaseSendError.shortMessage : decreaseSendError.message;
-      toast.error("Withdraw Failed", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: message });
+      toast.error("Transaction Failed", { 
+        icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), 
+        description: message,
+        action: {
+          label: "Copy Error",
+          onClick: () => navigator.clipboard.writeText(message || '')
+        }
+      });
       setIsDecreasing(false);
     }
   }, [decreaseSendError]);
@@ -644,7 +711,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
           blockNumber = receipt?.blockNumber;
         } catch {}
         if (lastWasCollectOnly.current && onFeesCollected) {
-          onFeesCollected();
+          onFeesCollected({ txHash: hash as `0x${string}`, blockNumber });
         } else {
           onLiquidityDecreased({ txHash: hash as `0x${string}`, blockNumber, isFullBurn: lastIsFullBurn.current } as any);
         }
@@ -686,10 +753,14 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
       processedTransactions.current.add(hashString);
       
        const message = decreaseConfirmError instanceof BaseError ? decreaseConfirmError.shortMessage : decreaseConfirmError.message;
-      toast.error("Withdraw Failed", { 
+      toast.error("Transaction Failed", { 
         id: hash,
         icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
-        description: message
+        description: message,
+        action: {
+          label: "Copy Error",
+          onClick: () => navigator.clipboard.writeText(message || '')
+        }
       });
       setIsDecreasing(false);
     }
@@ -700,11 +771,25 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
     // Claim fees only: decrease 0 liquidity, take pair, optional sweep
     claimFees: useCallback(async (tokenIdLike: string | number) => {
       if (!accountAddress || !chainId) {
-        toast.error("Wallet Not Connected", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Please connect your wallet and try again." });
+        toast.error("Wallet Not Connected", { 
+          icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), 
+          description: "Please connect your wallet and try again.",
+          action: {
+            label: "Open Ticket",
+            onClick: () => window.open('https://discord.gg/alphix', '_blank')
+          }
+        });
         return;
       }
       if (!V4_POSITION_MANAGER_ADDRESS) {
-        toast.error("Configuration Error", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Position Manager address not set." });
+        toast.error("Configuration Error", { 
+          icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), 
+          description: "Position Manager address not set.",
+          action: {
+            label: "Open Ticket",
+            onClick: () => window.open('https://discord.gg/alphix', '_blank')
+          }
+        });
         return;
       }
 
@@ -763,9 +848,37 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
           functionName: 'modifyLiquidities',
           args: [unlockData as Hex, deadline],
           chainId: chainId,
-        });
+        }, {
+          onError: (error: any) => {
+            // Extract user-friendly error message
+            let errorMessage = 'Transaction rejected';
+            if (error?.shortMessage) {
+              errorMessage = error.shortMessage;
+            } else if (error?.message) {
+              const match = error.message.match(/^([^\.]+\.)(?:\s|Request|Details|Contract|Docs)/);
+              errorMessage = match ? match[1].trim() : error.message.split('\n')[0];
+            }
+
+            toast.error('Collect Failed', {
+              icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
+              description: errorMessage,
+              action: {
+                label: "Copy Error",
+                onClick: () => navigator.clipboard.writeText(error?.message || errorMessage)
+              }
+            });
+            setIsDecreasing(false);
+          }
+        } as any);
       } catch (e: any) {
-        toast.error('Claim Fees Preparation Failed', { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: e?.message || 'Could not prepare claim-fees transaction.' });
+        toast.error('Preparation Error', { 
+          icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), 
+          description: e?.message || 'Could not prepare claim-fees transaction.',
+          action: {
+            label: "Copy Error",
+            onClick: () => navigator.clipboard.writeText(e?.message || 'Could not prepare claim-fees transaction.')
+          }
+        });
         setIsDecreasing(false);
       }
     }, [accountAddress, chainId, writeContract, resetWriteContract, getTokenIdFromPosition]),

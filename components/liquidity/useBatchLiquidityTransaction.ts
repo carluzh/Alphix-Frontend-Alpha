@@ -202,9 +202,13 @@ export function useBatchLiquidityTransaction() {
         error: errorMessage
       }));
 
-      toast.error("Failed to prepare batch transaction", {
-        description: errorMessage,
+      toast.error("Preparation Error", {
         icon: <OctagonX className="h-4 w-4 text-red-500" />,
+        description: errorMessage,
+        action: {
+          label: "Copy Error",
+          onClick: () => navigator.clipboard.writeText(errorMessage)
+        }
       });
 
       throw error;
@@ -257,9 +261,13 @@ export function useBatchLiquidityTransaction() {
         error: errorMessage
       }));
 
-      toast.error("Failed to sign permit", {
-        description: errorMessage,
+      toast.error("Signature Failed", {
         icon: <OctagonX className="h-4 w-4 text-red-500" />,
+        description: errorMessage,
+        action: {
+          label: "Copy Error",
+          onClick: () => navigator.clipboard.writeText(errorMessage)
+        }
       });
 
       throw error;
@@ -321,9 +329,13 @@ export function useBatchLiquidityTransaction() {
         error: eip5792Error.message
       }));
 
-      toast.error("Failed to execute batch transaction", {
-        description: eip5792Error.message,
+      toast.error("Batch Failed", {
         icon: <OctagonX className="h-4 w-4 text-red-500" />,
+        description: eip5792Error.message,
+        action: {
+          label: "Copy Error",
+          onClick: () => navigator.clipboard.writeText(eip5792Error.message)
+        }
       });
 
       throw eip5792Error;
@@ -399,9 +411,13 @@ export function useBatchLiquidityTransaction() {
         error: errorMessage
       }));
 
-      toast.error("Failed to execute transactions", {
-        description: errorMessage,
+      toast.error("Transaction Failed", {
         icon: <OctagonX className="h-4 w-4 text-red-500" />,
+        description: errorMessage,
+        action: {
+          label: "Copy Error",
+          onClick: () => navigator.clipboard.writeText(errorMessage)
+        }
       });
 
       throw error;
@@ -436,9 +452,13 @@ export function useBatchLiquidityTransaction() {
             error: 'Batch transaction failed'
           }));
 
-          toast.error("Batch transaction failed", {
-            description: "One or more operations in the batch failed",
+          toast.error("Batch Failed", {
             icon: <OctagonX className="h-4 w-4 text-red-500" />,
+            description: "One or more operations in the batch failed",
+            action: {
+              label: "Open Ticket",
+              onClick: () => window.open('https://discord.gg/alphix', '_blank')
+            }
           });
           break;
 
