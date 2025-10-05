@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import Image from "next/image";
 import { useAccount, useBalance } from "wagmi";
 import { toast } from "sonner";
+import { useEthersSigner } from "@/hooks/useEthersSigner";
 import { V4_POOL_FEE, V4_POOL_TICK_SPACING, V4_POOL_HOOKS } from "@/lib/swap-constants";
 import { TOKEN_DEFINITIONS, TokenSymbol } from "@/lib/pools-config";
 import { baseSepolia } from "@/lib/wagmiConfig";
@@ -35,9 +36,10 @@ const safeParseUnits = (amount: string, decimals: number): bigint => {
   
   return viemParseUnits(finalString, decimals);
 };
-import { useAddLiquidityTransaction } from "./useAddLiquidityTransaction";
+import { useAddLiquidityTransactionV2 } from "./useAddLiquidityTransactionV2";
 import { motion, AnimatePresence, useAnimation } from "framer-motion";
 import { InteractiveRangeChart } from "./InteractiveRangeChart";
+import { RangeSelectionModalV2 } from "./range-selection";
 import {
   Tooltip,
   TooltipContent,
@@ -226,7 +228,9 @@ export function AddLiquidityForm({
   
   // UI flow management
   const [depositStep, setDepositStep] = useState<'range' | 'amount'>('amount');
-  
+  const [showingTransactionSteps, setShowingTransactionSteps] = useState(false);
+  const [showRangeModal, setShowRangeModal] = useState(false);
+
   // Chart state
   const [xDomain, setXDomain] = useState<[number, number]>([-120000, 120000]);
   const [currentPriceLine, setCurrentPriceLine] = useState<number | null>(null);
@@ -264,6 +268,7 @@ export function AddLiquidityForm({
   
   const { address: accountAddress, chainId, isConnected } = useAccount();
   const { data: allPrices } = useAllPrices();
+  const signer = useEthersSigner();
 
   // Map any token symbol (e.g., aUSDC, aETH) to a USD price
   const getUSDPriceForSymbol = useCallback((symbol?: string): number => {
@@ -297,30 +302,19 @@ export function AddLiquidityForm({
     activeInputSide
   });
 
-  // Use the transaction hook
+  // Use the new transaction hooks (Uniswap-style)
   const {
-    isWorking,
-    step,
-    preparedTxData,
-    involvedTokensCount, 
-    completedERC20ApprovalsCount,
-    needsERC20Approvals,
-    allRequiredApprovals,
-    completedApprovals,
+    approvalData,
     isCheckingApprovals,
-    batchPermitSigned,
-    
-    isApproveWritePending,
+    isWorking,
     isApproving,
-    isMintSendPending,
-    isMintConfirming,
-    isMintSuccess,
-    
-    handlePrepareMint,
+    isDepositConfirming,
+    isDepositSuccess,
     handleApprove,
-    handleMint,
-    resetTransactionState,
-  } = useAddLiquidityTransaction({
+    handleDeposit,
+    refetchApprovals,
+    reset: resetTransaction,
+  } = useAddLiquidityTransactionV2({
     token0Symbol,
     token1Symbol,
     amount0,
@@ -330,11 +324,12 @@ export function AddLiquidityForm({
     activeInputSide,
     calculatedData,
     onLiquidityAdded,
-    onApprovalInsufficient: () => {
-      setApprovalWiggleCount(prev => prev + 1);
-    },
     onOpenChange: () => {},
   });
+
+  // Track which step we're on manually (no auto-progression)
+  const [currentTransactionStep, setCurrentTransactionStep] = useState<'idle' | 'approving_token0' | 'approving_token1' | 'signing_permit' | 'depositing'>('idle');
+  const [permitSignature, setPermitSignature] = useState<string>();
 
   // Balance hooks with refetch
   const { data: token0BalanceData, isLoading: isLoadingToken0Balance, refetch: refetchToken0Balance } = useBalance({
@@ -841,7 +836,7 @@ export function AddLiquidityForm({
 
   // Handle selecting a preset from dropdown
   const handleSelectPreset = (preset: string) => {
-    if (preparedTxData) resetTransactionState();
+    resetTransaction();
     
     setActivePreset(preset);
     setShowPresetSelector(false); // Close the selector
@@ -1163,66 +1158,167 @@ export function AddLiquidityForm({
     }
   };
 
-  // Handle preparation and submission
+  // Handle preparation and submission with manual step progression
   const handlePrepareAndSubmit = async () => {
     if (isInsufficientBalance) {
       showErrorToast("Insufficient Balance");
       return;
     }
-    
+
     if (parseFloat(amount0 || "0") <= 0 && parseFloat(amount1 || "0") <= 0) {
       showErrorToast("Invalid Amount", "Must be greater than 0");
       return;
     }
-    
-    if (preparedTxData) {
-      if (step === 'approve') handleApprove();
-      else if (step === 'mint') handleMint();
-    } else {
-      // Check if all involved tokens have been approved
-      const allTokensCompleted = completedERC20ApprovalsCount === allRequiredApprovals.length && allRequiredApprovals.length > 0;
-      
-      if (allTokensCompleted) {
-        // All approvals complete, go straight to mint
-        const preparedData = await handlePrepareMint();
-        if (preparedData && !preparedData.needsApproval) {
-          handleMint();
-        }
-      } else {
-        // Start the approval process
-        await handlePrepareMint();
+
+    // First click: switch to transaction steps view
+    if (!showingTransactionSteps) {
+      setShowingTransactionSteps(true);
+      return;
+    }
+
+    // Wait for approval data to load
+    if (!approvalData || isCheckingApprovals) {
+      return;
+    }
+
+    // Determine next step based on current state and approval data
+    if (currentTransactionStep === 'idle') {
+      // Check what's needed
+      if (approvalData.needsToken0ERC20Approval) {
+        setCurrentTransactionStep('approving_token0');
+        await handleApprove(token0Symbol);
+        setCurrentTransactionStep('idle');
+        await refetchApprovals();
+        return;
       }
+      if (approvalData.needsToken1ERC20Approval) {
+        setCurrentTransactionStep('approving_token1');
+        await handleApprove(token1Symbol);
+        setCurrentTransactionStep('idle');
+        await refetchApprovals();
+        return;
+      }
+      if ((approvalData.needsToken0Permit || approvalData.needsToken1Permit) && !permitSignature) {
+        setCurrentTransactionStep('signing_permit');
+        try {
+          await signPermit();
+          // After signing, don't refetch - the signature is enough for the deposit
+          setCurrentTransactionStep('idle');
+        } catch (error) {
+          // Reset state on error (user rejection or failure)
+          setCurrentTransactionStep('idle');
+          return;
+        }
+        return;
+      }
+      // All approvals/permits done, execute deposit
+      setCurrentTransactionStep('depositing');
+      await handleDeposit(permitSignature);
+      setCurrentTransactionStep('idle');
     }
   };
 
-  // Determine button text based on current state
+  // Sign the batch permit
+  const signPermit = useCallback(async () => {
+    if (!approvalData?.permitBatchData || !approvalData?.signatureDetails) {
+      return;
+    }
+
+    if (!signer) {
+      showErrorToast("Wallet not connected");
+      return;
+    }
+
+    try {
+      toast('Sign in Wallet', {
+        icon: React.createElement(InfoIcon, { className: 'h-4 w-4' })
+      });
+
+      const signature = await (signer as any)._signTypedData(
+        approvalData.signatureDetails.domain,
+        approvalData.signatureDetails.types,
+        approvalData.permitBatchData
+      );
+
+      setPermitSignature(signature);
+
+      // Show success toast
+      const currentTime = Math.floor(Date.now() / 1000);
+      const sigDeadline = parseInt(approvalData.permitBatchData.sigDeadline || '0');
+      const durationSeconds = sigDeadline - currentTime;
+
+      let durationFormatted = "";
+      if (durationSeconds >= 86400) {
+        const days = Math.ceil(durationSeconds / 86400);
+        durationFormatted = `${days} day${days > 1 ? 's' : ''}`;
+      } else if (durationSeconds >= 3600) {
+        const hours = Math.ceil(durationSeconds / 3600);
+        durationFormatted = `${hours} hour${hours > 1 ? 's' : ''}`;
+      } else {
+        const minutes = Math.ceil(durationSeconds / 60);
+        durationFormatted = `${minutes} minute${minutes > 1 ? 's' : ''}`;
+      }
+
+      toast.success('Batch Signature Complete', {
+        icon: React.createElement(BadgeCheck, { className: 'h-4 w-4 text-green-500' }),
+        description: `Batch permit signed successfully for ${durationFormatted}`
+      });
+    } catch (error: any) {
+      const isUserRejection =
+        error.message?.toLowerCase().includes('user rejected') ||
+        error.message?.toLowerCase().includes('user denied') ||
+        error.code === 4001;
+
+      if (!isUserRejection) {
+        showErrorToast("Signature Error", error.message);
+      }
+      throw error;
+    }
+  }, [approvalData, signer]);
+
+  // Determine button text based on current state and what's needed next
   const getButtonText = () => {
-    // Check for insufficient balance first (only when in input step)
-    if (step === 'input' && isInsufficientBalance) {
+    if (isInsufficientBalance) {
       return 'Insufficient Balance';
     }
 
-    if (step === 'approve') {
-      if (isApproveWritePending || isApproving) {
-        return `Approve ${preparedTxData?.approvalTokenSymbol || 'Tokens'}`;
+    if (isWorking) {
+      if (currentTransactionStep === 'approving_token0') {
+        return `Approving ${token0Symbol}...`;
       }
-      return `Approve ${preparedTxData?.approvalTokenSymbol || 'Tokens'}`;
-    } else if (step === 'mint') {
-      if (!batchPermitSigned) {
-        if (isMintSendPending || isWorking) {
-          return 'Sign';
-        }
-        return 'Sign';
-      } else {
-        if (isMintSendPending || isMintConfirming) {
-          return 'Deposit';
-        }
-        return 'Deposit';
+      if (currentTransactionStep === 'approving_token1') {
+        return `Approving ${token1Symbol}...`;
       }
-    } else {
-      // step === 'input'
+      if (currentTransactionStep === 'signing_permit') {
+        return 'Signing...';
+      }
+      if (currentTransactionStep === 'depositing' || isDepositConfirming) {
+        return 'Depositing...';
+      }
+      return 'Processing...';
+    }
+
+    // Not in transaction steps yet
+    if (!showingTransactionSteps) {
       return 'Deposit';
     }
+
+    // Waiting for approval data to load
+    if (!approvalData) {
+      return 'Loading...';
+    }
+
+    // In transaction steps - show what will happen next
+    if (approvalData.needsToken0ERC20Approval) {
+      return `Approve ${token0Symbol}`;
+    }
+    if (approvalData.needsToken1ERC20Approval) {
+      return `Approve ${token1Symbol}`;
+    }
+    if ((approvalData.needsToken0Permit || approvalData.needsToken1Permit) && !permitSignature) {
+      return 'Sign Permit';
+    }
+    return 'Deposit';
   };
 
   // Effect to auto-apply active percentage preset when currentPrice changes OR when activePreset changes
@@ -1276,7 +1372,7 @@ export function AddLiquidityForm({
 
         if (newTickUpper - newTickLower >= defaultTickSpacing) {
             if (newTickLower.toString() !== tickLower || newTickUpper.toString() !== tickUpper) {
-                if (preparedTxData) resetTransactionState();
+                resetTransaction();
                 setTickLower(newTickLower.toString());
                 setTickUpper(newTickUpper.toString());
                 setInitialDefaultApplied(true); 
@@ -1290,7 +1386,7 @@ export function AddLiquidityForm({
         }
     } else if (activePreset === "Full Range") {
         if (tickLower !== sdkMinTick.toString() || tickUpper !== sdkMaxTick.toString()) {
-            if (preparedTxData) resetTransactionState();
+            resetTransaction();
             setTickLower(sdkMinTick.toString());
             setTickUpper(sdkMaxTick.toString());
             setInitialDefaultApplied(true); 
@@ -1298,7 +1394,7 @@ export function AddLiquidityForm({
             resetChartViewbox(sdkMinTick, sdkMaxTick);
         }
     }
-  }, [currentPrice, currentPoolTick, activePreset, defaultTickSpacing, sdkMinTick, sdkMaxTick, tickLower, tickUpper, preparedTxData, resetTransactionState]);
+  }, [currentPrice, currentPoolTick, activePreset, defaultTickSpacing, sdkMinTick, sdkMaxTick, tickLower, tickUpper, resetTransaction]);
 
   // Effect to calculate Capital Efficiency and Enhanced APR
   useEffect(() => {
@@ -1520,7 +1616,7 @@ export function AddLiquidityForm({
     }
     
     if (newTickLower !== parseInt(tickLower) || newTickUpper !== parseInt(tickUpper)) {
-      if (preparedTxData) resetTransactionState();
+      resetTransaction();
       setTickLower(newTickLower.toString());
       setTickUpper(newTickUpper.toString());
       setInitialDefaultApplied(true);
@@ -1910,16 +2006,18 @@ export function AddLiquidityForm({
         setAmount0FullPrecision("");
         setAmount1FullPrecision("");
             setCalculatedData(null);
-            if (preparedTxData !== null || step !== 'input') {
-                resetTransactionState();
-            }
+            resetTransaction();
+            setShowingTransactionSteps(false);
+            setCurrentTransactionStep('idle');
+            setPermitSignature(undefined);
         }
     } else if (parseFloat(amount0) <= 0 && parseFloat(amount1) <= 0) {
         // Fallback: ensure cleanup if all amounts are zero or invalid, and no calculation was triggered.
         setCalculatedData(null);
-        if (preparedTxData !== null || step !== 'input') {
-            resetTransactionState();
-        }
+        resetTransaction();
+        setShowingTransactionSteps(false);
+        setCurrentTransactionStep('idle');
+        setPermitSignature(undefined);
     }
 
     prevCalculationDeps.current = currentDeps;
@@ -1930,10 +2028,17 @@ export function AddLiquidityForm({
     tickUpper,
     activeInputSide,
     debouncedCalculateAmountAndCheckApprovals,
-    preparedTxData, 
-    step,           
-    resetTransactionState,
+    resetTransaction,
   ]);
+
+  // Reset to range view when deposit succeeds
+  useEffect(() => {
+    if (isDepositSuccess) {
+      setShowingTransactionSteps(false);
+      setCurrentTransactionStep('idle');
+      setPermitSignature(undefined);
+    }
+  }, [isDepositSuccess]);
 
   // Check for insufficient balance
   useEffect(() => {
@@ -2313,7 +2418,7 @@ export function AddLiquidityForm({
 
                           // Clear full precision when user manually edits
                           setAmount0FullPrecision("");
-                          if (preparedTxData) { resetTransactionState(); }
+                          resetTransaction();
                           setAmount0(newValue);
                           setActiveInputSide('amount0');
                         }}
@@ -2422,7 +2527,7 @@ export function AddLiquidityForm({
 
                           // Clear full precision when user manually edits
                           setAmount1FullPrecision("");
-                          if (preparedTxData) { resetTransactionState(); }
+                          resetTransaction();
                           setAmount1(newValue);
                           setActiveInputSide('amount1');
                         }}
@@ -2683,25 +2788,28 @@ export function AddLiquidityForm({
                 </div>
               </div>
 
-              {/* Range Preview Chart with Interactive Controls */}
-              {step === 'input' ? (
-                <div 
-                  className="p-3 border border-dashed rounded-md bg-muted/10 mb-4"
+              {/* Range Preview Chart OR Transaction Steps (conditional based on flow state) */}
+              {!showingTransactionSteps ? (
+                <div
+                  className={`pt-3 px-3 pb-1.5 border border-dashed rounded-md mb-4 transition-all duration-200 group ${
+                    isPoolStateLoading || !isConnected
+                      ? 'bg-muted/10'
+                      : 'bg-muted/10 cursor-pointer hover:bg-primary/[0.025] hover:border-primary/10'
+                  }`}
+                  onClick={!isPoolStateLoading && isConnected ? () => setShowRangeModal(true) : undefined}
                 >
                   {isPoolStateLoading || !isConnected ? (
-                    <div className="w-full h-[80px] relative overflow-hidden flex flex-col items-center justify-center bg-muted/50 rounded-md"
-                      // style={{ backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
-                    >
-                      <Image 
-                        src="/LogoIconWhite.svg" 
-                        alt="Alphix Logo" 
+                    <div className="w-full h-[100px] relative overflow-hidden flex flex-col items-center justify-center bg-muted/50 rounded-md">
+                      <Image
+                        src="/LogoIconWhite.svg"
+                        alt="Alphix Logo"
                         width={32}
                         height={32}
                         className="animate-pulse opacity-75"
                       />
                     </div>
                   ) : (
-                    <div className="relative">
+                    <div className="relative pointer-events-none h-[100px]">
                       <InteractiveRangeChart
                         selectedPoolId={selectedPoolId}
                         chainId={chainId}
@@ -2716,16 +2824,12 @@ export function AddLiquidityForm({
                         onRangeChange={(newLower, newUpper) => {
                           setTickLower(newLower);
                           setTickUpper(newUpper);
-                          if (preparedTxData) resetTransactionState();
+                          resetTransaction();
                           setInitialDefaultApplied(true);
-                          setActivePreset(null); // Clear preset when manually dragging
+                          setActivePreset(null);
                         }}
                         onXDomainChange={(newDomain) => {
-                          // Update the domain
                           setXDomain(newDomain);
-                          
-                          // Don't reset the range position - let it stay where the user dragged it
-                          // The InteractiveRangeChart will maintain the correct position
                         }}
                         sdkMinTick={sdkMinTick}
                         sdkMaxTick={sdkMaxTick}
@@ -2734,16 +2838,47 @@ export function AddLiquidityForm({
                         poolToken1={poolToken1}
                         onDragStateChange={(state) => setIsDraggingRange(state)}
                         onLoadingChange={(loading) => setIsChartLoading(loading)}
+                        readOnly={true}
                       />
-                      
-                      {/* Chart labels are now handled internally by InteractiveRangeChart */}
-                      
-                      {/* Loading overlay for chart data using existing pattern */}
+
+                      <RangeSelectionModalV2
+                        isOpen={showRangeModal}
+                        onClose={() => setShowRangeModal(false)}
+                        onConfirm={(newTickLower, newTickUpper) => {
+                          setTickLower(newTickLower);
+                          setTickUpper(newTickUpper);
+                          resetTransaction();
+                          setInitialDefaultApplied(true);
+                          setActivePreset(null);
+                        }}
+                        initialTickLower={tickLower}
+                        initialTickUpper={tickUpper}
+                        selectedPoolId={selectedPoolId}
+                        chainId={chainId}
+                        token0Symbol={token0Symbol}
+                        token1Symbol={token1Symbol}
+                        currentPrice={currentPrice}
+                        currentPoolTick={currentPoolTick}
+                        currentPoolSqrtPriceX96={currentPoolSqrtPriceX96}
+                        minPriceDisplay={minPriceInputString}
+                        maxPriceDisplay={maxPriceInputString}
+                        baseTokenSymbol={baseTokenForPriceDisplay}
+                        sdkMinTick={sdkMinTick}
+                        sdkMaxTick={sdkMaxTick}
+                        defaultTickSpacing={defaultTickSpacing}
+                        xDomain={xDomain}
+                        onXDomainChange={(newDomain) => setXDomain(newDomain)}
+                        poolToken0={poolToken0}
+                        poolToken1={poolToken1}
+                        presetOptions={presetOptions}
+                        isInverted={isInverted}
+                      />
+
                       {(isChartLoading || isCalculating) && (
                         <div className="absolute inset-0 flex items-center justify-center bg-muted/20 rounded">
-                          <Image 
-                            src="/LogoIconWhite.svg" 
-                            alt="Loading" 
+                          <Image
+                            src="/LogoIconWhite.svg"
+                            alt="Loading"
                             width={24}
                             height={24}
                             className="animate-pulse opacity-75"
@@ -2755,56 +2890,70 @@ export function AddLiquidityForm({
                 </div>
               ) : (
                 <div className="p-3 border border-dashed rounded-md bg-muted/10 mb-4">
-                  <p className="text-sm font-medium mb-2 text-foreground/80">Transaction Steps</p>
+                <p className="text-sm font-medium mb-2 text-foreground/80">Transaction Steps</p>
                   <div className="space-y-1.5 text-xs text-muted-foreground">
                       {/* ERC20 Approvals to Permit2 */}
                       <div className="flex items-center justify-between">
                           <span>Token Approvals</span>
                           <span>
-                            { (step === 'approve' && (isApproveWritePending || isApproving)) || isCheckingApprovals
+                            { isApproving || isCheckingApprovals
                               ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
                               : (
-                                <motion.span 
+                                <motion.span
                                   animate={approvalWiggleControls}
-                                  className={`text-xs font-mono ${completedERC20ApprovalsCount === allRequiredApprovals.length && allRequiredApprovals.length > 0 ? 'text-green-500' : approvalWiggleCount > 0 ? 'text-red-500' : 'text-muted-foreground'}`}
+                                  className={`text-xs font-mono ${
+                                    !approvalData?.needsToken0ERC20Approval && !approvalData?.needsToken1ERC20Approval
+                                      ? 'text-green-500'
+                                      : approvalWiggleCount > 0
+                                      ? 'text-red-500'
+                                      : 'text-muted-foreground'
+                                  }`}
                                 >
-                                  {isCheckingApprovals ? 'Checking...' : `${completedERC20ApprovalsCount}/${allRequiredApprovals.length > 0 ? allRequiredApprovals.length : '-'}`}
+                                  {isCheckingApprovals
+                                    ? 'Checking...'
+                                    : !approvalData
+                                    ? '-'
+                                    : (() => {
+                                        const totalNeeded = [approvalData.needsToken0ERC20Approval, approvalData.needsToken1ERC20Approval].filter(Boolean).length;
+                                        const completed = 2 - totalNeeded;
+                                        return `${completed}/2`;
+                                      })()}
                                 </motion.span>
                               )
                             }
                           </span>
                       </div>
-                      
+
                       {/* Permit2 Signature */}
                       <div className="flex items-center justify-between">
                           <span>Permit Signature</span>
                           <span>
-                            { (step === 'mint' && !batchPermitSigned && (isMintSendPending || isWorking))
+                            { currentTransactionStep === 'signing_permit'
                               ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
                               : (
-                                <span className={`text-xs font-mono ${batchPermitSigned ? 'text-green-500' : ''}`}>
-                                  {batchPermitSigned ? '1/1' : '0/1'}
+                                <span className={`text-xs font-mono ${permitSignature ? 'text-green-500' : ''}`}>
+                                  {permitSignature ? '1/1' : '0/1'}
                                 </span>
                               )
                             }
                           </span>
                       </div>
-                      
+
                       {/* Deposit Transaction */}
                       <div className="flex items-center justify-between">
                           <span>Deposit Transaction</span>
                           <span>
-                            { (step === 'mint' && batchPermitSigned && (isMintSendPending || isMintConfirming))
+                            { isDepositConfirming
                               ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
                               : (
-                                <span className={`text-xs font-mono ${isMintSuccess ? 'text-green-500' : ''}`}>
-                                  {isMintSuccess ? '1/1' : '0/1'}
+                                <span className={`text-xs font-mono ${isDepositSuccess ? 'text-green-500' : ''}`}>
+                                  {isDepositSuccess ? '1/1' : '0/1'}
                                 </span>
                               )
                             }
                           </span>
                       </div>
-                      
+
                   </div>
                 </div>
               )}
@@ -2824,36 +2973,27 @@ export function AddLiquidityForm({
                 <Button
                   className={cn(
                     "w-full",
-                    (isWorking || isCalculating || isPoolStateLoading || isApproveWritePending || isMintSendPending || isCheckingApprovals ||
-                    (step === 'input' && (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0")) && !preparedTxData) ||
-                    (step === 'input' && isInsufficientBalance)) ?
+                    (isWorking || isCalculating || isPoolStateLoading || isCheckingApprovals ||
+                    (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0")) ||
+                    isInsufficientBalance) ?
                       "relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 !opacity-100 cursor-default text-white/75"
                       :
                       "text-sidebar-primary border border-sidebar-primary bg-[#3d271b] hover:bg-[#3d271b]/90"
                   )}
-                  onClick={() => {
-                    if (step === 'input') handlePrepareAndSubmit();
-                    else if (step === 'approve') handleApprove();
-                    else if (step === 'mint') handleMint();
-                  }}
-                  disabled={isWorking || 
+                  onClick={handlePrepareAndSubmit}
+                  disabled={isWorking ||
                     isCalculating ||
-                    isPoolStateLoading || 
-                    isApproveWritePending ||
-                    isMintSendPending ||
+                    isPoolStateLoading ||
                     isCheckingApprovals ||
-                    (step === 'input' && (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0")) && !preparedTxData) ||
-                    (step === 'input' && isInsufficientBalance)
+                    (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0")) ||
+                    isInsufficientBalance
                   }
-                  style={(isWorking || isCalculating || isPoolStateLoading || isApproveWritePending || isMintSendPending || isCheckingApprovals ||
-                    (step === 'input' && (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0")) && !preparedTxData) ||
-                    (step === 'input' && isInsufficientBalance)) ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
+                  style={(isWorking || isCalculating || isPoolStateLoading || isCheckingApprovals ||
+                    (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0")) ||
+                    isInsufficientBalance) ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
                 >
-                                    <span className={cn(
-                    (step === 'approve' && (isApproveWritePending || isApproving)) ||
-                    (step === 'mint' && (isMintSendPending || isMintConfirming || (!batchPermitSigned && isWorking))) ||
-                    (step === 'input' && (isWorking || isCheckingApprovals)) ||
-                    isPoolStateLoading
+                  <span className={cn(
+                    (isWorking || isCheckingApprovals || isPoolStateLoading)
                       ? "animate-pulse"
                       : ""
                   )}>

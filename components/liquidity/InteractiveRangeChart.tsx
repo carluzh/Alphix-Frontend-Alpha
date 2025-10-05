@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
-import { ResponsiveContainer, ComposedChart, XAxis, YAxis, Area, ReferenceLine, ReferenceArea, Tooltip as RechartsTooltip } from "recharts";
-import { ChevronLeft, ChevronRight, PlusIcon, MinusIcon } from "lucide-react";
+import { ResponsiveContainer, ComposedChart, XAxis, YAxis, Area, ReferenceLine, ReferenceArea, Tooltip as RechartsTooltip, Brush } from "recharts";
+import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Maximize } from "lucide-react";
 import { TOKEN_DEFINITIONS, TokenSymbol } from "@/lib/pools-config";
 import { formatUnits as viemFormatUnits } from "viem";
 import { Token } from '@uniswap/sdk-core';
@@ -70,6 +70,10 @@ interface InteractiveRangeChartProps {
   poolToken1?: any;
   onDragStateChange?: (state: 'left' | 'right' | 'center' | null) => void;
   onLoadingChange?: (isLoading: boolean) => void;
+  onChartClick?: () => void; // NEW: Click handler to open modal
+  readOnly?: boolean; // NEW: Disable all interactions
+  forceDenominationBase?: TokenSymbol; // NEW: Override denomination from parent
+  onReset?: () => void; // NEW: Reset handler for modal
 }
 
 export function InteractiveRangeChart({
@@ -91,7 +95,11 @@ export function InteractiveRangeChart({
   poolToken0,
   poolToken1,
   onDragStateChange,
-  onLoadingChange
+  onLoadingChange,
+  onChartClick,
+  readOnly = false,
+  forceDenominationBase,
+  onReset,
 }: InteractiveRangeChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState<'left' | 'right' | 'center' | null>(null);
@@ -184,14 +192,19 @@ export function InteractiveRangeChart({
 
   // Determine if we need to flip the denomination to show higher prices
   const shouldFlipDenomination = useMemo(() => {
+    // If forced denomination is provided, use it
+    if (forceDenominationBase) {
+      return forceDenominationBase === token0Symbol;
+    }
+
     if (!currentPrice || !token0Symbol || !token1Symbol) return false;
-    
+
     const currentPriceNum = parseFloat(currentPrice);
     const inversePrice = 1 / currentPriceNum;
-    
+
     // If the inverse price is larger, we should flip the denomination
     return inversePrice > currentPriceNum;
-  }, [currentPrice, token0Symbol, token1Symbol]);
+  }, [currentPrice, token0Symbol, token1Symbol, forceDenominationBase]);
 
   // Complete coordinate transformation system
   // When inverted, we create a display coordinate system that makes the chart appear as token1/token0
@@ -948,14 +961,14 @@ export function InteractiveRangeChart({
   };
 
   return (
-    <div className="space-y-2">
-      <div 
-        className="relative h-[80px] w-full touch-manipulation" 
+    <div className="h-full w-full min-h-[80px] flex flex-col">
+      <div
+        className={`relative flex-1 w-full min-h-[60px] ${readOnly ? '' : 'touch-manipulation'}`}
         ref={containerRef}
-        onMouseEnter={() => setIsHovering(true)}
-        onMouseLeave={() => { setIsHovering(false); stopBackgroundPan(); }}
-        onMouseDown={handleBackgroundMouseDown}
-        onTouchStart={(e) => {
+        onMouseEnter={() => !readOnly && setIsHovering(true)}
+        onMouseLeave={() => { !readOnly && setIsHovering(false); !readOnly && stopBackgroundPan(); }}
+        onMouseDown={readOnly ? undefined : handleBackgroundMouseDown}
+        onTouchStart={readOnly ? undefined : (e) => {
           if (e.touches.length === 1) {
             e.preventDefault();
           }
@@ -963,9 +976,9 @@ export function InteractiveRangeChart({
       >
         {/* Chart */}
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart 
+          <ComposedChart
             data={liquidityChartData}
-            margin={{ top: 2, right: 5, bottom: 5, left: 5 }}
+            margin={{ top: 2, right: 5, bottom: 4, left: 5 }}
           >
             <RechartsTooltip cursor={false} content={() => null} />
             <XAxis 
@@ -987,10 +1000,10 @@ export function InteractiveRangeChart({
               allowDecimals={true}
             />
             
-            {/* Step-after area chart for liquidity depth */}
+            {/* Step area chart for liquidity depth - direction changes based on denomination */}
             <Area
               yAxisId="bucketAxis"
-              type="stepAfter"
+              type={shouldFlipDenomination ? "stepBefore" : "stepAfter"}
               dataKey="liquidity"
               stroke="none"
               fill="#404040"
@@ -1013,89 +1026,90 @@ export function InteractiveRangeChart({
             )}
             
             {/* Selected range indicator */}
-            <ReferenceArea 
-              x1={transformTickToDisplay(parseInt(tickLower))} 
-              x2={transformTickToDisplay(parseInt(tickUpper))} 
+            <ReferenceArea
+              x1={transformTickToDisplay(parseInt(tickLower))}
+              x2={transformTickToDisplay(parseInt(tickUpper))}
               yAxisId="bucketAxis"
-              strokeOpacity={0} 
-              fill="#e85102" 
-              fillOpacity={0.25} 
+              strokeOpacity={0}
+              fill="#e85102"
+              fillOpacity={0.25}
               ifOverflow="extendDomain"
-              shape={(props) => {
-                const { x, y, width, height } = props;
-                if (!x || !y || !width || !height) {
-                  return <rect x={0} y={0} width={0} height={0} />;
-                }
-                
-                const radius = 6;
-                
-                return (
-                  <path
-                    d={`M ${x} ${y + height} L ${x} ${y + radius} Q ${x} ${y} ${x + radius} ${y} L ${x + width - radius} ${y} Q ${x + width} ${y} ${x + width} ${y + radius} L ${x + width} ${y + height} Z`}
-                    fill="#e85102"
-                    fillOpacity={0.25}
-                  />
-                );
-              }}
             />
+
           </ComposedChart>
         </ResponsiveContainer>
 
-        {/* Interactive drag handles */}
-        <div className={`absolute inset-0 pointer-events-none transition-opacity duration-200 ${isHovering || isMobile ? 'opacity-100' : 'opacity-0'}`}>
-          {/* Invisible center area - drag to move entire range */}
-          <div 
-            className="absolute top-0 bottom-0 pointer-events-auto cursor-move"
-            style={{ 
-              left: `${leftPos}%`, 
-              width: `${rightPos - leftPos}%`
-            }}
-            onMouseDown={(e) => handleMouseDown(e, 'center')}
-            onTouchStart={(e) => handleTouchStart(e, 'center')}
-          />
-          
-          {/* Left handle */}
-          <div 
-            className="absolute top-1/2 -translate-y-1/2 w-4 h-1/3 flex items-center justify-center pointer-events-auto cursor-pointer group"
-            style={{ left: `calc(${leftPos}% + 4px)` }}
-            onMouseDown={(e) => handleMouseDown(e, 'left')}
-            onTouchStart={(e) => handleTouchStart(e, 'left')}
-          >
-            <div className="z-10 flex h-4 w-3 items-center justify-center rounded-sm bg-muted/30 group-hover:bg-muted/10 transition-colors">
-              <ChevronLeft className="h-3 w-3 text-[#a1a1aa] group-hover:hidden" />
-              <div className="hidden group-hover:flex items-center justify-center gap-0.5">
-                <div className="w-px h-2 bg-[#a1a1aa]"></div>
-                <div className="w-px h-2 bg-[#a1a1aa]"></div>
+        {/* Static drag handles - hidden during loading */}
+        {!readOnly && !isChartDataLoading && (
+          <div className="absolute inset-0 pointer-events-none">
+            {/* Invisible center area - drag to move entire range */}
+            <div
+              className="absolute top-0 bottom-0 pointer-events-auto cursor-move"
+              style={{
+                left: `${leftPos}%`,
+                width: `${rightPos - leftPos}%`
+              }}
+              onMouseDown={(e) => handleMouseDown(e, 'center')}
+              onTouchStart={(e) => handleTouchStart(e, 'center')}
+            />
+
+            {/* Left handle */}
+            <div
+              className="absolute pointer-events-auto cursor-pointer"
+              style={{
+                left: `${leftPos}%`,
+                top: '2px',
+                bottom: '5px',
+                width: '20px'
+              }}
+              onMouseDown={(e) => handleMouseDown(e, 'left')}
+              onTouchStart={(e) => handleTouchStart(e, 'left')}
+            >
+              {/* Center grip bars - covers the line in middle section */}
+              <div className="absolute top-1/2 -translate-y-1/2 z-10 flex h-8 w-4 items-center justify-center rounded-sm bg-white/60 hover:bg-white/80 transition-colors gap-1" style={{ left: '-7px' }}>
+                <div className="w-0.5 h-4 bg-black/40 rounded-full"></div>
+                <div className="w-0.5 h-4 bg-black/40 rounded-full"></div>
               </div>
+              {/* Solid edge line - split into two parts to avoid showing under grip bar */}
+              <div className="absolute left-0 top-0 w-0.5 bg-white/60 transition-colors" style={{ bottom: 'calc(50% + 16px)' }}></div>
+              <div className="absolute left-0 bottom-0 w-0.5 bg-white/60 transition-colors" style={{ top: 'calc(50% + 16px)' }}></div>
+            </div>
+
+            {/* Right handle */}
+            <div
+              className="absolute pointer-events-auto cursor-pointer"
+              style={{
+                left: `${rightPos}%`,
+                top: '2px',
+                bottom: '5px',
+                width: '20px',
+                transform: 'translateX(-100%)'
+              }}
+              onMouseDown={(e) => handleMouseDown(e, 'right')}
+              onTouchStart={(e) => handleTouchStart(e, 'right')}
+            >
+              {/* Center grip bars - covers the line in middle section */}
+              <div className="absolute top-1/2 -translate-y-1/2 z-10 flex h-8 w-4 items-center justify-center rounded-sm bg-white/60 hover:bg-white/80 transition-colors gap-1" style={{ right: '-7px' }}>
+                <div className="w-0.5 h-4 bg-black/40 rounded-full"></div>
+                <div className="w-0.5 h-4 bg-black/40 rounded-full"></div>
+              </div>
+              {/* Solid edge line - split into two parts to avoid showing under grip bar */}
+              <div className="absolute right-0 top-0 w-0.5 bg-white/60 transition-colors" style={{ bottom: 'calc(50% + 16px)' }}></div>
+              <div className="absolute right-0 bottom-0 w-0.5 bg-white/60 transition-colors" style={{ top: 'calc(50% + 16px)' }}></div>
             </div>
           </div>
-          
-          {/* Right handle */}
-          <div 
-            className="absolute top-1/2 -translate-y-1/2 w-4 h-1/3 flex items-center justify-center pointer-events-auto cursor-pointer group"
-            style={{ left: `calc(${rightPos}% - 20px)` }}
-            onMouseDown={(e) => handleMouseDown(e, 'right')}
-            onTouchStart={(e) => handleTouchStart(e, 'right')}
-          >
-            <div className="z-10 flex h-4 w-3 items-center justify-center rounded-sm bg-muted/30 group-hover:bg-muted/10 transition-colors">
-              <ChevronRight className="h-3 w-3 text-[#a1a1aa] group-hover:hidden" />
-              <div className="hidden group-hover:flex items-center justify-center gap-0.5">
-                <div className="w-px h-2 bg-[#a1a1aa]"></div>
-                <div className="w-px h-2 bg-[#a1a1aa]"></div>
-              </div>
-            </div>
-          </div>
-        </div>
+        )}
 
         {/* Hover-only zoom controls */}
-        <div className={`absolute top-1 right-1 flex gap-1 pointer-events-auto transition-opacity duration-200 ${isHovering ? 'opacity-100' : 'opacity-0'}`}>
+        {!readOnly && (
+          <div className={`absolute top-1 right-1 flex gap-1 pointer-events-auto transition-opacity duration-200 ${isHovering ? 'opacity-100' : 'opacity-0'}`}>
           <button
             type="button"
             className="h-5 w-5 flex items-center justify-center rounded border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] hover:brightness-110 hover:border-white/30"
             onClick={() => zoomByFactor(0.8)}
             aria-label="Zoom in"
           >
-            <PlusIcon className="h-3 w-3" />
+            <ZoomIn className="h-4 w-4" />
           </button>
           <button
             type="button"
@@ -1103,7 +1117,7 @@ export function InteractiveRangeChart({
             onClick={() => zoomByFactor(1.25)}
             aria-label="Zoom out"
           >
-            <MinusIcon className="h-3 w-3" />
+            <ZoomOut className="h-4 w-4" />
           </button>
           <button
             type="button"
@@ -1111,16 +1125,26 @@ export function InteractiveRangeChart({
             onClick={centerOnCurrentPrice}
             aria-label="Center on current price"
           >
-            <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" className="opacity-80">
-              <rect x="4" y="2" width="1" height="8" rx="0.5" fill="currentColor" />
-              <rect x="7" y="2" width="1" height="8" rx="0.5" fill="currentColor" />
-            </svg>
+            <Maximize className="h-4 w-4" />
           </button>
-        </div>
+          {onReset && (
+            <button
+              type="button"
+              className="h-5 w-5 flex items-center justify-center rounded border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] hover:brightness-110 hover:border-white/30"
+              onClick={onReset}
+              aria-label="Reset range"
+            >
+              <svg width="16" height="16" viewBox="0 0 12 12" aria-hidden="true" className="opacity-80">
+                <path d="M2 6C2 3.79086 3.79086 2 6 2C7.38071 2 8.61929 2.65929 9.36396 3.68342M10 6C10 8.20914 8.20914 10 6 10C4.61929 10 3.38071 9.34071 2.63604 8.31658M9.5 2V4H7.5M2.5 10V8H4.5" stroke="currentColor" strokeWidth="1" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </button>
+          )}
+          </div>
+        )}
       </div>
 
       {/* Custom X-Axis Labels for Preview (using optimal denomination) */}
-      <div className="flex justify-between w-full px-[5px] box-border">
+      <div className="flex justify-between w-full px-[5px] box-border pt-0.5 flex-shrink-0">
         {previewXAxisTicks.map((labelItem, index) => (
           <span key={index} className="text-xs text-muted-foreground">
             {labelItem.displayLabel}

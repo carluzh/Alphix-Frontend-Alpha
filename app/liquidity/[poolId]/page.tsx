@@ -3733,10 +3733,10 @@ export default function PoolDetailPage() {
             onClick={() => setIsDynamicFeeModalOpen(false)}
           >
             {/* Modal content */}
-            <motion.div
-              initial={{ y: '20%', opacity: 0 }}
-              animate={{ y: '0%', opacity: 1 }}
-              exit={{ y: '20%', opacity: 0 }}
+          <motion.div
+            initial={{ y: '8%', opacity: 0 }}
+            animate={{ y: '0%', opacity: 1 }}
+            exit={{ y: '8%', opacity: 0 }}
               transition={{
                 duration: 0.4,
                 ease: [0.34, 1.3, 0.64, 1]
@@ -3834,8 +3834,8 @@ export default function PoolDetailPage() {
                   <div>
                     <h3 className="text-sm font-medium mb-2">Product Information</h3>
                     <p className="text-sm text-muted-foreground leading-relaxed">
-                      Dynamic fees automatically adjust based on market volatility and trading activity.
-                      This helps optimize returns for liquidity providers while maintaining competitive pricing for traders.
+                      Dynamic fees automatically adjust based on market volatility and available liquidity.
+                      This helps optimize returns for liquidity providers while maintaining competituive pricing for traders.
                     </p>
                   </div>
 

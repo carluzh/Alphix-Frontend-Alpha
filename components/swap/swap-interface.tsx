@@ -30,7 +30,7 @@ import React from "react"
 import { switchChain } from '@wagmi/core'
 import { config, baseSepolia } from "../../lib/wagmiConfig";
 import { toast } from "sonner";
-import { getAddress, parseUnits, formatUnits, type Address, type Hex } from "viem"
+import { getAddress, parseUnits, formatUnits, maxUint256, type Address, type Hex } from "viem"
 import { publicClient } from "../../lib/viemClient";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 
@@ -1604,7 +1604,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 address: fromToken.address,
                 abi: Erc20AbiDefinition,
                 functionName: 'approve',
-                args: [PERMIT2_ADDRESS, safeParseUnits("1000000", fromToken.decimals)], // Consistent large approval
+                args: [PERMIT2_ADDRESS, maxUint256], // Infinite approval (Uniswap-style)
             });
             if (!approveTxHash) throw new Error("Failed to send approval transaction");
 
@@ -1612,16 +1612,10 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
             const approvalReceipt = await publicClient.waitForTransactionReceipt({ hash: approveTxHash as Hex });
             if (!approvalReceipt || approvalReceipt.status !== 'success') throw new Error("Approval transaction failed on-chain");
 
-            // Show approval success toast with amount and transaction link
-            const approvalAmount = safeParseUnits("1000000", fromToken.decimals);
-            const approvalAmountFormatted = Number(formatUnits(approvalAmount, fromToken.decimals));
-            const approvalDescription = approvalAmountFormatted >= 100000000
-                ? `Approved infinite ${fromToken.symbol} for swapping`
-                : `Approved ${approvalAmountFormatted.toLocaleString()} ${fromToken.symbol} for swapping`;
-
+            // Show approval success toast with infinite approval message
             toast.success(`${fromToken.symbol} Approved`, {
                 icon: <BadgeCheck className="h-4 w-4 text-green-500" />,
-                description: approvalDescription,
+                description: `Approved infinite ${fromToken.symbol} for swapping`,
                 action: {
                     label: "View Transaction",
                     onClick: () => window.open(`https://sepolia.basescan.org/tx/${approveTxHash}`, '_blank')
