@@ -46,7 +46,6 @@ import { useQueryClient } from '@tanstack/react-query';
 import { getPositionManagerAddress } from '@/lib/pools-config';
 import { position_manager_abi } from '@/lib/abis/PositionManager_abi';
 import { getFromCache, setToCache, getFromCacheWithTtl, getUserPositionsCacheKey, getPoolStatsCacheKey, getPoolDynamicFeeCacheKey, getPoolChartDataCacheKey, loadUserPositionIds, derivePositionsFromIds, invalidateCacheEntry, waitForSubgraphBlock, setIndexingBarrier, invalidateUserPositionIdsCache, refreshFeesAfterTransaction } from "../../../lib/client-cache";
-import { fetchPoolFullRangeAPY } from "../../../lib/apy-calculator";
 
 import type { Pool } from "../../../types";
 import { AddLiquidityForm } from "../../../components/liquidity/AddLiquidityForm"; // AddLiquidityForm for right panel
@@ -638,7 +637,7 @@ export default function PoolDetailPage() {
   const getUsdPriceForSymbol = useCallback((symbolRaw?: string): number => {
     const symbol = (symbolRaw || '').toUpperCase();
     if (!symbol) return 0;
-    if (['USDC', 'AUSDC', 'USDT', 'AUSDT', 'MUSDT', 'YUSD'].includes(symbol)) return extractUsd(allPrices?.USDC as any, 1);
+    if (['USDC', 'AUSDC', 'USDT', 'AUSDT', 'MUSDT', 'YUSD', 'DAI', 'ADAI'].includes(symbol)) return extractUsd(allPrices?.USDC as any, 1);
     if (['ETH', 'AETH'].includes(symbol)) return extractUsd(allPrices?.ETH as any, 0);
     if (['BTC', 'ABTC'].includes(symbol)) return extractUsd(allPrices?.BTC as any, 0);
     return 0;
@@ -923,6 +922,32 @@ export default function PoolDetailPage() {
       }
       currentDate.setDate(currentDate.getDate() + 1);
     }
+    
+    // Pad at the beginning if we don't have enough days to reach daysBack
+    if (filledData.length > 0) {
+      const dataSpanDays = filledData.length;
+      if (dataSpanDays < daysBack) {
+        const daysToAdd = daysBack - dataSpanDays;
+        const oldestDate = new Date(filledData[0].date);
+        const emptyDays: ChartDataPoint[] = [];
+        
+        for (let i = 1; i <= daysToAdd; i++) {
+          const emptyDate = new Date(oldestDate);
+          emptyDate.setDate(emptyDate.getDate() - i);
+          emptyDays.unshift({
+            date: emptyDate.toISOString().split('T')[0],
+            volumeUSD: 0,
+            tvlUSD: 0,
+            volumeTvlRatio: 0,
+            emaRatio: 0,
+            dynamicFee: 0,
+          });
+        }
+        
+        return [...emptyDays, ...filledData];
+      }
+    }
+    
     return filledData;
   }, [windowWidth]);
 
@@ -1322,6 +1347,7 @@ export default function PoolDetailPage() {
               : d
           );
         }
+
         setApiChartData(finalMerged);
         // Keep header TVL strictly in sync with the chart's latest point
         try {
@@ -1421,13 +1447,26 @@ export default function PoolDetailPage() {
     const tvlNow = Number(poolStats?.tvlUSD || 0);
     const fees24hUSD = vol24 * feeRate;
 
-    // Fetch Full Range APY using our new calculator
-    let calculatedApr = 'Loading...';
-    try {
-      calculatedApr = await fetchPoolFullRangeAPY(poolId, 7);
-    } catch (error) {
-      console.error('[PoolPage] Failed to fetch APY for', poolId, error);
-      calculatedApr = 'N/A';
+    // Calculate APY directly: (Daily Fees * 365) / TVL * 100
+    let calculatedApr = '0.00%';
+    if (tvlNow > 0 && !isNaN(fees24hUSD) && isFinite(fees24hUSD)) {
+      const annualFees = fees24hUSD * 365;
+      const apy = (annualFees / tvlNow) * 100;
+      
+      // Format APY
+      if (isNaN(apy) || !isFinite(apy)) {
+        calculatedApr = '0.00%';
+      } else if (apy >= 1000) {
+        calculatedApr = `~${Math.round(apy)}%`;
+      } else if (apy >= 100) {
+        calculatedApr = `~${apy.toFixed(0)}%`;
+      } else if (apy >= 10) {
+        calculatedApr = `~${apy.toFixed(1)}%`;
+      } else if (apy > 0) {
+        calculatedApr = `~${apy.toFixed(2)}%`;
+      } else {
+        calculatedApr = '0.00%';
+      }
     }
 
     const combinedPoolData = {
@@ -2803,7 +2842,7 @@ export default function PoolDetailPage() {
                             className="animate-pulse opacity-75"
                           />
                         </div>
-                      ) : apiChartData.length > 0 ? (
+                      ) : apiChartData.length >= 1 ? (
                         // Mobile-only chart (no Y-axis)
                         isMobile ? (
                           activeChart === 'volumeTvlRatio' ? (
@@ -3353,8 +3392,10 @@ export default function PoolDetailPage() {
                           )
                         )
                       ) : (
-                        <div className="flex justify-center items-center h-full text-muted-foreground">
-                          No chart data available for this pool.
+                        <div className="flex justify-center items-center h-full">
+                          <div className="text-xs font-mono text-muted-foreground/50 animate-pulse">
+                            Pool Initializing ({apiChartData?.length || 0}/1 updates)
+                          </div>
                         </div>
                       )}
                     </ChartContainer>
@@ -3784,59 +3825,67 @@ export default function PoolDetailPage() {
 
                   {/* Current Fee Section with Chart */}
                   <div className="rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 p-4">
-                    <div className="flex gap-4 items-end">
-                      {/* Left side - Current Fee */}
-                      <div className="flex-shrink-0 min-w-[100px]">
-                        <h3 className="text-xs font-bold text-muted-foreground mb-1">Current Fee</h3>
-                        <p
-                          className="text-2xl font-semibold transition-colors"
-                          style={{ color: hoveredFee !== null ? 'var(--sidebar-primary)' : undefined }}
-                        >
-                          {hoveredFee !== null
-                            ? `${hoveredFee.toFixed(3)}%`
-                            : currentPoolData?.dynamicFeeBps !== undefined
-                              ? `${((currentPoolData.dynamicFeeBps as number) / 100).toFixed(3)}%`
-                              : 'Loading...'}
-                        </p>
-                      </div>
-
-                      {/* Right side - Chart */}
-                      <div className="flex-1 min-w-0">
-                        <ResponsiveContainer width="100%" height={60}>
-                          <LineChart
-                            data={apiChartData.slice(-30)}
-                            margin={{ top: 0, right: 0, bottom: 0, left: 0 }}
-                            onMouseLeave={() => setHoveredFee(null)}
+                    {apiChartData.slice(-30).length >= 7 ? (
+                      <div className="flex gap-4 items-end">
+                        {/* Left side - Current Fee */}
+                        <div className="flex-shrink-0 min-w-[100px]">
+                          <h3 className="text-xs font-bold text-muted-foreground mb-1">Current Fee</h3>
+                          <p
+                            className="text-2xl font-semibold transition-colors"
+                            style={{ color: hoveredFee !== null ? 'var(--sidebar-primary)' : undefined }}
                           >
-                            <XAxis dataKey="date" hide={true} />
-                            <YAxis hide={true} domain={['auto', 'auto']} />
-                            <ChartTooltip
-                              content={({ active, payload }) => {
-                                if (active && payload && payload[0]) {
-                                  const fee = payload[0].payload.dynamicFee;
-                                  if (typeof fee === 'number') {
-                                    setHoveredFee(fee);
+                            {hoveredFee !== null
+                              ? `${hoveredFee.toFixed(3)}%`
+                              : currentPoolData?.dynamicFeeBps !== undefined
+                                ? `${((currentPoolData.dynamicFeeBps as number) / 100).toFixed(3)}%`
+                                : 'Loading...'}
+                          </p>
+                        </div>
+
+                        {/* Right side - Chart */}
+                        <div className="flex-1 min-w-0">
+                          <ResponsiveContainer width="100%" height={60}>
+                            <LineChart
+                              data={apiChartData.slice(-30)}
+                              margin={{ top: 0, right: 0, bottom: 0, left: 0 }}
+                              onMouseLeave={() => setHoveredFee(null)}
+                            >
+                              <XAxis dataKey="date" hide={true} />
+                              <YAxis hide={true} domain={['auto', 'auto']} />
+                              <ChartTooltip
+                                content={({ active, payload }) => {
+                                  if (active && payload && payload[0]) {
+                                    const fee = payload[0].payload.dynamicFee;
+                                    if (typeof fee === 'number') {
+                                      setHoveredFee(fee);
+                                    }
+                                  } else {
+                                    setHoveredFee(null);
                                   }
-                                } else {
-                                  setHoveredFee(null);
-                                }
-                                return null;
-                              }}
-                              cursor={{ stroke: '#505050', strokeWidth: 1, strokeDasharray: '3 3' }}
-                            />
-                            <Line
-                              type="stepAfter"
-                              dataKey="dynamicFee"
-                              stroke={hoveredFee !== null ? 'var(--sidebar-primary)' : 'hsl(var(--chart-1))'}
-                              strokeWidth={1.5}
-                              dot={false}
-                              activeDot={false}
-                              isAnimationActive={false}
-                            />
-                          </LineChart>
-                        </ResponsiveContainer>
+                                  return null;
+                                }}
+                                cursor={{ stroke: '#505050', strokeWidth: 1, strokeDasharray: '3 3' }}
+                              />
+                              <Line
+                                type="stepAfter"
+                                dataKey="dynamicFee"
+                                stroke={hoveredFee !== null ? 'var(--sidebar-primary)' : 'hsl(var(--chart-1))'}
+                                strokeWidth={1.5}
+                                dot={false}
+                                activeDot={false}
+                                isAnimationActive={false}
+                              />
+                            </LineChart>
+                          </ResponsiveContainer>
+                        </div>
                       </div>
-                    </div>
+                    ) : (
+                      <div className="w-full h-[60px] flex items-center justify-center">
+                        <div className="text-xs font-mono text-muted-foreground/50 animate-pulse">
+                          Pool Initializing ({apiChartData.slice(-30).length}/7 updates)
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* Product Information */}

@@ -57,6 +57,15 @@
       "decimals": 18,
       "displayDecimals": 4,
       "icon": "/tokens/ETH.png"
+    },
+    "aDAI": {
+      "symbol": "aDAI",
+      "name": "Alphix DAI",
+      "address": "0x6876ef4dc1abadd2f3da7a0ccbf562e63b62964e",
+      "decimals": 18,
+      "displayDecimals": 2,
+      "icon": "/tokens/aDAI.png",
+      "usdPrice": "1.0"
     }
   },
   "pools": [
@@ -159,6 +168,46 @@
       "enabled": true,
       "featured": false,
       "type": "Volatile"
+    },
+    {
+      "id": "ausdc-adai",
+      "name": "aUSDC/aDAI",
+      "description": "Alphix USDC / Alphix DAI pool",
+      "subgraphId": "0x4bd4386e6ef583af6cea0e010a7118f41c4d3315e88b81a88fc7fd3822bf766b",
+      "currency0": {
+        "symbol": "aUSDC",
+        "address": "0x24429b8f2C8ebA374Dd75C0a72BCf4dF4C545BeD"
+      },
+      "currency1": {
+        "symbol": "aDAI",
+        "address": "0x6876ef4dc1abadd2f3da7a0ccbf562e63b62964e"
+      },
+      "fee": 8388608,
+      "tickSpacing": 30,
+      "hooks": "0x285a195230239822adbc6fd2281c7b1de1a17fc0",
+      "enabled": true,
+      "featured": false,
+      "type": "Stable"
+    },
+    {
+      "id": "adai-aeth",
+      "name": "aDAI/aETH",
+      "description": "Alphix DAI / Alphix Ethereum pool",
+      "subgraphId": "0x47da32fed07f99dc9a10744a58f43bf563909d8b46203c300487caf3edd8b1f3",
+      "currency0": {
+        "symbol": "aDAI",
+        "address": "0x6876ef4dc1abadd2f3da7a0ccbf562e63b62964e"
+      },
+      "currency1": {
+        "symbol": "aETH",
+        "address": "0xE7711aa6557A69592520Bbe7D704D64438f160e7"
+      },
+      "fee": 8388608,
+      "tickSpacing": 50,
+      "hooks": "0x285a195230239822adbc6fd2281c7b1de1a17fc0",
+      "enabled": true,
+      "featured": false,
+      "type": "Volatile"
     }
   ],
   "fees": {
@@ -167,8 +216,9 @@
     "currentRatio": "700000000000000000"
   },
   "_comments": {
-    "note": "TEMPORARY: Using existing subgraph pool IDs until new deployment is fully propagated",
-    "newPoolsWillBe": "Once new subgraph is live, update subgraphIds to the new pool IDs",
-    "deploymentStatus": "Waiting for new deployment with pool IDs: 0xfaa0e80397dda369eb68f6f67c9cd4d4884841f1417078e20844addc11170127, etc."
+    "subgraphId": "CRITICAL: The 'subgraphId' field contains the ACTUAL on-chain poolId (bytes32). DO NOT recalculate this value using keccak256 or any other method. The on-chain poolId may differ from calculated values due to internal contract logic. Always use the poolId provided by the contract deployment transaction or queried directly from on-chain state.",
+    "poolIdCalculation": "If you need a poolId for a new pool, get it from: 1) The deployment transaction logs, 2) The InitializePool event, or 3) By querying the PoolManager contract directly. Never calculate it manually.",
+    "fee": "The fee value 8388608 is the dynamic fee flag (0x800000). This indicates the pool uses dynamic fees managed by the hook contract.",
+    "hooks": "Each pool's hook address determines its on-chain behavior. Changing the hook address will change the poolId, making the pool a completely different pool on-chain."
   }
 } 

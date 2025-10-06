@@ -88,7 +88,7 @@ const TARGET_CHAIN_ID = baseSepolia.id; // Changed from 1301 to baseSepolia.id
 const MaxUint160 = BigInt('0xffffffffffffffffffffffffffffffffffffffff'); // 2**160 - 1
 
 // Helper function to get price mapping for tokens
-const getTokenPriceMapping = (tokenSymbol: string): 'BTC' | 'USDC' | 'ETH' => {
+const getTokenPriceMapping = (tokenSymbol: string): 'BTC' | 'USDC' | 'ETH' | 'DAI' => {
   // Map our tokens to coingecko price types
   switch (tokenSymbol) {
     case 'aBTC':
@@ -96,6 +96,9 @@ const getTokenPriceMapping = (tokenSymbol: string): 'BTC' | 'USDC' | 'ETH' => {
     case 'aUSDC':
     case 'aUSDT':
       return 'USDC'; // Using USDC price for all USD stablecoins
+    case 'aDAI':
+    case 'DAI':
+      return 'DAI';
     case 'aETH':
     case 'ETH':
       return 'ETH';
@@ -105,7 +108,7 @@ const getTokenPriceMapping = (tokenSymbol: string): 'BTC' | 'USDC' | 'ETH' => {
 };
 
 // Helper function to create Token instances from pools config
-const createTokenFromConfig = (tokenSymbol: string, prices: { BTC: number; USDC: number; ETH?: number } = { BTC: 77000, USDC: 1, ETH: 3500 }): Token | null => {
+const createTokenFromConfig = (tokenSymbol: string, prices: { BTC: number; USDC: number; ETH?: number; DAI?: number } = { BTC: 77000, USDC: 1, ETH: 3500, DAI: 1 }): Token | null => {
   const tokenConfig = getToken(tokenSymbol);
   if (!tokenConfig) return null;
   
@@ -129,7 +132,7 @@ const createTokenFromConfig = (tokenSymbol: string, prices: { BTC: number; USDC:
 };
 
 // Get available tokens for swap
-const getAvailableTokens = (prices?: { BTC: number; USDC: number; ETH?: number }): Token[] => {
+const getAvailableTokens = (prices?: { BTC: number; USDC: number; ETH?: number; DAI?: number }): Token[] => {
   const allTokens = getAllTokens();
   return Object.keys(allTokens)
     .map(symbol => createTokenFromConfig(symbol, prices))

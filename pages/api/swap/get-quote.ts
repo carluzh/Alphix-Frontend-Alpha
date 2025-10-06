@@ -142,13 +142,11 @@ async function getV4QuoteExactInputSingle(
     const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
     const quoter = new ethers.Contract(getQuoterAddress(), V4QuoterAbi as any, provider);
 
-    const poolId = ethers.utils.solidityKeccak256(
-      ['address','address','uint24','int24','address'],
-      [poolKey.currency0, poolKey.currency1, poolKey.fee, poolKey.tickSpacing, poolKey.hooks]
-      );
+    // Use the subgraphId directly as it's the actual on-chain poolId
+    const poolId = poolConfig.pool.subgraphId;
 
-      const stateView = new ethers.Contract(getStateViewAddress(), STATE_VIEW_ABI as any, provider);
-      await stateView.callStatic.getSlot0(poolId);
+    const stateView = new ethers.Contract(getStateViewAddress(), STATE_VIEW_ABI as any, provider);
+    await stateView.callStatic.getSlot0(poolId);
 
     const [amountOut, gasEstimate] = await quoter.callStatic.quoteExactInputSingle(quoteParams);
     return { amountOut, gasEstimate };

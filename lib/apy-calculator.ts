@@ -236,7 +236,7 @@ export function formatAPY(apy: number): string {
 
 /**
  * Fetches pool metrics and calculates Full Range APY for a pool
- * This is a client-side helper for fetching APY data
+ * Uses already-calculated fees from volume × fee
  */
 export async function fetchPoolFullRangeAPY(poolId: string, days: number = 7): Promise<string> {
   try {
@@ -263,12 +263,12 @@ export async function fetchPoolFullRangeAPY(poolId: string, days: number = 7): P
       return "0.00%";
     }
 
-    // Calculate base pool APY (full range)
+    // Simple APY: annualize the fees and divide by TVL
     const feesPerDay = totalFeesToken0 / actualDays;
     const annualFees = feesPerDay * 365;
-    const basePoolAPY = (annualFees / avgTVLToken0) * 100;
+    const apy = (annualFees / avgTVLToken0) * 100;
 
-    return formatAPY(basePoolAPY);
+    return formatAPY(apy);
   } catch (error) {
     console.error('[fetchPoolFullRangeAPY] Error:', error);
     return "—";

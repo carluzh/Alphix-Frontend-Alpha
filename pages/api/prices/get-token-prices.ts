@@ -26,6 +26,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       aUSDC: allPrices.USDC,
       USDT: allPrices.USDT,
       aUSDT: allPrices.USDT,
+      DAI: allPrices.DAI,
+      aDAI: allPrices.DAI,
       timestamp: allPrices.lastUpdated
     };
 

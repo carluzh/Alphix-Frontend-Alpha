@@ -474,10 +474,17 @@ export function InteractiveRangeChart({
         
         // Create 3 labels: left border, center, right border
         for (const pricePoint of pricePoints) {
-          const displayLabel = pricePoint.price.toLocaleString('en-US', { 
-            maximumFractionDigits: finalDisplayDecimals, 
-            minimumFractionDigits: Math.min(2, finalDisplayDecimals) 
-          });
+          let displayLabel: string;
+          if (pricePoint.price > 0 && pricePoint.price < 0.01) {
+            displayLabel = '<0.01';
+          } else {
+            const formatted = pricePoint.price.toLocaleString('en-US', { 
+              maximumFractionDigits: finalDisplayDecimals, 
+              minimumFractionDigits: Math.min(2, finalDisplayDecimals) 
+            });
+            // If it rounds to 0.00 but is actually positive, show <0.01
+            displayLabel = (formatted === '0.00' && pricePoint.price > 0) ? '<0.01' : formatted;
+          }
           
           newLabels.push({ 
             tickValue: transformTickToDisplay(pricePoint.tick), 
@@ -602,31 +609,9 @@ export function InteractiveRangeChart({
     panViewportStartRef.current = { x: e.clientX, domain: [...xDomain] as [number, number] };
   };
 
-  const applyDomainConstraintsLocal = (minTick: number, maxTick: number): [number, number] => {
-    let constrainedMin = minTick;
-    let constrainedMax = maxTick;
-    const minDomainSize = defaultTickSpacing * 10;
-    if (constrainedMax - constrainedMin < minDomainSize) {
-      const center = (constrainedMin + constrainedMax) / 2;
-      constrainedMin = center - minDomainSize / 2;
-      constrainedMax = center + minDomainSize / 2;
-    }
-    if (currentPoolTick !== null) {
-      const maxUpperDelta = Math.round(Math.log(6) / Math.log(1.0001));
-      const maxLowerDelta = Math.round(Math.log(0.05) / Math.log(1.0001));
-      const maxUpperTick = currentPoolTick + maxUpperDelta;
-      const maxLowerTick = currentPoolTick + maxLowerDelta;
-      constrainedMin = Math.max(constrainedMin, maxLowerTick);
-      constrainedMax = Math.min(constrainedMax, maxUpperTick);
-    }
-    constrainedMin = Math.floor(constrainedMin / defaultTickSpacing) * defaultTickSpacing;
-    constrainedMax = Math.ceil(constrainedMax / defaultTickSpacing) * defaultTickSpacing;
-    if (constrainedMax - constrainedMin < minDomainSize) {
-      const center = (constrainedMin + constrainedMax) / 2;
-      constrainedMin = Math.floor((center - minDomainSize / 2) / defaultTickSpacing) * defaultTickSpacing;
-      constrainedMax = Math.ceil((center + minDomainSize / 2) / defaultTickSpacing) * defaultTickSpacing;
-    }
-    return [constrainedMin, constrainedMax];
+  // Simple helper to align ticks to spacing
+  const alignToTickSpacing = (tick: number): number => {
+    return Math.round(tick / defaultTickSpacing) * defaultTickSpacing;
   };
 
   const handleBackgroundMouseMove = (e: MouseEvent) => {
@@ -645,10 +630,9 @@ export function InteractiveRangeChart({
       deltaTicks = -deltaTicks;
     }
     
-    const newMin = minTick - deltaTicks;
-    const newMax = maxTick - deltaTicks;
-    const [cMin, cMax] = applyDomainConstraintsLocal(newMin, newMax);
-    scheduleXDomainChange([cMin, cMax]);
+    const newMin = alignToTickSpacing(minTick - deltaTicks);
+    const newMax = alignToTickSpacing(maxTick - deltaTicks);
+    scheduleXDomainChange([newMin, newMax]);
   };
 
   const stopBackgroundPan = () => {
@@ -734,17 +718,22 @@ export function InteractiveRangeChart({
       [newTickLower, newTickUpper] = [newTickUpper, newTickLower];
     }
 
-    // Apply tick space constraints
+    // CRITICAL: Snap to valid tick spacing during drag for smooth, aligned movement
+    newTickLower = Math.round(newTickLower / defaultTickSpacing) * defaultTickSpacing;
+    newTickUpper = Math.round(newTickUpper / defaultTickSpacing) * defaultTickSpacing;
+
+    // Apply tick space constraints AFTER snapping
     newTickLower = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTickLower));
     newTickUpper = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTickUpper));
 
     // Ensure minimum spacing in tick space
     if (newTickUpper - newTickLower < defaultTickSpacing) {
       const center = (newTickLower + newTickUpper) / 2;
-      newTickLower = center - defaultTickSpacing / 2;
-      newTickUpper = center + defaultTickSpacing / 2;
-      newTickLower = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTickLower));
-      newTickUpper = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTickUpper));
+      newTickLower = Math.round((center - defaultTickSpacing / 2) / defaultTickSpacing) * defaultTickSpacing;
+      newTickUpper = newTickLower + defaultTickSpacing;
+      // Reapply constraints after spacing adjustment
+      newTickLower = Math.max(sdkMinTick, Math.min(sdkMaxTick - defaultTickSpacing, newTickLower));
+      newTickUpper = Math.min(sdkMaxTick, Math.max(sdkMinTick + defaultTickSpacing, newTickUpper));
     }
 
     scheduleRangeChange(newTickLower.toString(), newTickUpper.toString());
@@ -823,15 +812,22 @@ export function InteractiveRangeChart({
       [newTickLower, newTickUpper] = [newTickUpper, newTickLower];
     }
 
+    // CRITICAL: Snap to valid tick spacing during drag for smooth, aligned movement
+    newTickLower = Math.round(newTickLower / defaultTickSpacing) * defaultTickSpacing;
+    newTickUpper = Math.round(newTickUpper / defaultTickSpacing) * defaultTickSpacing;
+
+    // Apply tick space constraints AFTER snapping
     newTickLower = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTickLower));
     newTickUpper = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTickUpper));
 
+    // Ensure minimum spacing in tick space
     if (newTickUpper - newTickLower < defaultTickSpacing) {
-      if (isDragging === 'left') {
-        newTickLower = newTickUpper - defaultTickSpacing;
-      } else if (isDragging === 'right') {
-        newTickUpper = newTickLower + defaultTickSpacing;
-      }
+      const center = (newTickLower + newTickUpper) / 2;
+      newTickLower = Math.round((center - defaultTickSpacing / 2) / defaultTickSpacing) * defaultTickSpacing;
+      newTickUpper = newTickLower + defaultTickSpacing;
+      // Reapply constraints after spacing adjustment
+      newTickLower = Math.max(sdkMinTick, Math.min(sdkMaxTick - defaultTickSpacing, newTickLower));
+      newTickUpper = Math.min(sdkMaxTick, Math.max(sdkMinTick + defaultTickSpacing, newTickUpper));
     }
 
     scheduleRangeChange(newTickLower.toString(), newTickUpper.toString());
@@ -847,61 +843,26 @@ export function InteractiveRangeChart({
   const handleMouseUp = () => {
     if (finalDragPositionRef.current) {
       const { tickLower: finalTickLower, tickUpper: finalTickUpper } = finalDragPositionRef.current;
-      let [currentMinTick, currentMaxTick] = xDomain;
-      const currentDomainSize = currentMaxTick - currentMinTick;
-      const minDomainSize = defaultTickSpacing * 10;
-      const minSelectionRatio = 0.2;
 
-      const touchedLeft = finalTickLower <= currentMinTick;
-      const touchedRight = finalTickUpper >= currentMaxTick;
-
-      if (touchedLeft || touchedRight) {
-        let newMinTick = currentMinTick;
-        let newMaxTick = currentMaxTick;
-        const expandBy = Math.max(minDomainSize, currentDomainSize) * 0.25;
-
-        if (touchedLeft) newMinTick = currentMinTick - expandBy;
-        if (touchedRight) newMaxTick = currentMaxTick + expandBy;
-
-        if (currentPoolTick !== null) {
-          const maxUpperDelta = Math.round(Math.log(6) / Math.log(1.0001));
-          const maxLowerDelta = Math.round(Math.log(0.05) / Math.log(1.0001));
-          const maxUpperTick = currentPoolTick + maxUpperDelta;
-          const maxLowerTick = currentPoolTick + maxLowerDelta;
-          newMinTick = Math.max(newMinTick, maxLowerTick);
-          newMaxTick = Math.min(newMaxTick, maxUpperTick);
-        }
-
-        newMinTick = Math.floor(newMinTick / defaultTickSpacing) * defaultTickSpacing;
-        newMaxTick = Math.ceil(newMaxTick / defaultTickSpacing) * defaultTickSpacing;
-        if (newMaxTick - newMinTick < minDomainSize) {
-          const center = (newMinTick + newMaxTick) / 2;
-          newMinTick = center - minDomainSize / 2;
-          newMaxTick = center + minDomainSize / 2;
-          newMinTick = Math.floor(newMinTick / defaultTickSpacing) * defaultTickSpacing;
-          newMaxTick = Math.ceil(newMaxTick / defaultTickSpacing) * defaultTickSpacing;
-        }
-
-        if (onXDomainChange) onXDomainChange([newMinTick, newMaxTick]);
-      } else {
-        const selectionSize = finalTickUpper - finalTickLower;
-        if (selectionSize > 0 && selectionSize < currentDomainSize * minSelectionRatio) {
-          const targetSize = Math.max(minDomainSize, currentDomainSize * minSelectionRatio);
-          const center = (finalTickLower + finalTickUpper) / 2;
-          const [cMin, cMax] = applyDomainConstraintsLocal(center - targetSize / 2, center + targetSize / 2);
-          if (onXDomainChange) onXDomainChange([cMin, cMax]);
-        }
-      }
-
+      // Snap to valid tick spacing
       let snapLower = Math.round(finalTickLower / defaultTickSpacing) * defaultTickSpacing;
       let snapUpper = Math.round(finalTickUpper / defaultTickSpacing) * defaultTickSpacing;
+      
+      // Ensure minimum spacing
       if (snapUpper - snapLower < defaultTickSpacing) {
         const center = (snapLower + snapUpper) / 2;
-        snapLower = Math.floor((center - defaultTickSpacing / 2) / defaultTickSpacing) * defaultTickSpacing;
+        snapLower = Math.round((center - defaultTickSpacing / 2) / defaultTickSpacing) * defaultTickSpacing;
         snapUpper = snapLower + defaultTickSpacing;
       }
-      snapLower = Math.max(currentMinTick, Math.min(currentMaxTick, snapLower));
-      snapUpper = Math.max(currentMinTick, Math.min(currentMaxTick, snapUpper));
+      
+      // Apply constraints - clamp to sdk bounds
+      snapLower = Math.max(sdkMinTick, Math.min(sdkMaxTick - defaultTickSpacing, snapLower));
+      snapUpper = Math.min(sdkMaxTick, Math.max(sdkMinTick + defaultTickSpacing, snapUpper));
+      
+      // Final validation: ensure they're still aligned to tick spacing after constraints
+      snapLower = Math.round(snapLower / defaultTickSpacing) * defaultTickSpacing;
+      snapUpper = Math.round(snapUpper / defaultTickSpacing) * defaultTickSpacing;
+      
       onRangeChange(String(snapLower), String(snapUpper));
     }
 
@@ -948,16 +909,18 @@ export function InteractiveRangeChart({
     const center = (minTick + maxTick) / 2;
     const half = (maxTick - minTick) / 2;
     const newHalf = half * factor;
-    const [cMin, cMax] = applyDomainConstraintsLocal(center - newHalf, center + newHalf);
-    if (onXDomainChange) onXDomainChange([cMin, cMax]);
+    const newMin = alignToTickSpacing(center - newHalf);
+    const newMax = alignToTickSpacing(center + newHalf);
+    if (onXDomainChange) onXDomainChange([newMin, newMax]);
   };
 
   const centerOnCurrentPrice = () => {
     if (currentPoolTick === null) return;
-    const [minTick, maxTick] = xDomain;
-    const size = Math.max(defaultTickSpacing * 10, maxTick - minTick);
-    const [cMin, cMax] = applyDomainConstraintsLocal(currentPoolTick - size / 2, currentPoolTick + size / 2);
-    if (onXDomainChange) onXDomainChange([cMin, cMax]);
+    // Always show 10 ticks on either side of current price
+    const halfView = defaultTickSpacing * 10;
+    const newMin = alignToTickSpacing(currentPoolTick - halfView);
+    const newMax = alignToTickSpacing(currentPoolTick + halfView);
+    if (onXDomainChange) onXDomainChange([newMin, newMax]);
   };
 
   return (
@@ -977,7 +940,7 @@ export function InteractiveRangeChart({
         {/* Chart */}
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart
-            data={liquidityChartData}
+            data={liquidityChartData.length > 0 ? liquidityChartData : [{ tick: displayDomain[0], liquidity: 0 }, { tick: displayDomain[1], liquidity: 0 }]}
             margin={{ top: 2, right: 5, bottom: 4, left: 5 }}
           >
             <RechartsTooltip cursor={false} content={() => null} />
@@ -1015,7 +978,7 @@ export function InteractiveRangeChart({
             />
             
             {/* Current price line */}
-            {currentPoolTick !== null && (
+            {currentPoolTick !== null && !isChartDataLoading && (
               <ReferenceLine 
                 x={transformTickToDisplay(currentPoolTick)} 
                 stroke="#e85102"
@@ -1026,15 +989,17 @@ export function InteractiveRangeChart({
             )}
             
             {/* Selected range indicator */}
-            <ReferenceArea
-              x1={transformTickToDisplay(parseInt(tickLower))}
-              x2={transformTickToDisplay(parseInt(tickUpper))}
-              yAxisId="bucketAxis"
-              strokeOpacity={0}
-              fill="#e85102"
-              fillOpacity={0.25}
-              ifOverflow="extendDomain"
-            />
+            {!isNaN(parseInt(tickLower)) && !isNaN(parseInt(tickUpper)) && !isChartDataLoading && (
+              <ReferenceArea
+                x1={transformTickToDisplay(parseInt(tickLower))}
+                x2={transformTickToDisplay(parseInt(tickUpper))}
+                yAxisId="bucketAxis"
+                strokeOpacity={0}
+                fill="#e85102"
+                fillOpacity={0.3}
+                ifOverflow="extendDomain"
+              />
+            )}
 
           </ComposedChart>
         </ResponsiveContainer>
@@ -1144,13 +1109,15 @@ export function InteractiveRangeChart({
       </div>
 
       {/* Custom X-Axis Labels for Preview (using optimal denomination) */}
-      <div className="flex justify-between w-full px-[5px] box-border pt-0.5 flex-shrink-0">
-        {previewXAxisTicks.map((labelItem, index) => (
-          <span key={index} className="text-xs text-muted-foreground">
-            {labelItem.displayLabel}
-          </span>
-        ))}
-      </div>
+      {!isChartDataLoading && (
+        <div className="flex justify-between w-full px-[5px] box-border pt-0.5 flex-shrink-0">
+          {previewXAxisTicks.map((labelItem, index) => (
+            <span key={index} className="text-xs text-muted-foreground">
+              {labelItem.displayLabel}
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 } 

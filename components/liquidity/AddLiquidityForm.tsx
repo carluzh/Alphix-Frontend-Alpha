@@ -230,6 +230,7 @@ export function AddLiquidityForm({
   const [depositStep, setDepositStep] = useState<'range' | 'amount'>('amount');
   const [showingTransactionSteps, setShowingTransactionSteps] = useState(false);
   const [showRangeModal, setShowRangeModal] = useState(false);
+  const [modalInitialFocusField, setModalInitialFocusField] = useState<'min' | 'max' | null>(null);
 
   // Chart state
   const [xDomain, setXDomain] = useState<[number, number]>([-120000, 120000]);
@@ -581,26 +582,12 @@ export function AddLiquidityForm({
           if (!isNaN(numericCurrentPrice)) {
             setCurrentPriceLine(numericCurrentPrice);
             
-            // Set a fixed 20% zoom level around the current tick
+            // Always show 10 ticks on either side of current price
             const centerTick = poolState.currentPoolTick;
-            const percentage = 0.20; // 20% zoom
-            
-            const priceRatioUpper = 1 + percentage;
-            const priceRatioLower = 1 - percentage;
-
-            // This calculation is now correct for price of T0 in T1
-            const tickDeltaForT0T1Upper = Math.round(Math.log(priceRatioUpper) / Math.log(1.0001));
-            const tickDeltaForT0T1Lower = Math.round(Math.log(priceRatioLower) / Math.log(1.0001));
-
-            // The prices are symmetrical around the current tick in price space, but not in tick space.
-            // We use the larger of the two deltas (in absolute terms) to create a symmetrical zoom in tick space.
-            const largestDelta = Math.max(Math.abs(tickDeltaForT0T1Upper), Math.abs(tickDeltaForT0T1Lower));
-            
-            const domainTickLower = centerTick - largestDelta;
-            const domainTickUpper = centerTick + largestDelta;
-
-            const [constrainedMinTick, constrainedMaxTick] = applyDomainConstraints(domainTickLower, domainTickUpper);
-            setXDomain([constrainedMinTick, constrainedMaxTick]);
+            const halfView = defaultTickSpacing * 10;
+            const domainTickLower = centerTick - halfView;
+            const domainTickUpper = centerTick + halfView;
+            setXDomain([domainTickLower, domainTickUpper]);
 
           } else {
             setCurrentPriceLine(null);
@@ -650,9 +637,19 @@ export function AddLiquidityForm({
               : Math.pow(1.0001, minTickDomain);
             priceAtTick = rawPrice * decimalAdjFactor;
           }
+        let label = minTickDomain.toString();
+        if (!isNaN(priceAtTick)) {
+          if (priceAtTick > 0 && priceAtTick < 0.01) {
+            label = '<0.01';
+          } else {
+            const formatted = priceAtTick.toLocaleString('en-US', { maximumFractionDigits: displayDecimals, minimumFractionDigits: 2 });
+            // If it rounds to 0.00 but is actually positive, show <0.01
+            label = (formatted === '0.00' && priceAtTick > 0) ? '<0.01' : formatted;
+          }
+        }
         newLabels.push({ 
           tickValue: minTickDomain, 
-          displayLabel: isNaN(priceAtTick) ? minTickDomain.toString() : priceAtTick.toLocaleString('en-US', { maximumFractionDigits: displayDecimals, minimumFractionDigits: 2 })
+          displayLabel: label
         });
       } else if (isFinite(minTickDomain) && isFinite(maxTickDomain)) {
         const range = maxTickDomain - minTickDomain;
@@ -673,9 +670,19 @@ export function AddLiquidityForm({
               priceAtTick = currentPriceNum * priceDelta; // Direct for token1 denomination
             }
           }
+          let label = tickVal.toString();
+          if (!isNaN(priceAtTick)) {
+            if (priceAtTick > 0 && priceAtTick < 0.01) {
+              label = '<0.01';
+            } else {
+              const formatted = priceAtTick.toLocaleString('en-US', { maximumFractionDigits: displayDecimals, minimumFractionDigits: Math.min(2, displayDecimals) });
+              // If it rounds to 0.00 but is actually positive, show <0.01
+              label = (formatted === '0.00' && priceAtTick > 0) ? '<0.01' : formatted;
+            }
+          }
           newLabels.push({ 
             tickValue: tickVal, 
-            displayLabel: isNaN(priceAtTick) ? tickVal.toString() : priceAtTick.toLocaleString('en-US', { maximumFractionDigits: displayDecimals, minimumFractionDigits: Math.min(2, displayDecimals) }) 
+            displayLabel: label
           });
         }
       } 
@@ -774,7 +781,7 @@ export function AddLiquidityForm({
     // Use optimal denomination for decimals like the chart; force 2 for USD-denominated
     const baseDisplayToken = optimalDenominationForDecimals;
     const baseDisplayDefault = TOKEN_DEFINITIONS[baseDisplayToken]?.displayDecimals ?? 4;
-    const isUSDDenom = baseDisplayToken === 'aUSDT' || baseDisplayToken === 'aUSDC' || baseDisplayToken === 'USDT' || baseDisplayToken === 'USDC';
+    const isUSDDenom = baseDisplayToken === 'aUSDT' || baseDisplayToken === 'aUSDC' || baseDisplayToken === 'USDT' || baseDisplayToken === 'USDC' || baseDisplayToken === 'aDAI' || baseDisplayToken === 'DAI';
     const displayDecimals = isUSDDenom ? 2 : baseDisplayDefault;
 
     // Formatting for Min Price String
@@ -1078,65 +1085,18 @@ export function AddLiquidityForm({
 
   // Removed left/right remapping: left always edits "min" and right edits "max".
 
-  // Helper function to apply domain constraints
-  const applyDomainConstraints = useCallback((minTick: number, maxTick: number): [number, number] => {
-    // Apply minimum domain size constraint: ensure at least 10 tick spacings visible
-    const minDomainSize = defaultTickSpacing * 10;
-    let constrainedMinTick = minTick;
-    let constrainedMaxTick = maxTick;
-    
-    const domainSize = constrainedMaxTick - constrainedMinTick;
-    if (domainSize < minDomainSize) {
-      const centerTick = (constrainedMinTick + constrainedMaxTick) / 2;
-      constrainedMinTick = centerTick - minDomainSize / 2;
-      constrainedMaxTick = centerTick + minDomainSize / 2;
-    }
-    
-    // Apply maximum view range constraint: 500% above and 95% below current price
-    if (currentPoolTick !== null) {
-      const maxUpperDelta = Math.round(Math.log(6) / Math.log(1.0001)); // 500% above = 6x price
-      const maxLowerDelta = Math.round(Math.log(0.05) / Math.log(1.0001)); // 95% below = 0.05x price
-      
-      const maxUpperTick = currentPoolTick + maxUpperDelta;
-      const maxLowerTick = currentPoolTick + maxLowerDelta;
-      
-      // Clamp the domain to the maximum view range
-      constrainedMinTick = Math.max(constrainedMinTick, maxLowerTick);
-      constrainedMaxTick = Math.min(constrainedMaxTick, maxUpperTick);
-    }
-    
-    // Ensure the domain is properly aligned to tick spacing
-    constrainedMinTick = Math.floor(constrainedMinTick / defaultTickSpacing) * defaultTickSpacing;
-    constrainedMaxTick = Math.ceil(constrainedMaxTick / defaultTickSpacing) * defaultTickSpacing;
-    
-    // Ensure minimum domain size is maintained after constraints
-    const finalDomainSize = constrainedMaxTick - constrainedMinTick;
-    if (finalDomainSize < minDomainSize) {
-      const centerTick = (constrainedMinTick + constrainedMaxTick) / 2;
-      constrainedMinTick = centerTick - minDomainSize / 2;
-      constrainedMaxTick = centerTick + minDomainSize / 2;
-      
-      // Re-align to tick spacing
-      constrainedMinTick = Math.floor(constrainedMinTick / defaultTickSpacing) * defaultTickSpacing;
-      constrainedMaxTick = Math.ceil(constrainedMaxTick / defaultTickSpacing) * defaultTickSpacing;
-    }
-    
-    return [constrainedMinTick, constrainedMaxTick];
-  }, [defaultTickSpacing, currentPoolTick]);
-
   // Reset chart viewbox to fit the chosen range with configurable margins (fractions of selection width)
   const resetChartViewbox = useCallback((newTickLower: number, newTickUpper: number, leftMarginFrac: number = 0.05, rightMarginFrac: number = 0.05) => {
     if (newTickLower === newTickUpper) return;
 
-    // Always fit selection plus a small margin, then constrain
+    // Fit selection plus a small margin
     const rangeWidth = newTickUpper - newTickLower;
     const leftMarginTicks = Math.round(rangeWidth * Math.max(0, leftMarginFrac));
     const rightMarginTicks = Math.round(rangeWidth * Math.max(0, rightMarginFrac));
     const newMinTick = newTickLower - leftMarginTicks;
     const newMaxTick = newTickUpper + rightMarginTicks;
-    const [constrainedMinTick, constrainedMaxTick] = applyDomainConstraints(newMinTick, newMaxTick);
-    setXDomain([constrainedMinTick, constrainedMaxTick]);
-  }, [applyDomainConstraints, currentPoolTick, defaultTickSpacing, xDomain]);
+    setXDomain([newMinTick, newMaxTick]);
+  }, []);
 
   // Handle use full balance
   const handleUseFullBalance = (balanceString: string, tokenSymbolForDecimals: TokenSymbol, isToken0: boolean) => { 
@@ -2282,10 +2242,11 @@ export function AddLiquidityForm({
     const upper = parseInt(tickUpper);
     if (isNaN(lower) || isNaN(upper)) return null;
 
-    // Respect inversion: denominated switching and value inversion
+    // Use baseTokenForPriceDisplay to determine inversion (user's chosen denomination)
+    const shouldInvert = baseTokenForPriceDisplay === token0Symbol;
     const priceAt = (tickVal: number) => {
       const priceDelta = Math.pow(1.0001, tickVal - currentPoolTick);
-      return isInverted ? 1 / (currentNum * priceDelta) : currentNum * priceDelta;
+      return shouldInvert ? 1 / (currentNum * priceDelta) : currentNum * priceDelta;
     };
 
     // Full range special
@@ -2296,8 +2257,8 @@ export function AddLiquidityForm({
     const pLower = priceAt(lower);
     const pUpper = priceAt(upper);
 
-    const denomToken = isInverted ? token0Symbol : token1Symbol;
-    const isUsd = denomToken === 'aUSDT' || denomToken === 'aUSDC' || denomToken === 'USDT' || denomToken === 'USDC';
+    const denomToken = shouldInvert ? token0Symbol : token1Symbol;
+    const isUsd = denomToken === 'aUSDT' || denomToken === 'aUSDC' || denomToken === 'USDT' || denomToken === 'USDC' || denomToken === 'aDAI' || denomToken === 'DAI';
     const poolCfg = selectedPoolId ? getPoolById(selectedPoolId) : null;
     const isStablePoolType = (poolCfg?.type || '').toLowerCase() === 'stable';
     const decimals = isUsd ? (isStablePoolType ? 6 : 2) : (TOKEN_DEFINITIONS[denomToken]?.displayDecimals ?? 4);
@@ -2313,12 +2274,16 @@ export function AddLiquidityForm({
 
     const formatVal = (v: number) => {
       if (!isFinite(v)) return '∞';
-      return v.toLocaleString('en-US', { maximumFractionDigits: decimals, minimumFractionDigits: Math.min(2, decimals) });
+      if (v > 0 && v < 0.01) return '<0.01';
+      const formatted = v.toLocaleString('en-US', { maximumFractionDigits: decimals, minimumFractionDigits: Math.min(2, decimals) });
+      // If it rounds to 0.00 but is actually positive, show <0.01
+      if (formatted === '0.00' && v > 0) return '<0.01';
+      return formatted;
     };
 
     // Always display ascending by price: left = lower, right = higher
     return { left: formatVal(points[0].price), right: formatVal(points[1].price) };
-  }, [currentPoolTick, currentPrice, tickLower, tickUpper, token0Symbol, token1Symbol, sdkMinTick, sdkMaxTick, isInverted]);
+  }, [currentPoolTick, currentPrice, tickLower, tickUpper, token0Symbol, token1Symbol, sdkMinTick, sdkMaxTick, baseTokenForPriceDisplay, selectedPoolId]);
 
   // const { open } = useWeb3Modal();
 
@@ -2598,15 +2563,31 @@ export function AddLiquidityForm({
                         onClick={() => setShowRangeModal(true)}
                         title="Click to change range"
                       >
-                        {activePreset || "Custom"}
+                        {(() => {
+                          const presetLabels: Record<string, string> = {
+                            "Full Range": "Full Range",
+                            "±15%": "Conservative",
+                            "±8%": "Moderate",
+                            "±3%": "Concentrated",
+                            "±1%": "Narrow",
+                            "±0.5%": "Very Narrow",
+                            "±0.1%": "Ultra Narrow"
+                          };
+                          return activePreset ? (presetLabels[activePreset] || activePreset) : "Custom";
+                        })()}
                       </button>
                       {getPriceRangeDisplay() && (
                         <>
                           <div className="w-px h-4 bg-border" />
                           {/* Clickable price range display - opens modal */}
-                          <div className="flex items-center gap-1 text-xs cursor-pointer" onClick={() => setShowRangeModal(true)}>
+                          <div className="flex items-center gap-1 text-xs">
                             <div
-                              className={`${(isDraggingRange === 'left' || isDraggingRange === 'center') ? 'text-white' : 'text-muted-foreground'} hover:text-white px-1 py-1 transition-colors`}
+                              className={`${(isDraggingRange === 'left' || isDraggingRange === 'center') ? 'text-white' : 'text-muted-foreground'} hover:text-white px-1 py-1 transition-colors cursor-pointer`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setModalInitialFocusField('min');
+                                setShowRangeModal(true);
+                              }}
                             >
                               {(() => {
                                 const labels = computeRangeLabels();
@@ -2615,7 +2596,12 @@ export function AddLiquidityForm({
                             </div>
                             <span className="text-muted-foreground">-</span>
                             <div
-                              className={`${(isDraggingRange === 'right' || isDraggingRange === 'center') ? 'text-white' : 'text-muted-foreground'} hover:text-white px-1 py-1 transition-colors`}
+                              className={`${(isDraggingRange === 'right' || isDraggingRange === 'center') ? 'text-white' : 'text-muted-foreground'} hover:text-white px-1 py-1 transition-colors cursor-pointer`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setModalInitialFocusField('max');
+                                setShowRangeModal(true);
+                              }}
                             >
                               {(() => {
                                 const labels = computeRangeLabels();
@@ -2633,7 +2619,7 @@ export function AddLiquidityForm({
                                           const inverse = 1 / parseFloat(currentPrice);
                                           const flip = inverse > parseFloat(currentPrice);
                                           const denomToken = flip ? token0Symbol : token1Symbol;
-                                          const isUsd = denomToken === 'aUSDT' || denomToken === 'aUSDC' || denomToken === 'USDT' || denomToken === 'USDC';
+                                          const isUsd = denomToken === 'aUSDT' || denomToken === 'aUSDC' || denomToken === 'USDT' || denomToken === 'USDC' || denomToken === 'aDAI' || denomToken === 'DAI';
                                           const displayDecimals = isUsd ? 2 : (TOKEN_DEFINITIONS[denomToken]?.displayDecimals ?? 4);
                                           const numeric = flip ? inverse : parseFloat(currentPrice);
                                           return isFinite(numeric) ? numeric.toFixed(displayDecimals) : '∞';
@@ -2678,6 +2664,7 @@ export function AddLiquidityForm({
                   ) : (
                     <div className="relative pointer-events-none h-[100px]">
                       <InteractiveRangeChart
+                        key={`chart-${baseTokenForPriceDisplay}`}
                         selectedPoolId={selectedPoolId}
                         chainId={chainId}
                         token0Symbol={token0Symbol}
@@ -2711,7 +2698,10 @@ export function AddLiquidityForm({
 
                       <RangeSelectionModalV2
                         isOpen={showRangeModal}
-                        onClose={() => setShowRangeModal(false)}
+                        onClose={() => {
+                          setShowRangeModal(false);
+                          setModalInitialFocusField(null);
+                        }}
                         onConfirm={(newTickLower, newTickUpper, selectedPreset, denomination) => {
                           setTickLower(newTickLower);
                           setTickUpper(newTickUpper);
@@ -2723,6 +2713,7 @@ export function AddLiquidityForm({
                           if (denomination) {
                             setBaseTokenForPriceDisplay(denomination);
                           }
+                          setModalInitialFocusField(null);
                         }}
                         initialTickLower={tickLower}
                         initialTickUpper={tickUpper}
@@ -2746,6 +2737,7 @@ export function AddLiquidityForm({
                         poolToken1={poolToken1}
                         presetOptions={presetOptions}
                         isInverted={isInverted}
+                        initialFocusField={modalInitialFocusField}
                       />
 
                       {(isChartLoading || isCalculating) && (

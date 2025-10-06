@@ -106,14 +106,70 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       })
     ]);
 
-    const [poolResult, feeResult] = await Promise.all([
-      poolResponse.json(),
-      feeResponse.json()
-    ]);
+    // Check response status first
+    if (!poolResponse.ok) {
+      console.error('[pool-metrics] Pool subgraph error:', poolResponse.status, poolResponse.statusText);
+      return res.status(200).json({
+        pool: null,
+        metrics: {
+          totalFeesToken0: 0,
+          avgTVLToken0: 0,
+          totalVolumeToken0: 0,
+          currentFeeBps: 0,
+          days: 0
+        },
+        dayData: []
+      });
+    }
+
+    if (!feeResponse.ok) {
+      console.error('[pool-metrics] Fee subgraph error:', feeResponse.status, feeResponse.statusText);
+    }
+
+    // Handle empty/malformed responses gracefully
+    let poolResult: any;
+    let feeResult: any;
+    
+    try {
+      const poolText = await poolResponse.text();
+      if (!poolText || poolText.trim() === '') {
+        console.log('[pool-metrics] Empty pool response');
+        poolResult = { data: { trackedPool: null, poolDayDatas: [] } };
+      } else {
+        poolResult = JSON.parse(poolText);
+      }
+    } catch (e) {
+      console.error('[pool-metrics] Failed to parse pool response:', e);
+      poolResult = { data: { trackedPool: null, poolDayDatas: [] } };
+    }
+
+    try {
+      const feeText = await feeResponse.text();
+      if (!feeText || feeText.trim() === '') {
+        console.log('[pool-metrics] Empty fee response');
+        feeResult = { data: { alphixHooks: [] } };
+      } else {
+        feeResult = JSON.parse(feeText);
+      }
+    } catch (e) {
+      console.error('[pool-metrics] Failed to parse fee response:', e);
+      feeResult = { data: { alphixHooks: [] } };
+    }
 
     if (poolResult?.errors) {
-      console.error('[pool-metrics] Pool query errors:', poolResult.errors);
-      return res.status(500).json({ error: 'Subgraph query error', details: poolResult.errors });
+      console.error('[pool-metrics] Pool query errors:', JSON.stringify(poolResult.errors, null, 2));
+      // Return empty metrics for pools not yet in subgraph
+      return res.status(200).json({
+        pool: null,
+        metrics: {
+          totalFeesToken0: 0,
+          avgTVLToken0: 0,
+          totalVolumeToken0: 0,
+          currentFeeBps: 0,
+          days: 0
+        },
+        dayData: []
+      });
     }
 
     if (feeResult?.errors) {
@@ -123,8 +179,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const { data } = poolResult;
     const feeEvents = feeResult?.data?.alphixHooks || [];
 
-    if (!data?.poolDayDatas) {
-      return res.status(404).json({ error: 'Pool data not found' });
+    if (!data?.poolDayDatas || data.poolDayDatas.length === 0) {
+      console.log('[pool-metrics] No poolDayDatas found for pool. Pool may not be in subgraph yet.');
+      // Return empty metrics instead of error for pools not yet in subgraph
+      return res.status(200).json({
+        pool: data?.trackedPool || null,
+        metrics: {
+          totalFeesToken0: 0,
+          avgTVLToken0: 0,
+          totalVolumeToken0: 0,
+          currentFeeBps: 0,
+          days: 0
+        },
+        dayData: []
+      });
     }
 
     // Calculate aggregates
@@ -141,12 +209,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(200).json({
         pool,
         metrics: {
-          totalFeesUSD: 0,
-          avgTVL: 0,
-          totalVolumeUSD: 0,
-          priceHigh: 0,
-          priceLow: 0,
-          priceVolatility: 0,
+          totalFeesToken0: 0,
+          avgTVLToken0: 0,
+          totalVolumeToken0: 0,
+          currentFeeBps: 0,
           days: 0
         },
         dayData: []
@@ -192,10 +258,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const totalVolumeToken0 = dayDatas.reduce((sum, day) => sum + parseFloat(day.volumeToken0 || '0'), 0);
 
     // For APY calculation, we'll work in token0 terms
+    // Get the most recent actual fee rate from fee events (not the config flag)
+    const currentActualFeeBps = sortedFeeEvents.length > 0 
+      ? Number(sortedFeeEvents[sortedFeeEvents.length - 1].newFeeBps || 0)
+      : 0;
+
     const metrics = {
       totalFeesToken0: totalFeesToken0, // Fees in token0
       avgTVLToken0: avgTVLToken0, // TVL in token0
       totalVolumeToken0: totalVolumeToken0, // Volume in token0
+      currentFeeBps: currentActualFeeBps, // Actual current fee in basis points (millionths converted)
       days: dayDatas.length
     };
 

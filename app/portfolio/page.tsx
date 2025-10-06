@@ -746,7 +746,7 @@ export default function PortfolioPage() {
   const determineBaseTokenForPriceDisplay = useCallback((token0: string, token1: string): string => {
     if (!token0 || !token1) return token0;
     const quotePriority: Record<string, number> = {
-      'aUSDC': 10, 'aUSDT': 9, 'USDC': 8, 'USDT': 7, 'aETH': 6, 'ETH': 5, 'YUSD': 4, 'mUSDT': 3,
+      'aUSDC': 10, 'aUSDT': 9, 'aDAI': 8, 'USDC': 7, 'USDT': 6, 'DAI': 5, 'aETH': 4, 'ETH': 3, 'YUSD': 2, 'mUSDT': 1,
     };
     const token0Priority = quotePriority[token0] || 0;
     const token1Priority = quotePriority[token1] || 0;

@@ -140,12 +140,33 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
           if (Math.abs(n) >= 1e4) return n / 1e4;
           return n;
         };
-        const out: FeeHistoryPoint[] = evAsc.map((e: any) => ({
+        let out: FeeHistoryPoint[] = evAsc.map((e: any) => ({
           timeLabel: new Date(e.ts * 1000).toISOString().split('T')[0],
           volumeTvlRatio: scaleRatio(e.ratio),
           emaRatio: scaleRatio(e.ema),
           dynamicFee: (Number.isFinite(e.feeBps) ? e.feeBps : 0) / 10000,
         }));
+        
+        // Pad data with empty days if we have less than 30 days (to match the 30-day fetch window)
+        const expectedDays = 30;
+        if (out.length > 0 && out.length < expectedDays) {
+          const daysToAdd = expectedDays - out.length;
+          const oldestDate = new Date(out[0].timeLabel);
+          const emptyDays: FeeHistoryPoint[] = [];
+          
+          for (let i = 1; i <= daysToAdd; i++) {
+            const emptyDate = new Date(oldestDate);
+            emptyDate.setDate(emptyDate.getDate() - i);
+            emptyDays.unshift({
+              timeLabel: emptyDate.toISOString().split('T')[0],
+              volumeTvlRatio: 0,
+              emaRatio: 0,
+              dynamicFee: 0,
+            });
+          }
+          
+          out = [...emptyDays, ...out];
+        }
         
         // Cache the processed data
         if (out && out.length > 0) {
@@ -317,7 +338,9 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
 
   // Removed change-point dots per design preference; keep normalization only
 
-  const hasData = Array.isArray(effectiveData) && effectiveData.length > 0;
+    const hasData = Array.isArray(effectiveData) && effectiveData.length > 0;
+    const dataPointsCount = hasData ? effectiveData.length : 0;
+    const hasMinimumData = hasData && dataPointsCount >= 1;
 
   // Render different Card structures based on data availability
   if (alwaysShowSkeleton) {
@@ -374,8 +397,8 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
     );
   }
 
-  // If no data and not loading, show the empty state. If loading, fall through to the chart card (it shows a skeleton inside).
-  if (!hasData && !isActuallyLoading) {
+  // If insufficient data and not loading, show the initializing state. If loading, fall through to the chart card (it shows a skeleton inside).
+  if (!hasMinimumData && !isActuallyLoading) {
     return (
       <div
         className="w-full rounded-lg border border-sidebar-border/60 transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow"
@@ -422,7 +445,9 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
           </div>
         </div>
         <div className="px-2 py-2 h-[120px] relative">
-          <div className="w-full h-full flex items-center justify-center" />
+              <div className="w-full h-full flex items-center justify-center text-xs font-mono text-muted-foreground/50 animate-pulse">
+                Pool Initializing ({dataPointsCount}/1 updates)
+              </div>
         </div>
         
       </div>

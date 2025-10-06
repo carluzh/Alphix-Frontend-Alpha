@@ -40,6 +40,7 @@ interface RangeSelectionModalV2Props {
   poolToken1?: any;
   presetOptions: string[];
   isInverted?: boolean;
+  initialFocusField?: 'min' | 'max' | null;
 }
 
 // Helper to abbreviate decimal numbers beyond 10 decimals
@@ -63,11 +64,14 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
     minPriceDisplay, maxPriceDisplay, baseTokenSymbol,
     sdkMinTick, sdkMaxTick, defaultTickSpacing,
     xDomain, onXDomainChange, poolToken0, poolToken1, presetOptions,
-    isInverted = false
+    isInverted = false,
+    initialFocusField = null
   } = props;
 
   const containerRef = useRef<HTMLDivElement>(null);
   const suppressNextClick = useRef(false);
+  const minPriceInputRef = useRef<HTMLInputElement>(null);
+  const maxPriceInputRef = useRef<HTMLInputElement>(null);
 
   const swallowNextClick = () => {
     const handler = (e: Event) => {
@@ -115,7 +119,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
   const quoteTokenSymbol = denominationBase === token0Symbol ? token1Symbol : token0Symbol;
 
   // Display decimals for current price (capped at 4 or 2 for USD)
-  const isUSDDenom = ['aUSDT', 'aUSDC', 'USDT', 'USDC'].includes(denominationBase);
+  const isUSDDenom = ['aUSDT', 'aUSDC', 'USDT', 'USDC', 'aDAI', 'DAI'].includes(denominationBase);
   const poolPriceDecimals = isUSDDenom ? 2 : (denominationToken?.displayDecimals ?? 4);
 
   // Price label text - denomination is the unit, quote is what we're pricing
@@ -190,7 +194,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
       setLocalXDomain(xDomain);
       // Use the preset passed from the form (deterministic)
       setSelectedPreset(initialActivePreset !== undefined ? initialActivePreset : undefined);
-      setDenominationBase(token1Symbol);
+      setDenominationBase(baseTokenSymbol);
       
       // Calculate and set full precision values
       const minPrice = shouldInvert
@@ -206,6 +210,24 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
       setMaxPriceInput(abbreviateDecimal(maxPrice));
     }
   }, [isOpen, initialTickLower, initialTickUpper, initialActivePreset, xDomain, token1Symbol]);
+
+  // Auto-focus input field based on initialFocusField
+  useEffect(() => {
+    if (isOpen && initialFocusField) {
+      // Small delay to ensure modal is fully rendered
+      const timeoutId = setTimeout(() => {
+        if (initialFocusField === 'min' && minPriceInputRef.current) {
+          minPriceInputRef.current.focus();
+          minPriceInputRef.current.select();
+        } else if (initialFocusField === 'max' && maxPriceInputRef.current) {
+          maxPriceInputRef.current.focus();
+          maxPriceInputRef.current.select();
+        }
+      }, 100);
+      
+      return () => clearTimeout(timeoutId);
+    }
+  }, [isOpen, initialFocusField]);
 
   // Global outside-click close (capturing phase to beat internal stops)
   useEffect(() => {
@@ -322,6 +344,9 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
         shouldInvert ? setLocalTickLower(newTick.toString()) : setLocalTickUpper(newTick.toString());
       }
     }
+    
+    // Clear preset when manually adjusting, same as dragging
+    setSelectedPreset(null);
   };
 
   const handleReset = () => {
@@ -443,10 +468,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                   // Only show APY for Custom if it's the active preset
                   const shouldCalculateAPY = rangeType !== "Custom" || (rangeType === "Custom" && isActive);
 
-                  // Show loading state when dragging Custom
-                  if (rangeType === "Custom" && isActive && isDragging) {
-                    apyDisplay = "...";
-                  } else if (shouldCalculateAPY && poolMetrics && !isLoadingMetrics && currentPoolTick !== null && currentPoolSqrtPriceX96 && poolToken0 && poolToken1 && selectedPoolId) {
+                  if (shouldCalculateAPY && poolMetrics && !isLoadingMetrics && currentPoolTick !== null && currentPoolSqrtPriceX96 && poolToken0 && poolToken1 && selectedPoolId) {
                     try {
                       // Get pool configuration
                       const poolConfig = getPoolById(selectedPoolId);
@@ -632,6 +654,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                     </div>
                   </div>
                   <Input
+                    ref={minPriceInputRef}
                     type="text"
                     value={minPriceInput}
                     onChange={(e) => {
@@ -689,6 +712,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                     </div>
                   </div>
                   <Input
+                    ref={maxPriceInputRef}
                     type="text"
                     value={maxPriceInput}
                     onChange={(e) => {
