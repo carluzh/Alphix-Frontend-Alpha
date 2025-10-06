@@ -34,6 +34,7 @@ import { toast } from "sonner";
 import { getEnabledPools, getToken, getPoolSubgraphId, getPoolById } from "../../lib/pools-config";
 import { getFromCache, getFromCacheWithTtl, setToCache, getUserPositionsCacheKey, getPoolStatsCacheKey, loadUserPositionIds, derivePositionsFromIds, getPoolFeeBps } from "../../lib/client-cache";
 import { getCachedBatchData, setCachedBatchData, clearBatchDataCache } from "../../lib/cache-version";
+import { fetchPoolFullRangeAPY } from "../../lib/apy-calculator";
 import { Pool } from "../../types";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -174,8 +175,8 @@ export default function LiquidityPage() {
             const volume24hUSD = typeof batchPoolData.volume24hUSD === 'number' ? batchPoolData.volume24hUSD : undefined;
             const volumePrev24hUSD = typeof batchPoolData.volumePrev24hUSD === 'number' ? batchPoolData.volumePrev24hUSD : undefined;
             let fees24hUSD: number | undefined = undefined;
-            let aprStr: string = 'N/A';
-            
+            let aprStr: string = 'Loading...';
+
             if (typeof volume24hUSD === 'number') {
               try {
                 const bps = await getPoolFeeBps(apiPoolId);
@@ -183,9 +184,13 @@ export default function LiquidityPage() {
                 fees24hUSD = volume24hUSD * feeRate;
               } catch {}
             }
-            if (typeof fees24hUSD === 'number' && typeof tvlUSD === 'number' && tvlUSD > 0) {
-              const apr = (fees24hUSD * 365 / tvlUSD) * 100;
-              aprStr = `${apr.toFixed(2)}%`;
+
+            // Fetch Full Range APY using our new calculator
+            try {
+              aprStr = await fetchPoolFullRangeAPY(pool.id, 7);
+            } catch (error) {
+              console.error('[LiquidityPage] Failed to fetch APY for', pool.id, error);
+              aprStr = 'N/A';
             }
             return { 
               ...pool, 

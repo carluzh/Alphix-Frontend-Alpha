@@ -8,13 +8,19 @@ import { InteractiveRangeChart } from "../InteractiveRangeChart";
 import { PlusIcon, MinusIcon, ArrowLeftRight, CircleHelp } from "lucide-react";
 import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
+import { calculatePositionAPY, formatAPY, type PoolMetrics } from "@/lib/apy-calculator";
+import { getPoolById } from "@/lib/pools-config";
+import { Token } from '@uniswap/sdk-core';
+import { Pool as V4Pool, Position as V4Position } from '@uniswap/v4-sdk';
+import JSBI from 'jsbi';
 
 interface RangeSelectionModalV2Props {
   isOpen: boolean;
   onClose: () => void;
-  onConfirm: (tickLower: string, tickUpper: string) => void;
+  onConfirm: (tickLower: string, tickUpper: string, selectedPreset?: string | null, denomination?: TokenSymbol) => void;
   initialTickLower: string;
   initialTickUpper: string;
+  initialActivePreset?: string | null; // Pass current preset from form
   selectedPoolId?: string;
   chainId?: number;
   token0Symbol: TokenSymbol;
@@ -51,7 +57,7 @@ const abbreviateDecimal = (value: string, maxDecimals: number = 10): string => {
 
 export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
   const {
-    isOpen, onClose, onConfirm, initialTickLower, initialTickUpper,
+    isOpen, onClose, onConfirm, initialTickLower, initialTickUpper, initialActivePreset,
     selectedPoolId, chainId, token0Symbol, token1Symbol,
     currentPrice, currentPoolTick, currentPoolSqrtPriceX96,
     minPriceDisplay, maxPriceDisplay, baseTokenSymbol,
@@ -88,13 +94,18 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
   const [minPriceInput, setMinPriceInput] = useState(abbreviateDecimal(minPriceDisplay));
   const [maxPriceInput, setMaxPriceInput] = useState(abbreviateDecimal(maxPriceDisplay));
   const [isChartLoading, setIsChartLoading] = useState(true);
-  
+  const [isDragging, setIsDragging] = useState(false);
+
   // Track which input is focused
   const [isMinPriceFocused, setIsMinPriceFocused] = useState(false);
   const [isMaxPriceFocused, setIsMaxPriceFocused] = useState(false);
 
   // Local denomination toggle - independent of parent, defaults to token1
   const [denominationBase, setDenominationBase] = useState<TokenSymbol>(token1Symbol);
+
+  // Pool metrics for APY calculation
+  const [poolMetrics, setPoolMetrics] = useState<any>(null);
+  const [isLoadingMetrics, setIsLoadingMetrics] = useState(false);
 
   // Calculate if we need to invert based on our local denomination choice
   const shouldInvert = denominationBase === token0Symbol;
@@ -138,7 +149,11 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
 
   // Detect which preset matches current ticks (if any)
   const detectedPreset = useMemo(() => {
-    if (localTickLower === sdkMinTick.toString() && localTickUpper === sdkMaxTick.toString()) {
+    // Check Full Range - need to align to tickSpacing first
+    const alignedMinTick = Math.ceil(sdkMinTick / defaultTickSpacing) * defaultTickSpacing;
+    const alignedMaxTick = Math.floor(sdkMaxTick / defaultTickSpacing) * defaultTickSpacing;
+
+    if (localTickLower === alignedMinTick.toString() && localTickUpper === alignedMaxTick.toString()) {
       return "Full Range";
     }
 
@@ -163,8 +178,9 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
     return null;
   }, [localTickLower, localTickUpper, currentPoolTick, sdkMinTick, sdkMaxTick, defaultTickSpacing]);
 
-  // Use detected preset or manually selected preset
-  const activePreset = selectedPreset ?? detectedPreset;
+  // Use manually selected preset if explicitly set (including null for "Custom")
+  // Only fall back to detection if user hasn't made a manual selection
+  const activePreset = selectedPreset !== undefined ? selectedPreset : detectedPreset;
 
   // Initialize modal state when opened
   useEffect(() => {
@@ -172,7 +188,8 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
       setLocalTickLower(initialTickLower);
       setLocalTickUpper(initialTickUpper);
       setLocalXDomain(xDomain);
-      setSelectedPreset(null);
+      // Use the preset passed from the form (deterministic)
+      setSelectedPreset(initialActivePreset !== undefined ? initialActivePreset : undefined);
       setDenominationBase(token1Symbol);
       
       // Calculate and set full precision values
@@ -188,7 +205,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
       setMinPriceInput(abbreviateDecimal(minPrice));
       setMaxPriceInput(abbreviateDecimal(maxPrice));
     }
-  }, [isOpen, initialTickLower, initialTickUpper, xDomain, token1Symbol]);
+  }, [isOpen, initialTickLower, initialTickUpper, initialActivePreset, xDomain, token1Symbol]);
 
   // Global outside-click close (capturing phase to beat internal stops)
   useEffect(() => {
@@ -212,6 +229,36 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
       document.removeEventListener('touchstart', handleGlobalPointerDown, true);
     };
   }, [isOpen, onClose]);
+
+  // Fetch pool metrics when modal opens
+  useEffect(() => {
+    if (!isOpen || !selectedPoolId) return;
+
+    const fetchMetrics = async () => {
+      setIsLoadingMetrics(true);
+      try {
+        const response = await fetch('/api/liquidity/pool-metrics', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ poolId: selectedPoolId, days: 7 })
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          console.log('[RangeSelectionModalV2] Pool metrics response:', data);
+          setPoolMetrics(data.metrics);
+        } else {
+          console.error('[RangeSelectionModalV2] Pool metrics request failed:', response.status, await response.text());
+        }
+      } catch (error) {
+        console.error('Failed to fetch pool metrics:', error);
+      } finally {
+        setIsLoadingMetrics(false);
+      }
+    };
+
+    fetchMetrics();
+  }, [isOpen, selectedPoolId]);
 
   // Update price inputs when ticks or denomination changes
   useEffect(() => {
@@ -385,14 +432,122 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                   const labels: Record<string, string> = {
                     "Full Range": "Full Range", "±15%": "Conservative", "±3%": "Concentrated", "Custom": "Custom"
                   };
-                  const risks: Record<string, string> = {
-                    "Full Range": "Low Risk", "±15%": "Moderate", "±3%": "Highest", "Custom": ""
-                  };
 
                   // Custom is active when no preset matches
                   const isActive = rangeType === "Custom"
                     ? (activePreset !== "Full Range" && activePreset !== "±15%" && activePreset !== "±3%")
                     : activePreset === rangeType;
+
+                  // Calculate APY for this range type
+                  let apyDisplay = "";
+                  // Only show APY for Custom if it's the active preset
+                  const shouldCalculateAPY = rangeType !== "Custom" || (rangeType === "Custom" && isActive);
+
+                  // Show loading state when dragging Custom
+                  if (rangeType === "Custom" && isActive && isDragging) {
+                    apyDisplay = "...";
+                  } else if (shouldCalculateAPY && poolMetrics && !isLoadingMetrics && currentPoolTick !== null && currentPoolSqrtPriceX96 && poolToken0 && poolToken1 && selectedPoolId) {
+                    try {
+                      // Get pool configuration
+                      const poolConfig = getPoolById(selectedPoolId);
+                      if (!poolConfig) {
+                        apyDisplay = "—";
+                      } else {
+                        // Create SDK Token objects
+                        const token0 = new Token(
+                          chainId || 84532,
+                          poolToken0.address as `0x${string}`,
+                          poolToken0.decimals,
+                          poolToken0.symbol
+                        );
+                        const token1 = new Token(
+                          chainId || 84532,
+                          poolToken1.address as `0x${string}`,
+                          poolToken1.decimals,
+                          poolToken1.symbol
+                        );
+
+                        // Create V4Pool with correct parameters from config
+                        console.log('[RangeSelectionModalV2] Creating V4Pool with params:', {
+                          poolId: poolConfig.id,
+                          token0: token0.symbol,
+                          token1: token1.symbol,
+                          fee: poolConfig.fee,
+                          tickSpacing: poolConfig.tickSpacing,
+                          hooks: poolConfig.hooks,
+                          currentPoolSqrtPriceX96,
+                          currentPoolTick
+                        });
+
+                        const pool = new V4Pool(
+                          token0,
+                          token1,
+                          poolConfig.fee,
+                          poolConfig.tickSpacing,
+                          poolConfig.hooks,
+                          JSBI.BigInt(currentPoolSqrtPriceX96),
+                          JSBI.BigInt('0'), // liquidity not needed for APY calc
+                          currentPoolTick
+                        );
+
+                        console.log('[RangeSelectionModalV2] V4Pool created successfully:', {
+                          poolTickSpacing: pool.tickSpacing,
+                          poolTickCurrent: pool.tickCurrent
+                        });
+
+                        // Get ticks for this range type
+                        // IMPORTANT: Use poolConfig.tickSpacing, not defaultTickSpacing
+                        // defaultTickSpacing is for UI, but APY calc needs actual pool tickSpacing
+                        const actualTickSpacing = poolConfig.tickSpacing;
+
+                        let tickLower, tickUpper;
+                        if (rangeType === "Full Range") {
+                          // Align min/max ticks to actual pool spacing
+                          const alignedMinTick = Math.ceil(sdkMinTick / actualTickSpacing) * actualTickSpacing;
+                          const alignedMaxTick = Math.floor(sdkMaxTick / actualTickSpacing) * actualTickSpacing;
+                          tickLower = alignedMinTick;
+                          tickUpper = alignedMaxTick;
+                        } else if (rangeType === "Custom") {
+                          // Use current custom selection
+                          tickLower = parseInt(localTickLower);
+                          tickUpper = parseInt(localTickUpper);
+                        } else {
+                          // Calculate ticks for percentage-based ranges
+                          const percentages: Record<string, number> = {
+                            "±15%": 0.15,
+                            "±3%": 0.03
+                          };
+                          const pct = percentages[rangeType];
+                          if (pct && currentPoolTick !== null) {
+                            const tickDelta = Math.round(Math.log(1 + pct) / Math.log(1.0001));
+                            const expectedLower = Math.floor((currentPoolTick - tickDelta) / actualTickSpacing) * actualTickSpacing;
+                            const expectedUpper = Math.ceil((currentPoolTick + tickDelta) / actualTickSpacing) * actualTickSpacing;
+                            tickLower = Math.max(sdkMinTick, expectedLower);
+                            tickUpper = Math.min(sdkMaxTick, expectedUpper);
+                          } else {
+                            // Fallback to current selection
+                            tickLower = parseInt(localTickLower);
+                            tickUpper = parseInt(localTickUpper);
+                          }
+                        }
+
+                        // Calculate APY
+                        const metrics: PoolMetrics = {
+                          totalFeesToken0: poolMetrics.totalFeesToken0,
+                          avgTVLToken0: poolMetrics.avgTVLToken0,
+                          days: poolMetrics.days
+                        };
+
+                        const apy = calculatePositionAPY(pool, tickLower, tickUpper, metrics);
+                        apyDisplay = formatAPY(apy);
+                      }
+                    } catch (error) {
+                      console.error('[RangeSelectionModalV2] APY calculation error:', error);
+                      apyDisplay = "—";
+                    }
+                  } else if (isLoadingMetrics) {
+                    apyDisplay = "...";
+                  }
 
                   return (
                     <div
@@ -406,7 +561,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                       style={!isActive && rangeType !== "Custom" ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
                     >
                       <span className="text-sm font-medium relative z-10">{labels[rangeType] || rangeType}</span>
-                      <span className="text-xs text-muted-foreground relative z-10">{risks[rangeType] || ""}</span>
+                      <span className="text-xs text-muted-foreground relative z-10">{apyDisplay}</span>
                     </div>
                   );
                 })}
@@ -440,6 +595,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                     forceDenominationBase={denominationBase}
                     onReset={handleReset}
                     onLoadingChange={(loading) => setIsChartLoading(loading)}
+                    onDragStateChange={(state) => setIsDragging(state !== null)}
                   />
                 </div>
               </div>
@@ -575,7 +731,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
             </Button>
             <Button
               onClick={() => {
-                onConfirm(localTickLower, localTickUpper);
+                onConfirm(localTickLower, localTickUpper, activePreset, denominationBase);
                 onClose();
               }}
               className="relative flex h-10 flex-1 cursor-pointer items-center justify-center rounded-md border border-sidebar-primary bg-[#3d271b] hover:bg-[#3d271b]/90 px-3 text-sm font-medium transition-all duration-200 text-sidebar-primary"

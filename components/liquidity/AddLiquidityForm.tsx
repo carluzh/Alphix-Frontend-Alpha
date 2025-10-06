@@ -2591,196 +2591,63 @@ export function AddLiquidityForm({
                     </>
                   ) : (
                     <>
-                      {/* Animated preset dropdown like Swap Slippage */}
-                      <div className="relative preset-selector">
-                        <button
-                          type="button"
-                          className="px-1.5 py-0.5 text-xs font-normal rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-muted-foreground hover:brightness-110 hover:border-white/30 inline-flex items-center gap-1"
-                          onClick={() => setShowPresetSelector((v) => !v)}
-                          aria-haspopup="listbox"
-                          aria-expanded={showPresetSelector}
-                          title="Change preset range"
-                        >
-                          <span>{activePreset || "Custom"}</span>
-                          <svg width="10" height="10" viewBox="0 0 20 20" aria-hidden="true" className="opacity-80">
-                            <path d="M5 7l5 5 5-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                          </svg>
-                        </button>
-                        <AnimatePresence initial={false}>
-                          {showPresetSelector && (
-                            <motion.div
-                              key="range-preset-menu"
-                              initial={{ height: 0, opacity: 0 }}
-                              animate={{ height: 'auto', opacity: 1 }}
-                              exit={{ height: 0, opacity: 0 }}
-                              transition={{ duration: 0.18, ease: 'easeOut' }}
-                              className="absolute z-20 mt-1 left-0 w-max min-w-[180px] rounded-md border border-sidebar-border bg-[var(--modal-background)] shadow-md overflow-hidden"
-                            >
-                              <div className="p-1 grid gap-1">
-                                {presetOptions.map((preset) => (
-                                  <button
-                                    type="button"
-                                    key={preset}
-                                    className={cn(
-                                      "px-2 py-1 text-xs rounded text-left transition-colors",
-                                      activePreset === preset
-                                        ? "bg-muted text-foreground"
-                                        : "text-muted-foreground hover:bg-muted/30"
-                                    )}
-                                    onClick={() => {
-                                      handleSelectPreset(preset);
-                                      // Viewbox reset will be applied in the preset effect after ticks are recomputed
-                                      setShowPresetSelector(false);
-                                    }}
-                                  >
-                                    {preset}
-                                  </button>
-                                ))}
-                              </div>
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
-                      </div>
+                      {/* Range Type badge - opens modal */}
+                      <button
+                        type="button"
+                        className="px-2 py-0.5 text-xs font-medium rounded-md border border-sidebar-border bg-muted/30 text-foreground hover:bg-muted/50 transition-colors cursor-pointer"
+                        onClick={() => setShowRangeModal(true)}
+                        title="Click to change range"
+                      >
+                        {activePreset || "Custom"}
+                      </button>
                       {getPriceRangeDisplay() && (
                         <>
                           <div className="w-px h-4 bg-border" />
-                          {editingSide ? (
-                            // Editing: show inputs AND keep the current price pill visible
-                            <div className="flex items-center gap-1 text-xs price-range-editor">
-                              {editingSide === 'min' ? (
-                                <input
-                                  value={editingMinPrice}
-                                  onChange={(e) => handlePriceInputChange('min', e.target.value)}
-                                  onBlur={handleApplyPriceRange}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') handleApplyPriceRange();
-                                    if (e.key === 'Escape') handleCancelPriceRangeEdit();
-                                  }}
-                                  className={cn(
-                                    "w-16 h-auto p-0 text-xs text-center bg-transparent border-0 appearance-none focus:outline-none focus:ring-0 focus-visible:ring-offset-0 focus-visible:ring-0 font-sans transition-colors",
-                                    convertPriceToValidTick(editingMinPrice, false) !== null
-                                      ? "text-white"
-                                      : "text-muted-foreground"
-                                  )}
-                                  autoComplete="off"
-                                  autoFocus
-                                />
-                              ) : (
-                                <div
-                                  className="text-muted-foreground hover:text-white cursor-pointer px-1 py-1 transition-colors font-sans"
-                                  onClick={() => handleClickToEditPrice('min')}
-                                >
-                                  {(() => {
-                                    const labels = computeRangeLabels();
-                                    return labels ? labels.left : (minPriceInputString || "0.00");
-                                  })()}
-                                </div>
-                              )}
-                              <span className="text-muted-foreground font-sans">-</span>
-                              {editingSide === 'max' ? (
-                                <input
-                                  value={editingMaxPrice}
-                                  onChange={(e) => handlePriceInputChange('max', e.target.value)}
-                                  onBlur={handleApplyPriceRange}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') handleApplyPriceRange();
-                                    if (e.key === 'Escape') handleCancelPriceRangeEdit();
-                                  }}
-                                  className={cn(
-                                    "w-16 h-auto p-0 text-xs text-center bg-transparent border-0 appearance-none focus:outline-none focus:ring-0 focus-visible:ring-offset-0 focus-visible:ring-0 font-sans transition-colors",
-                                    convertPriceToValidTick(editingMaxPrice, true) !== null
-                                      ? "text-white"
-                                      : "text-muted-foreground"
-                                  )}
-                                  autoComplete="off"
-                                  autoFocus
-                                />
-                              ) : (
-                                <div
-                                  className="text-muted-foreground hover:text-white cursor-pointer px-1 py-1 transition-colors font-sans"
-                                  onClick={() => handleClickToEditPrice('max')}
-                                >
-                                  {(() => {
-                                    const labels = computeRangeLabels();
-                                    return labels ? labels.right : (maxPriceInputString || "∞");
-                                  })()}
-                                </div>
-                              )}
-                              {currentPrice && (
-                                <TooltipProvider delayDuration={0}>
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <span className="ml-2 inline-flex items-center gap-1 text-[10px] px-1 py-0.5 rounded border border-sidebar-border text-muted-foreground">
-                                        <span className="inline-block w-[2px] h-2" style={{ background: '#e85102' }} />
-                                        <span className="select-none">
-                                          {(() => {
-                                            const inverse = 1 / parseFloat(currentPrice);
-                                            const flip = inverse > parseFloat(currentPrice);
-                                            const denomToken = flip ? token0Symbol : token1Symbol;
-                                            const isUsd = denomToken === 'aUSDT' || denomToken === 'aUSDC' || denomToken === 'USDT' || denomToken === 'USDC';
-                                            const displayDecimals = isUsd ? 2 : (TOKEN_DEFINITIONS[denomToken]?.displayDecimals ?? 4);
-                                            const numeric = flip ? inverse : parseFloat(currentPrice);
-                                            return isFinite(numeric) ? numeric.toFixed(displayDecimals) : '∞';
-                                          })()}
-                                        </span>
-                                      </span>
-                                    </TooltipTrigger>
-                                    <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
-                                      Current Pool Price
-                                    </TooltipContent>
-                                  </Tooltip>
-                                </TooltipProvider>
-                              )}
+                          {/* Clickable price range display - opens modal */}
+                          <div className="flex items-center gap-1 text-xs cursor-pointer" onClick={() => setShowRangeModal(true)}>
+                            <div
+                              className={`${(isDraggingRange === 'left' || isDraggingRange === 'center') ? 'text-white' : 'text-muted-foreground'} hover:text-white px-1 py-1 transition-colors`}
+                            >
+                              {(() => {
+                                const labels = computeRangeLabels();
+                                return labels ? labels.left : (minPriceInputString || "0.00");
+                              })()}
                             </div>
-                          ) : (
-                            // Clickable price range display with hover effects and a small "Now" badge
-                            <div className="flex items-center gap-1 text-xs">
-                              <div 
-                                className={`${(isDraggingRange === 'left' || isDraggingRange === 'center') ? 'text-white' : 'text-muted-foreground'} hover:text-white cursor-pointer px-1 py-1 transition-colors min-price-display`}
-                                onClick={() => handleClickToEditPrice('min')}
-                              >
-                                {(() => {
-                                  const labels = computeRangeLabels();
-                                  return labels ? labels.left : (minPriceInputString || "0.00");
-                                })()}
-                              </div>
-                              <span className="text-muted-foreground">-</span>
-                              <div 
-                                className={`${(isDraggingRange === 'right' || isDraggingRange === 'center') ? 'text-white' : 'text-muted-foreground'} hover:text-white cursor-pointer px-1 py-1 transition-colors max-price-display`}
-                                onClick={() => handleClickToEditPrice('max')}
-                              >
-                                {(() => {
-                                  const labels = computeRangeLabels();
-                                  return labels ? labels.right : (maxPriceInputString || "∞");
-                                })()}
-                              </div>
-                              {currentPrice && (
-                                <TooltipProvider delayDuration={0}>
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <span className="ml-2 inline-flex items-center gap-1 text-[10px] px-1 py-0.5 rounded border border-sidebar-border text-muted-foreground">
-                                        <span className="inline-block w-[2px] h-2" style={{ background: '#e85102' }} />
-                                        <span className="select-none">
-                                          {(() => {
-                                            const inverse = 1 / parseFloat(currentPrice);
-                                            const flip = inverse > parseFloat(currentPrice);
-                                            const denomToken = flip ? token0Symbol : token1Symbol;
-                                            const isUsd = denomToken === 'aUSDT' || denomToken === 'aUSDC' || denomToken === 'USDT' || denomToken === 'USDC';
-                                            const displayDecimals = isUsd ? 2 : (TOKEN_DEFINITIONS[denomToken]?.displayDecimals ?? 4);
-                                            const numeric = flip ? inverse : parseFloat(currentPrice);
-                                            return isFinite(numeric) ? numeric.toFixed(displayDecimals) : '∞';
-                                          })()}
-                                        </span>
-                                      </span>
-                                    </TooltipTrigger>
-                                    <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
-                                      Current Pool Price
-                                    </TooltipContent>
-                                  </Tooltip>
-                                </TooltipProvider>
-                              )}
+                            <span className="text-muted-foreground">-</span>
+                            <div
+                              className={`${(isDraggingRange === 'right' || isDraggingRange === 'center') ? 'text-white' : 'text-muted-foreground'} hover:text-white px-1 py-1 transition-colors`}
+                            >
+                              {(() => {
+                                const labels = computeRangeLabels();
+                                return labels ? labels.right : (maxPriceInputString || "∞");
+                              })()}
                             </div>
-                          )}
+                            {currentPrice && (
+                              <TooltipProvider delayDuration={0}>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <span className="ml-2 inline-flex items-center gap-1 text-[10px] px-1 py-0.5 rounded border border-sidebar-border text-muted-foreground">
+                                      <span className="inline-block w-[2px] h-2" style={{ background: '#e85102' }} />
+                                      <span className="select-none">
+                                        {(() => {
+                                          const inverse = 1 / parseFloat(currentPrice);
+                                          const flip = inverse > parseFloat(currentPrice);
+                                          const denomToken = flip ? token0Symbol : token1Symbol;
+                                          const isUsd = denomToken === 'aUSDT' || denomToken === 'aUSDC' || denomToken === 'USDT' || denomToken === 'USDC';
+                                          const displayDecimals = isUsd ? 2 : (TOKEN_DEFINITIONS[denomToken]?.displayDecimals ?? 4);
+                                          const numeric = flip ? inverse : parseFloat(currentPrice);
+                                          return isFinite(numeric) ? numeric.toFixed(displayDecimals) : '∞';
+                                        })()}
+                                      </span>
+                                    </span>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
+                                    Current Pool Price
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            )}
+                          </div>
                         </>
                       )}
                     </>
@@ -2838,21 +2705,28 @@ export function AddLiquidityForm({
                         poolToken1={poolToken1}
                         onDragStateChange={(state) => setIsDraggingRange(state)}
                         onLoadingChange={(loading) => setIsChartLoading(loading)}
+                        forceDenominationBase={baseTokenForPriceDisplay}
                         readOnly={true}
                       />
 
                       <RangeSelectionModalV2
                         isOpen={showRangeModal}
                         onClose={() => setShowRangeModal(false)}
-                        onConfirm={(newTickLower, newTickUpper) => {
+                        onConfirm={(newTickLower, newTickUpper, selectedPreset, denomination) => {
                           setTickLower(newTickLower);
                           setTickUpper(newTickUpper);
                           resetTransaction();
                           setInitialDefaultApplied(true);
-                          setActivePreset(null);
+                          // Set the preset from the modal instead of clearing it
+                          setActivePreset(selectedPreset || null);
+                          // Sync denomination with modal
+                          if (denomination) {
+                            setBaseTokenForPriceDisplay(denomination);
+                          }
                         }}
                         initialTickLower={tickLower}
                         initialTickUpper={tickUpper}
+                        initialActivePreset={activePreset}
                         selectedPoolId={selectedPoolId}
                         chainId={chainId}
                         token0Symbol={token0Symbol}

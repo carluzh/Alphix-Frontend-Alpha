@@ -46,6 +46,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { getPositionManagerAddress } from '@/lib/pools-config';
 import { position_manager_abi } from '@/lib/abis/PositionManager_abi';
 import { getFromCache, setToCache, getFromCacheWithTtl, getUserPositionsCacheKey, getPoolStatsCacheKey, getPoolDynamicFeeCacheKey, getPoolChartDataCacheKey, loadUserPositionIds, derivePositionsFromIds, invalidateCacheEntry, waitForSubgraphBlock, setIndexingBarrier, invalidateUserPositionIdsCache, refreshFeesAfterTransaction } from "../../../lib/client-cache";
+import { fetchPoolFullRangeAPY } from "../../../lib/apy-calculator";
 
 import type { Pool } from "../../../types";
 import { AddLiquidityForm } from "../../../components/liquidity/AddLiquidityForm"; // AddLiquidityForm for right panel
@@ -1419,7 +1420,15 @@ export default function PoolDetailPage() {
     const vol24 = Number(poolStats?.volume24hUSD || 0);
     const tvlNow = Number(poolStats?.tvlUSD || 0);
     const fees24hUSD = vol24 * feeRate;
-    const calculatedApr = (tvlNow > 0 && fees24hUSD > 0) ? (((fees24hUSD * 365) / tvlNow) * 100).toFixed(2) + '%' : 'N/A';
+
+    // Fetch Full Range APY using our new calculator
+    let calculatedApr = 'Loading...';
+    try {
+      calculatedApr = await fetchPoolFullRangeAPY(poolId, 7);
+    } catch (error) {
+      console.error('[PoolPage] Failed to fetch APY for', poolId, error);
+      calculatedApr = 'N/A';
+    }
 
     const combinedPoolData = {
         ...basePoolInfo,
