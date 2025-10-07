@@ -87,7 +87,7 @@
       "hooks": "0xd450f7f8e4C11EE8620a349f73e7aC3905Dfd000",
       "enabled": true,
       "featured": true,
-      "type": "Volatile"
+      "type": "Standard"
     },
     {
       "id": "abtc-ausdc",
@@ -107,7 +107,7 @@
       "hooks": "0xd450f7f8e4C11EE8620a349f73e7aC3905Dfd000",
       "enabled": true,
       "featured": false,
-      "type": "Volatile"
+      "type": "Standard"
     },
     {
       "id": "ausdc-ausdt",
@@ -147,7 +147,7 @@
       "hooks": "0xd450f7f8e4C11EE8620a349f73e7aC3905Dfd000",
       "enabled": true,
       "featured": false,
-      "type": "Volatile"
+      "type": "Standard"
     },
     {
       "id": "abtc-aeth",
@@ -167,7 +167,7 @@
       "hooks": "0xd450f7f8e4C11EE8620a349f73e7aC3905Dfd000",
       "enabled": true,
       "featured": false,
-      "type": "Volatile"
+      "type": "Standard"
     },
     {
       "id": "ausdc-adai",
@@ -207,7 +207,7 @@
       "hooks": "0x285a195230239822adbc6fd2281c7b1de1a17fc0",
       "enabled": true,
       "featured": false,
-      "type": "Volatile"
+      "type": "Standard"
     }
   ],
   "fees": {

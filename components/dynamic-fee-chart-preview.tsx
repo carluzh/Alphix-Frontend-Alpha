@@ -146,26 +146,10 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
           emaRatio: scaleRatio(e.ema),
           dynamicFee: (Number.isFinite(e.feeBps) ? e.feeBps : 0) / 10000,
         }));
-        
-        // Pad data with empty days if we have less than 30 days (to match the 30-day fetch window)
-        const expectedDays = 30;
-        if (out.length > 0 && out.length < expectedDays) {
-          const daysToAdd = expectedDays - out.length;
-          const oldestDate = new Date(out[0].timeLabel);
-          const emptyDays: FeeHistoryPoint[] = [];
-          
-          for (let i = 1; i <= daysToAdd; i++) {
-            const emptyDate = new Date(oldestDate);
-            emptyDate.setDate(emptyDate.getDate() - i);
-            emptyDays.unshift({
-              timeLabel: emptyDate.toISOString().split('T')[0],
-              volumeTvlRatio: 0,
-              emaRatio: 0,
-              dynamicFee: 0,
-            });
-          }
-          
-          out = [...emptyDays, ...out];
+
+        // Always show exactly 30 days - take the most recent 30 data points
+        if (out.length > 30) {
+          out = out.slice(-30);
         }
         
         // Cache the processed data

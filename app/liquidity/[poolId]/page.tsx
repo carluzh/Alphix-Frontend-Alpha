@@ -833,7 +833,10 @@ export default function PoolDetailPage() {
       const exceedsSpace = requiredWidth > maxLeftColumnWidth;
       const hasSpaceForMore = requiredWidth + optionalCardWidth + cardGap + 40 < maxLeftColumnWidth; // 40px buffer
       
-      if (exceedsSpace) {
+      // Always hide Fees card below 1900px width
+      if (windowWidth < 1900 && showFeesCard) {
+        setShowFeesCard(false);
+      } else if (exceedsSpace) {
         // Hide cards in priority order: Fees → Volume → TVL
         if (showFeesCard) {
           setShowFeesCard(false);
@@ -842,8 +845,9 @@ export default function PoolDetailPage() {
         } else if (showTvlCard) {
           setShowTvlCard(false);
         }
-      } else if (hasSpaceForMore) {
+      } else if (hasSpaceForMore && windowWidth >= 1900) {
         // Show cards back in reverse priority: TVL → Volume → Fees
+        // Only show Fees card if width is >= 1900px
         if (!showTvlCard) {
           setShowTvlCard(true);
         } else if (!showVolumeCard && showTvlCard) {
@@ -2587,8 +2591,8 @@ export default function PoolDetailPage() {
                 </div>
               </div>
             ) : (
-                  <div ref={topBarRef} className="rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 p-4 mb-3 w-full max-w-[1200px] overflow-hidden">
-                    <div className="flex items-stretch gap-3 min-w-0 overflow-hidden">
+                  <div ref={topBarRef} className="rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 p-4 mb-3 w-full overflow-hidden">
+                    <div className="flex items-stretch gap-3 min-w-0 overflow-x-auto">
                       {/* Back arrow square */}
                       <div className="flex-shrink-0 rounded-lg bg-muted/30 border border-sidebar-border/60 hover:border-white/30 transition-colors cursor-pointer flex items-center justify-center"
                         style={{ width: '74px', height: '74px', minWidth: '74px', minHeight: '74px' }}
