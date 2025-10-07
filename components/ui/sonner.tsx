@@ -102,6 +102,12 @@ const Toaster = ({ ...props }: ToasterProps) => {
           left: auto !important;
         }
 
+        [data-sonner-toast][data-type="success"] [data-close-button],
+        [data-sonner-toast][data-type="error"] [data-close-button] {
+          top: 1rem !important;
+          transform: none !important;
+        }
+
         [data-sonner-toast] [data-close-button]:hover {
           opacity: 1 !important;
         }

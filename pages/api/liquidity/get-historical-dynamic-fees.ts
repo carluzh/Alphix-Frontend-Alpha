@@ -1,13 +1,31 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { getSubgraphUrlForPool, isDaiPool } from '../../../lib/subgraph-url-helper';
 
 // Subgraph URL selection (Satsuma default with env/query overrides)
 const LEGACY_SUBGRAPH_URL = process.env.SUBGRAPH_URL || "";
-function selectSubgraphUrl(_req: NextApiRequest): string {
-  const envDefault = process.env.NEXT_PUBLIC_SUBGRAPH_URL || process.env.SUBGRAPH_URL;
-  return envDefault || LEGACY_SUBGRAPH_URL;
+function selectSubgraphUrl(poolId: string | undefined): string {
+  return getSubgraphUrlForPool(poolId) || LEGACY_SUBGRAPH_URL;
 }
 
-const GET_LAST_HOOK_EVENTS = `
+// DAI subgraph uses currentRatio (Activity), old subgraph uses currentTargetRatio
+const GET_LAST_HOOK_EVENTS_DAI = `
+  query GetLastHookEvents($poolId: Bytes!) {
+    alphixHooks(
+      where: { pool: $poolId }
+      orderBy: timestamp
+      orderDirection: desc
+      first: 60
+    ) {
+      timestamp
+      newFeeBps
+      currentRatio
+      newTargetRatio
+      oldTargetRatio
+    }
+  }
+`;
+
+const GET_LAST_HOOK_EVENTS_OLD = `
   query GetLastHookEvents($poolId: Bytes!) {
     alphixHooks(
       where: { pool: $poolId }
@@ -28,7 +46,8 @@ type HookEvent = {
   timestamp: string;
   newFeeBps?: string;
   newFeeRateBps?: string;
-  currentTargetRatio?: string;
+  currentRatio?: string; // DAI subgraph uses this (Activity)
+  currentTargetRatio?: string; // Old subgraph uses this
   newTargetRatio?: string;
   oldTargetRatio?: string;
 };
@@ -71,11 +90,13 @@ export default async function handler(
   }
 
   try {
-    const SUBGRAPH_URL = selectSubgraphUrl(req);
+    const SUBGRAPH_URL = selectSubgraphUrl(poolId);
+    const query = isDaiPool(poolId) ? GET_LAST_HOOK_EVENTS_DAI : GET_LAST_HOOK_EVENTS_OLD;
+
     const resp = await fetch(SUBGRAPH_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: GET_LAST_HOOK_EVENTS, variables: { poolId: poolId.toLowerCase() } }),
+      body: JSON.stringify({ query, variables: { poolId: poolId.toLowerCase() } }),
     });
     if (!resp.ok) {
       const body = await resp.text();
@@ -85,7 +106,14 @@ export default async function handler(
     if (json.errors) {
       throw new Error(`Subgraph errors: ${JSON.stringify(json.errors)}`);
     }
-    const events = Array.isArray(json.data?.alphixHooks) ? json.data!.alphixHooks! : [];
+    let events = Array.isArray(json.data?.alphixHooks) ? json.data!.alphixHooks! : [];
+
+    // Normalize: DAI pools have currentRatio, old pools have currentTargetRatio
+    // Make sure both have currentRatio for consistent frontend usage
+    events = events.map(e => ({
+      ...e,
+      currentRatio: e.currentRatio || e.currentTargetRatio
+    }));
 
     // On success, update cache
     serverCache.set(cacheKey, { data: events, ts: Date.now() });

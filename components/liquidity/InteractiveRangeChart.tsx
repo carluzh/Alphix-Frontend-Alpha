@@ -916,10 +916,11 @@ export function InteractiveRangeChart({
 
   const centerOnCurrentPrice = () => {
     if (currentPoolTick === null) return;
-    // Always show 10 ticks on either side of current price
-    const halfView = defaultTickSpacing * 10;
-    const newMin = alignToTickSpacing(currentPoolTick - halfView);
-    const newMax = alignToTickSpacing(currentPoolTick + halfView);
+    // Set viewport based on pool type: ±5% for stable, ±20% for volatile
+    const percentageRange = isStablePool ? 0.05 : 0.20;
+    const tickRange = Math.round(Math.log(1 + percentageRange) / Math.log(1.0001));
+    const newMin = alignToTickSpacing(currentPoolTick - tickRange);
+    const newMax = alignToTickSpacing(currentPoolTick + tickRange);
     if (onXDomainChange) onXDomainChange([newMin, newMax]);
   };
 

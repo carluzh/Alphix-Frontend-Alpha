@@ -6,7 +6,10 @@
       "Bash(curl -X POST \"https://subgraph.satsuma-prod.com/59826817594f/layanss-team--533867/marinita/api\" -H \"Content-Type: application/json\" -d \"{\"\"query\"\":\"\"{ __schema { queryType { fields { name description } } } }\"\"}\")",
       "Bash(curl -X POST \"https://subgraph.satsuma-prod.com/59826817594f/layanss-team--533867/marinita/api\" -H \"Content-Type: application/json\" -d \"{\"\"query\"\":\"\"{ __type(name: \\\"\"Pool\\\"\") { fields { name type { name kind ofType { name kind } } } } }\"\"}\")",
       "Bash(curl -X POST \"https://subgraph.satsuma-prod.com/59826817594f/layanss-team--533867/marinita/api\" -H \"Content-Type: application/json\" -d \"{\"\"query\"\":\"\"{ __type(name: \\\"\"PoolDayData\\\"\") { fields { name type { name kind ofType { name kind } } } } }\"\"}\")",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(npx ts-node:*)",
+      "Bash(npx tsx:*)",
+      "Bash(python3:*)"
     ],
     "deny": [],
     "ask": []

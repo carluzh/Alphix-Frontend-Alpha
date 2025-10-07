@@ -1,8 +1,9 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getPoolSubgraphId, getAllPools } from '@/lib/pools-config';
 import { batchGetTokenPrices } from '@/lib/price-service';
+import { getSubgraphUrlForPool } from '@/lib/subgraph-url-helper';
 
-// Subgraph URL (server-only)
+// Default Subgraph URL (server-only)
 const SUBGRAPH_URL = process.env.SUBGRAPH_URL as string;
 if (!SUBGRAPH_URL) {
   throw new Error('SUBGRAPH_URL env var is required');
@@ -114,7 +115,9 @@ export default async function handler(
       }
     }`;
 
-    const hourlyResp = await fetch(SUBGRAPH_URL, {
+    // Use the appropriate subgraph URL for this pool
+    const subgraphUrl = getSubgraphUrlForPool(poolId);
+    const hourlyResp = await fetch(subgraphUrl, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query })
     });
     if (!hourlyResp.ok) {

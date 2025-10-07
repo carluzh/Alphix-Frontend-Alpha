@@ -581,12 +581,13 @@ export function AddLiquidityForm({
           const numericCurrentPrice = parseFloat(poolState.currentPrice);
           if (!isNaN(numericCurrentPrice)) {
             setCurrentPriceLine(numericCurrentPrice);
-            
-            // Always show 10 ticks on either side of current price
+
+            // Set initial viewport based on pool type: ±5% for stable, ±20% for volatile
             const centerTick = poolState.currentPoolTick;
-            const halfView = defaultTickSpacing * 10;
-            const domainTickLower = centerTick - halfView;
-            const domainTickUpper = centerTick + halfView;
+            const percentageRange = isStablePool ? 0.05 : 0.20;
+            const tickRange = Math.round(Math.log(1 + percentageRange) / Math.log(1.0001));
+            const domainTickLower = centerTick - tickRange;
+            const domainTickUpper = centerTick + tickRange;
             setXDomain([domainTickLower, domainTickUpper]);
 
           } else {
@@ -1084,6 +1085,13 @@ export function AddLiquidityForm({
   };
 
   // Removed left/right remapping: left always edits "min" and right edits "max".
+
+  // Apply domain constraints to ensure valid tick range
+  const applyDomainConstraints = useCallback((minTick: number, maxTick: number): [number, number] => {
+    const constrainedMin = Math.max(sdkMinTick, Math.min(sdkMaxTick - 1, minTick));
+    const constrainedMax = Math.max(constrainedMin + 1, Math.min(sdkMaxTick, maxTick));
+    return [constrainedMin, constrainedMax];
+  }, [sdkMinTick, sdkMaxTick]);
 
   // Reset chart viewbox to fit the chosen range with configurable margins (fractions of selection width)
   const resetChartViewbox = useCallback((newTickLower: number, newTickUpper: number, leftMarginFrac: number = 0.05, rightMarginFrac: number = 0.05) => {

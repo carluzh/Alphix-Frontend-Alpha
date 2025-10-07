@@ -19,10 +19,6 @@ import {
   GaugeIcon,
   CoinsIcon,
   BookTextIcon,
-  BadgeCheck,
-  OctagonX,
-  BellIcon,
-  Info,
 } from "lucide-react"
 import { ReactSVG } from "react-svg"
 import { useTheme } from "next-themes"
@@ -51,9 +47,6 @@ import { Badge } from "@/components/ui/badge"
 import { useRouter } from "next/navigation"; // Import useRouter
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { getLatestVersion } from "@/lib/version-log"
-import { toast } from "sonner"
-import { ToastTimer } from "@/components/ui/toast-timer"
-import { createRoot } from 'react-dom/client'
 
 const data = {
   user: {
@@ -125,7 +118,6 @@ export function AppSidebar({ variant = "floating", onBetaClick, ...props }: AppS
   const [badgeHovered, setBadgeHovered] = useState(false);
   const [lockedItem, setLockedItem] = useState<string | null>(null)
   const timeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const [toastIndex, setToastIndex] = useState(0)
 
   const handleLockedClick = (itemName: string) => {
     if (timeoutRef.current) {
@@ -135,47 +127,6 @@ export function AppSidebar({ variant = "floating", onBetaClick, ...props }: AppS
     timeoutRef.current = setTimeout(() => {
       setLockedItem(null)
     }, 1000)
-  }
-
-  const handleToastTest = () => {
-    const toasts = [
-      // Default toast (title only)
-      () => toast(
-        <>
-          Swap pending...
-          <ToastTimer duration={5000} />
-        </>,
-        {
-          icon: <Info className="h-4 w-4" />,
-          duration: 5000
-        }
-      ),
-
-      // Success toast with description and action
-      () => toast.success('Position Increased', {
-        icon: <BadgeCheck className="h-4 w-4 text-green-500" />,
-        description: 'Successfully added 1,000 USDC to ETH/USDC pool',
-        action: {
-          label: 'View Transaction',
-          onClick: () => window.open('https://etherscan.io', '_blank')
-        },
-        duration: Infinity
-      }),
-
-      // Error toast with description and Discord link
-      () => toast.error('Transaction Failed', {
-        icon: <OctagonX className="h-4 w-4 text-red-500" />,
-        description: 'Insufficient liquidity in the selected range',
-        action: {
-          label: 'Open Ticket',
-          onClick: () => window.open('https://discord.gg/alphix', '_blank')
-        },
-        duration: Infinity
-      }),
-    ]
-
-    toasts[toastIndex]()
-    setToastIndex((prev) => (prev + 1) % toasts.length)
   }
 
   useEffect(() => {
@@ -306,12 +257,6 @@ export function AppSidebar({ variant = "floating", onBetaClick, ...props }: AppS
                       </svg>
                       <span>Discord</span>
                     </a>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-                <SidebarMenuItem className="list-none">
-                  <SidebarMenuButton size="sm" className="h-7" onClick={handleToastTest}>
-                    <BellIcon className="h-4 w-4" />
-                    <span>Test Toast</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               </SidebarMenu>

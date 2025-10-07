@@ -1305,8 +1305,8 @@ export default function PoolDetailPage() {
             const e = evAsc[ei];
             const bps = Number(e?.newFeeBps ?? e?.newFeeRateBps ?? 0);
             curFeePct = Number.isFinite(bps) ? (bps / 10_000) : curFeePct;
-            curRatio = scaleRatio(e?.currentTargetRatio);
-            curEma = scaleRatio(e?.newTargetRatio);
+            curRatio = scaleRatio(e?.currentRatio); // Normalized in API (Activity)
+            curEma = scaleRatio(e?.newTargetRatio); // Target
             ei++;
           }
           feeByDate.set(dateStr, { ratio: curRatio, ema: curEma, feePct: curFeePct });

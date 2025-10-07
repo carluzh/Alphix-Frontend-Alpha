@@ -1,5 +1,6 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { getPoolSubgraphId } from '../../../lib/pools-config';
+import { getSubgraphUrlForPool, isDaiPool } from '../../../lib/subgraph-url-helper';
 
 // Server-only subgraph URL (original, unswizzled) - for pool data
 const SUBGRAPH_ORIGINAL_URL = process.env.SUBGRAPH_ORIGINAL_URL as string;
@@ -7,10 +8,10 @@ if (!SUBGRAPH_ORIGINAL_URL) {
   throw new Error('SUBGRAPH_ORIGINAL_URL env var is required');
 }
 
-// Public subgraph URL - for fee events (alphixHooks)
-const SUBGRAPH_PUBLIC_URL = process.env.NEXT_PUBLIC_SUBGRAPH_URL || process.env.SUBGRAPH_URL as string;
-if (!SUBGRAPH_PUBLIC_URL) {
-  throw new Error('SUBGRAPH_PUBLIC_URL env var is required');
+// Default subgraph URL
+const SUBGRAPH_URL = process.env.NEXT_PUBLIC_SUBGRAPH_URL || process.env.SUBGRAPH_URL as string;
+if (!SUBGRAPH_URL) {
+  throw new Error('SUBGRAPH_URL env var is required');
 }
 
 interface PoolDayData {
@@ -69,7 +70,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
   `;
 
-  const feeEventsQuery = `
+  // DAI subgraph uses currentRatio (Activity), old subgraph uses currentTargetRatio
+  const feeEventsQueryDai = `
+    query GetFeeEvents($poolId: Bytes!) {
+      alphixHooks(
+        where: { pool: $poolId }
+        orderBy: timestamp
+        orderDirection: desc
+        first: 100
+      ) {
+        timestamp
+        newFeeBps
+        currentRatio
+        newTargetRatio
+      }
+    }
+  `;
+
+  const feeEventsQueryOld = `
     query GetFeeEvents($poolId: Bytes!) {
       alphixHooks(
         where: { pool: $poolId }
@@ -85,7 +103,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
   `;
 
+  const feeEventsQuery = isDaiPool(poolId) ? feeEventsQueryDai : feeEventsQueryOld;
+
   try {
+    // Determine the appropriate subgraph URL for this pool
+    const subgraphUrlForPool = getSubgraphUrlForPool(poolId);
+
     // Fetch pool data and fee events in parallel from different subgraphs
     const [poolResponse, feeResponse] = await Promise.all([
       fetch(SUBGRAPH_ORIGINAL_URL, {
@@ -96,7 +119,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           variables: { poolId: apiId.toLowerCase(), days }
         })
       }),
-      fetch(SUBGRAPH_PUBLIC_URL, {
+      fetch(subgraphUrlForPool, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

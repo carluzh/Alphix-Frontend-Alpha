@@ -61,7 +61,7 @@
     "aDAI": {
       "symbol": "aDAI",
       "name": "Alphix DAI",
-      "address": "0x6876ef4dc1abadd2f3da7a0ccbf562e63b62964e",
+      "address": "0x6876Ef4dc1aBADd2f3dA7a0ccbF562E63b62964e",
       "decimals": 18,
       "displayDecimals": 2,
       "icon": "/tokens/aDAI.png",
@@ -180,7 +180,7 @@
       },
       "currency1": {
         "symbol": "aDAI",
-        "address": "0x6876ef4dc1abadd2f3da7a0ccbf562e63b62964e"
+        "address": "0x6876Ef4dc1aBADd2f3dA7a0ccbF562E63b62964e"
       },
       "fee": 8388608,
       "tickSpacing": 30,
@@ -196,14 +196,14 @@
       "subgraphId": "0x47da32fed07f99dc9a10744a58f43bf563909d8b46203c300487caf3edd8b1f3",
       "currency0": {
         "symbol": "aDAI",
-        "address": "0x6876ef4dc1abadd2f3da7a0ccbf562e63b62964e"
+        "address": "0x6876Ef4dc1aBADd2f3dA7a0ccbF562E63b62964e"
       },
       "currency1": {
         "symbol": "aETH",
         "address": "0xE7711aa6557A69592520Bbe7D704D64438f160e7"
       },
       "fee": 8388608,
-      "tickSpacing": 50,
+      "tickSpacing": 55,
       "hooks": "0x285a195230239822adbc6fd2281c7b1de1a17fc0",
       "enabled": true,
       "featured": false,

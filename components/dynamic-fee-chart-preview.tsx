@@ -127,8 +127,8 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
           .map((e: any) => ({
             ts: Number(e?.timestamp) || 0,
             feeBps: Number(e?.newFeeBps ?? e?.newFeeRateBps ?? 0),
-            ratio: e?.currentTargetRatio,
-            ema: e?.newTargetRatio,
+            ratio: e?.currentRatio, // Normalized in API (Activity)
+            ema: e?.newTargetRatio, // Target
           }))
           .filter((e: any) => e.ts >= thirtyDaysAgoSec) // Keep only last 30 days
           .sort((a: any, b: any) => a.ts - b.ts);

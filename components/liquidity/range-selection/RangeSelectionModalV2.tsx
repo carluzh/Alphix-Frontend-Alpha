@@ -259,7 +259,8 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
     const fetchMetrics = async () => {
       setIsLoadingMetrics(true);
       try {
-        const response = await fetch('/api/liquidity/pool-metrics', {
+        // Try to fetch 7 days, but fall back to 1 day if no data
+        let response = await fetch('/api/liquidity/pool-metrics', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ poolId: selectedPoolId, days: 7 })
@@ -267,8 +268,28 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
 
         if (response.ok) {
           const data = await response.json();
-          console.log('[RangeSelectionModalV2] Pool metrics response:', data);
-          setPoolMetrics(data.metrics);
+          console.log('[RangeSelectionModalV2] Pool metrics response (7d):', data);
+
+          // If we got valid data, use it
+          if (data.metrics && data.metrics.days > 0) {
+            setPoolMetrics(data.metrics);
+          } else {
+            // Try with 1 day of data for new pools
+            console.log('[RangeSelectionModalV2] No 7-day data, trying 1 day...');
+            response = await fetch('/api/liquidity/pool-metrics', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ poolId: selectedPoolId, days: 1 })
+            });
+
+            if (response.ok) {
+              const data1d = await response.json();
+              console.log('[RangeSelectionModalV2] Pool metrics response (1d):', data1d);
+              if (data1d.metrics && data1d.metrics.days > 0) {
+                setPoolMetrics(data1d.metrics);
+              }
+            }
+          }
         } else {
           console.error('[RangeSelectionModalV2] Pool metrics request failed:', response.status, await response.text());
         }
@@ -453,15 +474,26 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
             <div className="space-y-2">
               <span className="text-xs font-bold text-muted-foreground">Range Types</span>
               <div className="grid grid-cols-4 gap-2">
-                {["Full Range", "±15%", "±3%", "Custom"].map((rangeType) => {
-                  const labels: Record<string, string> = {
-                    "Full Range": "Full Range", "±15%": "Conservative", "±3%": "Concentrated", "Custom": "Custom"
-                  };
+                {(() => {
+                  // Determine which range types to show based on presetOptions
+                  const isStable = presetOptions.includes("±1%");
+                  const rangeTypes = isStable
+                    ? ["Full Range", "±3%", "±1%", "Custom"]
+                    : ["Full Range", "±15%", "±3%", "Custom"];
 
-                  // Custom is active when no preset matches
-                  const isActive = rangeType === "Custom"
-                    ? (activePreset !== "Full Range" && activePreset !== "±15%" && activePreset !== "±3%")
-                    : activePreset === rangeType;
+                  return rangeTypes.map((rangeType) => {
+                    const labels: Record<string, string> = {
+                      "Full Range": "Full Range",
+                      "±15%": "Conservative",
+                      "±3%": isStable ? "Conservative" : "Concentrated",
+                      "±1%": "Concentrated",
+                      "Custom": "Custom"
+                    };
+
+                    // Custom is active when no preset matches the displayed range types
+                    const isActive = rangeType === "Custom"
+                      ? !rangeTypes.slice(0, -1).includes(activePreset || "")
+                      : activePreset === rangeType;
 
                   // Calculate APY for this range type
                   let apyDisplay = "";
@@ -537,7 +569,8 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                           // Calculate ticks for percentage-based ranges
                           const percentages: Record<string, number> = {
                             "±15%": 0.15,
-                            "±3%": 0.03
+                            "±3%": 0.03,
+                            "±1%": 0.01
                           };
                           const pct = percentages[rangeType];
                           if (pct && currentPoolTick !== null) {
@@ -586,7 +619,8 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                       <span className="text-xs text-muted-foreground relative z-10">{apyDisplay}</span>
                     </div>
                   );
-                })}
+                });
+              })()}
               </div>
             </div>
 

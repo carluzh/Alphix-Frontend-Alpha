@@ -2,6 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { getPoolSubgraphId, getTokenDecimals } from '../../../lib/pools-config';
 import { batchGetTokenPrices, calculateSwapVolumeUSD } from '../../../lib/price-service';
 import { formatUnits } from 'viem';
+import { getSubgraphUrlForPool } from '../../../lib/subgraph-url-helper';
 
 // Server-only subgraph URL from env
 const SUBGRAPH_URL = process.env.SUBGRAPH_URL as string;
@@ -89,7 +90,10 @@ async function fetchRollingVolumeAndFeesForApi(
 
     console.log(`API: Fetching ${days}d volume/fees for pool: ${poolId} (subgraph ID: ${subgraphId})`);
 
-    const response = await fetch(SUBGRAPH_URL, {
+    // Use the appropriate subgraph URL for this pool
+    const subgraphUrl = getSubgraphUrlForPool(poolId);
+
+    const response = await fetch(subgraphUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

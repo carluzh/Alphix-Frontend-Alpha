@@ -7,6 +7,7 @@ import { getPoolSubgraphId, getAllPools, getTokenDecimals } from '@/lib/pools-co
 import { batchGetTokenPrices, calculateTotalUSD } from '@/lib/price-service';
 import { formatUnits } from 'viem';
 import { getCacheKeyWithVersion } from '@/lib/cache-version';
+import { getSubgraphUrlForPool, isDaiPool } from '@/lib/subgraph-url-helper';
 
 // For unstable_cache compatibility, create a synchronous version
 function getCacheKeyWithVersionSync(baseKey: string): string[] {
@@ -72,15 +73,32 @@ interface BatchPoolStatsMinimal {
 }
 
 const getSubgraphUrl = () => process.env.SUBGRAPH_URL as string | undefined;
+const getDaiSubgraphUrl = () => process.env.SUBGRAPH_URL_DAI as string | undefined;
 
 async function computePoolsBatch(): Promise<any> {
   const SUBGRAPH_URL = getSubgraphUrl();
+  const SUBGRAPH_URL_DAI = getDaiSubgraphUrl();
+
   if (!SUBGRAPH_URL) {
     return { success: false, message: 'SUBGRAPH_URL env var is required' };
   }
 
   const allPools = getAllPools();
   const targetPoolIds = allPools.map((pool) => getPoolSubgraphId(pool.id) || pool.id);
+
+  // Separate pools into DAI and non-DAI pools
+  const daiPoolIds: string[] = [];
+  const nonDaiPoolIds: string[] = [];
+
+  for (const pool of allPools) {
+    const poolId = pool.id;
+    const subgraphId = getPoolSubgraphId(poolId) || poolId;
+    if (isDaiPool(poolId)) {
+      daiPoolIds.push(subgraphId);
+    } else {
+      nonDaiPoolIds.push(subgraphId);
+    }
+  }
 
   const tokenSymbols = new Set<string>();
   for (const p of allPools) {
@@ -111,45 +129,90 @@ async function computePoolsBatch(): Promise<any> {
   const dayStartPrev = dayStart - 86400;
   const dayEndPrev = dayStartPrev + 86400 - 1;
 
-  // TVL for all pools (tagged for cache invalidation)
-  const tvlResp = await fetch(getSubgraphUrl()!, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      query: GET_POOLS_TVL_BULK,
-      variables: { poolIds: targetPoolIds.map((id) => id.toLowerCase()) },
-    }),
-    next: { tags: ['pools-batch'] },
-  });
-  const tvlJson = tvlResp.ok ? await tvlResp.json() : { data: { pools: [] } };
+  // TVL for all pools (query both subgraphs if DAI pools exist)
   const tvlById = new Map<string, { tvl0: any; tvl1: any }>();
-  for (const p of tvlJson?.data?.pools || []) {
-    tvlById.set(String(p.id).toLowerCase(), { tvl0: p.totalValueLockedToken0, tvl1: p.totalValueLockedToken1 });
+
+  // Query non-DAI pools from main subgraph
+  if (nonDaiPoolIds.length > 0) {
+    const tvlResp = await fetch(SUBGRAPH_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: GET_POOLS_TVL_BULK,
+        variables: { poolIds: nonDaiPoolIds.map((id) => id.toLowerCase()) },
+      }),
+      next: { tags: ['pools-batch'] },
+    });
+    const tvlJson = tvlResp.ok ? await tvlResp.json() : { data: { pools: [] } };
+    for (const p of tvlJson?.data?.pools || []) {
+      tvlById.set(String(p.id).toLowerCase(), { tvl0: p.totalValueLockedToken0, tvl1: p.totalValueLockedToken1 });
+    }
   }
 
-  // Hourly volume for all pools (tagged)
-  const hourlyResp = await fetch(getSubgraphUrl()!, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      query: GET_POOLS_HOURLY_BULK,
-      variables: { poolIds: targetPoolIds.map((id) => id.toLowerCase()), cutoff: cutoff49h },
-    }),
-    next: { tags: ['pools-batch'] },
-  });
-  const hourlyJson = hourlyResp.ok ? await hourlyResp.json() : { data: { poolHourDatas: [] } };
+  // Query DAI pools from DAI subgraph
+  if (daiPoolIds.length > 0 && SUBGRAPH_URL_DAI) {
+    const tvlRespDai = await fetch(SUBGRAPH_URL_DAI, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: GET_POOLS_TVL_BULK,
+        variables: { poolIds: daiPoolIds.map((id) => id.toLowerCase()) },
+      }),
+      next: { tags: ['pools-batch'] },
+    });
+    const tvlJsonDai = tvlRespDai.ok ? await tvlRespDai.json() : { data: { pools: [] } };
+    for (const p of tvlJsonDai?.data?.pools || []) {
+      tvlById.set(String(p.id).toLowerCase(), { tvl0: p.totalValueLockedToken0, tvl1: p.totalValueLockedToken1 });
+    }
+  }
+
+  // Hourly volume for all pools (query both subgraphs)
   const hourlyByPoolId = new Map<string, Array<any>>();
-  for (const h of hourlyJson?.data?.poolHourDatas || []) {
-    const id = String(h?.pool?.id || '').toLowerCase();
-    if (!id) continue;
-    if (!hourlyByPoolId.has(id)) hourlyByPoolId.set(id, []);
-    hourlyByPoolId.get(id)!.push(h);
+
+  // Query non-DAI pools
+  if (nonDaiPoolIds.length > 0) {
+    const hourlyResp = await fetch(SUBGRAPH_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: GET_POOLS_HOURLY_BULK,
+        variables: { poolIds: nonDaiPoolIds.map((id) => id.toLowerCase()), cutoff: cutoff49h },
+      }),
+      next: { tags: ['pools-batch'] },
+    });
+    const hourlyJson = hourlyResp.ok ? await hourlyResp.json() : { data: { poolHourDatas: [] } };
+    for (const h of hourlyJson?.data?.poolHourDatas || []) {
+      const id = String(h?.pool?.id || '').toLowerCase();
+      if (!id) continue;
+      if (!hourlyByPoolId.has(id)) hourlyByPoolId.set(id, []);
+      hourlyByPoolId.get(id)!.push(h);
+    }
   }
 
-  // Previous-day block
+  // Query DAI pools
+  if (daiPoolIds.length > 0 && SUBGRAPH_URL_DAI) {
+    const hourlyRespDai = await fetch(SUBGRAPH_URL_DAI, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: GET_POOLS_HOURLY_BULK,
+        variables: { poolIds: daiPoolIds.map((id) => id.toLowerCase()), cutoff: cutoff49h },
+      }),
+      next: { tags: ['pools-batch'] },
+    });
+    const hourlyJsonDai = hourlyRespDai.ok ? await hourlyRespDai.json() : { data: { poolHourDatas: [] } };
+    for (const h of hourlyJsonDai?.data?.poolHourDatas || []) {
+      const id = String(h?.pool?.id || '').toLowerCase();
+      if (!id) continue;
+      if (!hourlyByPoolId.has(id)) hourlyByPoolId.set(id, []);
+      hourlyByPoolId.get(id)!.push(h);
+    }
+  }
+
+  // Previous-day block (get from main subgraph - blocks should be the same)
   let prevDayBlock = 0;
   try {
-    const blkResp = await fetch(getSubgraphUrl()!, {
+    const blkResp = await fetch(SUBGRAPH_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query: GET_BLOCK_FOR_TS, variables: { ts: dayEndPrev } }),
@@ -163,28 +226,57 @@ async function computePoolsBatch(): Promise<any> {
 
   const prevTvlByPoolId = new Map<string, { tvl0: number; tvl1: number }>();
   if (prevDayBlock > 0) {
-    try {
-      const poolsAtBlockResp = await fetch(getSubgraphUrl()!, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          query: GET_POOLS_AT_BLOCK_BULK,
-          variables: { poolIds: targetPoolIds.map((id) => id.toLowerCase()), block: prevDayBlock },
-        }),
-        next: { tags: ['pools-batch'] },
-      });
-      if (poolsAtBlockResp.ok) {
-        const poolsAtBlockJson = await poolsAtBlockResp.json();
-        const items = poolsAtBlockJson?.data?.pools || [];
-        for (const it of items) {
-          const id = String(it?.id || '').toLowerCase();
-          if (!id) continue;
-          const tvl0 = Number(it?.totalValueLockedToken0) || 0;
-          const tvl1 = Number(it?.totalValueLockedToken1) || 0;
-          prevTvlByPoolId.set(id, { tvl0, tvl1 });
+    // Query non-DAI pools
+    if (nonDaiPoolIds.length > 0) {
+      try {
+        const poolsAtBlockResp = await fetch(SUBGRAPH_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            query: GET_POOLS_AT_BLOCK_BULK,
+            variables: { poolIds: nonDaiPoolIds.map((id) => id.toLowerCase()), block: prevDayBlock },
+          }),
+          next: { tags: ['pools-batch'] },
+        });
+        if (poolsAtBlockResp.ok) {
+          const poolsAtBlockJson = await poolsAtBlockResp.json();
+          const items = poolsAtBlockJson?.data?.pools || [];
+          for (const it of items) {
+            const id = String(it?.id || '').toLowerCase();
+            if (!id) continue;
+            const tvl0 = Number(it?.totalValueLockedToken0) || 0;
+            const tvl1 = Number(it?.totalValueLockedToken1) || 0;
+            prevTvlByPoolId.set(id, { tvl0, tvl1 });
+          }
         }
-      }
-    } catch {}
+      } catch {}
+    }
+
+    // Query DAI pools
+    if (daiPoolIds.length > 0 && SUBGRAPH_URL_DAI) {
+      try {
+        const poolsAtBlockRespDai = await fetch(SUBGRAPH_URL_DAI, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            query: GET_POOLS_AT_BLOCK_BULK,
+            variables: { poolIds: daiPoolIds.map((id) => id.toLowerCase()), block: prevDayBlock },
+          }),
+          next: { tags: ['pools-batch'] },
+        });
+        if (poolsAtBlockRespDai.ok) {
+          const poolsAtBlockJsonDai = await poolsAtBlockRespDai.json();
+          const items = poolsAtBlockJsonDai?.data?.pools || [];
+          for (const it of items) {
+            const id = String(it?.id || '').toLowerCase();
+            if (!id) continue;
+            const tvl0 = Number(it?.totalValueLockedToken0) || 0;
+            const tvl1 = Number(it?.totalValueLockedToken1) || 0;
+            prevTvlByPoolId.set(id, { tvl0, tvl1 });
+          }
+        }
+      } catch {}
+    }
   }
 
   const poolsStats: BatchPoolStatsMinimal[] = [];
