@@ -35,8 +35,8 @@ export function MobileHeader() {
       </div>
 
       <div className="flex-1 flex justify-center">
-        <ReactSVG 
-          src="/Logo Icon (white).svg" 
+        <ReactSVG
+          src="/LogoIconWhite.svg"
           className="h-6 w-6"
           beforeInjection={(svg) => {
             const paths = svg.querySelectorAll('path');

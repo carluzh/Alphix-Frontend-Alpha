@@ -32,7 +32,7 @@ import { config, baseSepolia } from "../../lib/wagmiConfig";
 import { toast } from "sonner";
 import { getAddress, parseUnits, formatUnits, maxUint256, type Address, type Hex } from "viem"
 import { publicClient } from "../../lib/viemClient";
-import { useIsMobile } from "@/hooks/use-is-mobile";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 import {
   getAllTokens,

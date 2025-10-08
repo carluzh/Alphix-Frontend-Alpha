@@ -24,7 +24,7 @@ import {
   RowData,
   ColumnSizingState
 } from "@tanstack/react-table";
-import { useIsMobile } from "@/hooks/use-is-mobile";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { MobileLiquidityList } from "@/components/MobileLiquidityList";
 import type { ProcessedPosition } from "../../pages/api/liquidity/get-positions";
 import {

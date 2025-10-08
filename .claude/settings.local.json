@@ -9,7 +9,21 @@
       "Bash(curl:*)",
       "Bash(npx ts-node:*)",
       "Bash(npx tsx:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(tree:*)",
+      "Bash(mkdir:*)",
+      "Bash(git mv:*)",
+      "Bash(find:*)",
+      "Bash(awk:*)",
+      "Bash(for dir in */)",
+      "Bash(done)",
+      "Bash(sort:*)",
+      "Bash(ls:*)",
+      "Bash(for file in \"version-log.ts\" \"prefetch-service.ts\" \"subgraph-url-helper.ts\" \"rpcClient.ts\")",
+      "Bash(do echo -n \"$file: \")",
+      "Bash(for dir in components/*/)",
+      "Bash(for file in \"site-header\" \"nav-user\" \"section-cards\")",
+      "Bash(do echo \"=== $file ===\")"
     ],
     "deny": [],
     "ask": []

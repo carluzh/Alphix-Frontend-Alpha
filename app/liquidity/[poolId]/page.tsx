@@ -13,7 +13,7 @@ import Image from "next/image";
 import { useRouter, useParams } from "next/navigation";
 import { useAccount, useBalance } from "wagmi";
 import { toast } from "sonner";
-import { useIsMobile } from "@/hooks/use-is-mobile";
+import { useIsMobile } from "@/hooks/use-mobile";
 import type { ProcessedPosition } from "../../../pages/api/liquidity/get-positions";
 import { TOKEN_DEFINITIONS, TokenSymbol } from "@/lib/pools-config";
 import { Tooltip as UITooltip, TooltipContent as UITooltipContent, TooltipProvider as UITooltipProvider, TooltipTrigger as UITooltipTrigger } from "@/components/ui/tooltip";
