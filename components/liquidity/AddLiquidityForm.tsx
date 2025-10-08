@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { PlusIcon, RefreshCwIcon, MinusIcon, ActivityIcon, CheckIcon, InfoIcon, ArrowLeftIcon, OctagonX, CircleCheck } from "lucide-react";
+import { PlusIcon, RefreshCwIcon, MinusIcon, ActivityIcon, CheckIcon, InfoIcon, ArrowLeftIcon, OctagonX, BadgeCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import Image from "next/image";
 import { useAccount, useBalance } from "wagmi";
 import { toast } from "sonner";
+import { useEthersSigner } from "@/hooks/useEthersSigner";
 import { V4_POOL_FEE, V4_POOL_TICK_SPACING, V4_POOL_HOOKS } from "@/lib/swap-constants";
 import { TOKEN_DEFINITIONS, TokenSymbol } from "@/lib/pools-config";
 import { baseSepolia } from "@/lib/wagmiConfig";
@@ -35,9 +36,10 @@ const safeParseUnits = (amount: string, decimals: number): bigint => {
   
   return viemParseUnits(finalString, decimals);
 };
-import { useAddLiquidityTransaction } from "./useAddLiquidityTransaction";
+import { useAddLiquidityTransactionV2 } from "./useAddLiquidityTransactionV2";
 import { motion, AnimatePresence, useAnimation } from "framer-motion";
 import { InteractiveRangeChart } from "./InteractiveRangeChart";
+import { RangeSelectionModalV2 } from "./range-selection";
 import {
   Tooltip,
   TooltipContent,
@@ -46,22 +48,24 @@ import {
 } from "@/components/ui/tooltip";
 // import { useWeb3Modal } from '@web3modal/wagmi/react';
 
-// Toast utility functions
-const showErrorToast = (title: string, description?: string) => {
+// Toast utility functions matching swap-interface patterns
+const showErrorToast = (title: string, description?: string, action?: { label: string; onClick: () => void }) => {
   toast.error(title, {
     icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
+    description: description,
+    action: action
+  });
+};
+
+const showSuccessToast = (title: string, description?: string) => {
+  toast.success(title, {
+    icon: React.createElement(BadgeCheck, { className: "h-4 w-4 text-green-500" }),
     description: description
   });
 };
 
-const showSuccessToast = (title: string) => {
-  toast.success(title, {
-    icon: React.createElement(CircleCheck, { className: "h-4 w-4 text-green-500" })
-  });
-};
-
 const showInfoToast = (title: string) => {
-  toast.info(title, {
+  toast(title, {
     icon: React.createElement(InfoIcon, { className: "h-4 w-4" })
   });
 };
@@ -224,7 +228,10 @@ export function AddLiquidityForm({
   
   // UI flow management
   const [depositStep, setDepositStep] = useState<'range' | 'amount'>('amount');
-  
+  const [showingTransactionSteps, setShowingTransactionSteps] = useState(false);
+  const [showRangeModal, setShowRangeModal] = useState(false);
+  const [modalInitialFocusField, setModalInitialFocusField] = useState<'min' | 'max' | null>(null);
+
   // Chart state
   const [xDomain, setXDomain] = useState<[number, number]>([-120000, 120000]);
   const [currentPriceLine, setCurrentPriceLine] = useState<number | null>(null);
@@ -233,6 +240,13 @@ export function AddLiquidityForm({
   // Wiggle animation for insufficient approvals
   const [approvalWiggleCount, setApprovalWiggleCount] = useState(0);
   const approvalWiggleControls = useAnimation();
+
+  // Wiggle animation for balance exceeded
+  const [balanceWiggleCount0, setBalanceWiggleCount0] = useState(0);
+  const [balanceWiggleCount1, setBalanceWiggleCount1] = useState(0);
+  const balanceWiggleControls0 = useAnimation();
+  const balanceWiggleControls1 = useAnimation();
+
   const panStartXRef = useRef<number | null>(null);
   const panStartDomainRef = useRef<[number, number] | null>(null);
   const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -255,6 +269,7 @@ export function AddLiquidityForm({
   
   const { address: accountAddress, chainId, isConnected } = useAccount();
   const { data: allPrices } = useAllPrices();
+  const signer = useEthersSigner();
 
   // Map any token symbol (e.g., aUSDC, aETH) to a USD price
   const getUSDPriceForSymbol = useCallback((symbol?: string): number => {
@@ -288,30 +303,19 @@ export function AddLiquidityForm({
     activeInputSide
   });
 
-  // Use the transaction hook
+  // Use the new transaction hooks (Uniswap-style)
   const {
-    isWorking,
-    step,
-    preparedTxData,
-    involvedTokensCount, 
-    completedERC20ApprovalsCount,
-    needsERC20Approvals,
-    allRequiredApprovals,
-    completedApprovals,
+    approvalData,
     isCheckingApprovals,
-    batchPermitSigned,
-    
-    isApproveWritePending,
+    isWorking,
     isApproving,
-    isMintSendPending,
-    isMintConfirming,
-    isMintSuccess,
-    
-    handlePrepareMint,
+    isDepositConfirming,
+    isDepositSuccess,
     handleApprove,
-    handleMint,
-    resetTransactionState,
-  } = useAddLiquidityTransaction({
+    handleDeposit,
+    refetchApprovals,
+    reset: resetTransaction,
+  } = useAddLiquidityTransactionV2({
     token0Symbol,
     token1Symbol,
     amount0,
@@ -321,27 +325,26 @@ export function AddLiquidityForm({
     activeInputSide,
     calculatedData,
     onLiquidityAdded,
-    onApprovalInsufficient: () => {
-      setApprovalWiggleCount(prev => prev + 1);
-    },
     onOpenChange: () => {},
   });
 
-  // Balance hooks
-  const { data: token0BalanceData, isLoading: isLoadingToken0Balance } = useBalance({
+  // Track which step we're on manually (no auto-progression)
+  const [currentTransactionStep, setCurrentTransactionStep] = useState<'idle' | 'approving_token0' | 'approving_token1' | 'signing_permit' | 'depositing'>('idle');
+  const [permitSignature, setPermitSignature] = useState<string>();
+
+  // Balance hooks with refetch
+  const { data: token0BalanceData, isLoading: isLoadingToken0Balance, refetch: refetchToken0Balance } = useBalance({
     address: accountAddress,
-    token: TOKEN_DEFINITIONS[token0Symbol]?.address === "0x0000000000000000000000000000000000000000" 
-      ? undefined 
-      : TOKEN_DEFINITIONS[token0Symbol]?.address as `0x${string}` | undefined,
+    token: TOKEN_DEFINITIONS[token0Symbol]?.address === "0x0000000000000000000000000000000000000000"
+      ? undefined : TOKEN_DEFINITIONS[token0Symbol]?.address as `0x${string}` | undefined,
     chainId,
     query: { enabled: !!accountAddress && !!chainId && !!TOKEN_DEFINITIONS[token0Symbol] },
   });
 
-  const { data: token1BalanceData, isLoading: isLoadingToken1Balance } = useBalance({
+  const { data: token1BalanceData, isLoading: isLoadingToken1Balance, refetch: refetchToken1Balance } = useBalance({
     address: accountAddress,
-    token: TOKEN_DEFINITIONS[token1Symbol]?.address === "0x0000000000000000000000000000000000000000" 
-      ? undefined 
-      : TOKEN_DEFINITIONS[token1Symbol]?.address as `0x${string}` | undefined,
+    token: TOKEN_DEFINITIONS[token1Symbol]?.address === "0x0000000000000000000000000000000000000000"
+      ? undefined : TOKEN_DEFINITIONS[token1Symbol]?.address as `0x${string}` | undefined,
     chainId,
     query: { enabled: !!accountAddress && !!chainId && !!TOKEN_DEFINITIONS[token1Symbol] },
   });
@@ -394,10 +397,44 @@ export function AddLiquidityForm({
     }
   }, [approvalWiggleCount, approvalWiggleControls]);
 
+  // Balance wiggle animation effects
+  useEffect(() => {
+    if (balanceWiggleCount0 > 0) {
+      balanceWiggleControls0.start({
+        x: [0, -3, 3, -2, 2, 0],
+        transition: { duration: 0.22, ease: 'easeOut' },
+      }).catch(() => {});
+    }
+  }, [balanceWiggleCount0, balanceWiggleControls0]);
+
+  useEffect(() => {
+    if (balanceWiggleCount1 > 0) {
+      balanceWiggleControls1.start({
+        x: [0, -3, 3, -2, 2, 0],
+        transition: { duration: 0.22, ease: 'easeOut' },
+      }).catch(() => {});
+    }
+  }, [balanceWiggleCount1, balanceWiggleControls1]);
+
   // Set initial state based on props
   useEffect(() => {
     setBaseTokenForPriceDisplay(token0Symbol);
   }, [token0Symbol]);
+
+  // Listen for balance refresh events
+  useEffect(() => {
+    if (!accountAddress) return;
+    const onRefresh = () => { refetchToken0Balance(); refetchToken1Balance(); };
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === `walletBalancesRefreshAt_${accountAddress}`) onRefresh();
+    };
+    window.addEventListener('walletBalancesRefresh', onRefresh);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener('walletBalancesRefresh', onRefresh);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, [accountAddress, refetchToken0Balance, refetchToken1Balance]);
 
   // Auto flip denomination to match InteractiveRangeChart axis when beneficial
   const shouldFlipDenomination = useMemo(() => {
@@ -544,27 +581,14 @@ export function AddLiquidityForm({
           const numericCurrentPrice = parseFloat(poolState.currentPrice);
           if (!isNaN(numericCurrentPrice)) {
             setCurrentPriceLine(numericCurrentPrice);
-            
-            // Set a fixed 20% zoom level around the current tick
+
+            // Set initial viewport based on pool type: ±5% for stable, ±20% for volatile
             const centerTick = poolState.currentPoolTick;
-            const percentage = 0.20; // 20% zoom
-            
-            const priceRatioUpper = 1 + percentage;
-            const priceRatioLower = 1 - percentage;
-
-            // This calculation is now correct for price of T0 in T1
-            const tickDeltaForT0T1Upper = Math.round(Math.log(priceRatioUpper) / Math.log(1.0001));
-            const tickDeltaForT0T1Lower = Math.round(Math.log(priceRatioLower) / Math.log(1.0001));
-
-            // The prices are symmetrical around the current tick in price space, but not in tick space.
-            // We use the larger of the two deltas (in absolute terms) to create a symmetrical zoom in tick space.
-            const largestDelta = Math.max(Math.abs(tickDeltaForT0T1Upper), Math.abs(tickDeltaForT0T1Lower));
-            
-            const domainTickLower = centerTick - largestDelta;
-            const domainTickUpper = centerTick + largestDelta;
-
-            const [constrainedMinTick, constrainedMaxTick] = applyDomainConstraints(domainTickLower, domainTickUpper);
-            setXDomain([constrainedMinTick, constrainedMaxTick]);
+            const percentageRange = isStablePool ? 0.05 : 0.20;
+            const tickRange = Math.round(Math.log(1 + percentageRange) / Math.log(1.0001));
+            const domainTickLower = centerTick - tickRange;
+            const domainTickUpper = centerTick + tickRange;
+            setXDomain([domainTickLower, domainTickUpper]);
 
           } else {
             setCurrentPriceLine(null);
@@ -614,9 +638,19 @@ export function AddLiquidityForm({
               : Math.pow(1.0001, minTickDomain);
             priceAtTick = rawPrice * decimalAdjFactor;
           }
+        let label = minTickDomain.toString();
+        if (!isNaN(priceAtTick)) {
+          if (priceAtTick > 0 && priceAtTick < 0.01) {
+            label = '<0.01';
+          } else {
+            const formatted = priceAtTick.toLocaleString('en-US', { maximumFractionDigits: displayDecimals, minimumFractionDigits: 2 });
+            // If it rounds to 0.00 but is actually positive, show <0.01
+            label = (formatted === '0.00' && priceAtTick > 0) ? '<0.01' : formatted;
+          }
+        }
         newLabels.push({ 
           tickValue: minTickDomain, 
-          displayLabel: isNaN(priceAtTick) ? minTickDomain.toString() : priceAtTick.toLocaleString('en-US', { maximumFractionDigits: displayDecimals, minimumFractionDigits: 2 })
+          displayLabel: label
         });
       } else if (isFinite(minTickDomain) && isFinite(maxTickDomain)) {
         const range = maxTickDomain - minTickDomain;
@@ -637,9 +671,19 @@ export function AddLiquidityForm({
               priceAtTick = currentPriceNum * priceDelta; // Direct for token1 denomination
             }
           }
+          let label = tickVal.toString();
+          if (!isNaN(priceAtTick)) {
+            if (priceAtTick > 0 && priceAtTick < 0.01) {
+              label = '<0.01';
+            } else {
+              const formatted = priceAtTick.toLocaleString('en-US', { maximumFractionDigits: displayDecimals, minimumFractionDigits: Math.min(2, displayDecimals) });
+              // If it rounds to 0.00 but is actually positive, show <0.01
+              label = (formatted === '0.00' && priceAtTick > 0) ? '<0.01' : formatted;
+            }
+          }
           newLabels.push({ 
             tickValue: tickVal, 
-            displayLabel: isNaN(priceAtTick) ? tickVal.toString() : priceAtTick.toLocaleString('en-US', { maximumFractionDigits: displayDecimals, minimumFractionDigits: Math.min(2, displayDecimals) }) 
+            displayLabel: label
           });
         }
       } 
@@ -738,7 +782,7 @@ export function AddLiquidityForm({
     // Use optimal denomination for decimals like the chart; force 2 for USD-denominated
     const baseDisplayToken = optimalDenominationForDecimals;
     const baseDisplayDefault = TOKEN_DEFINITIONS[baseDisplayToken]?.displayDecimals ?? 4;
-    const isUSDDenom = baseDisplayToken === 'aUSDT' || baseDisplayToken === 'aUSDC' || baseDisplayToken === 'USDT' || baseDisplayToken === 'USDC';
+    const isUSDDenom = baseDisplayToken === 'aUSDT' || baseDisplayToken === 'aUSDC' || baseDisplayToken === 'USDT' || baseDisplayToken === 'USDC' || baseDisplayToken === 'aDAI' || baseDisplayToken === 'DAI';
     const displayDecimals = isUSDDenom ? 2 : baseDisplayDefault;
 
     // Formatting for Min Price String
@@ -800,7 +844,7 @@ export function AddLiquidityForm({
 
   // Handle selecting a preset from dropdown
   const handleSelectPreset = (preset: string) => {
-    if (preparedTxData) resetTransactionState();
+    resetTransaction();
     
     setActivePreset(preset);
     setShowPresetSelector(false); // Close the selector
@@ -1042,65 +1086,25 @@ export function AddLiquidityForm({
 
   // Removed left/right remapping: left always edits "min" and right edits "max".
 
-  // Helper function to apply domain constraints
+  // Apply domain constraints to ensure valid tick range
   const applyDomainConstraints = useCallback((minTick: number, maxTick: number): [number, number] => {
-    // Apply minimum domain size constraint: ensure at least 10 tick spacings visible
-    const minDomainSize = defaultTickSpacing * 10;
-    let constrainedMinTick = minTick;
-    let constrainedMaxTick = maxTick;
-    
-    const domainSize = constrainedMaxTick - constrainedMinTick;
-    if (domainSize < minDomainSize) {
-      const centerTick = (constrainedMinTick + constrainedMaxTick) / 2;
-      constrainedMinTick = centerTick - minDomainSize / 2;
-      constrainedMaxTick = centerTick + minDomainSize / 2;
-    }
-    
-    // Apply maximum view range constraint: 500% above and 95% below current price
-    if (currentPoolTick !== null) {
-      const maxUpperDelta = Math.round(Math.log(6) / Math.log(1.0001)); // 500% above = 6x price
-      const maxLowerDelta = Math.round(Math.log(0.05) / Math.log(1.0001)); // 95% below = 0.05x price
-      
-      const maxUpperTick = currentPoolTick + maxUpperDelta;
-      const maxLowerTick = currentPoolTick + maxLowerDelta;
-      
-      // Clamp the domain to the maximum view range
-      constrainedMinTick = Math.max(constrainedMinTick, maxLowerTick);
-      constrainedMaxTick = Math.min(constrainedMaxTick, maxUpperTick);
-    }
-    
-    // Ensure the domain is properly aligned to tick spacing
-    constrainedMinTick = Math.floor(constrainedMinTick / defaultTickSpacing) * defaultTickSpacing;
-    constrainedMaxTick = Math.ceil(constrainedMaxTick / defaultTickSpacing) * defaultTickSpacing;
-    
-    // Ensure minimum domain size is maintained after constraints
-    const finalDomainSize = constrainedMaxTick - constrainedMinTick;
-    if (finalDomainSize < minDomainSize) {
-      const centerTick = (constrainedMinTick + constrainedMaxTick) / 2;
-      constrainedMinTick = centerTick - minDomainSize / 2;
-      constrainedMaxTick = centerTick + minDomainSize / 2;
-      
-      // Re-align to tick spacing
-      constrainedMinTick = Math.floor(constrainedMinTick / defaultTickSpacing) * defaultTickSpacing;
-      constrainedMaxTick = Math.ceil(constrainedMaxTick / defaultTickSpacing) * defaultTickSpacing;
-    }
-    
-    return [constrainedMinTick, constrainedMaxTick];
-  }, [defaultTickSpacing, currentPoolTick]);
+    const constrainedMin = Math.max(sdkMinTick, Math.min(sdkMaxTick - 1, minTick));
+    const constrainedMax = Math.max(constrainedMin + 1, Math.min(sdkMaxTick, maxTick));
+    return [constrainedMin, constrainedMax];
+  }, [sdkMinTick, sdkMaxTick]);
 
   // Reset chart viewbox to fit the chosen range with configurable margins (fractions of selection width)
   const resetChartViewbox = useCallback((newTickLower: number, newTickUpper: number, leftMarginFrac: number = 0.05, rightMarginFrac: number = 0.05) => {
     if (newTickLower === newTickUpper) return;
 
-    // Always fit selection plus a small margin, then constrain
+    // Fit selection plus a small margin
     const rangeWidth = newTickUpper - newTickLower;
     const leftMarginTicks = Math.round(rangeWidth * Math.max(0, leftMarginFrac));
     const rightMarginTicks = Math.round(rangeWidth * Math.max(0, rightMarginFrac));
     const newMinTick = newTickLower - leftMarginTicks;
     const newMaxTick = newTickUpper + rightMarginTicks;
-    const [constrainedMinTick, constrainedMaxTick] = applyDomainConstraints(newMinTick, newMaxTick);
-    setXDomain([constrainedMinTick, constrainedMaxTick]);
-  }, [applyDomainConstraints, currentPoolTick, defaultTickSpacing, xDomain]);
+    setXDomain([newMinTick, newMaxTick]);
+  }, []);
 
   // Handle use full balance
   const handleUseFullBalance = (balanceString: string, tokenSymbolForDecimals: TokenSymbol, isToken0: boolean) => { 
@@ -1122,61 +1126,167 @@ export function AddLiquidityForm({
     }
   };
 
-  // Handle preparation and submission
+  // Handle preparation and submission with manual step progression
   const handlePrepareAndSubmit = async () => {
     if (isInsufficientBalance) {
       showErrorToast("Insufficient Balance");
       return;
     }
-    
+
     if (parseFloat(amount0 || "0") <= 0 && parseFloat(amount1 || "0") <= 0) {
       showErrorToast("Invalid Amount", "Must be greater than 0");
       return;
     }
-    
-    if (preparedTxData) {
-      if (step === 'approve') handleApprove();
-      else if (step === 'mint') handleMint();
-    } else {
-      // Check if all involved tokens have been approved
-      const allTokensCompleted = completedERC20ApprovalsCount === allRequiredApprovals.length && allRequiredApprovals.length > 0;
-      
-      if (allTokensCompleted) {
-        // All approvals complete, go straight to mint
-        const preparedData = await handlePrepareMint();
-        if (preparedData && !preparedData.needsApproval) {
-          handleMint();
-        }
-      } else {
-        // Start the approval process
-        await handlePrepareMint();
+
+    // First click: switch to transaction steps view
+    if (!showingTransactionSteps) {
+      setShowingTransactionSteps(true);
+      return;
+    }
+
+    // Wait for approval data to load
+    if (!approvalData || isCheckingApprovals) {
+      return;
+    }
+
+    // Determine next step based on current state and approval data
+    if (currentTransactionStep === 'idle') {
+      // Check what's needed
+      if (approvalData.needsToken0ERC20Approval) {
+        setCurrentTransactionStep('approving_token0');
+        await handleApprove(token0Symbol);
+        setCurrentTransactionStep('idle');
+        await refetchApprovals();
+        return;
       }
+      if (approvalData.needsToken1ERC20Approval) {
+        setCurrentTransactionStep('approving_token1');
+        await handleApprove(token1Symbol);
+        setCurrentTransactionStep('idle');
+        await refetchApprovals();
+        return;
+      }
+      if ((approvalData.needsToken0Permit || approvalData.needsToken1Permit) && !permitSignature) {
+        setCurrentTransactionStep('signing_permit');
+        try {
+          await signPermit();
+          // After signing, don't refetch - the signature is enough for the deposit
+          setCurrentTransactionStep('idle');
+        } catch (error) {
+          // Reset state on error (user rejection or failure)
+          setCurrentTransactionStep('idle');
+          return;
+        }
+        return;
+      }
+      // All approvals/permits done, execute deposit
+      setCurrentTransactionStep('depositing');
+      await handleDeposit(permitSignature);
+      setCurrentTransactionStep('idle');
     }
   };
 
-  // Determine button text based on current state
-  const getButtonText = () => {
-    if (step === 'approve') {
-      if (isApproveWritePending || isApproving) {
-        return `Approve ${preparedTxData?.approvalTokenSymbol || 'Tokens'}`;
-      }
-      return `Approve ${preparedTxData?.approvalTokenSymbol || 'Tokens'}`;
-    } else if (step === 'mint') {
-      if (!batchPermitSigned) {
-        if (isMintSendPending || isWorking) {
-          return 'Sign';
-        }
-        return 'Sign';
+  // Sign the batch permit
+  const signPermit = useCallback(async () => {
+    if (!approvalData?.permitBatchData || !approvalData?.signatureDetails) {
+      return;
+    }
+
+    if (!signer) {
+      showErrorToast("Wallet not connected");
+      return;
+    }
+
+    try {
+      toast('Sign in Wallet', {
+        icon: React.createElement(InfoIcon, { className: 'h-4 w-4' })
+      });
+
+      const signature = await (signer as any)._signTypedData(
+        approvalData.signatureDetails.domain,
+        approvalData.signatureDetails.types,
+        approvalData.permitBatchData
+      );
+
+      setPermitSignature(signature);
+
+      // Show success toast
+      const currentTime = Math.floor(Date.now() / 1000);
+      const sigDeadline = parseInt(approvalData.permitBatchData.sigDeadline || '0');
+      const durationSeconds = sigDeadline - currentTime;
+
+      let durationFormatted = "";
+      if (durationSeconds >= 86400) {
+        const days = Math.ceil(durationSeconds / 86400);
+        durationFormatted = `${days} day${days > 1 ? 's' : ''}`;
+      } else if (durationSeconds >= 3600) {
+        const hours = Math.ceil(durationSeconds / 3600);
+        durationFormatted = `${hours} hour${hours > 1 ? 's' : ''}`;
       } else {
-        if (isMintSendPending || isMintConfirming) {
-          return 'Deposit';
-        }
-        return 'Deposit';
+        const minutes = Math.ceil(durationSeconds / 60);
+        durationFormatted = `${minutes} minute${minutes > 1 ? 's' : ''}`;
       }
-    } else {
-      // step === 'input'
+
+      toast.success('Batch Signature Complete', {
+        icon: React.createElement(BadgeCheck, { className: 'h-4 w-4 text-green-500' }),
+        description: `Batch permit signed successfully for ${durationFormatted}`
+      });
+    } catch (error: any) {
+      const isUserRejection =
+        error.message?.toLowerCase().includes('user rejected') ||
+        error.message?.toLowerCase().includes('user denied') ||
+        error.code === 4001;
+
+      if (!isUserRejection) {
+        showErrorToast("Signature Error", error.message);
+      }
+      throw error;
+    }
+  }, [approvalData, signer]);
+
+  // Determine button text based on current state and what's needed next
+  const getButtonText = () => {
+    if (isInsufficientBalance) {
+      return 'Insufficient Balance';
+    }
+
+    if (isWorking) {
+      if (currentTransactionStep === 'approving_token0') {
+        return `Approving ${token0Symbol}...`;
+      }
+      if (currentTransactionStep === 'approving_token1') {
+        return `Approving ${token1Symbol}...`;
+      }
+      if (currentTransactionStep === 'signing_permit') {
+        return 'Signing...';
+      }
+      if (currentTransactionStep === 'depositing' || isDepositConfirming) {
+        return 'Depositing...';
+      }
+      return 'Processing...';
+    }
+
+    // Not in transaction steps yet
+    if (!showingTransactionSteps) {
       return 'Deposit';
     }
+
+    // Waiting for approval data to load
+    if (!approvalData) {
+      return 'Loading...';
+    }
+
+    // In transaction steps - show what will happen next
+    if (approvalData.needsToken0ERC20Approval) {
+      return `Approve ${token0Symbol}`;
+    }
+    if (approvalData.needsToken1ERC20Approval) {
+      return `Approve ${token1Symbol}`;
+    }
+    if ((approvalData.needsToken0Permit || approvalData.needsToken1Permit) && !permitSignature) {
+      return 'Sign Permit';
+    }
+    return 'Deposit';
   };
 
   // Effect to auto-apply active percentage preset when currentPrice changes OR when activePreset changes
@@ -1230,7 +1340,7 @@ export function AddLiquidityForm({
 
         if (newTickUpper - newTickLower >= defaultTickSpacing) {
             if (newTickLower.toString() !== tickLower || newTickUpper.toString() !== tickUpper) {
-                if (preparedTxData) resetTransactionState();
+                resetTransaction();
                 setTickLower(newTickLower.toString());
                 setTickUpper(newTickUpper.toString());
                 setInitialDefaultApplied(true); 
@@ -1244,7 +1354,7 @@ export function AddLiquidityForm({
         }
     } else if (activePreset === "Full Range") {
         if (tickLower !== sdkMinTick.toString() || tickUpper !== sdkMaxTick.toString()) {
-            if (preparedTxData) resetTransactionState();
+            resetTransaction();
             setTickLower(sdkMinTick.toString());
             setTickUpper(sdkMaxTick.toString());
             setInitialDefaultApplied(true); 
@@ -1252,7 +1362,7 @@ export function AddLiquidityForm({
             resetChartViewbox(sdkMinTick, sdkMaxTick);
         }
     }
-  }, [currentPrice, currentPoolTick, activePreset, defaultTickSpacing, sdkMinTick, sdkMaxTick, tickLower, tickUpper, preparedTxData, resetTransactionState]);
+  }, [currentPrice, currentPoolTick, activePreset, defaultTickSpacing, sdkMinTick, sdkMaxTick, tickLower, tickUpper, resetTransaction]);
 
   // Effect to calculate Capital Efficiency and Enhanced APR
   useEffect(() => {
@@ -1474,7 +1584,7 @@ export function AddLiquidityForm({
     }
     
     if (newTickLower !== parseInt(tickLower) || newTickUpper !== parseInt(tickUpper)) {
-      if (preparedTxData) resetTransactionState();
+      resetTransaction();
       setTickLower(newTickLower.toString());
       setTickUpper(newTickUpper.toString());
       setInitialDefaultApplied(true);
@@ -1864,16 +1974,18 @@ export function AddLiquidityForm({
         setAmount0FullPrecision("");
         setAmount1FullPrecision("");
             setCalculatedData(null);
-            if (preparedTxData !== null || step !== 'input') {
-                resetTransactionState();
-            }
+            resetTransaction();
+            setShowingTransactionSteps(false);
+            setCurrentTransactionStep('idle');
+            setPermitSignature(undefined);
         }
     } else if (parseFloat(amount0) <= 0 && parseFloat(amount1) <= 0) {
         // Fallback: ensure cleanup if all amounts are zero or invalid, and no calculation was triggered.
         setCalculatedData(null);
-        if (preparedTxData !== null || step !== 'input') {
-            resetTransactionState();
-        }
+        resetTransaction();
+        setShowingTransactionSteps(false);
+        setCurrentTransactionStep('idle');
+        setPermitSignature(undefined);
     }
 
     prevCalculationDeps.current = currentDeps;
@@ -1884,10 +1996,17 @@ export function AddLiquidityForm({
     tickUpper,
     activeInputSide,
     debouncedCalculateAmountAndCheckApprovals,
-    preparedTxData, 
-    step,           
-    resetTransactionState,
+    resetTransaction,
   ]);
+
+  // Reset to range view when deposit succeeds
+  useEffect(() => {
+    if (isDepositSuccess) {
+      setShowingTransactionSteps(false);
+      setCurrentTransactionStep('idle');
+      setPermitSignature(undefined);
+    }
+  }, [isDepositSuccess]);
 
   // Check for insufficient balance
   useEffect(() => {
@@ -2131,10 +2250,11 @@ export function AddLiquidityForm({
     const upper = parseInt(tickUpper);
     if (isNaN(lower) || isNaN(upper)) return null;
 
-    // Respect inversion: denominated switching and value inversion
+    // Use baseTokenForPriceDisplay to determine inversion (user's chosen denomination)
+    const shouldInvert = baseTokenForPriceDisplay === token0Symbol;
     const priceAt = (tickVal: number) => {
       const priceDelta = Math.pow(1.0001, tickVal - currentPoolTick);
-      return isInverted ? 1 / (currentNum * priceDelta) : currentNum * priceDelta;
+      return shouldInvert ? 1 / (currentNum * priceDelta) : currentNum * priceDelta;
     };
 
     // Full range special
@@ -2145,8 +2265,8 @@ export function AddLiquidityForm({
     const pLower = priceAt(lower);
     const pUpper = priceAt(upper);
 
-    const denomToken = isInverted ? token0Symbol : token1Symbol;
-    const isUsd = denomToken === 'aUSDT' || denomToken === 'aUSDC' || denomToken === 'USDT' || denomToken === 'USDC';
+    const denomToken = shouldInvert ? token0Symbol : token1Symbol;
+    const isUsd = denomToken === 'aUSDT' || denomToken === 'aUSDC' || denomToken === 'USDT' || denomToken === 'USDC' || denomToken === 'aDAI' || denomToken === 'DAI';
     const poolCfg = selectedPoolId ? getPoolById(selectedPoolId) : null;
     const isStablePoolType = (poolCfg?.type || '').toLowerCase() === 'stable';
     const decimals = isUsd ? (isStablePoolType ? 6 : 2) : (TOKEN_DEFINITIONS[denomToken]?.displayDecimals ?? 4);
@@ -2162,12 +2282,16 @@ export function AddLiquidityForm({
 
     const formatVal = (v: number) => {
       if (!isFinite(v)) return '∞';
-      return v.toLocaleString('en-US', { maximumFractionDigits: decimals, minimumFractionDigits: Math.min(2, decimals) });
+      if (v > 0 && v < 0.01) return '<0.01';
+      const formatted = v.toLocaleString('en-US', { maximumFractionDigits: decimals, minimumFractionDigits: Math.min(2, decimals) });
+      // If it rounds to 0.00 but is actually positive, show <0.01
+      if (formatted === '0.00' && v > 0) return '<0.01';
+      return formatted;
     };
 
     // Always display ascending by price: left = lower, right = higher
     return { left: formatVal(points[0].price), right: formatVal(points[1].price) };
-  }, [currentPoolTick, currentPrice, tickLower, tickUpper, token0Symbol, token1Symbol, sdkMinTick, sdkMaxTick, isInverted]);
+  }, [currentPoolTick, currentPrice, tickLower, tickUpper, token0Symbol, token1Symbol, sdkMinTick, sdkMaxTick, baseTokenForPriceDisplay, selectedPoolId]);
 
   // const { open } = useWeb3Modal();
 
@@ -2236,7 +2360,10 @@ export function AddLiquidityForm({
                     </Button>
                   </div>
                 </div>
-                <div className={cn("rounded-lg bg-muted/30 p-4", { "outline outline-1 outline-muted": isAmount0Focused })}>
+                <motion.div
+                  className={cn("rounded-lg bg-muted/30 p-4", { "outline outline-1 outline-muted": isAmount0Focused })}
+                  animate={balanceWiggleControls0}
+                >
                   <div className="flex items-center gap-2">
                     <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
                       <Image src={getTokenIcon(token0Symbol)} alt={token0Symbol} width={20} height={20} className="rounded-full"/>
@@ -2251,9 +2378,20 @@ export function AddLiquidityForm({
                           let newValue = e.target.value.replace(',', '.'); // Ensure decimal separator is always period
                           // Only allow numbers, one decimal point, and prevent multiple decimal points
                           newValue = newValue.replace(/[^0-9.]/g, '').replace(/(\..*?)\./g, '$1');
+
+                          // Check if going over balance to trigger wiggle
+                          const maxAmount = token0BalanceData ? parseFloat(token0BalanceData.formatted || "0") : 0;
+                          const inputAmount = parseFloat(newValue || "0");
+                          const prevAmount = parseFloat(amount0 || "0");
+                          const wasOver = Number.isFinite(prevAmount) && Number.isFinite(maxAmount) ? prevAmount > maxAmount : false;
+                          const isOver = Number.isFinite(inputAmount) && Number.isFinite(maxAmount) ? inputAmount > maxAmount : false;
+                          if (isOver && !wasOver) {
+                            setBalanceWiggleCount0(c => c + 1);
+                          }
+
                           // Clear full precision when user manually edits
                           setAmount0FullPrecision("");
-                          if (preparedTxData) { resetTransactionState(); }
+                          resetTransaction();
                           setAmount0(newValue);
                           setActiveInputSide('amount0');
                         }}
@@ -2301,7 +2439,7 @@ export function AddLiquidityForm({
                       </div>
                     </div>
                   </div>
-                </div>
+                </motion.div>
               </div>
 
               {/* Plus Icon */}
@@ -2331,7 +2469,10 @@ export function AddLiquidityForm({
                     </Button>
                   </div>
                 </div>
-                <div className={cn("rounded-lg bg-muted/30 p-4", { "outline outline-1 outline-muted": isAmount1Focused })}>
+                <motion.div
+                  className={cn("rounded-lg bg-muted/30 p-4", { "outline outline-1 outline-muted": isAmount1Focused })}
+                  animate={balanceWiggleControls1}
+                >
                   <div className="flex items-center gap-2">
                     <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
                       <Image src={getTokenIcon(token1Symbol)} alt={token1Symbol} width={20} height={20} className="rounded-full"/>
@@ -2346,9 +2487,20 @@ export function AddLiquidityForm({
                           let newValue = e.target.value.replace(',', '.'); // Ensure decimal separator is always period
                           // Only allow numbers, one decimal point, and prevent multiple decimal points
                           newValue = newValue.replace(/[^0-9.]/g, '').replace(/(\..*?)\./g, '$1');
+
+                          // Check if going over balance to trigger wiggle
+                          const maxAmount = token1BalanceData ? parseFloat(token1BalanceData.formatted || "0") : 0;
+                          const inputAmount = parseFloat(newValue || "0");
+                          const prevAmount = parseFloat(amount1 || "0");
+                          const wasOver = Number.isFinite(prevAmount) && Number.isFinite(maxAmount) ? prevAmount > maxAmount : false;
+                          const isOver = Number.isFinite(inputAmount) && Number.isFinite(maxAmount) ? inputAmount > maxAmount : false;
+                          if (isOver && !wasOver) {
+                            setBalanceWiggleCount1(c => c + 1);
+                          }
+
                           // Clear full precision when user manually edits
                           setAmount1FullPrecision("");
-                          if (preparedTxData) { resetTransactionState(); }
+                          resetTransaction();
                           setAmount1(newValue);
                           setActiveInputSide('amount1');
                         }}
@@ -2396,7 +2548,7 @@ export function AddLiquidityForm({
                       </div>
                     </div>
                   </div>
-                </div>
+                </motion.div>
               </div>
 
               {/* Price Range Label (outside container, matching Amount style) */}
@@ -2412,196 +2564,84 @@ export function AddLiquidityForm({
                     </>
                   ) : (
                     <>
-                      {/* Animated preset dropdown like Swap Slippage */}
-                      <div className="relative preset-selector">
-                        <button
-                          type="button"
-                          className="px-1.5 py-0.5 text-xs font-normal rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-muted-foreground hover:brightness-110 hover:border-white/30 inline-flex items-center gap-1"
-                          onClick={() => setShowPresetSelector((v) => !v)}
-                          aria-haspopup="listbox"
-                          aria-expanded={showPresetSelector}
-                          title="Change preset range"
-                        >
-                          <span>{activePreset || "Custom"}</span>
-                          <svg width="10" height="10" viewBox="0 0 20 20" aria-hidden="true" className="opacity-80">
-                            <path d="M5 7l5 5 5-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                          </svg>
-                        </button>
-                        <AnimatePresence initial={false}>
-                          {showPresetSelector && (
-                            <motion.div
-                              key="range-preset-menu"
-                              initial={{ height: 0, opacity: 0 }}
-                              animate={{ height: 'auto', opacity: 1 }}
-                              exit={{ height: 0, opacity: 0 }}
-                              transition={{ duration: 0.18, ease: 'easeOut' }}
-                              className="absolute z-20 mt-1 left-0 w-max min-w-[180px] rounded-md border border-sidebar-border bg-[var(--modal-background)] shadow-md overflow-hidden"
-                            >
-                              <div className="p-1 grid gap-1">
-                                {presetOptions.map((preset) => (
-                                  <button
-                                    type="button"
-                                    key={preset}
-                                    className={cn(
-                                      "px-2 py-1 text-xs rounded text-left transition-colors",
-                                      activePreset === preset
-                                        ? "bg-muted text-foreground"
-                                        : "text-muted-foreground hover:bg-muted/30"
-                                    )}
-                                    onClick={() => {
-                                      handleSelectPreset(preset);
-                                      // Viewbox reset will be applied in the preset effect after ticks are recomputed
-                                      setShowPresetSelector(false);
-                                    }}
-                                  >
-                                    {preset}
-                                  </button>
-                                ))}
-                              </div>
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
-                      </div>
+                      {/* Range Type badge - opens modal */}
+                      <button
+                        type="button"
+                        className="px-2 py-0.5 text-xs font-medium rounded-md border border-sidebar-border bg-muted/30 text-foreground hover:bg-muted/50 transition-colors cursor-pointer"
+                        onClick={() => setShowRangeModal(true)}
+                        title="Click to change range"
+                      >
+                        {(() => {
+                          const presetLabels: Record<string, string> = {
+                            "Full Range": "Full Range",
+                            "±15%": "Conservative",
+                            "±8%": "Moderate",
+                            "±3%": "Concentrated",
+                            "±1%": "Narrow",
+                            "±0.5%": "Very Narrow",
+                            "±0.1%": "Ultra Narrow"
+                          };
+                          return activePreset ? (presetLabels[activePreset] || activePreset) : "Custom";
+                        })()}
+                      </button>
                       {getPriceRangeDisplay() && (
                         <>
                           <div className="w-px h-4 bg-border" />
-                          {editingSide ? (
-                            // Editing: show inputs AND keep the current price pill visible
-                            <div className="flex items-center gap-1 text-xs price-range-editor">
-                              {editingSide === 'min' ? (
-                                <input
-                                  value={editingMinPrice}
-                                  onChange={(e) => handlePriceInputChange('min', e.target.value)}
-                                  onBlur={handleApplyPriceRange}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') handleApplyPriceRange();
-                                    if (e.key === 'Escape') handleCancelPriceRangeEdit();
-                                  }}
-                                  className={cn(
-                                    "w-16 h-auto p-0 text-xs text-center bg-transparent border-0 appearance-none focus:outline-none focus:ring-0 focus-visible:ring-offset-0 focus-visible:ring-0 font-sans transition-colors",
-                                    convertPriceToValidTick(editingMinPrice, false) !== null
-                                      ? "text-white"
-                                      : "text-muted-foreground"
-                                  )}
-                                  autoComplete="off"
-                                  autoFocus
-                                />
-                              ) : (
-                                <div
-                                  className="text-muted-foreground hover:text-white cursor-pointer px-1 py-1 transition-colors font-sans"
-                                  onClick={() => handleClickToEditPrice('min')}
-                                >
-                                  {(() => {
-                                    const labels = computeRangeLabels();
-                                    return labels ? labels.left : (minPriceInputString || "0.00");
-                                  })()}
-                                </div>
-                              )}
-                              <span className="text-muted-foreground font-sans">-</span>
-                              {editingSide === 'max' ? (
-                                <input
-                                  value={editingMaxPrice}
-                                  onChange={(e) => handlePriceInputChange('max', e.target.value)}
-                                  onBlur={handleApplyPriceRange}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') handleApplyPriceRange();
-                                    if (e.key === 'Escape') handleCancelPriceRangeEdit();
-                                  }}
-                                  className={cn(
-                                    "w-16 h-auto p-0 text-xs text-center bg-transparent border-0 appearance-none focus:outline-none focus:ring-0 focus-visible:ring-offset-0 focus-visible:ring-0 font-sans transition-colors",
-                                    convertPriceToValidTick(editingMaxPrice, true) !== null
-                                      ? "text-white"
-                                      : "text-muted-foreground"
-                                  )}
-                                  autoComplete="off"
-                                  autoFocus
-                                />
-                              ) : (
-                                <div
-                                  className="text-muted-foreground hover:text-white cursor-pointer px-1 py-1 transition-colors font-sans"
-                                  onClick={() => handleClickToEditPrice('max')}
-                                >
-                                  {(() => {
-                                    const labels = computeRangeLabels();
-                                    return labels ? labels.right : (maxPriceInputString || "∞");
-                                  })()}
-                                </div>
-                              )}
-                              {currentPrice && (
-                                <TooltipProvider delayDuration={0}>
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <span className="ml-2 inline-flex items-center gap-1 text-[10px] px-1 py-0.5 rounded border border-sidebar-border text-muted-foreground">
-                                        <span className="inline-block w-[2px] h-2" style={{ background: '#e85102' }} />
-                                        <span className="select-none">
-                                          {(() => {
-                                            const inverse = 1 / parseFloat(currentPrice);
-                                            const flip = inverse > parseFloat(currentPrice);
-                                            const denomToken = flip ? token0Symbol : token1Symbol;
-                                            const isUsd = denomToken === 'aUSDT' || denomToken === 'aUSDC' || denomToken === 'USDT' || denomToken === 'USDC';
-                                            const displayDecimals = isUsd ? 2 : (TOKEN_DEFINITIONS[denomToken]?.displayDecimals ?? 4);
-                                            const numeric = flip ? inverse : parseFloat(currentPrice);
-                                            return isFinite(numeric) ? numeric.toFixed(displayDecimals) : '∞';
-                                          })()}
-                                        </span>
-                                      </span>
-                                    </TooltipTrigger>
-                                    <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
-                                      Current Pool Price
-                                    </TooltipContent>
-                                  </Tooltip>
-                                </TooltipProvider>
-                              )}
+                          {/* Clickable price range display - opens modal */}
+                          <div className="flex items-center gap-1 text-xs">
+                            <div
+                              className={`${(isDraggingRange === 'left' || isDraggingRange === 'center') ? 'text-white' : 'text-muted-foreground'} hover:text-white px-1 py-1 transition-colors cursor-pointer`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setModalInitialFocusField('min');
+                                setShowRangeModal(true);
+                              }}
+                            >
+                              {(() => {
+                                const labels = computeRangeLabels();
+                                return labels ? labels.left : (minPriceInputString || "0.00");
+                              })()}
                             </div>
-                          ) : (
-                            // Clickable price range display with hover effects and a small "Now" badge
-                            <div className="flex items-center gap-1 text-xs">
-                              <div 
-                                className={`${(isDraggingRange === 'left' || isDraggingRange === 'center') ? 'text-white' : 'text-muted-foreground'} hover:text-white cursor-pointer px-1 py-1 transition-colors min-price-display`}
-                                onClick={() => handleClickToEditPrice('min')}
-                              >
-                                {(() => {
-                                  const labels = computeRangeLabels();
-                                  return labels ? labels.left : (minPriceInputString || "0.00");
-                                })()}
-                              </div>
-                              <span className="text-muted-foreground">-</span>
-                              <div 
-                                className={`${(isDraggingRange === 'right' || isDraggingRange === 'center') ? 'text-white' : 'text-muted-foreground'} hover:text-white cursor-pointer px-1 py-1 transition-colors max-price-display`}
-                                onClick={() => handleClickToEditPrice('max')}
-                              >
-                                {(() => {
-                                  const labels = computeRangeLabels();
-                                  return labels ? labels.right : (maxPriceInputString || "∞");
-                                })()}
-                              </div>
-                              {currentPrice && (
-                                <TooltipProvider delayDuration={0}>
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <span className="ml-2 inline-flex items-center gap-1 text-[10px] px-1 py-0.5 rounded border border-sidebar-border text-muted-foreground">
-                                        <span className="inline-block w-[2px] h-2" style={{ background: '#e85102' }} />
-                                        <span className="select-none">
-                                          {(() => {
-                                            const inverse = 1 / parseFloat(currentPrice);
-                                            const flip = inverse > parseFloat(currentPrice);
-                                            const denomToken = flip ? token0Symbol : token1Symbol;
-                                            const isUsd = denomToken === 'aUSDT' || denomToken === 'aUSDC' || denomToken === 'USDT' || denomToken === 'USDC';
-                                            const displayDecimals = isUsd ? 2 : (TOKEN_DEFINITIONS[denomToken]?.displayDecimals ?? 4);
-                                            const numeric = flip ? inverse : parseFloat(currentPrice);
-                                            return isFinite(numeric) ? numeric.toFixed(displayDecimals) : '∞';
-                                          })()}
-                                        </span>
-                                      </span>
-                                    </TooltipTrigger>
-                                    <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
-                                      Current Pool Price
-                                    </TooltipContent>
-                                  </Tooltip>
-                                </TooltipProvider>
-                              )}
+                            <span className="text-muted-foreground">-</span>
+                            <div
+                              className={`${(isDraggingRange === 'right' || isDraggingRange === 'center') ? 'text-white' : 'text-muted-foreground'} hover:text-white px-1 py-1 transition-colors cursor-pointer`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setModalInitialFocusField('max');
+                                setShowRangeModal(true);
+                              }}
+                            >
+                              {(() => {
+                                const labels = computeRangeLabels();
+                                return labels ? labels.right : (maxPriceInputString || "∞");
+                              })()}
                             </div>
-                          )}
+                            {currentPrice && (
+                              <TooltipProvider delayDuration={0}>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <span className="ml-2 inline-flex items-center gap-1 text-[10px] px-1 py-0.5 rounded border border-sidebar-border text-muted-foreground">
+                                      <span className="inline-block w-[2px] h-2" style={{ background: '#e85102' }} />
+                                      <span className="select-none">
+                                        {(() => {
+                                          const inverse = 1 / parseFloat(currentPrice);
+                                          const flip = inverse > parseFloat(currentPrice);
+                                          const denomToken = flip ? token0Symbol : token1Symbol;
+                                          const isUsd = denomToken === 'aUSDT' || denomToken === 'aUSDC' || denomToken === 'USDT' || denomToken === 'USDC' || denomToken === 'aDAI' || denomToken === 'DAI';
+                                          const displayDecimals = isUsd ? 2 : (TOKEN_DEFINITIONS[denomToken]?.displayDecimals ?? 4);
+                                          const numeric = flip ? inverse : parseFloat(currentPrice);
+                                          return isFinite(numeric) ? numeric.toFixed(displayDecimals) : '∞';
+                                        })()}
+                                      </span>
+                                    </span>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
+                                    Current Pool Price
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            )}
+                          </div>
                         </>
                       )}
                     </>
@@ -2609,26 +2649,30 @@ export function AddLiquidityForm({
                 </div>
               </div>
 
-              {/* Range Preview Chart with Interactive Controls */}
-              {step === 'input' ? (
-                <div 
-                  className="p-3 border border-dashed rounded-md bg-muted/10 mb-4"
+              {/* Range Preview Chart OR Transaction Steps (conditional based on flow state) */}
+              {!showingTransactionSteps ? (
+                <div
+                  className={`pt-3 px-3 pb-1.5 border border-dashed rounded-md mb-4 transition-all duration-200 group ${
+                    isPoolStateLoading || !isConnected
+                      ? 'bg-muted/10'
+                      : 'bg-muted/10 cursor-pointer hover:bg-primary/[0.025] hover:border-primary/10'
+                  }`}
+                  onClick={!isPoolStateLoading && isConnected ? () => setShowRangeModal(true) : undefined}
                 >
                   {isPoolStateLoading || !isConnected ? (
-                    <div className="w-full h-[80px] relative overflow-hidden flex flex-col items-center justify-center bg-muted/50 rounded-md"
-                      // style={{ backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
-                    >
-                      <Image 
-                        src="/LogoIconWhite.svg" 
-                        alt="Alphix Logo" 
+                    <div className="w-full h-[100px] relative overflow-hidden flex flex-col items-center justify-center bg-muted/50 rounded-md">
+                      <Image
+                        src="/LogoIconWhite.svg"
+                        alt="Alphix Logo"
                         width={32}
                         height={32}
                         className="animate-pulse opacity-75"
                       />
                     </div>
                   ) : (
-                    <div className="relative">
+                    <div className="relative pointer-events-none h-[100px]">
                       <InteractiveRangeChart
+                        key={`chart-${baseTokenForPriceDisplay}`}
                         selectedPoolId={selectedPoolId}
                         chainId={chainId}
                         token0Symbol={token0Symbol}
@@ -2642,16 +2686,12 @@ export function AddLiquidityForm({
                         onRangeChange={(newLower, newUpper) => {
                           setTickLower(newLower);
                           setTickUpper(newUpper);
-                          if (preparedTxData) resetTransactionState();
+                          resetTransaction();
                           setInitialDefaultApplied(true);
-                          setActivePreset(null); // Clear preset when manually dragging
+                          setActivePreset(null);
                         }}
                         onXDomainChange={(newDomain) => {
-                          // Update the domain
                           setXDomain(newDomain);
-                          
-                          // Don't reset the range position - let it stay where the user dragged it
-                          // The InteractiveRangeChart will maintain the correct position
                         }}
                         sdkMinTick={sdkMinTick}
                         sdkMaxTick={sdkMaxTick}
@@ -2660,16 +2700,59 @@ export function AddLiquidityForm({
                         poolToken1={poolToken1}
                         onDragStateChange={(state) => setIsDraggingRange(state)}
                         onLoadingChange={(loading) => setIsChartLoading(loading)}
+                        forceDenominationBase={baseTokenForPriceDisplay}
+                        readOnly={true}
                       />
-                      
-                      {/* Chart labels are now handled internally by InteractiveRangeChart */}
-                      
-                      {/* Loading overlay for chart data using existing pattern */}
+
+                      <RangeSelectionModalV2
+                        isOpen={showRangeModal}
+                        onClose={() => {
+                          setShowRangeModal(false);
+                          setModalInitialFocusField(null);
+                        }}
+                        onConfirm={(newTickLower, newTickUpper, selectedPreset, denomination) => {
+                          setTickLower(newTickLower);
+                          setTickUpper(newTickUpper);
+                          resetTransaction();
+                          setInitialDefaultApplied(true);
+                          // Set the preset from the modal instead of clearing it
+                          setActivePreset(selectedPreset || null);
+                          // Sync denomination with modal
+                          if (denomination) {
+                            setBaseTokenForPriceDisplay(denomination);
+                          }
+                          setModalInitialFocusField(null);
+                        }}
+                        initialTickLower={tickLower}
+                        initialTickUpper={tickUpper}
+                        initialActivePreset={activePreset}
+                        selectedPoolId={selectedPoolId}
+                        chainId={chainId}
+                        token0Symbol={token0Symbol}
+                        token1Symbol={token1Symbol}
+                        currentPrice={currentPrice}
+                        currentPoolTick={currentPoolTick}
+                        currentPoolSqrtPriceX96={currentPoolSqrtPriceX96}
+                        minPriceDisplay={minPriceInputString}
+                        maxPriceDisplay={maxPriceInputString}
+                        baseTokenSymbol={baseTokenForPriceDisplay}
+                        sdkMinTick={sdkMinTick}
+                        sdkMaxTick={sdkMaxTick}
+                        defaultTickSpacing={defaultTickSpacing}
+                        xDomain={xDomain}
+                        onXDomainChange={(newDomain) => setXDomain(newDomain)}
+                        poolToken0={poolToken0}
+                        poolToken1={poolToken1}
+                        presetOptions={presetOptions}
+                        isInverted={isInverted}
+                        initialFocusField={modalInitialFocusField}
+                      />
+
                       {(isChartLoading || isCalculating) && (
                         <div className="absolute inset-0 flex items-center justify-center bg-muted/20 rounded">
-                          <Image 
-                            src="/LogoIconWhite.svg" 
-                            alt="Loading" 
+                          <Image
+                            src="/LogoIconWhite.svg"
+                            alt="Loading"
                             width={24}
                             height={24}
                             className="animate-pulse opacity-75"
@@ -2681,56 +2764,70 @@ export function AddLiquidityForm({
                 </div>
               ) : (
                 <div className="p-3 border border-dashed rounded-md bg-muted/10 mb-4">
-                  <p className="text-sm font-medium mb-2 text-foreground/80">Transaction Steps</p>
+                <p className="text-sm font-medium mb-2 text-foreground/80">Transaction Steps</p>
                   <div className="space-y-1.5 text-xs text-muted-foreground">
                       {/* ERC20 Approvals to Permit2 */}
                       <div className="flex items-center justify-between">
                           <span>Token Approvals</span>
                           <span>
-                            { (step === 'approve' && (isApproveWritePending || isApproving)) || isCheckingApprovals
+                            { isApproving || isCheckingApprovals
                               ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
                               : (
-                                <motion.span 
+                                <motion.span
                                   animate={approvalWiggleControls}
-                                  className={`text-xs font-mono ${completedERC20ApprovalsCount === allRequiredApprovals.length && allRequiredApprovals.length > 0 ? 'text-green-500' : approvalWiggleCount > 0 ? 'text-red-500' : 'text-muted-foreground'}`}
+                                  className={`text-xs font-mono ${
+                                    !approvalData?.needsToken0ERC20Approval && !approvalData?.needsToken1ERC20Approval
+                                      ? 'text-green-500'
+                                      : approvalWiggleCount > 0
+                                      ? 'text-red-500'
+                                      : 'text-muted-foreground'
+                                  }`}
                                 >
-                                  {isCheckingApprovals ? 'Checking...' : `${completedERC20ApprovalsCount}/${allRequiredApprovals.length > 0 ? allRequiredApprovals.length : '-'}`}
+                                  {isCheckingApprovals
+                                    ? 'Checking...'
+                                    : !approvalData
+                                    ? '-'
+                                    : (() => {
+                                        const totalNeeded = [approvalData.needsToken0ERC20Approval, approvalData.needsToken1ERC20Approval].filter(Boolean).length;
+                                        const completed = 2 - totalNeeded;
+                                        return `${completed}/2`;
+                                      })()}
                                 </motion.span>
                               )
                             }
                           </span>
                       </div>
-                      
+
                       {/* Permit2 Signature */}
                       <div className="flex items-center justify-between">
                           <span>Permit Signature</span>
                           <span>
-                            { (step === 'mint' && !batchPermitSigned && (isMintSendPending || isWorking))
+                            { currentTransactionStep === 'signing_permit'
                               ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
                               : (
-                                <span className={`text-xs font-mono ${batchPermitSigned ? 'text-green-500' : ''}`}>
-                                  {batchPermitSigned ? '1/1' : '0/1'}
+                                <span className={`text-xs font-mono ${permitSignature ? 'text-green-500' : ''}`}>
+                                  {permitSignature ? '1/1' : '0/1'}
                                 </span>
                               )
                             }
                           </span>
                       </div>
-                      
+
                       {/* Deposit Transaction */}
                       <div className="flex items-center justify-between">
                           <span>Deposit Transaction</span>
                           <span>
-                            { (step === 'mint' && batchPermitSigned && (isMintSendPending || isMintConfirming))
+                            { isDepositConfirming
                               ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
                               : (
-                                <span className={`text-xs font-mono ${isMintSuccess ? 'text-green-500' : ''}`}>
-                                  {isMintSuccess ? '1/1' : '0/1'}
+                                <span className={`text-xs font-mono ${isDepositSuccess ? 'text-green-500' : ''}`}>
+                                  {isDepositSuccess ? '1/1' : '0/1'}
                                 </span>
                               )
                             }
                           </span>
                       </div>
-                      
+
                   </div>
                 </div>
               )}
@@ -2750,36 +2847,27 @@ export function AddLiquidityForm({
                 <Button
                   className={cn(
                     "w-full",
-                    (isWorking || isCalculating || isPoolStateLoading || isApproveWritePending || isMintSendPending || isCheckingApprovals ||
-                    (step === 'input' && (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0")) && !preparedTxData) ||
-                    (step === 'input' && isInsufficientBalance)) ?
+                    (isWorking || isCalculating || isPoolStateLoading || isCheckingApprovals ||
+                    (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0")) ||
+                    isInsufficientBalance) ?
                       "relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 !opacity-100 cursor-default text-white/75"
                       :
                       "text-sidebar-primary border border-sidebar-primary bg-[#3d271b] hover:bg-[#3d271b]/90"
                   )}
-                  onClick={() => {
-                    if (step === 'input') handlePrepareAndSubmit();
-                    else if (step === 'approve') handleApprove();
-                    else if (step === 'mint') handleMint();
-                  }}
-                  disabled={isWorking || 
+                  onClick={handlePrepareAndSubmit}
+                  disabled={isWorking ||
                     isCalculating ||
-                    isPoolStateLoading || 
-                    isApproveWritePending ||
-                    isMintSendPending ||
+                    isPoolStateLoading ||
                     isCheckingApprovals ||
-                    (step === 'input' && (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0")) && !preparedTxData) ||
-                    (step === 'input' && isInsufficientBalance)
+                    (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0")) ||
+                    isInsufficientBalance
                   }
-                  style={(isWorking || isCalculating || isPoolStateLoading || isApproveWritePending || isMintSendPending || isCheckingApprovals ||
-                    (step === 'input' && (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0")) && !preparedTxData) ||
-                    (step === 'input' && isInsufficientBalance)) ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
+                  style={(isWorking || isCalculating || isPoolStateLoading || isCheckingApprovals ||
+                    (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0")) ||
+                    isInsufficientBalance) ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
                 >
-                                    <span className={cn(
-                    (step === 'approve' && (isApproveWritePending || isApproving)) ||
-                    (step === 'mint' && (isMintSendPending || isMintConfirming || (!batchPermitSigned && isWorking))) ||
-                    (step === 'input' && (isWorking || isCheckingApprovals)) ||
-                    isPoolStateLoading
+                  <span className={cn(
+                    (isWorking || isCheckingApprovals || isPoolStateLoading)
                       ? "animate-pulse"
                       : ""
                   )}>

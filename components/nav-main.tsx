@@ -23,8 +23,6 @@ import {
   SidebarMenuBadge,
 } from "@/components/ui/sidebar"
 
-const OutOfRangeToastIcon = () => (<OctagonX className="h-4 w-4 text-red-500" />);
-
 interface NavMainItem {
   title: string
   url?: string
@@ -174,7 +172,7 @@ export function NavMain({
 
   useEffect(() => {
     if (isConfirmed) {
-      toast.success("Faucet Claimed", { icon: <BadgeCheck className="h-4 w-4 text-sidebar-primary" /> });
+      toast.success("Faucet Claimed", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
       resetWriteContract();
       // On successful claim, update local cache and refetch from contract
       const now = Math.floor(Date.now() / 1000);
@@ -220,9 +218,20 @@ export function NavMain({
 
       const lower2 = String(finalErrorMessage).toLowerCase();
       if (lower2.includes('once per day')) {
-        toast.error('Can only claim once per day', { icon: <OutOfRangeToastIcon /> });
+        toast.error('Daily Limit Reached', { 
+          icon: <OctagonX className="h-4 w-4 text-red-500" />,
+          description: 'You can only claim once per day.',
+          duration: 4000
+        });
       } else {
-        toast.error(finalErrorMessage, { icon: <OutOfRangeToastIcon /> });
+        toast.error('Claim Failed', { 
+          icon: <OctagonX className="h-4 w-4 text-red-500" />,
+          description: finalErrorMessage,
+          action: {
+            label: "Copy Error",
+            onClick: () => navigator.clipboard.writeText(finalErrorMessage)
+          }
+        });
       }
       resetWriteContract();
     }
@@ -248,15 +257,30 @@ export function NavMain({
       } catch {}
     }
     if (!isConnected) {
-      toast.error("Please connect your wallet first.")
+      toast.error("Wallet Not Connected", {
+        icon: <OctagonX className="h-4 w-4 text-red-500" />,
+        description: "Please connect your wallet first.",
+        duration: 4000
+      });
       return
     }
     if (currentChainId !== targetChainId) {
-      toast.error(`Please switch to the ${baseSepolia.name} network.`)
+      toast.error("Wrong Network", {
+        icon: <OctagonX className="h-4 w-4 text-red-500" />,
+        description: `Please switch to the ${baseSepolia.name} network.`,
+        duration: 4000
+      });
       return
     }
     if (!userAddress) {
-      toast.error("Could not retrieve wallet address.")
+      toast.error("Address Error", {
+        icon: <OctagonX className="h-4 w-4 text-red-500" />,
+        description: "Could not retrieve wallet address.",
+        action: {
+          label: "Open Ticket",
+          onClick: () => window.open('https://discord.gg/alphix', '_blank')
+        }
+      });
       return
     }
     try {
@@ -272,9 +296,20 @@ export function NavMain({
       const toastMessage = faucetTxData.errorDetails || `API Error: ${faucetTxData.message || 'Unknown error'}`;
       const lower = String(toastMessage).toLowerCase();
       if (lower.includes('once per day')) {
-        toast.error('Can only claim once per day', { icon: <OutOfRangeToastIcon /> });
+        toast.error('Daily Limit Reached', { 
+          icon: <OctagonX className="h-4 w-4 text-red-500" />,
+          description: 'You can only claim once per day.',
+          duration: 4000
+        });
       } else {
-        toast.error(toastMessage, { icon: <OutOfRangeToastIcon /> });
+        toast.error('API Error', { 
+          icon: <OctagonX className="h-4 w-4 text-red-500" />,
+          description: toastMessage,
+          action: {
+            label: "Copy Error",
+            onClick: () => navigator.clipboard.writeText(toastMessage)
+          }
+        });
       }
         return
       }
@@ -291,9 +326,21 @@ export function NavMain({
       console.error("Faucet action error:", error)
       const msg = String(error?.message || '').toLowerCase();
       if (msg.includes('once per day')) {
-        toast.error('Can only claim once per day', { icon: <OutOfRangeToastIcon /> });
+        toast.error('Daily Limit Reached', { 
+          icon: <OctagonX className="h-4 w-4 text-red-500" />,
+          description: 'You can only claim once per day.',
+          duration: 4000
+        });
       } else {
-        toast.error(`Error during faucet action: ${error.message}`, { icon: <OctagonX className="h-4 w-4 text-red-500" /> })
+        const errorMessage = error.message || 'Faucet action failed';
+        toast.error('Faucet Error', { 
+          icon: <OctagonX className="h-4 w-4 text-red-500" />,
+          description: errorMessage,
+          action: {
+            label: "Copy Error",
+            onClick: () => navigator.clipboard.writeText(errorMessage)
+          }
+        });
       }
     }
   }

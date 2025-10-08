@@ -16,7 +16,7 @@ import { refreshFeesAfterTransaction } from '@/lib/client-cache';
 import { invalidateAfterTx } from '@/lib/invalidation';
 import { invalidateActivityCache, invalidateUserPositionsCache, invalidateUserPositionIdsCache } from '@/lib/client-cache';
 import { clearBatchDataCache } from '@/lib/cache-version';
-import { OctagonX } from 'lucide-react';
+import { OctagonX, InfoIcon, BadgeCheck } from 'lucide-react';
 
 // Helper function to safely parse amounts without precision loss
 const safeParseUnits = (amount: string, decimals: number): bigint => {
@@ -113,11 +113,11 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
 
   const increaseLiquidity = useCallback(async (positionData: IncreasePositionData, opts?: IncreaseOptions) => {
     if (!accountAddress || !chainId) {
-      toast.error("Wallet Not Connected", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Please connect your wallet and try again." });
+      toast.error("Wallet Not Connected", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Please connect your wallet and try again.", action: { label: "Open Ticket", onClick: () => window.open('https://discord.gg/alphix', '_blank') } });
       return;
     }
     if (!V4_POSITION_MANAGER_ADDRESS) {
-      toast.error("Configuration Error", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Position Manager address not set." });
+      toast.error("Configuration Error", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Position Manager address not set.", action: { label: "Open Ticket", onClick: () => window.open('https://discord.gg/alphix', '_blank') } });
       return;
     }
     
@@ -390,12 +390,48 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
           if (needPermit) {
             const prepared = await preparePermit2BatchForPosition(nftTokenId, accountAddress as `0x${string}`, chainId, deadline);
             if (prepared?.message?.details && prepared.message.details.length > 0) {
+              // Inform user about batch signature request
+              toast("Sign in Wallet", {
+                icon: React.createElement(InfoIcon, { className: "h-4 w-4" })
+              });
+
               const signature = await signTypedDataAsync({
                 domain: prepared.domain as any,
                 types: prepared.types as any,
                 primaryType: prepared.primaryType,
                 message: prepared.message as any,
               });
+              
+              // Show batch signature success
+              const currentTime = Math.floor(Date.now() / 1000);
+              const sigDeadline = prepared.message?.sigDeadline || deadline;
+              const durationSeconds = Number(sigDeadline) - currentTime;
+              let durationFormatted = "";
+              if (durationSeconds >= 31536000) {
+                  const years = Math.ceil(durationSeconds / 31536000);
+                  durationFormatted = `${years} year${years > 1 ? 's' : ''}`;
+              } else if (durationSeconds >= 2592000) {
+                  const months = Math.ceil(durationSeconds / 2592000);
+                  durationFormatted = `${months} month${months > 1 ? 's' : ''}`;
+              } else if (durationSeconds >= 604800) {
+                  const weeks = Math.ceil(durationSeconds / 604800);
+                  durationFormatted = `${weeks} week${weeks > 1 ? 's' : ''}`;
+              } else if (durationSeconds >= 86400) {
+                  const days = Math.ceil(durationSeconds / 86400);
+                  durationFormatted = `${days} day${days > 1 ? 's' : ''}`;
+              } else if (durationSeconds >= 3600) {
+                  const hours = Math.ceil(durationSeconds / 3600);
+                  durationFormatted = `${hours} hour${hours > 1 ? 's' : ''}`;
+              } else {
+                  const minutes = Math.ceil(durationSeconds / 60);
+                  durationFormatted = `${minutes} minute${minutes > 1 ? 's' : ''}`;
+              }
+
+              toast.success("Batch Signature Complete", {
+                icon: React.createElement(BadgeCheck, { className: "h-4 w-4 text-green-500" }),
+                description: `Batch permit signed successfully for ${durationFormatted}`
+              });
+
               addOptionsBatch = {
                 batchPermit: {
                   owner: accountAddress,
@@ -430,6 +466,11 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
         hasBatchPermit: Boolean((addOptions as any)?.batchPermit),
       });
 
+      // Inform user about increase transaction request
+      toast("Confirm Increase", {
+        icon: React.createElement(InfoIcon, { className: "h-4 w-4" })
+      });
+
       resetWriteContract();
       writeContract({
         address: V4_POSITION_MANAGER_ADDRESS as Hex,
@@ -440,15 +481,13 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
         chainId,
       } as any);
 
-      // No intermediate toasts
-
     } catch (error: any) {
       console.error("Error preparing increase transaction:", error);
       const msg = (error?.message || '').toString();
       if ((error as any)?.__zero || msg.includes('ZERO_LIQUIDITY')) {
-        toast.error("Try a larger Amount", { icon: React.createElement(OctagonX, { className: 'h-4 w-4 text-red-500' }) });
+        toast.error("Try a larger Amount", { icon: React.createElement(OctagonX, { className: 'h-4 w-4 text-red-500' }), action: { label: "Open Ticket", onClick: () => window.open('https://discord.gg/alphix', '_blank') } });
       } else {
-        toast.error("Increase Failed", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: msg || "Could not prepare the transaction." });
+        toast.error("Increase Failed", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: msg || "Could not prepare the transaction.", action: { label: "Copy Error", onClick: () => navigator.clipboard.writeText(msg || '') } });
       }
       setIsIncreasing(false);
     }
@@ -457,7 +496,7 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
   useEffect(() => {
     if (increaseSendError) {
       const message = increaseSendError instanceof BaseError ? increaseSendError.shortMessage : increaseSendError.message;
-      toast.error("Increase Failed", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: message });
+      toast.error("Increase Failed", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: message, action: { label: "Copy Error", onClick: () => navigator.clipboard.writeText(message || '') } });
       try { console.error('[increase] send error', increaseSendError); } catch {}
       setIsIncreasing(false);
     }
@@ -468,7 +507,17 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
 
     if (isIncreaseConfirmed && handledIncreaseHashRef.current !== hash) {
       handledIncreaseHashRef.current = hash;
-      // Delegate the sole success toast to page-level logic
+      
+      // Show liquidity increased success toast with transaction link
+      toast.success("Liquidity Increased", {
+        icon: React.createElement(BadgeCheck, { className: "h-4 w-4 text-green-500" }),
+        description: `Liquidity added to existing position successfully`,
+        action: hash ? {
+          label: "View Transaction",
+          onClick: () => window.open(`https://sepolia.basescan.org/tx/${hash}`, '_blank')
+        } : undefined
+      });
+      
       (async () => {
         let blockNumber: bigint | undefined = undefined;
         try {
@@ -518,7 +567,8 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
       toast.error("Increase Failed", { 
         id: hash,
         icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
-        description: message
+        description: message,
+        action: { label: "Copy Error", onClick: () => navigator.clipboard.writeText(message || '') }
       });
       try { console.error('[increase] confirm error', increaseConfirmError); } catch {}
       setIsIncreasing(false);

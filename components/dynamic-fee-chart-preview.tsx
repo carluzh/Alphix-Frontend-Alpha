@@ -118,6 +118,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
         const resp = await fetch(`/api/liquidity/get-historical-dynamic-fees?poolId=${encodeURIComponent(String(subgraphId))}&days=30`);
         if (!resp.ok) return;
         const events = await resp.json();
+        console.log('[DynamicFeeChart] Subgraph events:', events);
         if (!Array.isArray(events)) return;
         // Filter to last 30 days from today (not from oldest data)
         const nowSec = Math.floor(Date.now() / 1000);
@@ -126,9 +127,8 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
           .map((e: any) => ({
             ts: Number(e?.timestamp) || 0,
             feeBps: Number(e?.newFeeBps ?? e?.newFeeRateBps ?? 0),
-            ratio: e?.currentTargetRatio,
-            // API returns oldTargetRatio (not newTargetRatio). Use oldTargetRatio; fallback to currentTargetRatio.
-            ema: e?.oldTargetRatio ?? e?.currentTargetRatio,
+            ratio: e?.currentRatio, // Normalized in API (Activity)
+            ema: e?.newTargetRatio, // Target
           }))
           .filter((e: any) => e.ts >= thirtyDaysAgoSec) // Keep only last 30 days
           .sort((a: any, b: any) => a.ts - b.ts);
@@ -140,12 +140,17 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
           if (Math.abs(n) >= 1e4) return n / 1e4;
           return n;
         };
-        const out: FeeHistoryPoint[] = evAsc.map((e: any) => ({
+        let out: FeeHistoryPoint[] = evAsc.map((e: any) => ({
           timeLabel: new Date(e.ts * 1000).toISOString().split('T')[0],
           volumeTvlRatio: scaleRatio(e.ratio),
           emaRatio: scaleRatio(e.ema),
           dynamicFee: (Number.isFinite(e.feeBps) ? e.feeBps : 0) / 10000,
         }));
+
+        // Always show exactly 30 days - take the most recent 30 data points
+        if (out.length > 30) {
+          out = out.slice(-30);
+        }
         
         // Cache the processed data
         if (out && out.length > 0) {
@@ -317,7 +322,9 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
 
   // Removed change-point dots per design preference; keep normalization only
 
-  const hasData = Array.isArray(effectiveData) && effectiveData.length > 0;
+    const hasData = Array.isArray(effectiveData) && effectiveData.length > 0;
+    const dataPointsCount = hasData ? effectiveData.length : 0;
+    const hasMinimumData = hasData && dataPointsCount >= 1;
 
   // Render different Card structures based on data availability
   if (alwaysShowSkeleton) {
@@ -374,8 +381,8 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
     );
   }
 
-  // If no data and not loading, show the empty state. If loading, fall through to the chart card (it shows a skeleton inside).
-  if (!hasData && !isActuallyLoading) {
+  // If insufficient data and not loading, show the initializing state. If loading, fall through to the chart card (it shows a skeleton inside).
+  if (!hasMinimumData && !isActuallyLoading) {
     return (
       <div
         className="w-full rounded-lg border border-sidebar-border/60 transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow"
@@ -422,7 +429,9 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
           </div>
         </div>
         <div className="px-2 py-2 h-[120px] relative">
-          <div className="w-full h-full flex items-center justify-center" />
+              <div className="w-full h-full flex items-center justify-center text-xs font-mono text-muted-foreground/50 animate-pulse">
+                Pool Initializing ({dataPointsCount}/1 updates)
+              </div>
         </div>
         
       </div>

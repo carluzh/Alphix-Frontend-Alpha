@@ -3,23 +3,8 @@
 import { useState, useRef, useEffect } from "react"
 import type * as React from "react"
 import type { LucideIcon } from "lucide-react"
-import { LaptopIcon, Trash2Icon, SettingsIcon, LogOutIcon, CheckIcon } from "lucide-react"
-import { toast } from "sonner"
+import { LaptopIcon, SettingsIcon, LogOutIcon, CheckIcon } from "lucide-react"
 import { CustomLockIcon } from "./CustomLockIcon"
-import { clearCache } from "@/lib/client-cache"
-
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-  DropdownMenuSub,
-  DropdownMenuSubTrigger,
-  DropdownMenuSubContent,
-  DropdownMenuPortal,
-} from "@/components/ui/dropdown-menu"
 
 import {
   SidebarGroup,
@@ -71,40 +56,7 @@ export function NavSecondary({
         <SidebarMenu className="flex flex-col gap-1 px-3">
           {items.map((item) => (
             <SidebarMenuItem key={item.title} className="list-none">
-              {item.title === "Settings" ? (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <SidebarMenuButton className="focus-visible:ring-0">
-                      <item.icon />
-                      <span>{item.title}</span>
-                    </SidebarMenuButton>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuPortal>
-                    <DropdownMenuContent 
-                      side="top" 
-                      align="center"
-                      sideOffset={4}
-                      className="w-56 rounded-lg border-sidebar-border"
-                      style={{ backgroundColor: '#0f0f0f' }}
-                    >
-                      <DropdownMenuItem onClick={() => {
-                        try { clearCache(); } catch {}
-                        try { sessionStorage.clear(); } catch {}
-                        try { localStorage.clear(); } catch {}
-                        toast(
-                          <span className="flex items-center">
-                            <Trash2Icon className="mr-2 h-4 w-4 flex-shrink-0" />
-                            <span>Cache Cleared</span>
-                          </span>
-                        );
-                      }} className="cursor-pointer">
-                        <Trash2Icon className="mr-2 h-4 w-4" />
-                        <span>Clean Cache</span>
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenuPortal>
-                </DropdownMenu>
-              ) : item.disabled ? (
+              {item.disabled ? (
                 <SidebarMenuButton
                   onClick={() => handleLockedClick(item.title)}
                   className="opacity-75 w-full flex items-center"

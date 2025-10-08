@@ -5,15 +5,13 @@ import { SwapInterface } from "@/components/swap/swap-interface"
 import { ScrollRevealTransactions } from "@/components/scroll-reveal-transactions"
 import { StarrySkyBackground } from "@/components/StarrySkyBackground"
 import type { Metadata } from 'next'
-import React, { useState, useCallback } from "react"; // Import useState and useCallback
-import { SwapRoute } from "@/lib/routing-engine"; // Import SwapRoute type
-// REMOVED: import { Button } from "@/components/ui/button"; // Import Button component
-// REMOVED: import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react"; // Import Chevron icons
+import React, { useState, useCallback, useEffect } from "react";
+import { SwapRoute } from "@/lib/routing-engine";
 
 export default function Page() {
   // State for multi-hop routing and fees, lifted from SwapInterface
   const [currentRoute, setCurrentRoute] = useState<SwapRoute | null>(null);
-  const [selectedPoolIndexForChart, setSelectedPoolIndexForChart] = useState<number>(0); // Track which pool's chart to show
+  const [selectedPoolIndexForChart, setSelectedPoolIndexForChart] = useState<number>(0);
 
   // Handler for selecting which pool's fee chart to display (passed down to SwapInputView)
   const handleSelectPoolForChart = useCallback((poolIndex: number) => {

@@ -92,46 +92,66 @@ function parseTokenIdFromHexId(idHex: string): bigint | null {
 async function fetchAndProcessUserPositionsForApi(ownerAddress: string): Promise<ProcessedPosition[]> {
     // Minimal logging only; no timers/withTimeout
     const owner = getAddress(ownerAddress);
-    // Subgraph-only path
-    try {
-        const resp = await fetch(SUBGRAPH_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query: GET_USER_HOOK_POSITIONS_QUERY, variables: { owner: owner.toLowerCase() } }),
-        });
-        if (resp.ok) {
-            const json = await resp.json() as { data?: { positions: SubgraphPosition[] } };
-            let raw = (json as any)?.data?.hookPositions ?? [] as SubgraphPosition[];
-            // Fallback to legacy positions if hookPositions empty
-            if (!Array.isArray(raw) || raw.length === 0) {
-                try {
-                    const respLegacy = await fetch(SUBGRAPH_URL, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ query: GET_USER_LEGACY_POSITIONS_QUERY, variables: { owner: owner.toLowerCase() } }),
-                    });
-                    if (respLegacy.ok) {
-                        const jsonLegacy = await respLegacy.json() as any;
-                        const legacy = (jsonLegacy?.data?.positions || []) as Array<{ id: string; tokenId?: string; owner: string; createdAtTimestamp?: string }>;
-                        raw = legacy.map((p) => ({
-                            id: p.id,
-                            owner: p.owner,
-                            tickLower: '0',
-                            tickUpper: '0',
-                            liquidity: '0',
-                            creationTimestamp: p.createdAtTimestamp || '0',
-                            lastTimestamp: undefined as any,
-                            pool: { id: '' },
-                        }));
-                    }
-                } catch {}
+
+    // Query both subgraphs in parallel (default and DAI)
+    const SUBGRAPH_URL_DAI = process.env.SUBGRAPH_URL_DAI;
+    const subgraphUrls = [SUBGRAPH_URL];
+    if (SUBGRAPH_URL_DAI && SUBGRAPH_URL_DAI !== SUBGRAPH_URL) {
+        subgraphUrls.push(SUBGRAPH_URL_DAI);
+    }
+
+    // Fetch from all subgraphs
+    let allRawPositions: SubgraphPosition[] = [];
+
+    for (const subgraphUrl of subgraphUrls) {
+        try {
+            const resp = await fetch(subgraphUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query: GET_USER_HOOK_POSITIONS_QUERY, variables: { owner: owner.toLowerCase() } }),
+            });
+            if (resp.ok) {
+                const json = await resp.json() as { data?: { positions: SubgraphPosition[] } };
+                let raw = (json as any)?.data?.hookPositions ?? [] as SubgraphPosition[];
+
+                // Fallback to legacy positions if hookPositions empty
+                if (!Array.isArray(raw) || raw.length === 0) {
+                    try {
+                        const respLegacy = await fetch(subgraphUrl, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ query: GET_USER_LEGACY_POSITIONS_QUERY, variables: { owner: owner.toLowerCase() } }),
+                        });
+                        if (respLegacy.ok) {
+                            const jsonLegacy = await respLegacy.json() as any;
+                            const legacy = (jsonLegacy?.data?.positions || []) as Array<{ id: string; tokenId?: string; owner: string; createdAtTimestamp?: string }>;
+                            raw = legacy.map((p) => ({
+                                id: p.id,
+                                owner: p.owner,
+                                tickLower: '0',
+                                tickUpper: '0',
+                                liquidity: '0',
+                                creationTimestamp: p.createdAtTimestamp || '0',
+                                lastTimestamp: undefined as any,
+                                pool: { id: '' },
+                            }));
+                        }
+                    } catch {}
+                }
+
+                allRawPositions = allRawPositions.concat(raw);
             }
-            // (debug logging removed)
-            // Also return processed results using live slot0 for balances
-            if (raw.length > 0) {
+        } catch (err) {
+            console.error('[get-positions] Error fetching from subgraph', subgraphUrl, err);
+        }
+    }
+
+    // Process all positions
+    try {
+        if (allRawPositions.length > 0) {
                 const processed: ProcessedPosition[] = [];
                 const stateCache = new Map<string, { sqrtPriceX96: string; tick: number; poolLiquidity: string }>();
-                for (const r of raw) {
+                for (const r of allRawPositions) {
                     try {
                         const tokenId = parseTokenIdFromHexId(r.id);
                         if (tokenId === null) continue;
@@ -217,7 +237,6 @@ async function fetchAndProcessUserPositionsForApi(ownerAddress: string): Promise
                 // (debug logging removed)
                 return processed;
             }
-        }
     } catch {}
     // If the subgraph returns nothing or fails, return empty list (no on-chain fallback)
     return [];
@@ -275,38 +294,56 @@ export default async function handler(
 
 // Extracted helper for idsOnly/countOnly to keep main handler clean
 async function fetchIdsOrCount(ownerAddress: string, idsOnly: boolean, withCreatedAt: boolean) {
-  try {
-    const resp = await fetch(SUBGRAPH_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: GET_USER_HOOK_POSITIONS_QUERY, variables: { owner: ownerAddress.toLowerCase() } }),
-    });
-    if (!resp.ok) return idsOnly ? [] : { message: 'ok', count: 0 };
-    const json = await resp.json() as any;
-    let raw = (json?.data?.hookPositions || []) as SubgraphPosition[];
-    if ((!Array.isArray(raw) || raw.length === 0)) {
-      try {
-        const respLegacy = await fetch(SUBGRAPH_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: GET_USER_LEGACY_POSITIONS_QUERY, variables: { owner: ownerAddress.toLowerCase() } }),
-        });
-        if (respLegacy.ok) {
-          const jsonLegacy = await respLegacy.json() as any;
-          const legacy = (jsonLegacy?.data?.positions || []) as Array<{ id: string; tokenId?: string; owner: string; createdAtTimestamp?: string }>;
-          raw = legacy.map((p) => ({
-            id: p.id,
-            owner: p.owner,
-            tickLower: '0',
-            tickUpper: '0',
-            liquidity: '0',
-            creationTimestamp: p.createdAtTimestamp || '0',
-            lastTimestamp: '0',
-            pool: { id: '' },
-          })) as any;
-        }
-      } catch {}
+  // Query both subgraphs in parallel (default and DAI)
+  const SUBGRAPH_URL_DAI = process.env.SUBGRAPH_URL_DAI;
+  const subgraphUrls = [SUBGRAPH_URL];
+  if (SUBGRAPH_URL_DAI && SUBGRAPH_URL_DAI !== SUBGRAPH_URL) {
+    subgraphUrls.push(SUBGRAPH_URL_DAI);
+  }
+
+  let allRawPositions: SubgraphPosition[] = [];
+
+  for (const subgraphUrl of subgraphUrls) {
+    try {
+      const resp = await fetch(subgraphUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: GET_USER_HOOK_POSITIONS_QUERY, variables: { owner: ownerAddress.toLowerCase() } }),
+      });
+      if (!resp.ok) continue;
+      const json = await resp.json() as any;
+      let raw = (json?.data?.hookPositions || []) as SubgraphPosition[];
+      if ((!Array.isArray(raw) || raw.length === 0)) {
+        try {
+          const respLegacy = await fetch(subgraphUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: GET_USER_LEGACY_POSITIONS_QUERY, variables: { owner: ownerAddress.toLowerCase() } }),
+          });
+          if (respLegacy.ok) {
+            const jsonLegacy = await respLegacy.json() as any;
+            const legacy = (jsonLegacy?.data?.positions || []) as Array<{ id: string; tokenId?: string; owner: string; createdAtTimestamp?: string }>;
+            raw = legacy.map((p) => ({
+              id: p.id,
+              owner: p.owner,
+              tickLower: '0',
+              tickUpper: '0',
+              liquidity: '0',
+              creationTimestamp: p.createdAtTimestamp || '0',
+              lastTimestamp: '0',
+              pool: { id: '' },
+            })) as any;
+          }
+        } catch {}
+      }
+      allRawPositions = allRawPositions.concat(raw);
+    } catch (err) {
+      console.error('[get-positions] Error in fetchIdsOrCount from', subgraphUrl, err);
     }
+  }
+
+  try {
+    const raw = allRawPositions;
 
     if (!idsOnly) {
         return { message: 'ok', count: raw.length };

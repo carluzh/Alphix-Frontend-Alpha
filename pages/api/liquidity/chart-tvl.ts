@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getPoolSubgraphId, getAllPools } from '@/lib/pools-config';
 import { batchGetTokenPrices } from '@/lib/price-service';
+import { getSubgraphUrlForPool } from '@/lib/subgraph-url-helper';
 
 const SUBGRAPH_URL = process.env.SUBGRAPH_URL as string;
 if (!SUBGRAPH_URL) {
@@ -77,6 +78,9 @@ export default async function handler(
       cursor.setUTCDate(cursor.getUTCDate() + 1);
     }
 
+    // Use the appropriate subgraph URL for this pool
+    const subgraphUrl = getSubgraphUrlForPool(poolId);
+
     // Build blocks alias query for end-of-day (23:59:59Z)
     const blockAliases = allDateKeys.map((key) => {
       const alias = `b_${key.replace(/-/g, '_')}`;
@@ -85,7 +89,7 @@ export default async function handler(
     }).join('\n');
     const blocksQuery = `query Blocks {\n${blockAliases}\n}`;
 
-    const blkResp = await fetch(SUBGRAPH_URL, {
+    const blkResp = await fetch(subgraphUrl, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: blocksQuery })
     });
     if (!blkResp.ok) {
@@ -110,7 +114,7 @@ export default async function handler(
     }).join('\n');
     const poolsQuery = `query Pools {\n${poolAliases}\n}`;
 
-    const poolsResp = await fetch(SUBGRAPH_URL, {
+    const poolsResp = await fetch(subgraphUrl, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: poolsQuery })
     });
     if (!poolsResp.ok) {

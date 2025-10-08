@@ -51,11 +51,11 @@ function AppKitProvider({ children, cookies }: { children: ReactNode, cookies: s
       projectId: projectId,
       networks: [baseSepolia],
       defaultNetwork: baseSepolia,
-      metadata, 
+      metadata,
       features: {
         analytics: true,
-        email: false,          
-        socials: [],           
+        email: false,
+        socials: [],
       },
       themeMode: 'dark',
       themeVariables: {

@@ -27,17 +27,18 @@ import {
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { MobileLiquidityList } from "@/components/MobileLiquidityList";
 import type { ProcessedPosition } from "../../pages/api/liquidity/get-positions";
-import { 
-    useAccount, 
+import {
+    useAccount,
 } from "wagmi";
 import { toast } from "sonner";
 import { getEnabledPools, getToken, getPoolSubgraphId, getPoolById } from "../../lib/pools-config";
 import { getFromCache, getFromCacheWithTtl, setToCache, getUserPositionsCacheKey, getPoolStatsCacheKey, loadUserPositionIds, derivePositionsFromIds, getPoolFeeBps } from "../../lib/client-cache";
 import { getCachedBatchData, setCachedBatchData, clearBatchDataCache } from "../../lib/cache-version";
+import { fetchPoolFullRangeAPY } from "../../lib/apy-calculator";
 import { Pool } from "../../types";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ChevronUpIcon, ChevronDownIcon, ChevronsUpDownIcon, PlusIcon } from "lucide-react";
+import { ChevronUpIcon, ChevronDownIcon, ChevronsUpDownIcon, PlusIcon, BadgeCheck, OctagonX } from "lucide-react";
 import { ArrowUpRight, ArrowDownRight } from "lucide-react";
 import { TOKEN_DEFINITIONS, type TokenSymbol } from "@/lib/pools-config";
 import { useIncreaseLiquidity, type IncreasePositionData } from "@/components/liquidity/useIncreaseLiquidity";
@@ -174,18 +175,41 @@ export default function LiquidityPage() {
             const volume24hUSD = typeof batchPoolData.volume24hUSD === 'number' ? batchPoolData.volume24hUSD : undefined;
             const volumePrev24hUSD = typeof batchPoolData.volumePrev24hUSD === 'number' ? batchPoolData.volumePrev24hUSD : undefined;
             let fees24hUSD: number | undefined = undefined;
-            let aprStr: string = 'N/A';
-            
+            let aprStr: string = 'Loading...';
+
             if (typeof volume24hUSD === 'number') {
               try {
                 const bps = await getPoolFeeBps(apiPoolId);
                 const feeRate = Math.max(0, bps) / 10_000;
                 fees24hUSD = volume24hUSD * feeRate;
-              } catch {}
-            }
-            if (typeof fees24hUSD === 'number' && typeof tvlUSD === 'number' && tvlUSD > 0) {
-              const apr = (fees24hUSD * 365 / tvlUSD) * 100;
-              aprStr = `${apr.toFixed(2)}%`;
+                
+                // Calculate APY directly: (Daily Fees * 365) / TVL * 100
+                if (tvlUSD && tvlUSD > 0 && fees24hUSD !== undefined && !isNaN(fees24hUSD)) {
+                  const annualFees = fees24hUSD * 365;
+                  const apy = (annualFees / tvlUSD) * 100;
+                  
+                  // Format APY
+                  if (isNaN(apy) || !isFinite(apy)) {
+                    aprStr = '0.00%';
+                  } else if (apy >= 1000) {
+                    aprStr = `~${Math.round(apy)}%`;
+                  } else if (apy >= 100) {
+                    aprStr = `~${apy.toFixed(0)}%`;
+                  } else if (apy >= 10) {
+                    aprStr = `~${apy.toFixed(1)}%`;
+                  } else if (apy > 0) {
+                    aprStr = `~${apy.toFixed(2)}%`;
+                  } else {
+                    aprStr = '0.00%';
+                  }
+                } else {
+                  aprStr = '0.00%';
+                }
+              } catch {
+                aprStr = '0.00%';
+              }
+            } else {
+              aprStr = '0.00%';
             }
             return { 
               ...pool, 
@@ -209,7 +233,14 @@ export default function LiquidityPage() {
 
       } catch (error) {
         console.error("[LiquidityPage] Batch fetch failed:", error);
-        toast.error("Could not load pool data", { description: "Failed to fetch data from the server." });
+        toast.error("Could not load pool data", { 
+          description: "Failed to fetch data from the server.", 
+          icon: <OctagonX className="h-4 w-4 text-red-500" />,
+          action: {
+            label: "Open Ticket",
+            onClick: () => window.open('https://discord.gg/alphix', '_blank')
+          }
+        });
       }
     }, [dynamicPools]);
 
@@ -222,7 +253,7 @@ export default function LiquidityPage() {
   const determineBaseTokenForPriceDisplay = useCallback((token0: string, token1: string): string => {
     if (!token0 || !token1) return token0;
     const quotePriority: Record<string, number> = {
-      'aUSDC': 10, 'aUSDT': 9, 'USDC': 8, 'USDT': 7, 'aETH': 6, 'ETH': 5, 'YUSD': 4, 'mUSDT': 3,
+      'aUSDC': 10, 'aUSDT': 9, 'aDAI': 8, 'USDC': 7, 'USDT': 6, 'DAI': 5, 'aETH': 4, 'ETH': 3, 'YUSD': 2, 'mUSDT': 1,
     };
     const token0Priority = quotePriority[token0] || 0;
     const token1Priority = quotePriority[token1] || 0;
@@ -271,18 +302,18 @@ export default function LiquidityPage() {
 
   const { increaseLiquidity } = useIncreaseLiquidity({
     onLiquidityIncreased: () => {
-      sonnerToast.success("Liquidity Increased");
+      sonnerToast.success("Liquidity Increased", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
       // Consider a targeted position refresh here
     },
   });
 
   const { decreaseLiquidity, claimFees } = useDecreaseLiquidity({
     onLiquidityDecreased: () => {
-      sonnerToast.success("Liquidity Decreased");
+      sonnerToast.success("Liquidity Decreased", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
       // Consider a targeted position refresh here
     },
     onFeesCollected: () => {
-      sonnerToast.success("Fees Collected");
+      sonnerToast.success("Fees Collected", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
       // Consider a targeted position refresh here
     },
   });
@@ -589,14 +620,14 @@ export default function LiquidityPage() {
       ),
       size: 200, // Larger size for yield column to push it right
       sortingFn: (rowA, rowB) => {
-        const a = rowA.original.apr ? parseFloat(rowA.original.apr.replace('%', '')) : 0;
-        const b = rowB.original.apr ? parseFloat(rowB.original.apr.replace('%', '')) : 0;
+        const a = rowA.original.apr ? parseFloat(rowA.original.apr.replace(/[~%]/g, '')) : 0;
+        const b = rowB.original.apr ? parseFloat(rowB.original.apr.replace(/[~%]/g, '')) : 0;
         return a - b;
       },
       sortDescFirst: true,
       cell: ({ row }) => {
         const isAprCalculated = row.original.apr !== undefined && row.original.apr !== "Loading..." && row.original.apr !== "N/A";
-        const formattedAPR = isAprCalculated ? formatAPR(parseFloat(row.original.apr.replace('%', ''))) : undefined;
+        const formattedAPR = isAprCalculated ? formatAPR(parseFloat(row.original.apr.replace(/[~%]/g, ''))) : undefined;
         
         return (
           <div className="relative flex items-center justify-end w-full h-full">

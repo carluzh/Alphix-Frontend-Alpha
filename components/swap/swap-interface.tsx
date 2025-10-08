@@ -21,6 +21,7 @@ import {
   InfoIcon,
   XIcon,
   OctagonX,
+  BadgeCheck,
 } from "lucide-react"
 import Image from "next/image"
 import { useAccount, useBalance, useSignTypedData, useWriteContract, useWaitForTransactionReceipt } from "wagmi"
@@ -29,7 +30,7 @@ import React from "react"
 import { switchChain } from '@wagmi/core'
 import { config, baseSepolia } from "../../lib/wagmiConfig";
 import { toast } from "sonner";
-import { getAddress, parseUnits, formatUnits, type Address, type Hex } from "viem"
+import { getAddress, parseUnits, formatUnits, maxUint256, type Address, type Hex } from "viem"
 import { publicClient } from "../../lib/viemClient";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 
@@ -87,7 +88,7 @@ const TARGET_CHAIN_ID = baseSepolia.id; // Changed from 1301 to baseSepolia.id
 const MaxUint160 = BigInt('0xffffffffffffffffffffffffffffffffffffffff'); // 2**160 - 1
 
 // Helper function to get price mapping for tokens
-const getTokenPriceMapping = (tokenSymbol: string): 'BTC' | 'USDC' | 'ETH' => {
+const getTokenPriceMapping = (tokenSymbol: string): 'BTC' | 'USDC' | 'ETH' | 'DAI' => {
   // Map our tokens to coingecko price types
   switch (tokenSymbol) {
     case 'aBTC':
@@ -95,6 +96,9 @@ const getTokenPriceMapping = (tokenSymbol: string): 'BTC' | 'USDC' | 'ETH' => {
     case 'aUSDC':
     case 'aUSDT':
       return 'USDC'; // Using USDC price for all USD stablecoins
+    case 'aDAI':
+    case 'DAI':
+      return 'DAI';
     case 'aETH':
     case 'ETH':
       return 'ETH';
@@ -104,7 +108,7 @@ const getTokenPriceMapping = (tokenSymbol: string): 'BTC' | 'USDC' | 'ETH' => {
 };
 
 // Helper function to create Token instances from pools config
-const createTokenFromConfig = (tokenSymbol: string, prices: { BTC: number; USDC: number; ETH?: number } = { BTC: 77000, USDC: 1, ETH: 3500 }): Token | null => {
+const createTokenFromConfig = (tokenSymbol: string, prices: { BTC: number; USDC: number; ETH?: number; DAI?: number } = { BTC: 77000, USDC: 1, ETH: 3500, DAI: 1 }): Token | null => {
   const tokenConfig = getToken(tokenSymbol);
   if (!tokenConfig) return null;
   
@@ -128,7 +132,7 @@ const createTokenFromConfig = (tokenSymbol: string, prices: { BTC: number; USDC:
 };
 
 // Get available tokens for swap
-const getAvailableTokens = (prices?: { BTC: number; USDC: number; ETH?: number }): Token[] => {
+const getAvailableTokens = (prices?: { BTC: number; USDC: number; ETH?: number; DAI?: number }): Token[] => {
   const allTokens = getAllTokens();
   return Object.keys(allTokens)
     .map(symbol => createTokenFromConfig(symbol, prices))
@@ -683,10 +687,14 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   // Effect for handling wrong network notification
   useEffect(() => {
     if (isMounted && isConnected && currentChainId !== TARGET_CHAIN_ID && !isAttemptingSwitch) {
-      const newToastId = toast("Wrong Network", {
+      const newToastId = toast.error("Network Error", {
         description: "Please switch to Base Sepolia.",
-        icon: <WarningToastIcon />,
-        duration: 5000, 
+        icon: <OctagonX className="h-4 w-4 text-red-500" />,
+        duration: 5000,
+        action: {
+          label: "Open Ticket",
+          onClick: () => window.open('https://discord.gg/alphix', '_blank')
+        }
       });
       wrongNetworkToastIdRef.current = newToastId; 
       setIsWrongNetworkToastActive(true); 
@@ -700,13 +708,20 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
 
   // Effect for Success Notification
   useEffect(() => {
-    if (swapState === "success") {
-      toast("Swap Successful", {
-        icon: <SuccessToastIcon />,
-        duration: 4000
+    if (swapState === "success" && swapTxInfo?.hash) {
+      const swapDescription = `Swapped ${swapTxInfo.fromAmount} ${swapTxInfo.fromSymbol} to ${swapTxInfo.toAmount} ${swapTxInfo.toSymbol} successfully`;
+
+      toast.success("Swap Successful", {
+        icon: <BadgeCheck className="h-4 w-4 text-green-500" />,
+        description: swapDescription,
+        duration: 4000,
+        action: {
+          label: "View Transaction",
+          onClick: () => window.open(swapTxInfo.explorerUrl, '_blank')
+        }
       });
     }
-  }, [swapState]);
+  }, [swapState, swapTxInfo]);
 
   // Helper function for formatting balance display
   const getFormattedDisplayBalance = (numericBalance: number | undefined): string => {
@@ -741,14 +756,12 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   useEffect(() => {
     if (!accountAddress) return;
     
-    const onRefresh = () => {
-      // Force refetch of current token balances
-      if (fromToken.address !== "0x0000000000000000000000000000000000000000") {
-        refetchFromTokenBalance();
-      }
-      if (toToken.address !== "0x0000000000000000000000000000000000000000") {
-        refetchToTokenBalance();
-      }
+    const onRefresh = async () => {
+      // Force refetch of current token balances with fresh data
+      await Promise.all([
+        refetchFromTokenBalance?.({ cancelRefetch: false }),
+        refetchToTokenBalance?.({ cancelRefetch: false })
+      ]);
     };
     
     const onStorage = (e: StorageEvent) => {
@@ -1029,28 +1042,33 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
         
         // Handle specific error types with appropriate toasts
         const errorMsg = data.error || 'Failed to get quote';
-        if (errorMsg === 'Not enough liquidity') {
-          toast.error('Not enough liquidity', {
-            description: 'Try reducing the amount or check back later'
-          });
-        } else if (errorMsg === 'Amount exceeds available liquidity') {
-          toast.error('Amount too large', {
-            description: 'The requested amount exceeds available liquidity'
-          });
-        } else if (errorMsg === 'Price impact too high') {
-          toast.error('Price impact too high', {
-            description: 'Try reducing the amount or adjust slippage'
-          });
-        } else if (errorMsg === 'Route not available for this amount') {
-          toast.error('Route not available', {
-            description: 'Try a different amount or use exact input instead'
+        if (errorMsg === 'Route not available for this amount') {
+          toast.error('Quote Error', {
+            icon: <OctagonX className="h-4 w-4 text-red-500" />,
+            description: 'Route not available. Please refer to our documentation for supported tokens.',
+            action: {
+              label: "Open Ticket",
+              onClick: () => window.open('https://discord.gg/alphix', '_blank')
+            }
           });
         } else if (errorMsg === 'Cannot fulfill exact output amount') {
-          toast.error('Cannot fulfill exact amount', {
-            description: 'Try reducing the output amount or use exact input'
+          toast.error('Quote Error', {
+            icon: <OctagonX className="h-4 w-4 text-red-500" />,
+            description: 'Exact Output failed. Reduce the amount or use exact input instead.',
+            action: {
+              label: "Open Ticket",
+              onClick: () => window.open('https://discord.gg/alphix', '_blank')
+            }
           });
         } else {
-          toast.error(`Quote Error: ${errorMsg}`);
+          toast.error('Quote Error', {
+            icon: <OctagonX className="h-4 w-4 text-red-500" />,
+            description: 'No Quote received. Input a smaller amount and try again.',
+            action: {
+              label: "Open Ticket",
+              onClick: () => window.open('https://discord.gg/alphix', '_blank')
+            }
+          });
         }
         
         setQuoteError(errorMsg);
@@ -1062,6 +1080,8 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       
       // Handle network/connection errors with appropriate messaging
       let errorMsg = 'Failed to fetch quote';
+      let toastDescription = 'No Quote received. Input a smaller amount and try again.';
+      
       if (error instanceof Error) {
         const errorStr = error.message.toLowerCase();
         
@@ -1069,23 +1089,34 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
         if (errorStr.includes('call_exception') || 
             errorStr.includes('call revert exception') ||
             (errorStr.includes('0x6190b2b0') || errorStr.includes('0x486aa307'))) {
-          if (activelyEditedSide === 'to') {
+          if (lastEditedSideRef.current === 'to') {
             errorMsg = 'Route not available for this amount';
+            toastDescription = 'Route not available. Please refer to our documentation for supported tokens.';
           } else {
             errorMsg = 'Not enough liquidity';
+            toastDescription = 'No Quote received. Input a smaller amount and try again.';
           }
         }
         // Check for network/connection errors
         else if (errorStr.includes('network') || errorStr.includes('connection') || errorStr.includes('timeout')) {
           errorMsg = 'Network error - please try again';
+          toastDescription = 'Network error while fetching quote. Please try again.';
         }
         // Check for fetch/HTTP errors
         else if (errorStr.includes('fetch') || errorStr.includes('http')) {
           errorMsg = 'Connection error - please try again';
+          toastDescription = 'Network error while fetching quote. Please try again.';
         }
       }
       
-      toast.error(`Quote Error: ${errorMsg}`);
+      toast.error('Quote Error', {
+        icon: <OctagonX className="h-4 w-4 text-red-500" />,
+        description: toastDescription,
+        action: {
+          label: "Open Ticket",
+          onClick: () => window.open('https://discord.gg/alphix', '_blank')
+        }
+      });
       setQuoteError(errorMsg);
       // Leave the user's actively edited field untouched on exception
     } finally {
@@ -1309,10 +1340,14 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     } catch (error) {
       if (currentChainId !== TARGET_CHAIN_ID) {
         if (!isWrongNetworkToastActive) { 
-            wrongNetworkToastIdRef.current = toast("Wrong Network", {
+            wrongNetworkToastIdRef.current = toast.error("Network Error", {
                 description: "Failed to switch. Please try again.",
-                icon: <WarningToastIcon />,
+                icon: <OctagonX className="h-4 w-4 text-red-500" />,
                 duration: Infinity,
+                action: {
+                  label: "Open Ticket",
+                  onClick: () => window.open('https://discord.gg/alphix', '_blank')
+                }
             });
             setIsWrongNetworkToastActive(true);
         }
@@ -1425,9 +1460,14 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       console.error("Error during initial swap checks:", error);
       setIsSwapping(false); // Re-enable buttons
       setSwapProgressState("error"); // Set a general error state for checks
-      toast("Error preparing swap", {
-        description: error.message || "Could not verify token allowances.",
-        icon: <WarningToastIcon />
+      const errorCode = error.message || "Could not verify token allowances.";
+      toast.error("Backend Error", {
+        icon: <OctagonX className="h-4 w-4 text-red-500" />,
+        description: "Something went wrong on our end. The team has been notified.",
+        action: {
+          label: "Copy Error",
+          onClick: () => navigator.clipboard.writeText(errorCode)
+        }
       });
     }
   };
@@ -1493,7 +1533,9 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   // This function opens the MODAL
   const handlePreviewChartClick = useCallback(() => {
     if (isMobile) {
-      toast("Not available on mobile (Alpha)", { 
+      toast.error("Unsupported Device", {
+        icon: <OctagonX className="h-4 w-4 text-red-500" />,
+        description: "This feature is unavailable on mobile (Alpha). Please use a desktop browser.",
         duration: 4000
       });
     } else {
@@ -1555,17 +1597,33 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
         // ACTION: Need to Approve
         if (stateBeforeAction === "needs_approval") {
             setSwapProgressState("approving");
+
+            // Inform user about approval request
+            toast("Confirm in Wallet", {
+                icon: <InfoIcon className="h-4 w-4" />
+            });
+
             const approveTxHash = await sendApprovalTx({
                 address: fromToken.address,
                 abi: Erc20AbiDefinition,
                 functionName: 'approve',
-                args: [PERMIT2_ADDRESS, safeParseUnits("1000000", fromToken.decimals)], // Consistent large approval
+                args: [PERMIT2_ADDRESS, maxUint256], // Infinite approval (Uniswap-style)
             });
             if (!approveTxHash) throw new Error("Failed to send approval transaction");
 
             setSwapProgressState("waiting_approval");
             const approvalReceipt = await publicClient.waitForTransactionReceipt({ hash: approveTxHash as Hex });
             if (!approvalReceipt || approvalReceipt.status !== 'success') throw new Error("Approval transaction failed on-chain");
+
+            // Show approval success toast with infinite approval message
+            toast.success(`${fromToken.symbol} Approved`, {
+                icon: <BadgeCheck className="h-4 w-4 text-green-500" />,
+                description: `Approved infinite ${fromToken.symbol} for swapping`,
+                action: {
+                    label: "View Transaction",
+                    onClick: () => window.open(`https://sepolia.basescan.org/tx/${approveTxHash}`, '_blank')
+                }
+            });
 
             setCompletedSteps(prev => [...prev, "approval_complete"]);
 
@@ -1593,8 +1651,14 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
             if (!currentPermitDetailsForSign) {
               // This should not happen if logic is correct, but as a safeguard:
               console.error("[handleConfirmSwap] Error: currentPermitDetailsForSign is null before signing.");
-              toast.error("Error preparing signature. Please try again.", {
-                icon: <WarningToastIcon /> // ENSURED ICON
+              const errorCode = "currentPermitDetailsForSign is null before signing";
+              toast.error("Backend Error", {
+                icon: <OctagonX className="h-4 w-4 text-red-500" />,
+                description: "We encountered an internal issue. Please start over. If the issue persists reach out below.",
+                action: {
+                  label: "Copy Error",
+                  onClick: () => navigator.clipboard.writeText(errorCode)
+                }
               });
               setIsSwapping(false);
               setSwapProgressState("error");
@@ -1614,24 +1678,29 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
             setSwapProgressState("signing_permit");
 
             console.log("DEBUG: permitDataForSigning structure:", permitDataForSigning);
-            
+
             // Check if permitData exists (only present when needsPermit is true)
             if (!permitDataForSigning.permitData) {
                 throw new Error("Permit data is missing when signature is required");
             }
-            
+
             // Use the permitData structure from the new API response
             const permitMessage = permitDataForSigning.permitData.message;
             const messageToSign = {
                 details: {
                     token: getAddress(fromToken.address),
-                    amount: MaxUint160, 
+                    amount: MaxUint160,
                     expiration: permitMessage.details.expiration,
                     nonce: permitMessage.details.nonce,
                 },
                 spender: getAddress(permitDataForSigning.permitData.message.spender),
                 sigDeadline: BigInt(permitMessage.sigDeadline), // Convert string back to BigInt
             };
+
+            // Inform user about signature request
+            toast("Sign in Wallet", {
+                icon: <InfoIcon className="h-4 w-4" />
+            });
 
             const signatureFromSigning = await signTypedDataAsync({
                 domain: permitDataForSigning.permitData.domain,
@@ -1643,6 +1712,37 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
             if (!signatureFromSigning) throw new Error("Signature process did not return a valid signature.");
             setObtainedSignature(signatureFromSigning); // Store the obtained signature
 
+            // Show signature success toast with deadline duration
+            const currentTime = Math.floor(Date.now() / 1000);
+            const deadlineSeconds = Number(messageToSign.sigDeadline);
+            const durationSeconds = deadlineSeconds - currentTime;
+
+            // Format duration in human-readable format (round UP within the chosen unit)
+            let durationFormatted = "";
+            if (durationSeconds >= 31536000) {
+                const years = Math.ceil(durationSeconds / 31536000);
+                durationFormatted = `${years} year${years > 1 ? 's' : ''}`;
+            } else if (durationSeconds >= 2592000) {
+                const months = Math.ceil(durationSeconds / 2592000);
+                durationFormatted = `${months} month${months > 1 ? 's' : ''}`;
+            } else if (durationSeconds >= 604800) {
+                const weeks = Math.ceil(durationSeconds / 604800);
+                durationFormatted = `${weeks} week${weeks > 1 ? 's' : ''}`;
+            } else if (durationSeconds >= 86400) {
+                const days = Math.ceil(durationSeconds / 86400);
+                durationFormatted = `${days} day${days > 1 ? 's' : ''}`;
+            } else if (durationSeconds >= 3600) {
+                const hours = Math.ceil(durationSeconds / 3600);
+                durationFormatted = `${hours} hour${hours > 1 ? 's' : ''}`;
+            } else {
+                const minutes = Math.ceil(durationSeconds / 60);
+                durationFormatted = `${minutes} minute${minutes > 1 ? 's' : ''}`;
+            }
+
+            toast.success("Signature Complete", {
+                icon: <BadgeCheck className="h-4 w-4 text-green-500" />,
+                description: `${fromToken.symbol} permit signed successfully for ${durationFormatted}`
+            });
 
             setCompletedSteps(prev => [...prev, "signature_complete"]);
             setSwapProgressState("ready_to_swap"); 
@@ -1725,8 +1825,13 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
 
                 } catch (feeError: any) {
                     console.error("[handleConfirmSwap] Error fetching dynamic fee:", feeError);
-                    toast.error("Could not fetch swap fee. Please try again.", {
-                      icon: <WarningToastIcon />
+                    toast.error("Backend Error", {
+                      icon: <OctagonX className="h-4 w-4 text-red-500" />,
+                      description: "Could not fetch swap fee. Please try again.",
+                      action: {
+                        label: "Open Ticket",
+                        onClick: () => window.open('https://discord.gg/alphix', '_blank')
+                      }
                     });
                     setIsSwapping(false);
                     setSwapProgressState("error");
@@ -1782,8 +1887,13 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                      throw new Error(errorInfo, { cause: cause });
                 }
 
-                window.swapBuildData = buildTxApiData; 
+                window.swapBuildData = buildTxApiData;
                 setSwapProgressState("executing_swap");
+
+                // Inform user about swap transaction request
+                toast("Confirm Swap", {
+                    icon: <InfoIcon className="h-4 w-4" />
+                });
 
                 const txHash = await sendSwapTx({
                     address: getAddress(buildTxApiData.to),
@@ -1816,9 +1926,10 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 setSwapProgressState("complete");
                 setIsSwapping(false);
                 
-                // Only show success view after transaction is confirmed
-                console.log("ETH Swap - Setting success state for hash:", txHash);
+                // Trigger balance refresh & show success view after confirmed
                 setSwapState("success");
+                if (accountAddress) localStorage.setItem(`walletBalancesRefreshAt_${accountAddress}`, String(Date.now()));
+                window.dispatchEvent(new Event('walletBalancesRefresh'));
                 return;
             }
 
@@ -1827,8 +1938,14 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
             
             if (!currentPermitDetailsForSign || (needsSignatureCheck && !obtainedSignature)) {
                  console.error("[handleConfirmSwap] Error: Permit details missing, or signature was required but not obtained.");
-                 toast.error("Critical error in swap preparation. Please start over.", {
-                  icon: <WarningToastIcon /> // ENSURED ICON
+                 const errorCode = "Permit details missing or signature not obtained";
+                 toast.error("Backend Error", {
+                   icon: <OctagonX className="h-4 w-4 text-red-500" />,
+                   description: "We encountered an internal issue. Please start over. If the issue persists reach out below.",
+                   action: {
+                     label: "Copy Error",
+                     onClick: () => navigator.clipboard.writeText(errorCode)
+                   }
                  });
                  setIsSwapping(false);
                  setSwapProgressState("error"); 
@@ -1912,8 +2029,13 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
 
             } catch (feeError: any) {
                 console.error("[handleConfirmSwap] Error fetching dynamic fee:", feeError);
-                toast.error("Could not fetch swap fee. Please try again.", {
-                  icon: <WarningToastIcon /> // ENSURED ICON
+                toast.error("Backend Error", {
+                  icon: <OctagonX className="h-4 w-4 text-red-500" />,
+                  description: "Could not fetch swap fee. Please try again.",
+                  action: {
+                    label: "Open Ticket",
+                    onClick: () => window.open('https://discord.gg/alphix', '_blank')
+                  }
                 });
                 setIsSwapping(false);
                 setSwapProgressState("error"); // Or back to "ready_to_swap" to allow retry
@@ -1984,8 +2106,14 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                  throw new Error(errorInfo, { cause: cause });
             }
 
-            window.swapBuildData = buildTxApiData; 
+            window.swapBuildData = buildTxApiData;
             setSwapProgressState("executing_swap");
+
+            // Inform user about swap transaction request
+            toast("Confirm Swap", {
+                icon: <InfoIcon className="h-4 w-4" />
+            });
+
             const txHash = await sendSwapTx({
                 address: getAddress(buildTxApiData.to),
                 abi: UniversalRouterAbi,
@@ -2017,9 +2145,10 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
             setSwapProgressState("complete");
             setIsSwapping(false);
             
-            // Only show success view after transaction is confirmed
-            console.log("ETH Swap - Setting success state for hash:", txHash);
+            // Trigger balance refresh & show success view after confirmed
             setSwapState("success");
+            if (accountAddress) localStorage.setItem(`walletBalancesRefreshAt_${accountAddress}`, String(Date.now()));
+            window.dispatchEvent(new Event('walletBalancesRefresh'));
             return;
         }
 
@@ -2047,9 +2176,14 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
         }
 
         if (isSlippageError) {
-            toast.error("Slippage to Low", {
+            toast.error("Slippage Error", {
                 icon: <OctagonX className="h-4 w-4 text-red-500" />,
                 duration: 5000,
+                description: "Reduce your amount or increase slippage, then try again.",
+                action: {
+                  label: "Open Ticket",
+                  onClick: () => window.open('https://discord.gg/alphix', '_blank')
+                }
             });
             setSwapProgressState("error");
             window.swapBuildData = undefined;
@@ -2074,16 +2208,22 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
         }
 
         if (isUserRejection) {
-            toast("Transaction Rejected", {
+            toast.error("Transaction Rejected", {
+                 icon: <OctagonX className="h-4 w-4 text-red-500" />,
                  description: "The request was rejected in your wallet.",
-                 icon: <WarningToastIcon />, duration: 4000,
+                 duration: 4000
             });
             // Reset state to before the rejected action, allowing a clean retry of that specific step
             setSwapProgressState(stateBeforeAction);
         } else {
-            toast("Swap Failed", {
-                 description: displayError, // Show the specific error message
-                 icon: <WarningToastIcon />, duration: 5000,
+            toast.error("Transaction Error", {
+                 icon: <OctagonX className="h-4 w-4 text-red-500" />,
+                 description: "The transaction failed.",
+                 duration: 5000,
+                 action: {
+                   label: "Copy Error",
+                   onClick: () => navigator.clipboard.writeText(displayError)
+                 }
             });
             // For other errors, go to a general error state to avoid infinite loops if the error is persistent
             setSwapProgressState("error");
@@ -2418,6 +2558,12 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       } else if (isLoadingCurrentFromTokenBalance || isLoadingCurrentToTokenBalance) {
         return "Loading Balances...";
       } else {
+        // Check for insufficient balance
+        const fromAmountNum = parseFloat(fromAmount || "0");
+        const fromBalanceNum = parseFloat(fromToken.balance || "0");
+        if (fromAmountNum > 0 && fromBalanceNum < fromAmountNum) {
+          return "Insufficient Balance";
+        }
         return "Swap";
       }
     } else {
@@ -2493,7 +2639,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     // Update fromToken price, only if it changes
     setFromToken(prev => {
       const priceType = getTokenPriceMapping(prev.symbol);
-      const priceData = tokenPrices[priceType];
+      const priceData = tokenPrices[priceType] as any;
       const newPrice = (typeof priceData === 'object' && priceData?.usd) ? priceData.usd : (typeof priceData === 'number' ? priceData : prev.usdPrice);
       if (prev.usdPrice === newPrice) return prev;
       return { ...prev, usdPrice: newPrice };
@@ -2502,7 +2648,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     // Update toToken price, only if it changes
     setToToken(prev => {
       const priceType = getTokenPriceMapping(prev.symbol);
-      const priceData = tokenPrices[priceType];
+      const priceData = tokenPrices[priceType] as any;
       const newPrice = (typeof priceData === 'object' && priceData?.usd) ? priceData.usd : (typeof priceData === 'number' ? priceData : prev.usdPrice);
       if (prev.usdPrice === newPrice) return prev;
       return { ...prev, usdPrice: newPrice };
@@ -2512,7 +2658,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     setTokenList(prevList => 
       prevList.map(token => {
         const priceType = getTokenPriceMapping(token.symbol);
-        const priceData = tokenPrices[priceType];
+        const priceData = tokenPrices[priceType] as any;
         const newPrice = (typeof priceData === 'object' && priceData?.usd) ? priceData.usd : (typeof priceData === 'number' ? priceData : token.usdPrice);
         return {
           ...token,

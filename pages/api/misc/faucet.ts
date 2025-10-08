@@ -2,7 +2,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { getAddress, parseAbi, Hex, Address } from 'viem';
 import { publicClient } from '../../../lib/viemClient';
 
-export const FAUCET_CONTRACT_ADDRESS: Address = '0x5634bA278a0655F88432C6dFAC22338361bBaC00'; // NEW ADDRESS
+export const FAUCET_CONTRACT_ADDRESS: Address = '0xab7a6d7abf22dd4e7d18950ea92e7cb795921ba9'; // NEW ADDRESS
 export const FAUCET_FUNCTION_SIGNATURE: Hex = '0xde5f72fd'; // faucet()
 
 // ABI for the faucet function (minimal for simulation)

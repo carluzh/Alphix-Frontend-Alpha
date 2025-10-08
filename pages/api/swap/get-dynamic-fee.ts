@@ -52,8 +52,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             const rawBps = (Number(lpFeeMillionths) / 1_000_000) * 10_000;
             // Preserve hundredths of a basis point (0.01 bps) to avoid rounding down 4.4 bps -> 4 bps
             actualDynamicFeeBps = Math.max(0, Math.round(rawBps * 100) / 100);
-            
-            console.log(`Read LP fee ~${actualDynamicFeeBps} bps for pool ${poolConfig.id} (${poolConfig.name})`);
         } catch (error) {
             console.error(`Error reading pool fee for ${poolConfig.id}:`, error);
             console.log(`Falling back to default fee ${DEFAULT_DYNAMIC_FEE} bps for pool ${poolConfig.id}`);

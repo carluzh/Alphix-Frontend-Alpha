@@ -16,10 +16,10 @@ import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from "@/lib/abis/stat
 import { parseAbi, type Abi, type Hex, getAddress } from "viem";
 import { ethers } from "ethers";
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract } from "wagmi";
+import { baseSepolia } from "@/lib/wagmiConfig";
 import { useUserPositions, useActivity, useAllPrices, useUncollectedFeesBatch } from "@/components/data/hooks";
 import { prefetchService } from "@/lib/prefetch-service";
 import { setIndexingBarrier, invalidateUserPositionIdsCache } from "@/lib/client-cache";
-import { baseSepolia } from "@/lib/wagmiConfig";
 import { toast } from "sonner";
 import { FAUCET_CONTRACT_ADDRESS, faucetContractAbi } from "@/pages/api/misc/faucet";
 import poolsConfig from "@/config/pools.json";
@@ -746,7 +746,7 @@ export default function PortfolioPage() {
   const determineBaseTokenForPriceDisplay = useCallback((token0: string, token1: string): string => {
     if (!token0 || !token1) return token0;
     const quotePriority: Record<string, number> = {
-      'aUSDC': 10, 'aUSDT': 9, 'USDC': 8, 'USDT': 7, 'aETH': 6, 'ETH': 5, 'YUSD': 4, 'mUSDT': 3,
+      'aUSDC': 10, 'aUSDT': 9, 'aDAI': 8, 'USDC': 7, 'USDT': 6, 'DAI': 5, 'aETH': 4, 'ETH': 3, 'YUSD': 2, 'mUSDT': 1,
     };
     const token0Priority = quotePriority[token0] || 0;
     const token1Priority = quotePriority[token1] || 0;
@@ -1208,9 +1208,8 @@ export default function PortfolioPage() {
       }
     }
 
-    // Show toast immediately and close modal
+    // Close modal (success toast is handled by useIncreaseLiquidity hook)
     console.log('[Portfolio] Transaction successful, clearing pendingActionRef');
-    toast.success("Position Increased", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
     setShowIncreaseModal(false);
     pendingActionRef.current = null;
     
@@ -1319,7 +1318,14 @@ export default function PortfolioPage() {
       }
     }
     
-    toast.success(closing ? "Position Closed" : "Position Decreased", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
+    toast.success(closing ? "Position Closed" : "Liquidity Decreased", {
+      icon: <BadgeCheck className="h-4 w-4 text-green-500" />,
+      description: closing ? `Position successfully closed` : `Liquidity successfully decreased`,
+      action: {
+        label: "View Transaction",
+        onClick: () => window.open(`https://sepolia.basescan.org/tx/${info.txHash}`, '_blank')
+      }
+    });
     setShowWithdrawModal(false);
     setPositionToWithdraw(null);
     pendingActionRef.current = null;
@@ -1368,8 +1374,15 @@ export default function PortfolioPage() {
     onLiquidityIncreased: onLiquidityIncreasedCallback 
   });
   
-  const onFeesCollected = useCallback(async () => {
-    toast.success('Fees Collected', { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
+  const onFeesCollected = useCallback(async (info?: { txHash?: `0x${string}`; blockNumber?: bigint }) => {
+    toast.success('Fees Collected', {
+      icon: <BadgeCheck className="h-4 w-4 text-green-500" />,
+      description: 'Fees successfully collected',
+      action: info?.txHash ? {
+        label: "View Transaction",
+        onClick: () => window.open(`https://sepolia.basescan.org/tx/${info.txHash}`, '_blank')
+      } : undefined
+    });
     if (lastTxBlockRef.current) {
       await waitForSubgraphBlock(Number(lastTxBlockRef.current));
       lastTxBlockRef.current = null;
@@ -1385,33 +1398,25 @@ export default function PortfolioPage() {
 
   // Enhanced claimFees with optimistic updates
   const enhancedClaimFees = useCallback(async (positionId: string) => {
-    try {
-      pendingActionRef.current = { type: 'collect' };
-      
-      // Show optimistic loading state
-      setActivePositions(prev => prev.map(p => 
-        p.positionId === positionId 
-          ? { ...p, isOptimisticallyUpdating: true } 
-          : p
-      ));
-      
-      await claimFees(positionId);
-    } catch (error: any) {
-      toast.error('Collect failed', { 
-        icon: <OctagonX className="h-4 w-4 text-red-500" />, 
-        description: error?.message 
-      });
-      
-      // Clear loading state on error
-      setActivePositions(prev => prev.map(p => 
-        p.positionId === positionId 
-          ? { ...p, isOptimisticallyUpdating: undefined } 
-          : p
-      ));
-      
+    pendingActionRef.current = { type: 'collect' };
+
+    // Show optimistic loading state
+    setActivePositions(prev => prev.map(p =>
+      p.positionId === positionId
+        ? { ...p, isOptimisticallyUpdating: true }
+        : p
+    ));
+
+    await claimFees(positionId);
+  }, [claimFees]);
+
+  // Clear optimistic loading state when hook finishes (success or error)
+  useEffect(() => {
+    if (!isDecreasingLiquidity && pendingActionRef.current?.type === 'collect') {
+      setActivePositions(prev => prev.map(p => ({ ...p, isOptimisticallyUpdating: undefined })));
       pendingActionRef.current = null;
     }
-  }, [claimFees]);
+  }, [isDecreasingLiquidity]);
 
   const isCompoundInProgressRef = useRef(false);
 
@@ -1621,10 +1626,15 @@ export default function PortfolioPage() {
     const onRefresh = () => {
       // Re-run balances fetch immediately
       run();
+      // Also trigger portfolio data refresh
+      setPositionsRefresh(prev => prev + 1);
     };
     const onStorage = (e: StorageEvent) => {
       if (!e.key || !accountAddress) return;
-      if (e.key === `walletBalancesRefreshAt_${accountAddress}`) run();
+      if (e.key === `walletBalancesRefreshAt_${accountAddress}`) {
+        run();
+        setPositionsRefresh(prev => prev + 1);
+      }
     };
     window.addEventListener('walletBalancesRefresh', onRefresh as EventListener);
     window.addEventListener('storage', onStorage);
@@ -1644,15 +1654,27 @@ export default function PortfolioPage() {
     } catch {}
   }, [router]);
   
-  // Auto-expand all grouped positions by default
+  // Auto-expand pools with <= 2 positions by default
   useEffect(() => {
-    const newExpanded: Record<string, boolean> = {};
+    // Count positions per pool
+    const poolCounts = new Map<string, number>();
     activePositions.forEach(p => {
       const poolKey = String(p?.poolId || '').toLowerCase();
-      // Initialize all groups as collapsed by default
-          newExpanded[poolKey] = false;
+      poolCounts.set(poolKey, (poolCounts.get(poolKey) || 0) + 1);
     });
-    setExpandedPools(newExpanded);
+
+    // Only update expanded state for NEW pools (not already in expandedPools)
+    // Preserve user's manual expand/collapse choices
+    setExpandedPools(prev => {
+      const newExpanded = { ...prev };
+      poolCounts.forEach((count, poolKey) => {
+        // Only set default if this pool isn't already tracked
+        if (!(poolKey in prev)) {
+          newExpanded[poolKey] = count <= 2;
+        }
+      });
+      return newExpanded;
+    });
   }, [activePositions]);
 
   const handleActiveSortCycle = (columnId: 'amounts' | 'value' | 'apr') => {
@@ -1819,17 +1841,21 @@ export default function PortfolioPage() {
 
 
   // Enhanced menu actions with pending action tracking
-  const openAddLiquidity = useCallback((pos: any) => {
+  const openAddLiquidity = useCallback((pos: any, onModalClose?: () => void) => {
     console.log('[Portfolio] Opening add liquidity modal for position:', pos.positionId);
     setPositionToModify(pos);
     pendingActionRef.current = { type: 'increase' };
     setShowIncreaseModal(true);
+    // Close the menu if callback provided
+    if (onModalClose) onModalClose();
   }, []);
   
-  const openWithdraw = useCallback((pos: any) => {
+  const openWithdraw = useCallback((pos: any, onModalClose?: () => void) => {
     setPositionToWithdraw(pos);
     pendingActionRef.current = { type: 'withdraw' };
     setShowWithdrawModal(true);
+    // Close the menu if callback provided
+    if (onModalClose) onModalClose();
   }, []);
 
   // Debounce helper
@@ -3748,7 +3774,11 @@ export default function PortfolioPage() {
           }}
           positionToModify={positionToModify}
           feesForIncrease={feesForIncrease}
-          increaseLiquidity={increaseLiquidity}
+          increaseLiquidity={positionToModify ? (data) => {
+            console.log('[Portfolio] Setting pendingActionRef to increase and calling increaseLiquidity');
+            pendingActionRef.current = { type: 'increase' };
+            increaseLiquidity(data);
+          } : undefined}
           isIncreasingLiquidity={isIncreasingLiquidity}
           isIncreaseSuccess={isIncreaseSuccess}
           increaseTxHash={increaseTxHash}

@@ -68,7 +68,7 @@ const getFormattedDisplayBalance = (numericBalance: number | undefined, tokenSym
 };
 
 // Get token price mapping for CoinGecko prices using pools.json data
-const getTokenPriceMapping = (tokenSymbol: string): 'BTC' | 'USDC' | 'ETH' => {
+const getTokenPriceMapping = (tokenSymbol: string): 'BTC' | 'USDC' | 'ETH' | 'DAI' => {
   // Get token config from pools.json
   const tokenConfig = getToken(tokenSymbol);
   if (!tokenConfig) return 'USDC'; // fallback
@@ -80,6 +80,9 @@ const getTokenPriceMapping = (tokenSymbol: string): 'BTC' | 'USDC' | 'ETH' => {
     case 'aUSDC':
     case 'aUSDT':
       return 'USDC'; // Stablecoins
+    case 'aDAI':
+    case 'DAI':
+      return 'DAI';
     case 'aETH':
     case 'ETH':
       return 'ETH';
@@ -89,6 +92,8 @@ const getTokenPriceMapping = (tokenSymbol: string): 'BTC' | 'USDC' | 'ETH' => {
         return 'BTC';
       } else if (tokenConfig.name.toLowerCase().includes('ethereum') || tokenConfig.name.toLowerCase().includes('eth')) {
         return 'ETH';
+      } else if (tokenConfig.name.toLowerCase().includes('dai')) {
+        return 'DAI';
       } else {
         return 'USDC'; // Default to USDC for stablecoins and unknown tokens
       }

@@ -16,6 +16,8 @@ import { toast } from "sonner";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import type { ProcessedPosition } from "../../../pages/api/liquidity/get-positions";
 import { TOKEN_DEFINITIONS, TokenSymbol } from "@/lib/pools-config";
+import { Tooltip as UITooltip, TooltipContent as UITooltipContent, TooltipProvider as UITooltipProvider, TooltipTrigger as UITooltipTrigger } from "@/components/ui/tooltip";
+import { motion, AnimatePresence } from "framer-motion";
 import { formatUnits, type Hex } from "viem";
 import { Bar, BarChart, Line, LineChart, CartesianGrid, XAxis, YAxis, ResponsiveContainer, ComposedChart, Area, ReferenceLine, ReferenceArea } from "recharts";
 import { getPoolById, getPoolSubgraphId, getToken, getAllTokens } from "@/lib/pools-config";
@@ -70,7 +72,6 @@ import {
 import { ChevronDownIcon } from "lucide-react";
 
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { motion, AnimatePresence } from "framer-motion";
 import { PositionSkeleton } from '@/components/liquidity/PositionSkeleton';
 import { PositionCard } from '@/components/liquidity/PositionCard';
 
@@ -485,9 +486,10 @@ export default function PoolDetailPage() {
   }>>([]);
   const [isLoadingPositions, setIsLoadingPositions] = useState(false);
   const [activeChart, setActiveChart] = useState<keyof Pick<typeof chartConfig, 'volume' | 'tvl' | 'volumeTvlRatio' | 'emaRatio' | 'dynamicFee'>>("volumeTvlRatio");
-  
+  const [isDynamicFeeModalOpen, setIsDynamicFeeModalOpen] = useState(false);
+  const [hoveredFee, setHoveredFee] = useState<number | null>(null);
 
-  
+
   const { address: accountAddress, isConnected, chainId } = useAccount();
   const { writeContract } = useWriteContract();
   const [collectHash, setCollectHash] = useState<`0x${string}` | undefined>(undefined);
@@ -497,12 +499,23 @@ export default function PoolDetailPage() {
   // Handle collect success
   useEffect(() => {
     if (isCollectConfirmed && collectHash && lastCollectPositionId) {
-      toast.success("Fees Collected", { 
-        icon: <BadgeCheck className="h-4 w-4 text-green-500" /> 
+      toast.success("Fees Collected", {
+        icon: <BadgeCheck className="h-4 w-4 text-green-500" />,
+        action: {
+          label: "View Transaction",
+          onClick: () => window.open(`https://sepolia.basescan.org/tx/${collectHash}`, '_blank')
+        }
       });
-      
+
       // Refresh fee data for the collected position
       refreshFeesAfterTransaction(lastCollectPositionId, queryClient);
+
+      // Clear loading state
+      setUserPositions(prev => prev.map(p =>
+        p.positionId === lastCollectPositionId
+          ? { ...p, isOptimisticallyUpdating: undefined }
+          : p
+      ));
     }
   }, [isCollectConfirmed, collectHash, lastCollectPositionId, queryClient]);
   // Guard to prevent duplicate toasts and unintended modal closes across re-renders
@@ -624,7 +637,7 @@ export default function PoolDetailPage() {
   const getUsdPriceForSymbol = useCallback((symbolRaw?: string): number => {
     const symbol = (symbolRaw || '').toUpperCase();
     if (!symbol) return 0;
-    if (['USDC', 'AUSDC', 'USDT', 'AUSDT', 'MUSDT', 'YUSD'].includes(symbol)) return extractUsd(allPrices?.USDC as any, 1);
+    if (['USDC', 'AUSDC', 'USDT', 'AUSDT', 'MUSDT', 'YUSD', 'DAI', 'ADAI'].includes(symbol)) return extractUsd(allPrices?.USDC as any, 1);
     if (['ETH', 'AETH'].includes(symbol)) return extractUsd(allPrices?.ETH as any, 0);
     if (['BTC', 'ABTC'].includes(symbol)) return extractUsd(allPrices?.BTC as any, 0);
     return 0;
@@ -797,12 +810,12 @@ export default function PoolDetailPage() {
       const maxLeftColumnWidth = availableWidth - addLiqFormWidth - columnGap - safetyMargin;
       
       // Calculate required width for top bar content (use a stable baseline to avoid feedback loops)
-      const tokenInfoWidth = 300; // includes chevron + icons + labels headroom
+      const tokenInfoWidth = 280; // includes chevron + icons + labels
       const apyWidth = 160; // APY card width
       const optionalCardWidth = 160; // Width for each optional card
       const cardGap = 12; // gap-3 between cards
       const topBarPadding = 32; // p-4 padding inside top bar
-      
+
       // Start with minimal required width (token info + APY + padding)
       let requiredWidth = tokenInfoWidth + apyWidth + cardGap + topBarPadding;
       
@@ -820,7 +833,10 @@ export default function PoolDetailPage() {
       const exceedsSpace = requiredWidth > maxLeftColumnWidth;
       const hasSpaceForMore = requiredWidth + optionalCardWidth + cardGap + 40 < maxLeftColumnWidth; // 40px buffer
       
-      if (exceedsSpace) {
+      // Always hide Fees card below 1900px width
+      if (windowWidth < 1900 && showFeesCard) {
+        setShowFeesCard(false);
+      } else if (exceedsSpace) {
         // Hide cards in priority order: Fees → Volume → TVL
         if (showFeesCard) {
           setShowFeesCard(false);
@@ -829,8 +845,9 @@ export default function PoolDetailPage() {
         } else if (showTvlCard) {
           setShowTvlCard(false);
         }
-      } else if (hasSpaceForMore) {
+      } else if (hasSpaceForMore && windowWidth >= 1900) {
         // Show cards back in reverse priority: TVL → Volume → Fees
+        // Only show Fees card if width is >= 1900px
         if (!showTvlCard) {
           setShowTvlCard(true);
         } else if (!showVolumeCard && showTvlCard) {
@@ -883,7 +900,7 @@ export default function PoolDetailPage() {
   const processChartDataForScreenSize = useCallback((data: ChartDataPoint[]) => {
     if (!data?.length) return [];
     const sortedData = [...data].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-    let daysBack = windowWidth < 1500 ? 14 : windowWidth < 1700 ? 21 : 28;
+    let daysBack = windowWidth < 1500 ? 30 : windowWidth < 1700 ? 45 : 60;
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - daysBack);
     const recentData = sortedData.filter(item => new Date(item.date) >= cutoffDate);
@@ -909,6 +926,32 @@ export default function PoolDetailPage() {
       }
       currentDate.setDate(currentDate.getDate() + 1);
     }
+    
+    // Pad at the beginning if we don't have enough days to reach daysBack
+    if (filledData.length > 0) {
+      const dataSpanDays = filledData.length;
+      if (dataSpanDays < daysBack) {
+        const daysToAdd = daysBack - dataSpanDays;
+        const oldestDate = new Date(filledData[0].date);
+        const emptyDays: ChartDataPoint[] = [];
+        
+        for (let i = 1; i <= daysToAdd; i++) {
+          const emptyDate = new Date(oldestDate);
+          emptyDate.setDate(emptyDate.getDate() - i);
+          emptyDays.unshift({
+            date: emptyDate.toISOString().split('T')[0],
+            volumeUSD: 0,
+            tvlUSD: 0,
+            volumeTvlRatio: 0,
+            emaRatio: 0,
+            dynamicFee: 0,
+          });
+        }
+        
+        return [...emptyDays, ...filledData];
+      }
+    }
+    
     return filledData;
   }, [windowWidth]);
 
@@ -1247,6 +1290,7 @@ export default function PoolDetailPage() {
         // Map fee events to per-day overlays over the same date domain
         const feeByDate = new Map<string, { ratio: number; ema: number; feePct: number }>();
         const events: any[] = Array.isArray(feeJson) ? feeJson : [];
+        console.log('[PoolPage] Subgraph fee events:', events);
         const evAsc = [...events].sort((a, b) => Number(a?.timestamp || 0) - Number(b?.timestamp || 0));
         const scaleRatio = (val: any): number => {
           const n = typeof val === 'string' ? Number(val) : (typeof val === 'number' ? val : 0);
@@ -1265,8 +1309,8 @@ export default function PoolDetailPage() {
             const e = evAsc[ei];
             const bps = Number(e?.newFeeBps ?? e?.newFeeRateBps ?? 0);
             curFeePct = Number.isFinite(bps) ? (bps / 10_000) : curFeePct;
-            curRatio = scaleRatio(e?.currentTargetRatio);
-            curEma = scaleRatio(e?.oldTargetRatio);
+            curRatio = scaleRatio(e?.currentRatio); // Normalized in API (Activity)
+            curEma = scaleRatio(e?.newTargetRatio); // Target
             ei++;
           }
           feeByDate.set(dateStr, { ratio: curRatio, ema: curEma, feePct: curFeePct });
@@ -1307,6 +1351,7 @@ export default function PoolDetailPage() {
               : d
           );
         }
+
         setApiChartData(finalMerged);
         // Keep header TVL strictly in sync with the chart's latest point
         try {
@@ -1321,7 +1366,15 @@ export default function PoolDetailPage() {
         if (!keepLoading) setIsLoadingChartData(false);
       } catch (error: any) {
         console.error('Failed to fetch daily chart series:', error);
-        toast.error('Chart Data Failed', { icon: <OctagonX className="h-4 w-4 text-red-500" />, description: error?.message || String(error) });
+        const errorMessage = error?.message || String(error);
+        toast.error('Chart Data Failed', { 
+          icon: <OctagonX className="h-4 w-4 text-red-500" />, 
+          description: errorMessage,
+          action: {
+            label: "Copy Error",
+            onClick: () => navigator.clipboard.writeText(errorMessage)
+          }
+        });
         // End loading unless caller wants to keep spinner (e.g., backoff window)
         if (!keepLoading) setIsLoadingChartData(false);
       }
@@ -1329,7 +1382,14 @@ export default function PoolDetailPage() {
 
     const basePoolInfo = getPoolConfiguration(poolId);
     if (!basePoolInfo) {
-      toast.error("Pool Not Found", { icon: <OctagonX className="h-4 w-4 text-red-500" />, description: "Pool configuration not found for this ID." });
+      toast.error("Pool Not Found", { 
+        icon: <OctagonX className="h-4 w-4 text-red-500" />, 
+        description: "Pool configuration not found for this ID.",
+        action: {
+          label: "Open Ticket",
+          onClick: () => window.open('https://discord.gg/alphix', '_blank')
+        }
+      });
       router.push('/liquidity');
       return;
     }
@@ -1390,7 +1450,28 @@ export default function PoolDetailPage() {
     const vol24 = Number(poolStats?.volume24hUSD || 0);
     const tvlNow = Number(poolStats?.tvlUSD || 0);
     const fees24hUSD = vol24 * feeRate;
-    const calculatedApr = (tvlNow > 0 && fees24hUSD > 0) ? (((fees24hUSD * 365) / tvlNow) * 100).toFixed(2) + '%' : 'N/A';
+
+    // Calculate APY directly: (Daily Fees * 365) / TVL * 100
+    let calculatedApr = '0.00%';
+    if (tvlNow > 0 && !isNaN(fees24hUSD) && isFinite(fees24hUSD)) {
+      const annualFees = fees24hUSD * 365;
+      const apy = (annualFees / tvlNow) * 100;
+      
+      // Format APY
+      if (isNaN(apy) || !isFinite(apy)) {
+        calculatedApr = '0.00%';
+      } else if (apy >= 1000) {
+        calculatedApr = `~${Math.round(apy)}%`;
+      } else if (apy >= 100) {
+        calculatedApr = `~${apy.toFixed(0)}%`;
+      } else if (apy >= 10) {
+        calculatedApr = `~${apy.toFixed(1)}%`;
+      } else if (apy > 0) {
+        calculatedApr = `~${apy.toFixed(2)}%`;
+      } else {
+        calculatedApr = '0.00%';
+      }
+    }
 
     const combinedPoolData = {
         ...basePoolInfo,
@@ -1846,7 +1927,7 @@ export default function PoolDetailPage() {
 
     // Show toast immediately but let Success View handle modal closure
     console.log('[DEBUG] Transaction successful, triggering immediate refetch');
-    toast.success("Position Increased", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
+    // Toast is shown by useIncreaseLiquidity hook already - don't duplicate
     // IMMEDIATE refetch for increases - fees are critical and must be fresh
     console.log('[DEBUG] onLiquidityIncreasedCallback: Triggering immediate refetch after increase');
     console.log('[DEBUG] onLiquidityIncreasedCallback: Info passed to refreshAfterIncrease:', info);
@@ -1905,7 +1986,14 @@ export default function PoolDetailPage() {
       }
     }
     
-    toast.success(closing ? "Position Closed" : "Position Decreased", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
+    toast.success(closing ? "Position Closed" : "Liquidity Decreased", { 
+      icon: <BadgeCheck className="h-4 w-4 text-green-500" />,
+      description: closing ? `Position successfully closed` : `Liquidity successfully decreased`,
+      action: {
+        label: "View Transaction",
+        onClick: () => window.open(`https://sepolia.basescan.org/tx/${info.txHash}`, '_blank')
+      }
+    });
     // Don't close or clear position here - let the modal's success view show
     pendingActionRef.current = null;
 
@@ -1927,8 +2015,15 @@ export default function PoolDetailPage() {
 
   const { decreaseLiquidity, isLoading: isDecreasingLiquidity, isSuccess: isDecreaseSuccess, hash: decreaseTxHash, reset: resetDecreaseLiquidity } = useDecreaseLiquidity({
     onLiquidityDecreased: onLiquidityDecreasedCallback,
-    onFeesCollected: () => {
-      toast.success("Fees Collected", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
+    onFeesCollected: (info) => {
+      toast.success("Fees Collected", {
+        icon: <BadgeCheck className="h-4 w-4 text-green-500" />,
+        description: 'Fees successfully collected',
+        action: info?.txHash ? {
+          label: "View Transaction",
+          onClick: () => window.open(`https://sepolia.basescan.org/tx/${info.txHash}`, '_blank')
+        } : undefined
+      });
     },
   });
 
@@ -2013,7 +2108,14 @@ export default function PoolDetailPage() {
   // Handle withdraw position
   const handleBurnPosition = (position: ProcessedPosition) => {
     if (!position.positionId || !position.token0.symbol || !position.token1.symbol) {
-      toast.error("Invalid Position", { icon: <OctagonX className="h-4 w-4 text-red-500" />, description: "Missing critical position data (ID or token symbols)." });
+      toast.error("Invalid Position", { 
+        icon: <OctagonX className="h-4 w-4 text-red-500" />, 
+        description: "Missing critical position data (ID or token symbols).",
+        action: {
+          label: "Open Ticket",
+          onClick: () => window.open('https://discord.gg/alphix', '_blank')
+        }
+      });
       return;
     }
     setPositionToBurn(position);
@@ -2025,7 +2127,14 @@ export default function PoolDetailPage() {
   // Handle increase position
   const handleIncreasePosition = (position: ProcessedPosition, onModalClose?: () => void) => {
     if (!position.positionId || !position.token0.symbol || !position.token1.symbol) {
-      toast.error("Invalid Position", { icon: <OctagonX className="h-4 w-4 text-red-500" />, description: "Missing critical position data (ID or token symbols)." });
+      toast.error("Invalid Position", { 
+        icon: <OctagonX className="h-4 w-4 text-red-500" />, 
+        description: "Missing critical position data (ID or token symbols).",
+        action: {
+          label: "Open Ticket",
+          onClick: () => window.open('https://discord.gg/alphix', '_blank')
+        }
+      });
       return;
     }
     setPositionToModify(position);
@@ -2040,7 +2149,14 @@ export default function PoolDetailPage() {
   // Handle decrease position
   const handleDecreasePosition = (position: ProcessedPosition) => {
     if (!position.positionId || !position.token0.symbol || !position.token1.symbol) {
-      toast.error("Invalid Position", { icon: <OctagonX className="h-4 w-4 text-red-500" />, description: "Missing critical position data (ID or token symbols)." });
+      toast.error("Invalid Position", { 
+        icon: <OctagonX className="h-4 w-4 text-red-500" />, 
+        description: "Missing critical position data (ID or token symbols).",
+        action: {
+          label: "Open Ticket",
+          onClick: () => window.open('https://discord.gg/alphix', '_blank')
+        }
+      });
       return;
     }
     setPositionToModify(position);
@@ -2099,13 +2215,28 @@ export default function PoolDetailPage() {
       try {
         tokenId = BigInt(tokenIdStr);
       } catch {
-        toast.error('Invalid Token ID', { icon: <OctagonX className="h-4 w-4 text-red-500" />, description: 'The position token ID is invalid.' });
+        toast.error('Invalid Token ID', {
+          icon: <OctagonX className="h-4 w-4 text-red-500" />,
+          description: 'The position token ID is invalid.',
+          action: {
+            label: "Open Ticket",
+            onClick: () => window.open('https://discord.gg/alphix', '_blank')
+          }
+        });
         return;
       }
       const { buildCollectFeesCall } = await import('@/lib/liquidity-utils');
       const { calldata, value } = await buildCollectFeesCall({ tokenId, userAddress: accountAddress as `0x${string}` });
       pendingActionRef.current = { type: 'collect' };
-      setLastCollectPositionId(positionId); // Store position ID for fee refresh
+      setLastCollectPositionId(positionId);
+
+      // Set loading state
+      setUserPositions(prev => prev.map(p =>
+        p.positionId === positionId
+          ? { ...p, isOptimisticallyUpdating: true }
+          : p
+      ));
+
       writeContract({
         address: getPositionManagerAddress() as `0x${string}`,
         abi: position_manager_abi as any,
@@ -2115,10 +2246,51 @@ export default function PoolDetailPage() {
         chainId,
       } as any, {
         onSuccess: (hash) => setCollectHash(hash as `0x${string}`),
+        onError: (error: any) => {
+          // Extract user-friendly error message (use shortMessage if available, or extract first line)
+          let errorMessage = 'Transaction rejected';
+          if (error?.shortMessage) {
+            errorMessage = error.shortMessage;
+          } else if (error?.message) {
+            // Extract just the first meaningful line before "Request Arguments:" or "Details:"
+            const match = error.message.match(/^([^\.]+\.)(?:\s|Request|Details|Contract|Docs)/);
+            errorMessage = match ? match[1].trim() : error.message.split('\n')[0];
+          }
+
+          toast.error('Collect Failed', {
+            icon: <OctagonX className="h-4 w-4 text-red-500" />,
+            description: errorMessage,
+            action: {
+              label: "Copy Error",
+              onClick: () => navigator.clipboard.writeText(error?.message || errorMessage)
+            }
+          });
+
+          // Clear loading state on error
+          setUserPositions(prev => prev.map(p =>
+            p.positionId === positionId
+              ? { ...p, isOptimisticallyUpdating: undefined }
+              : p
+          ));
+        }
       } as any);
     } catch (err: any) {
-      console.error('Collect via SDK failed:', err);
-      toast.error('Collect Failed', { icon: <OctagonX className="h-4 w-4 text-red-500" />, description: err?.message });
+      const errorMessage = err?.message || 'Failed to collect fees';
+      toast.error('Collect Failed', {
+        icon: <OctagonX className="h-4 w-4 text-red-500" />,
+        description: errorMessage,
+        action: {
+          label: "Copy Error",
+          onClick: () => navigator.clipboard.writeText(errorMessage)
+        }
+      });
+
+      // Clear loading state on error
+      setUserPositions(prev => prev.map(p =>
+        p.positionId === positionId
+          ? { ...p, isOptimisticallyUpdating: undefined }
+          : p
+      ));
     }
   }, [accountAddress, chainId, writeContract, toast]);
 
@@ -2200,7 +2372,15 @@ export default function PoolDetailPage() {
         setIsFullBurn(isNearFullBurn);
       } catch (error: any) {
         console.error("Error calculating decrease amount:", error);
-        toast.error("Calculation Error", { icon: <OctagonX className="h-4 w-4 text-red-500" />, description: error.message || "Could not calculate corresponding amount." });
+        const errorMessage = error.message || "Could not calculate corresponding amount.";
+        toast.error("Calculation Error", { 
+          icon: <OctagonX className="h-4 w-4 text-red-500" />, 
+          description: errorMessage,
+          action: {
+            label: "Copy Error",
+            onClick: () => navigator.clipboard.writeText(errorMessage)
+          }
+        });
         if (inputSide === 'amount0') setDecreaseAmount1("");
         else setDecreaseAmount0("");
       } finally {
@@ -2236,7 +2416,11 @@ export default function PoolDetailPage() {
   // Handle decrease transaction
   const handleConfirmDecrease = () => {
     if (!positionToModify || (!decreaseAmount0 && !decreaseAmount1)) {
-      toast.error("Missing Amount", { icon: <OctagonX className="h-4 w-4 text-red-500" />, description: "Please enter at least one amount to remove." });
+      toast.error("Invalid Amount", { 
+        icon: <OctagonX className="h-4 w-4 text-red-500" />, 
+        description: "Please enter an amount to remove.",
+        duration: 4000
+      });
       return;
     }
     
@@ -2245,7 +2429,11 @@ export default function PoolDetailPage() {
       const amount0Num = parseFloat(decreaseAmount0 || "0");
       const amount1Num = parseFloat(decreaseAmount1 || "0");
       if (amount0Num <= 0 && amount1Num <= 0) {
-        toast.error("Invalid Amount", { icon: <OctagonX className="h-4 w-4 text-red-500" />, description: "Please enter a valid amount to remove." });
+        toast.error("Invalid Amount", { 
+          icon: <OctagonX className="h-4 w-4 text-red-500" />, 
+          description: "Please enter an amount to remove.",
+          duration: 4000
+        });
         return;
       }
     }
@@ -2265,7 +2453,14 @@ export default function PoolDetailPage() {
     const token1Symbol = getTokenSymbolByAddress(positionToModify.token1.address);
     
     if (!token0Symbol || !token1Symbol) {
-      toast.error("Token Configuration Error", { icon: <OctagonX className="h-4 w-4 text-red-500" />, description: `Token definitions not found for addresses: ${positionToModify.token0.address}, ${positionToModify.token1.address}` });
+      toast.error("Configuration Error", { 
+        icon: <OctagonX className="h-4 w-4 text-red-500" />, 
+        description: "Token configuration is invalid.",
+        action: {
+          label: "Open Ticket",
+          onClick: () => window.open('https://discord.gg/alphix', '_blank')
+        }
+      });
       return;
     }
 
@@ -2397,16 +2592,21 @@ export default function PoolDetailPage() {
               </div>
             ) : (
                   <div ref={topBarRef} className="rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 p-4 mb-3 w-full overflow-hidden">
-                    <div className="flex items-stretch gap-3 min-w-0 overflow-hidden">
-                      {/* Token info container inside dotted container - flexible, shrinkable */}
-                      <div ref={tokenInfoRef} className="min-w-0 basis-0 flex-1 overflow-hidden rounded-lg bg-muted/30 border border-sidebar-border/60 hover:border-white/30 transition-colors cursor-pointer"
-                       onClick={() => router.push('/liquidity')}
-                       role="button"
-                       tabIndex={0}
-                       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); router.push('/liquidity'); } }}>
+                    <div className="flex items-stretch gap-3 min-w-0 overflow-x-auto">
+                      {/* Back arrow square */}
+                      <div className="flex-shrink-0 rounded-lg bg-muted/30 border border-sidebar-border/60 hover:border-white/30 transition-colors cursor-pointer flex items-center justify-center"
+                        style={{ width: '74px', height: '74px', minWidth: '74px', minHeight: '74px' }}
+                        onClick={() => router.push('/liquidity')}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); router.push('/liquidity'); } }}>
+                        <ChevronLeft className="h-5 w-5 text-muted-foreground" />
+                      </div>
+
+                      {/* Token info container inside dotted container */}
+                      <div ref={tokenInfoRef} className="min-w-0 basis-0 flex-1 overflow-hidden rounded-lg bg-muted/30 border border-sidebar-border/60">
                         <div className="px-4 py-3 flex items-center w-full min-w-0">
                           <div className="flex items-center gap-1 min-w-0 flex-1">
-                            <ChevronLeft className="h-4 w-4 text-muted-foreground mr-1 flex-shrink-0" />
                             <div className="relative w-16 h-8 mr-0.5 flex-shrink-0">
                           <div className="absolute top-0 left-0 w-8 h-8 rounded-full overflow-hidden bg-background z-10">
                             <Image src={currentPoolData.tokens[0].icon} alt={currentPoolData.tokens[0].symbol} width={32} height={32} className="w-full h-full object-cover" />
@@ -2420,20 +2620,60 @@ export default function PoolDetailPage() {
                         <div className="flex-1 min-w-0">
                           <div className="flex flex-col min-w-0">
                             <span className="font-medium mb-0.5 truncate">{currentPoolData.pair}</span>
-                                <div className="flex items-center gap-3 min-w-0">
+                                <div className="flex items-center gap-2 min-w-0">
                               {(getPoolById(poolId)?.type || currentPoolData?.type) && (
-                                    <span className="px-1.5 py-0.5 text-xs font-normal rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-muted-foreground flex-shrink-0" style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}>
-                                  {getPoolById(poolId)?.type || (currentPoolData as any)?.type}
-                                </span>
+                                <UITooltipProvider delayDuration={0}>
+                                  <UITooltip>
+                                    <UITooltipTrigger asChild>
+                                      <span className="px-1.5 py-0.5 text-xs font-normal rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-muted-foreground flex-shrink-0 cursor-default" style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}>
+                                        {getPoolById(poolId)?.type || (currentPoolData as any)?.type}
+                                      </span>
+                                    </UITooltipTrigger>
+                                    <UITooltipContent side="bottom" sideOffset={6} className="px-2 py-1 text-xs">
+                                      <div className="font-medium text-foreground">Pool Type</div>
+                                    </UITooltipContent>
+                                  </UITooltip>
+                                </UITooltipProvider>
                               )}
-                                  <span className="text-xs text-muted-foreground flex-shrink-0">
-                                {(() => {
-                                  if (currentPoolData.dynamicFeeBps === undefined) return "Loading...";
-                                  const pct = (currentPoolData.dynamicFeeBps as number) / 100;
-                                  const formatted = pct < 0.1 ? pct.toFixed(3) : pct.toFixed(2);
-                                  return `${formatted}%`;
-                                })()}
-                              </span>
+
+                              {/* Divider */}
+                              <div className="h-3 w-px bg-border flex-shrink-0" />
+
+                              {/* Feature indicator square */}
+                              <UITooltipProvider delayDuration={0}>
+                                <UITooltip>
+                                  <UITooltipTrigger asChild>
+                                    <div
+                                      className="flex-shrink-0 rounded-md bg-sidebar-primary/10 border border-sidebar-border flex items-center justify-center cursor-pointer hover:bg-sidebar-primary/20 transition-colors"
+                                      style={{ width: '20px', height: '20px', minWidth: '20px', minHeight: '20px' }}
+                                      onClick={() => setIsDynamicFeeModalOpen(true)}
+                                    >
+                                      <Image src="/Dynamic Fee.svg" alt="Dynamic Fee" width={12} height={12} />
+                                    </div>
+                                  </UITooltipTrigger>
+                                  <UITooltipContent side="bottom" sideOffset={6} className="px-2 py-1 text-xs">
+                                    <div className="font-medium text-foreground">Dynamic Fee</div>
+                                  </UITooltipContent>
+                                </UITooltip>
+                              </UITooltipProvider>
+
+                              <UITooltipProvider delayDuration={0}>
+                                <UITooltip>
+                                  <UITooltipTrigger asChild>
+                                    <span className="text-xs text-muted-foreground flex-shrink-0 cursor-default">
+                                      {(() => {
+                                        if (currentPoolData.dynamicFeeBps === undefined) return "Loading...";
+                                        const pct = (currentPoolData.dynamicFeeBps as number) / 100;
+                                        const formatted = pct < 0.1 ? pct.toFixed(3) : pct.toFixed(2);
+                                        return `${formatted}%`;
+                                      })()}
+                                    </span>
+                                  </UITooltipTrigger>
+                                  <UITooltipContent side="bottom" sideOffset={6} className="px-2 py-1 text-xs">
+                                    <div className="font-medium text-foreground">Current Fee</div>
+                                  </UITooltipContent>
+                                </UITooltip>
+                              </UITooltipProvider>
                             </div>
                           </div>
                         </div>
@@ -2606,7 +2846,7 @@ export default function PoolDetailPage() {
                             className="animate-pulse opacity-75"
                           />
                         </div>
-                      ) : apiChartData.length > 0 ? (
+                      ) : apiChartData.length >= 1 ? (
                         // Mobile-only chart (no Y-axis)
                         isMobile ? (
                           activeChart === 'volumeTvlRatio' ? (
@@ -3156,8 +3396,10 @@ export default function PoolDetailPage() {
                           )
                         )
                       ) : (
-                        <div className="flex justify-center items-center h-full text-muted-foreground">
-                          No chart data available for this pool.
+                        <div className="flex justify-center items-center h-full">
+                          <div className="text-xs font-mono text-muted-foreground/50 animate-pulse">
+                            Pool Initializing ({apiChartData?.length || 0}/1 updates)
+                          </div>
                         </div>
                       )}
                     </ChartContainer>
@@ -3532,6 +3774,147 @@ export default function PoolDetailPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Dynamic Fee Modal */}
+      <AnimatePresence>
+        {isDynamicFeeModalOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.3 }}
+            className="fixed inset-0 z-50 flex items-center justify-center backdrop-blur-md"
+            onClick={() => setIsDynamicFeeModalOpen(false)}
+          >
+            {/* Modal content */}
+          <motion.div
+            initial={{ y: '8%', opacity: 0 }}
+            animate={{ y: '0%', opacity: 1 }}
+            exit={{ y: '8%', opacity: 0 }}
+              transition={{
+                duration: 0.4,
+                ease: [0.34, 1.3, 0.64, 1]
+              }}
+              className="relative rounded-lg border border-sidebar-border shadow-2xl overflow-hidden"
+              style={{
+                width: '500px',
+                maxWidth: '90vw',
+                backgroundColor: 'var(--modal-background)',
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 transition-colors flex flex-col h-full">
+                {/* Header */}
+                <div className="flex items-center justify-between px-4 py-2 border-b border-sidebar-border/60">
+                  <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">PRODUCT</h2>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setIsDynamicFeeModalOpen(false)}
+                    className="h-6 w-6 -mr-1 text-muted-foreground hover:text-foreground"
+                  >
+                    <span className="text-lg">×</span>
+                  </Button>
+                </div>
+
+                {/* Content */}
+                <div className="p-4 space-y-4">
+                  {/* Dynamic Fee Title */}
+                  <div className="flex items-center gap-3">
+                    <div className="flex-shrink-0 rounded-md bg-sidebar-primary/10 border border-sidebar-border flex items-center justify-center" style={{ width: '32px', height: '32px' }}>
+                      <Image src="/Dynamic Fee.svg" alt="Dynamic Fee" width={18} height={18} />
+                    </div>
+                    <h3 className="text-base font-semibold">Dynamic Fee</h3>
+                  </div>
+
+                  {/* Current Fee Section with Chart */}
+                  <div className="rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 p-4">
+                    {apiChartData.slice(-30).length >= 7 ? (
+                      <div className="flex gap-4 items-end">
+                        {/* Left side - Current Fee */}
+                        <div className="flex-shrink-0 min-w-[100px]">
+                          <h3 className="text-xs font-bold text-muted-foreground mb-1">Current Fee</h3>
+                          <p
+                            className="text-2xl font-semibold transition-colors"
+                            style={{ color: hoveredFee !== null ? 'var(--sidebar-primary)' : undefined }}
+                          >
+                            {hoveredFee !== null
+                              ? `${hoveredFee.toFixed(3)}%`
+                              : currentPoolData?.dynamicFeeBps !== undefined
+                                ? `${((currentPoolData.dynamicFeeBps as number) / 100).toFixed(3)}%`
+                                : 'Loading...'}
+                          </p>
+                        </div>
+
+                        {/* Right side - Chart */}
+                        <div className="flex-1 min-w-0">
+                          <ResponsiveContainer width="100%" height={60}>
+                            <LineChart
+                              data={apiChartData.slice(-30)}
+                              margin={{ top: 0, right: 0, bottom: 0, left: 0 }}
+                              onMouseLeave={() => setHoveredFee(null)}
+                            >
+                              <XAxis dataKey="date" hide={true} />
+                              <YAxis hide={true} domain={['auto', 'auto']} />
+                              <ChartTooltip
+                                content={({ active, payload }) => {
+                                  if (active && payload && payload[0]) {
+                                    const fee = payload[0].payload.dynamicFee;
+                                    if (typeof fee === 'number') {
+                                      setHoveredFee(fee);
+                                    }
+                                  } else {
+                                    setHoveredFee(null);
+                                  }
+                                  return null;
+                                }}
+                                cursor={{ stroke: '#505050', strokeWidth: 1, strokeDasharray: '3 3' }}
+                              />
+                              <Line
+                                type="stepAfter"
+                                dataKey="dynamicFee"
+                                stroke={hoveredFee !== null ? 'var(--sidebar-primary)' : 'hsl(var(--chart-1))'}
+                                strokeWidth={1.5}
+                                dot={false}
+                                activeDot={false}
+                                isAnimationActive={false}
+                              />
+                            </LineChart>
+                          </ResponsiveContainer>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="w-full h-[60px] flex items-center justify-center">
+                        <div className="text-xs font-mono text-muted-foreground/50 animate-pulse">
+                          Pool Initializing ({apiChartData.slice(-30).length}/7 updates)
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Product Information */}
+                  <div>
+                    <h3 className="text-sm font-medium mb-2">Product Information</h3>
+                    <p className="text-sm text-muted-foreground leading-relaxed">
+                      Dynamic fees automatically adjust based on market volatility and available liquidity.
+                      This helps optimize returns for liquidity providers while maintaining competituive pricing for traders.
+                    </p>
+                  </div>
+
+                  {/* Learn More Button */}
+                  <div
+                    className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:bg-accent hover:brightness-110 hover:border-white/30 text-white"
+                    style={{ backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+                    onClick={() => window.open('https://alphix.gitbook.io/docs/products/dynamic-fee', '_blank')}
+                  >
+                    Learn More
+                  </div>
+                </div>
+              </div>
+              </motion.div>
+            </motion.div>
+        )}
+      </AnimatePresence>
 
     </AppLayout>
   );

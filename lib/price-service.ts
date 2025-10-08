@@ -9,8 +9,8 @@ const CACHE_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 const COINGECKO_PRICE_ENDPOINT = 'https://api.coingecko.com/api/v3/simple/price';
 const API_TIMEOUT_MS = 8000;
 
-// All coins we need in one batch - only 4 real coins
-const ALL_COINGECKO_IDS = ['bitcoin', 'usd-coin', 'ethereum', 'tether'];
+// All coins we need in one batch - only 5 real coins
+const ALL_COINGECKO_IDS = ['bitcoin', 'usd-coin', 'ethereum', 'tether', 'dai'];
 const ONGOING_REQUEST_KEY = 'fetch_all_prices';
 
 
@@ -21,12 +21,14 @@ function getUnderlyingAsset(tokenSymbol: string): keyof AllPricesData | null {
   if (tokenSymbol === 'USDC') return 'USDC';
   if (tokenSymbol === 'ETH') return 'ETH';
   if (tokenSymbol === 'USDT') return 'USDT';
+  if (tokenSymbol === 'DAI') return 'DAI';
   
   // Infer from token names in pools.json
   if (tokenSymbol.includes('BTC')) return 'BTC';
   if (tokenSymbol.includes('USDC')) return 'USDC';
   if (tokenSymbol.includes('ETH')) return 'ETH';
   if (tokenSymbol.includes('USDT')) return 'USDT';
+  if (tokenSymbol.includes('DAI')) return 'DAI';
   
   return null;
 }
@@ -37,6 +39,7 @@ export interface AllPricesData {
   USDC: { usd: number; usd_24h_change?: number };
   ETH: { usd: number; usd_24h_change?: number };
   USDT: { usd: number; usd_24h_change?: number };
+  DAI: { usd: number; usd_24h_change?: number };
   lastUpdated: number;
 }
 
@@ -83,6 +86,7 @@ async function fetchAllPrices(signal?: AbortSignal): Promise<AllPricesData> {
         USDC: { usd: data['usd-coin']?.usd || 1, usd_24h_change: data['usd-coin']?.usd_24h_change },
         ETH: { usd: data.ethereum?.usd || 0, usd_24h_change: data.ethereum?.usd_24h_change },
         USDT: { usd: data.tether?.usd || 1, usd_24h_change: data.tether?.usd_24h_change },
+        DAI: { usd: data.dai?.usd || 1, usd_24h_change: data.dai?.usd_24h_change },
         lastUpdated: Date.now()
       };
       
