@@ -218,7 +218,7 @@ export function AddLiquidityForm({
   
   // UI state
   const [isInsufficientBalance, setIsInsufficientBalance] = useState(false);
-  const [activePreset, setActivePreset] = useState<string | null>("Full Range");
+  const [activePreset, setActivePreset] = useState<string | null>(null);
   const [isPoolStateLoading, setIsPoolStateLoading] = useState<boolean>(false);
   const [isChartLoading, setIsChartLoading] = useState<boolean>(false);
   const [enhancedAprDisplay, setEnhancedAprDisplay] = useState<string>(poolApr || "Yield N/A");
@@ -279,6 +279,7 @@ export function AddLiquidityForm({
     if (s.includes('ETH')) return allPrices?.ETH?.usd ?? 0;
     if (s.includes('USDC')) return allPrices?.USDC?.usd ?? 1;
     if (s.includes('USDT')) return allPrices?.USDT?.usd ?? 1;
+    if (s.includes('DAI')) return allPrices?.DAI?.usd ?? 1;
     return 0;
   }, [allPrices]);
 
@@ -2572,14 +2573,15 @@ export function AddLiquidityForm({
                         title="Click to change range"
                       >
                         {(() => {
-                          const presetLabels: Record<string, string> = {
+                          // Map presets to consistent labels (matches RangeSelectionModalV2)
+                          const presetLabels: Record<string, string> = isStablePool ? {
+                            "Full Range": "Full Range",
+                            "±3%": "Conservative",
+                            "±1%": "Concentrated"
+                          } : {
                             "Full Range": "Full Range",
                             "±15%": "Conservative",
-                            "±8%": "Moderate",
-                            "±3%": "Concentrated",
-                            "±1%": "Narrow",
-                            "±0.5%": "Very Narrow",
-                            "±0.1%": "Ultra Narrow"
+                            "±3%": "Concentrated"
                           };
                           return activePreset ? (presetLabels[activePreset] || activePreset) : "Custom";
                         })()}

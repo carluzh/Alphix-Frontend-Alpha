@@ -102,6 +102,7 @@ async function fetchAndProcessUserPositionsForApi(ownerAddress: string): Promise
 
     // Fetch from all subgraphs
     let allRawPositions: SubgraphPosition[] = [];
+    const seenPositionIds = new Set<string>(); // Track position IDs to prevent duplicates
 
     for (const subgraphUrl of subgraphUrls) {
         try {
@@ -139,7 +140,13 @@ async function fetchAndProcessUserPositionsForApi(ownerAddress: string): Promise
                     } catch {}
                 }
 
-                allRawPositions = allRawPositions.concat(raw);
+                // Deduplicate positions across subgraphs
+                for (const pos of raw) {
+                    if (!seenPositionIds.has(pos.id)) {
+                        seenPositionIds.add(pos.id);
+                        allRawPositions.push(pos);
+                    }
+                }
             }
         } catch (err) {
             console.error('[get-positions] Error fetching from subgraph', subgraphUrl, err);
@@ -302,6 +309,7 @@ async function fetchIdsOrCount(ownerAddress: string, idsOnly: boolean, withCreat
   }
 
   let allRawPositions: SubgraphPosition[] = [];
+  const seenPositionIds = new Set<string>(); // Track position IDs to prevent duplicates
 
   for (const subgraphUrl of subgraphUrls) {
     try {
@@ -336,7 +344,13 @@ async function fetchIdsOrCount(ownerAddress: string, idsOnly: boolean, withCreat
           }
         } catch {}
       }
-      allRawPositions = allRawPositions.concat(raw);
+      // Deduplicate positions across subgraphs
+      for (const pos of raw) {
+        if (!seenPositionIds.has(pos.id)) {
+          seenPositionIds.add(pos.id);
+          allRawPositions.push(pos);
+        }
+      }
     } catch (err) {
       console.error('[get-positions] Error in fetchIdsOrCount from', subgraphUrl, err);
     }
