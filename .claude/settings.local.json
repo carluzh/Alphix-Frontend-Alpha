@@ -23,7 +23,10 @@
       "Bash(do echo -n \"$file: \")",
       "Bash(for dir in components/*/)",
       "Bash(for file in \"site-header\" \"nav-user\" \"section-cards\")",
-      "Bash(do echo \"=== $file ===\")"
+      "Bash(do echo \"=== $file ===\")",
+      "Bash(npm run build:*)",
+      "Bash(npm run test:run:*)",
+      "Bash(node:*)"
     ],
     "deny": [],
     "ask": []

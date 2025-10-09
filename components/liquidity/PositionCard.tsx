@@ -361,7 +361,7 @@ export function PositionCard({
                     e.stopPropagation();
                     openWithdraw(position);
                 }}
-                className="flex h-9 cursor-pointer items-center justify-center rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-4 py-2 text-xs font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30"
+                className="flex h-9 cursor-pointer items-center justify-center rounded-md border border-sidebar-border bg-button px-4 py-2 text-xs font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30"
                 style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: '200%', backgroundPosition: 'center' }}
                 >
                 Withdraw
@@ -528,7 +528,7 @@ export function PositionCard({
                             animate={{ opacity: 1, y: 0, scale: 1 }}
                             exit={{ opacity: 0, y: positionMenuOpenUp ? 6 : -6, scale: 0.98 }}
                             transition={{ type: 'spring', stiffness: 420, damping: 26, mass: 0.6 }}
-                            className="absolute z-[100] right-0 w-max min-w-[140px] rounded-md border border-sidebar-border bg-[var(--modal-background)] shadow-md overflow-hidden position-card-menu-content"
+                            className="absolute z-[100] right-0 w-max min-w-[140px] rounded-md border border-sidebar-border bg-modal shadow-md overflow-hidden position-card-menu-content"
                             style={{
                             marginTop: positionMenuOpenUp ? undefined : 4,
                             bottom: positionMenuOpenUp ? '100%' : undefined,

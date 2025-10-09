@@ -399,7 +399,7 @@ export default function LiquidityPage() {
         return (
           <div className="flex items-center gap-2">
             <div className="relative w-14 h-7">
-              <div className="absolute top-0 left-0 w-7 h-7 rounded-full overflow-hidden bg-background z-10">
+              <div className="absolute top-0 left-0 w-7 h-7 rounded-full overflow-hidden bg-main z-10">
                 <Image
                   src={pool.tokens[0].icon}
                   alt={pool.tokens[0].symbol}
@@ -410,7 +410,7 @@ export default function LiquidityPage() {
               </div>
               {/* New relative container for second icon and cut-out */}
               <div className="absolute top-0 left-4 w-7 h-7">
-                <div className="absolute inset-0 rounded-full overflow-hidden bg-background z-30">
+                <div className="absolute inset-0 rounded-full overflow-hidden bg-main z-30">
                   <Image
                     src={pool.tokens[1].icon}
                     alt={pool.tokens[1].symbol}
@@ -420,7 +420,7 @@ export default function LiquidityPage() {
                   />
                 </div>
                 {/* Background circle for cut-out effect in table */}
-                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-[#111111] z-20"></div>
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-main z-20"></div>
               </div>
             </div>
             <div className="flex flex-col">
@@ -428,7 +428,7 @@ export default function LiquidityPage() {
               <div className="flex items-center gap-3">
                 {pool.type && (
                   <span
-                    className="px-1.5 py-0.5 text-xs font-normal rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-muted-foreground"
+                    className="px-1.5 py-0.5 text-xs font-normal rounded-md border border-sidebar-border bg-button text-muted-foreground"
                     style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
                   >
                     {pool.type}
@@ -647,7 +647,7 @@ export default function LiquidityPage() {
                 e.stopPropagation();
                 handleAddLiquidity(e, row.original.id);
               }}
-              className="absolute right-0 top-1/2 -translate-y-1/2 flex h-10 cursor-pointer items-center justify-end gap-2 rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto hover:brightness-110 hover:border-white/30"
+              className="absolute right-0 top-1/2 -translate-y-1/2 flex h-10 cursor-pointer items-center justify-end gap-2 rounded-md border border-sidebar-border bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto hover:brightness-110 hover:border-white/30"
               style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
             >
               <PlusIcon className="h-4 w-4 relative z-0" />
@@ -898,7 +898,7 @@ export default function LiquidityPage() {
                         onClick={() => setSelectedCategory(cat)}
                         className={`px-2 py-1 text-xs rounded-md transition-all duration-200 cursor-pointer ${
                           selectedCategory === cat
-                            ? 'border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-foreground brightness-110'
+                            ? 'border border-sidebar-border bg-button text-foreground brightness-110'
                             : 'text-muted-foreground hover:text-foreground'
                         }`}
                         style={selectedCategory === cat ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
@@ -918,7 +918,7 @@ export default function LiquidityPage() {
               />
             ) : (
               <div className="overflow-x-auto isolate">
-                <Table className="w-full bg-muted/30 border border-sidebar-border/60 overflow-hidden" style={{ tableLayout: 'fixed' }}>
+                <Table className="w-full bg-muted/30 border border-sidebar-border/60 rounded-lg overflow-hidden" style={{ tableLayout: 'fixed' }}>
                   <TableHeader>
                     {/* New category header row inside the table for perfect alignment */}
                     <TableRow className="hover:bg-transparent">

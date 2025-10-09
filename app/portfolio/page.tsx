@@ -2560,7 +2560,7 @@ export default function PortfolioPage() {
                   onClick={() => setSelectedSection(section)}
                   className={`px-2 py-1 text-xs rounded-md transition-all duration-200 cursor-pointer ${
                     selectedSection === section
-                      ? 'border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-foreground brightness-110'
+                      ? 'border border-sidebar-border bg-button text-foreground brightness-110'
                       : 'text-muted-foreground hover:text-foreground'
                   }`}
                   style={selectedSection === section ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
@@ -2635,7 +2635,7 @@ export default function PortfolioPage() {
                 <div className="mb-2 flex items-center gap-2 justify-between">
                   <button
                     type="button"
-                    className="px-2 py-1 text-xs rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-foreground brightness-110"
+                    className="px-2 py-1 text-xs rounded-md border border-sidebar-border bg-button text-foreground brightness-110"
                     style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
                   >
                     Balances
@@ -2942,7 +2942,7 @@ export default function PortfolioPage() {
               <div className="mb-2 flex items-center gap-2 justify-between">
                 <button
                   type="button"
-                  className="px-2 py-1 text-xs rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-foreground brightness-110"
+                  className="px-2 py-1 text-xs rounded-md border border-sidebar-border bg-button text-foreground brightness-110"
                   style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
                 >
                   Balances
@@ -2995,8 +2995,8 @@ export default function PortfolioPage() {
                   // Disable only when processing/confirming, like sidebar
                   const disabled = Boolean(isFaucetBusy || isFaucetConfirming);
                   const className = canClaim
-                    ? `px-2 py-1 text-xs rounded-md border border-sidebar-primary bg-[#3d271b] text-sidebar-primary transition-colors ${disabled ? 'opacity-70 cursor-not-allowed' : 'hover:bg-[#4a2f22]'}`
-                    : `px-2 py-1 text-xs rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-muted-foreground transition-colors ${disabled || last < 0 ? 'opacity-70 cursor-not-allowed' : 'hover:bg-muted/60'}`;
+                    ? `px-2 py-1 text-xs rounded-md border border-sidebar-primary bg-button-primary text-sidebar-primary transition-colors ${disabled ? 'opacity-70 cursor-not-allowed' : 'hover-button-primary'}`
+                    : `px-2 py-1 text-xs rounded-md border border-sidebar-border bg-button text-muted-foreground transition-colors ${disabled || last < 0 ? 'opacity-70 cursor-not-allowed' : 'hover:bg-muted/60'}`;
                   const style = canClaim ? undefined : { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } as React.CSSProperties;
                   return (
                     <button type="button" onClick={handleClick} className={className} style={style} disabled={disabled || last < 0}>
@@ -3086,7 +3086,7 @@ export default function PortfolioPage() {
           onClick={() => setSelectedSection(section)}
           className={`px-2 py-1 text-xs rounded-md transition-all duration-200 cursor-pointer ${
             selectedSection === section
-              ? 'border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-foreground brightness-110'
+              ? 'border border-sidebar-border bg-button text-foreground brightness-110'
               : 'text-muted-foreground hover:text-foreground'
           }`}
           style={selectedSection === section ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
@@ -3161,7 +3161,7 @@ export default function PortfolioPage() {
                                       <div className="absolute inset-0 rounded-full overflow-hidden bg-background z-30">
                                         <Image src={token1Icon} alt={first?.token1?.symbol || ''} width={28} height={28} className="w-full h-full object-cover" />
                                       </div>
-                                      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#111111] z-20" style={{ width: 32, height: 32 }}></div>
+                                      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-main z-20" style={{ width: 32, height: 32 }}></div>
                                     </div>
                                   </div>
                                   <div className="truncate font-normal text-sm">{first?.token0?.symbol}/{first?.token1?.symbol}</div>
@@ -3170,7 +3170,7 @@ export default function PortfolioPage() {
                                     <Tooltip>
                                       <TooltipTrigger asChild>
                                         <span
-                                          className="ml-1 w-5 h-5 flex items-center justify-center text-[10px] rounded bg-[var(--sidebar-connect-button-bg)] text-muted-foreground cursor-default"
+                                          className="ml-1 w-5 h-5 flex items-center justify-center text-[10px] rounded bg-button text-muted-foreground cursor-default"
                                         >
                                           {items.length}
                                         </span>
@@ -3358,7 +3358,7 @@ export default function PortfolioPage() {
                                 <div className="min-w-0 text-left">
                                   {it.type === 'Swap' ? (
                                     <span
-                                      className="px-1.5 py-0.5 text-xs font-normal rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-muted-foreground"
+                                      className="px-1.5 py-0.5 text-xs font-normal rounded-md border border-sidebar-border bg-button text-muted-foreground"
                                       style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
                                     >
                                       Swap
@@ -3622,7 +3622,7 @@ export default function PortfolioPage() {
             <div className="mb-2 flex items-center gap-2 justify-between">
               <button
                 type="button"
-                className="px-2 py-1 text-xs rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-foreground brightness-110"
+                className="px-2 py-1 text-xs rounded-md border border-sidebar-border bg-button text-foreground brightness-110"
                 style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
               >
                 Balances
@@ -3681,8 +3681,8 @@ export default function PortfolioPage() {
                 // Disable only when processing/confirming, like sidebar
                 const disabled = Boolean(isFaucetBusy || isFaucetConfirming);
                 const className = canClaim
-                  ? `px-2 py-1 text-xs rounded-md border border-sidebar-primary bg-[#3d271b] text-sidebar-primary transition-colors ${disabled ? 'opacity-70 cursor-not-allowed' : 'hover:bg-[#4a2f22]'}`
-                  : `px-2 py-1 text-xs rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-muted-foreground transition-colors ${disabled || last < 0 ? 'opacity-70 cursor-not-allowed' : 'hover:bg-muted/60'}`;
+                  ? `px-2 py-1 text-xs rounded-md border border-sidebar-primary bg-button-primary text-sidebar-primary transition-colors ${disabled ? 'opacity-70 cursor-not-allowed' : 'hover-button-primary'}`
+                  : `px-2 py-1 text-xs rounded-md border border-sidebar-border bg-button text-muted-foreground transition-colors ${disabled || last < 0 ? 'opacity-70 cursor-not-allowed' : 'hover:bg-muted/60'}`;
                 const style = canClaim ? undefined : { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } as React.CSSProperties;
                 return (
                   <button type="button" onClick={handleClick} className={className} style={style} disabled={disabled || last < 0}>

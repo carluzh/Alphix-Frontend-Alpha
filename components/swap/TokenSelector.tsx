@@ -322,7 +322,7 @@ export function TokenSelector({
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.98 }}
               transition={{ duration: 0.2 }}
-              className="fixed rounded-lg shadow-2xl border border-border overflow-hidden bg-popover" // Changed to fixed and bg-popover
+              className="fixed rounded-lg shadow-2xl border border-primary overflow-hidden bg-popover" // Consolidated: uses brand-border and brand-container-bg
               onClick={(e) => e.stopPropagation()}
               style={{
                 top: swapContainerRect.top,
@@ -332,7 +332,7 @@ export function TokenSelector({
               }}
             >
               {/* Header */}
-              <div className="flex items-center justify-between p-4 border-b border-border">
+              <div className="flex items-center justify-between p-4 border-b border-primary">
                 <h2 className="text-sm font-medium">
                   {excludeToken ? 'Swap From Token' : 'Swap To Token'} {/* Reverted header text logic */}
                 </h2>

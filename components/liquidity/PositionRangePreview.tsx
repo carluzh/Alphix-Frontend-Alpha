@@ -63,11 +63,11 @@ export function PositionRangePreview({
         {/* Current price indicator (vertical line) */}
         {currentTick !== null && (
           <div
-            className="absolute top-0 bottom-0 w-0.5 bg-[#e85102]"
+            className="absolute top-0 bottom-0 w-0.5 bg-sidebar-primary"
             style={{ left: `${Math.max(0, Math.min(100, relativePosition))}%` }}
           >
             {/* Dot at current price */}
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-[#e85102] border border-background" />
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-sidebar-primary border border-background" />
           </div>
         )}
 

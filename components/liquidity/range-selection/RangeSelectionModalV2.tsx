@@ -610,8 +610,8 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                       onClick={() => rangeType !== "Custom" && handlePresetClick(rangeType)}
                       className={`relative h-12 px-4 flex items-center justify-between rounded-md border transition-all duration-200 overflow-hidden ${
                         rangeType === "Custom"
-                          ? `cursor-default ${isActive ? 'text-sidebar-primary border-sidebar-primary bg-[#3d271b]/50' : 'border-sidebar-border/50 bg-muted/20 text-muted-foreground'}`
-                          : `cursor-pointer ${isActive ? 'text-sidebar-primary border-sidebar-primary bg-[#3d271b]' : 'border-sidebar-border bg-[var(--sidebar-connect-button-bg)] hover:bg-accent hover:brightness-110 hover:border-white/30 text-white'}`
+                          ? `cursor-default ${isActive ? 'text-sidebar-primary border-sidebar-primary bg-button-primary/50' : 'border-sidebar-border/50 bg-muted/20 text-muted-foreground'}`
+                          : `cursor-pointer ${isActive ? 'text-sidebar-primary border-sidebar-primary bg-button-primary' : 'border-sidebar-border bg-button hover:bg-accent hover:brightness-110 hover:border-white/30 text-white'}`
                       }`}
                       style={!isActive && rangeType !== "Custom" ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
                     >
@@ -782,7 +782,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
             <Button
               variant="ghost"
               onClick={onClose}
-              className="relative flex h-10 flex-1 cursor-pointer items-center justify-center rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:bg-accent hover:brightness-110 hover:border-white/30 text-white"
+              className="relative flex h-10 flex-1 cursor-pointer items-center justify-center rounded-md border border-sidebar-border bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:bg-accent hover:brightness-110 hover:border-white/30 text-white"
               style={{ backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
             >
               Cancel
@@ -792,7 +792,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                 onConfirm(localTickLower, localTickUpper, activePreset, denominationBase);
                 onClose();
               }}
-              className="relative flex h-10 flex-1 cursor-pointer items-center justify-center rounded-md border border-sidebar-primary bg-[#3d271b] hover:bg-[#3d271b]/90 px-3 text-sm font-medium transition-all duration-200 text-sidebar-primary"
+              className="relative flex h-10 flex-1 cursor-pointer items-center justify-center rounded-md border border-sidebar-primary bg-button-primary hover:bg-button-primary/90 px-3 text-sm font-medium transition-all duration-200 text-sidebar-primary"
             >
               Confirm
             </Button>

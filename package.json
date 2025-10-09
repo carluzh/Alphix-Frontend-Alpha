@@ -5,16 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
-    "test": "vitest",
-    "test:ui": "vitest --ui",
-    "test:run": "vitest run",
-    "test:coverage": "vitest run --coverage",
-    "test:e2e": "playwright test",
-    "test:e2e:ui": "playwright test --ui",
-    "test:e2e:debug": "playwright test --debug",
-    "test:e2e:testnet": "E2E_TESTNET_MODE=true playwright test tests/e2e/testnet-*.spec.ts",
-    "test:e2e:testnet:debug": "E2E_TESTNET_MODE=true playwright test tests/e2e/testnet-*.spec.ts --debug"
+    "start": "next start"
   },
   "dependencies": {
     "@dnd-kit/core": "latest",

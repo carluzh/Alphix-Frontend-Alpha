@@ -168,7 +168,7 @@ export function SwapReviewView({
   return (
     <motion.div key="review" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
       <div 
-        className="mb-6 flex items-center justify-between rounded-lg border border-[var(--swap-border)] p-4 hover:bg-muted/30 transition-colors cursor-pointer" 
+        className="mb-6 flex items-center justify-between rounded-lg border border-primary p-4 hover:bg-muted/30 transition-colors cursor-pointer" 
         onClick={handleChangeButton}
       >
         <div className="flex items-center gap-3">
@@ -221,7 +221,7 @@ export function SwapReviewView({
           <Image src={displayToToken.icon} alt={displayToToken.symbol} width={32} height={32} className="rounded-full"/>
         </div>
       </div>
-      <div className="rounded-lg border border-dashed border-[var(--swap-border)] p-4 mb-6 space-y-3 text-sm">
+      <div className="rounded-lg border border-dashed border-primary p-4 mb-6 space-y-3 text-sm">
         {renderStepIndicator("approval", swapProgressState, completedSteps)}
         {renderStepIndicator("signature", swapProgressState, completedSteps)}
         {renderStepIndicator("transaction", swapProgressState, completedSteps)}
@@ -238,7 +238,7 @@ export function SwapReviewView({
             return (
               <motion.div
                 key={step}
-                className={`flex items-center justify-center rounded-full bg-[var(--sidebar-connect-button-bg)] border border-sidebar-border overflow-hidden ${
+                className={`flex items-center justify-center rounded-full bg-button border border-primary overflow-hidden ${
                   isActive ? 'animate-pulse' : ''
                 }`}
                 initial={false}
@@ -285,7 +285,7 @@ export function SwapReviewView({
       <div className="grid grid-cols-2 gap-3">
         <Button
           variant="outline"
-          className="relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 text-white/75 disabled:opacity-50"
+          className="relative border border-primary bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 text-white/75 disabled:opacity-50"
           onClick={handleChangeButton}
           disabled={isSwapping}
           style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
@@ -294,8 +294,8 @@ export function SwapReviewView({
         </Button>
         <Button
           className={isSwapping || swapProgressState === "init" || swapProgressState === "checking_allowance" 
-            ? "relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 !opacity-100 cursor-default text-white/75"
-            : "text-sidebar-primary border border-sidebar-primary bg-[#3d271b] hover:bg-[#3d271b]/90"
+            ? "relative border border-primary bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 !opacity-100 cursor-default text-white/75"
+            : "text-sidebar-primary border border-sidebar-primary bg-button-primary hover-button-primary"
           }
           onClick={handleConfirmSwap}
           disabled={isSwapping || swapProgressState === "init" || swapProgressState === "checking_allowance"}

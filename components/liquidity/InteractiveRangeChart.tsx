@@ -1071,7 +1071,7 @@ export function InteractiveRangeChart({
           <div className={`absolute top-1 right-1 flex gap-1 pointer-events-auto transition-opacity duration-200 ${isHovering ? 'opacity-100' : 'opacity-0'}`}>
           <button
             type="button"
-            className="h-5 w-5 flex items-center justify-center rounded border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] hover:brightness-110 hover:border-white/30"
+            className="h-5 w-5 flex items-center justify-center rounded border border-sidebar-border bg-button hover:brightness-110 hover:border-white/30"
             onClick={() => zoomByFactor(0.8)}
             aria-label="Zoom in"
           >
@@ -1079,7 +1079,7 @@ export function InteractiveRangeChart({
           </button>
           <button
             type="button"
-            className="h-5 w-5 flex items-center justify-center rounded border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] hover:brightness-110 hover:border-white/30"
+            className="h-5 w-5 flex items-center justify-center rounded border border-sidebar-border bg-button hover:brightness-110 hover:border-white/30"
             onClick={() => zoomByFactor(1.25)}
             aria-label="Zoom out"
           >
@@ -1087,7 +1087,7 @@ export function InteractiveRangeChart({
           </button>
           <button
             type="button"
-            className="h-5 w-5 flex items-center justify-center rounded border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] hover:brightness-110 hover:border-white/30"
+            className="h-5 w-5 flex items-center justify-center rounded border border-sidebar-border bg-button hover:brightness-110 hover:border-white/30"
             onClick={centerOnCurrentPrice}
             aria-label="Center on current price"
           >
@@ -1096,7 +1096,7 @@ export function InteractiveRangeChart({
           {onReset && (
             <button
               type="button"
-              className="h-5 w-5 flex items-center justify-center rounded border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] hover:brightness-110 hover:border-white/30"
+              className="h-5 w-5 flex items-center justify-center rounded border border-sidebar-border bg-button hover:brightness-110 hover:border-white/30"
               onClick={onReset}
               aria-label="Reset range"
             >

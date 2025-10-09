@@ -2838,7 +2838,7 @@ export function AddLiquidityForm({
 
               {/* Continue Button */}
               {!isConnected ? (
-                <div className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30"
+                <div className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md border border-sidebar-border bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30"
                   style={{ backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
                 >
                   {/* @ts-ignore */}
@@ -2852,9 +2852,9 @@ export function AddLiquidityForm({
                     (isWorking || isCalculating || isPoolStateLoading || isCheckingApprovals ||
                     (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0")) ||
                     isInsufficientBalance) ?
-                      "relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 !opacity-100 cursor-default text-white/75"
+                      "relative border border-sidebar-border bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 !opacity-100 cursor-default text-white/75"
                       :
-                      "text-sidebar-primary border border-sidebar-primary bg-[#3d271b] hover:bg-[#3d271b]/90"
+                      "text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90"
                   )}
                   onClick={handlePrepareAndSubmit}
                   disabled={isWorking ||

@@ -118,10 +118,10 @@ export function LoginForm({
               type="submit"
               className={
                 !password.trim()
-                  ? "w-full relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 text-white/75 hover:bg-[var(--sidebar-connect-button-bg)]"
+                  ? "w-full relative border border-sidebar-border bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 text-white/75 hover:bg-button"
                   : isLoading
-                    ? "w-full text-sidebar-primary border border-sidebar-primary bg-[#3d271b]/50 hover:bg-[#3d271b]/60 opacity-75 cursor-not-allowed"
-                    : "w-full text-sidebar-primary border border-sidebar-primary bg-[#3d271b] hover:bg-[#3d271b]/90"
+                    ? "w-full text-sidebar-primary border border-sidebar-primary bg-button-primary/50 hover:bg-button-primary/60 opacity-75 cursor-not-allowed"
+                    : "w-full text-sidebar-primary border border-sidebar-primary bg-button-primary hover-button-primary"
               }
               disabled={isLoading}
               style={!password.trim() ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
@@ -261,7 +261,7 @@ export default function LoginPage() {
           />
           <Badge
             variant="outline"
-            className="bg-[#3d271b] text-sidebar-primary border-sidebar-primary rounded-md font-normal hover:bg-[#4a2f1f] transition-colors cursor-default"
+            className="bg-button-primary text-sidebar-primary border-sidebar-primary rounded-md font-normal hover-button-primary transition-colors cursor-default"
             style={{ fontFamily: 'Consolas, monospace' }}
           >
             Beta

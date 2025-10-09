@@ -1601,7 +1601,7 @@ export function AddLiquidityModal({
                   <div className="grid grid-cols-2 gap-3 pt-2">
                     <Button 
                       variant="outline" 
-                      className="relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75 disabled:opacity-50" 
+                      className="relative border border-sidebar-border bg-button px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75 disabled:opacity-50" 
                       onClick={() => onOpenChange(false)} 
                       disabled={isWorking || isIncreasingLiquidity}
                       style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
@@ -1611,8 +1611,8 @@ export function AddLiquidityModal({
 
                     <Button
                       className={checkInsufficientBalanceIncrease() ?
-                        "relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75" :
-                        "text-sidebar-primary border border-sidebar-primary bg-[#3d271b] hover:bg-[#3d271b]/90"
+                        "relative border border-sidebar-border bg-button px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75" :
+                        "text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90"
                       }
                       onClick={handleConfirmIncrease}
                       disabled={isIncreasingLiquidity || isIncreaseCalculating || (parseFloat(increaseAmount0 || "0") <= 0 && parseFloat(increaseAmount1 || "0") <= 0) || checkInsufficientBalanceIncrease()}
@@ -1635,7 +1635,7 @@ export function AddLiquidityModal({
                     </div>
 
                       {/* Main Position Section */}
-                      <div className="rounded-lg bg-[var(--token-container-background)] p-4 border border-sidebar-border/60">
+                      <div className="rounded-lg bg-container p-4 border border-sidebar-border/60">
                         {/* Token Amounts with Large Icons - 2 Column Layout */}
                         <div className="space-y-4">
                           <div className="flex justify-between items-start">
@@ -1892,7 +1892,7 @@ export function AddLiquidityModal({
                     <div className="grid grid-cols-2 gap-3 pt-2">
                       <Button 
                         variant="outline" 
-                        className="relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75 disabled:opacity-50" 
+                        className="relative border border-sidebar-border bg-button px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75 disabled:opacity-50" 
                         onClick={() => {
                           if (showTransactionOverview) {
                             setShowTransactionOverview(false);
@@ -1908,7 +1908,7 @@ export function AddLiquidityModal({
                       </Button>
 
                       <Button
-                        className="text-sidebar-primary border border-sidebar-primary bg-[#3d271b] hover:bg-[#3d271b]/90"
+                        className="text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90"
                         onClick={showTransactionOverview ? handleExecuteTransaction : handleFinalConfirmIncrease}
                         disabled={increaseIsWorking || isIncreasingLiquidity || isIncreaseCalculating}
                       >
@@ -2073,7 +2073,7 @@ export function AddLiquidityModal({
             <div className="grid grid-cols-2 gap-3 pt-2">
               <Button 
                 variant="outline" 
-                className="relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75 disabled:opacity-50" 
+                className="relative border border-sidebar-border bg-button px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75 disabled:opacity-50" 
                 onClick={() => onOpenChange(false)} 
                 disabled={isWorking}
                 style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
@@ -2082,7 +2082,7 @@ export function AddLiquidityModal({
               </Button>
 
               <Button
-                className={(isWorking || isCalculating || !token0Symbol || !token1Symbol || (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0"))) ? "relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 !opacity-100 cursor-default text-white/75" : "text-sidebar-primary border border-sidebar-primary bg-[#3d271b] hover:bg-[#3d271b]/90"}
+                className={(isWorking || isCalculating || !token0Symbol || !token1Symbol || (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0"))) ? "relative border border-sidebar-border bg-button px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 !opacity-100 cursor-default text-white/75" : "text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90"}
                 onClick={() => {
                   if (step === 'input') handlePrepareMint();
                   else if (step === 'approve') handleApprove();
@@ -2163,7 +2163,7 @@ export function AddLiquidityModal({
           <div className="border rounded-lg p-6" style={{ backgroundColor: 'var(--modal-background)' }}>
             {/* Transaction Summary */}
             <div 
-              className="mb-6 flex items-center justify-between rounded-lg border border-[var(--swap-border)] p-4 hover:bg-muted/30 transition-colors cursor-pointer" 
+              className="mb-6 flex items-center justify-between rounded-lg border border-sidebar-border p-4 hover:bg-muted/30 transition-colors cursor-pointer" 
               onClick={() => {
                 // Don't call onLiquidityAdded here to prevent auto-close
                 // The callback was already called when transaction confirmed
@@ -2234,7 +2234,7 @@ export function AddLiquidityModal({
             {/* Success Icon and Message */}
             <div className="my-8 flex flex-col items-center justify-center">
               <div
-                className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-[var(--sidebar-connect-button-bg)] border border-sidebar-border overflow-hidden"
+                className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-button border border-sidebar-border overflow-hidden"
                 style={{
                   backgroundImage: 'url(/pattern_wide.svg)',
                   backgroundSize: 'cover',
@@ -2281,7 +2281,7 @@ export function AddLiquidityModal({
             {/* Action Button */}
             <Button
               variant="outline"
-              className="w-full relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 text-white/75"
+              className="w-full relative border border-sidebar-border bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 text-white/75"
               onClick={() => {
                 // Don't call onLiquidityAdded here to prevent auto-close
                 // The callback was already called when transaction confirmed

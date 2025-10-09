@@ -386,7 +386,7 @@ export function NavMain({
                 {item.isFaucet && faucetCooldown && (
                   faucetCooldown === "Claim" ? (
                     isFaucetUnread && (
-                      <SidebarMenuBadge className="bg-[#3d271b] text-sidebar-primary border border-sidebar-primary">1</SidebarMenuBadge>
+                      <SidebarMenuBadge className="bg-button-primary text-sidebar-primary border border-sidebar-primary">1</SidebarMenuBadge>
                     )
                   ) : (
                     <>

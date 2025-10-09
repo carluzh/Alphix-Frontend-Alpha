@@ -136,6 +136,7 @@ export function SwapInputView({
   const hoverPreviewActiveRef = React.useRef(false);
   const committedPoolIndexRef = React.useRef<number>(0);
   const [balanceWiggleCount, setBalanceWiggleCount] = React.useState(0);
+  const [isBuyInputFocused, setIsBuyInputFocused] = React.useState(false);
   const wiggleControls = useAnimation();
 
   const formatPercentFromBps = React.useCallback((bps: number) => {
@@ -260,9 +261,9 @@ export function SwapInputView({
         </div>
         <motion.div 
           className={cn(
-            "rounded-lg bg-[var(--token-container-background)] p-4 border transition-colors hover:border-[var(--token-container-border-hover)]",
+            "rounded-lg bg-surface p-4 border transition-colors hover:border-primary",
             isSellInputFocused
-              ? "border-[var(--token-container-border-hover)]"
+              ? "border-primary"
               : "border-transparent"
           )}
           animate={wiggleControls}
@@ -310,7 +311,12 @@ export function SwapInputView({
             </span>
         </div>
         <div 
-          className="rounded-lg bg-[var(--token-container-background)] p-4 border border-transparent transition-colors hover:border-[var(--token-container-border-hover)]"
+          className={cn(
+            "rounded-lg bg-surface p-4 border transition-colors hover:border-primary",
+            isBuyInputFocused
+              ? "border-primary"
+              : "border-transparent"
+          )}
         >
           <div className="flex items-center gap-2">
             <TokenSelector
@@ -325,6 +331,8 @@ export function SwapInputView({
               <Input
                 value={toAmount}
                 onChange={onToAmountChange}
+                onFocus={() => setIsBuyInputFocused(true)}
+                onBlur={() => setIsBuyInputFocused(false)}
                 disabled={!isConnected || isAttemptingSwitch}
                 className={cn(
                   "text-right text-xl md:text-xl font-medium h-auto p-0 focus-visible:ring-0 focus-visible:ring-offset-0 border-0 bg-transparent",
@@ -692,7 +700,7 @@ export function SwapInputView({
                           key={val}
                           type="button"
                           className={cn(
-                            "px-1.5 py-0.5 text-xs font-normal rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-muted-foreground transition-colors",
+                            "px-1.5 py-0.5 text-xs font-normal rounded-md border border-primary bg-button text-muted-foreground transition-colors",
                             "hover:brightness-110 hover:border-white/30",
                             slippage === val && "border-white/30"
                           )}
@@ -705,7 +713,7 @@ export function SwapInputView({
                       {!isCustomSlippage ? (
                         <button
                           type="button"
-                          className="px-1.5 py-0.5 text-xs font-normal rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-muted-foreground transition-colors hover:brightness-110 hover:border-white/30"
+                          className="px-1.5 py-0.5 text-xs font-normal rounded-md border border-primary bg-button text-muted-foreground transition-colors hover:brightness-110 hover:border-white/30"
                           onClick={() => {
                             setIsCustomSlippage(true);
                             setCustomSlippage(slippage.toString());
@@ -745,9 +753,9 @@ export function SwapInputView({
               "w-full", // Always applies full width
               // Conditional styles for disabled state (matches sidebar's Connect Wallet)
               actionButtonDisabled ?
-                "relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 !opacity-100 cursor-default text-white/75"
+                "relative border border-primary bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 !opacity-100 cursor-default text-white/75"
                 : // Styles for enabled state (original "btn-primary" look)
-                "text-sidebar-primary border border-sidebar-primary bg-[#3d271b] hover:bg-[#3d271b]/90"
+                "text-sidebar-primary border border-sidebar-primary bg-button-primary hover-button-primary transition-colors duration-200"
             )}
             onClick={handleSwap}
             disabled={actionButtonDisabled ||
@@ -765,7 +773,7 @@ export function SwapInputView({
           </Button>
         ) : (
           <div
-            className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30"
+            className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md border border-primary bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30"
             style={{ backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
           >
             {/* @ts-expect-error custom element provided by wallet kit */}

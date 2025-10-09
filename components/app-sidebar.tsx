@@ -185,7 +185,7 @@ export function AppSidebar({ variant = "floating", onBetaClick, ...props }: AppS
                   {/* Show 'Beta' by default; on hover swap to version text without resizing */}
                   <Badge
                     variant="outline"
-                    className="bg-[#3d271b] text-sidebar-primary border-sidebar-primary rounded-md font-normal hover:bg-[#4a2f1f] transition-colors cursor-pointer inline-block"
+                    className="bg-button-primary text-sidebar-primary border-sidebar-primary rounded-md font-normal hover-button-primary transition-colors cursor-pointer inline-block"
                     style={{ fontFamily: 'Consolas, monospace' }}
                     title="Click to show update info"
                     onMouseEnter={() => setBadgeHovered(true)}

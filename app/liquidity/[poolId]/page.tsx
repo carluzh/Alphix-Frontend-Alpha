@@ -24,7 +24,6 @@ import { getPoolById, getPoolSubgraphId, getToken, getAllTokens } from "@/lib/po
 import { usePoolState, useAllPrices, useUncollectedFees, useUncollectedFeesBatch } from "@/components/data/hooks";
 import { getPoolFeeBps } from "@/lib/client-cache";
 import { SafeStorage } from "@/lib/safe-storage";
-import "@/lib/cache-keys"; // Ensure global CacheKeys is loaded
 import { RetryUtility } from "@/lib/retry-utility";
 import {
   ChartConfig,
@@ -2538,7 +2537,7 @@ export default function PoolDetailPage() {
                           <span className="font-medium mb-0.5 truncate">{currentPoolData.pair}</span>
                           <div className="flex items-center gap-3">
                             {(getPoolById(poolId)?.type || currentPoolData?.type) && (
-                              <span className="px-1.5 py-0.5 text-xs font-normal rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-muted-foreground" style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}>
+                              <span className="px-1.5 py-0.5 text-xs font-normal rounded-md border border-sidebar-border bg-button text-muted-foreground" style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}>
                                 {getPoolById(poolId)?.type || (currentPoolData as any)?.type}
                               </span>
                             )}
@@ -2625,7 +2624,7 @@ export default function PoolDetailPage() {
                                 <UITooltipProvider delayDuration={0}>
                                   <UITooltip>
                                     <UITooltipTrigger asChild>
-                                      <span className="px-1.5 py-0.5 text-xs font-normal rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-muted-foreground flex-shrink-0 cursor-default" style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}>
+                                      <span className="px-1.5 py-0.5 text-xs font-normal rounded-md border border-sidebar-border bg-button text-muted-foreground flex-shrink-0 cursor-default" style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}>
                                         {getPoolById(poolId)?.type || (currentPoolData as any)?.type}
                                       </span>
                                     </UITooltipTrigger>
@@ -2914,7 +2913,7 @@ export default function PoolDetailPage() {
                                       if (!dataPoint) return null;
 
                                       return (
-                                        <div className="grid min-w-[8rem] items-start gap-1.5 rounded-lg border border-sidebar-border bg-[#0f0f0f] px-2.5 py-1.5 text-xs shadow-xl">
+                                        <div className="grid min-w-[8rem] items-start gap-1.5 rounded-lg border border-sidebar-border bg-main px-2.5 py-1.5 text-xs shadow-xl">
                                           <div className="font-medium">
                                             {new Date(dataPoint.date).toLocaleDateString("en-US", {
                                               month: "long",
@@ -3046,7 +3045,7 @@ export default function PoolDetailPage() {
                                 content={
                                   <ChartTooltipContent 
                                     indicator="line"
-                                    className="!bg-[#0f0f0f] !text-card-foreground border border-sidebar-border shadow-lg rounded-lg"
+                                    className="!bg-main !text-card-foreground border border-sidebar-border shadow-lg rounded-lg"
                                     formatter={(value, name, item, index, payload) => {
                                       const itemConfig = chartConfig[name as keyof typeof chartConfig];
                                       const indicatorColor = item?.color || (itemConfig && 'color' in itemConfig ? itemConfig.color : '#404040');
@@ -3207,7 +3206,7 @@ export default function PoolDetailPage() {
                                       if (!dataPoint) return null;
 
                                       return (
-                                        <div className="grid min-w-[8rem] items-start gap-1.5 rounded-lg border border-sidebar-border bg-[#0f0f0f] px-2.5 py-1.5 text-xs shadow-xl">
+                                        <div className="grid min-w-[8rem] items-start gap-1.5 rounded-lg border border-sidebar-border bg-main px-2.5 py-1.5 text-xs shadow-xl">
                                           <div className="font-medium">
                                             {new Date(dataPoint.date).toLocaleDateString("en-US", {
                                               month: "long",
@@ -3339,7 +3338,7 @@ export default function PoolDetailPage() {
                                 content={
                                   <ChartTooltipContent 
                                     indicator="line"
-                                    className="!bg-[#0f0f0f] !text-card-foreground border border-sidebar-border shadow-lg rounded-lg"
+                                    className="!bg-main !text-card-foreground border border-sidebar-border shadow-lg rounded-lg"
                                     formatter={(value, name, item, index, payload) => {
                                       const itemConfig = chartConfig[name as keyof typeof chartConfig];
                                       const indicatorColor = item?.color || (itemConfig && 'color' in itemConfig ? itemConfig.color : '#404040');
@@ -3450,7 +3449,7 @@ export default function PoolDetailPage() {
                     e.stopPropagation();
                     setAddLiquidityFormOpen(true);
                   }}
-                  className="flex h-9 cursor-pointer items-center justify-center gap-2 rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30"
+                  className="flex h-9 cursor-pointer items-center justify-center gap-2 rounded-md border border-sidebar-border bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30"
                   style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
                 >
                   <PlusIcon className="h-4 w-4 relative z-0" />
@@ -3903,7 +3902,7 @@ export default function PoolDetailPage() {
 
                   {/* Learn More Button */}
                   <div
-                    className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:bg-accent hover:brightness-110 hover:border-white/30 text-white"
+                    className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md border border-sidebar-border bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:bg-accent hover:brightness-110 hover:border-white/30 text-white"
                     style={{ backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
                     onClick={() => window.open('https://alphix.gitbook.io/docs/products/dynamic-fee', '_blank')}
                   >
