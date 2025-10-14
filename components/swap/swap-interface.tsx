@@ -1842,17 +1842,38 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 const effectiveTimestamp = BigInt(Math.floor(Date.now() / 1000));
                 const effectiveFallbackSigDeadline = effectiveTimestamp + BigInt(30 * 60); // 30 min fallback
 
-                // Prepare limits based on swap type
+                // Prepare limits based on swap type using BigInt to avoid precision issues
                 const isExactOut = lastEditedSideRef.current === 'to';
                 const toDecimals = toToken.decimals;
                 const fromDecimals = fromToken.decimals;
-                // ExactIn: compute minOut; ExactOut: compute maxIn
-                const quotedOutNum = parseFloat(toAmount || "0");
-                const quotedInNum = parseFloat(fromAmount || "0");
-                const minOutNum = quotedOutNum > 0 ? quotedOutNum * (1 - slippage / 100) : 0;
-                const maxInNum = quotedInNum > 0 ? quotedInNum * (1 + slippage / 100) : 0;
-                const minimumReceivedStr = minOutNum.toFixed(toDecimals);
-                const maximumInputStr = maxInNum.toFixed(fromDecimals);
+                
+                // Calculate slippage using BigInt math to avoid floating point precision issues
+                let minimumReceivedStr: string;
+                let maximumInputStr: string;
+                
+                try {
+                    // Parse the quoted amounts to BigInt (smallest units)
+                    const quotedOutBigInt = safeParseUnits(toAmount || "0", toDecimals);
+                    const quotedInBigInt = safeParseUnits(fromAmount || "0", fromDecimals);
+                    
+                    // Calculate min/max using BigInt arithmetic
+                    // minOut = quotedOut * (100 - slippage) / 100
+                    const minOutBigInt = (quotedOutBigInt * BigInt(Math.floor((100 - slippage) * 100))) / BigInt(10000);
+                    // maxIn = quotedIn * (100 + slippage) / 100
+                    const maxInBigInt = (quotedInBigInt * BigInt(Math.floor((100 + slippage) * 100))) / BigInt(10000);
+                    
+                    // Format back to decimal strings
+                    minimumReceivedStr = formatUnits(minOutBigInt, toDecimals);
+                    maximumInputStr = formatUnits(maxInBigInt, fromDecimals);
+                } catch (err) {
+                    // Fallback to floating point calculation if BigInt fails
+                    const quotedOutNum = parseFloat(toAmount || "0");
+                    const quotedInNum = parseFloat(fromAmount || "0");
+                    const minOutNum = quotedOutNum > 0 ? quotedOutNum * (1 - slippage / 100) : 0;
+                    const maxInNum = quotedInNum > 0 ? quotedInNum * (1 + slippage / 100) : 0;
+                    minimumReceivedStr = minOutNum.toFixed(toDecimals);
+                    maximumInputStr = maxInNum.toFixed(fromDecimals);
+                }
 
                 // Use dummy permit data for native ETH
                 const bodyForSwapTx = {
@@ -2046,16 +2067,38 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
             const effectiveTimestamp = BigInt(Math.floor(Date.now() / 1000));
             const effectiveFallbackSigDeadline = effectiveTimestamp + BigInt(30 * 60); // 30 min fallback
 
-            // Prepare limits based on swap type
+            // Prepare limits based on swap type using BigInt to avoid precision issues
             const isExactOut2 = lastEditedSideRef.current === 'to';
             const toDecimals2 = toToken.decimals;
             const fromDecimals2 = fromToken.decimals;
-            const quotedOutNum2 = parseFloat(toAmount || "0");
-            const quotedInNum2 = parseFloat(fromAmount || "0");
-            const minOutNum2 = quotedOutNum2 > 0 ? quotedOutNum2 * (1 - slippage / 100) : 0;
-            const maxInNum2 = quotedInNum2 > 0 ? quotedInNum2 * (1 + slippage / 100) : 0;
-            const minimumReceivedStr = minOutNum2.toFixed(toDecimals2);
-            const maximumInputStr = maxInNum2.toFixed(fromDecimals2);
+            
+            // Calculate slippage using BigInt math to avoid floating point precision issues
+            let minimumReceivedStr: string;
+            let maximumInputStr: string;
+            
+            try {
+                // Parse the quoted amounts to BigInt (smallest units)
+                const quotedOutBigInt = safeParseUnits(toAmount || "0", toDecimals2);
+                const quotedInBigInt = safeParseUnits(fromAmount || "0", fromDecimals2);
+                
+                // Calculate min/max using BigInt arithmetic
+                // minOut = quotedOut * (100 - slippage) / 100
+                const minOutBigInt = (quotedOutBigInt * BigInt(Math.floor((100 - slippage) * 100))) / BigInt(10000);
+                // maxIn = quotedIn * (100 + slippage) / 100
+                const maxInBigInt = (quotedInBigInt * BigInt(Math.floor((100 + slippage) * 100))) / BigInt(10000);
+                
+                // Format back to decimal strings
+                minimumReceivedStr = formatUnits(minOutBigInt, toDecimals2);
+                maximumInputStr = formatUnits(maxInBigInt, fromDecimals2);
+            } catch (err) {
+                // Fallback to floating point calculation if BigInt fails
+                const quotedOutNum2 = parseFloat(toAmount || "0");
+                const quotedInNum2 = parseFloat(fromAmount || "0");
+                const minOutNum2 = quotedOutNum2 > 0 ? quotedOutNum2 * (1 - slippage / 100) : 0;
+                const maxInNum2 = quotedInNum2 > 0 ? quotedInNum2 * (1 + slippage / 100) : 0;
+                minimumReceivedStr = minOutNum2.toFixed(toDecimals2);
+                maximumInputStr = maxInNum2.toFixed(fromDecimals2);
+            }
 
             // Extract permit information based on the new API structure
             let permitNonce, permitExpiration, permitSigDeadline;

@@ -3,22 +3,27 @@ import { getAddress, parseUnits, encodeFunctionData, type Address, type Hex, typ
 
 // Helper function to safely parse amounts and prevent scientific notation errors
 const safeParseUnits = (amount: string, decimals: number): bigint => {
-  // Convert scientific notation to decimal format
+  // Handle edge case where amount is "0" or empty
+  if (!amount || amount === "0" || amount === "0.0") {
+    return 0n;
+  }
+  
+  // Check if the amount is in scientific notation
   const numericAmount = parseFloat(amount);
   if (isNaN(numericAmount)) {
     throw new Error("Invalid number format");
   }
   
-  // Convert to string with full decimal representation (no scientific notation)
-  const fullDecimalString = numericAmount.toFixed(decimals);
+  // If the string contains 'e' or 'E', it's in scientific notation - convert it
+  if (amount.toLowerCase().includes('e')) {
+    const fullDecimalString = numericAmount.toFixed(decimals);
+    const trimmedString = fullDecimalString.replace(/\.?0+$/, '');
+    const finalString = trimmedString === '.' ? '0' : trimmedString;
+    return parseUnits(finalString, decimals);
+  }
   
-  // Remove trailing zeros after decimal point
-  const trimmedString = fullDecimalString.replace(/\.?0+$/, '');
-  
-  // If the result is just a decimal point, return "0"
-  const finalString = trimmedString === '.' ? '0' : trimmedString;
-  
-  return parseUnits(finalString, decimals);
+  // Otherwise, use the string directly to preserve precision
+  return parseUnits(amount, decimals);
 };
 import { Token } from '@uniswap/sdk-core';
 import { RoutePlanner, CommandType } from '@uniswap/universal-router-sdk';
@@ -202,10 +207,16 @@ async function prepareV4ExactInSwapData(
         BigNumber.from(amountInSmallestUnits.toString()),
     ]);
 
-    // Third: TAKE_ALL
+    // Third: TAKE_ALL - take whatever amount the swap produced
+    // For native ETH output, use a very low minimum (1 wei) to avoid precision issues
+    // The SWAP action's amountOutMinimum already enforces the actual slippage protection
+    const outputCurrency = zeroForOne ? v4PoolKey.currency1 : v4PoolKey.currency0;
+    const isNativeOutput = outputCurrency === '0x0000000000000000000000000000000000000000';
+    const takeAllMin = isNativeOutput ? 1n : (minAmountOutSmallestUnits * 95n) / 100n;
+    
     v4Planner.addAction(Actions.TAKE_ALL, [
-        zeroForOne ? v4PoolKey.currency1 : v4PoolKey.currency0,
-        BigNumber.from(minAmountOutSmallestUnits.toString())
+        outputCurrency,
+        BigNumber.from(takeAllMin.toString())
     ]);
 
     const encodedActions = v4Planner.finalize() as Hex;
@@ -343,9 +354,23 @@ async function prepareV4MultiHopExactInSwapData(
     ]);
 
     // TAKE_ALL on true output currency (final currencyOut)
+    // For native ETH output, use a very low minimum (1 wei) to avoid precision issues
+    // The SWAP action's amountOutMinimum already enforces the actual slippage protection
+    const lastPoolKey = poolKeys[poolKeys.length - 1];
+    const finalOutputToken = createTokenSDK(route.path[route.path.length - 1] as TokenSymbol, chainId);
+    if (!finalOutputToken) {
+        throw new Error('Failed to create output token for TAKE_ALL');
+    }
+    // Determine which currency in the last pool is the output
+    const outputCurrency = getAddress(finalOutputToken.address!) === lastPoolKey.currency0 
+        ? lastPoolKey.currency0 
+        : lastPoolKey.currency1;
+    const isNativeOutput = outputCurrency === '0x0000000000000000000000000000000000000000';
+    const takeAllMin = isNativeOutput ? 1n : (minAmountOutSmallestUnits * 95n) / 100n;
+    
     v4Planner.addAction(Actions.TAKE_ALL, [
-        poolKeys[poolKeys.length - 1].currency1,
-        BigNumber.from(minAmountOutSmallestUnits.toString()),
+        outputCurrency,
+        BigNumber.from(takeAllMin.toString()),
     ]);
 
     const encodedActions = v4Planner.finalize() as Hex;
@@ -432,65 +457,105 @@ async function prepareV4MultiHopExactOutSwapData(
         });
         poolKeys.push(poolKey);
     }
-    // V4 doesn't support multihop ExactOut - use individual SWAP_EXACT_OUT_SINGLE actions
-    console.log(`[ExactOut Debug] Building individual hop actions (V4 limitation)`);
+    // V4 doesn't support multihop ExactOut natively
+    // We need to quote each hop individually to get the correct intermediate amounts
+    console.log(`[ExactOut Debug] Calculating intermediate amounts for each hop`);
     
-    // Process hops in reverse order for ExactOut (like V3)
+    // Get the quoter to calculate amounts for each hop
+    const quoterAddress = '0x4a6513c898fe1b2d0e78d3b0e0a4a151589b1cba'; // From config
+    const quoter = new ethers.Contract(quoterAddress, [
+        'function quoteExactOutputSingle((address,address,uint24,int24,address) poolKey, bool zeroForOne, uint128 amountOut, bytes hookData) external returns (uint256 amountIn, uint256 gasEstimate)'
+    ], provider);
+    
+    // Calculate amounts for each hop working backwards
+    const hopAmounts: { amountOut: bigint; maxAmountIn: bigint }[] = [];
+    let currentAmountOut = amountOutSmallestUnits;
+    
+    // Process hops in reverse order (from output to input)
     for (let i = poolKeys.length - 1; i >= 0; i--) {
         const poolKey = poolKeys[i];
-        const hop = poolKeys.length - 1 - i;
-        const routeHop = route.pools[i];
+        
+        // Determine swap direction for this hop
+        const token0 = createTokenSDK(route.pools[i].token0 as TokenSymbol, chainId);
+        const token1 = createTokenSDK(route.pools[i].token1 as TokenSymbol, chainId);
+        if (!token0 || !token1) throw new Error(`Failed to create tokens for hop ${i}`);
+        
+        // For the last hop, we want the final output amount
+        // For intermediate hops, we want the amount calculated from the previous hop
+        const hopAmountOut = currentAmountOut;
+        
+        // Determine which direction we're swapping
+        let zeroForOne: boolean;
+        if (i === poolKeys.length - 1) {
+            // Last hop: we're producing the final output
+            zeroForOne = getAddress(outputToken.address!) !== poolKey.currency0;
+        } else {
+            // Intermediate hop: we're producing input for the next hop
+            const nextHopInputToken = createTokenSDK(route.pools[i + 1].token0 as TokenSymbol, chainId);
+            zeroForOne = getAddress(nextHopInputToken!.address!) === poolKey.currency1;
+        }
+        
+        // Quote this hop to get required input
+        const quoteResult = await quoter.callStatic.quoteExactOutputSingle(
+            [poolKey.currency0, poolKey.currency1, poolKey.fee, poolKey.tickSpacing, poolKey.hooks],
+            zeroForOne,
+            hopAmountOut,
+            '0x'
+        );
+        
+        const hopMaxAmountIn = BigInt(quoteResult.amountIn.toString()) * maxAmountInSmallestUnits / amountOutSmallestUnits; // Scale by slippage
+        
+        console.log(`[ExactOut Debug] Hop ${i}: amountOut=${hopAmountOut.toString()}, maxAmountIn=${hopMaxAmountIn.toString()}`);
+        
+        hopAmounts.unshift({ amountOut: hopAmountOut, maxAmountIn: hopMaxAmountIn });
+        currentAmountOut = hopMaxAmountIn; // This becomes the output for the previous hop
+    }
+    
+    // Now build the swaps with correct amounts for each hop
+    for (let i = poolKeys.length - 1; i >= 0; i--) {
+        const poolKey = poolKeys[i];
+        const hopIndex = poolKeys.length - 1 - i;
+        const { amountOut: hopAmountOut, maxAmountIn: hopMaxAmountIn } = hopAmounts[hopIndex];
         
         let currencyIn: string;
         let currencyOut: string;
         let zeroForOne: boolean;
         
         if (i === poolKeys.length - 1) {
-            // Last hop: intermediate -> final output
             currencyIn = poolKey.currency0 === inputToken.address ? poolKey.currency1 : poolKey.currency0;
             currencyOut = outputToken.address;
         } else {
-            // Intermediate hops: previous intermediate -> next intermediate
             currencyIn = poolKey.currency0 === inputToken.address ? poolKey.currency1 : poolKey.currency0;
             currencyOut = poolKey.currency0 === currencyIn ? poolKey.currency1 : poolKey.currency0;
         }
         
         zeroForOne = getAddress(currencyIn) === poolKey.currency0;
         
-        // Use the route's calculated amounts for each hop
-        const hopAmountOut = BigNumber.from(amountOutSmallestUnits.toString());
-        const hopAmountInMaximum = BigNumber.from(maxAmountInSmallestUnits.toString());
-        
-        console.log(`[ExactOut Debug] Hop ${hop}: ${currencyIn} -> ${currencyOut}, zeroForOne: ${zeroForOne}`);
-        console.log(`[ExactOut Debug] Hop ${hop} amounts: amountOut=${hopAmountOut.toString()}, amountInMaximum=${hopAmountInMaximum.toString()}`);
-        
         v4Planner.addAction(Actions.SWAP_EXACT_OUT_SINGLE, [
             {
                 poolKey: poolKey,
                 zeroForOne: zeroForOne,
-                amountOut: hopAmountOut,
-                amountInMaximum: hopAmountInMaximum,
+                amountOut: BigNumber.from(hopAmountOut.toString()),
+                amountInMaximum: BigNumber.from(hopMaxAmountIn.toString()),
                 sqrtPriceLimitX96: BigNumber.from(0),
                 hookData: '0x'
             }
         ]);
-        // For each hop, settle the input currency and take the output currency
+        
+        // Settle and take for each hop
         if (i === poolKeys.length - 1) {
-            // Last hop: settle input currency (max amount needed)
             v4Planner.addAction(Actions.SETTLE_ALL, [
                 getAddress(currencyIn),
-                BigNumber.from(maxAmountInSmallestUnits.toString()),
+                BigNumber.from(hopMaxAmountIn.toString()),
             ]);
-            // Take final output currency (exact amount desired)
             v4Planner.addAction(Actions.TAKE_ALL, [
                 getAddress(currencyOut),
-                BigNumber.from(amountOutSmallestUnits.toString()),
+                BigNumber.from(hopAmountOut.toString()),
             ]);
         } else {
-            // Intermediate hops: settle input and take intermediate output
             v4Planner.addAction(Actions.SETTLE_ALL, [
                 getAddress(currencyIn),
-                BigNumber.from(maxAmountInSmallestUnits.toString()),
+                BigNumber.from(hopMaxAmountIn.toString()),
             ]);
             v4Planner.addAction(Actions.TAKE_ALL, [
                 getAddress(currencyOut),

@@ -5,7 +5,16 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "e2e:install": "playwright install --with-deps",
+    "e2e:fork": "anvil --fork-url %BASE_SEPOLIA_RPC% --chain-id 84532 --block-time 1",
+    "e2e:fork:unix": "anvil --fork-url $BASE_SEPOLIA_RPC --chain-id 84532 --block-time 1",
+    "e2e:build": "cross-env NEXT_PUBLIC_RPC_URL=http://127.0.0.1:8545 next build",
+    "e2e:start": "cross-env NEXT_PUBLIC_RPC_URL=http://127.0.0.1:8545 next start -p 3000",
+    "e2e": "npm run e2e:build && start-server-and-test e2e:start http://127.0.0.1:3000 'playwright test tests/e2e/swap-consolidated.spec.ts -c playwright.config.ts --reporter=line'",
+    "e2e:quick": "npm run e2e:build && start-server-and-test e2e:start http://127.0.0.1:3000 'playwright test tests/e2e/swap-consolidated.spec.ts -c playwright.config.ts --grep \"Quick Suite\" --reporter=line'",
+    "e2e:full": "npm run e2e:build && start-server-and-test e2e:start http://127.0.0.1:3000 'playwright test tests/e2e/swap-consolidated.spec.ts -c playwright.config.ts --grep \"Full Suite\" --reporter=line'",
+    "e2e:ci": "npm run e2e:build && start-server-and-test e2e:start http://127.0.0.1:3000 'playwright test tests/e2e/swap-consolidated.spec.ts -c playwright.config.ts --reporter=line'"
   },
   "dependencies": {
     "@dnd-kit/core": "latest",
@@ -14,6 +23,7 @@
     "@dnd-kit/utilities": "latest",
     "@emotion/is-prop-valid": "latest",
     "@hookform/resolvers": "^3.9.1",
+    "@playwright/test": "^1.56.0",
     "@radix-ui/react-accordion": "^1.2.2",
     "@radix-ui/react-alert-dialog": "^1.1.4",
     "@radix-ui/react-aspect-ratio": "^1.1.1",
@@ -87,6 +97,7 @@
     "zod": "latest"
   },
   "devDependencies": {
+    "@tenkeylabs/dappwright": "^2.11.3",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.8.0",
     "@testing-library/react": "^16.3.0",
@@ -95,11 +106,13 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^5.0.2",
+    "cross-env": "^7.0.3",
     "jsdom": "^26.1.0",
     "msw": "^2.11.0",
     "pino-pretty": "^13.0.0",
     "playwright": "^1.55.0",
     "postcss": "^8",
+    "start-server-and-test": "^2.0.8",
     "typescript": "5.8.3",
     "vitest": "^3.2.4"
   }

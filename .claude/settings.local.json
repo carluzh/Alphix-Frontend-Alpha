@@ -26,7 +26,18 @@
       "Bash(do echo \"=== $file ===\")",
       "Bash(npm run build:*)",
       "Bash(npm run test:run:*)",
-      "Bash(node:*)"
+      "Bash(node:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npx playwright test:*)",
+      "Bash(./run-e2e-tests.sh:*)",
+      "Bash(timeout:*)",
+      "Bash(tee:*)",
+      "Bash(pkill:*)",
+      "Bash(cd:*)",
+      "Bash(npm run test:*)",
+      "Bash(bash:*)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)"
     ],
     "deny": [],
     "ask": []

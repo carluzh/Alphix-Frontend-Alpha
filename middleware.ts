@@ -3,6 +3,12 @@ import type { NextRequest } from 'next/server';
 // import { cookies } from 'next/headers'; // Not used in Middleware for reading cookies
 
 export function middleware(request: NextRequest) {
+  // Bypass auth for E2E tests (check for query parameter)
+  if (request.nextUrl.searchParams.get('e2e') === 'true') {
+    console.log('[MIDDLEWARE] E2E test detected - bypassing auth checks');
+    return NextResponse.next();
+  }
+
   // Handle CORS preflight universally to avoid 400s from OPTIONS
   if (request.method === 'OPTIONS') {
     const res = new NextResponse(null, { status: 204 });

@@ -15,27 +15,32 @@ if (!projectId) {
 
 
 
-// Define Base Sepolia
+// Define Base Sepolia with support for custom RPC URL (for E2E testing with Anvil fork)
+const customRpcUrl = process.env.NEXT_PUBLIC_RPC_URL;
+const defaultRpcUrls = [
+  'https://sepolia.base.org',
+  'https://base-sepolia.drpc.org',
+  'https://base-sepolia.publicnode.com',
+  'https://1rpc.io/base-sepolia'
+];
+
+// Use custom RPC URL if set (for E2E testing), otherwise use default URLs
+const rpcUrls = customRpcUrl ? [customRpcUrl] : defaultRpcUrls;
+
+// For E2E testing with Anvil fork using chain ID 1337
+const isE2EMode = customRpcUrl?.includes('127.0.0.1') || customRpcUrl?.includes('localhost');
+const chainId = isE2EMode ? 1337 : 84532;
+
 export const baseSepolia = defineChain({
-  id: 84532,
-  name: 'Base Sepolia',
+  id: chainId,
+  name: isE2EMode ? 'Base Sepolia (local)' : 'Base Sepolia',
   nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
   rpcUrls: {
     default: { 
-      http: [
-        'https://sepolia.base.org',
-        'https://base-sepolia.drpc.org',
-        'https://base-sepolia.publicnode.com',
-        'https://1rpc.io/base-sepolia'
-      ] 
+      http: rpcUrls
     },
     public: { 
-      http: [
-        'https://sepolia.base.org',
-        'https://base-sepolia.drpc.org',
-        'https://base-sepolia.publicnode.com',
-        'https://1rpc.io/base-sepolia'
-      ] 
+      http: rpcUrls
     },
   },
   blockExplorers: {

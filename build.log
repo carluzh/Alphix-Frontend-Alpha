@@ -1,0 +1,95 @@
+
+> my-v0-project@0.1.0 e2e:build
+> cross-env NEXT_PUBLIC_RPC_URL=http://127.0.0.1:8545 next build
+
+   ▲ Next.js 15.2.4
+   - Environments: .env.local
+   - Experiments (use with caution):
+     ✓ webpackBuildWorker
+     ✓ parallelServerCompiles
+     ✓ parallelServerBuildTraces
+
+   Creating an optimized production build ...
+Browserslist: browsers data (caniuse-lite) is 6 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+ ✓ Compiled successfully in 20.0s
+   Skipping validation of types
+   Linting ...
+   Collecting page data ...
+   Generating static pages (0/18) ...
+   Generating static pages (4/18) 
+   Generating static pages (8/18) 
+[generatePoolsFromConfig] Processing pool: aeth-ausdt, Type: Standard
+[generatePoolsFromConfig] Processing pool: abtc-ausdc, Type: Standard
+[generatePoolsFromConfig] Processing pool: ausdc-ausdt, Type: Stable
+[generatePoolsFromConfig] Processing pool: eth-ausdt, Type: Standard
+[generatePoolsFromConfig] Processing pool: abtc-aeth, Type: Standard
+[generatePoolsFromConfig] Processing pool: ausdc-adai, Type: Stable
+[generatePoolsFromConfig] Processing pool: adai-aeth, Type: Standard
+   Generating static pages (13/18) 
+ ✓ Generating static pages (18/18)
+   Finalizing page optimization ...
+   Collecting build traces ...
+
+Route (app)                                           Size  First Load JS
+┌ ƒ /                                              16.5 kB         818 kB
+├ ƒ /_not-found                                      990 B         103 kB
+├ ƒ /api/cache-version                               169 B         103 kB
+├ ƒ /api/internal/revalidate-pools                   169 B         103 kB
+├ ƒ /api/liquidity/get-pools-batch                   452 B         205 kB
+├ ƒ /api/login                                       169 B         103 kB
+├ ƒ /api/logout                                      169 B         103 kB
+├ ƒ /api/maintenance-status                          169 B         103 kB
+├ ƒ /api/request-access                              169 B         103 kB
+├ ƒ /api/save-beta-user                              169 B         103 kB
+├ ƒ /brand                                         7.94 kB         183 kB
+├ ƒ /liquidity                                       20 kB         735 kB
+├ ƒ /liquidity/[poolId]                            60.9 kB         910 kB
+├ ƒ /login                                         7.18 kB         219 kB
+├ ƒ /maintenance                                   5.59 kB         171 kB
+├ ƒ /portfolio                                     25.3 kB         782 kB
+└ ƒ /swap                                          2.24 kB         827 kB
++ First Load JS shared by all                       102 kB
+  ├ chunks/1684-4a9ad7f60b34ee5d.js                45.6 kB
+  ├ chunks/4bd1b696-c7c7b3665c370d21.js            53.3 kB
+  └ other shared chunks (total)                     3.6 kB
+
+Route (pages)                                         Size  First Load JS
+┌ ƒ /api/internal/revalidate-chart                     0 B        93.8 kB
+├ ƒ /api/liquidity/calculate-liquidity-parameters      0 B        93.8 kB
+├ ƒ /api/liquidity/chart-tvl                           0 B        93.8 kB
+├ ƒ /api/liquidity/chart-volume                        0 B        93.8 kB
+├ ƒ /api/liquidity/check-approvals                     0 B        93.8 kB
+├ ƒ /api/liquidity/check-token-approvals               0 B        93.8 kB
+├ ƒ /api/liquidity/example                             0 B        93.8 kB
+├ ƒ /api/liquidity/get-bucket-depths                   0 B        93.8 kB
+├ ƒ /api/liquidity/get-historical-dynamic-fees         0 B        93.8 kB
+├ ƒ /api/liquidity/get-pool-params                     0 B        93.8 kB
+├ ƒ /api/liquidity/get-pool-state                      0 B        93.8 kB
+├ ƒ /api/liquidity/get-positions                       0 B        93.8 kB
+├ ƒ /api/liquidity/get-rolling-volume-fees             0 B        93.8 kB
+├ ƒ /api/liquidity/get-uncollected-fees                0 B        93.8 kB
+├ ƒ /api/liquidity/initialize-pool                     0 B        93.8 kB
+├ ƒ /api/liquidity/pool-metrics                        0 B        93.8 kB
+├ ƒ /api/liquidity/prepare-batch-tx                    0 B        93.8 kB
+├ ƒ /api/liquidity/prepare-decrease-tx                 0 B        93.8 kB
+├ ƒ /api/liquidity/prepare-mint-tx                     0 B        93.8 kB
+├ ƒ /api/liquidity/subgraph-head                       0 B        93.8 kB
+├ ƒ /api/misc/faucet                                   0 B        93.8 kB
+├ ƒ /api/portfolio/get-activity                        0 B        93.8 kB
+├ ƒ /api/prices                                        0 B        93.8 kB
+├ ƒ /api/prices/get-token-prices                       0 B        93.8 kB
+├ ƒ /api/swap/build-tx                                 0 B        93.8 kB
+├ ƒ /api/swap/get-dynamic-fee                          0 B        93.8 kB
+├ ƒ /api/swap/get-quote                                0 B        93.8 kB
+└ ƒ /api/swap/prepare-permit                           0 B        93.8 kB
++ First Load JS shared by all                      93.8 kB
+  ├ chunks/framework-fb2633265c141072.js           57.7 kB
+  ├ chunks/main-c2c96fb37385aa38.js                32.2 kB
+  └ other shared chunks (total)                     3.9 kB
+
+ƒ Middleware                                       32.8 kB
+
+ƒ  (Dynamic)  server-rendered on demand
+
