@@ -8,7 +8,7 @@ export default defineConfig({
   use: {
     baseURL: process.env.BASE_URL || 'http://127.0.0.1:3000',
     headless: false,
-    viewport: { width: 1280, height: 800 },
+    viewport: { width: 1900, height: 1000 },
     ignoreHTTPSErrors: true,
     video: 'off',
     screenshot: 'only-on-failure',

@@ -54,9 +54,15 @@ elif [ "$SUITE" = "swap" ]; then
     SUITE_NAME="Swap (All Sessions)"
   fi
 elif [ "$SUITE" = "liquidity" ]; then
-  SUITE_NAME="Liquidity"
   TEST_FILE="liquidity.spec.ts"
-  GREP_PATTERN="^\[|^  |^✓|^===|^Session|^Error|failed|passed"
+  GREP_PATTERN="^\[|^  |^✓|^===|^Session|^Error|failed|passed|Balance|Warning|Quote|Position|Deposit|Approval|Permit|PART|STARTING|COMPLETE"
+
+  if [ "$MODE" = "quick" ]; then
+    SUITE_NAME="Liquidity (Session 1 Only)"
+    GREP_PATTERN="^\[|^  |^✓|^===|^Session|^Error|failed|passed|PART|STARTING|COMPLETE"
+  else
+    SUITE_NAME="Liquidity (All Sessions)"
+  fi
 elif [ "$SUITE" = "portfolio" ]; then
   SUITE_NAME="Portfolio"
   TEST_FILE="portfolio.spec.ts"

@@ -46,10 +46,13 @@ if "%SUITE%"=="all" (
     set NPM_SCRIPT=e2e:full
   )
 ) else if "%SUITE%"=="liquidity" (
-  set SUITE_NAME=Liquidity
-  REM Future: set NPM_SCRIPT=e2e:liquidity
-  echo Test suite not yet implemented: liquidity
-  goto cleanup
+  if "%MODE%"=="quick" (
+    set SUITE_NAME=Liquidity ^(Session 1 Only^)
+    set NPM_SCRIPT=e2e:liquidity:quick
+  ) else (
+    set SUITE_NAME=Liquidity ^(All Sessions^)
+    set NPM_SCRIPT=e2e:liquidity
+  )
 ) else if "%SUITE%"=="portfolio" (
   set SUITE_NAME=Portfolio
   REM Future: set NPM_SCRIPT=e2e:portfolio
