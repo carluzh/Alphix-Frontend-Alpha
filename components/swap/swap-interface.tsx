@@ -658,30 +658,32 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   const handleChangeButton = () => {
     // Force a full state reset by unmounting and remounting
     // Use a two-step approach
-    
+
     // First, clear any variables that might persist
     window.swapBuildData = undefined;
-    
+
     // Force reset of completedSteps (most important for visual feedback)
     setCompletedSteps([]);
-    
+
     // Then force back to input state immediately
     setSwapState("input");
-    
+
     // Reset all other states as well EXCEPT permit data
     setSwapProgressState("init");
     setSwapError(null);
     setIsSwapping(false);
-    
-    // Note: We're NOT clearing existingPermitData
-    // Explicitly refresh the quote for the current input so UI is consistent
-    if (fromAmount && parseFloat(fromAmount) > 0) {
-      fetchQuote(fromAmount);
-    } else {
-      setToAmount("0");
-      setQuoteError(null);
-      setRouteInfo(null);
-    }
+
+    // CRITICAL FIX: Don't re-fetch quote when returning from review
+    // The existing quote data (fromAmount, toAmount, routeInfo) is already correct
+    // Re-fetching would cause:
+    // 1. Rounding issues for ExactOut (user wants EXACT output preserved)
+    // 2. Potential failures for complex multihop routes
+    // The amounts and route remain unchanged from what was displayed in review
+
+    // Reset lastEditedSideRef to 'from' for any future edits after returning
+    lastEditedSideRef.current = 'from';
+
+    // Note: We're NOT clearing existingPermitData or re-fetching quotes
   };
 
   // Effect for handling wrong network notification
@@ -1390,9 +1392,8 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
           fromTokenSymbol: fromToken.symbol,
           toTokenSymbol: toToken.symbol,
           chainId: currentChainId,
-          checkExisting: true,
         };
-        
+
         console.log("DEBUG: fetchPermitData request body:", requestBody);
         console.log("DEBUG: Individual values:", {
           accountAddress,
@@ -1401,7 +1402,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
           toTokenSymbol: toToken.symbol,
           currentChainId
         });
-        
+
         const response = await fetch('/api/swap/prepare-permit', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1575,7 +1576,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                     fromTokenSymbol: fromToken.symbol,
                     toTokenSymbol: toToken.symbol,
                     chainId: currentChainId,
-                    checkExisting: true, // Always check validity when fetching
                 }),
             });
             const data = await response.json();
@@ -1708,9 +1708,10 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 primaryType: 'PermitSingle',
                 message: messageToSign,
             });
-            
+
             if (!signatureFromSigning) throw new Error("Signature process did not return a valid signature.");
-            setObtainedSignature(signatureFromSigning); // Store the obtained signature
+            setObtainedSignature(signatureFromSigning);
+            await new Promise(resolve => setTimeout(resolve, 50));
 
             // Show signature success toast with deadline duration
             const currentTime = Math.floor(Date.now() / 1000);
@@ -2100,20 +2101,15 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 maximumInputStr = maxInNum2.toFixed(fromDecimals2);
             }
 
-            // Extract permit information based on the new API structure
+            // Extract permit information - always use fresh permit data (never reuse existing permits)
             let permitNonce, permitExpiration, permitSigDeadline;
-            if (permitDetailsToUse.needsPermit === false && permitDetailsToUse.existingPermit) {
-                // Use existing permit data
-                permitNonce = permitDetailsToUse.existingPermit.nonce;
-                permitExpiration = permitDetailsToUse.existingPermit.expiration;
-                permitSigDeadline = effectiveFallbackSigDeadline.toString(); // Use fallback for existing permits
-            } else if (permitDetailsToUse.needsPermit === true && permitDetailsToUse.permitData) {
-                // Use new permit data
+            if (permitDetailsToUse.needsPermit === true && permitDetailsToUse.permitData) {
+                // Use fresh permit data from signature
                 permitNonce = permitDetailsToUse.permitData.message.details.nonce;
                 permitExpiration = permitDetailsToUse.permitData.message.details.expiration;
                 permitSigDeadline = permitDetailsToUse.permitData.message.sigDeadline.toString();
             } else {
-                throw new Error("Invalid permit data structure");
+                throw new Error("Invalid permit data structure - fresh signature required");
             }
 
             const bodyForSwapTx = {

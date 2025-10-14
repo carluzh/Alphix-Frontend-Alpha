@@ -88,8 +88,7 @@ export default async function handler(req: PreparePermitRequest, res: NextApiRes
             return res.status(200).json({
                 ok: true,
                 message: 'Native ETH swap - no permit required',
-                needsPermit: false,
-                existingPermit: null
+                needsPermit: false
             });
         }
 
@@ -131,23 +130,7 @@ export default async function handler(req: PreparePermitRequest, res: NextApiRes
         const [currentAmount, currentExpiration, nonce] = currentNonce;
         const currentTimestamp = Math.floor(Date.now() / 1000);
 
-        // Check if existing permit is still valid
-        const hasValidExistingPermit = currentAmount > 0n && currentExpiration > currentTimestamp;
-
-        if (hasValidExistingPermit) {
-            return res.status(200).json({
-                ok: true,
-                message: 'Valid existing permit found',
-                needsPermit: false,
-                existingPermit: {
-                    amount: currentAmount.toString(),
-                    expiration: currentExpiration,
-                    nonce: nonce
-                }
-            });
-        }
-
-        // Need new permit - generate permit data
+        // Always generate fresh permit data (never reuse existing permits to avoid AllowanceExpired errors)
         const expiration = currentTimestamp + (7 * 24 * 60 * 60); // 7 days from now
         const sigDeadline = BigInt(currentTimestamp + (60 * 60)); // 1 hour from now
 

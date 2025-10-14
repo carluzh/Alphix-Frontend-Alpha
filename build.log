@@ -13,13 +13,14 @@
 Browserslist: browsers data (caniuse-lite) is 6 months old. Please run:
   npx update-browserslist-db@latest
   Why you should do it regularly: https://github.com/browserslist/update-db#readme
- ✓ Compiled successfully in 20.0s
+ ✓ Compiled successfully in 22.0s
    Skipping validation of types
    Linting ...
    Collecting page data ...
    Generating static pages (0/18) ...
    Generating static pages (4/18) 
    Generating static pages (8/18) 
+   Generating static pages (13/18) 
 [generatePoolsFromConfig] Processing pool: aeth-ausdt, Type: Standard
 [generatePoolsFromConfig] Processing pool: abtc-ausdc, Type: Standard
 [generatePoolsFromConfig] Processing pool: ausdc-ausdt, Type: Stable
@@ -27,7 +28,6 @@ Browserslist: browsers data (caniuse-lite) is 6 months old. Please run:
 [generatePoolsFromConfig] Processing pool: abtc-aeth, Type: Standard
 [generatePoolsFromConfig] Processing pool: ausdc-adai, Type: Stable
 [generatePoolsFromConfig] Processing pool: adai-aeth, Type: Standard
-   Generating static pages (13/18) 
  ✓ Generating static pages (18/18)
    Finalizing page optimization ...
    Collecting build traces ...

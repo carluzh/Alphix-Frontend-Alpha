@@ -11,10 +11,11 @@
     "e2e:fork:unix": "anvil --fork-url $BASE_SEPOLIA_RPC --chain-id 84532 --block-time 1",
     "e2e:build": "cross-env NEXT_PUBLIC_RPC_URL=http://127.0.0.1:8545 next build",
     "e2e:start": "cross-env NEXT_PUBLIC_RPC_URL=http://127.0.0.1:8545 next start -p 3000",
-    "e2e": "npm run e2e:build && start-server-and-test e2e:start http://127.0.0.1:3000 'playwright test tests/e2e/swap-consolidated.spec.ts -c playwright.config.ts --reporter=line'",
-    "e2e:quick": "npm run e2e:build && start-server-and-test e2e:start http://127.0.0.1:3000 'playwright test tests/e2e/swap-consolidated.spec.ts -c playwright.config.ts --grep \"Quick Suite\" --reporter=line'",
-    "e2e:full": "npm run e2e:build && start-server-and-test e2e:start http://127.0.0.1:3000 'playwright test tests/e2e/swap-consolidated.spec.ts -c playwright.config.ts --grep \"Full Suite\" --reporter=line'",
-    "e2e:ci": "npm run e2e:build && start-server-and-test e2e:start http://127.0.0.1:3000 'playwright test tests/e2e/swap-consolidated.spec.ts -c playwright.config.ts --reporter=line'"
+    "e2e": "npm run e2e:build && start-server-and-test e2e:start http://127.0.0.1:3000 'playwright test tests/swap.spec.ts -c tests/playwright.config.ts --reporter=line'",
+    "e2e:quick": "npm run e2e:build && start-server-and-test e2e:start http://127.0.0.1:3000 'playwright test tests/swap.spec.ts -c tests/playwright.config.ts --grep \"Session 1\" --reporter=line'",
+    "e2e:session3": "npm run e2e:build && start-server-and-test e2e:start http://127.0.0.1:3000 'playwright test tests/swap.spec.ts -c tests/playwright.config.ts --grep \"Session 3\" --reporter=line'",
+    "e2e:full": "npm run e2e:build && start-server-and-test e2e:start http://127.0.0.1:3000 'playwright test tests/swap.spec.ts -c tests/playwright.config.ts --reporter=line'",
+    "e2e:ci": "npm run e2e:build && start-server-and-test e2e:start http://127.0.0.1:3000 'playwright test tests/swap.spec.ts -c tests/playwright.config.ts --reporter=line'"
   },
   "dependencies": {
     "@dnd-kit/core": "latest",

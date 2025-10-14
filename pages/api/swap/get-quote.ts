@@ -3,22 +3,27 @@ import { getAddress, parseUnits, type Address } from 'viem';
 
 // Helper function to safely parse amounts and prevent scientific notation errors
 const safeParseUnits = (amount: string, decimals: number): bigint => {
-  // Convert scientific notation to decimal format
-  const numericAmount = parseFloat(amount);
-  if (isNaN(numericAmount)) {
-    throw new Error("Invalid number format");
+  // Handle edge cases
+  if (!amount || amount === "0" || amount === "0.0") {
+    return 0n;
   }
-  
-  // Convert to string with full decimal representation (no scientific notation)
-  const fullDecimalString = numericAmount.toFixed(decimals);
-  
-  // Remove trailing zeros after decimal point
-  const trimmedString = fullDecimalString.replace(/\.?0+$/, '');
-  
-  // If the result is just a decimal point, return "0"
-  const finalString = trimmedString === '.' ? '0' : trimmedString;
-  
-  return parseUnits(finalString, decimals);
+
+  // Check for scientific notation (e.g., "1e-8")
+  if (amount.toLowerCase().includes('e')) {
+    // Convert scientific notation to decimal using parseFloat, then format
+    const numericAmount = parseFloat(amount);
+    if (isNaN(numericAmount)) {
+      throw new Error("Invalid number format");
+    }
+    const fullDecimalString = numericAmount.toFixed(decimals);
+    const trimmedString = fullDecimalString.replace(/\.?0+$/, '');
+    const finalString = trimmedString === '.' ? '0' : trimmedString;
+    return parseUnits(finalString, decimals);
+  }
+
+  // For normal decimal strings, use parseUnits directly to preserve precision
+  // viem's parseUnits handles decimal strings correctly without floating point errors
+  return parseUnits(amount, decimals);
 };
 import { Token } from '@uniswap/sdk-core';
 import { 

@@ -293,14 +293,17 @@ export function SwapReviewView({
           Change
         </Button>
         <Button
-          className={isSwapping || swapProgressState === "init" || swapProgressState === "checking_allowance" 
-            ? "relative border border-primary bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 !opacity-100 cursor-default text-white/75"
-            : "text-sidebar-primary border border-sidebar-primary bg-button-primary hover-button-primary"
+          className={
+            swapProgressState === "needs_approval" ||
+            swapProgressState === "needs_signature" ||
+            swapProgressState === "ready_to_swap"
+              ? "text-sidebar-primary border border-sidebar-primary bg-button-primary hover-button-primary"
+              : "relative border border-primary bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 !opacity-100 cursor-default text-white/75"
           }
           onClick={handleConfirmSwap}
-          disabled={isSwapping || swapProgressState === "init" || swapProgressState === "checking_allowance"}
-          style={(isSwapping || swapProgressState === "init" || swapProgressState === "checking_allowance") 
-            ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } 
+          disabled={!(swapProgressState === "needs_approval" || swapProgressState === "needs_signature" || swapProgressState === "ready_to_swap")}
+          style={!(swapProgressState === "needs_approval" || swapProgressState === "needs_signature" || swapProgressState === "ready_to_swap")
+            ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }
             : undefined
           }
         >

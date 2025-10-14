@@ -141,14 +141,15 @@ export function encodeMultihopExactOutPath(
 ): PathKeyGuide[] {
   const pathKeys: PathKeyGuide[] = []
   let currentCurrencyOut = currencyOut
-  
-  // For ExactOut, we process pools in reverse order (like V3)
+
+  // For ExactOut, we process pools in reverse order to find intermediate currencies
+  // But we build the path array in FORWARD order (same structure as ExactIn)
   for (let i = poolKeys.length - 1; i >= 0; i--) {
     // Determine the input currency for this hop (reverse direction)
     const currencyIn = currentCurrencyOut === poolKeys[i].currency0
       ? poolKeys[i].currency1
       : poolKeys[i].currency0
-    
+
     // Create path key for this hop
     const pathKey: PathKeyGuide = {
       intermediateCurrency: currencyIn,
@@ -157,11 +158,11 @@ export function encodeMultihopExactOutPath(
       hooks: poolKeys[i].hooks,
       hookData: '0x'
     }
-    
-    pathKeys.push(pathKey)
+
+    pathKeys.unshift(pathKey) // Add to FRONT to maintain forward order
     currentCurrencyOut = currencyIn // Input becomes output for next hop (going backwards)
   }
-  
+
   return pathKeys
 }
 
@@ -386,183 +387,67 @@ async function prepareV4MultiHopExactOutSwapData(
 ): Promise<V4PlanBuild> {
     const inputToken = createTokenSDK(route.path[0] as TokenSymbol, chainId);
     const outputToken = createTokenSDK(route.path[route.path.length - 1] as TokenSymbol, chainId);
-    
+
     if (!inputToken || !outputToken) {
         throw new Error(`Failed to create token instances for multi-hop route`);
     }
 
-    // Create V4Planner for multi-hop
-    const v4Planner = new V4Planner();
-    
-    // Initialize provider for StateView check
-    const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL || process.env.RPC_URL || 'https://sepolia.base.org';
-    const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
-    
-    // Preflight: verify each hop pool exists via StateView (same as ExactIn)
-    const stateView = new ethers.Contract(getStateViewAddress(), STATE_VIEW_ABI as any, provider);
+    console.log(`[ExactOut Debug] Building pool keys for route: ${routeToString(route)}`);
+    console.log(`[ExactOut Debug] Route path:`, route.path);
+    console.log(`[ExactOut Debug] Route pools:`, route.pools.map(p => ({
+        poolId: p.poolId,
+        poolName: p.poolName,
+        token0: p.token0,
+        token1: p.token1,
+        fee: p.fee,
+        tickSpacing: p.tickSpacing
+    })));
+
+    const poolKeys: PoolKey[] = [];
     for (let i = 0; i < route.pools.length; i++) {
         const hop = route.pools[i];
         const poolCfg = getPoolConfigForTokens(hop.token0, hop.token1);
         if (!poolCfg) {
             throw new Error(`Missing pool config for hop ${i}: ${hop.poolName}`);
         }
-        const poolId = ethers.utils.solidityKeccak256(
-            ['address','address','uint24','int24','address'],
-            [poolCfg.pool.currency0.address, poolCfg.pool.currency1.address, poolCfg.pool.fee, poolCfg.pool.tickSpacing, poolCfg.pool.hooks]
-        );
-        await stateView.callStatic.getSlot0(poolId);
-    }
-    
-    // Build the encoded path for multi-hop
-    const pools: Pool[] = [];
-    for (let i = 0; i < route.pools.length; i++) {
-        const poolInfo = route.pools[i];
-        const token0 = createTokenSDK(poolInfo.token0 as TokenSymbol, chainId);
-        const token1 = createTokenSDK(poolInfo.token1 as TokenSymbol, chainId);
-        
-        if (!token0 || !token1) {
-            throw new Error(`Failed to create token instances for pool: ${poolInfo.poolName}`);
-        }
-        
-        const sortedToken0 = token0.sortsBefore(token1) ? token0 : token1;
-        const sortedToken1 = token0.sortsBefore(token1) ? token1 : token0;
-        
-        // Create pool instance
-        const placeholderSqrtPriceX96 = (1n << 96n);
-        const placeholderLiquidity = '1000000000000000000';
-        const placeholderTick = 0;
-        
-        const pool = new Pool(
-            sortedToken0, sortedToken1, poolInfo.fee, poolInfo.tickSpacing, poolInfo.hooks,
-            placeholderSqrtPriceX96.toString(), placeholderLiquidity, placeholderTick
-        );
-        pools.push(pool);
-    }
-
-    // Use the SAME pool resolution logic as ExactIn multihop (which works)
-    console.log(`[ExactOut Debug] Building pool keys for route: ${routeToString(route)}`);
-    const poolKeys: PoolKey[] = [];
-    for (let i = 0; i < route.pools.length; i++) {
-        const hop = route.pools[i];
-        console.log(`[ExactOut Debug] Hop ${i}: ${hop.token0} -> ${hop.token1} (${hop.poolName})`);
-        const poolCfg = getPoolConfigForTokens(hop.token0, hop.token1);
-        if (!poolCfg) throw new Error(`Pool config not found for hop ${i}: ${hop.poolName}`);
         const poolKey = createPoolKeyFromConfig(poolCfg.pool);
-        console.log(`[ExactOut Debug] Pool key ${i}:`, {
-            currency0: poolKey.currency0,
-            currency1: poolKey.currency1,
-            fee: poolKey.fee,
-            tickSpacing: poolKey.tickSpacing,
-            hooks: poolKey.hooks
-        });
         poolKeys.push(poolKey);
     }
-    // V4 doesn't support multihop ExactOut natively
-    // We need to quote each hop individually to get the correct intermediate amounts
-    console.log(`[ExactOut Debug] Calculating intermediate amounts for each hop`);
-    
-    // Get the quoter to calculate amounts for each hop
-    const quoterAddress = '0x4a6513c898fe1b2d0e78d3b0e0a4a151589b1cba'; // From config
-    const quoter = new ethers.Contract(quoterAddress, [
-        'function quoteExactOutputSingle((address,address,uint24,int24,address) poolKey, bool zeroForOne, uint128 amountOut, bytes hookData) external returns (uint256 amountIn, uint256 gasEstimate)'
-    ], provider);
-    
-    // Calculate amounts for each hop working backwards
-    const hopAmounts: { amountOut: bigint; maxAmountIn: bigint }[] = [];
-    let currentAmountOut = amountOutSmallestUnits;
-    
-    // Process hops in reverse order (from output to input)
-    for (let i = poolKeys.length - 1; i >= 0; i--) {
-        const poolKey = poolKeys[i];
-        
-        // Determine swap direction for this hop
-        const token0 = createTokenSDK(route.pools[i].token0 as TokenSymbol, chainId);
-        const token1 = createTokenSDK(route.pools[i].token1 as TokenSymbol, chainId);
-        if (!token0 || !token1) throw new Error(`Failed to create tokens for hop ${i}`);
-        
-        // For the last hop, we want the final output amount
-        // For intermediate hops, we want the amount calculated from the previous hop
-        const hopAmountOut = currentAmountOut;
-        
-        // Determine which direction we're swapping
-        let zeroForOne: boolean;
-        if (i === poolKeys.length - 1) {
-            // Last hop: we're producing the final output
-            zeroForOne = getAddress(outputToken.address!) !== poolKey.currency0;
-        } else {
-            // Intermediate hop: we're producing input for the next hop
-            const nextHopInputToken = createTokenSDK(route.pools[i + 1].token0 as TokenSymbol, chainId);
-            zeroForOne = getAddress(nextHopInputToken!.address!) === poolKey.currency1;
+
+    console.log(`[ExactOut Debug] Encoding path with outputToken: ${outputToken.address}`);
+    const pathKeys = encodeMultihopExactOutPath(poolKeys, outputToken.address);
+    console.log(`[ExactOut Debug] Generated pathKeys:`, pathKeys.map((pk, i) => ({
+        hop: i,
+        intermediateCurrency: pk.intermediateCurrency,
+        fee: pk.fee,
+        tickSpacing: pk.tickSpacing,
+        hooks: pk.hooks,
+        hookData: pk.hookData
+    })));
+
+    const v4Planner = new V4Planner();
+
+    v4Planner.addAction(Actions.SWAP_EXACT_OUT, [
+        {
+            currencyOut: outputToken.address,
+            path: pathKeys,
+            amountOut: BigNumber.from(amountOutSmallestUnits.toString()),
+            amountInMaximum: BigNumber.from(maxAmountInSmallestUnits.toString()),
         }
-        
-        // Quote this hop to get required input
-        const quoteResult = await quoter.callStatic.quoteExactOutputSingle(
-            [poolKey.currency0, poolKey.currency1, poolKey.fee, poolKey.tickSpacing, poolKey.hooks],
-            zeroForOne,
-            hopAmountOut,
-            '0x'
-        );
-        
-        const hopMaxAmountIn = BigInt(quoteResult.amountIn.toString()) * maxAmountInSmallestUnits / amountOutSmallestUnits; // Scale by slippage
-        
-        console.log(`[ExactOut Debug] Hop ${i}: amountOut=${hopAmountOut.toString()}, maxAmountIn=${hopMaxAmountIn.toString()}`);
-        
-        hopAmounts.unshift({ amountOut: hopAmountOut, maxAmountIn: hopMaxAmountIn });
-        currentAmountOut = hopMaxAmountIn; // This becomes the output for the previous hop
-    }
-    
-    // Now build the swaps with correct amounts for each hop
-    for (let i = poolKeys.length - 1; i >= 0; i--) {
-        const poolKey = poolKeys[i];
-        const hopIndex = poolKeys.length - 1 - i;
-        const { amountOut: hopAmountOut, maxAmountIn: hopMaxAmountIn } = hopAmounts[hopIndex];
-        
-        let currencyIn: string;
-        let currencyOut: string;
-        let zeroForOne: boolean;
-        
-        if (i === poolKeys.length - 1) {
-            currencyIn = poolKey.currency0 === inputToken.address ? poolKey.currency1 : poolKey.currency0;
-            currencyOut = outputToken.address;
-        } else {
-            currencyIn = poolKey.currency0 === inputToken.address ? poolKey.currency1 : poolKey.currency0;
-            currencyOut = poolKey.currency0 === currencyIn ? poolKey.currency1 : poolKey.currency0;
-        }
-        
-        zeroForOne = getAddress(currencyIn) === poolKey.currency0;
-        
-        v4Planner.addAction(Actions.SWAP_EXACT_OUT_SINGLE, [
-            {
-                poolKey: poolKey,
-                zeroForOne: zeroForOne,
-                amountOut: BigNumber.from(hopAmountOut.toString()),
-                amountInMaximum: BigNumber.from(hopMaxAmountIn.toString()),
-                sqrtPriceLimitX96: BigNumber.from(0),
-                hookData: '0x'
-            }
-        ]);
-        
-        // Settle and take for each hop
-        if (i === poolKeys.length - 1) {
-            v4Planner.addAction(Actions.SETTLE_ALL, [
-                getAddress(currencyIn),
-                BigNumber.from(hopMaxAmountIn.toString()),
-            ]);
-            v4Planner.addAction(Actions.TAKE_ALL, [
-                getAddress(currencyOut),
-                BigNumber.from(hopAmountOut.toString()),
-            ]);
-        } else {
-            v4Planner.addAction(Actions.SETTLE_ALL, [
-                getAddress(currencyIn),
-                BigNumber.from(hopMaxAmountIn.toString()),
-            ]);
-            v4Planner.addAction(Actions.TAKE_ALL, [
-                getAddress(currencyOut),
-                BigNumber.from(hopAmountOut.toString()),
-            ]);
-        }
-    }
+    ]);
+
+    v4Planner.addAction(Actions.SETTLE_ALL, [
+        inputToken.address,
+        BigNumber.from(maxAmountInSmallestUnits.toString()),
+    ]);
+
+    const isNativeOutput = outputToken.isNative;
+    const takeAllMin = isNativeOutput ? 1n : (amountOutSmallestUnits * 95n) / 100n;
+
+    v4Planner.addAction(Actions.TAKE_ALL, [
+        outputToken.address,
+        BigNumber.from(takeAllMin.toString()),
+    ]);
 
     const encodedActions = v4Planner.finalize() as Hex;
     return { encodedActions, actions: (v4Planner as any).actions, params: (v4Planner as any).params };
