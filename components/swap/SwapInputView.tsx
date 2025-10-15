@@ -259,9 +259,9 @@ export function SwapInputView({
             </Button>
           </div>
         </div>
-        <motion.div 
+        <motion.div
           className={cn(
-            "rounded-lg bg-surface p-4 border transition-colors hover:border-primary",
+            "group rounded-lg bg-surface p-4 border transition-colors hover:border-primary",
             isSellInputFocused
               ? "border-primary"
               : "border-transparent"
@@ -287,8 +287,47 @@ export function SwapInputView({
                 placeholder="0"
                 disabled={!isConnected || isAttemptingSwitch}
               />
-              <div className="text-right text-xs text-muted-foreground">
-                {formatCurrency((parseFloat(fromAmount || "0") * (displayFromToken.usdPrice || 0)).toString())}
+              <div className="relative text-right text-xs min-h-5">
+                {/* USD Value - hide on hover */}
+                <div className={cn("text-muted-foreground transition-opacity duration-100", {
+                  "group-hover:opacity-0": isConnected && parseFloat(displayFromToken.balance || "0") > 0
+                })}>
+                  {formatCurrency((parseFloat(fromAmount || "0") * (displayFromToken.usdPrice || 0)).toString())}
+                </div>
+                {/* Percentage buttons - show on hover */}
+                {isConnected && parseFloat(displayFromToken.balance || "0") > 0 && (
+                  <div className="absolute right-0 top-0 flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
+                    {[25, 50, 75, 100].map((percentage, index) => (
+                      <motion.div
+                        key={percentage}
+                        className="opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0"
+                        style={{
+                          transitionDelay: `${index * 40}ms`,
+                          transitionDuration: '200ms',
+                          transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)'
+                        }}
+                      >
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-5 px-2 text-[10px] font-medium rounded-md border-sidebar-border bg-muted/20 hover:bg-muted/40 transition-colors"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const balance = parseFloat(displayFromToken.balance || "0");
+                            const amount = (balance * percentage) / 100;
+                            // Create synthetic event to trigger the existing handler
+                            const syntheticEvent = {
+                              target: { value: amount.toString() }
+                            } as React.ChangeEvent<HTMLInputElement>;
+                            handleFromAmountChange(syntheticEvent);
+                          }}
+                        >
+                          {percentage === 100 ? 'MAX' : `${percentage}%`}
+                        </Button>
+                      </motion.div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -310,9 +349,9 @@ export function SwapInputView({
               Balance: { (isConnected ? (isLoadingCurrentToTokenBalance ? "Loading..." : displayToToken.balance) : "~")} {displayToToken.symbol}
             </span>
         </div>
-        <div 
+        <div
           className={cn(
-            "rounded-lg bg-surface p-4 border transition-colors hover:border-primary",
+            "group rounded-lg bg-surface p-4 border transition-colors hover:border-primary",
             isBuyInputFocused
               ? "border-primary"
               : "border-transparent"
@@ -340,15 +379,52 @@ export function SwapInputView({
                 )}
                 placeholder="0"
               />
-              <div className={cn(
-                "text-right text-xs text-muted-foreground",
-                { "animate-pulse": quoteLoading && activelyEditedSide === 'from' }
-              )}>
-                {(() => {
-                  const amount = parseFloat(toAmount || "");
-                  if (!toAmount || isNaN(amount)) return "$0.00";
-                  return formatCurrency((amount * (displayToToken.usdPrice || 0)).toString());
-                })()}
+              <div className="relative text-right text-xs min-h-5">
+                {/* USD Value - hide on hover */}
+                <div className={cn("text-muted-foreground transition-opacity duration-100", {
+                  "animate-pulse": quoteLoading && activelyEditedSide === 'from',
+                  "group-hover:opacity-0": isConnected && parseFloat(displayToToken.balance || "0") > 0
+                })}>
+                  {(() => {
+                    const amount = parseFloat(toAmount || "");
+                    if (!toAmount || isNaN(amount)) return "$0.00";
+                    return formatCurrency((amount * (displayToToken.usdPrice || 0)).toString());
+                  })()}
+                </div>
+                {/* Percentage buttons - show on hover (for exact output swaps) */}
+                {isConnected && parseFloat(displayToToken.balance || "0") > 0 && (
+                  <div className="absolute right-0 top-0 flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
+                    {[25, 50, 75, 100].map((percentage, index) => (
+                      <motion.div
+                        key={percentage}
+                        className="opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0"
+                        style={{
+                          transitionDelay: `${index * 40}ms`,
+                          transitionDuration: '200ms',
+                          transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)'
+                        }}
+                      >
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-5 px-2 text-[10px] font-medium rounded-md border-sidebar-border bg-muted/20 hover:bg-muted/40 transition-colors"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const balance = parseFloat(displayToToken.balance || "0");
+                            const amount = (balance * percentage) / 100;
+                            // Create synthetic event to trigger the existing handler
+                            const syntheticEvent = {
+                              target: { value: amount.toString() }
+                            } as React.ChangeEvent<HTMLInputElement>;
+                            onToAmountChange(syntheticEvent);
+                          }}
+                        >
+                          {percentage === 100 ? 'MAX' : `${percentage}%`}
+                        </Button>
+                      </motion.div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </div>

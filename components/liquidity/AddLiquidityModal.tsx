@@ -30,7 +30,7 @@ import { formatUnits as viemFormatUnits, parseUnits as viemParseUnits, getAddres
 import type { ProcessedPosition } from "../../pages/api/liquidity/get-positions";
 import { useAllPrices } from "@/components/data/hooks";
 import { formatUSD } from "@/lib/format";
-import { sanitizeDecimalInput, debounce, getTokenSymbolByAddress, formatUncollectedFee } from "@/lib/utils";
+import { sanitizeDecimalInput, debounce, getTokenSymbolByAddress, formatUncollectedFee, cn } from "@/lib/utils";
 import { formatUnits } from "viem";
 import { preparePermit2BatchForNewPosition } from '@/lib/liquidity-utils';
 import { providePreSignedIncreaseBatchPermit } from './useIncreaseLiquidity';
@@ -1373,8 +1373,8 @@ export function AddLiquidityModal({
                         Balance: {displayToken0Balance} {positionToModify.token0.symbol}
                       </button>
                     </div>
-                    <motion.div 
-                      className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4"
+                    <motion.div
+                      className="group rounded-lg bg-muted/30 border border-sidebar-border/60 p-4"
                       animate={wiggleControls0}
                     >
                       <div className="flex items-center gap-2">
@@ -1404,12 +1404,52 @@ export function AddLiquidityModal({
                             disabled={isIncreasingLiquidity}
                             className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
                           />
-                          <div className="text-right text-xs text-muted-foreground">
-                            {(() => {
-                              const usdPrice = getUSDPriceForSymbol(positionToModify.token0.symbol);
-                              const numeric = parseFloat(increaseAmount0 || "0");
-                              return formatCalculatedAmount(numeric * usdPrice);
-                            })()}
+                          <div className="relative text-right text-xs min-h-5">
+                            <div className={cn("text-muted-foreground transition-opacity duration-100", {
+                              "group-hover:opacity-0": isConnected && token0BalanceData && parseFloat(token0BalanceData.formatted || "0") > 0
+                            })}>
+                              {(() => {
+                                const usdPrice = getUSDPriceForSymbol(positionToModify.token0.symbol);
+                                const numeric = parseFloat(increaseAmount0 || "0");
+                                return formatCalculatedAmount(numeric * usdPrice);
+                              })()}
+                            </div>
+                            {isConnected && token0BalanceData && parseFloat(token0BalanceData.formatted || "0") > 0 && (
+                              <div className="absolute right-0 top-0 flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
+                                {[25, 50, 75, 100].map((percentage, index) => (
+                                  <motion.div
+                                    key={percentage}
+                                    className="opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0"
+                                    style={{
+                                      transitionDelay: `${index * 40}ms`,
+                                      transitionDuration: '200ms',
+                                      transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)'
+                                    }}
+                                  >
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      className="h-5 px-2 text-[10px] font-medium rounded-md border-sidebar-border bg-muted/20 hover:bg-muted/40 transition-colors"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        const balance = parseFloat(token0BalanceData.formatted || "0");
+                                        const amount = (balance * percentage) / 100;
+                                        const syntheticEvent = {
+                                          target: { value: amount.toString() }
+                                        } as React.ChangeEvent<HTMLInputElement>;
+                                        const cappedAmount = handleIncreaseAmountChangeWithWiggle(syntheticEvent, 'amount0');
+                                        setIncreaseActiveInputSide('amount0');
+                                        if (cappedAmount && parseFloat(cappedAmount) > 0) {
+                                          calculateIncreaseAmount(cappedAmount, 'amount0');
+                                        }
+                                      }}
+                                    >
+                                      {percentage === 100 ? 'MAX' : `${percentage}%`}
+                                    </Button>
+                                  </motion.div>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -1434,8 +1474,8 @@ export function AddLiquidityModal({
                         Balance: {displayToken1Balance} {positionToModify.token1.symbol}
                       </button>
                     </div>
-                    <motion.div 
-                      className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4"
+                    <motion.div
+                      className="group rounded-lg bg-muted/30 border border-sidebar-border/60 p-4"
                       animate={wiggleControls1}
                     >
                       <div className="flex items-center gap-2">
@@ -1465,12 +1505,52 @@ export function AddLiquidityModal({
                             disabled={isIncreasingLiquidity}
                             className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
                           />
-                          <div className="text-right text-xs text-muted-foreground">
-                            {(() => {
-                              const usdPrice = getUSDPriceForSymbol(positionToModify.token1.symbol);
-                              const numeric = parseFloat(increaseAmount1 || "0");
-                              return formatCalculatedAmount(numeric * usdPrice);
-                            })()}
+                          <div className="relative text-right text-xs min-h-5">
+                            <div className={cn("text-muted-foreground transition-opacity duration-100", {
+                              "group-hover:opacity-0": isConnected && token1BalanceData && parseFloat(token1BalanceData.formatted || "0") > 0
+                            })}>
+                              {(() => {
+                                const usdPrice = getUSDPriceForSymbol(positionToModify.token1.symbol);
+                                const numeric = parseFloat(increaseAmount1 || "0");
+                                return formatCalculatedAmount(numeric * usdPrice);
+                              })()}
+                            </div>
+                            {isConnected && token1BalanceData && parseFloat(token1BalanceData.formatted || "0") > 0 && (
+                              <div className="absolute right-0 top-0 flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
+                                {[25, 50, 75, 100].map((percentage, index) => (
+                                  <motion.div
+                                    key={percentage}
+                                    className="opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0"
+                                    style={{
+                                      transitionDelay: `${index * 40}ms`,
+                                      transitionDuration: '200ms',
+                                      transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)'
+                                    }}
+                                  >
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      className="h-5 px-2 text-[10px] font-medium rounded-md border-sidebar-border bg-muted/20 hover:bg-muted/40 transition-colors"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        const balance = parseFloat(token1BalanceData.formatted || "0");
+                                        const amount = (balance * percentage) / 100;
+                                        const syntheticEvent = {
+                                          target: { value: amount.toString() }
+                                        } as React.ChangeEvent<HTMLInputElement>;
+                                        const cappedAmount = handleIncreaseAmountChangeWithWiggle(syntheticEvent, 'amount1');
+                                        setIncreaseActiveInputSide('amount1');
+                                        if (cappedAmount && parseFloat(cappedAmount) > 0) {
+                                          calculateIncreaseAmount(cappedAmount, 'amount1');
+                                        }
+                                      }}
+                                    >
+                                      {percentage === 100 ? 'MAX' : `${percentage}%`}
+                                    </Button>
+                                  </motion.div>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>

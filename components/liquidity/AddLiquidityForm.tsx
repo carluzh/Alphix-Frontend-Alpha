@@ -2366,9 +2366,9 @@ export function AddLiquidityForm({
                         className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
                       />
                       <div className="relative text-right text-xs min-h-5">
-                        {/* USD Value - hide on hover when empty */}
+                        {/* USD Value - hide on hover always */}
                         <div className={cn("text-muted-foreground transition-opacity duration-100", {
-                          "group-hover:opacity-0": isConnected && !amount0 && token0BalanceData && parseFloat(token0BalanceData.formatted || "0") > 0
+                          "group-hover:opacity-0": isConnected && token0BalanceData && parseFloat(token0BalanceData.formatted || "0") > 0
                         })}>
                           {(() => {
                             const usdPrice = getUSDPriceForSymbol(token0Symbol);
@@ -2389,8 +2389,8 @@ export function AddLiquidityForm({
                             }
                           })()}
                         </div>
-                        {/* Percentage buttons - show on hover when empty */}
-                        {isConnected && !amount0 && token0BalanceData && parseFloat(token0BalanceData.formatted || "0") > 0 && (
+                        {/* Percentage buttons - show on hover always */}
+                        {isConnected && token0BalanceData && parseFloat(token0BalanceData.formatted || "0") > 0 && (
                           <div className="absolute right-0 top-0 flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
                             {[25, 50, 75, 100].map((percentage, index) => (
                               <motion.div
@@ -2507,9 +2507,9 @@ export function AddLiquidityForm({
                         className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
                       />
                       <div className="relative text-right text-xs min-h-5">
-                        {/* USD Value - hide on hover when empty */}
+                        {/* USD Value - hide on hover always */}
                         <div className={cn("text-muted-foreground transition-opacity duration-100", {
-                          "group-hover:opacity-0": isConnected && !amount1 && token1BalanceData && parseFloat(token1BalanceData.formatted || "0") > 0
+                          "group-hover:opacity-0": isConnected && token1BalanceData && parseFloat(token1BalanceData.formatted || "0") > 0
                         })}>
                           {(() => {
                             const usdPrice = getUSDPriceForSymbol(token1Symbol);
@@ -2530,8 +2530,8 @@ export function AddLiquidityForm({
                             }
                           })()}
                         </div>
-                        {/* Percentage buttons - show on hover when empty */}
-                        {isConnected && !amount1 && token1BalanceData && parseFloat(token1BalanceData.formatted || "0") > 0 && (
+                        {/* Percentage buttons - show on hover always */}
+                        {isConnected && token1BalanceData && parseFloat(token1BalanceData.formatted || "0") > 0 && (
                           <div className="absolute right-0 top-0 flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
                             {[25, 50, 75, 100].map((percentage, index) => (
                               <motion.div
