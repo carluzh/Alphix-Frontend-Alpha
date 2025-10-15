@@ -610,7 +610,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                       onClick={() => rangeType !== "Custom" && handlePresetClick(rangeType)}
                       className={`relative h-12 px-4 flex items-center justify-between rounded-md border transition-all duration-200 overflow-hidden ${
                         rangeType === "Custom"
-                          ? `cursor-default ${isActive ? 'text-sidebar-primary border-sidebar-primary bg-button-primary/50' : 'border-sidebar-border/50 bg-muted/20 text-muted-foreground'}`
+                          ? `cursor-default ${isActive ? 'text-sidebar-primary border-sidebar-primary bg-button-primary' : 'border-sidebar-border/50 bg-muted/20 text-muted-foreground'}`
                           : `cursor-pointer ${isActive ? 'text-sidebar-primary border-sidebar-primary bg-button-primary' : 'border-sidebar-border bg-button hover:bg-accent hover:brightness-110 hover:border-white/30 text-white'}`
                       }`}
                       style={!isActive && rangeType !== "Custom" ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}

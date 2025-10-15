@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { PlusIcon, RefreshCwIcon, MinusIcon, ActivityIcon, CheckIcon, InfoIcon, ArrowLeftIcon, OctagonX, BadgeCheck } from "lucide-react";
+import { PlusIcon, RefreshCwIcon, MinusIcon, ActivityIcon, CheckIcon, InfoIcon, ArrowLeftIcon, OctagonX, BadgeCheck, Maximize } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -13,7 +13,6 @@ import { toast } from "sonner";
 import { useEthersSigner } from "@/hooks/useEthersSigner";
 import { V4_POOL_FEE, V4_POOL_TICK_SPACING, V4_POOL_HOOKS } from "@/lib/swap-constants";
 import { TOKEN_DEFINITIONS, TokenSymbol } from "@/lib/pools-config";
-import { baseSepolia } from "@/lib/wagmiConfig";
 import { getPoolById, getToken } from "@/lib/pools-config";
 import { formatUnits as viemFormatUnits, parseUnits as viemParseUnits, getAddress, type Hex } from "viem";
 
@@ -70,11 +69,6 @@ const showInfoToast = (title: string) => {
   });
 };
 
-// Chart data interfaces
-interface CustomAxisLabel {
-  tickValue: number;    
-  displayLabel: string; 
-}
 import { Token } from '@uniswap/sdk-core';
 import { Pool as V4PoolSDK, Position as V4PositionSDK } from "@uniswap/v4-sdk";
 import JSBI from "jsbi";
@@ -212,8 +206,6 @@ export function AddLiquidityForm({
 
   // Price and range state
   const [currentPrice, setCurrentPrice] = useState<string | null>(null);
-  const [priceAtTickLower, setPriceAtTickLower] = useState<string | null>(null);
-  const [priceAtTickUpper, setPriceAtTickUpper] = useState<string | null>(null);
   const [currentPoolSqrtPriceX96, setCurrentPoolSqrtPriceX96] = useState<string | null>(null);
   
   // UI state
@@ -224,10 +216,9 @@ export function AddLiquidityForm({
   const [enhancedAprDisplay, setEnhancedAprDisplay] = useState<string>(poolApr || "Yield N/A");
   const [capitalEfficiencyFactor, setCapitalEfficiencyFactor] = useState<number>(1);
   const [initialDefaultApplied, setInitialDefaultApplied] = useState(false);
-  const [baseTokenForPriceDisplay, setBaseTokenForPriceDisplay] = useState<TokenSymbol>('aUSDC');
+  const [baseTokenForPriceDisplay, setBaseTokenForPriceDisplay] = useState<TokenSymbol>(initialTokens.token0);
   
   // UI flow management
-  const [depositStep, setDepositStep] = useState<'range' | 'amount'>('amount');
   const [showingTransactionSteps, setShowingTransactionSteps] = useState(false);
   const [showRangeModal, setShowRangeModal] = useState(false);
   const [modalInitialFocusField, setModalInitialFocusField] = useState<'min' | 'max' | null>(null);
@@ -263,10 +254,7 @@ export function AddLiquidityForm({
   // Min/Max price input strings
   const [minPriceInputString, setMinPriceInputString] = useState<string>("");
   const [maxPriceInputString, setMaxPriceInputString] = useState<string>("");
-  
-  // Custom X-axis ticks for chart
-  const [customXAxisTicks, setCustomXAxisTicks] = useState<CustomAxisLabel[]>([]);
-  
+
   const { address: accountAddress, chainId, isConnected } = useAccount();
   const { data: allPrices } = useAllPrices();
   const signer = useEthersSigner();
@@ -367,26 +355,6 @@ export function AddLiquidityForm({
       : [sdkBaseToken1, sdkBaseToken0];
     return { poolToken0: pt0, poolToken1: pt1 };
   }, [token0Symbol, token1Symbol, chainId]);
-  
-  // Function to remove number input arrows
-  useEffect(() => {
-    const style = document.createElement('style');
-    style.innerHTML = `
-      input[type=number]::-webkit-inner-spin-button,
-      input[type=number]::-webkit-outer-spin-button {
-        -webkit-appearance: none;
-        margin: 0;
-      }
-      input[type=number] {
-        -moz-appearance: textfield;
-      }
-    `;
-    document.head.appendChild(style);
-    
-    return () => {
-      document.head.removeChild(style);
-    };
-  }, []);
 
   // Approval wiggle animation effect
   useEffect(() => {
@@ -416,11 +384,6 @@ export function AddLiquidityForm({
       }).catch(() => {});
     }
   }, [balanceWiggleCount1, balanceWiggleControls1]);
-
-  // Set initial state based on props
-  useEffect(() => {
-    setBaseTokenForPriceDisplay(token0Symbol);
-  }, [token0Symbol]);
 
   // Listen for balance refresh events
   useEffect(() => {
@@ -503,8 +466,6 @@ export function AddLiquidityForm({
           setCalculatedData(null);
           setActiveInputSide(null);
           setCurrentPrice(null);
-          setPriceAtTickLower(null);
-          setPriceAtTickUpper(null);
           setInitialDefaultApplied(false);
           setActivePreset(isStablePool ? "±1%" : "±15%"); // Reset preset on pool change
           setBaseTokenForPriceDisplay(t0); // Reset base token for price display
@@ -534,16 +495,12 @@ export function AddLiquidityForm({
     setInitialDefaultApplied(false);
     setTickLower(sdkMinTick.toString());
     setTickUpper(sdkMaxTick.toString());
-        setAmount0("");
-        setAmount1("");
-        setAmount0FullPrecision("");
-        setAmount1FullPrecision("");
+    setAmount0("");
+    setAmount1("");
     setAmount0FullPrecision("");
     setAmount1FullPrecision("");
     setCalculatedData(null);
     setCurrentPoolTick(null);
-    setPriceAtTickLower(null);
-    setPriceAtTickUpper(null);
     setCurrentPrice(null);
     setActivePreset(isStablePool ? "±1%" : "±15%"); // Reset preset based on pool type
     setBaseTokenForPriceDisplay(token0Symbol); // Reset base token for price display
@@ -612,89 +569,6 @@ export function AddLiquidityForm({
       fetchPoolState();
     }
   }, [selectedPoolId, chainId]);
-
-  // Effect to update custom X-axis ticks when domain changes
-  useEffect(() => {
-    if (xDomain && xDomain[0] !== undefined && xDomain[1] !== undefined && token0Symbol && token1Symbol) {
-      const [minTickDomain, maxTickDomain] = xDomain;
-      const desiredTickCount = 3; 
-      const newLabels: CustomAxisLabel[] = [];
-
-      const token0Def = TOKEN_DEFINITIONS[token0Symbol];
-      const token1Def = TOKEN_DEFINITIONS[token1Symbol];
-      const displayDecimals = baseTokenForPriceDisplay === token0Symbol 
-        ? (token0Def?.displayDecimals ?? 4) 
-        : (token1Def?.displayDecimals ?? 4);
-
-      if (minTickDomain === maxTickDomain) {
-        // Simplified: just show one label if domain is a single point
-        // Price calculation for a single tick
-        let priceAtTick = NaN;
-                  if (token0Def?.decimals !== undefined && token1Def?.decimals !== undefined) {
-            const decimalAdjFactor = baseTokenForPriceDisplay === token0Symbol 
-              ? Math.pow(10, token1Def.decimals - token0Def.decimals)
-              : Math.pow(10, token0Def.decimals - token1Def.decimals);
-            const rawPrice = baseTokenForPriceDisplay === token0Symbol 
-              ? Math.pow(1.0001, -minTickDomain)
-              : Math.pow(1.0001, minTickDomain);
-            priceAtTick = rawPrice * decimalAdjFactor;
-          }
-        let label = minTickDomain.toString();
-        if (!isNaN(priceAtTick)) {
-          if (priceAtTick > 0 && priceAtTick < 0.01) {
-            label = '<0.01';
-          } else {
-            const formatted = priceAtTick.toLocaleString('en-US', { maximumFractionDigits: displayDecimals, minimumFractionDigits: 2 });
-            // If it rounds to 0.00 but is actually positive, show <0.01
-            label = (formatted === '0.00' && priceAtTick > 0) ? '<0.01' : formatted;
-          }
-        }
-        newLabels.push({ 
-          tickValue: minTickDomain, 
-          displayLabel: label
-        });
-      } else if (isFinite(minTickDomain) && isFinite(maxTickDomain)) {
-        const range = maxTickDomain - minTickDomain;
-        const step = range / (desiredTickCount > 1 ? desiredTickCount - 1 : 1);
-        
-        for (let i = 0; i < desiredTickCount; i++) {
-          const tickVal = Math.round(minTickDomain + (i * step));
-          let priceAtTick = NaN;
-
-          if (currentPrice && currentPoolTick !== null) {
-            // Use currentPrice as reference (same approach as min/max prices)
-            const currentPriceNum = parseFloat(currentPrice);
-            const priceDelta = Math.pow(1.0001, tickVal - currentPoolTick);
-            
-            if (baseTokenForPriceDisplay === token0Symbol) {
-              priceAtTick = 1 / (currentPriceNum * priceDelta); // Invert for token0 denomination
-            } else {
-              priceAtTick = currentPriceNum * priceDelta; // Direct for token1 denomination
-            }
-          }
-          let label = tickVal.toString();
-          if (!isNaN(priceAtTick)) {
-            if (priceAtTick > 0 && priceAtTick < 0.01) {
-              label = '<0.01';
-            } else {
-              const formatted = priceAtTick.toLocaleString('en-US', { maximumFractionDigits: displayDecimals, minimumFractionDigits: Math.min(2, displayDecimals) });
-              // If it rounds to 0.00 but is actually positive, show <0.01
-              label = (formatted === '0.00' && priceAtTick > 0) ? '<0.01' : formatted;
-            }
-          }
-          newLabels.push({ 
-            tickValue: tickVal, 
-            displayLabel: label
-          });
-        }
-      } 
-      setCustomXAxisTicks(newLabels);
-    } else {
-      // Handle non-finite domains if necessary, for now, clear ticks
-      setCustomXAxisTicks([]);
-      return;
-    }
-  }, [xDomain, baseTokenForPriceDisplay, token0Symbol, token1Symbol]);
 
   // Effect to update price input strings when underlying ticks or base display token changes
   useEffect(() => {
@@ -855,8 +729,6 @@ export function AddLiquidityForm({
       setTickLower(sdkMinTick.toString());
       setTickUpper(sdkMaxTick.toString());
       setInitialDefaultApplied(true);
-      setPriceAtTickLower(null);
-      setPriceAtTickUpper(null);
       // Reset viewbox to the ±15% centered style for consistency
       resetChartViewbox(sdkMinTick, sdkMaxTick);
     } else {
@@ -1108,7 +980,7 @@ export function AddLiquidityForm({
   }, []);
 
   // Handle use full balance
-  const handleUseFullBalance = (balanceString: string, tokenSymbolForDecimals: TokenSymbol, isToken0: boolean) => { 
+  const handleUseFullBalance = (balanceString: string, tokenSymbolForDecimals: TokenSymbol, isToken0: boolean) => {
     try {
       const numericBalance = parseFloat(balanceString);
       if (isNaN(numericBalance) || numericBalance <= 0) return;
@@ -1118,7 +990,7 @@ export function AddLiquidityForm({
       if (isToken0) {
         setAmount0(formattedBalance);
         setActiveInputSide('amount0');
-      } else { 
+      } else {
         setAmount1(formattedBalance);
         setActiveInputSide('amount1');
       }
@@ -1866,8 +1738,6 @@ export function AddLiquidityForm({
         } else {
           setCurrentPriceLine(null);
         }
-        if (result.priceAtTickLower) setPriceAtTickLower(result.priceAtTickLower);
-        if (result.priceAtTickUpper) setPriceAtTickUpper(result.priceAtTickUpper);
 
         if (inputSide === 'amount0') {
           try {
@@ -1897,10 +1767,8 @@ export function AddLiquidityForm({
       } catch (error: any) {
         showErrorToast("Calculation Error", "Estimation failed");
         setCalculatedData(null);
-        setCurrentPrice(null);      
-        setCurrentPoolTick(null);   
-        setPriceAtTickLower(null);  
-        setPriceAtTickUpper(null);  
+        setCurrentPrice(null);
+        setCurrentPoolTick(null);
         setCurrentPriceLine(null);  
         if (inputSide === 'amount0' && currentAmount1 !== "Error") setAmount1(""); 
         else if (inputSide === 'amount1' && currentAmount0 !== "Error") setAmount0("");
@@ -2066,110 +1934,6 @@ export function AddLiquidityForm({
     setIsInsufficientBalance(insufficient);
   }, [amount0, amount1, token0Symbol, token1Symbol, calculatedData, token0BalanceData, token1BalanceData]);
 
-  // Custom shape for ReferenceArea with rounded top corners
-  const RoundedTopReferenceArea = (props: any) => {
-    const { x, y, width, height, fill, fillOpacity, strokeOpacity } = props;
-    
-    // Validate all required numeric props
-    if (
-      typeof x !== 'number' || isNaN(x) ||
-      typeof y !== 'number' || isNaN(y) ||
-      typeof width !== 'number' || isNaN(width) ||
-      typeof height !== 'number' || isNaN(height) ||
-      width <= 0 || height <= 0
-    ) {
-      console.warn("[RoundedTopReferenceArea] Invalid props received:", { x, y, width, height });
-      return null;
-    }
-
-    const r = 6;
-
-    const path = `
-      M ${x},${y + height} 
-      L ${x + width},${y + height}
-      L ${x + width},${y + r}
-      Q ${x + width},${y} ${x + width - r},${y}
-      L ${x + r},${y}
-      Q ${x},${y} ${x},${y + r}
-      Z
-    `;
-
-    // Fallback for very small widths where arcs might look weird
-    if (width < 2 * r) {
-        return <rect x={x} y={y} width={width} height={height} fill={fill} fillOpacity={fillOpacity} strokeOpacity={strokeOpacity} />;
-    }
-
-    return <path d={path} fill={fill} fillOpacity={fillOpacity} strokeOpacity={strokeOpacity} />;
-  };
-
-  // Custom Recharts Tooltip
-  const CustomTooltip = ({ active, payload, label, poolToken0Symbol, token0, token1, baseTokenForPrice }: any) => { 
-    if (active && payload && payload.length && token0 && token1) {
-      const tooltipData = payload[0].payload; 
-      const currentTick = tooltipData.tick ?? label;
-      const formattedTickLabel = typeof currentTick === 'number' ? currentTick.toLocaleString() : 'N/A'; 
-      const displayPoolTokenSymbol = poolToken0Symbol || '';
-
-      let priceAtTickDisplay = "Price N/A";
-      const token0Def = TOKEN_DEFINITIONS[token0 as TokenSymbol];
-      const token1Def = TOKEN_DEFINITIONS[token1 as TokenSymbol];
-
-      if (token0Def && token1Def && typeof currentTick === 'number') {
-        const t0Dec = token0Def.decimals;
-        const t1Dec = token1Def.decimals;
-        let price = NaN;
-        let quoteTokenSymbol = "";
-        let priceOfTokenSymbol = "";
-
-        const sdkToken0 = new Token(baseSepolia.id, getAddress(token0Def.address), t0Dec, token0);
-        const sdkToken1 = new Token(baseSepolia.id, getAddress(token1Def.address), t1Dec, token1);
-
-        const formToken0IsPoolToken0 = sdkToken0.sortsBefore(sdkToken1);
-
-        if (baseTokenForPrice === token0) { // Show price denominated in token0
-            quoteTokenSymbol = token0;
-            priceOfTokenSymbol = token1;
-            const decimalAdjFactor = Math.pow(10, t1Dec - t0Dec);
-            const rawPrice = formToken0IsPoolToken0 
-                ? Math.pow(1.0001, -currentTick) 
-                : Math.pow(1.0001, currentTick);
-            price = rawPrice * decimalAdjFactor;
-        } else { // Show price denominated in token1
-            quoteTokenSymbol = token1;
-            priceOfTokenSymbol = token0;
-            const decimalAdjFactor = Math.pow(10, t0Dec - t1Dec);
-            const rawPrice = formToken0IsPoolToken0 
-                ? Math.pow(1.0001, currentTick)
-                : Math.pow(1.0001, -currentTick);
-            price = rawPrice * decimalAdjFactor;
-        }
-
-        if (!isNaN(price)) {
-          const displayDecimals = TOKEN_DEFINITIONS[quoteTokenSymbol as TokenSymbol]?.displayDecimals || 4;
-          if (price === Infinity) priceAtTickDisplay = "∞";
-          else if (price < 1e-8 && price > 0) priceAtTickDisplay = "<0.00000001";
-          else if (price === 0) priceAtTickDisplay = "0";
-          else priceAtTickDisplay = price.toLocaleString('en-US', { maximumFractionDigits: displayDecimals, minimumFractionDigits: Math.min(2, displayDecimals) });
-          priceAtTickDisplay += ` ${priceOfTokenSymbol}/${quoteTokenSymbol}`;
-        } else {
-            priceAtTickDisplay = "Price Calc Error";
-        }
-      } else {
-        priceAtTickDisplay = "Price Data Missing";
-      }
-
-      return (
-        <div className="bg-background border border-border shadow-lg p-2 rounded-md text-xs">
-          <p className="font-semibold text-foreground/90">{`Tick: ${formattedTickLabel}`}</p>
-          <p className="text-foreground/80 mt-0.5">{`Price: ${priceAtTickDisplay}`}</p>
-        </div>
-      );
-    }
-    return null;
-  };
-
-  // Chart data state - now handled in InteractiveRangeChart
-
   // Calculate price range in optimal denomination for display
   const getPriceRangeDisplay = useCallback(() => {
     if (currentPoolTick === null || !currentPrice || !tickLower || !tickUpper) {
@@ -2210,17 +1974,7 @@ export function AddLiquidityForm({
     const isUSDDenominated = (optimalDenomination === 'aUSDT' || optimalDenomination === 'aUSDC') || 
                             (priceAtLowerTick >= 100 && priceAtLowerTick <= 10000 && priceAtUpperTick >= 100 && priceAtUpperTick <= 10000);
     const finalDisplayDecimals = isUSDDenominated ? (isStable ? 6 : 2) : displayDecimals;
-    
-    // Temporarily disable console logs during development to reduce spam
-    // console.log("[AddLiquidityForm] Price range formatting:", {
-    //   optimalDenomination,
-    //   displayDecimals,
-    //   finalDisplayDecimals,
-    //   priceAtLowerTick,
-    //   priceAtUpperTick,
-    //   isUSDDenominated
-    // });
-    
+
     // Format prices with proper decimals
     const formattedLower = priceAtLowerTick.toLocaleString('en-US', { 
       maximumFractionDigits: finalDisplayDecimals, 
@@ -2294,302 +2048,31 @@ export function AddLiquidityForm({
     return { left: formatVal(points[0].price), right: formatVal(points[1].price) };
   }, [currentPoolTick, currentPrice, tickLower, tickUpper, token0Symbol, token1Symbol, sdkMinTick, sdkMaxTick, baseTokenForPriceDisplay, selectedPoolId]);
 
-  // const { open } = useWeb3Modal();
-
   return (
     <div className="space-y-4">
-      {/* Tabs for Swap/Deposit/Withdraw - MOVED TO PARENT COMPONENT */}
-      {/*
-      <div className="flex border-b border-border mb-4">
-        <button
-          className={`py-2 px-4 text-sm font-medium ${activeTab === 'deposit' 
-            ? 'text-foreground border-b-2 border-primary' 
-            : 'text-muted-foreground hover:text-foreground/80'}`}
-          onClick={() => setActiveTab('deposit')}
-        >
-          Deposit
-        </button>
-        <button
-          className={`py-2 px-4 text-sm font-medium ${activeTab === 'withdraw' 
-            ? 'text-foreground border-b-2 border-primary' 
-            : 'text-muted-foreground hover:text-foreground/80'}`}
-          onClick={() => {
-            setActiveTab('withdraw');
-            showInfoToast("Withdraw Coming Soon");
-          }}
-        >
-          Withdraw
-        </button>
-        <button
-          className={`py-2 px-4 text-sm font-medium ${activeTab === 'swap' 
-            ? 'text-foreground border-b-2 border-primary' 
-            : 'text-muted-foreground hover:text-foreground/80'}`}
-          onClick={() => {
-            setActiveTab('swap');
-            showInfoToast("Swap Coming Soon");
-          }}
-        >
-          Swap
-        </button>
-      </div>
-      */}
-
       {/* Deposit Tab Content */}
       {activeTab === 'deposit' && (
         <>
           {/* Amount Input Step */}
             <>
             {/* Header removed; now provided by parent container */}
-              
-              {/* Input for Token 0 */}
-              <div className="space-y-2">
+
+              {/* Range Section - Step 1 */}
+              <div className="border border-dashed rounded-md mb-6 bg-muted/10 p-3">
+                {/* Range Label */}
                 <div className="flex items-center justify-between mb-2">
-                  <Button 
-                    variant="ghost" 
-                    className="h-auto p-0 text-sm font-medium text-foreground hover:bg-transparent hover:text-muted-foreground transition-colors" 
-                  >
-                    Amount
-                  </Button>
-                  <div className="flex items-center gap-1">
-                    <Button 
-                      variant="ghost" 
-                      className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent" 
-                      onClick={() => handleUseFullBalance(token0BalanceData?.formatted || "0", token0Symbol, true)} 
-                      disabled={isWorking || isCalculating}
-                    >  
-                      Balance: {displayToken0Balance} {token0Symbol}
-                    </Button>
-                  </div>
-                </div>
-                <motion.div
-                  className={cn("rounded-lg bg-muted/30 p-4", { "outline outline-1 outline-muted": isAmount0Focused })}
-                  animate={balanceWiggleControls0}
-                >
+                  <Label className="text-sm font-medium">Range</Label>
                   <div className="flex items-center gap-2">
-                    <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
-                      <Image src={getTokenIcon(token0Symbol)} alt={token0Symbol} width={20} height={20} className="rounded-full"/>
-                      <span className="text-sm font-medium">{token0Symbol}</span>
-                    </div>
-                    <div className="flex-1">
-                      <Input
-                        id="amount0"
-                        placeholder="0.0"
-                        value={amount0}
-                        onChange={(e) => {
-                          let newValue = e.target.value.replace(',', '.'); // Ensure decimal separator is always period
-                          // Only allow numbers, one decimal point, and prevent multiple decimal points
-                          newValue = newValue.replace(/[^0-9.]/g, '').replace(/(\..*?)\./g, '$1');
-
-                          // Check if going over balance to trigger wiggle
-                          const maxAmount = token0BalanceData ? parseFloat(token0BalanceData.formatted || "0") : 0;
-                          const inputAmount = parseFloat(newValue || "0");
-                          const prevAmount = parseFloat(amount0 || "0");
-                          const wasOver = Number.isFinite(prevAmount) && Number.isFinite(maxAmount) ? prevAmount > maxAmount : false;
-                          const isOver = Number.isFinite(inputAmount) && Number.isFinite(maxAmount) ? inputAmount > maxAmount : false;
-                          if (isOver && !wasOver) {
-                            setBalanceWiggleCount0(c => c + 1);
-                          }
-
-                          // Clear full precision when user manually edits
-                          setAmount0FullPrecision("");
-                          resetTransaction();
-                          setAmount0(newValue);
-                          setActiveInputSide('amount0');
-                        }}
-                        onFocus={() => {
-                          setIsAmount0Focused(true);
-                          // Show full precision if current value is abbreviated (has '...')
-                          if (amount0FullPrecision && (amount0.includes('...') || amount0FullPrecision !== amount0)) {
-                            setAmount0(amount0FullPrecision);
-                          }
-                        }}
-                        onBlur={() => {
-                          setIsAmount0Focused(false);
-                          // Re-abbreviate if we have full precision and it's not the active input side
-                          if (amount0FullPrecision && (!activeInputSide || activeInputSide !== 'amount0')) {
-                            const displayAmount = formatTokenDisplayAmount(amount0FullPrecision, token0Symbol);
-                            setAmount0(displayAmount);
-                          }
-                        }}
-                        type="text"
-                        pattern="[0-9]*\.?[0-9]*"
-                        inputMode="decimal"
-                        autoComplete="off"
-                        disabled={isWorking || (isCalculating && activeInputSide === 'amount1')}
-                        className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
-                      />
-                      <div className="text-right text-xs text-muted-foreground">
-                        {(() => {
-                          const usdPrice = getUSDPriceForSymbol(token0Symbol);
-                          
-                          // Use precise backend data when available, fallback to display amount
-                          if (calculatedData && calculatedData.amount0) {
-                            try {
-                              const preciseAmount = parseFloat(viemFormatUnits(BigInt(calculatedData.amount0), TOKEN_DEFINITIONS[token0Symbol]?.decimals || 18));
-                              return formatUSD(preciseAmount * usdPrice);
-                            } catch {
-                              // Fallback to display amount if parsing fails
-                              const numeric = parseDisplayAmount(amount0);
-                              return formatUSD(numeric * usdPrice);
-                            }
-                          } else {
-                            const numeric = parseDisplayAmount(amount0);
-                            return formatUSD(numeric * usdPrice);
-                          }
-                        })()}
-                      </div>
-                    </div>
-                  </div>
-                </motion.div>
-              </div>
-
-              {/* Plus Icon */}
-              <div className="flex justify-center items-center my-2">
-                <div className="flex items-center justify-center h-8 w-8 rounded-full bg-muted/20">
-                  <PlusIcon className="h-4 w-4 text-muted-foreground" />
-                </div>
-              </div>
-
-              {/* Input for Token 1 */}
-              <div className="space-y-2 mb-4">
-                <div className="flex items-center justify-between mb-2">
-                  <Button 
-                    variant="ghost" 
-                    className="h-auto p-0 text-sm font-medium text-foreground hover:bg-transparent hover:text-muted-foreground transition-colors" 
-                  >
-                    Amount
-                  </Button>
-                  <div className="flex items-center gap-1">
-                    <Button 
-                      variant="ghost" 
-                      className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent" 
-                      onClick={() => handleUseFullBalance(token1BalanceData?.formatted || "0", token1Symbol, false)} 
-                      disabled={isWorking || isCalculating}
-                    > 
-                      Balance: {displayToken1Balance} {token1Symbol}
-                    </Button>
-                  </div>
-                </div>
-                <motion.div
-                  className={cn("rounded-lg bg-muted/30 p-4", { "outline outline-1 outline-muted": isAmount1Focused })}
-                  animate={balanceWiggleControls1}
-                >
-                  <div className="flex items-center gap-2">
-                    <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
-                      <Image src={getTokenIcon(token1Symbol)} alt={token1Symbol} width={20} height={20} className="rounded-full"/>
-                      <span className="text-sm font-medium">{token1Symbol}</span>
-                    </div>
-                    <div className="flex-1">
-                      <Input
-                        id="amount1"
-                        placeholder="0.0"
-                        value={amount1}
-                        onChange={(e) => {
-                          let newValue = e.target.value.replace(',', '.'); // Ensure decimal separator is always period
-                          // Only allow numbers, one decimal point, and prevent multiple decimal points
-                          newValue = newValue.replace(/[^0-9.]/g, '').replace(/(\..*?)\./g, '$1');
-
-                          // Check if going over balance to trigger wiggle
-                          const maxAmount = token1BalanceData ? parseFloat(token1BalanceData.formatted || "0") : 0;
-                          const inputAmount = parseFloat(newValue || "0");
-                          const prevAmount = parseFloat(amount1 || "0");
-                          const wasOver = Number.isFinite(prevAmount) && Number.isFinite(maxAmount) ? prevAmount > maxAmount : false;
-                          const isOver = Number.isFinite(inputAmount) && Number.isFinite(maxAmount) ? inputAmount > maxAmount : false;
-                          if (isOver && !wasOver) {
-                            setBalanceWiggleCount1(c => c + 1);
-                          }
-
-                          // Clear full precision when user manually edits
-                          setAmount1FullPrecision("");
-                          resetTransaction();
-                          setAmount1(newValue);
-                          setActiveInputSide('amount1');
-                        }}
-                        onFocus={() => {
-                          setIsAmount1Focused(true);
-                          // Show full precision if current value is abbreviated (has '...')
-                          if (amount1FullPrecision && (amount1.includes('...') || amount1FullPrecision !== amount1)) {
-                            setAmount1(amount1FullPrecision);
-                          }
-                        }}
-                        onBlur={() => {
-                          setIsAmount1Focused(false);
-                          // Re-abbreviate if we have full precision and it's not the active input side
-                          if (amount1FullPrecision && (!activeInputSide || activeInputSide !== 'amount1')) {
-                            const displayAmount = formatTokenDisplayAmount(amount1FullPrecision, token1Symbol);
-                            setAmount1(displayAmount);
-                          }
-                        }}
-                        type="text"
-                        pattern="[0-9]*\.?[0-9]*"
-                        inputMode="decimal"
-                        autoComplete="off"
-                        disabled={isWorking || (isCalculating && activeInputSide === 'amount0')}
-                        className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
-                      />
-                      <div className="text-right text-xs text-muted-foreground">
-                        {(() => {
-                          const usdPrice = getUSDPriceForSymbol(token1Symbol);
-                          
-                          // Use precise backend data when available, fallback to display amount
-                          if (calculatedData && calculatedData.amount1) {
-                            try {
-                              const preciseAmount = parseFloat(viemFormatUnits(BigInt(calculatedData.amount1), TOKEN_DEFINITIONS[token1Symbol]?.decimals || 18));
-                              return formatUSD(preciseAmount * usdPrice);
-                            } catch {
-                              // Fallback to display amount if parsing fails
-                              const numeric = parseDisplayAmount(amount1);
-                              return formatUSD(numeric * usdPrice);
-                            }
-                          } else {
-                            const numeric = parseDisplayAmount(amount1);
-                            return formatUSD(numeric * usdPrice);
-                          }
-                        })()}
-                      </div>
-                    </div>
-                  </div>
-                </motion.div>
-              </div>
-
-              {/* Price Range Label (outside container, matching Amount style) */}
-              <div className="flex items-center justify-between mb-2">
-                <Label className="text-sm font-medium">Price Range</Label>
-                <div className="flex items-center gap-2">
-                  {!currentPrice || !minPriceInputString || !maxPriceInputString ? (
-                    // Loading skeletons
-                    <>
-                      <div className="h-4 w-12 bg-muted/50 rounded animate-pulse" />
-                      <div className="w-px h-4 bg-border" />
-                      <div className="h-4 w-20 bg-muted/50 rounded animate-pulse" />
-                    </>
-                  ) : (
-                    <>
-                      {/* Range Type badge - opens modal */}
-                      <button
-                        type="button"
-                        className="px-2 py-0.5 text-xs font-medium rounded-md border border-sidebar-border bg-muted/30 text-foreground hover:bg-muted/50 transition-colors cursor-pointer"
-                        onClick={() => setShowRangeModal(true)}
-                        title="Click to change range"
-                      >
-                        {(() => {
-                          // Map presets to consistent labels (matches RangeSelectionModalV2)
-                          const presetLabels: Record<string, string> = isStablePool ? {
-                            "Full Range": "Full Range",
-                            "±3%": "Conservative",
-                            "±1%": "Concentrated"
-                          } : {
-                            "Full Range": "Full Range",
-                            "±15%": "Conservative",
-                            "±3%": "Concentrated"
-                          };
-                          return activePreset ? (presetLabels[activePreset] || activePreset) : "Custom";
-                        })()}
-                      </button>
-                      {getPriceRangeDisplay() && (
-                        <>
-                          <div className="w-px h-4 bg-border" />
-                          {/* Clickable price range display - opens modal */}
+                    {!currentPrice || !minPriceInputString || !maxPriceInputString ? (
+                      // Loading skeletons
+                      <>
+                        <div className="h-4 w-12 bg-muted/50 rounded animate-pulse" />
+                        <div className="h-4 w-20 bg-muted/50 rounded animate-pulse" />
+                      </>
+                    ) : (
+                      <>
+                        {/* Clickable price range display - opens modal */}
+                        {getPriceRangeDisplay() && (
                           <div className="flex items-center gap-1 text-xs">
                             <div
                               className={`${(isDraggingRange === 'left' || isDraggingRange === 'center') ? 'text-white' : 'text-muted-foreground'} hover:text-white px-1 py-1 transition-colors cursor-pointer`}
@@ -2644,126 +2127,102 @@ export function AddLiquidityForm({
                               </TooltipProvider>
                             )}
                           </div>
-                        </>
-                      )}
-                    </>
-                  )}
+                        )}
+                      </>
+                    )}
+                  </div>
                 </div>
+
+                {/* Range Buttons */}
+                {!showingTransactionSteps ? (
+                  <div className="grid grid-cols-4 gap-2">
+                    {["Full Range", "Wide", "Narrow", "Custom"].map((preset) => {
+                      // Map labels to internal preset values
+                      const presetValue = (() => {
+                        if (preset === "Full Range") return "Full Range";
+                        if (preset === "Wide") return isStablePool ? "±3%" : "±15%";
+                        if (preset === "Narrow") return isStablePool ? "±1%" : "±3%";
+                        return null; // Custom
+                      })();
+
+                      const isActive = activePreset === presetValue;
+                      const isCustom = preset === "Custom";
+
+                      return (
+                        <button
+                          key={preset}
+                          type="button"
+                          onClick={() => {
+                            if (preset === "Custom") {
+                              setShowRangeModal(true);
+                            } else {
+                              handleSelectPreset(presetValue!);
+                            }
+                          }}
+                          className={`relative h-10 px-2 flex items-center justify-center gap-1.5 rounded-md border transition-all duration-200 overflow-hidden text-[11px] font-medium cursor-pointer ${
+                            isActive
+                              ? 'text-sidebar-primary border-sidebar-primary bg-button-primary'
+                              : 'border-sidebar-border bg-button hover:bg-accent hover:brightness-110 hover:border-white/30 text-white'
+                          }`}
+                          style={!isActive ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
+                        >
+                          {isCustom && <Maximize className={`w-3 h-3 relative z-10 ${isActive ? 'text-sidebar-primary' : 'text-muted-foreground'}`} />}
+                          <span className="relative z-10">{preset}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
               </div>
 
-              {/* Range Preview Chart OR Transaction Steps (conditional based on flow state) */}
               {!showingTransactionSteps ? (
-                <div
-                  className={`pt-3 px-3 pb-1.5 border border-dashed rounded-md mb-4 transition-all duration-200 group ${
-                    isPoolStateLoading || !isConnected
-                      ? 'bg-muted/10'
-                      : 'bg-muted/10 cursor-pointer hover:bg-primary/[0.025] hover:border-primary/10'
-                  }`}
-                  onClick={!isPoolStateLoading && isConnected ? () => setShowRangeModal(true) : undefined}
-                >
-                  {isPoolStateLoading || !isConnected ? (
-                    <div className="w-full h-[100px] relative overflow-hidden flex flex-col items-center justify-center bg-muted/50 rounded-md">
-                      <Image
-                        src="/LogoIconWhite.svg"
-                        alt="Alphix Logo"
-                        width={32}
-                        height={32}
-                        className="animate-pulse opacity-75"
-                      />
-                    </div>
-                  ) : (
-                    <div className="relative pointer-events-none h-[100px]">
-                      <InteractiveRangeChart
-                        key={`chart-${baseTokenForPriceDisplay}`}
-                        selectedPoolId={selectedPoolId}
-                        chainId={chainId}
-                        token0Symbol={token0Symbol}
-                        token1Symbol={token1Symbol}
-                        currentPoolTick={currentPoolTick}
-                        currentPrice={currentPrice}
-                        currentPoolSqrtPriceX96={currentPoolSqrtPriceX96}
-                        tickLower={tickLower}
-                        tickUpper={tickUpper}
-                        xDomain={xDomain}
-                        onRangeChange={(newLower, newUpper) => {
-                          setTickLower(newLower);
-                          setTickUpper(newUpper);
-                          resetTransaction();
-                          setInitialDefaultApplied(true);
-                          setActivePreset(null);
-                        }}
-                        onXDomainChange={(newDomain) => {
-                          setXDomain(newDomain);
-                        }}
-                        sdkMinTick={sdkMinTick}
-                        sdkMaxTick={sdkMaxTick}
-                        defaultTickSpacing={defaultTickSpacing}
-                        poolToken0={poolToken0}
-                        poolToken1={poolToken1}
-                        onDragStateChange={(state) => setIsDraggingRange(state)}
-                        onLoadingChange={(loading) => setIsChartLoading(loading)}
-                        forceDenominationBase={baseTokenForPriceDisplay}
-                        readOnly={true}
-                      />
+                <>
 
-                      <RangeSelectionModalV2
-                        isOpen={showRangeModal}
-                        onClose={() => {
-                          setShowRangeModal(false);
-                          setModalInitialFocusField(null);
-                        }}
-                        onConfirm={(newTickLower, newTickUpper, selectedPreset, denomination) => {
-                          setTickLower(newTickLower);
-                          setTickUpper(newTickUpper);
-                          resetTransaction();
-                          setInitialDefaultApplied(true);
-                          // Set the preset from the modal instead of clearing it
-                          setActivePreset(selectedPreset || null);
-                          // Sync denomination with modal
-                          if (denomination) {
-                            setBaseTokenForPriceDisplay(denomination);
-                          }
-                          setModalInitialFocusField(null);
-                        }}
-                        initialTickLower={tickLower}
-                        initialTickUpper={tickUpper}
-                        initialActivePreset={activePreset}
-                        selectedPoolId={selectedPoolId}
-                        chainId={chainId}
-                        token0Symbol={token0Symbol}
-                        token1Symbol={token1Symbol}
-                        currentPrice={currentPrice}
-                        currentPoolTick={currentPoolTick}
-                        currentPoolSqrtPriceX96={currentPoolSqrtPriceX96}
-                        minPriceDisplay={minPriceInputString}
-                        maxPriceDisplay={maxPriceInputString}
-                        baseTokenSymbol={baseTokenForPriceDisplay}
-                        sdkMinTick={sdkMinTick}
-                        sdkMaxTick={sdkMaxTick}
-                        defaultTickSpacing={defaultTickSpacing}
-                        xDomain={xDomain}
-                        onXDomainChange={(newDomain) => setXDomain(newDomain)}
-                        poolToken0={poolToken0}
-                        poolToken1={poolToken1}
-                        presetOptions={presetOptions}
-                        isInverted={isInverted}
-                        initialFocusField={modalInitialFocusField}
-                      />
+                  <RangeSelectionModalV2
+                    isOpen={showRangeModal}
+                    onClose={() => {
+                      setShowRangeModal(false);
+                      setModalInitialFocusField(null);
+                    }}
+                    onConfirm={(newTickLower, newTickUpper, selectedPreset, denomination) => {
+                      setTickLower(newTickLower);
+                      setTickUpper(newTickUpper);
+                      resetTransaction();
+                      setInitialDefaultApplied(true);
+                      // Set the preset from the modal instead of clearing it
+                      setActivePreset(selectedPreset || null);
+                      // Sync denomination with modal
+                      if (denomination) {
+                        setBaseTokenForPriceDisplay(denomination);
+                      }
+                      setModalInitialFocusField(null);
+                    }}
+                    initialTickLower={tickLower}
+                    initialTickUpper={tickUpper}
+                    initialActivePreset={activePreset}
+                    selectedPoolId={selectedPoolId}
+                    chainId={chainId}
+                    token0Symbol={token0Symbol}
+                    token1Symbol={token1Symbol}
+                    currentPrice={currentPrice}
+                    currentPoolTick={currentPoolTick}
+                    currentPoolSqrtPriceX96={currentPoolSqrtPriceX96}
+                    minPriceDisplay={minPriceInputString}
+                    maxPriceDisplay={maxPriceInputString}
+                    baseTokenSymbol={baseTokenForPriceDisplay}
+                    sdkMinTick={sdkMinTick}
+                    sdkMaxTick={sdkMaxTick}
+                    defaultTickSpacing={defaultTickSpacing}
+                    xDomain={xDomain}
+                    onXDomainChange={(newDomain) => setXDomain(newDomain)}
+                    poolToken0={poolToken0}
+                    poolToken1={poolToken1}
+                    presetOptions={presetOptions}
+                    isInverted={isInverted}
+                    initialFocusField={modalInitialFocusField}
+                  />
+                </>
 
-                      {(isChartLoading || isCalculating) && (
-                        <div className="absolute inset-0 flex items-center justify-center bg-muted/20 rounded">
-                          <Image
-                            src="/LogoIconWhite.svg"
-                            alt="Loading"
-                            width={24}
-                            height={24}
-                            className="animate-pulse opacity-75"
-                          />
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
               ) : (
                 <div className="p-3 border border-dashed rounded-md bg-muted/10 mb-4">
                 <p className="text-sm font-medium mb-2 text-foreground/80">Transaction Steps</p>
@@ -2833,6 +2292,281 @@ export function AddLiquidityForm({
                   </div>
                 </div>
               )}
+
+              {/* Input for Token 0 */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between mb-2">
+                  <Label className="text-sm font-medium">Amount</Label>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="ghost"
+                      className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent"
+                      onClick={() => handleUseFullBalance(token0BalanceData?.formatted || "0", token0Symbol, true)}
+                      disabled={isWorking || isCalculating}
+                    >
+                      Balance: {displayToken0Balance} {token0Symbol}
+                    </Button>
+                  </div>
+                </div>
+                <motion.div
+                  className={cn("rounded-lg bg-muted/30 p-4 group", { "outline outline-1 outline-muted": isAmount0Focused })}
+                  animate={balanceWiggleControls0}
+                >
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
+                      <Image src={getTokenIcon(token0Symbol)} alt={token0Symbol} width={20} height={20} className="rounded-full"/>
+                      <span className="text-sm font-medium">{token0Symbol}</span>
+                    </div>
+                    <div className="flex-1">
+                      <Input
+                        id="amount0"
+                        placeholder="0.0"
+                        value={amount0}
+                        onChange={(e) => {
+                          let newValue = e.target.value.replace(',', '.'); // Ensure decimal separator is always period
+                          // Only allow numbers, one decimal point, and prevent multiple decimal points
+                          newValue = newValue.replace(/[^0-9.]/g, '').replace(/(\..*?)\./g, '$1');
+
+                          // Check if going over balance to trigger wiggle
+                          const maxAmount = token0BalanceData ? parseFloat(token0BalanceData.formatted || "0") : 0;
+                          const inputAmount = parseFloat(newValue || "0");
+                          const prevAmount = parseFloat(amount0 || "0");
+                          const wasOver = Number.isFinite(prevAmount) && Number.isFinite(maxAmount) ? prevAmount > maxAmount : false;
+                          const isOver = Number.isFinite(inputAmount) && Number.isFinite(maxAmount) ? inputAmount > maxAmount : false;
+                          if (isOver && !wasOver) {
+                            setBalanceWiggleCount0(c => c + 1);
+                          }
+
+                          // Clear full precision when user manually edits
+                          setAmount0FullPrecision("");
+                          resetTransaction();
+                          setAmount0(newValue);
+                          setActiveInputSide('amount0');
+                        }}
+                        onFocus={() => {
+                          setIsAmount0Focused(true);
+                          // Show full precision if current value is abbreviated (has '...')
+                          if (amount0FullPrecision && (amount0.includes('...') || amount0FullPrecision !== amount0)) {
+                            setAmount0(amount0FullPrecision);
+                          }
+                        }}
+                        onBlur={() => {
+                          setIsAmount0Focused(false);
+                          // Re-abbreviate if we have full precision and it's not the active input side
+                          if (amount0FullPrecision && (!activeInputSide || activeInputSide !== 'amount0')) {
+                            const displayAmount = formatTokenDisplayAmount(amount0FullPrecision, token0Symbol);
+                            setAmount0(displayAmount);
+                          }
+                        }}
+                        type="text"
+                        pattern="[0-9]*\.?[0-9]*"
+                        inputMode="decimal"
+                        autoComplete="off"
+                        disabled={isWorking || (isCalculating && activeInputSide === 'amount1')}
+                        className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
+                      />
+                      <div className="relative text-right text-xs min-h-5">
+                        {/* USD Value - hide on hover when empty */}
+                        <div className={cn("text-muted-foreground transition-opacity duration-100", {
+                          "group-hover:opacity-0": isConnected && !amount0 && token0BalanceData && parseFloat(token0BalanceData.formatted || "0") > 0
+                        })}>
+                          {(() => {
+                            const usdPrice = getUSDPriceForSymbol(token0Symbol);
+
+                            // Use precise backend data when available, fallback to display amount
+                            if (calculatedData && calculatedData.amount0) {
+                              try {
+                                const preciseAmount = parseFloat(viemFormatUnits(BigInt(calculatedData.amount0), TOKEN_DEFINITIONS[token0Symbol]?.decimals || 18));
+                                return formatUSD(preciseAmount * usdPrice);
+                              } catch {
+                                // Fallback to display amount if parsing fails
+                                const numeric = parseDisplayAmount(amount0);
+                                return formatUSD(numeric * usdPrice);
+                              }
+                            } else {
+                              const numeric = parseDisplayAmount(amount0);
+                              return formatUSD(numeric * usdPrice);
+                            }
+                          })()}
+                        </div>
+                        {/* Percentage buttons - show on hover when empty */}
+                        {isConnected && !amount0 && token0BalanceData && parseFloat(token0BalanceData.formatted || "0") > 0 && (
+                          <div className="absolute right-0 top-0 flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
+                            {[25, 50, 75, 100].map((percentage, index) => (
+                              <motion.div
+                                key={percentage}
+                                className="opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0"
+                                style={{
+                                  transitionDelay: `${index * 40}ms`,
+                                  transitionDuration: '200ms',
+                                  transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)'
+                                }}
+                              >
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-5 px-2 text-[10px] font-medium rounded-md border-sidebar-border bg-muted/20 hover:bg-muted/40 transition-colors"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const balance = parseFloat(token0BalanceData.formatted || "0");
+                                    const amount = (balance * percentage) / 100;
+                                    const formattedAmount = amount.toFixed(TOKEN_DEFINITIONS[token0Symbol]?.decimals || 18);
+                                    setAmount0(formattedAmount);
+                                    setActiveInputSide('amount0');
+                                  }}
+                                >
+                                  {percentage === 100 ? 'MAX' : `${percentage}%`}
+                                </Button>
+                              </motion.div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
+              </div>
+
+              {/* Plus Icon */}
+              <div className="flex justify-center items-center my-2">
+                <div className="flex items-center justify-center h-8 w-8 rounded-full bg-muted/20">
+                  <PlusIcon className="h-4 w-4 text-muted-foreground" />
+                </div>
+              </div>
+
+              {/* Input for Token 1 */}
+              <div className="space-y-2 mb-4">
+                <div className="flex items-center justify-between mb-2">
+                  <Label className="text-sm font-medium">Amount</Label>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="ghost"
+                      className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent"
+                      onClick={() => handleUseFullBalance(token1BalanceData?.formatted || "0", token1Symbol, false)}
+                      disabled={isWorking || isCalculating}
+                    >
+                      Balance: {displayToken1Balance} {token1Symbol}
+                    </Button>
+                  </div>
+                </div>
+                <motion.div
+                  className={cn("rounded-lg bg-muted/30 p-4 group", { "outline outline-1 outline-muted": isAmount1Focused })}
+                  animate={balanceWiggleControls1}
+                >
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
+                      <Image src={getTokenIcon(token1Symbol)} alt={token1Symbol} width={20} height={20} className="rounded-full"/>
+                      <span className="text-sm font-medium">{token1Symbol}</span>
+                    </div>
+                    <div className="flex-1">
+                      <Input
+                        id="amount1"
+                        placeholder="0.0"
+                        value={amount1}
+                        onChange={(e) => {
+                          let newValue = e.target.value.replace(',', '.'); // Ensure decimal separator is always period
+                          // Only allow numbers, one decimal point, and prevent multiple decimal points
+                          newValue = newValue.replace(/[^0-9.]/g, '').replace(/(\..*?)\./g, '$1');
+
+                          // Check if going over balance to trigger wiggle
+                          const maxAmount = token1BalanceData ? parseFloat(token1BalanceData.formatted || "0") : 0;
+                          const inputAmount = parseFloat(newValue || "0");
+                          const prevAmount = parseFloat(amount1 || "0");
+                          const wasOver = Number.isFinite(prevAmount) && Number.isFinite(maxAmount) ? prevAmount > maxAmount : false;
+                          const isOver = Number.isFinite(inputAmount) && Number.isFinite(maxAmount) ? inputAmount > maxAmount : false;
+                          if (isOver && !wasOver) {
+                            setBalanceWiggleCount1(c => c + 1);
+                          }
+
+                          // Clear full precision when user manually edits
+                          setAmount1FullPrecision("");
+                          resetTransaction();
+                          setAmount1(newValue);
+                          setActiveInputSide('amount1');
+                        }}
+                        onFocus={() => {
+                          setIsAmount1Focused(true);
+                          // Show full precision if current value is abbreviated (has '...')
+                          if (amount1FullPrecision && (amount1.includes('...') || amount1FullPrecision !== amount1)) {
+                            setAmount1(amount1FullPrecision);
+                          }
+                        }}
+                        onBlur={() => {
+                          setIsAmount1Focused(false);
+                          // Re-abbreviate if we have full precision and it's not the active input side
+                          if (amount1FullPrecision && (!activeInputSide || activeInputSide !== 'amount1')) {
+                            const displayAmount = formatTokenDisplayAmount(amount1FullPrecision, token1Symbol);
+                            setAmount1(displayAmount);
+                          }
+                        }}
+                        type="text"
+                        pattern="[0-9]*\.?[0-9]*"
+                        inputMode="decimal"
+                        autoComplete="off"
+                        disabled={isWorking || (isCalculating && activeInputSide === 'amount0')}
+                        className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
+                      />
+                      <div className="relative text-right text-xs min-h-5">
+                        {/* USD Value - hide on hover when empty */}
+                        <div className={cn("text-muted-foreground transition-opacity duration-100", {
+                          "group-hover:opacity-0": isConnected && !amount1 && token1BalanceData && parseFloat(token1BalanceData.formatted || "0") > 0
+                        })}>
+                          {(() => {
+                            const usdPrice = getUSDPriceForSymbol(token1Symbol);
+
+                            // Use precise backend data when available, fallback to display amount
+                            if (calculatedData && calculatedData.amount1) {
+                              try {
+                                const preciseAmount = parseFloat(viemFormatUnits(BigInt(calculatedData.amount1), TOKEN_DEFINITIONS[token1Symbol]?.decimals || 18));
+                                return formatUSD(preciseAmount * usdPrice);
+                              } catch {
+                                // Fallback to display amount if parsing fails
+                                const numeric = parseDisplayAmount(amount1);
+                                return formatUSD(numeric * usdPrice);
+                              }
+                            } else {
+                              const numeric = parseDisplayAmount(amount1);
+                              return formatUSD(numeric * usdPrice);
+                            }
+                          })()}
+                        </div>
+                        {/* Percentage buttons - show on hover when empty */}
+                        {isConnected && !amount1 && token1BalanceData && parseFloat(token1BalanceData.formatted || "0") > 0 && (
+                          <div className="absolute right-0 top-0 flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
+                            {[25, 50, 75, 100].map((percentage, index) => (
+                              <motion.div
+                                key={percentage}
+                                className="opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0"
+                                style={{
+                                  transitionDelay: `${index * 40}ms`,
+                                  transitionDuration: '200ms',
+                                  transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)'
+                                }}
+                              >
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-5 px-2 text-[10px] font-medium rounded-md border-sidebar-border bg-muted/20 hover:bg-muted/40 transition-colors"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const balance = parseFloat(token1BalanceData.formatted || "0");
+                                    const amount = (balance * percentage) / 100;
+                                    const formattedAmount = amount.toFixed(TOKEN_DEFINITIONS[token1Symbol]?.decimals || 18);
+                                    setAmount1(formattedAmount);
+                                    setActiveInputSide('amount1');
+                                  }}
+                                >
+                                  {percentage === 100 ? 'MAX' : `${percentage}%`}
+                                </Button>
+                              </motion.div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
+              </div>
 
               {/* Current Price Display removed per updated UI */}
 

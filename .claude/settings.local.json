@@ -37,7 +37,9 @@
       "Bash(npm run test:*)",
       "Bash(bash:*)",
       "Bash(netstat:*)",
-      "Bash(findstr:*)"
+      "Bash(findstr:*)",
+      "Bash(for var in \"isPanning\" \"isDraggingRange\" \"dragStartX\" \"dragStartTickLower\" \"dragStartTickUpper\" \"dragSide\" \"editingSide\" \"customXAxisTicks\" \"editingMinPrice\" \"editingMaxPrice\" \"showPresetSelector\")",
+      "Bash(for ref in \"panStartXRef\" \"panStartDomainRef\" \"chartContainerRef\" \"prevCalculationDeps\")"
     ],
     "deny": [],
     "ask": []
