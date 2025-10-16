@@ -81,8 +81,8 @@ export function calculateActiveLiquidityPercentage(
       tickSpacing,
       liquidityAmount: liquidityAmount.toString(),
       pool: `${pool.token0.symbol}/${pool.token1.symbol}`,
-      token0: { symbol: pool.token0.symbol, decimals: pool.token0.decimals, address: pool.token0.address },
-      token1: { symbol: pool.token1.symbol, decimals: pool.token1.decimals, address: pool.token1.address }
+      token0: { symbol: pool.token0.symbol, decimals: pool.token0.decimals, address: 'address' in pool.token0 ? pool.token0.address : 'native' },
+      token1: { symbol: pool.token1.symbol, decimals: pool.token1.decimals, address: 'address' in pool.token1 ? pool.token1.address : 'native' }
     });
 
     // Create the concentrated position

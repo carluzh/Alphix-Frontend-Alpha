@@ -23,7 +23,6 @@ import {
 import { ReactSVG } from "react-svg"
 import { useTheme } from "next-themes"
 import { NavMain } from "./nav-main"
-import { NavSecondary } from "./nav-secondary"
 import { NavGovernance } from "./nav-governance"
 import { AccountStatus } from "./AccountStatus"
 import { ConnectWalletButton } from "./ConnectWalletButton"

@@ -10,7 +10,6 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { Info, Clock3, ChevronsLeftRight, EllipsisVertical, OctagonX } from "lucide-react";
 import { TokenStack } from "./TokenStack";
 import { FeesCell } from "./FeesCell";
-import { PositionRangePreview } from "./PositionRangePreview";
 import { TOKEN_DEFINITIONS, TokenSymbol, getToken as getTokenConfig } from '@/lib/pools-config';
 import { nearestUsableTick } from '@uniswap/v3-sdk';
 

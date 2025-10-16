@@ -37,8 +37,7 @@ const safeParseUnits = (amount: string, decimals: number): bigint => {
 };
 import { useAddLiquidityTransactionV2 } from "./useAddLiquidityTransactionV2";
 import { motion, AnimatePresence, useAnimation } from "framer-motion";
-import { InteractiveRangeChart } from "./InteractiveRangeChart";
-import { RangeSelectionModalV2 } from "./range-selection";
+import { RangeSelectionModalV2 } from "./range-selection/RangeSelectionModalV2";
 import {
   Tooltip,
   TooltipContent,

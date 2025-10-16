@@ -131,7 +131,9 @@ export async function getAllTokenPrices(params?: { signal?: AbortSignal }): Prom
 export async function getTokenPrice(tokenSymbol: string): Promise<number | null> {
   const allPrices = await getAllTokenPrices();
   const baseSymbol = getUnderlyingAsset(tokenSymbol);
-  return baseSymbol ? allPrices[baseSymbol]?.usd || null : null;
+  if (!baseSymbol) return null;
+  const priceData = allPrices[baseSymbol];
+  return typeof priceData === 'object' ? priceData.usd || null : null;
 }
 
 /**

@@ -21,7 +21,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { formatUnits, type Hex } from "viem";
 import { Bar, BarChart, Line, LineChart, CartesianGrid, XAxis, YAxis, ResponsiveContainer, ComposedChart, Area, ReferenceLine, ReferenceArea } from "recharts";
 import { getPoolById, getPoolSubgraphId, getToken, getAllTokens } from "@/lib/pools-config";
-import { usePoolState, useAllPrices, useUncollectedFees, useUncollectedFeesBatch } from "@/components/data/hooks";
+import { usePoolState, useAllPrices, useUncollectedFeesBatch } from "@/components/data/hooks";
 import { getPoolFeeBps } from "@/lib/client-cache";
 import { SafeStorage } from "@/lib/safe-storage";
 import { RetryUtility } from "@/lib/retry-utility";
@@ -51,23 +51,12 @@ import { AddLiquidityForm } from "../../../components/liquidity/AddLiquidityForm
 import { AddLiquidityModal } from "../../../components/liquidity/AddLiquidityModal";
 import { WithdrawLiquidityModal } from "../../../components/liquidity/WithdrawLiquidityModal";
 import React from "react";
-import { useBurnLiquidity, type BurnPositionData } from "@/components/liquidity/useBurnLiquidity";
 import { useIncreaseLiquidity, type IncreasePositionData } from "@/components/liquidity/useIncreaseLiquidity";
 import { useDecreaseLiquidity, type DecreasePositionData } from "@/components/liquidity/useDecreaseLiquidity";
 import { prefetchService } from "@/lib/prefetch-service";
 import { publicClient } from "@/lib/viemClient";
 
 
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { ChevronDownIcon } from "lucide-react";
 
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -2003,10 +1992,6 @@ export default function PoolDetailPage() {
   }, [isFullBurn, refreshAfterMutation, positionToBurn, calculatePositionUsd, currentPoolData]);
 
   // Initialize the liquidity modification hooks (moved here after callback definitions)
-  const { burnLiquidity, isLoading: isBurningLiquidity } = useBurnLiquidity({
-    onLiquidityBurned: onLiquidityBurnedCallback
-  });
-
   const { increaseLiquidity, isLoading: isIncreasingLiquidity, isSuccess: isIncreaseSuccess, hash: increaseTxHash, reset: resetIncreaseLiquidity } = useIncreaseLiquidity({
     onLiquidityIncreased: onLiquidityIncreasedCallback,
   });
@@ -3540,7 +3525,7 @@ export default function PoolDetailPage() {
         isOpen={showBurnConfirmDialog}
         onOpenChange={(open) => {
         // Only allow closing if not currently processing transaction
-        if (!isBurningLiquidity && !isDecreasingLiquidity) {
+        if (!isDecreasingLiquidity) {
           setShowBurnConfirmDialog(open);
           // Reset position when modal is actually closed
           if (!open) {

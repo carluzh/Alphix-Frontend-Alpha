@@ -65,7 +65,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 // Chart Import
 import { DynamicFeeChart, generateMockFeeHistory } from "../dynamic-fee-chart";
 import { DynamicFeeChartPreview } from "../dynamic-fee-chart-preview";
-import { PulsatingDot } from "../pulsating-dot";
 import { getFromCache, setToCache, getFromCacheWithTtl, getPoolDynamicFeeCacheKey } from "@/lib/client-cache";
 import { getPoolByTokens } from "@/lib/pools-config";
 import { findBestRoute, SwapRoute, PoolHop } from "@/lib/routing-engine";
