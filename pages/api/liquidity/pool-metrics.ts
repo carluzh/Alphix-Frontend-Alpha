@@ -37,10 +37,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   const apiId = getPoolSubgraphId(poolId) || poolId;
+  const isDAI = isDaiPool(poolId);
 
-  console.log('[pool-metrics] Request:', { poolId, apiId: apiId.toLowerCase(), days });
+  console.log('[pool-metrics] Request:', { poolId, apiId: apiId.toLowerCase(), days, isDAI });
 
-  const poolQuery = `
+  // Use different query based on whether it's a DAI pool (Satsuma schema) or not (Original schema)
+  const poolQueryOriginal = `
     query PoolMetrics($poolId: Bytes!, $days: Int!) {
       trackedPool(id: $poolId) {
         id
@@ -69,6 +71,33 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     }
   `;
+
+  // Satsuma schema (for DAI pools) - uses standard Uniswap V3 field names
+  const poolQuerySatsuma = `
+    query PoolMetrics($poolId: ID!, $days: Int!) {
+      pool(id: $poolId) {
+        id
+        totalValueLockedToken0
+        totalValueLockedToken1
+        feeTier
+        txCount
+      }
+
+      poolDayDatas(
+        where: { pool: $poolId }
+        first: $days
+        orderBy: date
+        orderDirection: desc
+      ) {
+        date
+        volumeToken0
+        volumeToken1
+        tvlUSD
+      }
+    }
+  `;
+
+  const poolQuery = isDAI ? poolQuerySatsuma : poolQueryOriginal;
 
   // DAI subgraph uses currentRatio (Activity), old subgraph uses currentTargetRatio
   const feeEventsQueryDai = `
@@ -109,9 +138,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Determine the appropriate subgraph URL for this pool
     const subgraphUrlForPool = getSubgraphUrlForPool(poolId);
 
-    // Fetch pool data and fee events in parallel from different subgraphs
+    // For DAI pools, use pool-specific Satsuma subgraph for both pool data and fee events
+    // For non-DAI pools, use ORIGINAL subgraph for pool data and Satsuma for fee events
+    const poolDataUrl = isDAI ? subgraphUrlForPool : SUBGRAPH_ORIGINAL_URL;
+
     const [poolResponse, feeResponse] = await Promise.all([
-      fetch(SUBGRAPH_ORIGINAL_URL, {
+      fetch(poolDataUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -202,11 +234,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const { data } = poolResult;
     const feeEvents = feeResult?.data?.alphixHooks || [];
 
+    // Handle both schema types
+    const pool = isDAI ? data?.pool : data?.trackedPool;
+
     if (!data?.poolDayDatas || data.poolDayDatas.length === 0) {
       console.log('[pool-metrics] No poolDayDatas found for pool. Pool may not be in subgraph yet.');
       // Return empty metrics instead of error for pools not yet in subgraph
       return res.status(200).json({
-        pool: data?.trackedPool || null,
+        pool: pool || null,
         metrics: {
           totalFeesToken0: 0,
           avgTVLToken0: 0,
@@ -218,9 +253,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
     }
 
-    // Calculate aggregates
-    const dayDatas: PoolDayData[] = data.poolDayDatas;
-    const pool = data.trackedPool;
+    // Normalize day data to common format
+    const dayDatas = data.poolDayDatas.map((day: any) => ({
+      date: day.date,
+      volumeToken0: day.volumeToken0,
+      volumeToken1: day.volumeToken1,
+      tvlToken0: day.tvlToken0 || '0', // Not available in Satsuma schema
+      tvlToken1: day.tvlToken1 || '0', // Not available in Satsuma schema
+      currentFeeRateBps: day.currentFeeRateBps || '0' // Not available in Satsuma schema
+    }));
 
     console.log('[pool-metrics] Found', dayDatas.length, 'days of data');
     console.log('[pool-metrics] Found', feeEvents.length, 'fee events');
@@ -276,8 +317,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       totalFeesToken0 += dayFees;
     }
 
-    // Average TVL in token0 terms
-    const avgTVLToken0 = dayDatas.reduce((sum, day) => sum + parseFloat(day.tvlToken0 || '0'), 0) / dayDatas.length;
+    // Calculate TVL - for DAI pools use current pool TVL, for others average daily TVL
+    let avgTVLToken0: number;
+    if (isDAI && pool?.totalValueLockedToken0) {
+      // For Satsuma schema, use current pool TVL (day data doesn't have TVL)
+      avgTVLToken0 = parseFloat(pool.totalValueLockedToken0);
+      console.log('[pool-metrics] Using current pool TVL for DAI pool:', avgTVLToken0);
+    } else {
+      // For original schema, average the daily TVL values
+      avgTVLToken0 = dayDatas.reduce((sum, day) => sum + parseFloat(day.tvlToken0 || '0'), 0) / dayDatas.length;
+      console.log('[pool-metrics] Using averaged daily TVL:', avgTVLToken0);
+    }
+
     const totalVolumeToken0 = dayDatas.reduce((sum, day) => sum + parseFloat(day.volumeToken0 || '0'), 0);
 
     // For APY calculation, we'll work in token0 terms

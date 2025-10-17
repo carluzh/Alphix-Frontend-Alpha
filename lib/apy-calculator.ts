@@ -1,15 +1,22 @@
 /**
  * APY Calculator for Uniswap V4 Liquidity Positions
- * Calculates APY based on active liquidity percentage using Uniswap V4 SDK
+ * Calculates APR based on active liquidity in user's selected range
  */
 
 import { Pool as V4Pool, Position as V4Position } from '@uniswap/v4-sdk';
 import JSBI from 'jsbi';
+import { batchGetTokenPrices } from './price-service';
 
 export interface PoolMetrics {
   totalFeesToken0: number; // Total fees earned in token0 over the period
   avgTVLToken0: number; // Average TVL in token0
   days: number; // Number of days in the period
+}
+
+export interface PositionData {
+  tickLower: number;
+  tickUpper: number;
+  liquidity: string; // Raw liquidity as string from subgraph
 }
 
 /**
@@ -175,47 +182,180 @@ export function calculateActiveLiquidityPercentage(
 }
 
 /**
- * Calculate APY for a position
- *
- * APY = (fees earned per year / capital deployed) * 100
- *
- * For concentrated positions:
- * - They earn the same fees as a full-range position with the same liquidity L
- * - But they require less capital to achieve that liquidity L
- * - Therefore APY is higher by the concentration ratio
+ * DEPRECATED - Not used anymore
+ * We now use pool.liquidity directly which represents active liquidity at current tick
  */
-export function calculatePositionAPY(
+export function calculateTotalActiveLiquidity(
+  positions: PositionData[],
+  userTickLower: number,
+  userTickUpper: number,
+  pool: V4Pool
+): number {
+  // This function is no longer used
+  return 0;
+}
+
+/**
+ * Calculate APR for a position using liquidity share approach
+ *
+ * Formula:
+ * 1. Fetch USD prices for both tokens
+ * 2. Calculate my liquidity (L) from $100 USD investment in this range using SDK
+ * 3. Get pool's total liquidity (L) at current tick from pool.liquidity
+ * 4. My fee share = my L / (pool L + my L)
+ * 5. My APR = (annual fees × fee share / investment) × 100
+ *
+ * Key insight: Narrower ranges get MORE liquidity (L) for same capital,
+ * thus higher fee share, thus higher APR.
+ *
+ * @param pool - V4Pool instance with current pool state
+ * @param tickLower - Lower tick of the position
+ * @param tickUpper - Upper tick of the position
+ * @param poolMetrics - Historical metrics (fees, TVL, days)
+ * @param positions - UNUSED (kept for backwards compatibility)
+ * @param investmentAmountUSD - Investment amount in USD (default $100)
+ * @returns APR as a percentage (0-9999)
+ */
+export async function calculatePositionAPY(
   pool: V4Pool,
   tickLower: number,
   tickUpper: number,
-  poolMetrics: PoolMetrics
-): number {
+  poolMetrics: PoolMetrics,
+  positions?: PositionData[],
+  investmentAmountUSD: number = 100
+): Promise<number> {
   try {
-    if (poolMetrics.avgTVLToken0 === 0 || poolMetrics.days === 0) {
+    const currentTick = pool.tickCurrent;
+
+    // If price is outside range, position earns no fees
+    if (currentTick < tickLower || currentTick >= tickUpper) {
+      console.warn('[calculatePositionAPY] Price outside range:', { currentTick, tickLower, tickUpper });
       return 0;
     }
 
-    // Calculate base pool APY (full-range equivalent)
+    if (poolMetrics.days === 0 || poolMetrics.avgTVLToken0 === 0) {
+      return 0;
+    }
+
+    // Calculate annual fees for the pool
     const feesPerDay = poolMetrics.totalFeesToken0 / poolMetrics.days;
     const annualFees = feesPerDay * 365;
-    const basePoolAPY = (annualFees / poolMetrics.avgTVLToken0) * 100;
 
-    // Get concentration multiplier
-    const concentrationPercentage = calculateActiveLiquidityPercentage(pool, tickLower, tickUpper);
-    const concentrationMultiplier = concentrationPercentage / 100;
+    // Get pool's current liquidity (L) at current tick
+    // This is the denominator - total active liquidity earning fees right now
+    const poolLiquidityStr = pool.liquidity.toString();
+    const poolL = parseFloat(poolLiquidityStr);
 
-    // Concentrated positions earn proportionally more APY
-    const positionAPY = basePoolAPY * concentrationMultiplier;
+    if (poolL === 0 || isNaN(poolL) || !isFinite(poolL)) {
+      console.warn('[calculatePositionAPY] Invalid pool liquidity:', poolLiquidityStr);
+      // Fallback to base pool APR
+      const basePoolAPR = (annualFees / poolMetrics.avgTVLToken0) * 100;
+      return Math.min(Math.max(basePoolAPR, 0), 9999);
+    }
 
-    console.log('[calculatePositionAPY]', {
-      basePoolAPY,
-      concentrationPercentage,
-      concentrationMultiplier,
-      positionAPY,
-      tickRange: { tickLower, tickUpper, currentTick: pool.tickCurrent }
+    // Fetch USD prices for both tokens
+    const token0Symbol = pool.token0.symbol || '';
+    const token1Symbol = pool.token1.symbol || '';
+
+    let token0PriceUSD: number;
+    let token1PriceUSD: number;
+
+    try {
+      const prices = await batchGetTokenPrices([token0Symbol, token1Symbol]);
+      token0PriceUSD = prices[token0Symbol] || 0;
+      token1PriceUSD = prices[token1Symbol] || 0;
+
+      if (token0PriceUSD === 0 || token1PriceUSD === 0) {
+        console.warn('[calculatePositionAPY] Missing USD prices, falling back to base APR');
+        const basePoolAPR = (annualFees / poolMetrics.avgTVLToken0) * 100;
+        return Math.min(Math.max(basePoolAPR, 0), 9999);
+      }
+    } catch (error) {
+      console.error('[calculatePositionAPY] Failed to fetch prices:', error);
+      const basePoolAPR = (annualFees / poolMetrics.avgTVLToken0) * 100;
+      return Math.min(Math.max(basePoolAPR, 0), 9999);
+    }
+
+    // Calculate my liquidity (L) from $100 USD investment
+    // Strategy: Use SDK's fromAmounts with large amounts, then scale based on USD value
+    let myL: number;
+    try {
+      // Use a test amount (1000 tokens each) to see what ratio the SDK uses
+      const testAmount0 = JSBI.BigInt(1000 * (10 ** pool.token0.decimals));
+      const testAmount1 = JSBI.BigInt(1000 * (10 ** pool.token1.decimals));
+
+      const testPosition = V4Position.fromAmounts({
+        pool,
+        tickLower,
+        tickUpper,
+        amount0: testAmount0,
+        amount1: testAmount1,
+        useFullPrecision: true
+      });
+
+      // Get the actual amounts the SDK decided to use
+      const actualAmount0 = parseFloat(testPosition.amount0.toSignificant(18));
+      const actualAmount1 = parseFloat(testPosition.amount1.toSignificant(18));
+
+      // Calculate total USD value of this test position
+      const totalUSDValue = (actualAmount0 * token0PriceUSD) + (actualAmount1 * token1PriceUSD);
+
+      // Scale liquidity to match our target USD investment
+      const scaleFactor = investmentAmountUSD / totalUSDValue;
+      const testLiquidity = parseFloat(testPosition.liquidity.toString());
+      myL = testLiquidity * scaleFactor;
+
+      console.log('[calculatePositionAPY] Liquidity calculation:', {
+        tickLower,
+        tickUpper,
+        currentTick,
+        tickRange: tickUpper - tickLower,
+        token0: token0Symbol,
+        token1: token1Symbol,
+        token0PriceUSD,
+        token1PriceUSD,
+        actualAmount0,
+        actualAmount1,
+        totalUSDValue: totalUSDValue.toFixed(2),
+        targetUSD: investmentAmountUSD,
+        scaleFactor,
+        testLiquidity: testLiquidity.toExponential(2),
+        finalLiquidity: myL.toExponential(2)
+      });
+
+      if (isNaN(myL) || !isFinite(myL) || myL <= 0) {
+        console.warn('[calculatePositionAPY] Invalid user liquidity:', myL);
+        throw new Error('Invalid liquidity calculation');
+      }
+    } catch (error) {
+      console.error('[calculatePositionAPY] Failed to calculate user liquidity:', error);
+      // Fallback to base pool APR
+      const basePoolAPR = (annualFees / poolMetrics.avgTVLToken0) * 100;
+      return Math.min(Math.max(basePoolAPR, 0), 9999);
+    }
+
+    // Calculate fee share: my L / (pool L + my L)
+    const totalL = poolL + myL;
+    const feeShare = myL / totalL;
+
+    // My annual fees = total annual fees × my share
+    const myAnnualFees = annualFees * feeShare;
+
+    // My APR = (my annual fees / my investment) × 100
+    const apr = (myAnnualFees / investmentAmountUSD) * 100;
+
+    console.log('[calculatePositionAPY] Liquidity share calculation:', {
+      tickRange: { tickLower, tickUpper, currentTick },
+      investment: investmentAmountUSD,
+      poolL: poolL.toExponential(2),
+      myL: myL.toExponential(2),
+      feeShare: (feeShare * 100).toFixed(6) + '%',
+      annualFees: annualFees.toFixed(2),
+      myAnnualFees: myAnnualFees.toFixed(6),
+      apr: apr.toFixed(2) + '%'
     });
 
-    return Math.min(Math.max(positionAPY, 0), 9999);
+    return Math.min(Math.max(apr, 0), 9999);
 
   } catch (error) {
     console.error('[calculatePositionAPY] Error:', error);

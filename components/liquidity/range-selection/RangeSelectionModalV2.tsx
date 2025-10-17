@@ -110,6 +110,11 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
   // Pool metrics for APY calculation
   const [poolMetrics, setPoolMetrics] = useState<any>(null);
   const [isLoadingMetrics, setIsLoadingMetrics] = useState(false);
+  const [poolLiquidity, setPoolLiquidity] = useState<string | null>(null);
+  const [positionData, setPositionData] = useState<Array<{tickLower: number; tickUpper: number; liquidity: string}> | null>(null);
+
+  // APY values calculated asynchronously
+  const [apyValues, setApyValues] = useState<Record<string, number>>({});
 
   // Calculate if we need to invert based on our local denomination choice
   const shouldInvert = denominationBase === token0Symbol;
@@ -193,7 +198,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
       setLocalTickUpper(initialTickUpper);
       setLocalXDomain(xDomain);
       // Use the preset passed from the form (deterministic)
-      setSelectedPreset(initialActivePreset !== undefined ? initialActivePreset : undefined);
+      setSelectedPreset(initialActivePreset !== undefined ? initialActivePreset : null);
       setDenominationBase(baseTokenSymbol);
       
       // Calculate and set full precision values
@@ -252,22 +257,40 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
     };
   }, [isOpen, onClose]);
 
-  // Fetch pool metrics when modal opens
+  // Fetch pool metrics, liquidity, and position data when modal opens
   useEffect(() => {
     if (!isOpen || !selectedPoolId) return;
 
-    const fetchMetrics = async () => {
+    const fetchData = async () => {
       setIsLoadingMetrics(true);
       try {
-        // Try to fetch 7 days, but fall back to 1 day if no data
-        let response = await fetch('/api/liquidity/pool-metrics', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ poolId: selectedPoolId, days: 7 })
-        });
+        // Fetch pool metrics, pool state, and position data in parallel
+        const [metricsResponse, stateResponse, positionsResponse] = await Promise.all([
+          fetch('/api/liquidity/pool-metrics', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ poolId: selectedPoolId, days: 7 })
+          }),
+          fetch(`/api/liquidity/get-pool-state?poolId=${encodeURIComponent(selectedPoolId)}`),
+          fetch('/api/liquidity/get-bucket-depths', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ poolId: selectedPoolId, first: 2000 })
+          })
+        ]);
 
-        if (response.ok) {
-          const data = await response.json();
+        // Handle pool state
+        if (stateResponse.ok) {
+          const stateData = await stateResponse.json();
+          console.log('[RangeSelectionModalV2] Pool state response:', stateData);
+          if (stateData.liquidity) {
+            setPoolLiquidity(stateData.liquidity);
+          }
+        }
+
+        // Handle pool metrics
+        if (metricsResponse.ok) {
+          const data = await metricsResponse.json();
           console.log('[RangeSelectionModalV2] Pool metrics response (7d):', data);
 
           // If we got valid data, use it
@@ -276,14 +299,14 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
           } else {
             // Try with 1 day of data for new pools
             console.log('[RangeSelectionModalV2] No 7-day data, trying 1 day...');
-            response = await fetch('/api/liquidity/pool-metrics', {
+            const response1d = await fetch('/api/liquidity/pool-metrics', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ poolId: selectedPoolId, days: 1 })
             });
 
-            if (response.ok) {
-              const data1d = await response.json();
+            if (response1d.ok) {
+              const data1d = await response1d.json();
               console.log('[RangeSelectionModalV2] Pool metrics response (1d):', data1d);
               if (data1d.metrics && data1d.metrics.days > 0) {
                 setPoolMetrics(data1d.metrics);
@@ -291,32 +314,52 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
             }
           }
         } else {
-          console.error('[RangeSelectionModalV2] Pool metrics request failed:', response.status, await response.text());
+          console.error('[RangeSelectionModalV2] Pool metrics request failed:', metricsResponse.status, await metricsResponse.text());
+        }
+
+        // Handle position data
+        if (positionsResponse.ok) {
+          const positionsData = await positionsResponse.json();
+          console.log('[RangeSelectionModalV2] Position data response:', {
+            count: positionsData?.positions?.length || 0
+          });
+
+          if (positionsData.positions && Array.isArray(positionsData.positions)) {
+            // Extract only the data we need for APR calculation
+            const positions = positionsData.positions.map((p: any) => ({
+              tickLower: Number(p.tickLower),
+              tickUpper: Number(p.tickUpper),
+              liquidity: p.liquidity
+            }));
+            setPositionData(positions);
+          }
+        } else {
+          console.error('[RangeSelectionModalV2] Position data request failed:', positionsResponse.status);
         }
       } catch (error) {
-        console.error('Failed to fetch pool metrics:', error);
+        console.error('Failed to fetch pool data:', error);
       } finally {
         setIsLoadingMetrics(false);
       }
     };
 
-    fetchMetrics();
+    fetchData();
   }, [isOpen, selectedPoolId]);
 
   // Update price inputs when ticks or denomination changes
   useEffect(() => {
     if (!isOpen) return;
-    
+
     const minPrice = shouldInvert
       ? calculatePriceFromTick(parseInt(localTickUpper))
       : calculatePriceFromTick(parseInt(localTickLower));
     const maxPrice = shouldInvert
       ? calculatePriceFromTick(parseInt(localTickLower))
       : calculatePriceFromTick(parseInt(localTickUpper));
-    
+
     setMinPriceFullPrecision(minPrice);
     setMaxPriceFullPrecision(maxPrice);
-    
+
     // Only update display if not focused
     if (!isMinPriceFocused) {
       setMinPriceInput(abbreviateDecimal(minPrice));
@@ -325,6 +368,107 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
       setMaxPriceInput(abbreviateDecimal(maxPrice));
     }
   }, [localTickLower, localTickUpper, denominationBase, shouldInvert, isMinPriceFocused, isMaxPriceFocused, isOpen]);
+
+  // Calculate APY values asynchronously when dependencies change
+  useEffect(() => {
+    if (!isOpen || !poolMetrics || !poolLiquidity || isLoadingMetrics || currentPoolTick === null || !currentPoolSqrtPriceX96 || !poolToken0 || !poolToken1 || !selectedPoolId) {
+      return;
+    }
+
+    const calculateAPYs = async () => {
+      try {
+        // Get pool configuration
+        const poolConfig = getPoolById(selectedPoolId);
+        if (!poolConfig) return;
+
+        // Create SDK Token objects
+        const token0 = new Token(
+          chainId || 84532,
+          poolToken0.address as `0x${string}`,
+          poolToken0.decimals,
+          poolToken0.symbol
+        );
+        const token1 = new Token(
+          chainId || 84532,
+          poolToken1.address as `0x${string}`,
+          poolToken1.decimals,
+          poolToken1.symbol
+        );
+
+        // Create V4Pool
+        const pool = new V4Pool(
+          token0,
+          token1,
+          poolConfig.fee,
+          poolConfig.tickSpacing,
+          poolConfig.hooks,
+          JSBI.BigInt(currentPoolSqrtPriceX96),
+          JSBI.BigInt(poolLiquidity),
+          currentPoolTick
+        );
+
+        const actualTickSpacing = poolConfig.tickSpacing;
+        const isStable = presetOptions.includes("±1%");
+        const rangeTypes = isStable
+          ? ["Full Range", "±3%", "±1%", "Custom"]
+          : ["Full Range", "±15%", "±3%", "Custom"];
+
+        const metrics: PoolMetrics = {
+          totalFeesToken0: poolMetrics.totalFeesToken0,
+          avgTVLToken0: poolMetrics.avgTVLToken0,
+          days: poolMetrics.days
+        };
+
+        const newApyValues: Record<string, number> = {};
+
+        // Calculate APY for each range type
+        for (const rangeType of rangeTypes) {
+          // Skip Custom for now, it will be calculated when active
+          if (rangeType === "Custom") continue;
+
+          let tickLower, tickUpper;
+
+          if (rangeType === "Full Range") {
+            const alignedMinTick = Math.ceil(sdkMinTick / actualTickSpacing) * actualTickSpacing;
+            const alignedMaxTick = Math.floor(sdkMaxTick / actualTickSpacing) * actualTickSpacing;
+            tickLower = alignedMinTick;
+            tickUpper = alignedMaxTick;
+          } else {
+            const percentages: Record<string, number> = {
+              "±15%": 0.15,
+              "±3%": 0.03,
+              "±1%": 0.01
+            };
+            const pct = percentages[rangeType];
+            if (pct && currentPoolTick !== null) {
+              const tickDelta = Math.round(Math.log(1 + pct) / Math.log(1.0001));
+              const expectedLower = Math.floor((currentPoolTick - tickDelta) / actualTickSpacing) * actualTickSpacing;
+              const expectedUpper = Math.ceil((currentPoolTick + tickDelta) / actualTickSpacing) * actualTickSpacing;
+              tickLower = Math.max(sdkMinTick, expectedLower);
+              tickUpper = Math.min(sdkMaxTick, expectedUpper);
+            } else {
+              continue;
+            }
+          }
+
+          const apy = await calculatePositionAPY(pool, tickLower, tickUpper, metrics, positionData || undefined, 100);
+          newApyValues[rangeType] = apy;
+        }
+
+        // Also calculate APY for current custom selection
+        const customTickLower = parseInt(localTickLower);
+        const customTickUpper = parseInt(localTickUpper);
+        const customAPY = await calculatePositionAPY(pool, customTickLower, customTickUpper, metrics, positionData || undefined, 100);
+        newApyValues["Custom"] = customAPY;
+
+        setApyValues(newApyValues);
+      } catch (error) {
+        console.error('[RangeSelectionModalV2] APY calculation error:', error);
+      }
+    };
+
+    calculateAPYs();
+  }, [isOpen, poolMetrics, poolLiquidity, isLoadingMetrics, currentPoolTick, currentPoolSqrtPriceX96, poolToken0, poolToken1, selectedPoolId, chainId, presetOptions, sdkMinTick, sdkMaxTick, localTickLower, localTickUpper, positionData]);
 
   const handlePresetClick = (preset: string) => {
     setSelectedPreset(preset);
@@ -484,9 +628,9 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                   return rangeTypes.map((rangeType) => {
                     const labels: Record<string, string> = {
                       "Full Range": "Full Range",
-                      "±15%": "Conservative",
-                      "±3%": isStable ? "Conservative" : "Concentrated",
-                      "±1%": "Concentrated",
+                      "±15%": "Wide",
+                      "±3%": isStable ? "Wide" : "Narrow",
+                      "±1%": "Narrow",
                       "Custom": "Custom"
                     };
 
@@ -495,113 +639,19 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                       ? !rangeTypes.slice(0, -1).includes(activePreset || "")
                       : activePreset === rangeType;
 
-                  // Calculate APY for this range type
+                  // Get APY for this range type from precomputed values
                   let apyDisplay = "";
                   // Only show APY for Custom if it's the active preset
-                  const shouldCalculateAPY = rangeType !== "Custom" || (rangeType === "Custom" && isActive);
+                  const shouldShowAPY = rangeType !== "Custom" || (rangeType === "Custom" && isActive);
 
-                  if (shouldCalculateAPY && poolMetrics && !isLoadingMetrics && currentPoolTick !== null && currentPoolSqrtPriceX96 && poolToken0 && poolToken1 && selectedPoolId) {
-                    try {
-                      // Get pool configuration
-                      const poolConfig = getPoolById(selectedPoolId);
-                      if (!poolConfig) {
-                        apyDisplay = "—";
-                      } else {
-                        // Create SDK Token objects
-                        const token0 = new Token(
-                          chainId || 84532,
-                          poolToken0.address as `0x${string}`,
-                          poolToken0.decimals,
-                          poolToken0.symbol
-                        );
-                        const token1 = new Token(
-                          chainId || 84532,
-                          poolToken1.address as `0x${string}`,
-                          poolToken1.decimals,
-                          poolToken1.symbol
-                        );
-
-                        // Create V4Pool with correct parameters from config
-                        console.log('[RangeSelectionModalV2] Creating V4Pool with params:', {
-                          poolId: poolConfig.id,
-                          token0: token0.symbol,
-                          token1: token1.symbol,
-                          fee: poolConfig.fee,
-                          tickSpacing: poolConfig.tickSpacing,
-                          hooks: poolConfig.hooks,
-                          currentPoolSqrtPriceX96,
-                          currentPoolTick
-                        });
-
-                        const pool = new V4Pool(
-                          token0,
-                          token1,
-                          poolConfig.fee,
-                          poolConfig.tickSpacing,
-                          poolConfig.hooks,
-                          JSBI.BigInt(currentPoolSqrtPriceX96),
-                          JSBI.BigInt('0'), // liquidity not needed for APY calc
-                          currentPoolTick
-                        );
-
-                        console.log('[RangeSelectionModalV2] V4Pool created successfully:', {
-                          poolTickSpacing: pool.tickSpacing,
-                          poolTickCurrent: pool.tickCurrent
-                        });
-
-                        // Get ticks for this range type
-                        // IMPORTANT: Use poolConfig.tickSpacing, not defaultTickSpacing
-                        // defaultTickSpacing is for UI, but APY calc needs actual pool tickSpacing
-                        const actualTickSpacing = poolConfig.tickSpacing;
-
-                        let tickLower, tickUpper;
-                        if (rangeType === "Full Range") {
-                          // Align min/max ticks to actual pool spacing
-                          const alignedMinTick = Math.ceil(sdkMinTick / actualTickSpacing) * actualTickSpacing;
-                          const alignedMaxTick = Math.floor(sdkMaxTick / actualTickSpacing) * actualTickSpacing;
-                          tickLower = alignedMinTick;
-                          tickUpper = alignedMaxTick;
-                        } else if (rangeType === "Custom") {
-                          // Use current custom selection
-                          tickLower = parseInt(localTickLower);
-                          tickUpper = parseInt(localTickUpper);
-                        } else {
-                          // Calculate ticks for percentage-based ranges
-                          const percentages: Record<string, number> = {
-                            "±15%": 0.15,
-                            "±3%": 0.03,
-                            "±1%": 0.01
-                          };
-                          const pct = percentages[rangeType];
-                          if (pct && currentPoolTick !== null) {
-                            const tickDelta = Math.round(Math.log(1 + pct) / Math.log(1.0001));
-                            const expectedLower = Math.floor((currentPoolTick - tickDelta) / actualTickSpacing) * actualTickSpacing;
-                            const expectedUpper = Math.ceil((currentPoolTick + tickDelta) / actualTickSpacing) * actualTickSpacing;
-                            tickLower = Math.max(sdkMinTick, expectedLower);
-                            tickUpper = Math.min(sdkMaxTick, expectedUpper);
-                          } else {
-                            // Fallback to current selection
-                            tickLower = parseInt(localTickLower);
-                            tickUpper = parseInt(localTickUpper);
-                          }
-                        }
-
-                        // Calculate APY
-                        const metrics: PoolMetrics = {
-                          totalFeesToken0: poolMetrics.totalFeesToken0,
-                          avgTVLToken0: poolMetrics.avgTVLToken0,
-                          days: poolMetrics.days
-                        };
-
-                        const apy = calculatePositionAPY(pool, tickLower, tickUpper, metrics);
-                        apyDisplay = formatAPY(apy);
-                      }
-                    } catch (error) {
-                      console.error('[RangeSelectionModalV2] APY calculation error:', error);
+                  if (shouldShowAPY) {
+                    if (isLoadingMetrics) {
+                      apyDisplay = "...";
+                    } else if (apyValues[rangeType] !== undefined) {
+                      apyDisplay = formatAPY(apyValues[rangeType]);
+                    } else {
                       apyDisplay = "—";
                     }
-                  } else if (isLoadingMetrics) {
-                    apyDisplay = "...";
                   }
 
                   return (
