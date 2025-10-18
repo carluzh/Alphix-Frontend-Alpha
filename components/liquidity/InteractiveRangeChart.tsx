@@ -441,7 +441,7 @@ export function InteractiveRangeChart({
       if (isFinite(minTickDomain) && isFinite(maxTickDomain)) {
         const basePrice = normalizedCurrentPriceNum;
         if (!isFinite(basePrice) || basePrice <= 0) return newLabels;
-        const displayDecimals = TOKEN_DEFINITIONS[optimalDenomination]?.displayDecimals || 4;
+        const displayDecimals = 6;
         
         // For USD-denominated tokens show more precision (6 decimals) only for Stable pools
         const isUsd = (optimalDenomination === 'aUSDT' || optimalDenomination === 'aUSDC');

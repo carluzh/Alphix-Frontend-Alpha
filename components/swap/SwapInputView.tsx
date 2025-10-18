@@ -15,8 +15,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { cn, formatTokenAmount } from "@/lib/utils";
-import { Token, FeeDetail, OutlineArcIcon } from './swap-interface';
+import { cn } from "@/lib/utils";
+import { Token, FeeDetail } from './swap-interface';
 import { TokenSelector, TokenSelectorToken } from './TokenSelector';
 import { getToken } from '@/lib/pools-config';
 import { findBestRoute } from '@/lib/routing-engine';
@@ -31,17 +31,10 @@ interface SwapInputViewProps {
   activelyEditedSide: 'from' | 'to';
   handleSwapTokens: () => void;
   handleUseFullBalance: (token: Token, isFrom: boolean) => void;
+  handleUsePercentage: (percentage: number, isFrom: boolean) => void;
   availableTokens: Token[];
   onFromTokenSelect: (token: Token) => void;
   onToTokenSelect: (token: Token) => void;
-  handleCyclePercentage: () => void;
-  handleMouseEnterArc: () => void;
-  handleMouseLeaveArc: () => void;
-  actualNumericPercentage: number;
-  currentSteppedPercentage: number;
-  hoveredArcPercentage: number | null;
-  isSellInputFocused: boolean;
-  setIsSellInputFocused: (value: boolean) => void;
   formatCurrency: (value: string) => string;
   isConnected: boolean;
   isAttemptingSwitch: boolean;
@@ -71,10 +64,10 @@ interface SwapInputViewProps {
   routeFeesLoading?: boolean;
   selectedPoolIndexForChart?: number;
   onSelectPoolForChart?: (poolIndex: number) => void;
-  swapContainerRect: { top: number; left: number; width: number; height: number; }; // New prop
-  slippage: number; // Add slippage prop
-  onSlippageChange: (newSlippage: number) => void; // Add slippage change handler
-  showRoute?: boolean; // control showing route section
+  swapContainerRect: { top: number; left: number; width: number; height: number; };
+  slippage: number;
+  onSlippageChange: (newSlippage: number) => void;
+  showRoute?: boolean;
   onRouteHoverChange?: (hover: boolean) => void;
 }
 
@@ -88,17 +81,10 @@ export function SwapInputView({
   activelyEditedSide,
   handleSwapTokens,
   handleUseFullBalance,
+  handleUsePercentage,
   availableTokens,
   onFromTokenSelect,
   onToTokenSelect,
-  handleCyclePercentage,
-  handleMouseEnterArc,
-  handleMouseLeaveArc,
-  actualNumericPercentage,
-  currentSteppedPercentage,
-  hoveredArcPercentage,
-  isSellInputFocused,
-  setIsSellInputFocused,
   formatCurrency,
   isConnected,
   isAttemptingSwitch,
@@ -136,11 +122,11 @@ export function SwapInputView({
   const hoverPreviewActiveRef = React.useRef(false);
   const committedPoolIndexRef = React.useRef<number>(0);
   const [balanceWiggleCount, setBalanceWiggleCount] = React.useState(0);
+  const [isSellInputFocused, setIsSellInputFocused] = React.useState(false);
   const [isBuyInputFocused, setIsBuyInputFocused] = React.useState(false);
   const wiggleControls = useAnimation();
 
   const formatPercentFromBps = React.useCallback((bps: number) => {
-    // Convert basis points to percentage points: 1 bps = 0.01%
     const percent = bps / 100;
     const decimals = percent < 0.1 ? 3 : 2;
     return `${percent.toFixed(decimals)}%`;
@@ -148,23 +134,20 @@ export function SwapInputView({
 
   const presetSlippages = [0.05, 0.10, 0.50, 1.00];
 
-  // Ensure first pool is selected initially
   React.useEffect(() => {
     if (onSelectPoolForChart) {
       onSelectPoolForChart(0);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  
+
   const handleSlippageSelect = (value: number) => {
     onSlippageChange(value);
-    // Keep the panel open until the arrow is clicked again
     setIsCustomSlippage(false);
   };
 
   const handleCustomSlippageInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
-    // Allow only numbers and decimal point
     if (value === "" || /^\d*\.?\d*$/.test(value)) {
       const numValue = parseFloat(value);
       if (value === "" || (numValue >= 0 && numValue <= 99)) {
@@ -175,9 +158,8 @@ export function SwapInputView({
 
   const handleCustomSlippageSubmit = () => {
     if (customSlippage && !isNaN(parseFloat(customSlippage))) {
-      const rounded = Math.round(parseFloat(customSlippage) * 100) / 100; // Round to 2 decimals
+      const rounded = Math.round(parseFloat(customSlippage) * 100) / 100;
       onSlippageChange(rounded);
-      // Keep the panel open until the arrow is clicked again
       setCustomSlippage("");
     }
   };
@@ -201,9 +183,6 @@ export function SwapInputView({
     }
   }, [balanceWiggleCount, wiggleControls]);
 
-  
-
-  // Allow any input; wiggle once when crossing from within-balance to over-balance
   const handleFromAmountChangeWithWiggle = (e: React.ChangeEvent<HTMLInputElement>) => {
     try {
       const nextRaw = e.target.value;
@@ -219,221 +198,206 @@ export function SwapInputView({
     handleFromAmountChange(e);
   };
 
-  // Keep the slippage editor open until the arrow is clicked again
-  // Disable outside-click to close behavior
   React.useEffect(() => {
     return;
   }, [isSlippageEditing]);
+
   return (
-    <motion.div 
-      key="input" 
-      initial={{ opacity: 0 }} 
-      animate={{ opacity: 1 }} 
-      exit={{ opacity: 0, y: -20 }} 
+    <motion.div
+      key="input"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0, y: -20 }}
       transition={{ duration: 0.2 }}
       data-swap-container="true"
     >
-      {/* Sell Section - Uses `displayFromToken` */}
-      <div className="mb-6">
-        <div className="flex items-center justify-between mb-2">
-          <Label className="text-sm font-medium">Sell</Label>
-          <div className="flex items-center gap-1">
-            <Button variant="ghost" className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent" onClick={() => handleUseFullBalance(displayFromToken, true)} disabled={!isConnected}>
-                Balance: { (isConnected ? (isLoadingCurrentFromTokenBalance ? "Loading..." : displayFromToken.balance) : "~")} {displayFromToken.symbol}
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-5 w-5 rounded-full hover:bg-muted/40"
-              onClick={handleCyclePercentage}
-              onMouseEnter={handleMouseEnterArc}
-              onMouseLeave={handleMouseLeaveArc}
-              disabled={!isConnected}
-            >
-              <OutlineArcIcon
-                actualPercentage={actualNumericPercentage}
-                steppedPercentage={currentSteppedPercentage}
-                hoverPercentage={hoveredArcPercentage}
-                isOverLimit={actualNumericPercentage > 100}
-              />
-            </Button>
-          </div>
-        </div>
+      {/* Sell Section */}
+      <div className="mb-2">
         <motion.div
           className={cn(
             "group rounded-lg bg-surface p-4 border transition-colors hover:border-primary",
-            isSellInputFocused
-              ? "border-primary"
-              : "border-transparent"
+            isSellInputFocused ? "border-primary" : "border-transparent"
           )}
           animate={wiggleControls}
         >
-          <div className="flex items-center gap-2">
-            <TokenSelector
-              selectedToken={displayFromToken as TokenSelectorToken}
-              availableTokens={availableTokens as TokenSelectorToken[]}
-              onTokenSelect={onFromTokenSelect}
-              excludeToken={displayToToken as TokenSelectorToken}
+        <div className="flex items-center justify-between mb-2">
+          <Label className="text-sm font-medium">Sell</Label>
+          <Button
+            variant="ghost"
+            className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent"
+            onClick={() => handleUseFullBalance(displayFromToken, true)}
+            disabled={!isConnected}
+          >
+            {isConnected ? (isLoadingCurrentFromTokenBalance ? "Loading..." : displayFromToken.balance) : "~"} {displayFromToken.symbol}
+          </Button>
+        </div>
+        <div className="flex items-center gap-2">
+          <TokenSelector
+            selectedToken={displayFromToken as TokenSelectorToken}
+            availableTokens={availableTokens as TokenSelectorToken[]}
+            onTokenSelect={onFromTokenSelect}
+            excludeToken={displayToToken as TokenSelectorToken}
+            disabled={!isConnected || isAttemptingSwitch}
+            swapContainerRect={swapContainerRect}
+          />
+          <div className="flex-1">
+            <Input
+              value={fromAmount}
+              onChange={handleFromAmountChangeWithWiggle}
+              onFocus={() => setIsSellInputFocused(true)}
+              onBlur={() => setIsSellInputFocused(false)}
+              className={cn(
+                "border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto input-enhanced focus-visible:rounded-none focus-visible:outline-none",
+                { "opacity-50": quoteLoading && activelyEditedSide === 'to' }
+              )}
+              placeholder="0"
               disabled={!isConnected || isAttemptingSwitch}
-              swapContainerRect={swapContainerRect} // Pass the new prop
             />
-            <div className="flex-1">
-              <Input
-                value={fromAmount}
-                onChange={handleFromAmountChangeWithWiggle}
-                onFocus={() => setIsSellInputFocused(true)}
-                onBlur={() => setIsSellInputFocused(false)}
-                className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto input-enhanced focus-visible:rounded-none focus-visible:outline-none"
-                placeholder="0"
-                disabled={!isConnected || isAttemptingSwitch}
-              />
-              <div className="relative text-right text-xs min-h-5">
-                {/* USD Value - hide on hover */}
-                <div className={cn("text-muted-foreground transition-opacity duration-100", {
-                  "group-hover:opacity-0": isConnected && parseFloat(displayFromToken.balance || "0") > 0
-                })}>
-                  {formatCurrency((parseFloat(fromAmount || "0") * (displayFromToken.usdPrice || 0)).toString())}
-                </div>
-                {/* Percentage buttons - show on hover */}
-                {isConnected && parseFloat(displayFromToken.balance || "0") > 0 && (
-                  <div className="absolute right-0 top-0 flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
-                    {[25, 50, 75, 100].map((percentage, index) => (
-                      <motion.div
-                        key={percentage}
-                        className="opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0"
-                        style={{
-                          transitionDelay: `${index * 40}ms`,
-                          transitionDuration: '200ms',
-                          transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)'
+            <div className="relative text-right text-xs min-h-5">
+              {/* USD Value - hide on hover */}
+              <div className={cn("text-muted-foreground transition-opacity duration-100", {
+                "opacity-50": quoteLoading && activelyEditedSide === 'to',
+                "group-hover:opacity-0": isConnected && parseFloat(displayFromToken.balance || "0") > 0
+              })}>
+                {formatCurrency((parseFloat(fromAmount || "0") * (displayFromToken.usdPrice || 0)).toString())}
+              </div>
+              {/* Percentage buttons - show on hover */}
+              {isConnected && parseFloat(displayFromToken.balance || "0") > 0 && (
+                <div className="absolute right-0 top-[3px] flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
+                  {[25, 50, 75, 100].map((percentage, index) => (
+                    <motion.div
+                      key={percentage}
+                      className="opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0"
+                      style={{
+                        transitionDelay: `${index * 40}ms`,
+                        transitionDuration: '200ms',
+                        transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)'
+                      }}
+                    >
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-5 px-2 text-[10px] font-medium rounded-md border-sidebar-border bg-muted/20 hover:bg-muted/40 transition-colors"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleUsePercentage(percentage, true);
                         }}
                       >
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-5 px-2 text-[10px] font-medium rounded-md border-sidebar-border bg-muted/20 hover:bg-muted/40 transition-colors"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            const balance = parseFloat(displayFromToken.balance || "0");
-                            const amount = (balance * percentage) / 100;
-                            // Create synthetic event to trigger the existing handler
-                            const syntheticEvent = {
-                              target: { value: amount.toString() }
-                            } as React.ChangeEvent<HTMLInputElement>;
-                            handleFromAmountChange(syntheticEvent);
-                          }}
-                        >
-                          {percentage === 100 ? 'MAX' : `${percentage}%`}
-                        </Button>
-                      </motion.div>
-                    ))}
-                  </div>
-                )}
-              </div>
+                        {percentage === 100 ? 'MAX' : `${percentage}%`}
+                      </Button>
+                    </motion.div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
+        </div>
         </motion.div>
       </div>
 
+      {/* Arrow button */}
       <div className="flex justify-center">
-        <Button variant="ghost" size="icon" className="rounded-full bg-muted/30 z-10 h-8 w-8" onClick={handleSwapTokens} disabled={!isConnected || isAttemptingSwitch}>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="rounded-lg bg-muted/30 z-10 h-8 w-8"
+          onClick={handleSwapTokens}
+          disabled={!isConnected || isAttemptingSwitch}
+        >
           <ArrowDownIcon className="h-4 w-4" />
           <span className="sr-only">Swap tokens</span>
         </Button>
       </div>
 
-      {/* Buy Section - Uses `displayToToken` */}
+      {/* Buy Section */}
       <div className="mt-2">
-        <div className="flex items-center justify-between mb-2">
-          <Label className="text-sm font-medium">Buy</Label>
-          <span className={cn("text-xs text-muted-foreground", { "opacity-50": !isConnected })}>
-              Balance: { (isConnected ? (isLoadingCurrentToTokenBalance ? "Loading..." : displayToToken.balance) : "~")} {displayToToken.symbol}
-            </span>
-        </div>
         <div
           className={cn(
             "group rounded-lg bg-surface p-4 border transition-colors hover:border-primary",
-            isBuyInputFocused
-              ? "border-primary"
-              : "border-transparent"
+            isBuyInputFocused ? "border-primary" : "border-transparent"
           )}
         >
-          <div className="flex items-center gap-2">
-            <TokenSelector
-              selectedToken={displayToToken as TokenSelectorToken}
-              availableTokens={availableTokens as TokenSelectorToken[]}
-              onTokenSelect={onToTokenSelect}
-              excludeToken={displayFromToken as TokenSelectorToken}
+        <div className="flex items-center justify-between mb-2">
+          <Label className="text-sm font-medium">Buy</Label>
+          <Button
+            variant="ghost"
+            className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent"
+            onClick={() => handleUseFullBalance(displayToToken, false)}
+            disabled={!isConnected}
+          >
+            {isConnected ? (isLoadingCurrentToTokenBalance ? "Loading..." : displayToToken.balance) : "~"} {displayToToken.symbol}
+          </Button>
+        </div>
+        <div className="flex items-center gap-2">
+          <TokenSelector
+            selectedToken={displayToToken as TokenSelectorToken}
+            availableTokens={availableTokens as TokenSelectorToken[]}
+            onTokenSelect={onToTokenSelect}
+            excludeToken={displayFromToken as TokenSelectorToken}
+            disabled={!isConnected || isAttemptingSwitch}
+            swapContainerRect={swapContainerRect}
+          />
+          <div className="flex-1">
+            <Input
+              value={toAmount}
+              onChange={onToAmountChange}
+              onFocus={() => setIsBuyInputFocused(true)}
+              onBlur={() => setIsBuyInputFocused(false)}
               disabled={!isConnected || isAttemptingSwitch}
-              swapContainerRect={swapContainerRect} // Pass the new prop
+              className={cn(
+                "text-right text-xl md:text-xl font-medium h-auto p-0 focus-visible:ring-0 focus-visible:ring-offset-0 border-0 bg-transparent",
+                { "opacity-50": quoteLoading && activelyEditedSide === 'from' }
+              )}
+              placeholder="0"
             />
-            <div className="flex-1">
-              <Input
-                value={toAmount}
-                onChange={onToAmountChange}
-                onFocus={() => setIsBuyInputFocused(true)}
-                onBlur={() => setIsBuyInputFocused(false)}
-                disabled={!isConnected || isAttemptingSwitch}
-                className={cn(
-                  "text-right text-xl md:text-xl font-medium h-auto p-0 focus-visible:ring-0 focus-visible:ring-offset-0 border-0 bg-transparent",
-                  { "text-muted-foreground animate-pulse": quoteLoading && activelyEditedSide === 'from' }
-                )}
-                placeholder="0"
-              />
-              <div className="relative text-right text-xs min-h-5">
-                {/* USD Value - hide on hover */}
-                <div className={cn("text-muted-foreground transition-opacity duration-100", {
-                  "animate-pulse": quoteLoading && activelyEditedSide === 'from',
-                  "group-hover:opacity-0": isConnected && parseFloat(displayToToken.balance || "0") > 0
-                })}>
-                  {(() => {
-                    const amount = parseFloat(toAmount || "");
-                    if (!toAmount || isNaN(amount)) return "$0.00";
-                    return formatCurrency((amount * (displayToToken.usdPrice || 0)).toString());
-                  })()}
-                </div>
-                {/* Percentage buttons - show on hover (for exact output swaps) */}
-                {isConnected && parseFloat(displayToToken.balance || "0") > 0 && (
-                  <div className="absolute right-0 top-0 flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
-                    {[25, 50, 75, 100].map((percentage, index) => (
-                      <motion.div
-                        key={percentage}
-                        className="opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0"
-                        style={{
-                          transitionDelay: `${index * 40}ms`,
-                          transitionDuration: '200ms',
-                          transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)'
+            <div className="relative text-right text-xs min-h-5">
+              {/* USD Value - hide on hover */}
+              <div className={cn("text-muted-foreground transition-opacity duration-100", {
+                "opacity-50": quoteLoading && activelyEditedSide === 'from',
+                "group-hover:opacity-0": isConnected && parseFloat(displayToToken.balance || "0") > 0
+              })}>
+                {(() => {
+                  const amount = parseFloat(toAmount || "");
+                  if (!toAmount || isNaN(amount)) return "$0.00";
+                  return formatCurrency((amount * (displayToToken.usdPrice || 0)).toString());
+                })()}
+              </div>
+              {/* Percentage buttons - show on hover */}
+              {isConnected && parseFloat(displayToToken.balance || "0") > 0 && (
+                <div className="absolute right-0 top-[3px] flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
+                  {[25, 50, 75, 100].map((percentage, index) => (
+                    <motion.div
+                      key={percentage}
+                      className="opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0"
+                      style={{
+                        transitionDelay: `${index * 40}ms`,
+                        transitionDuration: '200ms',
+                        transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)'
+                      }}
+                    >
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-5 px-2 text-[10px] font-medium rounded-md border-sidebar-border bg-muted/20 hover:bg-muted/40 transition-colors"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleUsePercentage(percentage, false);
                         }}
                       >
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-5 px-2 text-[10px] font-medium rounded-md border-sidebar-border bg-muted/20 hover:bg-muted/40 transition-colors"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            const balance = parseFloat(displayToToken.balance || "0");
-                            const amount = (balance * percentage) / 100;
-                            // Create synthetic event to trigger the existing handler
-                            const syntheticEvent = {
-                              target: { value: amount.toString() }
-                            } as React.ChangeEvent<HTMLInputElement>;
-                            onToAmountChange(syntheticEvent);
-                          }}
-                        >
-                          {percentage === 100 ? 'MAX' : `${percentage}%`}
-                        </Button>
-                      </motion.div>
-                    ))}
-                  </div>
-                )}
-              </div>
+                        {percentage === 100 ? 'MAX' : `${percentage}%`}
+                      </Button>
+                    </motion.div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
+        </div>
         </div>
       </div>
 
       {/* Route, Fee, and Slippage Information */}
-      {/* Route can be toggled via showRoute */}
-      <div className="mt-3 mb-1 space-y-1.5">
+      <div className="mt-4 space-y-1.5">
         {showRoute && isConnected && currentChainId === TARGET_CHAIN_ID && (
           <>
             <div
@@ -446,12 +410,11 @@ export function SwapInputView({
                 }
               }}
             >
-              <div className="flex items-center gap-2"> {/* Left section: Route label */}
+              <div className="flex items-center gap-2">
                 <span>Route:</span>
               </div>
 
-              <div className="flex items-center gap-3"> {/* Right section: Fee and Token Picker */}
-                {/* Currently selected pool fee percentage */}
+              <div className="flex items-center gap-3">
                 {clickedTokenIndex !== null && routeFees?.[selectedPoolIndexForChart] && (
                   <div className="flex items-center gap-1.5">
                     <span className="text-muted-foreground text-xs">
@@ -488,7 +451,7 @@ export function SwapInputView({
                     </TooltipProvider>
                   </div>
                 )}
-                
+
                 {/* Animated token picker */}
                 <div className="relative flex items-center h-7">
                   {(() => {
@@ -497,15 +460,13 @@ export function SwapInputView({
                     const overlap = 0.3 * iconSize;
                     const step = iconSize - overlap;
 
-                    const pairMargin = 10; // same as hover margin for consistency
+                    const pairMargin = 10;
                     const hoverMargin = 10;
 
                     const baseWidth = path.length > 0 ? iconSize + (path.length - 1) * step : 0;
 
-                    // Compute boundary gaps (between token i and i+1), using max() so hover never over-increases existing pair margins
                     const gaps: number[] = Array(Math.max(0, path.length - 1)).fill(0);
 
-                    // Pair margins (added before and after the selected pair, never inside it)
                     const rawPoolIndex = selectedPoolIndexForChart;
                     const poolIndex = Math.max(0, Math.min(rawPoolIndex, path.length - 2));
                     if (clickedTokenIndex !== null) {
@@ -513,7 +474,6 @@ export function SwapInputView({
                       if (poolIndex < path.length - 2) gaps[poolIndex + 1] = Math.max(gaps[poolIndex + 1], pairMargin);
                     }
 
-                    // Hover margins: symmetrical (left and right) except at edges
                     if (hoveredRouteIndex !== null && path.length > 1) {
                       const h = hoveredRouteIndex;
                       const applyLeft = h > 0;
@@ -522,7 +482,6 @@ export function SwapInputView({
                       if (applyRight) gaps[h] = Math.max(gaps[h], hoverMargin);
                     }
 
-                    // Prefix sums to get per-token x offsets
                     const offsets: number[] = new Array(path.length).fill(0);
                     for (let i = 1; i < path.length; i++) {
                       offsets[i] = offsets[i - 1] + (gaps[i - 1] || 0);
@@ -541,11 +500,9 @@ export function SwapInputView({
                         animate={{ width: animatedWidth }}
                         transition={{ type: "spring", stiffness: 300, damping: 30 }}
                       >
-                        {/* Group outline for selected pair */}
                         {clickedTokenIndex !== null && (() => {
-                          const ringPadding = 3; // small margin so hover-scaled tokens fit inside
+                          const ringPadding = 3;
 
-                          // Final positions of the pair's tokens (left edges) with offsets
                           const token1FinalLeft = (poolIndex * step) + offsets[poolIndex];
                           const token2FinalLeft = ((poolIndex + 1) * step) + offsets[poolIndex + 1];
 
@@ -582,7 +539,6 @@ export function SwapInputView({
                           const tokenConfig = getToken(tokenSymbol);
                           const tokenIcon = tokenConfig?.icon || "/placeholder-logo.svg";
 
-                          // Determine selected pair (both tokens get outline)
                           const isSelected = clickedTokenIndex !== null && (index === poolIndex || index === poolIndex + 1);
 
                           const leftPos = index * step;
@@ -605,15 +561,14 @@ export function SwapInputView({
                                   const poolsCount = (routeInfo?.pools.length || Math.max(1, n - 1));
                                   const maxPoolIdx = Math.max(0, poolsCount - 1);
 
-                                  // Stepwise selection change based on relative hover position
                                   const currentStart = Math.max(0, Math.min((committedPoolIndexRef.current ?? selectedPoolIndexForChart), maxPoolIdx));
                                   let nextStart = currentStart;
                                   if (index <= currentStart - 1) {
-                                    nextStart = currentStart - 1; // move one step left
+                                    nextStart = currentStart - 1;
                                   } else if (index >= currentStart + 2) {
-                                    nextStart = currentStart + 1; // move one step right
+                                    nextStart = currentStart + 1;
                                   } else {
-                                    nextStart = currentStart; // hovering within or adjacent keeps current
+                                    nextStart = currentStart;
                                   }
                                   nextStart = Math.max(0, Math.min(nextStart, maxPoolIdx));
 
@@ -644,7 +599,6 @@ export function SwapInputView({
                                           padding: `${iconSize * 0.1}px`,
                                           margin: `-${iconSize * 0.1}px`
                                         }}
-                                        // Click disabled: selection persists from last hover
                                         onClick={() => {}}
                                       >
                                         <Image
@@ -674,14 +628,12 @@ export function SwapInputView({
               </div>
             </div>
 
-            {/* Divider: Only shows if Route is visible and there's an amount */}
             {parseFloat(fromAmount || "0") > 0 && (
               <div className="py-0.5">
                 <div className="border-t border-dashed border-muted-foreground/20" />
               </div>
             )}
 
-            {/* Fee and Slippage: Shown for any swap with an amount */}
             {parseFloat(fromAmount || "0") > 0 && (
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
@@ -701,7 +653,6 @@ export function SwapInputView({
                       }
                       const totalFeeBps = routeFees.reduce((total, routeFee) => total + routeFee.fee, 0);
                       const inputAmountUSD = parseFloat(fromAmount || "0") * (displayFromToken.usdPrice || 0);
-                      // totalFeeBps is in basis points; convert to fraction by dividing by 10,000
                       const feeInUSD = inputAmountUSD * (totalFeeBps / 10000);
                       const isMultiHop = (routeInfo?.path?.length || 2) > 2;
                       const percentDisplay = formatPercentFromBps(totalFeeBps);
@@ -728,7 +679,6 @@ export function SwapInputView({
                   </div>
                 </div>
 
-                {/* Max Slippage and Minimum Received - one row + inline presets row */}
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
                   <div className="flex items-center gap-1.5" ref={slippageRef}>
                     <span>Max Slippage:</span>
@@ -745,12 +695,7 @@ export function SwapInputView({
                         }}
                       >
                         <span>{slippage}%</span>
-                        <motion.span
-                          animate={{ rotate: isSlippageEditing ? 180 : 0 }}
-                          transition={{ type: "tween", duration: 0.18 }}
-                        >
-                          <ChevronDownIcon className="h-3 w-3 text-muted-foreground/60 hover:text-muted-foreground" />
-                        </motion.span>
+                        <ChevronDownIcon className="h-3 w-3 text-muted-foreground/60 hover:text-muted-foreground" />
                       </button>
                     )}
                   </div>
@@ -785,7 +730,6 @@ export function SwapInputView({
                           {val.toFixed(2)}%
                         </button>
                       ))}
-                      {/* Custom option */}
                       {!isCustomSlippage ? (
                         <button
                           type="button"
@@ -821,16 +765,14 @@ export function SwapInputView({
         )}
       </div>
 
-
       <div className="mt-4 h-10">
         {!isMounted ? null : isConnected ? (
           <Button
             className={cn(
-              "w-full", // Always applies full width
-              // Conditional styles for disabled state (matches sidebar's Connect Wallet)
+              "w-full",
               actionButtonDisabled ?
                 "relative border border-primary bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 !opacity-100 cursor-default text-white/75"
-                : // Styles for enabled state (original "btn-primary" look)
+                :
                 "text-sidebar-primary border border-sidebar-primary bg-button-primary hover-button-primary transition-colors duration-200"
             )}
             onClick={handleSwap}
@@ -860,4 +802,4 @@ export function SwapInputView({
       </div>
     </motion.div>
   );
-} 
+}

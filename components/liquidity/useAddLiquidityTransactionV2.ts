@@ -184,7 +184,7 @@ export function useAddLiquidityTransactionV2({
         });
 
         // Use writeContractAsync for multicall
-        const hash = await depositAsync({
+        const depositConfig: any = {
           address: result.transaction.to as `0x${string}`,
           abi: [
             {
@@ -197,8 +197,14 @@ export function useAddLiquidityTransactionV2({
           ],
           functionName: 'multicall',
           args: [[result.transaction.data as Hex]],
-          value: result.transaction.value ? BigInt(result.transaction.value) : undefined,
-        });
+        };
+
+        // Only add value if it exists
+        if (result.transaction.value) {
+          depositConfig.value = BigInt(result.transaction.value);
+        }
+
+        const hash = await depositAsync(depositConfig);
 
         // Callback immediately after submission
         onLiquidityAdded(token0Symbol, token1Symbol);

@@ -6,11 +6,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { cn } from "@/lib/utils";
+import { cn, formatTokenDisplayAmount } from "@/lib/utils";
 import Image from "next/image";
 import { useAccount, useBalance } from "wagmi";
 import { toast } from "sonner";
 import { useEthersSigner } from "@/hooks/useEthersSigner";
+import { usePercentageInput } from "@/hooks/usePercentageInput";
 import { V4_POOL_FEE, V4_POOL_TICK_SPACING, V4_POOL_HOOKS } from "@/lib/swap-constants";
 import { TOKEN_DEFINITIONS, TokenSymbol } from "@/lib/pools-config";
 import { getPoolById, getToken } from "@/lib/pools-config";
@@ -80,31 +81,6 @@ const getTokenIcon = (symbol?: string) => {
   if (!symbol) return "/placeholder-logo.svg";
   const tokenConfig = getToken(symbol);
   return tokenConfig?.icon || "/placeholder-logo.svg";
-};
-
-const formatTokenDisplayAmount = (amount: string, tokenSymbol: TokenSymbol) => {
-  const num = parseFloat(amount);
-  if (isNaN(num)) return amount;
-  if (num === 0) return "0";
-
-  const tokenConfig = TOKEN_DEFINITIONS[tokenSymbol];
-  const tokenDecimals = tokenConfig?.decimals ?? 18;
-
-  // Cap display at 10 decimals max, abbreviate if token has more
-  let displayDecimals, shouldAbbreviate;
-
-  if (tokenDecimals > 10) {
-    displayDecimals = 10;
-    shouldAbbreviate = true;
-  } else {
-    displayDecimals = tokenDecimals;
-    shouldAbbreviate = false;
-  }
-
-  const formatted = num.toFixed(displayDecimals);
-
-  // Add '...' if token has more than 10 decimals
-  return shouldAbbreviate ? formatted + '...' : formatted;
 };
 
 // Debounce function
@@ -336,7 +312,31 @@ export function AddLiquidityForm({
     chainId,
     query: { enabled: !!accountAddress && !!chainId && !!TOKEN_DEFINITIONS[token1Symbol] },
   });
-  
+
+  // Percentage input handlers using the new shared hook
+  // Wrapper to update both display and full precision states
+  const setAmount0WithPrecision = useCallback((value: string) => {
+    setAmount0(value);
+    setAmount0FullPrecision(value);
+  }, []);
+
+  const setAmount1WithPrecision = useCallback((value: string) => {
+    setAmount1(value);
+    setAmount1FullPrecision(value);
+  }, []);
+
+  const handleToken0Percentage = usePercentageInput(
+    token0BalanceData,
+    { decimals: TOKEN_DEFINITIONS[token0Symbol]?.decimals || 18, symbol: token0Symbol },
+    setAmount0WithPrecision
+  );
+
+  const handleToken1Percentage = usePercentageInput(
+    token1BalanceData,
+    { decimals: TOKEN_DEFINITIONS[token1Symbol]?.decimals || 18, symbol: token1Symbol },
+    setAmount1WithPrecision
+  );
+
   // Derived pool tokens (for labels/formatting)
   const { poolToken0, poolToken1 } = useMemo(() => {
     if (!token0Symbol || !token1Symbol || !chainId) return { poolToken0: null, poolToken1: null };
@@ -600,8 +600,8 @@ export function AddLiquidityForm({
     let valForMinInput: number | null = null;
     let valForMaxInput: number | null = null;
 
-    const decimalsForToken0Display = TOKEN_DEFINITIONS[token0Symbol]?.displayDecimals ?? 4;
-    const decimalsForToken1Display = TOKEN_DEFINITIONS[token1Symbol]?.displayDecimals ?? 4;
+    const decimalsForToken0Display = 6;
+    const decimalsForToken1Display = 6;
 
     const rawApiPriceAtTickLower = calculatedData?.priceAtTickLower ? parseFloat(calculatedData.priceAtTickLower) : null;
     const rawApiPriceAtTickUpper = calculatedData?.priceAtTickUpper ? parseFloat(calculatedData.priceAtTickUpper) : null;
@@ -655,9 +655,8 @@ export function AddLiquidityForm({
     let finalMaxPriceString = "";
     // Use optimal denomination for decimals like the chart; force 2 for USD-denominated
     const baseDisplayToken = optimalDenominationForDecimals;
-    const baseDisplayDefault = TOKEN_DEFINITIONS[baseDisplayToken]?.displayDecimals ?? 4;
     const isUSDDenom = baseDisplayToken === 'aUSDT' || baseDisplayToken === 'aUSDC' || baseDisplayToken === 'USDT' || baseDisplayToken === 'USDC' || baseDisplayToken === 'aDAI' || baseDisplayToken === 'DAI';
-    const displayDecimals = isUSDDenom ? 2 : baseDisplayDefault;
+    const displayDecimals = isUSDDenom ? 2 : 6;
 
     // Formatting for Min Price String
     if (valForMinInput !== null && !isNaN(valForMinInput)) {
@@ -699,11 +698,8 @@ export function AddLiquidityForm({
       return "0";
     }
 
-    // Use token's displayDecimals from pools.json
-    const tokenConfig = TOKEN_DEFINITIONS[tokenSymbolForDecimals];
-    const displayDecimals = tokenConfig?.displayDecimals ?? 4;
-
-    const formatted = numericBalance.toFixed(displayDecimals);
+    // Use 6-decimal cap for balance display
+    const formatted = numericBalance.toFixed(6);
     return formatted;
   };
 
@@ -984,7 +980,7 @@ export function AddLiquidityForm({
       const numericBalance = parseFloat(balanceString);
       if (isNaN(numericBalance) || numericBalance <= 0) return;
 
-      const formattedBalance = numericBalance.toFixed(TOKEN_DEFINITIONS[tokenSymbolForDecimals]?.decimals || 18);
+      const formattedBalance = formatTokenDisplayAmount(numericBalance.toString(), tokenSymbolForDecimals);
 
       if (isToken0) {
         setAmount0(formattedBalance);
@@ -1964,15 +1960,14 @@ export function AddLiquidityForm({
     
     // Get display decimals for the optimal denomination
     // Increase precision for Stable pools when USD denominated
-    let displayDecimals = TOKEN_DEFINITIONS[optimalDenomination]?.displayDecimals || 4;
     const poolCfg = selectedPoolId ? getPoolById(selectedPoolId) : null;
     const isStable = (poolCfg?.type || '').toLowerCase() === 'stable';
-    
+
     // For USD-denominated tokens, always use 2 decimals
     // Also check if the prices are in USD range (100-10000) which indicates USD denomination
-    const isUSDDenominated = (optimalDenomination === 'aUSDT' || optimalDenomination === 'aUSDC') || 
+    const isUSDDenominated = (optimalDenomination === 'aUSDT' || optimalDenomination === 'aUSDC') ||
                             (priceAtLowerTick >= 100 && priceAtLowerTick <= 10000 && priceAtUpperTick >= 100 && priceAtUpperTick <= 10000);
-    const finalDisplayDecimals = isUSDDenominated ? (isStable ? 6 : 2) : displayDecimals;
+    const finalDisplayDecimals = isUSDDenominated ? (isStable ? 6 : 2) : 6;
 
     // Format prices with proper decimals
     const formattedLower = priceAtLowerTick.toLocaleString('en-US', { 
@@ -2023,7 +2018,7 @@ export function AddLiquidityForm({
     const isUsd = denomToken === 'aUSDT' || denomToken === 'aUSDC' || denomToken === 'USDT' || denomToken === 'USDC' || denomToken === 'aDAI' || denomToken === 'DAI';
     const poolCfg = selectedPoolId ? getPoolById(selectedPoolId) : null;
     const isStablePoolType = (poolCfg?.type || '').toLowerCase() === 'stable';
-    const decimals = isUsd ? (isStablePoolType ? 6 : 2) : (TOKEN_DEFINITIONS[denomToken]?.displayDecimals ?? 4);
+    const decimals = isUsd ? (isStablePoolType ? 6 : 2) : 6;
 
     const points = [
       { tick: lower, price: pLower },
@@ -2112,7 +2107,7 @@ export function AddLiquidityForm({
                                           const flip = inverse > parseFloat(currentPrice);
                                           const denomToken = flip ? token0Symbol : token1Symbol;
                                           const isUsd = denomToken === 'aUSDT' || denomToken === 'aUSDC' || denomToken === 'USDT' || denomToken === 'USDC' || denomToken === 'aDAI' || denomToken === 'DAI';
-                                          const displayDecimals = isUsd ? 2 : (TOKEN_DEFINITIONS[denomToken]?.displayDecimals ?? 4);
+                                          const displayDecimals = isUsd ? 2 : 6;
                                           const numeric = flip ? inverse : parseFloat(currentPrice);
                                           return isFinite(numeric) ? numeric.toFixed(displayDecimals) : '∞';
                                         })()}
@@ -2390,7 +2385,7 @@ export function AddLiquidityForm({
                         </div>
                         {/* Percentage buttons - show on hover always */}
                         {isConnected && token0BalanceData && parseFloat(token0BalanceData.formatted || "0") > 0 && (
-                          <div className="absolute right-0 top-0 flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
+                          <div className="absolute right-0 top-[3px] flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
                             {[25, 50, 75, 100].map((percentage, index) => (
                               <motion.div
                                 key={percentage}
@@ -2407,10 +2402,7 @@ export function AddLiquidityForm({
                                   className="h-5 px-2 text-[10px] font-medium rounded-md border-sidebar-border bg-muted/20 hover:bg-muted/40 transition-colors"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    const balance = parseFloat(token0BalanceData.formatted || "0");
-                                    const amount = (balance * percentage) / 100;
-                                    const formattedAmount = amount.toFixed(TOKEN_DEFINITIONS[token0Symbol]?.decimals || 18);
-                                    setAmount0(formattedAmount);
+                                    handleToken0Percentage(percentage);
                                     setActiveInputSide('amount0');
                                   }}
                                 >
@@ -2531,7 +2523,7 @@ export function AddLiquidityForm({
                         </div>
                         {/* Percentage buttons - show on hover always */}
                         {isConnected && token1BalanceData && parseFloat(token1BalanceData.formatted || "0") > 0 && (
-                          <div className="absolute right-0 top-0 flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
+                          <div className="absolute right-0 top-[3px] flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
                             {[25, 50, 75, 100].map((percentage, index) => (
                               <motion.div
                                 key={percentage}
@@ -2548,10 +2540,7 @@ export function AddLiquidityForm({
                                   className="h-5 px-2 text-[10px] font-medium rounded-md border-sidebar-border bg-muted/20 hover:bg-muted/40 transition-colors"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    const balance = parseFloat(token1BalanceData.formatted || "0");
-                                    const amount = (balance * percentage) / 100;
-                                    const formattedAmount = amount.toFixed(TOKEN_DEFINITIONS[token1Symbol]?.decimals || 18);
-                                    setAmount1(formattedAmount);
+                                    handleToken1Percentage(percentage);
                                     setActiveInputSide('amount1');
                                   }}
                                 >

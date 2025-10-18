@@ -7,33 +7,18 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
-// Format token amounts to max 9 decimals with ... truncation
-export function formatTokenAmount(amount: string | number, maxDecimals: number = 9): string {
+// Format token amounts to max decimals (default 6) without abbreviation
+export function formatTokenAmount(amount: string | number, maxDecimals: number = 6): string {
   if (!amount || amount === '0' || amount === 0) return '0';
-  
+
   const numAmount = typeof amount === 'string' ? parseFloat(amount) : amount;
   if (!Number.isFinite(numAmount)) return '0';
-  
-  // Convert to string to work with decimal places
-  const amountStr = numAmount.toString();
-  
-  // If it's scientific notation, convert to regular decimal
-  if (amountStr.includes('e')) {
-    const formatted = numAmount.toFixed(maxDecimals);
-    return formatted;
-  }
-  
-  // Split by decimal point
-  const [integerPart, decimalPart = ''] = amountStr.split('.');
-  
-  // If no decimal part or decimal part is within limit, return as is
-  if (!decimalPart || decimalPart.length <= maxDecimals) {
-    return amountStr;
-  }
-  
-  // Truncate decimal part and add ellipsis
-  const truncatedDecimal = decimalPart.substring(0, maxDecimals);
-  return `${integerPart}.${truncatedDecimal}...`;
+
+  // Use toFixed to limit decimals
+  const formatted = numAmount.toFixed(maxDecimals);
+
+  // Remove trailing zeros after decimal point
+  return formatted.replace(/\.?0+$/, '') || "0";
 }
 
 export function shortenAddress(address: string, chars = 4): string {
@@ -46,13 +31,26 @@ export function absoluteUrl(path: string) {
   return `${process.env.NEXT_PUBLIC_APP_URL}${path}`;
 }
 
-// Token display utilities
-export const formatTokenDisplayAmount = (amount: string) => {
+// Token display utilities - Format to actual token decimals (up to 6 max)
+export const formatTokenDisplayAmount = (amount: string, tokenSymbol?: TokenSymbol) => {
   const num = parseFloat(amount);
   if (isNaN(num)) return amount;
-  if (num === 0) return "0.00";
-  if (num > 0 && num < 0.0001) return "< 0.0001";
-  return num.toFixed(4);
+  if (num === 0) return "0";
+  if (num > 0 && num < 0.000001) return "< 0.000001";
+
+  // Determine the number of decimals to use
+  let decimalsToUse = 6; // default max
+  if (tokenSymbol) {
+    const tokenConfig = TOKEN_DEFINITIONS[tokenSymbol];
+    const tokenDecimals = tokenConfig?.decimals ?? 18;
+    // Use the minimum of token's actual decimals and 6
+    decimalsToUse = Math.min(tokenDecimals, 6);
+  }
+
+  const formatted = num.toFixed(decimalsToUse);
+
+  // Remove trailing zeros after decimal point
+  return formatted.replace(/\.?0+$/, '') || "0";
 };
 
 export const getTokenIcon = (symbol?: string) => {
@@ -103,12 +101,11 @@ export const getTokenSymbolByAddress = (address: string): TokenSymbol | null => 
 export const formatUncollectedFee = (feeAmount: string, tokenSymbol: TokenSymbol) => {
   try {
     const decimals = TOKEN_DEFINITIONS[tokenSymbol]?.decimals ?? 18;
-    const displayDecimals = TOKEN_DEFINITIONS[tokenSymbol]?.displayDecimals ?? 4;
     const amount = parseFloat(formatUnits(BigInt(feeAmount), decimals));
-    
+
     if (!Number.isFinite(amount) || amount <= 0) return null;
-    
-    return amount > 0 && amount < 0.001 ? '< 0.001' : amount.toFixed(displayDecimals);
+
+    return amount > 0 && amount < 0.001 ? '< 0.001' : amount.toFixed(6);
   } catch {
     return null;
   }

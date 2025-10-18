@@ -138,10 +138,19 @@ export default async function handler(
       const token0Symbol = getTokenSymbolByAddress(poolKey.currency0);
       const token1Symbol = getTokenSymbolByAddress(poolKey.currency1);
 
+      if (!token0Symbol || !token1Symbol) {
+        throw new Error(`Unable to identify token symbols from addresses`);
+      }
+
       // 7) Optional formatted (display)
       const { getToken } = await import('@/lib/pools-config');
       const token0Config = getToken(token0Symbol);
       const token1Config = getToken(token1Symbol);
+
+      if (!token0Config || !token1Config) {
+        throw new Error(`Token configuration not found for ${token0Symbol} or ${token1Symbol}`);
+      }
+
       const formattedAmount0 = formatUnits(rawAmount0, token0Config.decimals);
       const formattedAmount1 = formatUnits(rawAmount1, token1Config.decimals);
 
@@ -325,8 +334,8 @@ export default async function handler(
       return numericAmount.toFixed(displayDecimals);
     };
 
-    const formattedAmount0 = formatTokenDisplayAmount(rawAmount0, token0Config.decimals, token0Config.displayDecimals);
-    const formattedAmount1 = formatTokenDisplayAmount(rawAmount1, token1Config.decimals, token1Config.displayDecimals);
+    const formattedAmount0 = formatTokenDisplayAmount(rawAmount0, token0Config.decimals, 6);
+    const formattedAmount1 = formatTokenDisplayAmount(rawAmount1, token1Config.decimals, 6);
 
     return res.status(200).json({
       success: true,
@@ -351,8 +360,8 @@ export default async function handler(
         rawAmount1: rawAmount1.toString(),
         token0Decimals: token0Config.decimals,
         token1Decimals: token1Config.decimals,
-        token0DisplayDecimals: token0Config.displayDecimals,
-        token1DisplayDecimals: token1Config.displayDecimals,
+        token0DisplayDecimals: 6,
+        token1DisplayDecimals: 6,
       }
     });
   } catch (e: any) {

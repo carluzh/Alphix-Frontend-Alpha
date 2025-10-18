@@ -83,9 +83,9 @@ const DEFAULT_TICK_SPACING = 60;
 const formatTokenDisplayAmount = (amount: string) => {
   const num = parseFloat(amount);
   if (isNaN(num)) return amount;
-  if (num === 0) return "0.00";
-  if (num > 0 && num < 0.0001) return "< 0.0001";
-  return num.toFixed(4);
+  if (num === 0) return "0";
+  if (num > 0 && num < 0.000001) return "< 0.000001";
+  return num.toFixed(6);
 };
 
 // Get token icon for display
@@ -175,9 +175,7 @@ const convertTickToPrice = (tick: number, currentPoolTick: number | null, curren
       if (isFinite(priceAtTick)) {
         if (priceAtTick < 1e-11 && priceAtTick > 0) return "0";
         if (priceAtTick > 1e30) return "∞";
-        const displayDecimals = baseTokenForPriceDisplay === token0Symbol 
-          ? (TOKEN_DEFINITIONS[token0Symbol as TokenSymbol]?.displayDecimals ?? 4)
-          : (TOKEN_DEFINITIONS[token1Symbol as TokenSymbol]?.displayDecimals ?? 4);
+        const displayDecimals = 6;
         return priceAtTick.toFixed(displayDecimals);
       }
     }
@@ -203,7 +201,7 @@ const convertTickToPrice = (tick: number, currentPoolTick: number | null, curren
     if (!isFinite(displayVal) || isNaN(displayVal)) return 'N/A';
     if (displayVal < 1e-11 && displayVal > 0) return '0';
     if (displayVal > 1e30) return '∞';
-    const displayDecimals = (TOKEN_DEFINITIONS[baseTokenForPriceDisplay as TokenSymbol]?.displayDecimals ?? 4);
+    const displayDecimals = 6;
     return displayVal.toFixed(displayDecimals);
   } catch {
     return 'N/A';
@@ -572,7 +570,7 @@ export default function PoolDetailPage() {
     } else if (numericBalance > 0 && numericBalance < 0.001) {
       return "< 0.001";
     } else {
-      const displayDecimals = TOKEN_DEFINITIONS[tokenSymbolForDecimals]?.displayDecimals ?? 4;
+      const displayDecimals = 6;
       return numericBalance.toFixed(displayDecimals);
     }
   };

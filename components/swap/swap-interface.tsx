@@ -33,6 +33,7 @@ import { toast } from "sonner";
 import { getAddress, parseUnits, formatUnits, maxUint256, type Address, type Hex } from "viem"
 import { publicClient } from "../../lib/viemClient";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useSwapPercentageInput } from "@/hooks/usePercentageInput";
 
 import {
   getAllTokens,
@@ -57,7 +58,7 @@ import { Label } from "@/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Badge } from "@/components/ui/badge"
-import { cn } from "@/lib/utils"
+import { cn, formatTokenDisplayAmount } from "@/lib/utils"
 
 // Modal Imports
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from "@/components/ui/dialog";
@@ -113,16 +114,12 @@ const createTokenFromConfig = (tokenSymbol: string, prices: { BTC: number; USDC:
   
   const priceType = getTokenPriceMapping(tokenSymbol);
   const usdPrice = prices[priceType] || 1;
-  
-  // Ensure displayDecimals has a proper fallback
-      const displayDecimals = tokenConfig.displayDecimals ?? (tokenSymbol === 'aBTC' ? 8 : 4);
-  
+
   return {
     address: tokenConfig.address as Address,
     symbol: tokenConfig.symbol,
     name: tokenConfig.name,
     decimals: tokenConfig.decimals,
-    displayDecimals: displayDecimals,
     balance: "0.000",
     value: "$0.00",
     icon: tokenConfig.icon,
@@ -144,7 +141,6 @@ export interface Token {
   symbol: string;
   name: string;
   decimals: number;
-  displayDecimals: number; // Add displayDecimals for proper formatting
   balance: string; // Fetched balance, formatted string
   value: string;   // USD value based on fetched balance and usdPrice, formatted string "$X.YZ"
   icon: string;
@@ -724,20 +720,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     }
   }, [swapState, swapTxInfo]);
 
-  // Helper function for formatting balance display
-  const getFormattedDisplayBalance = (numericBalance: number | undefined): string => {
-    if (numericBalance === undefined || isNaN(numericBalance)) {
-      numericBalance = 0;
-    }
-    if (numericBalance === 0) {
-      return "0.000";
-    } else if (numericBalance > 0 && numericBalance < 0.001) {
-      return "< 0.001";
-    } else {
-      return numericBalance.toFixed(3);
-    }
-  };
-
   // --- Dynamic Balance Fetching for current tokens ---
   const { data: fromTokenBalanceData, isLoading: isLoadingFromTokenBalance, error: fromTokenBalanceError, refetch: refetchFromTokenBalance } = useBalance({
     address: accountAddress,
@@ -752,6 +734,16 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     chainId: TARGET_CHAIN_ID,
     query: { enabled: !!accountAddress && !!toToken.address }
   });
+
+  // Use shared percentage input hook for both tokens
+  const { handleFromPercentage, handleToPercentage } = useSwapPercentageInput(
+    fromTokenBalanceData,
+    toTokenBalanceData,
+    fromToken,
+    toToken,
+    setFromAmount,
+    setToAmount
+  );
 
   // Listen for faucet claim to refresh balances
   useEffect(() => {
@@ -782,7 +774,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   // Update fromToken balance
   useEffect(() => {
     const numericBalance = fromTokenBalanceData ? parseFloat(fromTokenBalanceData.formatted) : 0;
-    const displayBalance = getFormattedDisplayBalance(numericBalance);
+    const displayBalance = formatTokenDisplayAmount(numericBalance.toString(), fromToken.symbol as TokenSymbol);
 
     setFromToken(prevToken => {
       // Only create a new object if the balance or value has actually changed
@@ -814,12 +806,12 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       // If no changes, return the existing token object to prevent re-renders
       return prevToken;
     });
-  }, [fromTokenBalanceData, fromTokenBalanceError, isLoadingFromTokenBalance, currentChainId, isConnected, getFormattedDisplayBalance]);
+  }, [fromTokenBalanceData, fromTokenBalanceError, isLoadingFromTokenBalance, currentChainId, isConnected, fromToken.symbol]);
 
   // Update toToken balance
   useEffect(() => {
     const numericBalance = toTokenBalanceData ? parseFloat(toTokenBalanceData.formatted) : 0;
-    const displayBalance = getFormattedDisplayBalance(numericBalance);
+    const displayBalance = formatTokenDisplayAmount(numericBalance.toString(), toToken.symbol as TokenSymbol);
 
     setToToken(prevToken => {
       // Only create a new object if the balance or value has actually changed
@@ -849,7 +841,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       
       return prevToken;
     });
-  }, [toTokenBalanceData, toTokenBalanceError, isLoadingToTokenBalance, currentChainId, isConnected, getFormattedDisplayBalance]);
+  }, [toTokenBalanceData, toTokenBalanceError, isLoadingToTokenBalance, currentChainId, isConnected, toToken.symbol]);
 
   // Helper function to format currency
   const formatCurrency = useCallback((valueString: string): string => {
@@ -868,7 +860,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   }, []); // Added useCallback with empty dependency array
 
   // Helper function to format token amount for display (Review, Success, Balances)
-  // Uses the token's actual displayDecimals from configuration and special < 0.001 display.
+  // Uses a 6-decimal cap for shortened display
   const formatTokenAmountDisplay = useCallback((amountString: string, token: Token): string => {
     try {
       const amount = parseFloat(amountString);
@@ -878,11 +870,8 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       // Handle very small positive numbers with special string FIRST
       if (amount > 0 && amount < 0.001) return "< 0.001";
 
-      // Use the token's actual displayDecimals from configuration
-      const displayDecimals = token.displayDecimals;
-
-      // Format with the token's configured decimals
-      return amount.toFixed(displayDecimals);
+      // Use 6-decimal cap for all tokens
+      return amount.toFixed(6);
 
     } catch (error) {
       console.error("Error formatting token amount display:", error);
@@ -925,7 +914,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
           const data = await response.json();
           
           if (response.ok && data.success) {
-            // Set the quoted amount in the UI
+            // Set the quoted amount in the UI (use raw value for full precision)
             setToAmount(data.toAmount);
             setQuoteError(null);
             
@@ -943,10 +932,10 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
             
             setQuoteError(data.error || 'Failed to get quote');
             setRouteInfo(null); // Clear route info on error
-            
+
             // Fallback to the calculation using current prices
             const calculatedTo = (fromValue * fromToken.usdPrice) / toToken.usdPrice;
-            setToAmount(calculatedTo.toFixed(toToken.decimals));
+            setToAmount(calculatedTo.toString());
           }
         } catch (error: any) {
           console.error('❌ V4 Quoter Exception:', error);
@@ -956,10 +945,10 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
           
           setQuoteError('Failed to fetch quote');
           setRouteInfo(null); // Clear route info on exception
-          
+
           // Fallback to the calculation using current prices
           const calculatedTo = (fromValue * fromToken.usdPrice) / toToken.usdPrice;
-          setToAmount(calculatedTo.toFixed(toToken.decimals));
+          setToAmount(calculatedTo.toString());
         } finally {
           // Clear loading state
           setQuoteLoading(false);
@@ -967,7 +956,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       } else {
         // Fallback to the calculation using current prices
         const calculatedTo = (fromValue * fromToken.usdPrice) / toToken.usdPrice;
-        setToAmount(calculatedTo.toFixed(toToken.decimals));
+        setToAmount(calculatedTo.toString());
         setRouteInfo(null); // No route info for calculated prices
       }
     }, 500); // 500ms debounce
@@ -1025,16 +1014,10 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
         if (data.swapType === 'ExactOut') {
           // When editing Buy, backfill Sell only;
           // never mutate Buy to preserve user typing (incl. trailing dot)
-          const raw = String(data.fromAmount ?? "");
-          const [intPart, decPart = ""] = raw.split(".");
-          const truncated = decPart.length > 9 ? `${intPart}.${decPart.slice(0,9)}` : raw;
-          setFromAmount(truncated);
+          setFromAmount(String(data.fromAmount ?? ""));
         } else {
           // ExactIn flow: update Buy value from quote
-          const rawTo = String(data.toAmount ?? "");
-          const [i2, d2 = ""] = rawTo.split(".");
-          const truncTo = d2.length > 9 ? `${i2}.${d2.slice(0,9)}` : rawTo;
-          setToAmount(truncTo);
+          setToAmount(String(data.toAmount ?? ""));
         }
         setRouteInfo(data.route || null);
         setQuoteError(null);
@@ -1268,7 +1251,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       minimumReceived: formattedMinimumReceived,
     }));
 
-  }, [fromAmount, toAmount, fromToken?.symbol, fromToken?.usdPrice, fromToken?.displayDecimals, toToken?.symbol, toToken?.usdPrice, toToken?.displayDecimals, formatCurrency, isConnected, currentChainId, dynamicFeeLoading, dynamicFeeError, dynamicFeeBps, routeFees, routeFeesLoading, formatTokenAmountDisplay, slippage]);
+  }, [fromAmount, toAmount, fromToken?.symbol, fromToken?.usdPrice, toToken?.symbol, toToken?.usdPrice, formatCurrency, isConnected, currentChainId, dynamicFeeLoading, dynamicFeeError, dynamicFeeBps, routeFees, routeFeesLoading, formatTokenAmountDisplay, slippage]);
 
   const handleFromAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
@@ -1472,36 +1455,15 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     }
   };
 
-  const handleUsePercentage = (percentage: number) => {
-    try {
-      // Use the dynamic fromToken balance data
-      if (fromTokenBalanceData && fromTokenBalanceData.formatted) {
-        // Parse the exact blockchain value
-        const exactBalance = fromTokenBalanceData.formatted;
-        const exactNumericBalance = parseFloat(exactBalance);
-        
-        if (isNaN(exactNumericBalance) || exactNumericBalance <= 0) {
-          console.warn(`Invalid or zero balance for ${fromToken.symbol}`);
-          return;
-        }
-
-        // Calculate the exact percentage amount
-        const exactAmount = exactNumericBalance * (percentage / 100);
-        
-        // Set the amount directly using the formatted string to preserve precision
-        // This matches the logic in handleUseFullBalance for consistency
-        if (percentage === 100) {
-          // For 100%, use the exact blockchain value directly
-          setFromAmount(exactBalance);
-        } else {
-          // For other percentages, calculate and format to the token's decimals
-          setFromAmount(exactAmount.toFixed(fromToken.decimals));
-        }
-      } else {
-        console.warn(`No valid balance data for ${fromToken.symbol}`);
-      }
-    } catch (error) {
-      console.error("Error using exact balance for percentage calculation:", error);
+  // Wrapper function to maintain compatibility with existing code
+  // Delegates to the shared hook handlers
+  const handleUsePercentage = (percentage: number, isFrom: boolean = true) => {
+    if (isFrom) {
+      handleFromPercentage(percentage);
+      lastEditedSideRef.current = 'from';
+    } else {
+      handleToPercentage(percentage);
+      lastEditedSideRef.current = 'to';
     }
   };
   
@@ -1509,14 +1471,17 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     try {
       // Use the appropriate dynamic balance data based on which token is being used
       const balanceData = isFrom ? fromTokenBalanceData : toTokenBalanceData;
-      
+
       // Use the exact formatted value from the blockchain if available
       if (balanceData && balanceData.formatted) {
         if (isFrom) {
           // Set EXACTLY what the blockchain reports - no parsing/formatting that might round
           setFromAmount(balanceData.formatted);
+          lastEditedSideRef.current = 'from';
         } else {
-          console.warn("Setting 'toAmount' based on 'toToken' balance is not directly supported");
+          // Set EXACTLY what the blockchain reports for the "to" token
+          setToAmount(balanceData.formatted);
+          lastEditedSideRef.current = 'to';
         }
       } else {
         console.warn(`No valid balance data for ${token.symbol}`);
@@ -2803,9 +2768,10 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   };
 
   return (
-    <div className="flex flex-col" ref={containerRef}> {/* Container ref wraps everything */}
+    <div className="flex flex-col">
+      <div ref={containerRef} className="w-full max-w-md mx-auto">
       {/* Main Swap Interface Card */}
-      <Card className="w-full max-w-md card-gradient z-10 mx-auto rounded-lg bg-[var(--swap-background)] border-[var(--swap-border)]"> {/* Applied styling here */} 
+      <Card className="w-full card-gradient z-10 rounded-lg bg-[var(--swap-background)] border-[var(--swap-border)]"> {/* Applied styling here */}
         {/* <CardHeader className="pt-6 pb-2">
             <CardTitle className="text-center">Swap Tokens</CardTitle>
         </CardHeader> */}
@@ -2822,22 +2788,15 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 activelyEditedSide={lastEditedSideRef.current}
                 handleSwapTokens={handleSwapTokens}
                 handleUseFullBalance={handleUseFullBalance}
+                handleUsePercentage={handleUsePercentage}
                 availableTokens={tokenList}
                 onFromTokenSelect={handleFromTokenSelect}
                 onToTokenSelect={handleToTokenSelect}
-                handleCyclePercentage={handleCyclePercentage}
                 routeInfo={routeInfo}
                 routeFees={routeFees}
                 routeFeesLoading={routeFeesLoading}
                 selectedPoolIndexForChart={selectedPoolIndexForChart}
                 onSelectPoolForChart={handleSelectPoolForChart}
-                handleMouseEnterArc={handleMouseEnterArc}
-                handleMouseLeaveArc={handleMouseLeaveArc}
-                actualNumericPercentage={actualNumericPercentage}
-                currentSteppedPercentage={currentSteppedPercentage}
-                hoveredArcPercentage={hoveredArcPercentage}
-                isSellInputFocused={isSellInputFocused}
-                setIsSellInputFocused={setIsSellInputFocused}
                 onRouteHoverChange={undefined}
                 formatCurrency={formatCurrency}
                 isConnected={isConnected}
@@ -2892,7 +2851,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
 
       {/* Preview Chart Row with external nav arrows */}
       <div className="w-full relative">
-        <div className="w-full max-w-md mx-auto relative group">
+        <div className="w-full relative group">
           {/* Hover buffer extends horizontally so arrows remain clickable while visible */}
           <div className="absolute inset-y-0 left-[-2.75rem] right-[-2.75rem]"></div>
           <div className="relative">
@@ -2958,6 +2917,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
           )}
         </div>
         </div>
+      </div>
       </div>
 
       {/* Full Chart Modal - Controlled by isFeeChartModalOpen - Moved outside the mapping */}

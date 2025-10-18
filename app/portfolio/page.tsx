@@ -767,9 +767,7 @@ export default function PortfolioPage() {
         if (isFinite(priceAtTick)) {
           if (priceAtTick < 1e-11 && priceAtTick > 0) return '0';
           if (priceAtTick > 1e30) return '∞';
-          const displayDecimals = (baseTokenForPriceDisplay === token0Symbol
-            ? (TOKEN_DEFINITIONS[token0Symbol as TokenSymbol]?.displayDecimals ?? 4)
-            : (TOKEN_DEFINITIONS[token1Symbol as TokenSymbol]?.displayDecimals ?? 4));
+          const displayDecimals = 6;
           return priceAtTick.toFixed(displayDecimals);
         }
       }
@@ -797,7 +795,7 @@ export default function PortfolioPage() {
       if (!isFinite(displayVal) || isNaN(displayVal)) return 'N/A';
       if (displayVal < 1e-11 && displayVal > 0) return '0';
       if (displayVal > 1e30) return '∞';
-      const displayDecimals = (TOKEN_DEFINITIONS[baseTokenForPriceDisplay as TokenSymbol]?.displayDecimals ?? 4);
+      const displayDecimals = 6;
       return displayVal.toFixed(displayDecimals);
     } catch {
       return 'N/A';
@@ -1022,9 +1020,9 @@ export default function PortfolioPage() {
   const formatTokenDisplayAmount = (amount: string) => {
     const num = parseFloat(amount);
     if (isNaN(num)) return amount;
-    if (num === 0) return "0.00";
-    if (num > 0 && num < 0.0001) return "< 0.0001";
-    return num.toFixed(4);
+    if (num === 0) return "0";
+    if (num > 0 && num < 0.000001) return "< 0.000001";
+    return num.toFixed(6);
   };
 
   const getTokenIconSrc = (symbol?: string) => {
@@ -3042,7 +3040,7 @@ export default function PortfolioPage() {
                         return c - c / denom;
                       })();
                       const isUp = deltaUsd >= 0;
-                      const amountDisplayDecimals = typeof tokenInfo?.displayDecimals === 'number' ? tokenInfo.displayDecimals : 4;
+                      const amountDisplayDecimals = 6;
                       return (
                         <div key={tb.symbol} className="flex items-center justify-between h-[64px] pl-6 pr-6 group">
                           <div className="flex items-center gap-2 min-w-0">
@@ -3581,7 +3579,7 @@ export default function PortfolioPage() {
                               return c - c / denom;
                             })();
                             const isUp = deltaUsd >= 0;
-                            const amountDisplayDecimals = typeof tokenInfo?.displayDecimals === 'number' ? tokenInfo.displayDecimals : 4;
+                            const amountDisplayDecimals = 6;
                             return (
                               <div key={tb.symbol} className="flex items-center justify-between h-[64px] pl-6 pr-6 group">
                                 <div className="flex items-center gap-2 min-w-0">
@@ -3721,7 +3719,7 @@ export default function PortfolioPage() {
                         return c - c / denom;
                       })();
                       const isUp = deltaUsd >= 0;
-                      const amountDisplayDecimals = typeof tokenInfo?.displayDecimals === 'number' ? tokenInfo.displayDecimals : 4;
+                      const amountDisplayDecimals = 6;
                       return (
                         <div key={tb.symbol} className="flex items-center justify-between h-[64px] pl-6 pr-6 group">
                           <div className="flex items-center gap-2 min-w-0">

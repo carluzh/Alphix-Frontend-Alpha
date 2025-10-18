@@ -452,15 +452,15 @@ export function PositionCard({
 
                         // Check if position is at risk (within 2% of bounds for volatile pools only)
                         let isAtRisk = false;
-                        if (position.isInRange && !isFullRange && currentPoolTick !== null) {
+                        if (position.isInRange && !isFullRange && currentPoolTick !== null && currentPoolTick !== undefined) {
                             // Get pool type from poolDataByPoolId
                             const pool = poolDataByPoolId[poolKey] || poolDataByPoolId[String(position.poolId || '').toLowerCase()] || {};
                             const poolType = pool?.type || 'Volatile'; // Default to Volatile if not specified
 
                             if (poolType === 'Volatile') {
                                 const tickRange = position.tickUpper - position.tickLower;
-                                const distanceFromLower = currentPoolTick - position.tickLower;
-                                const distanceFromUpper = position.tickUpper - currentPoolTick;
+                                const distanceFromLower = currentPoolTick! - position.tickLower;
+                                const distanceFromUpper = position.tickUpper - currentPoolTick!;
 
                                 // Check if within 2% of either bound
                                 const lowerThreshold = tickRange * 0.02;

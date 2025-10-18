@@ -124,7 +124,7 @@ export default function Home() {
   return (
     <div className="bg-black" style={{background: '#0a0908'}}>
       {/* CSS Keyframes for interactive animations */}
-      <style jsx>{`
+      <style>{`
         @keyframes swapSlideIn {
           0% {
             opacity: 0;

@@ -306,31 +306,22 @@ export function TokenSelector({
       </Button>
 
       {/* Token Selection Modal */}
-      <AnimatePresence>
-        {isOpen && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="fixed inset-0 z-50"
-            onClick={() => setIsOpen(false)} // Directly close isOpen
+      {isOpen && (
+        <div
+          className="fixed inset-0 z-50"
+          onClick={() => setIsOpen(false)}
+        >
+          {/* Modal positioned to overlay SwapInputView */}
+          <div
+            className="fixed rounded-lg shadow-2xl border border-primary overflow-hidden bg-popover"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              top: swapContainerRect.top,
+              left: swapContainerRect.left,
+              width: swapContainerRect.width,
+              height: swapContainerRect.height,
+            }}
           >
-            {/* Modal positioned to overlay SwapInputView */}
-            <motion.div
-              initial={{ opacity: 0, scale: 0.98 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.98 }}
-              transition={{ duration: 0.2 }}
-              className="fixed rounded-lg shadow-2xl border border-primary overflow-hidden bg-popover" // Consolidated: uses brand-border and brand-container-bg
-              onClick={(e) => e.stopPropagation()}
-              style={{
-                top: swapContainerRect.top,
-                left: swapContainerRect.left,
-                width: swapContainerRect.width,
-                height: swapContainerRect.height,
-              }}
-            >
               {/* Header */}
               <div className="flex items-center justify-between p-4 border-b border-primary">
                 <h2 className="text-sm font-medium">
@@ -431,10 +422,9 @@ export function TokenSelector({
                   </div>
                 )}
               </div>
-            </motion.div>
-          </motion.div>
+            </div>
+          </div>
         )}
-      </AnimatePresence>
     </div>
   );
 } 

@@ -178,17 +178,7 @@ export function SwapReviewView({
               {calculatedValues.fromTokenAmount === "< 0.001" ? (
                 <span className="text-xs text-muted-foreground">{calculatedValues.fromTokenAmount}</span>
               ) : (
-                (() => {
-                  const formatted = formatTokenAmount(calculatedValues.fromTokenAmount);
-                  const hasEllipsis = formatted.endsWith('...');
-                  const main = hasEllipsis ? formatted.slice(0, -3) : formatted;
-                  return (
-                    <span className="text-sm">
-                      {main}
-                      {hasEllipsis && <span className="text-muted-foreground">...</span>}
-                    </span>
-                  );
-                })()
+                <span className="text-sm">{formatTokenAmount(calculatedValues.fromTokenAmount)}</span>
               )}
               <span className="ml-1 text-xs text-muted-foreground">{displayFromToken.symbol}</span>
             </div>
@@ -202,17 +192,7 @@ export function SwapReviewView({
               {calculatedValues.toTokenAmount === "< 0.001" ? (
                 <span className="text-xs text-muted-foreground">{calculatedValues.toTokenAmount}</span>
               ) : (
-                (() => {
-                  const formatted = formatTokenAmount(calculatedValues.toTokenAmount);
-                  const hasEllipsis = formatted.endsWith('...');
-                  const main = hasEllipsis ? formatted.slice(0, -3) : formatted;
-                  return (
-                    <span className="text-sm">
-                      {main}
-                      {hasEllipsis && <span className="text-muted-foreground">...</span>}
-                    </span>
-                  );
-                })()
+                <span className="text-sm">{formatTokenAmount(calculatedValues.toTokenAmount)}</span>
               )}
               <span className="ml-1 text-xs text-muted-foreground">{displayToToken.symbol}</span>
             </div>

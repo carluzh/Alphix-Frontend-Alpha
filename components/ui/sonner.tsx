@@ -10,7 +10,7 @@ const Toaster = ({ ...props }: ToasterProps) => {
 
   return (
     <>
-      <style jsx global>{`
+      <style>{`
         @keyframes toastSlideIn {
           0% { transform: translateX(120%); opacity: 0; }
           70% { transform: translateX(-4px); }

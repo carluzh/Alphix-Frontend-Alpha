@@ -125,7 +125,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
 
   // Display decimals for current price (capped at 4 or 2 for USD)
   const isUSDDenom = ['aUSDT', 'aUSDC', 'USDT', 'USDC', 'aDAI', 'DAI'].includes(denominationBase);
-  const poolPriceDecimals = isUSDDenom ? 2 : (denominationToken?.displayDecimals ?? 4);
+  const poolPriceDecimals = isUSDDenom ? 2 : 6;
 
   // Price label text - denomination is the unit, quote is what we're pricing
   const pricePerText = `${denominationBase} per ${quoteTokenSymbol}`;

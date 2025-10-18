@@ -17,44 +17,38 @@ export const TOKEN_DEFINITIONS = {
     'aUSDC': {
         addressRaw: '0x663cf82e49419a3dc88eec65c2155b4b2d0fa335',
         decimals: 6,
-        symbol: 'aUSDC',
-        displayDecimals: 2
+        symbol: 'aUSDC'
     },
     'aUSDT': {
         addressRaw: '0xbaabfa3ac2ed3d0154e9e2002f94d8550a79bfa8',
         decimals: 6,
-        symbol: 'aUSDT',
-        displayDecimals: 2
+        symbol: 'aUSDT'
     },
     'aETH': {
         addressRaw: '0x28c00749cb9066d240fe1270b6d7f294b8b34d99',
         decimals: 18,
-        symbol: 'aETH',
-        displayDecimals: 4
+        symbol: 'aETH'
     },
     'aBTC': {
         addressRaw: '0x13c26fb69d48ed5a72ce3302fc795082e2427f4d',
         decimals: 8,
-        symbol: 'aBTC',
-        displayDecimals: 6
+        symbol: 'aBTC'
     },
     'ETH': {
         addressRaw: '0x0000000000000000000000000000000000000000',
         decimals: 18,
-        symbol: 'ETH',
-        displayDecimals: 4
+        symbol: 'ETH'
     }
 } as const;
 
 // Define a type for the token symbols for better type safety
 export type TokenSymbol = keyof typeof TOKEN_DEFINITIONS;
 
-// Explicitly define the type for a single token definition including displayDecimals
+// Explicitly define the type for a single token definition
 export interface TokenDefinition {
     readonly addressRaw: string;
     readonly decimals: number;
     readonly symbol: TokenSymbol;
-    readonly displayDecimals?: number; // Optional, as it's newly added
 }
 
 // --- V4 Pool Configuration ---

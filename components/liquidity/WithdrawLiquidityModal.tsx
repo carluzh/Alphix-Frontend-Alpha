@@ -24,6 +24,7 @@ import { useDecreaseLiquidity } from "./useDecreaseLiquidity";
 import { formatTokenDisplayAmount, getTokenIcon, sanitizeDecimalInput, debounce, getTokenSymbolByAddress, formatUncollectedFee, cn } from "@/lib/utils";
 import { useAllPrices } from "@/components/data/hooks";
 import { formatUSD } from "@/lib/format";
+import { calculatePercentageFromString } from "@/hooks/usePercentageInput";
 
 
 interface WithdrawLiquidityModalProps {
@@ -720,7 +721,7 @@ export function WithdrawLiquidityModal({
                         onClick={() => handleMaxWithdraw('amount0')}
                                 disabled={isWorking}
                       >
-                                Balance: {formatTokenDisplayAmount(position.token0.amount)} {position.token0.symbol}
+                                Balance: {formatTokenDisplayAmount(position.token0.amount, position.token0.symbol as TokenSymbol)} {position.token0.symbol}
                       </button>
                    </div>
                   <motion.div
@@ -743,10 +744,11 @@ export function WithdrawLiquidityModal({
                           inputMode="decimal"
                           enterKeyHint="done"
                           onChange={(e) => {
-                            const cappedAmount = handleWithdrawAmountChangeWithWiggle(e, 'amount0');
+                            handleWithdrawAmountChangeWithWiggle(e, 'amount0');
                             setWithdrawActiveInputSide('amount0');
-                            if (cappedAmount && parseFloat(cappedAmount) > 0) {
-                              calculateWithdrawAmount(cappedAmount, 'amount0');
+                            const newAmount = sanitizeDecimalInput(e.target.value);
+                            if (newAmount && parseFloat(newAmount) > 0) {
+                              calculateWithdrawAmount(newAmount, 'amount0');
                             } else {
                               setWithdrawAmount1("");
                               setIsFullWithdraw(false);
@@ -766,7 +768,7 @@ export function WithdrawLiquidityModal({
                                 })()}
                               </div>
                               {parseFloat(position.token0.amount) > 0 && (
-                                <div className="absolute right-0 top-0 flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
+                                <div className="absolute right-0 top-[3px] flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
                                   {[25, 50, 75, 100].map((percentage, index) => (
                                     <motion.div
                                       key={percentage}
@@ -783,15 +785,15 @@ export function WithdrawLiquidityModal({
                                         className="h-5 px-2 text-[10px] font-medium rounded-md border-sidebar-border bg-muted/20 hover:bg-muted/40 transition-colors"
                                         onClick={(e) => {
                                           e.stopPropagation();
-                                          const balance = parseFloat(position.token0.amount);
-                                          const amount = (balance * percentage) / 100;
+                                          const token0Decimals = TOKEN_DEFINITIONS[getTokenSymbolByAddress(position.token0.address) as TokenSymbol]?.decimals || 18;
+                                          const amount = calculatePercentageFromString(position.token0.amount, percentage, token0Decimals);
                                           const syntheticEvent = {
-                                            target: { value: amount.toString() }
+                                            target: { value: amount }
                                           } as React.ChangeEvent<HTMLInputElement>;
-                                          const cappedAmount = handleWithdrawAmountChangeWithWiggle(syntheticEvent, 'amount0');
+                                          handleWithdrawAmountChangeWithWiggle(syntheticEvent, 'amount0');
                                           setWithdrawActiveInputSide('amount0');
-                                          if (cappedAmount && parseFloat(cappedAmount) > 0) {
-                                            calculateWithdrawAmount(cappedAmount, 'amount0');
+                                          if (amount && parseFloat(amount) > 0) {
+                                            calculateWithdrawAmount(amount, 'amount0');
                                           }
                                         }}
                                       >
@@ -822,7 +824,7 @@ export function WithdrawLiquidityModal({
                                 onClick={() => handleMaxWithdraw('amount1')}
                                 disabled={isWorking}
                               >
-                                Balance: {formatTokenDisplayAmount(position.token1.amount)} {position.token1.symbol}
+                                Balance: {formatTokenDisplayAmount(position.token1.amount, position.token1.symbol as TokenSymbol)} {position.token1.symbol}
                               </button>
                    </div>
                   <motion.div
@@ -845,10 +847,11 @@ export function WithdrawLiquidityModal({
                           inputMode="decimal"
                           enterKeyHint="done"
                           onChange={(e) => {
-                            const cappedAmount = handleWithdrawAmountChangeWithWiggle(e, 'amount1');
+                            handleWithdrawAmountChangeWithWiggle(e, 'amount1');
                             setWithdrawActiveInputSide('amount1');
-                            if (cappedAmount && parseFloat(cappedAmount) > 0) {
-                              calculateWithdrawAmount(cappedAmount, 'amount1');
+                            const newAmount = sanitizeDecimalInput(e.target.value);
+                            if (newAmount && parseFloat(newAmount) > 0) {
+                              calculateWithdrawAmount(newAmount, 'amount1');
                             } else {
                               setWithdrawAmount0("");
                               setIsFullWithdraw(false);
@@ -868,7 +871,7 @@ export function WithdrawLiquidityModal({
                                 })()}
                               </div>
                               {parseFloat(position.token1.amount) > 0 && (
-                                <div className="absolute right-0 top-0 flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
+                                <div className="absolute right-0 top-[3px] flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
                                   {[25, 50, 75, 100].map((percentage, index) => (
                                     <motion.div
                                       key={percentage}
@@ -885,15 +888,15 @@ export function WithdrawLiquidityModal({
                                         className="h-5 px-2 text-[10px] font-medium rounded-md border-sidebar-border bg-muted/20 hover:bg-muted/40 transition-colors"
                                         onClick={(e) => {
                                           e.stopPropagation();
-                                          const balance = parseFloat(position.token1.amount);
-                                          const amount = (balance * percentage) / 100;
+                                          const token1Decimals = TOKEN_DEFINITIONS[getTokenSymbolByAddress(position.token1.address) as TokenSymbol]?.decimals || 18;
+                                          const amount = calculatePercentageFromString(position.token1.amount, percentage, token1Decimals);
                                           const syntheticEvent = {
-                                            target: { value: amount.toString() }
+                                            target: { value: amount }
                                           } as React.ChangeEvent<HTMLInputElement>;
-                                          const cappedAmount = handleWithdrawAmountChangeWithWiggle(syntheticEvent, 'amount1');
+                                          handleWithdrawAmountChangeWithWiggle(syntheticEvent, 'amount1');
                                           setWithdrawActiveInputSide('amount1');
-                                          if (cappedAmount && parseFloat(cappedAmount) > 0) {
-                                            calculateWithdrawAmount(cappedAmount, 'amount1');
+                                          if (amount && parseFloat(amount) > 0) {
+                                            calculateWithdrawAmount(amount, 'amount1');
                                           }
                                         }}
                                       >
@@ -924,7 +927,7 @@ export function WithdrawLiquidityModal({
                          onClick={() => handleMaxWithdraw('amount0')}
                          disabled={isWorking}
                        >
-                                  Balance: {formatTokenDisplayAmount(position.token0.amount)} {position.token0.symbol}
+                                  Balance: {formatTokenDisplayAmount(position.token0.amount, position.token0.symbol as TokenSymbol)} {position.token0.symbol}
                        </button>
                      </div>
                     <motion.div 
@@ -979,7 +982,7 @@ export function WithdrawLiquidityModal({
                          onClick={() => handleMaxWithdraw('amount1')}
                          disabled={isWorking}
                        >
-                                  Balance: {formatTokenDisplayAmount(position.token1.amount)} {position.token1.symbol}
+                                  Balance: {formatTokenDisplayAmount(position.token1.amount, position.token1.symbol as TokenSymbol)} {position.token1.symbol}
                        </button>
                      </div>
                     <motion.div 
@@ -1163,7 +1166,7 @@ export function WithdrawLiquidityModal({
 
                                   const formattedFee = feeNumber > 0 && feeNumber < 0.0001
                                     ? '< 0.0001'
-                                    : feeNumber.toFixed(4).replace(/\.?0+$/, '');
+                                    : feeNumber.toFixed(6).replace(/\.?0+$/, '');
 
                                   return `+${formattedFee}`;
                                 })()}
@@ -1192,7 +1195,7 @@ export function WithdrawLiquidityModal({
 
                                   const formattedFee = feeNumber > 0 && feeNumber < 0.0001
                                     ? '< 0.0001'
-                                    : feeNumber.toFixed(4).replace(/\.?0+$/, '');
+                                    : feeNumber.toFixed(6).replace(/\.?0+$/, '');
 
                                   return `+${formattedFee}`;
                                 })()}

@@ -13,7 +13,7 @@ export function PositionSkeleton({ token0Symbol, token1Symbol, className = "" }:
   
   return (
     <Card className={`bg-muted/30 border border-sidebar-border/60 ${className}`}>
-      <style jsx>{`
+      <style>{`
         .skeleton-pulse {
           animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
         }

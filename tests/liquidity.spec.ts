@@ -41,7 +41,7 @@ test.describe('Liquidity E2E Tests', () => {
 
         // Handle MetaMask connection popup
         console.log('[PART 2] Confirming connection...')
-        let metamaskConnectPage = null
+        let metamaskConnectPage: typeof page | null = null
         let connectAttempts = 0
         const maxConnectAttempts = 20
 

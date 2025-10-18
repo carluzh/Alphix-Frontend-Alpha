@@ -17,6 +17,7 @@ import {
 import Image from "next/image";
 import { useAccount, useBalance, useSignTypedData, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { toast } from "sonner";
+import { usePercentageInput } from "@/hooks/usePercentageInput";
 import { TOKEN_DEFINITIONS, TokenSymbol, getToken, getAllTokens, getPoolById } from "@/lib/pools-config";
 import { useAddLiquidityTransaction } from "./useAddLiquidityTransaction";
 import { useIncreaseLiquidity, type IncreasePositionData } from "./useIncreaseLiquidity";
@@ -39,9 +40,9 @@ import { providePreSignedIncreaseBatchPermit } from './useIncreaseLiquidity';
 const formatTokenDisplayAmount = (amount: string) => {
   const num = parseFloat(amount);
   if (isNaN(num)) return amount;
-  if (num === 0) return "0.00";
-  if (num > 0 && num < 0.0001) return "< 0.0001";
-  return num.toFixed(4);
+  if (num === 0) return "0";
+  if (num > 0 && num < 0.000001) return "< 0.000001";
+  return num.toFixed(6);
 };
 
 const getTokenIcon = (symbol?: string) => {
@@ -335,12 +336,25 @@ export function AddLiquidityModal({
 
   const { data: token1BalanceData, isLoading: isLoadingToken1Balance } = useBalance({
     address: accountAddress,
-    token: TOKEN_DEFINITIONS[balanceToken1Symbol]?.address === "0x0000000000000000000000000000000000000000" 
-      ? undefined 
+    token: TOKEN_DEFINITIONS[balanceToken1Symbol]?.address === "0x0000000000000000000000000000000000000000"
+      ? undefined
       : TOKEN_DEFINITIONS[balanceToken1Symbol]?.address as `0x${string}` | undefined,
     chainId,
     query: { enabled: !!accountAddress && !!chainId && !!TOKEN_DEFINITIONS[balanceToken1Symbol] },
   });
+
+  // Percentage input handlers using the new shared hook
+  const handleToken0Percentage = usePercentageInput(
+    token0BalanceData,
+    { decimals: TOKEN_DEFINITIONS[balanceToken0Symbol]?.decimals || 18, symbol: balanceToken0Symbol },
+    isExistingPosition ? setIncreaseAmount0 : setAmount0
+  );
+
+  const handleToken1Percentage = usePercentageInput(
+    token1BalanceData,
+    { decimals: TOKEN_DEFINITIONS[balanceToken1Symbol]?.decimals || 18, symbol: balanceToken1Symbol },
+    isExistingPosition ? setIncreaseAmount1 : setAmount1
+  );
 
   // Transaction hooks
   const {
@@ -1059,8 +1073,7 @@ export function AddLiquidityModal({
     } else if (numericBalance > 0 && numericBalance < 0.001) {
       return "< 0.001";
     } else {
-      const displayDecimals = TOKEN_DEFINITIONS[tokenSymbolForDecimals]?.displayDecimals ?? 4;
-      return numericBalance.toFixed(displayDecimals);
+      return numericBalance.toFixed(6);
     }
   };
 
@@ -1393,10 +1406,11 @@ export function AddLiquidityModal({
                             inputMode="decimal"
                             enterKeyHint="done"
                             onChange={(e) => {
-                              const cappedAmount = handleIncreaseAmountChangeWithWiggle(e, 'amount0');
+                              handleIncreaseAmountChangeWithWiggle(e, 'amount0');
                               setIncreaseActiveInputSide('amount0');
-                              if (cappedAmount && parseFloat(cappedAmount) > 0) {
-                                calculateIncreaseAmount(cappedAmount, 'amount0');
+                              const newAmount = sanitizeDecimalInput(e.target.value);
+                              if (newAmount && parseFloat(newAmount) > 0) {
+                                calculateIncreaseAmount(newAmount, 'amount0');
                               } else {
                                 setIncreaseAmount1("");
                               }
@@ -1415,7 +1429,7 @@ export function AddLiquidityModal({
                               })()}
                             </div>
                             {isConnected && token0BalanceData && parseFloat(token0BalanceData.formatted || "0") > 0 && (
-                              <div className="absolute right-0 top-0 flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
+                              <div className="absolute right-0 top-[3px] flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
                                 {[25, 50, 75, 100].map((percentage, index) => (
                                   <motion.div
                                     key={percentage}
@@ -1432,16 +1446,15 @@ export function AddLiquidityModal({
                                       className="h-5 px-2 text-[10px] font-medium rounded-md border-sidebar-border bg-muted/20 hover:bg-muted/40 transition-colors"
                                       onClick={(e) => {
                                         e.stopPropagation();
-                                        const balance = parseFloat(token0BalanceData.formatted || "0");
-                                        const amount = (balance * percentage) / 100;
-                                        const syntheticEvent = {
-                                          target: { value: amount.toString() }
-                                        } as React.ChangeEvent<HTMLInputElement>;
-                                        const cappedAmount = handleIncreaseAmountChangeWithWiggle(syntheticEvent, 'amount0');
+                                        handleToken0Percentage(percentage);
                                         setIncreaseActiveInputSide('amount0');
-                                        if (cappedAmount && parseFloat(cappedAmount) > 0) {
-                                          calculateIncreaseAmount(cappedAmount, 'amount0');
-                                        }
+                                        // Trigger calculation with the new amount from the state (usePercentageInput already set it)
+                                        setTimeout(() => {
+                                          const currentAmount = isExistingPosition ? increaseAmount0 : amount0;
+                                          if (currentAmount && parseFloat(currentAmount) > 0) {
+                                            calculateIncreaseAmount(currentAmount, 'amount0');
+                                          }
+                                        }, 0);
                                       }}
                                     >
                                       {percentage === 100 ? 'MAX' : `${percentage}%`}
@@ -1494,10 +1507,11 @@ export function AddLiquidityModal({
                             inputMode="decimal"
                             enterKeyHint="done"
                             onChange={(e) => {
-                              const cappedAmount = handleIncreaseAmountChangeWithWiggle(e, 'amount1');
+                              handleIncreaseAmountChangeWithWiggle(e, 'amount1');
                               setIncreaseActiveInputSide('amount1');
-                              if (cappedAmount && parseFloat(cappedAmount) > 0) {
-                                calculateIncreaseAmount(cappedAmount, 'amount1');
+                              const newAmount = sanitizeDecimalInput(e.target.value);
+                              if (newAmount && parseFloat(newAmount) > 0) {
+                                calculateIncreaseAmount(newAmount, 'amount1');
                               } else {
                                 setIncreaseAmount0("");
                               }
@@ -1516,7 +1530,7 @@ export function AddLiquidityModal({
                               })()}
                             </div>
                             {isConnected && token1BalanceData && parseFloat(token1BalanceData.formatted || "0") > 0 && (
-                              <div className="absolute right-0 top-0 flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
+                              <div className="absolute right-0 top-[3px] flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
                                 {[25, 50, 75, 100].map((percentage, index) => (
                                   <motion.div
                                     key={percentage}
@@ -1533,16 +1547,15 @@ export function AddLiquidityModal({
                                       className="h-5 px-2 text-[10px] font-medium rounded-md border-sidebar-border bg-muted/20 hover:bg-muted/40 transition-colors"
                                       onClick={(e) => {
                                         e.stopPropagation();
-                                        const balance = parseFloat(token1BalanceData.formatted || "0");
-                                        const amount = (balance * percentage) / 100;
-                                        const syntheticEvent = {
-                                          target: { value: amount.toString() }
-                                        } as React.ChangeEvent<HTMLInputElement>;
-                                        const cappedAmount = handleIncreaseAmountChangeWithWiggle(syntheticEvent, 'amount1');
+                                        handleToken1Percentage(percentage);
                                         setIncreaseActiveInputSide('amount1');
-                                        if (cappedAmount && parseFloat(cappedAmount) > 0) {
-                                          calculateIncreaseAmount(cappedAmount, 'amount1');
-                                        }
+                                        // Trigger calculation with the new amount from the state (usePercentageInput already set it)
+                                        setTimeout(() => {
+                                          const currentAmount = isExistingPosition ? increaseAmount1 : amount1;
+                                          if (currentAmount && parseFloat(currentAmount) > 0) {
+                                            calculateIncreaseAmount(currentAmount, 'amount1');
+                                          }
+                                        }, 0);
                                       }}
                                     >
                                       {percentage === 100 ? 'MAX' : `${percentage}%`}
@@ -1815,7 +1828,7 @@ export function AddLiquidityModal({
                                   
                                   const formattedFee = feeNumber > 0 && feeNumber < 0.0001 
                                     ? '< 0.0001' 
-                                    : feeNumber.toFixed(4).replace(/\.?0+$/, '');
+                                    : feeNumber.toFixed(6).replace(/\.?0+$/, '');
                                   
                                   return `+${formattedFee}`;
                                 })()}
@@ -1844,7 +1857,7 @@ export function AddLiquidityModal({
                                   
                                   const formattedFee = feeNumber > 0 && feeNumber < 0.0001 
                                     ? '< 0.0001' 
-                                    : feeNumber.toFixed(4).replace(/\.?0+$/, '');
+                                    : feeNumber.toFixed(6).replace(/\.?0+$/, '');
                                   
                                   return `+${formattedFee}`;
                                 })()}

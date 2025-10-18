@@ -276,18 +276,16 @@ export default function LiquidityPage() {
     if (!isFinite(priceAtTick) || isNaN(priceAtTick)) return 'N/A';
     if (priceAtTick < 1e-11 && priceAtTick > 0) return '0';
     if (priceAtTick > 1e30) return '∞';
-    const displayDecimals = (baseTokenForPriceDisplay === token0Symbol
-      ? (TOKEN_DEFINITIONS[token0Symbol as TokenSymbol]?.displayDecimals ?? 4)
-      : (TOKEN_DEFINITIONS[token1Symbol as TokenSymbol]?.displayDecimals ?? 4));
+    const displayDecimals = 6;
     return priceAtTick.toFixed(displayDecimals);
   }, []);
 
   const formatTokenDisplayAmount = (amount: string) => {
     const num = parseFloat(amount);
     if (isNaN(num)) return amount;
-    if (num === 0) return "0.00";
-    if (num > 0 && num < 0.0001) return "< 0.0001";
-    return num.toFixed(4);
+    if (num === 0) return "0";
+    if (num > 0 && num < 0.000001) return "< 0.000001";
+    return num.toFixed(6);
   };
 
   const formatAgeShort = (seconds: number | undefined) => {

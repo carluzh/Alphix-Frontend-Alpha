@@ -8,7 +8,6 @@ export interface TokenConfig {
   name: string;
   address: string;
   decimals: number;
-  displayDecimals: number;
   icon: string;
 }
 
@@ -207,15 +206,13 @@ export const TOKEN_DEFINITIONS: Record<string, {
   address: string;
   decimals: number;
   symbol: string;
-  displayDecimals: number;
 }> = Object.fromEntries(
   Object.entries(poolsConfig.tokens).map(([symbol, token]) => [
     symbol,
     {
       address: token.address,
       decimals: token.decimals,
-      symbol: token.symbol,
-      displayDecimals: token.displayDecimals
+      symbol: token.symbol
     }
   ])
 );
