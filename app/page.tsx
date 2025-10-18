@@ -1225,7 +1225,7 @@ function WebGLCanvas({ rightMargin }: { rightMargin: number }) {
       time *= 0.001;
       if (!gl || !canvas) return;
       
-      gl.clearColor(0.0, 0.0, 0.0, 1);
+      gl.clearColor(0.039, 0.035, 0.031, 1);
       gl.clear(gl.COLOR_BUFFER_BIT);
 
       gl.useProgram(program);

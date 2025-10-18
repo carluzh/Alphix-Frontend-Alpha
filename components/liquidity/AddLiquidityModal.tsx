@@ -594,7 +594,7 @@ export function AddLiquidityModal({
             });
           } else {
             toast.success(`${increasePreparedTxData.approvalTokenSymbol} Approved`, { 
-              icon: React.createElement(CheckIcon, { className: "h-4 w-4 text-green-500" })
+              icon: React.createElement(BadgeCheck, { className: "h-4 w-4 text-green-500" })
             });
           }
           
@@ -624,7 +624,7 @@ export function AddLiquidityModal({
           // All approvals done
           console.log(`[Modal Approval Check] ✅ All approvals complete!`);
           toast.success(`${increasePreparedTxData.approvalTokenSymbol} Approved`, { 
-            icon: React.createElement(CheckIcon, { className: "h-4 w-4 text-green-500" })
+            icon: React.createElement(BadgeCheck, { className: "h-4 w-4 text-green-500" })
           });
           setIncreaseNeedsERC20Approvals([]);
           setIncreasePreparedTxData({ needsApproval: false });
