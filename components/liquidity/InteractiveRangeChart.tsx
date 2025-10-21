@@ -239,11 +239,11 @@ export function InteractiveRangeChart({
 
   // Remove complex domain transformation - keep it simple
 
-  // Fetch raw positions (with caching to prevent zoom delays)
+  // Fetch tick data (simpler and more efficient than positions)
   useEffect(() => {
     let cancelled = false;
-    const fetchPositionData = async () => {
-      if (!selectedPoolId || !chainId || currentPoolTick === null) {
+    const fetchTickData = async () => {
+      if (!selectedPoolId) {
         setRawHookPositions(null);
         return;
       }
@@ -258,13 +258,13 @@ export function InteractiveRangeChart({
       if (onLoadingChange) onLoadingChange(true);
 
       try {
-        // Fetch raw positions without bucket parameters for caching
-        const resp = await fetch('/api/liquidity/get-bucket-depths', {
+        // Fetch ticks from Satsuma subgraph (more efficient than positions)
+        const resp = await fetch('/api/liquidity/get-ticks', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             poolId: selectedPoolId,
-            first: 2000
+            first: 1000
           })
         });
 
@@ -273,11 +273,39 @@ export function InteractiveRangeChart({
         }
 
         const json = await resp.json();
-        const positions = Array.isArray(json?.positions) ? json.positions : [];
-        
-        if (!cancelled) setRawHookPositions(positions);
+        const ticks = Array.isArray(json?.ticks) ? json.ticks : [];
+
+        console.log(`[InteractiveRangeChart] Received ${ticks.length} ticks, building liquidity map...`);
+
+        // Directly build netLiquidityByTick from tick data (bypass position processing)
+        if (ticks.length > 0) {
+          const liquidityMap = new Map<number, number>();
+
+          for (const tick of ticks) {
+            const tickIdx = parseInt(tick.tickIdx);
+            const liquidityNet = parseFloat(tick.liquidityNet);
+
+            if (!isNaN(tickIdx) && !isNaN(liquidityNet) && liquidityNet !== 0) {
+              liquidityMap.set(tickIdx, liquidityNet);
+            }
+          }
+
+          console.log(`[InteractiveRangeChart] Built liquidity map with ${liquidityMap.size} ticks`);
+
+          if (!cancelled) {
+            setNetLiquidityByTick(liquidityMap);
+            // Don't touch rawHookPositions/processedPositions - leave them as-is
+            // This prevents the old useEffects from re-running and clearing our map
+          }
+        } else {
+          if (!cancelled) {
+            setNetLiquidityByTick(new Map());
+            setRawHookPositions(null);
+            setProcessedPositions(null);
+          }
+        }
       } catch (error) {
-        console.error("[InteractiveRangeChart] Error fetching position data:", error);
+        console.error("[InteractiveRangeChart] Error fetching tick data:", error);
         setRawHookPositions(null);
       } finally {
         setIsChartDataLoading(false);
@@ -285,9 +313,9 @@ export function InteractiveRangeChart({
       }
     };
 
-    fetchPositionData();
+    fetchTickData();
     return () => { cancelled = true; };
-  }, [selectedPoolId, chainId, currentPoolTick]); // Remove xDomain dependency for caching
+  }, [selectedPoolId]); // Only re-fetch when pool changes
 
   // Process positions into unified amount0 values
   useEffect(() => {
@@ -498,17 +526,34 @@ export function InteractiveRangeChart({
 
   // Generate cumulative liquidity chart data from net liquidity by tick
   const liquidityChartData = useMemo(() => {
-    if (netLiquidityByTick.size === 0) return [];
-    
+    if (netLiquidityByTick.size === 0) {
+      console.log('[InteractiveRangeChart] netLiquidityByTick is empty, no chart data');
+      return [];
+    }
+
     // Get all ticks and sort them
     const sortedTicks = Array.from(netLiquidityByTick.keys()).sort((a, b) => a - b);
+    console.log(`[InteractiveRangeChart] Generating chart data from ${sortedTicks.length} ticks`);
     
     // Filter to visible range for performance using original domain
+    // IMPORTANT: Include boundary ticks to show where liquidity actually ends
     const [minTick, maxTick] = xDomain;
     const buffer = Math.max((maxTick - minTick) * 0.2, defaultTickSpacing * 50); // 20% buffer or at least 50 tick spacings
-    const visibleTicks = sortedTicks.filter(tick => 
-      tick >= minTick - buffer && tick <= maxTick + buffer
-    );
+
+    // Find visible range indices
+    const minVisible = minTick - buffer;
+    const maxVisible = maxTick + buffer;
+
+    const visibleStartIdx = sortedTicks.findIndex(tick => tick >= minVisible);
+    const visibleEndIdx = sortedTicks.findIndex(tick => tick > maxVisible);
+
+    // Include 2 ticks before and after to show liquidity boundaries properly
+    const startIdx = Math.max(0, visibleStartIdx - 2);
+    const endIdx = visibleEndIdx === -1
+      ? sortedTicks.length
+      : Math.min(sortedTicks.length, visibleEndIdx + 2);
+
+    const visibleTicks = sortedTicks.slice(startIdx, endIdx);
     
     // Calculate cumulative liquidity starting from the earliest tick
     const chartData: Array<{ tick: number; liquidity: number }> = [];
@@ -531,12 +576,17 @@ export function InteractiveRangeChart({
     for (const tick of visibleTicks) {
       const netChange = netLiquidityByTick.get(tick) || 0;
       cumulativeLiquidity += netChange;
-      
+
       // Add data point with display-space positioning
       chartData.push({
         tick: transformTickToDisplay(tick),
         liquidity: Math.max(0, cumulativeLiquidity) // Ensure non-negative
       });
+    }
+
+    console.log(`[InteractiveRangeChart] Chart data points: ${chartData.length}, max liquidity: ${Math.max(...chartData.map(d => d.liquidity))}`);
+    if (chartData.length > 0) {
+      console.log('[InteractiveRangeChart] Sample chart data:', chartData.slice(0, 3));
     }
     
     // Ensure at least two points exist at the domain bounds so the area renders even when zoomed tightly
@@ -551,14 +601,10 @@ export function InteractiveRangeChart({
     
     // Sort chart data by display tick for proper rendering
     chartData.sort((a, b) => a.tick - b.tick);
-    
-    if (chartData[0].tick > displayMin) {
-      chartData.unshift({ tick: displayMin, liquidity: chartData[0].liquidity });
-    }
-    if (chartData[chartData.length - 1].tick < displayMax) {
-      chartData.push({ tick: displayMax, liquidity: chartData[chartData.length - 1].liquidity });
-    }
-    
+
+    // Don't extend to display boundaries - this causes infinite liquidity visualization
+    // The chart should only show liquidity where it actually exists (where ticks are initialized)
+
     return chartData;
   }, [netLiquidityByTick, xDomain, defaultTickSpacing, transformTickToDisplay, displayDomain]);
 

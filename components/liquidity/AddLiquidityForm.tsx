@@ -45,7 +45,6 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-// import { useWeb3Modal } from '@web3modal/wagmi/react';
 
 // Toast utility functions matching swap-interface patterns
 const showErrorToast = (title: string, description?: string, action?: { label: string; onClick: () => void }) => {
@@ -75,6 +74,7 @@ import JSBI from "jsbi";
 import poolsConfig from "../../config/pools.json";
 import { useAllPrices } from "@/components/data/hooks";
 import { formatUSD } from "@/lib/format";
+import { getOptimalBaseToken, getDecimalsForDenomination } from "@/lib/denomination-utils";
 
 // Utility functions
 const getTokenIcon = (symbol?: string) => {
@@ -191,7 +191,8 @@ export function AddLiquidityForm({
   const [enhancedAprDisplay, setEnhancedAprDisplay] = useState<string>(poolApr || "Yield N/A");
   const [capitalEfficiencyFactor, setCapitalEfficiencyFactor] = useState<number>(1);
   const [initialDefaultApplied, setInitialDefaultApplied] = useState(false);
-  const [baseTokenForPriceDisplay, setBaseTokenForPriceDisplay] = useState<TokenSymbol>(initialTokens.token0);
+  const [baseTokenForPriceDisplay, setBaseTokenForPriceDisplay] = useState<TokenSymbol>(() =>
+    getOptimalBaseToken(initialTokens.token0, initialTokens.token1));
   
   // UI flow management
   const [showingTransactionSteps, setShowingTransactionSteps] = useState(false);
@@ -399,46 +400,25 @@ export function AddLiquidityForm({
     };
   }, [accountAddress, refetchToken0Balance, refetchToken1Balance]);
 
-  // Auto flip denomination to match InteractiveRangeChart axis when beneficial
-  const shouldFlipDenomination = useMemo(() => {
-    if (!currentPrice) return false;
-    const currentPriceNum = parseFloat(currentPrice);
-    if (!isFinite(currentPriceNum) || currentPriceNum <= 0) return false;
-    const inverse = 1 / currentPriceNum;
-    return inverse > currentPriceNum;
-  }, [currentPrice]);
+  // Determine if prices should be inverted based on baseTokenForPriceDisplay
+  const isInverted = useMemo(() =>
+    baseTokenForPriceDisplay === token0Symbol, [baseTokenForPriceDisplay, token0Symbol]);
 
-  // Inversion state based on current price (same as shouldFlipDenomination for consistency)
-  const isInverted = useMemo(() => shouldFlipDenomination, [shouldFlipDenomination]);
-
-  // Keep denomination aligned with inversion (but freeze while editing)
+  // Keep denomination aligned with optimal base (but freeze while editing)
   useEffect(() => {
     if (editingSide) return;
-    const desiredBase = isInverted ? token0Symbol : token1Symbol;
+    const priceNum = currentPrice ? parseFloat(currentPrice) : undefined;
+    const desiredBase = getOptimalBaseToken(token0Symbol, token1Symbol, priceNum);
     if (desiredBase && desiredBase !== baseTokenForPriceDisplay) {
       setBaseTokenForPriceDisplay(desiredBase);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isInverted, token0Symbol, token1Symbol, editingSide]);
+  }, [token0Symbol, token1Symbol, currentPrice, editingSide]);
 
-  // Determine optimal denomination for display decimals (match chart priority)
   const optimalDenominationForDecimals = useMemo(() => {
-    const quotePriority: Record<string, number> = {
-      'aUSDC': 10,
-      'aUSDT': 9,
-      'USDC': 8,
-      'USDT': 7,
-      'aETH': 6,
-      'ETH': 5,
-      'YUSD': 4,
-      'mUSDT': 3,
-    };
-    const t0 = token0Symbol;
-    const t1 = token1Symbol;
-    const p0 = quotePriority[t0] || 0;
-    const p1 = quotePriority[t1] || 0;
-    return p1 > p0 ? t1 : t0;
-  }, [token0Symbol, token1Symbol]);
+    const priceNum = currentPrice ? parseFloat(currentPrice) : undefined;
+    return getOptimalBaseToken(token0Symbol, token1Symbol, priceNum);
+  }, [token0Symbol, token1Symbol, currentPrice]);
 
   // Setup tokens based on selectedPoolId
   useEffect(() => {
@@ -653,10 +633,10 @@ export function AddLiquidityForm({
 
     let finalMinPriceString = "";
     let finalMaxPriceString = "";
-    // Use optimal denomination for decimals like the chart; force 2 for USD-denominated
+    // Use optimal denomination for decimals like the chart, considering pool type
     const baseDisplayToken = optimalDenominationForDecimals;
-    const isUSDDenom = baseDisplayToken === 'aUSDT' || baseDisplayToken === 'aUSDC' || baseDisplayToken === 'USDT' || baseDisplayToken === 'USDC' || baseDisplayToken === 'aDAI' || baseDisplayToken === 'DAI';
-    const displayDecimals = isUSDDenom ? 2 : 6;
+    const poolCfg = selectedPoolId ? getPoolById(selectedPoolId) : null;
+    const displayDecimals = getDecimalsForDenomination(baseDisplayToken, poolCfg?.type);
 
     // Formatting for Min Price String
     if (valForMinInput !== null && !isNaN(valForMinInput)) {
@@ -704,12 +684,12 @@ export function AddLiquidityForm({
   };
 
   // Display balance calculations
-  const displayToken0Balance = isLoadingToken0Balance 
-    ? "Loading..." 
+  const displayToken0Balance = isLoadingToken0Balance
+    ? <span className="inline-block h-3 w-16 bg-muted/60 rounded animate-pulse" />
     : (token0BalanceData ? getFormattedDisplayBalance(parseFloat(token0BalanceData.formatted), token0Symbol) : "~");
-  
-  const displayToken1Balance = isLoadingToken1Balance 
-    ? "Loading..." 
+
+  const displayToken1Balance = isLoadingToken1Balance
+    ? <span className="inline-block h-3 w-16 bg-muted/60 rounded animate-pulse" />
     : (token1BalanceData ? getFormattedDisplayBalance(parseFloat(token1BalanceData.formatted), token1Symbol) : "~");
 
   // Handle selecting a preset from dropdown
@@ -1141,7 +1121,7 @@ export function AddLiquidityForm({
 
     // Waiting for approval data to load
     if (!approvalData) {
-      return 'Loading...';
+      return 'Preparing...';
     }
 
     // In transaction steps - show what will happen next
@@ -1958,16 +1938,9 @@ export function AddLiquidityForm({
       priceAtUpperTick = currentPriceNum * upperPriceDelta;
     }
     
-    // Get display decimals for the optimal denomination
-    // Increase precision for Stable pools when USD denominated
+    // Get display decimals for the optimal denomination using utility function
     const poolCfg = selectedPoolId ? getPoolById(selectedPoolId) : null;
-    const isStable = (poolCfg?.type || '').toLowerCase() === 'stable';
-
-    // For USD-denominated tokens, always use 2 decimals
-    // Also check if the prices are in USD range (100-10000) which indicates USD denomination
-    const isUSDDenominated = (optimalDenomination === 'aUSDT' || optimalDenomination === 'aUSDC') ||
-                            (priceAtLowerTick >= 100 && priceAtLowerTick <= 10000 && priceAtUpperTick >= 100 && priceAtUpperTick <= 10000);
-    const finalDisplayDecimals = isUSDDenominated ? (isStable ? 6 : 2) : 6;
+    const finalDisplayDecimals = getDecimalsForDenomination(optimalDenomination, poolCfg?.type);
 
     // Format prices with proper decimals
     const formattedLower = priceAtLowerTick.toLocaleString('en-US', { 
@@ -2015,10 +1988,8 @@ export function AddLiquidityForm({
     const pUpper = priceAt(upper);
 
     const denomToken = shouldInvert ? token0Symbol : token1Symbol;
-    const isUsd = denomToken === 'aUSDT' || denomToken === 'aUSDC' || denomToken === 'USDT' || denomToken === 'USDC' || denomToken === 'aDAI' || denomToken === 'DAI';
     const poolCfg = selectedPoolId ? getPoolById(selectedPoolId) : null;
-    const isStablePoolType = (poolCfg?.type || '').toLowerCase() === 'stable';
-    const decimals = isUsd ? (isStablePoolType ? 6 : 2) : 6;
+    const decimals = getDecimalsForDenomination(denomToken, poolCfg?.type);
 
     const points = [
       { tick: lower, price: pLower },
@@ -2031,10 +2002,26 @@ export function AddLiquidityForm({
 
     const formatVal = (v: number) => {
       if (!isFinite(v)) return '∞';
-      if (v > 0 && v < 0.01) return '<0.01';
-      const formatted = v.toLocaleString('en-US', { maximumFractionDigits: decimals, minimumFractionDigits: Math.min(2, decimals) });
-      // If it rounds to 0.00 but is actually positive, show <0.01
-      if (formatted === '0.00' && v > 0) return '<0.01';
+
+      // Calculate threshold based on decimals (e.g., 6 decimals = 0.000001 threshold)
+      const threshold = Math.pow(10, -decimals);
+
+      // Show < threshold for very small values
+      if (v > 0 && v < threshold) {
+        return `<${threshold.toFixed(decimals)}`;
+      }
+
+      // Use consistent formatting with minimum 2 decimals, maximum based on denomination
+      const formatted = v.toLocaleString('en-US', {
+        maximumFractionDigits: decimals,
+        minimumFractionDigits: Math.min(2, decimals)
+      });
+
+      // Safety check: if it rounds to 0.00 but is actually positive, show < threshold
+      if (formatted === '0.00' && v > 0) {
+        return `<${threshold.toFixed(decimals)}`;
+      }
+
       return formatted;
     };
 
@@ -2051,7 +2038,8 @@ export function AddLiquidityForm({
             <>
             {/* Header removed; now provided by parent container */}
 
-              {/* Range Section - Step 1 */}
+              {/* Range Section - Step 1 - Hide when showing transaction steps */}
+              {!showingTransactionSteps && (
               <div className="border border-dashed rounded-md mb-6 bg-muted/10 p-3">
                 {/* Range Label */}
                 <div className="flex items-center justify-between mb-2">
@@ -2103,13 +2091,20 @@ export function AddLiquidityForm({
                                       <span className="inline-block w-[2px] h-2" style={{ background: '#e85102' }} />
                                       <span className="select-none">
                                         {(() => {
-                                          const inverse = 1 / parseFloat(currentPrice);
-                                          const flip = inverse > parseFloat(currentPrice);
-                                          const denomToken = flip ? token0Symbol : token1Symbol;
-                                          const isUsd = denomToken === 'aUSDT' || denomToken === 'aUSDC' || denomToken === 'USDT' || denomToken === 'USDC' || denomToken === 'aDAI' || denomToken === 'DAI';
-                                          const displayDecimals = isUsd ? 2 : 6;
-                                          const numeric = flip ? inverse : parseFloat(currentPrice);
-                                          return isFinite(numeric) ? numeric.toFixed(displayDecimals) : '∞';
+                                          // Use same denomination logic as computeRangeLabels (baseTokenForPriceDisplay)
+                                          const shouldInvert = baseTokenForPriceDisplay === token0Symbol;
+                                          const denomToken = shouldInvert ? token0Symbol : token1Symbol;
+                                          const poolCfg = selectedPoolId ? getPoolById(selectedPoolId) : null;
+                                          const displayDecimals = getDecimalsForDenomination(denomToken, poolCfg?.type);
+                                          const numeric = shouldInvert ? (1 / parseFloat(currentPrice)) : parseFloat(currentPrice);
+
+                                          if (!isFinite(numeric)) return '∞';
+
+                                          // Use toLocaleString for consistent formatting with range labels
+                                          return numeric.toLocaleString('en-US', {
+                                            maximumFractionDigits: displayDecimals,
+                                            minimumFractionDigits: Math.min(2, displayDecimals)
+                                          });
                                         })()}
                                       </span>
                                     </span>
@@ -2168,144 +2163,72 @@ export function AddLiquidityForm({
                   </div>
                 ) : null}
               </div>
+              )}
 
-              {!showingTransactionSteps ? (
-                <>
-
-                  <RangeSelectionModalV2
-                    isOpen={showRangeModal}
-                    onClose={() => {
-                      setShowRangeModal(false);
-                      setModalInitialFocusField(null);
-                    }}
-                    onConfirm={(newTickLower, newTickUpper, selectedPreset, denomination) => {
-                      setTickLower(newTickLower);
-                      setTickUpper(newTickUpper);
-                      resetTransaction();
-                      setInitialDefaultApplied(true);
-                      // Set the preset from the modal instead of clearing it
-                      setActivePreset(selectedPreset || null);
-                      // Sync denomination with modal
-                      if (denomination) {
-                        setBaseTokenForPriceDisplay(denomination);
-                      }
-                      setModalInitialFocusField(null);
-                    }}
-                    initialTickLower={tickLower}
-                    initialTickUpper={tickUpper}
-                    initialActivePreset={activePreset}
-                    selectedPoolId={selectedPoolId}
-                    chainId={chainId}
-                    token0Symbol={token0Symbol}
-                    token1Symbol={token1Symbol}
-                    currentPrice={currentPrice}
-                    currentPoolTick={currentPoolTick}
-                    currentPoolSqrtPriceX96={currentPoolSqrtPriceX96}
-                    minPriceDisplay={minPriceInputString}
-                    maxPriceDisplay={maxPriceInputString}
-                    baseTokenSymbol={baseTokenForPriceDisplay}
-                    sdkMinTick={sdkMinTick}
-                    sdkMaxTick={sdkMaxTick}
-                    defaultTickSpacing={defaultTickSpacing}
-                    xDomain={xDomain}
-                    onXDomainChange={(newDomain) => setXDomain(newDomain)}
-                    poolToken0={poolToken0}
-                    poolToken1={poolToken1}
-                    presetOptions={presetOptions}
-                    isInverted={isInverted}
-                    initialFocusField={modalInitialFocusField}
-                  />
-                </>
-
-              ) : (
-                <div className="p-3 border border-dashed rounded-md bg-muted/10 mb-4">
-                <p className="text-sm font-medium mb-2 text-foreground/80">Transaction Steps</p>
-                  <div className="space-y-1.5 text-xs text-muted-foreground">
-                      {/* ERC20 Approvals to Permit2 */}
-                      <div className="flex items-center justify-between">
-                          <span>Token Approvals</span>
-                          <span>
-                            { isApproving || isCheckingApprovals
-                              ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
-                              : (
-                                <motion.span
-                                  animate={approvalWiggleControls}
-                                  className={`text-xs font-mono ${
-                                    !approvalData?.needsToken0ERC20Approval && !approvalData?.needsToken1ERC20Approval
-                                      ? 'text-green-500'
-                                      : approvalWiggleCount > 0
-                                      ? 'text-red-500'
-                                      : 'text-muted-foreground'
-                                  }`}
-                                >
-                                  {isCheckingApprovals
-                                    ? 'Checking...'
-                                    : !approvalData
-                                    ? '-'
-                                    : (() => {
-                                        const totalNeeded = [approvalData.needsToken0ERC20Approval, approvalData.needsToken1ERC20Approval].filter(Boolean).length;
-                                        const completed = 2 - totalNeeded;
-                                        return `${completed}/2`;
-                                      })()}
-                                </motion.span>
-                              )
-                            }
-                          </span>
-                      </div>
-
-                      {/* Permit2 Signature */}
-                      <div className="flex items-center justify-between">
-                          <span>Permit Signature</span>
-                          <span>
-                            { currentTransactionStep === 'signing_permit'
-                              ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
-                              : (
-                                <span className={`text-xs font-mono ${permitSignature ? 'text-green-500' : ''}`}>
-                                  {permitSignature ? '1/1' : '0/1'}
-                                </span>
-                              )
-                            }
-                          </span>
-                      </div>
-
-                      {/* Deposit Transaction */}
-                      <div className="flex items-center justify-between">
-                          <span>Deposit Transaction</span>
-                          <span>
-                            { isDepositConfirming
-                              ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
-                              : (
-                                <span className={`text-xs font-mono ${isDepositSuccess ? 'text-green-500' : ''}`}>
-                                  {isDepositSuccess ? '1/1' : '0/1'}
-                                </span>
-                              )
-                            }
-                          </span>
-                      </div>
-
-                  </div>
-                </div>
+              {/* Range Selection Modal - Only show when NOT in transaction steps */}
+              {!showingTransactionSteps && (
+                <RangeSelectionModalV2
+                  isOpen={showRangeModal}
+                  onClose={() => {
+                    setShowRangeModal(false);
+                    setModalInitialFocusField(null);
+                  }}
+                  onConfirm={(newTickLower, newTickUpper, selectedPreset, denomination) => {
+                    setTickLower(newTickLower);
+                    setTickUpper(newTickUpper);
+                    resetTransaction();
+                    setInitialDefaultApplied(true);
+                    // Set the preset from the modal instead of clearing it
+                    setActivePreset(selectedPreset || null);
+                    // Sync denomination with modal
+                    if (denomination) {
+                      setBaseTokenForPriceDisplay(denomination);
+                    }
+                    setModalInitialFocusField(null);
+                  }}
+                  initialTickLower={tickLower}
+                  initialTickUpper={tickUpper}
+                  initialActivePreset={activePreset}
+                  selectedPoolId={selectedPoolId}
+                  chainId={chainId}
+                  token0Symbol={token0Symbol}
+                  token1Symbol={token1Symbol}
+                  currentPrice={currentPrice}
+                  currentPoolTick={currentPoolTick}
+                  currentPoolSqrtPriceX96={currentPoolSqrtPriceX96}
+                  minPriceDisplay={minPriceInputString}
+                  maxPriceDisplay={maxPriceInputString}
+                  baseTokenSymbol={baseTokenForPriceDisplay}
+                  sdkMinTick={sdkMinTick}
+                  sdkMaxTick={sdkMaxTick}
+                  defaultTickSpacing={defaultTickSpacing}
+                  xDomain={xDomain}
+                  onXDomainChange={(newDomain) => setXDomain(newDomain)}
+                  poolToken0={poolToken0}
+                  poolToken1={poolToken1}
+                  presetOptions={presetOptions}
+                  isInverted={isInverted}
+                  initialFocusField={modalInitialFocusField}
+                />
               )}
 
               {/* Input for Token 0 */}
               <div className="space-y-2">
-                <div className="flex items-center justify-between mb-2">
-                  <Label className="text-sm font-medium">Amount</Label>
-                  <div className="flex items-center gap-1">
+                <motion.div
+                  className={cn("rounded-lg bg-muted/30 p-4 group", { "outline outline-1 outline-muted": isAmount0Focused })}
+                  animate={balanceWiggleControls0}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <Label className="text-sm font-medium">Amount</Label>
                     <Button
                       variant="ghost"
                       className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent"
                       onClick={() => handleUseFullBalance(token0BalanceData?.formatted || "0", token0Symbol, true)}
                       disabled={isWorking || isCalculating}
                     >
-                      Balance: {displayToken0Balance} {token0Symbol}
+                      {displayToken0Balance} {token0Symbol}
                     </Button>
                   </div>
-                </div>
-                <motion.div
-                  className={cn("rounded-lg bg-muted/30 p-4 group", { "outline outline-1 outline-muted": isAmount0Focused })}
-                  animate={balanceWiggleControls0}
-                >
                   <div className="flex items-center gap-2">
                     <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
                       <Image src={getTokenIcon(token0Symbol)} alt={token0Symbol} width={20} height={20} className="rounded-full"/>
@@ -2427,23 +2350,21 @@ export function AddLiquidityForm({
 
               {/* Input for Token 1 */}
               <div className="space-y-2 mb-4">
-                <div className="flex items-center justify-between mb-2">
-                  <Label className="text-sm font-medium">Amount</Label>
-                  <div className="flex items-center gap-1">
+                <motion.div
+                  className={cn("rounded-lg bg-muted/30 p-4 group", { "outline outline-1 outline-muted": isAmount1Focused })}
+                  animate={balanceWiggleControls1}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <Label className="text-sm font-medium">Amount</Label>
                     <Button
                       variant="ghost"
                       className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent"
                       onClick={() => handleUseFullBalance(token1BalanceData?.formatted || "0", token1Symbol, false)}
                       disabled={isWorking || isCalculating}
                     >
-                      Balance: {displayToken1Balance} {token1Symbol}
+                      {displayToken1Balance} {token1Symbol}
                     </Button>
                   </div>
-                </div>
-                <motion.div
-                  className={cn("rounded-lg bg-muted/30 p-4 group", { "outline outline-1 outline-muted": isAmount1Focused })}
-                  animate={balanceWiggleControls1}
-                >
                   <div className="flex items-center gap-2">
                     <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
                       <Image src={getTokenIcon(token1Symbol)} alt={token1Symbol} width={20} height={20} className="rounded-full"/>
@@ -2558,6 +2479,81 @@ export function AddLiquidityForm({
 
               {/* Current Price Display removed per updated UI */}
 
+              {/* Transaction Steps - Show when user clicked deposit */}
+              {showingTransactionSteps && (
+                <div className="p-3 border border-dashed rounded-md bg-muted/10 mb-4">
+                  <p className="text-sm font-medium mb-2 text-foreground/80">Transaction Steps</p>
+                  <div className="space-y-1.5 text-xs text-muted-foreground">
+                    {/* ERC20 Approvals to Permit2 */}
+                    <div className="flex items-center justify-between">
+                      <span>Token Approvals</span>
+                      <span>
+                        { isApproving || isCheckingApprovals
+                          ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
+                          : (
+                            <motion.span
+                              animate={approvalWiggleControls}
+                              className={`text-xs font-mono ${
+                                !approvalData?.needsToken0ERC20Approval && !approvalData?.needsToken1ERC20Approval
+                                  ? 'text-green-500'
+                                  : approvalWiggleCount > 0
+                                  ? 'text-red-500'
+                                  : 'text-muted-foreground'
+                              }`}
+                            >
+                              {isCheckingApprovals
+                                ? 'Checking...'
+                                : !approvalData
+                                ? '-'
+                                : (() => {
+                                    const totalNeeded = [approvalData.needsToken0ERC20Approval, approvalData.needsToken1ERC20Approval].filter(Boolean).length;
+                                    const completed = 2 - totalNeeded;
+                                    return `${completed}/2`;
+                                  })()}
+                            </motion.span>
+                          )
+                        }
+                      </span>
+                    </div>
+
+                    {/* Permit2 Signature */}
+                    <div className="flex items-center justify-between">
+                      <span>Permit Signature</span>
+                      <span>
+                        { currentTransactionStep === 'signing_permit'
+                          ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
+                          : (
+                            <span className={`text-xs font-mono ${
+                              permitSignature || (!approvalData?.needsToken0Permit && !approvalData?.needsToken1Permit)
+                                ? 'text-green-500'
+                                : ''
+                            }`}>
+                              {/* Show 1/1 if we have signature OR if no permit is needed (pre-existing permits) */}
+                              {permitSignature || (!approvalData?.needsToken0Permit && !approvalData?.needsToken1Permit) ? '1/1' : '0/1'}
+                            </span>
+                          )
+                        }
+                      </span>
+                    </div>
+
+                    {/* Deposit Transaction */}
+                    <div className="flex items-center justify-between">
+                      <span>Deposit Transaction</span>
+                      <span>
+                        { isDepositConfirming
+                          ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
+                          : (
+                            <span className={`text-xs font-mono ${isDepositSuccess ? 'text-green-500' : ''}`}>
+                              {isDepositSuccess ? '1/1' : '0/1'}
+                            </span>
+                          )
+                        }
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Continue Button */}
               {!isConnected ? (
                 <div className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md border border-sidebar-border bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30"
@@ -2567,7 +2563,54 @@ export function AddLiquidityForm({
                   <appkit-button className="absolute inset-0 z-10 block h-full w-full cursor-pointer p-0 opacity-0" />
                   <span className="relative z-0 pointer-events-none">Connect Wallet</span>
                 </div>
+              ) : showingTransactionSteps ? (
+                // Split button layout: Back | Deposit/Approve/etc
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    className="w-1/3 border-sidebar-border bg-button hover:bg-muted/30"
+                    onClick={() => {
+                      setShowingTransactionSteps(false);
+                      resetTransaction();
+                    }}
+                    disabled={isWorking}
+                    style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+                  >
+                    Back
+                  </Button>
+                  <Button
+                    className={cn(
+                      "flex-1",
+                      (isWorking || isCalculating || isPoolStateLoading || isCheckingApprovals ||
+                      (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0")) ||
+                      isInsufficientBalance) ?
+                        "relative border border-sidebar-border bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 !opacity-100 cursor-default text-white/75"
+                        :
+                        "text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90"
+                    )}
+                    onClick={handlePrepareAndSubmit}
+                    disabled={isWorking ||
+                      isCalculating ||
+                      isPoolStateLoading ||
+                      isCheckingApprovals ||
+                      (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0")) ||
+                      isInsufficientBalance
+                    }
+                    style={(isWorking || isCalculating || isPoolStateLoading || isCheckingApprovals ||
+                      (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0")) ||
+                      isInsufficientBalance) ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
+                  >
+                    <span className={cn(
+                      (isWorking || isCheckingApprovals || isPoolStateLoading)
+                        ? "animate-pulse"
+                        : ""
+                    )}>
+                      {getButtonText()}
+                    </span>
+                  </Button>
+                </div>
               ) : (
+                // Single button layout for initial view
                 <Button
                   className={cn(
                     "w-full",

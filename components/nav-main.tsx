@@ -361,13 +361,13 @@ export function NavMain({
               <SidebarMenuButton
                 onClick={() => handleLockedClick(item.title)}
                 className={cn(
-                  "w-full flex items-center rounded-lg px-2 py-2 transition-colors",
-                  "text-muted-foreground hover:text-white"
+                  "w-full flex items-center rounded-lg px-2 py-2 transition-colors hover:bg-[#1f1f1f] hover:text-white",
+                  "text-muted-foreground"
                 )}
                 tooltip={item.title}
               >
                 {item.icon && <item.icon className="h-4 w-4 flex-shrink-0" />}
-                <span className="flex-1 truncate ml-3 text-sm font-medium">{item.title}</span>
+                <span className="flex-1 truncate ml-2 text-sm font-medium">{item.title}</span>
                 {lockedItem === item.title && (
                   <span className="flex items-center">
                     <CustomLockIcon className="h-4 w-4 flex-shrink-0 text-muted-foreground mr-0.5" />
@@ -379,14 +379,14 @@ export function NavMain({
               <SidebarMenuButton
                 onClick={handleFaucetClick}
                 className={cn(
-                  "group/faucet w-full flex items-center rounded-lg px-2 py-2 transition-colors",
-                  "text-muted-foreground hover:text-white"
+                  "group/faucet w-full flex items-center rounded-lg px-2 py-2 transition-colors hover:bg-[#1f1f1f] hover:text-white",
+                  "text-muted-foreground"
                 )}
                 tooltip={item.title}
                 disabled={isTxPending || isConfirming}
               >
                 {item.icon && <item.icon className="h-4 w-4 flex-shrink-0" />}
-                <span className="flex-1 truncate ml-3 text-sm font-medium">
+                <span className="flex-1 truncate ml-2.5 text-sm font-medium">
                   {isTxPending || isConfirming ? "Processing..." : item.title}
                 </span>
                 {item.isFaucet && faucetCooldown && (
@@ -450,10 +450,10 @@ export function NavMain({
                 tooltip={item.title}
                 asChild
                 className={cn(
-                  "w-full rounded-lg px-2 py-2 transition-colors",
+                  "w-full rounded-lg px-2 py-2 transition-colors hover:bg-[#1f1f1f] hover:text-white",
                   isActive
-                    ? "bg-sidebar-accent text-white"
-                    : "text-muted-foreground hover:text-white"
+                    ? "bg-[#1f1f1f] text-white"
+                    : "text-muted-foreground"
                 )}
               >
                 <Link href={item.url!} className="flex items-center w-full">
@@ -461,7 +461,7 @@ export function NavMain({
                     "h-4 w-4 flex-shrink-0",
                     isActive ? "text-white" : ""
                   )} />}
-                  <span className="flex-1 truncate ml-3 text-sm font-medium">{item.title}</span>
+                  <span className="flex-1 truncate ml-2 text-sm font-medium">{item.title}</span>
                 </Link>
               </SidebarMenuButton>
             ) : item.title === "Swap" ? (
@@ -469,10 +469,10 @@ export function NavMain({
                 tooltip="Swap"
                 asChild
                 className={cn(
-                  "w-full rounded-lg px-2 py-2 transition-colors",
+                  "w-full rounded-lg px-2 py-2 transition-colors hover:bg-[#1f1f1f] hover:text-white",
                   isActive
-                    ? "bg-sidebar-accent text-white"
-                    : "text-muted-foreground hover:text-white"
+                    ? "bg-[#1f1f1f] text-white"
+                    : "text-muted-foreground"
                 )}
               >
                 <Link href={item.url!} className="flex items-center w-full">
@@ -487,7 +487,7 @@ export function NavMain({
                       isActive ? "text-white" : ""
                     )} />
                   )}
-                  <span className="flex-1 truncate ml-3 text-sm font-medium">Swap</span>
+                  <span className="flex-1 truncate ml-2 text-sm font-medium">Swap</span>
                 </Link>
               </SidebarMenuButton>
             ) : (
@@ -495,10 +495,10 @@ export function NavMain({
                 tooltip={item.title}
                 asChild
                 className={cn(
-                  "w-full rounded-lg px-2 py-2 transition-colors",
+                  "w-full rounded-lg px-2 py-2 transition-colors hover:bg-[#1f1f1f] hover:text-white",
                   isActive
-                    ? "bg-sidebar-accent text-white"
-                    : "text-muted-foreground hover:text-white"
+                    ? "bg-[#1f1f1f] text-white"
+                    : "text-muted-foreground"
                 )}
               >
                 <Link href={item.url!} className="flex items-center w-full">
@@ -506,7 +506,7 @@ export function NavMain({
                     "h-4 w-4 flex-shrink-0",
                     isActive ? "text-white" : ""
                   )} />}
-                  <span className="flex-1 truncate ml-3 text-sm font-medium">{item.title}</span>
+                  <span className="flex-1 truncate ml-2 text-sm font-medium">{item.title}</span>
                 </Link>
               </SidebarMenuButton>
             )}

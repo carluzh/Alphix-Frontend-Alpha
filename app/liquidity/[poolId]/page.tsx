@@ -61,7 +61,8 @@ import { ChevronDownIcon } from "lucide-react";
 
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { PositionSkeleton } from '@/components/liquidity/PositionSkeleton';
-import { PositionCard } from '@/components/liquidity/PositionCard';
+import { PositionCardCompact } from '@/components/liquidity/PositionCardCompact';
+import { PositionDetailsModal } from '@/components/liquidity/PositionDetailsModal';
 
 
 // Define the structure of the chart data points from the API
@@ -575,32 +576,28 @@ export default function PoolDetailPage() {
     }
   };
 
-  // Display balance calculations
-  const displayToken0Balance = isLoadingToken0Balance 
-    ? "Loading..." 
-    : (token0BalanceData ? getFormattedDisplayBalance(parseFloat(token0BalanceData.formatted), 'aUSDC' as TokenSymbol) : "~");
-  
-  const displayToken1Balance = isLoadingToken1Balance 
-    ? "Loading..." 
-    : (token1BalanceData ? getFormattedDisplayBalance(parseFloat(token1BalanceData.formatted), 'aUSDT' as TokenSymbol) : "~");
 
-  const leftColumnRef = useRef<HTMLDivElement>(null); // Ref for the entire left column
-  const topBarRef = useRef<HTMLDivElement>(null); // Ref for top bar overflow detection
-  const tokenInfoRef = useRef<HTMLDivElement>(null); // Ref to measure token info width
+  // Get base pool info first (synchronous, no loading needed)
+  const basePoolInfo = getPoolConfiguration(poolId);
 
-  // State for the pool's detailed data (including fetched stats)
-  const [currentPoolData, setCurrentPoolData] = useState<PoolDetailData | null>(null);
-  
+  // State for the pool's detailed data (initialized with base config for immediate render)
+  const [currentPoolData, setCurrentPoolData] = useState<PoolDetailData | null>(() => {
+    if (!basePoolInfo) return null;
+    const poolConfig = getPoolById(poolId);
+    return {
+      ...basePoolInfo,
+      highlighted: false,
+      tickSpacing: poolConfig?.tickSpacing || DEFAULT_TICK_SPACING,
+      dynamicFeeBps: undefined, // Will be loaded
+    } as PoolDetailData;
+  });
 
   const [apiChartData, setApiChartData] = useState<ChartDataPoint[]>([]);
   const [isLoadingChartData, setIsLoadingChartData] = useState(false);
   const [currentPoolTick, setCurrentPoolTick] = useState<number | null>(null);
   const [currentPrice, setCurrentPrice] = useState<string | null>(null);
-
-  const basePoolInfo = getPoolConfiguration(poolId);
   const apiPoolIdToUse = basePoolInfo?.subgraphId || '';
-  const { data: poolStateData } = usePoolState(String(apiPoolIdToUse));
-  const { data: poolState } = poolStateData || {};
+  const { data: poolState } = usePoolState(String(apiPoolIdToUse));
 
   useEffect(() => {
     if (poolState?.currentPrice && typeof poolState?.currentPoolTick === 'number') {
@@ -608,8 +605,6 @@ export default function PoolDetailPage() {
       setCurrentPoolTick(Number(poolState.currentPoolTick));
     }
   }, [poolState]);
-  // REMOVED: useBlockRefetch causing unnecessary RPC polling to sepolia.base.org
-  // useBlockRefetch({ poolIds: apiPoolIdToUse ? [apiPoolIdToUse] : [] });
 
   const { data: allPrices } = useAllPrices();
   const isLoadingPrices = !allPrices;
@@ -734,23 +729,16 @@ export default function PoolDetailPage() {
 
   const isMobile = useIsMobile();
 
-
-
-  const [windowWidth, setWindowWidth] = useState<number>(1200);
-  // Dynamic overflow detection states
-  const [showFeesCard, setShowFeesCard] = useState(true);
-  const [showVolumeCard, setShowVolumeCard] = useState(true);
-  const [showTvlCard, setShowTvlCard] = useState(true);
+  const [windowWidth, setWindowWidth] = useState<number>(
+    typeof window !== 'undefined' ? window.innerWidth : 1200
+  );
 
 
 
 
-  // State for position menu
-  const [showPositionMenu, setShowPositionMenu] = useState<string | null>(null);
-  const [positionMenuOpenUp, setPositionMenuOpenUp] = useState<boolean>(false);
-
-  // PositionCard compatible state and functions
-  const [openPositionMenuKey, setOpenPositionMenuKey] = useState<string | null>(null);
+  // State for position details modal
+  const [selectedPositionForDetails, setSelectedPositionForDetails] = useState<ProcessedPosition | null>(null);
+  const [isPositionDetailsModalOpen, setIsPositionDetailsModalOpen] = useState(false);
 
   // Debounce versioning to avoid stale API results applying to current inputs
   const increaseCalcVersionRef = React.useRef(0);
@@ -764,124 +752,6 @@ export default function PoolDetailPage() {
       return () => window.removeEventListener('resize', handleResize);
     }
   }, []);
-
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (showPositionMenu && !(event.target as Element).closest('.position-menu-trigger')) {
-          setShowPositionMenu(null);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [showPositionMenu]);
-
-  // Dynamic overflow detection for top bar to prevent AddLiquidityForm overflow
-  useEffect(() => {
-    const checkOverflow = () => {
-      if (windowWidth < 1500) return; // Only check when AddLiquidityForm is visible
-      
-      // Use actual container measurements instead of assumptions
-      const mainContainer = document.querySelector('.flex.flex-1.flex-col.p-3.sm\\:p-6.sm\\:px-10');
-      if (!mainContainer) return;
-      
-      const containerRect = mainContainer.getBoundingClientRect();
-      const availableWidth = containerRect.width;
-      
-      // Fixed widths
-      const addLiqFormWidth = 450; // AddLiquidityForm width
-      const columnGap = 24; // gap-6
-      const safetyMargin = 60; // Extra safety margin
-      
-      // Available width for left column
-      const maxLeftColumnWidth = availableWidth - addLiqFormWidth - columnGap - safetyMargin;
-      
-      // Calculate required width for top bar content (use a stable baseline to avoid feedback loops)
-      const tokenInfoWidth = 280; // includes chevron + icons + labels
-      const apyWidth = 160; // APY card width
-      const optionalCardWidth = 160; // Width for each optional card
-      const cardGap = 12; // gap-3 between cards
-      const topBarPadding = 32; // p-4 padding inside top bar
-
-      // Start with minimal required width (token info + APY + padding)
-      let requiredWidth = tokenInfoWidth + apyWidth + cardGap + topBarPadding;
-      
-      // Add width for visible optional cards
-      const optionalCards = [
-        { show: showTvlCard, name: 'TVL' },
-        { show: showVolumeCard, name: 'Volume' },
-        { show: showFeesCard, name: 'Fees' }
-      ];
-      
-      const visibleOptionalCount = optionalCards.filter(card => card.show).length;
-      requiredWidth += visibleOptionalCount * (optionalCardWidth + cardGap);
-      
-      // Determine if we need to hide cards or can show more
-      const exceedsSpace = requiredWidth > maxLeftColumnWidth;
-      const hasSpaceForMore = requiredWidth + optionalCardWidth + cardGap + 40 < maxLeftColumnWidth; // 40px buffer
-      
-      // Always hide Fees card below 1900px width
-      if (windowWidth < 1900 && showFeesCard) {
-        setShowFeesCard(false);
-      } else if (exceedsSpace) {
-        // Hide cards in priority order: Fees → Volume → TVL
-        if (showFeesCard) {
-          setShowFeesCard(false);
-        } else if (showVolumeCard) {
-          setShowVolumeCard(false);
-        } else if (showTvlCard) {
-          setShowTvlCard(false);
-        }
-      } else if (hasSpaceForMore && windowWidth >= 1900) {
-        // Show cards back in reverse priority: TVL → Volume → Fees
-        // Only show Fees card if width is >= 1900px
-        if (!showTvlCard) {
-          setShowTvlCard(true);
-        } else if (!showVolumeCard && showTvlCard) {
-          setShowVolumeCard(true);
-        } else if (!showFeesCard && showVolumeCard && showTvlCard) {
-          setShowFeesCard(true);
-        }
-      }
-    };
-
-    // Debounce the check to avoid rapid firing
-    const timeoutId = setTimeout(() => {
-      requestAnimationFrame(checkOverflow);
-    }, 150);
-    
-    return () => clearTimeout(timeoutId);
-  }, [windowWidth, currentPoolData, showFeesCard, showVolumeCard, showTvlCard]);
-
-  // Initialize card visibility based on screen size (fallback for non-1500px+ screens)
-  useEffect(() => {
-    if (windowWidth < 1500) {
-      // For screens without AddLiquidityForm, use simple breakpoints
-      if (windowWidth >= 1200) {
-        setShowFeesCard(true);
-        setShowVolumeCard(true);
-        setShowTvlCard(true);
-      } else if (windowWidth >= 1000) {
-        setShowFeesCard(false);
-        setShowVolumeCard(true);
-        setShowTvlCard(true);
-      } else if (windowWidth >= 800) {
-        setShowFeesCard(false);
-        setShowVolumeCard(false);
-        setShowTvlCard(true);
-      } else {
-        setShowFeesCard(false);
-        setShowVolumeCard(false);
-        setShowTvlCard(false);
-      }
-    } else {
-      // For screens with AddLiquidityForm, start with all visible and let overflow detection handle it
-      setShowFeesCard(true);
-      setShowVolumeCard(true);
-      setShowTvlCard(true);
-    }
-  }, [windowWidth]);
-
-
 
   const processChartDataForScreenSize = useCallback((data: ChartDataPoint[]) => {
     if (!data?.length) return [];
@@ -970,14 +840,6 @@ export default function PoolDetailPage() {
     }
   }, [poolId, isConnected, accountAddress]);
 
-  // Subscribe once to centralized positions refresh events
-  // useEffect(() => {
-  //   if (!isConnected || !accountAddress) return;
-  //   const unsubscribe = prefetchService.addPositionsListener(accountAddress, () => {
-  //     refetchPositionsOnly();
-  //   });
-  //   return unsubscribe;
-  // }, [isConnected, accountAddress, refetchPositionsOnly]); // Temporarily disabled to prevent infinite loops
   const onLiquidityBurnedCallback = useCallback(() => {
     if (pendingActionRef.current?.type !== 'burn') return; // ignore stale callback
     toast.success("Position Closed", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
@@ -2121,11 +1983,6 @@ export default function PoolDetailPage() {
     }
     setPositionToModify(position);
     setShowIncreaseModal(true);
-    
-    // TODO: Implement menu close callback when modal architecture supports it
-    // if (onModalClose) {
-    //   setMenuCloseCallback(() => onModalClose);
-    // }
   };
 
   // Handle decrease position
@@ -2465,37 +2322,37 @@ export default function PoolDetailPage() {
   };
 
 
-  // Early return for loading state AFTER all hooks have been called
-  if (!poolId || !currentPoolData) return (
-      <AppLayout>
-        <div className="flex flex-1 justify-center items-center p-6">
-          <Image 
-            src="/LogoIconWhite.svg" 
-            alt="Loading..." 
-            width={48}
-            height={48}
-            className="animate-pulse opacity-75"
-          />
-        </div>
-      </AppLayout>
-    );
+  // Early return only if pool config doesn't exist (invalid poolId)
+  if (!currentPoolData) return (
+    <AppLayout>
+      <div className="flex flex-1 justify-center items-center p-6">
+        <Image
+          src="/LogoIconWhite.svg"
+          alt="Loading..."
+          width={48}
+          height={48}
+          className="animate-pulse opacity-75"
+        />
+      </div>
+    </AppLayout>
+  );
 
   
 
   return (
     <AppLayout>
       <div className="flex flex-1 flex-col">
-        <div className="flex flex-1 flex-col p-3 sm:p-6 sm:px-10 max-w-full overflow-hidden">
+        <div className="flex flex-1 flex-col p-3 sm:p-6 max-w-full overflow-hidden">
 
           
           {/* Main content area with two columns (row layout only at >=1500px) */}
           <div className="flex flex-col min-[1500px]:flex-row gap-6 min-w-0 max-w-full overflow-hidden">
             {/* Left Column: Header + Graph (flexible, takes remaining space) */}
-            <div ref={leftColumnRef} className="flex-1 min-w-0 flex flex-col space-y-3">
+            <div className="flex-1 min-w-0 flex flex-col space-y-3">
           {/* Header: Token info container + Stats in dotted container */}
           <div className="mt-3 sm:mt-0">
-            {windowWidth < 768 ? (
-              <div className="space-y-3 overflow-x-hidden mb-2">
+            {/* Mobile layout < 768px */}
+            <div className="md:hidden space-y-3 overflow-x-hidden mb-2">
                 {/* Identification above for mobile */}
                 <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 cursor-pointer"
                      onClick={() => router.push('/liquidity')}
@@ -2526,7 +2383,7 @@ export default function PoolDetailPage() {
                             )}
                             <span className="text-xs text-muted-foreground">
                               {(() => {
-                                if (currentPoolData.dynamicFeeBps === undefined) return "Loading...";
+                                if (currentPoolData.dynamicFeeBps === undefined) return <span className="inline-block h-3 w-12 bg-muted/60 rounded animate-pulse" />;
                                 const pct = (currentPoolData.dynamicFeeBps as number) / 100;
                                 const formatted = pct < 0.1 ? pct.toFixed(3) : pct.toFixed(2);
                                 return `${formatted}%`;
@@ -2546,35 +2403,68 @@ export default function PoolDetailPage() {
                       <div className="flex items-center justify-between px-4 h-9">
                         <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">VOLUME (24H)</h2>
                       </div>
-                      <div className="px-4 py-1"><div className="text-lg font-medium truncate">{currentPoolData.volume24h}</div></div>
+                      <div className="px-4 py-1">
+                        <div className="text-lg font-medium truncate">
+                          {currentPoolData.volume24h === "Loading..." ? (
+                            <span className="inline-block h-5 w-20 bg-muted/60 rounded animate-pulse" />
+                          ) : (
+                            currentPoolData.volume24h
+                          )}
+                        </div>
+                      </div>
                     </div>
                     {/* Fees */}
                     <div className="rounded-lg bg-muted/30 border border-sidebar-border/60">
                       <div className="flex items-center justify-between px-4 h-9">
                         <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">FEES (24H)</h2>
                       </div>
-                      <div className="px-4 py-1"><div className="text-lg font-medium truncate">{currentPoolData.fees24h}</div></div>
+                      <div className="px-4 py-1">
+                        <div className="text-lg font-medium truncate">
+                          {currentPoolData.fees24h === "Loading..." ? (
+                            <span className="inline-block h-5 w-20 bg-muted/60 rounded animate-pulse" />
+                          ) : (
+                            currentPoolData.fees24h
+                          )}
+                        </div>
+                      </div>
                     </div>
                     {/* TVL */}
                     <div className="rounded-lg bg-muted/30 border border-sidebar-border/60">
                       <div className="flex items-center justify-between px-4 h-9">
                         <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">TVL</h2>
                       </div>
-                      <div className="px-4 py-1"><div className="text-lg font-medium truncate">{currentPoolData.liquidity}</div></div>
+                      <div className="px-4 py-1">
+                        <div className="text-lg font-medium truncate">
+                          {currentPoolData.liquidity === "Loading..." ? (
+                            <span className="inline-block h-5 w-20 bg-muted/60 rounded animate-pulse" />
+                          ) : (
+                            currentPoolData.liquidity
+                          )}
+                        </div>
+                      </div>
                     </div>
                     {/* APY */}
                     <div className="rounded-lg bg-muted/30 border border-sidebar-border/60">
                       <div className="flex items-center justify-between px-4 h-9">
                         <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">APY</h2>
                       </div>
-                      <div className="px-4 py-1"><div className="text-lg font-medium truncate">{currentPoolData.apr}</div></div>
+                      <div className="px-4 py-1">
+                        <div className="text-lg font-medium truncate">
+                          {currentPoolData.apr === "Loading..." ? (
+                            <span className="inline-block h-5 w-20 bg-muted/60 rounded animate-pulse" />
+                          ) : (
+                            currentPoolData.apr
+                          )}
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
-            ) : (
-                  <div ref={topBarRef} className="rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 p-4 mb-3 w-full overflow-hidden">
-                    <div className="flex items-stretch gap-3 min-w-0 overflow-x-auto">
+            {/* Desktop layout >= 768px */}
+            <div className="hidden md:block">
+                  <div className="rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 p-4 mb-3 w-full">
+                    <div className="flex items-stretch gap-3 min-w-0">
                       {/* Back arrow square */}
                       <div className="flex-shrink-0 rounded-lg bg-muted/30 border border-sidebar-border/60 hover:border-white/30 transition-colors cursor-pointer flex items-center justify-center"
                         style={{ width: '74px', height: '74px', minWidth: '74px', minHeight: '74px' }}
@@ -2586,7 +2476,7 @@ export default function PoolDetailPage() {
                       </div>
 
                       {/* Token info container inside dotted container */}
-                      <div ref={tokenInfoRef} className="min-w-0 basis-0 flex-1 overflow-hidden rounded-lg bg-muted/30 border border-sidebar-border/60">
+                      <div className="min-w-0 basis-0 flex-1 overflow-hidden rounded-lg bg-muted/30 border border-sidebar-border/60">
                         <div className="px-4 py-3 flex items-center w-full min-w-0">
                           <div className="flex items-center gap-1 min-w-0 flex-1">
                             <div className="relative w-16 h-8 mr-0.5 flex-shrink-0">
@@ -2621,38 +2511,29 @@ export default function PoolDetailPage() {
                               {/* Divider */}
                               <div className="h-3 w-px bg-border flex-shrink-0" />
 
-                              {/* Feature indicator square */}
+                              {/* Dynamic Fee indicator with percentage */}
                               <UITooltipProvider delayDuration={0}>
                                 <UITooltip>
                                   <UITooltipTrigger asChild>
-                                    <div
-                                      className="flex-shrink-0 rounded-md bg-sidebar-primary/10 border border-sidebar-border flex items-center justify-center cursor-pointer hover:bg-sidebar-primary/20 transition-colors"
-                                      style={{ width: '20px', height: '20px', minWidth: '20px', minHeight: '20px' }}
-                                      onClick={() => setIsDynamicFeeModalOpen(true)}
-                                    >
-                                      <Image src="/Dynamic Fee.svg" alt="Dynamic Fee" width={12} height={12} />
+                                    <div className="flex items-center gap-1.5 cursor-pointer" onClick={() => setIsDynamicFeeModalOpen(true)}>
+                                      <div
+                                        className="flex-shrink-0 rounded-md bg-sidebar-primary/10 border border-sidebar-border flex items-center justify-center hover:bg-sidebar-primary/20 transition-colors"
+                                        style={{ width: '20px', height: '20px', minWidth: '20px', minHeight: '20px' }}
+                                      >
+                                        <Image src="/Dynamic Fee.svg" alt="Dynamic Fee" width={12} height={12} />
+                                      </div>
+                                      <span className="text-xs text-muted-foreground flex-shrink-0">
+                                        {(() => {
+                                          if (currentPoolData.dynamicFeeBps === undefined) return <span className="inline-block h-3 w-12 bg-muted/60 rounded animate-pulse" />;
+                                          const pct = (currentPoolData.dynamicFeeBps as number) / 100;
+                                          const formatted = pct < 0.1 ? pct.toFixed(3) : pct.toFixed(2);
+                                          return `${formatted}%`;
+                                        })()}
+                                      </span>
                                     </div>
                                   </UITooltipTrigger>
                                   <UITooltipContent side="bottom" sideOffset={6} className="px-2 py-1 text-xs">
                                     <div className="font-medium text-foreground">Dynamic Fee</div>
-                                  </UITooltipContent>
-                                </UITooltip>
-                              </UITooltipProvider>
-
-                              <UITooltipProvider delayDuration={0}>
-                                <UITooltip>
-                                  <UITooltipTrigger asChild>
-                                    <span className="text-xs text-muted-foreground flex-shrink-0 cursor-default">
-                                      {(() => {
-                                        if (currentPoolData.dynamicFeeBps === undefined) return "Loading...";
-                                        const pct = (currentPoolData.dynamicFeeBps as number) / 100;
-                                        const formatted = pct < 0.1 ? pct.toFixed(3) : pct.toFixed(2);
-                                        return `${formatted}%`;
-                                      })()}
-                                    </span>
-                                  </UITooltipTrigger>
-                                  <UITooltipContent side="bottom" sideOffset={6} className="px-2 py-1 text-xs">
-                                    <div className="font-medium text-foreground">Current Fee</div>
                                   </UITooltipContent>
                                 </UITooltip>
                               </UITooltipProvider>
@@ -2666,53 +2547,65 @@ export default function PoolDetailPage() {
                   {/* Vertical divider */}
                       <div className="w-0 border-l border-dashed border-sidebar-border/60 self-stretch mx-1 flex-shrink-0" />
 
-                  {/* Volume */}
-                  {showVolumeCard && (
-                        <div
-                          className="w-[160px] flex-shrink-0 rounded-lg bg-muted/30 border border-sidebar-border/60 hover:border-white/30 transition-colors cursor-pointer"
-                          onClick={() => setActiveChart('volume')}
-                          role="button"
-                          tabIndex={0}
-                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActiveChart('volume'); } }}
-                        >
-                          <div className="flex items-center justify-between px-3 h-9">
-                            <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">VOLUME (24H)</h2>
-                          </div>
-                          <div className="px-3 py-1">
-                            <div className="text-lg font-medium truncate">{currentPoolData.volume24h}</div>
-                          </div>
-                        </div>
-                  )}
-
-                  {/* Fees */}
-                  {showFeesCard && (
-                        <div className="w-[160px] flex-shrink-0 rounded-lg bg-muted/30 border border-sidebar-border/60">
-                          <div className="flex items-center justify-between px-3 h-9">
-                        <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">FEES (24H)</h2>
-                      </div>
-                          <div className="px-3 py-1">
-                        <div className="text-lg font-medium truncate">{currentPoolData.fees24h}</div>
+                  {/* Volume - Show at: >= 1100px when no AddLiqForm, >= 1700px when AddLiqForm visible */}
+                  <div
+                    className="w-[160px] flex-shrink-0 rounded-lg bg-muted/30 border border-sidebar-border/60 hover:border-white/30 transition-colors cursor-pointer hidden min-[1100px]:max-[1499px]:block min-[1700px]:block"
+                    onClick={() => setActiveChart('volume')}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActiveChart('volume'); } }}
+                  >
+                    <div className="flex items-center justify-between px-3 h-9">
+                      <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">VOLUME (24H)</h2>
+                    </div>
+                    <div className="px-3 py-1">
+                      <div className="text-lg font-medium truncate">
+                        {currentPoolData.volume24h === "Loading..." ? (
+                          <span className="inline-block h-5 w-20 bg-muted/60 rounded animate-pulse" />
+                        ) : (
+                          currentPoolData.volume24h
+                        )}
                       </div>
                     </div>
-                  )}
+                  </div>
 
-                  {/* TVL */}
-                  {showTvlCard && (
-                        <div
-                          className="w-[160px] flex-shrink-0 rounded-lg bg-muted/30 border border-sidebar-border/60 hover:border-white/30 transition-colors cursor-pointer"
-                          onClick={() => setActiveChart('tvl')}
-                          role="button"
-                          tabIndex={0}
-                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActiveChart('tvl'); } }}
-                        >
-                          <div className="flex items-center justify-between px-3 h-9">
-                            <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">TVL</h2>
-                          </div>
-                          <div className="px-3 py-1">
-                            <div className="text-lg font-medium truncate">{currentPoolData.liquidity}</div>
-                          </div>
-                        </div>
-                  )}
+                  {/* Fees - Show only on very large screens >= 2000px */}
+                  <div className="w-[160px] flex-shrink-0 rounded-lg bg-muted/30 border border-sidebar-border/60 hidden min-[2000px]:block">
+                    <div className="flex items-center justify-between px-3 h-9">
+                      <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">FEES (24H)</h2>
+                    </div>
+                    <div className="px-3 py-1">
+                      <div className="text-lg font-medium truncate">
+                        {currentPoolData.fees24h === "Loading..." ? (
+                          <span className="inline-block h-5 w-20 bg-muted/60 rounded animate-pulse" />
+                        ) : (
+                          currentPoolData.fees24h
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* TVL - Show at: >= 768px when no AddLiqForm, >= 1500px when AddLiqForm visible */}
+                  <div
+                    className="w-[160px] flex-shrink-0 rounded-lg bg-muted/30 border border-sidebar-border/60 hover:border-white/30 transition-colors cursor-pointer hidden sm:max-[1499px]:block min-[1500px]:block"
+                    onClick={() => setActiveChart('tvl')}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActiveChart('tvl'); } }}
+                  >
+                    <div className="flex items-center justify-between px-3 h-9">
+                      <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">TVL</h2>
+                    </div>
+                    <div className="px-3 py-1">
+                      <div className="text-lg font-medium truncate">
+                        {currentPoolData.liquidity === "Loading..." ? (
+                          <span className="inline-block h-5 w-20 bg-muted/60 rounded animate-pulse" />
+                        ) : (
+                          currentPoolData.liquidity
+                        )}
+                      </div>
+                    </div>
+                  </div>
 
                       {/* APY (always) - fixed width */}
                       <div className="w-[160px] flex-shrink-0 rounded-lg bg-muted/30 border border-sidebar-border/60">
@@ -2720,21 +2613,27 @@ export default function PoolDetailPage() {
                       <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">APY</h2>
                     </div>
                         <div className="px-3 py-1">
-                      <div className="text-lg font-medium truncate">{currentPoolData.apr}</div>
+                      <div className="text-lg font-medium truncate">
+                        {currentPoolData.apr === "Loading..." ? (
+                          <span className="inline-block h-5 w-20 bg-muted/60 rounded animate-pulse" />
+                        ) : (
+                          currentPoolData.apr
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
-            )}
+            </div>
           </div>
           
               {/* Pool Overview Section */}
               <div className="flex-1 min-h-0">
-                <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 transition-colors flex flex-col h-full min-h-[300px] sm:min-h-[350px] sm:max-h-none">
+                <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 transition-colors flex flex-col h-full min-h-[300px] sm:min-h-[350px]">
                   <div className="flex items-center justify-between px-4 py-2 border-b border-sidebar-border/60">
                     <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">POOL ACTIVITY</h2>
-                    {windowWidth < 1500 ? (
-                      // Dropdown for smaller screens
+                    {/* Dropdown for smaller screens < 1500px */}
+                    <div className="min-[1500px]:hidden">
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button
@@ -2776,9 +2675,9 @@ export default function PoolDetailPage() {
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
-                    ) : (
-                      // Buttons for larger screens - mimic category tabs styling
-                      <div className="flex items-center gap-2">
+                    </div>
+                    {/* Buttons for larger screens >= 1500px - mimic category tabs styling */}
+                    <div className="hidden min-[1500px]:flex items-center gap-2">
                         <button 
                           className={`px-2 py-1 text-xs rounded-md transition-colors ${
                             activeChart === 'volumeTvlRatio' 
@@ -2811,7 +2710,6 @@ export default function PoolDetailPage() {
                           TVL
                         </button>
                       </div>
-                    )}
                   </div>
                   <div className="p-0 flex-1 min-h-0">
                     <ChartContainer
@@ -3390,17 +3288,16 @@ export default function PoolDetailPage() {
               </div>
             </div>
 
-            {/* Right Column: Add Liquidity Form (fixed width at >=1500px) */}
-            <div className="w-full min-[1500px]:w-[450px] min-[1500px]:flex-shrink-0 min-[1500px]:min-w-[450px]">
-
-
-              {poolId && currentPoolData && windowWidth >= 1500 && (
-                <div className="w-full rounded-lg bg-muted/30 border border-sidebar-border/60 transition-colors overflow-hidden relative">
+            {/* Right Column: Add Liquidity Form (fixed width at >=1500px, hidden below) */}
+            {/* Key trick: Fixed width prevents layout shift from form content loading */}
+            <div className="hidden min-[1500px]:block w-[450px] flex-shrink-0">
+              {poolId && currentPoolData && (
+                <div className="w-full rounded-lg bg-muted/30 border border-sidebar-border/60 transition-colors relative">
                   {/* Container header to match novel layout */}
                   <div className="flex items-center justify-between px-4 py-2 border-b border-sidebar-border/60">
                     <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">ADD LIQUIDITY</h2>
                   </div>
-                  {/* Content */}
+                  {/* Content - contained within fixed width parent */}
                   <div className="p-3 sm:p-4">
                     <AddLiquidityFormMemo
                       selectedPoolId={poolId}
@@ -3414,10 +3311,8 @@ export default function PoolDetailPage() {
                       activeTab={'deposit'} // Always pass 'deposit'
                     />
                   </div>
-
                 </div>
               )}
-              
             </div>
           </div>
           
@@ -3426,19 +3321,18 @@ export default function PoolDetailPage() {
             {/* Static title - always visible */}
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-medium">Your Positions</h3>
-              {windowWidth < 1500 && (
-                <a
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setAddLiquidityFormOpen(true);
-                  }}
-                  className="flex h-9 cursor-pointer items-center justify-center gap-2 rounded-md border border-sidebar-border bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30"
-                  style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
-                >
-                  <PlusIcon className="h-4 w-4 relative z-0" />
-                  <span className="relative z-0 whitespace-nowrap">Add Liquidity</span>
-                </a>
-              )}
+              {/* Add Liquidity button - only show below 1500px */}
+              <a
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setAddLiquidityFormOpen(true);
+                }}
+                className="flex h-9 cursor-pointer items-center justify-center gap-2 rounded-md border border-sidebar-border bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 min-[1500px]:hidden"
+                style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+              >
+                <PlusIcon className="h-4 w-4 relative z-0" />
+                <span className="relative z-0 whitespace-nowrap">Add Liquidity</span>
+              </a>
             </div>
             
             {isLoadingPositions ? (
@@ -3474,35 +3368,25 @@ export default function PoolDetailPage() {
                     };
 
                     return (
-                      <PositionCard
-                            key={position.positionId}
+                      <PositionCardCompact
+                        key={position.positionId}
                         position={positionWithFees as any}
                         valueUSD={calculatePositionUsd(position)}
                         poolKey={poolId}
                         getUsdPriceForSymbol={getUsdPriceForSymbol}
-                        determineBaseTokenForPriceDisplay={determineBaseTokenForPriceDisplay}
-                        convertTickToPrice={convertTickToPrice}
-                        poolDataByPoolId={poolDataByPoolId}
-                        formatTokenDisplayAmount={formatTokenDisplayAmount}
-                        formatAgeShort={formatAgeShort}
-                        openWithdraw={handleBurnPosition}
-                        openAddLiquidity={handleIncreasePosition}
-                        claimFees={claimFees}
-                        toast={toast}
-                        openPositionMenuKey={showPositionMenu}
-                        setOpenPositionMenuKey={setShowPositionMenu}
-                        positionMenuOpenUp={positionMenuOpenUp}
-                        setPositionMenuOpenUp={setPositionMenuOpenUp}
-                        onClick={() => {}}
+                        onClick={() => {
+                          setSelectedPositionForDetails(positionWithFees as any);
+                          setIsPositionDetailsModalOpen(true);
+                        }}
                         isLoadingPrices={isLoadingPrices}
                         isLoadingPoolStates={!currentPoolData}
                         currentPrice={currentPrice}
                         currentPoolTick={currentPoolTick}
-                        // Prefetch fee data to avoid loading states
+                        convertTickToPrice={convertTickToPrice}
                         prefetchedRaw0={feeData?.amount0}
                         prefetchedRaw1={feeData?.amount1}
                       />
-                        );
+                    );
                   })}
                 </div>
               </div>
@@ -3824,7 +3708,7 @@ export default function PoolDetailPage() {
                               ? `${hoveredFee.toFixed(3)}%`
                               : currentPoolData?.dynamicFeeBps !== undefined
                                 ? `${((currentPoolData.dynamicFeeBps as number) / 100).toFixed(3)}%`
-                                : 'Loading...'}
+                                : <span className="inline-block h-7 w-16 bg-muted/60 rounded animate-pulse" />}
                           </p>
                         </div>
 
@@ -3897,6 +3781,55 @@ export default function PoolDetailPage() {
             </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Position Details Modal */}
+      {selectedPositionForDetails && (
+        <PositionDetailsModal
+          isOpen={isPositionDetailsModalOpen}
+          onClose={() => {
+            setIsPositionDetailsModalOpen(false);
+            setSelectedPositionForDetails(null);
+          }}
+          position={selectedPositionForDetails}
+          valueUSD={calculatePositionUsd(selectedPositionForDetails)}
+          prefetchedRaw0={getFeesForPosition(selectedPositionForDetails.positionId)?.amount0}
+          prefetchedRaw1={getFeesForPosition(selectedPositionForDetails.positionId)?.amount1}
+          formatTokenDisplayAmount={formatTokenDisplayAmount}
+          getUsdPriceForSymbol={getUsdPriceForSymbol}
+          onAddLiquidity={() => {
+            setIsPositionDetailsModalOpen(false);
+            handleIncreasePosition(selectedPositionForDetails);
+          }}
+          onWithdraw={() => {
+            setIsPositionDetailsModalOpen(false);
+            handleBurnPosition(selectedPositionForDetails);
+          }}
+          onClaimFees={async () => {
+            try {
+              await claimFees(selectedPositionForDetails.positionId);
+              toast.success('Fees Claimed', {
+                description: 'Your fees have been successfully claimed.',
+                duration: 4000
+              });
+              setIsPositionDetailsModalOpen(false);
+            } catch (err: any) {
+              toast.error('Claim Failed', {
+                icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
+                description: err?.message || 'Failed to claim fees.',
+                action: {
+                  label: "Copy Error",
+                  onClick: () => navigator.clipboard.writeText(err?.message || 'Failed to claim fees')
+                }
+              });
+            }
+          }}
+          currentPrice={currentPrice}
+          currentPoolTick={currentPoolTick}
+          convertTickToPrice={convertTickToPrice}
+          selectedPoolId={selectedPositionForDetails.poolId}
+          chainId={chainId}
+        />
+      )}
 
     </AppLayout>
   );

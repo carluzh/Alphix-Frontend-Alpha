@@ -28,6 +28,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { PortfolioTickBar } from "@/components/portfolio/PortfolioTickBar";
 import { ConnectWalletButton } from "@/components/ConnectWalletButton";
 import { TOKEN_DEFINITIONS, type TokenSymbol, getToken as getTokenCfg } from "@/lib/pools-config";
+import { getOptimalBaseToken } from "@/lib/denomination-utils";
 import { formatUnits as viemFormatUnits } from "viem";
 import { useIncreaseLiquidity } from "@/components/liquidity/useIncreaseLiquidity";
 import { useDecreaseLiquidity } from "@/components/liquidity/useDecreaseLiquidity";
@@ -741,16 +742,8 @@ export default function PortfolioPage() {
   const SDK_MIN_TICK = -887272;
   const SDK_MAX_TICK = 887272;
 
-  // Price helpers (approximate; match semantics from pool page)
-  const determineBaseTokenForPriceDisplay = useCallback((token0: string, token1: string): string => {
-    if (!token0 || !token1) return token0;
-    const quotePriority: Record<string, number> = {
-      'aUSDC': 10, 'aUSDT': 9, 'aDAI': 8, 'USDC': 7, 'USDT': 6, 'DAI': 5, 'aETH': 4, 'ETH': 3, 'YUSD': 2, 'mUSDT': 1,
-    };
-    const token0Priority = quotePriority[token0] || 0;
-    const token1Priority = quotePriority[token1] || 0;
-    return token1Priority > token0Priority ? token1 : token0;
-  }, []);
+  const determineBaseTokenForPriceDisplay = useCallback((token0: string, token1: string): string =>
+    getOptimalBaseToken(token0, token1), []);
 
   const convertTickToPrice = useCallback((tick: number, currentPoolTick: number | null, currentPrice: string | null, baseTokenForPriceDisplay: string, token0Symbol: string, token1Symbol: string): string => {
     if (tick === SDK_MAX_TICK) return '∞';

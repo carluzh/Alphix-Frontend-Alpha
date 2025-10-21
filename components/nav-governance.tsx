@@ -60,13 +60,13 @@ export function NavGovernance({
             <SidebarMenuButton
               onClick={() => item.disabled && handleLockedClick(item.title)}
               className={cn(
-                "w-full flex items-center rounded-lg px-2 py-2 transition-colors",
-                "text-muted-foreground hover:text-white"
+                "w-full flex items-center rounded-lg px-2 py-2 transition-colors hover:bg-[#1f1f1f] hover:text-white",
+                "text-muted-foreground"
               )}
               tooltip={item.title}
             >
               {item.icon && <item.icon className="h-4 w-4 flex-shrink-0" />}
-              <span className="flex-1 truncate ml-3 text-sm font-medium">{item.title}</span>
+              <span className="flex-1 truncate ml-2 text-sm font-medium">{item.title}</span>
               {item.disabled && lockedItem === item.title && (
                 <span className="flex items-center">
                   <CustomLockIcon className="h-4 w-4 flex-shrink-0 text-muted-foreground mr-0.5" />

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo, useRef } from "react";
+import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { TokenSymbol, getToken, TOKEN_DEFINITIONS } from "@/lib/pools-config";
@@ -10,6 +11,7 @@ import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
 import { calculatePositionAPY, formatAPY, type PoolMetrics } from "@/lib/apy-calculator";
 import { getPoolById } from "@/lib/pools-config";
+import { getOptimalBaseToken } from "@/lib/denomination-utils";
 import { Token } from '@uniswap/sdk-core';
 import { Pool as V4Pool, Position as V4Position } from '@uniswap/v4-sdk';
 import JSBI from 'jsbi';
@@ -72,6 +74,13 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
   const suppressNextClick = useRef(false);
   const minPriceInputRef = useRef<HTMLInputElement>(null);
   const maxPriceInputRef = useRef<HTMLInputElement>(null);
+  const [mounted, setMounted] = useState(false);
+
+  // Ensure we're mounted before rendering portal (SSR safety)
+  useEffect(() => {
+    setMounted(true);
+    return () => setMounted(false);
+  }, []);
 
   const swallowNextClick = () => {
     const handler = (e: Event) => {
@@ -104,14 +113,18 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
   const [isMinPriceFocused, setIsMinPriceFocused] = useState(false);
   const [isMaxPriceFocused, setIsMaxPriceFocused] = useState(false);
 
-  // Local denomination toggle - independent of parent, defaults to token1
-  const [denominationBase, setDenominationBase] = useState<TokenSymbol>(token1Symbol);
+  // Local denomination - use centralized logic for initial value
+  const initialDenomination = useMemo(() => {
+    const currentPriceNum = currentPrice ? parseFloat(currentPrice) : undefined;
+    return getOptimalBaseToken(token0Symbol, token1Symbol, currentPriceNum);
+  }, [token0Symbol, token1Symbol, currentPrice]);
+
+  const [denominationBase, setDenominationBase] = useState<TokenSymbol>(initialDenomination);
 
   // Pool metrics for APY calculation
   const [poolMetrics, setPoolMetrics] = useState<any>(null);
   const [isLoadingMetrics, setIsLoadingMetrics] = useState(false);
   const [poolLiquidity, setPoolLiquidity] = useState<string | null>(null);
-  const [positionData, setPositionData] = useState<Array<{tickLower: number; tickUpper: number; liquidity: string}> | null>(null);
 
   // APY values calculated asynchronously
   const [apyValues, setApyValues] = useState<Record<string, number>>({});
@@ -199,7 +212,9 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
       setLocalXDomain(xDomain);
       // Use the preset passed from the form (deterministic)
       setSelectedPreset(initialActivePreset !== undefined ? initialActivePreset : null);
-      setDenominationBase(baseTokenSymbol);
+      // Use centralized denomination logic on open, but allow baseTokenSymbol override if explicitly set
+      const optimalDenom = getOptimalBaseToken(token0Symbol, token1Symbol, currentPrice ? parseFloat(currentPrice) : undefined);
+      setDenominationBase(baseTokenSymbol || optimalDenom);
       
       // Calculate and set full precision values
       const minPrice = shouldInvert
@@ -324,15 +339,8 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
             count: positionsData?.positions?.length || 0
           });
 
-          if (positionsData.positions && Array.isArray(positionsData.positions)) {
-            // Extract only the data we need for APR calculation
-            const positions = positionsData.positions.map((p: any) => ({
-              tickLower: Number(p.tickLower),
-              tickUpper: Number(p.tickUpper),
-              liquidity: p.liquidity
-            }));
-            setPositionData(positions);
-          }
+          // Position data is no longer needed - InteractiveRangeChartV2 uses ticks instead
+          // Keeping the fetch for backward compatibility with APY calculations if needed
         } else {
           console.error('[RangeSelectionModalV2] Position data request failed:', positionsResponse.status);
         }
@@ -451,14 +459,14 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
             }
           }
 
-          const apy = await calculatePositionAPY(pool, tickLower, tickUpper, metrics, positionData || undefined, 100);
+          const apy = await calculatePositionAPY(pool, tickLower, tickUpper, metrics, 100);
           newApyValues[rangeType] = apy;
         }
 
         // Also calculate APY for current custom selection
         const customTickLower = parseInt(localTickLower);
         const customTickUpper = parseInt(localTickUpper);
-        const customAPY = await calculatePositionAPY(pool, customTickLower, customTickUpper, metrics, positionData || undefined, 100);
+        const customAPY = await calculatePositionAPY(pool, customTickLower, customTickUpper, metrics, 100);
         newApyValues["Custom"] = customAPY;
 
         setApyValues(newApyValues);
@@ -468,7 +476,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
     };
 
     calculateAPYs();
-  }, [isOpen, poolMetrics, poolLiquidity, isLoadingMetrics, currentPoolTick, currentPoolSqrtPriceX96, poolToken0, poolToken1, selectedPoolId, chainId, presetOptions, sdkMinTick, sdkMaxTick, localTickLower, localTickUpper, positionData]);
+  }, [isOpen, poolMetrics, poolLiquidity, isLoadingMetrics, currentPoolTick, currentPoolSqrtPriceX96, poolToken0, poolToken1, selectedPoolId, chainId, presetOptions, sdkMinTick, sdkMaxTick, localTickLower, localTickUpper]);
 
   const handlePresetClick = (preset: string) => {
     setSelectedPreset(preset);
@@ -521,7 +529,10 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
     setLocalTickUpper(Math.min(sdkMaxTick, Math.ceil((currentPoolTick + delta) / defaultTickSpacing) * defaultTickSpacing).toString());
   };
 
-  return (
+  // Don't render portal until mounted (SSR safety)
+  if (!mounted) return null;
+
+  const modalContent = (
     <AnimatePresence>
       {isOpen && (
         <motion.div
@@ -530,7 +541,14 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
           exit={{ opacity: 0 }}
           transition={{ duration: 0.3 }}
           className="fixed inset-0 z-[9999] flex items-center justify-center backdrop-blur-md cursor-default"
-          style={{ pointerEvents: 'auto' }}
+          style={{
+            pointerEvents: 'auto',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)'
+          }}
           onMouseDown={(e) => {
             if (e.target === e.currentTarget) {
               e.preventDefault();
@@ -543,10 +561,10 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
           }}
         >
           <motion.div
-            initial={{ y: '8%', opacity: 0 }}
-            animate={{ y: '0%', opacity: 1 }}
-            exit={{ y: '8%', opacity: 0 }}
-            transition={{ duration: 0.4, ease: [0.34, 1.3, 0.64, 1] }}
+            initial={{ scale: 0.95, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.95, opacity: 0 }}
+            transition={{ duration: 0.2, ease: 'easeOut' }}
             className="relative rounded-lg border border-solid shadow-2xl flex flex-col cursor-default"
             style={{
               width: '900px',
@@ -691,15 +709,25 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                     </div>
                   )}
                   <InteractiveRangeChart
-                    selectedPoolId={selectedPoolId} chainId={chainId} token0Symbol={token0Symbol} token1Symbol={token1Symbol}
-                    currentPoolTick={currentPoolTick} currentPrice={currentPrice} currentPoolSqrtPriceX96={currentPoolSqrtPriceX96}
-                    tickLower={localTickLower} tickUpper={localTickUpper} xDomain={localXDomain}
+                    selectedPoolId={selectedPoolId}
+                    chainId={chainId}
+                    token0Symbol={token0Symbol}
+                    token1Symbol={token1Symbol}
+                    currentPoolTick={currentPoolTick}
+                    currentPrice={currentPrice}
+                    currentPoolSqrtPriceX96={currentPoolSqrtPriceX96}
+                    tickLower={localTickLower}
+                    tickUpper={localTickUpper}
+                    xDomain={localXDomain}
                     onRangeChange={(newLower, newUpper) => { setLocalTickLower(newLower); setLocalTickUpper(newUpper); setSelectedPreset(null); }}
                     onXDomainChange={(newDomain) => setLocalXDomain(newDomain)}
-                    sdkMinTick={sdkMinTick} sdkMaxTick={sdkMaxTick} defaultTickSpacing={defaultTickSpacing}
-                    poolToken0={poolToken0} poolToken1={poolToken1} readOnly={false}
+                    sdkMinTick={sdkMinTick}
+                    sdkMaxTick={sdkMaxTick}
+                    defaultTickSpacing={defaultTickSpacing}
+                    poolToken0={poolToken0}
+                    poolToken1={poolToken1}
+                    readOnly={false}
                     forceDenominationBase={denominationBase}
-                    onReset={handleReset}
                     onLoadingChange={(loading) => setIsChartLoading(loading)}
                     onDragStateChange={(state) => setIsDragging(state !== null)}
                   />
@@ -853,4 +881,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
       )}
     </AnimatePresence>
   );
+
+  // Render modal at document body level to escape layout constraints
+  return createPortal(modalContent, document.body);
 }

@@ -13,188 +13,6 @@ export interface PoolMetrics {
   days: number; // Number of days in the period
 }
 
-export interface PositionData {
-  tickLower: number;
-  tickUpper: number;
-  liquidity: string; // Raw liquidity as string from subgraph
-}
-
-/**
- * Calculate what percentage of a position's total value is actively providing liquidity
- * at the current price using Uniswap V4 SDK Position objects.
- *
- * This creates two positions with the same liquidity L:
- * 1. The actual position with the specified range
- * 2. A full-range reference position
- *
- * Then compares their required capital. A concentrated position requires less capital
- * for the same liquidity L, which means it earns more fees per dollar invested.
- */
-export function calculateActiveLiquidityPercentage(
-  pool: V4Pool,
-  tickLower: number,
-  tickUpper: number,
-): number {
-  try {
-    const currentTick = pool.tickCurrent;
-    const tickSpacing = pool.tickSpacing;
-
-    console.log('[calculateActiveLiquidityPercentage] Input validation:', {
-      pool: `${pool.token0.symbol}/${pool.token1.symbol}`,
-      tickLower,
-      tickUpper,
-      currentTick,
-      tickSpacing,
-      sqrtPriceX96: pool.sqrtRatioX96.toString(),
-      fee: pool.fee,
-      hooks: pool.hooks
-    });
-
-    // If price is outside range, position earns no fees
-    if (currentTick < tickLower || currentTick >= tickUpper) {
-      console.warn('[calculateActiveLiquidityPercentage] Price outside range:', { currentTick, tickLower, tickUpper });
-      return 0;
-    }
-
-    // Validate ticks are properly aligned
-    if (tickLower % tickSpacing !== 0 || tickUpper % tickSpacing !== 0) {
-      console.error('[calculateActiveLiquidityPercentage] Ticks not aligned to spacing:', {
-        tickLower,
-        tickUpper,
-        tickSpacing,
-        lowerMod: tickLower % tickSpacing,
-        upperMod: tickUpper % tickSpacing
-      });
-      return 100; // Fallback to 100% (1x multiplier)
-    }
-
-    // Validate tick order
-    if (tickLower >= tickUpper) {
-      console.error('[calculateActiveLiquidityPercentage] Invalid tick order:', {
-        tickLower,
-        tickUpper
-      });
-      return 100;
-    }
-
-    // Use a fixed liquidity amount for comparison
-    // The actual value doesn't matter - we're comparing ratios
-    const liquidityAmount = JSBI.BigInt('1000000000000000000'); // 1e18
-
-    console.log('[calculateActiveLiquidityPercentage] Creating concentrated position with params:', {
-      tickLower,
-      tickUpper,
-      currentTick,
-      tickSpacing,
-      liquidityAmount: liquidityAmount.toString(),
-      pool: `${pool.token0.symbol}/${pool.token1.symbol}`,
-      token0: { symbol: pool.token0.symbol, decimals: pool.token0.decimals, address: 'address' in pool.token0 ? pool.token0.address : 'native' },
-      token1: { symbol: pool.token1.symbol, decimals: pool.token1.decimals, address: 'address' in pool.token1 ? pool.token1.address : 'native' }
-    });
-
-    // Create the concentrated position
-    let concentratedPosition;
-    try {
-      concentratedPosition = new V4Position({
-        pool,
-        tickLower,
-        tickUpper,
-        liquidity: liquidityAmount,
-      });
-      console.log('[calculateActiveLiquidityPercentage] Concentrated position created successfully');
-    } catch (error) {
-      console.error('[calculateActiveLiquidityPercentage] Failed to create concentrated position:', {
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-        tickLower,
-        tickUpper,
-        currentTick,
-        tickSpacing,
-        pool: `${pool.token0.symbol}/${pool.token1.symbol}`
-      });
-      throw error;
-    }
-
-    // Create a full-range position with the same liquidity
-    // Align to the pool's actual tick spacing
-    const MIN_TICK_RAW = -887272;
-    const MAX_TICK_RAW = 887272;
-    const MIN_TICK = Math.ceil(MIN_TICK_RAW / tickSpacing) * tickSpacing;
-    const MAX_TICK = Math.floor(MAX_TICK_RAW / tickSpacing) * tickSpacing;
-
-    console.log('[calculateActiveLiquidityPercentage] Creating full range position:', {
-      MIN_TICK,
-      MAX_TICK,
-      tickSpacing
-    });
-
-    let fullRangePosition;
-    try {
-      fullRangePosition = new V4Position({
-        pool,
-        tickLower: MIN_TICK,
-        tickUpper: MAX_TICK,
-        liquidity: liquidityAmount,
-      });
-      console.log('[calculateActiveLiquidityPercentage] Full range position created successfully');
-    } catch (error) {
-      console.error('[calculateActiveLiquidityPercentage] Failed to create full range position:', {
-        error: error instanceof Error ? error.message : String(error),
-        MIN_TICK,
-        MAX_TICK,
-        tickSpacing,
-        pool: `${pool.token0.symbol}/${pool.token1.symbol}`
-      });
-      throw error;
-    }
-
-    // Get amounts required for each position
-    const concAmount0 = parseFloat(concentratedPosition.amount0.toSignificant(18));
-    const concAmount1 = parseFloat(concentratedPosition.amount1.toSignificant(18));
-
-    const fullAmount0 = parseFloat(fullRangePosition.amount0.toSignificant(18));
-    const fullAmount1 = parseFloat(fullRangePosition.amount1.toSignificant(18));
-
-    // Get current prices
-    const price0 = parseFloat(pool.token0Price.toSignificant(18));
-    const price1 = parseFloat(pool.token1Price.toSignificant(18));
-
-    // Calculate total value in token0 terms for each position
-    const concTotalValue = concAmount0 + (concAmount1 / price0);
-    const fullTotalValue = fullAmount0 + (fullAmount1 / price0);
-
-    if (concTotalValue === 0) {
-      return 0;
-    }
-
-    // The concentration ratio is how much less capital the concentrated position needs
-    // for the same liquidity (and thus the same fee earnings)
-    // Higher ratio = more concentrated = more fees per dollar
-    const concentrationRatio = fullTotalValue / concTotalValue;
-
-    // Return as percentage (0-100)
-    return Math.min(Math.max(concentrationRatio * 100, 0), 10000);
-
-  } catch (error) {
-    console.error('[calculateActiveLiquidityPercentage] Error:', error);
-    return 100; // Fallback to 100% (1x, like full range)
-  }
-}
-
-/**
- * DEPRECATED - Not used anymore
- * We now use pool.liquidity directly which represents active liquidity at current tick
- */
-export function calculateTotalActiveLiquidity(
-  positions: PositionData[],
-  userTickLower: number,
-  userTickUpper: number,
-  pool: V4Pool
-): number {
-  // This function is no longer used
-  return 0;
-}
-
 /**
  * Calculate APR for a position using liquidity share approach
  *
@@ -212,7 +30,6 @@ export function calculateTotalActiveLiquidity(
  * @param tickLower - Lower tick of the position
  * @param tickUpper - Upper tick of the position
  * @param poolMetrics - Historical metrics (fees, TVL, days)
- * @param positions - UNUSED (kept for backwards compatibility)
  * @param investmentAmountUSD - Investment amount in USD (default $100)
  * @returns APR as a percentage (0-9999)
  */
@@ -221,7 +38,6 @@ export async function calculatePositionAPY(
   tickLower: number,
   tickUpper: number,
   poolMetrics: PoolMetrics,
-  positions?: PositionData[],
   investmentAmountUSD: number = 100
 ): Promise<number> {
   try {
@@ -248,9 +64,7 @@ export async function calculatePositionAPY(
 
     if (poolL === 0 || isNaN(poolL) || !isFinite(poolL)) {
       console.warn('[calculatePositionAPY] Invalid pool liquidity:', poolLiquidityStr);
-      // Fallback to base pool APR
-      const basePoolAPR = (annualFees / poolMetrics.avgTVLToken0) * 100;
-      return Math.min(Math.max(basePoolAPR, 0), 9999);
+      return 0;
     }
 
     // Fetch USD prices for both tokens
@@ -265,15 +79,34 @@ export async function calculatePositionAPY(
       token0PriceUSD = prices[token0Symbol] || 0;
       token1PriceUSD = prices[token1Symbol] || 0;
 
-      if (token0PriceUSD === 0 || token1PriceUSD === 0) {
-        console.warn('[calculatePositionAPY] Missing USD prices, falling back to base APR');
-        const basePoolAPR = (annualFees / poolMetrics.avgTVLToken0) * 100;
-        return Math.min(Math.max(basePoolAPR, 0), 9999);
+      // If neither token has a USD price, we can't calculate APY meaningfully
+      if (token0PriceUSD === 0 && token1PriceUSD === 0) {
+        console.warn('[calculatePositionAPY] No USD prices available for either token');
+        return 0;
+      }
+
+      // If only one token has USD price, we can still work with it
+      // by using the pool price ratio to derive the other token's value
+      if (token0PriceUSD === 0 && token1PriceUSD > 0) {
+        // Use token1 price and pool ratio to estimate token0 price
+        const token0InToken1Terms = parseFloat(pool.token0Price.toSignificant(18));
+        token0PriceUSD = token1PriceUSD * token0InToken1Terms;
+        console.log(`[calculatePositionAPY] Derived ${token0Symbol} price from ${token1Symbol}: $${token0PriceUSD.toFixed(6)}`);
+      } else if (token1PriceUSD === 0 && token0PriceUSD > 0) {
+        // Use token0 price and pool ratio to estimate token1 price
+        const token1InToken0Terms = parseFloat(pool.token1Price.toSignificant(18));
+        token1PriceUSD = token0PriceUSD * token1InToken0Terms;
+        console.log(`[calculatePositionAPY] Derived ${token1Symbol} price from ${token0Symbol}: $${token1PriceUSD.toFixed(6)}`);
+      }
+
+      // Sanity check final prices
+      if (token0PriceUSD === 0 || token1PriceUSD === 0 || !isFinite(token0PriceUSD) || !isFinite(token1PriceUSD)) {
+        console.warn('[calculatePositionAPY] Invalid derived prices, cannot calculate APY');
+        return 0;
       }
     } catch (error) {
       console.error('[calculatePositionAPY] Failed to fetch prices:', error);
-      const basePoolAPR = (annualFees / poolMetrics.avgTVLToken0) * 100;
-      return Math.min(Math.max(basePoolAPR, 0), 9999);
+      return 0;
     }
 
     // Calculate my liquidity (L) from $100 USD investment
@@ -329,8 +162,13 @@ export async function calculatePositionAPY(
       }
     } catch (error) {
       console.error('[calculatePositionAPY] Failed to calculate user liquidity:', error);
-      // Fallback to base pool APR
-      const basePoolAPR = (annualFees / poolMetrics.avgTVLToken0) * 100;
+      // Fallback to base pool APR - convert to USD terms
+      const avgTVLUSD = poolMetrics.avgTVLToken0 * token0PriceUSD;
+      const annualFeesUSD = annualFees * token0PriceUSD;
+      if (avgTVLUSD === 0) {
+        return 0;
+      }
+      const basePoolAPR = (annualFeesUSD / avgTVLUSD) * 100;
       return Math.min(Math.max(basePoolAPR, 0), 9999);
     }
 
@@ -338,11 +176,14 @@ export async function calculatePositionAPY(
     const totalL = poolL + myL;
     const feeShare = myL / totalL;
 
-    // My annual fees = total annual fees × my share
-    const myAnnualFees = annualFees * feeShare;
+    // My annual fees in token0 terms
+    const myAnnualFeesToken0 = annualFees * feeShare;
 
-    // My APR = (my annual fees / my investment) × 100
-    const apr = (myAnnualFees / investmentAmountUSD) * 100;
+    // Convert to USD for APR calculation
+    const myAnnualFeesUSD = myAnnualFeesToken0 * token0PriceUSD;
+
+    // My APR = (my annual fees in USD / my investment in USD) × 100
+    const apr = (myAnnualFeesUSD / investmentAmountUSD) * 100;
 
     console.log('[calculatePositionAPY] Liquidity share calculation:', {
       tickRange: { tickLower, tickUpper, currentTick },
@@ -350,8 +191,10 @@ export async function calculatePositionAPY(
       poolL: poolL.toExponential(2),
       myL: myL.toExponential(2),
       feeShare: (feeShare * 100).toFixed(6) + '%',
-      annualFees: annualFees.toFixed(2),
-      myAnnualFees: myAnnualFees.toFixed(6),
+      annualFeesToken0: annualFees.toFixed(6),
+      myAnnualFeesToken0: myAnnualFeesToken0.toFixed(6),
+      myAnnualFeesUSD: myAnnualFeesUSD.toFixed(6),
+      token0PriceUSD: token0PriceUSD.toFixed(2),
       apr: apr.toFixed(2) + '%'
     });
 

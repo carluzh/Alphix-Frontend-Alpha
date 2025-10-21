@@ -213,7 +213,7 @@ export function PositionCard({
             <CardContent className="p-3 sm:p-4 group">
             <div className="grid sm:items-center gap-5 grid-cols-[min-content_max-content_max-content_1px_max-content_1fr_7rem] sm:grid-cols-[min-content_max-content_max-content_1px_max-content_1fr_7rem]">
             {/* Column 1: Token Icons - Very narrow */}
-            <div className="flex items-center min-w-0 flex-none gap-0">
+            <div className="flex items-center min-w-0 flex-none gap-0 my-auto">
                 {isLoadingPrices || isLoadingPoolStates ? <div className="h-6 w-10 bg-muted/60 rounded-full animate-pulse" /> : <TokenStack position={position as any} />}
             </div>
 
@@ -384,14 +384,14 @@ export function PositionCard({
                                     position.token1.symbol || ''
                                 );
                                 // When flipped, use the opposite token as base to show ascending prices
-                                const baseTokenForPriceDisplay = shouldFlipDenomination 
+                                const baseTokenForPriceDisplay = shouldFlipDenomination
                                     ? (optimalBase === position.token0.symbol ? position.token1.symbol : position.token0.symbol)
                                     : optimalBase;
 
                                 const pool = poolDataByPoolId[poolKey] || poolDataByPoolId[String(position.poolId || '').toLowerCase()] || {};
                                 const currentPriceStr = currentPrice || (pool?.price ? String(pool.price) : null);
                                 const tickNow = currentPoolTick !== null ? currentPoolTick : (typeof pool?.tick === 'number' ? pool.tick : null);
-                                
+
                                 const minPrice = convertTickToPrice(
                                     position.tickLower,
                                     tickNow,
@@ -408,14 +408,50 @@ export function PositionCard({
                                     position.token0.symbol || '',
                                     position.token1.symbol || ''
                                 );
-                                
+
+                                const hasUsd = position.token0.symbol === 'aUSDT' || position.token0.symbol === 'aUSDC' || position.token0.symbol === 'USDT' || position.token0.symbol === 'USDC' || position.token0.symbol === 'aDAI' || position.token0.symbol === 'DAI' ||
+                                               position.token1.symbol === 'aUSDT' || position.token1.symbol === 'aUSDC' || position.token1.symbol === 'USDT' || position.token1.symbol === 'USDC' || position.token1.symbol === 'aDAI' || position.token1.symbol === 'DAI';
+                                const decimals = hasUsd ? 2 : 6;
+
+                                // Format value with threshold-based display (same as AddLiquidityForm)
+                                const formatVal = (priceStr: string) => {
+                                    const v = parseFloat(priceStr);
+                                    if (!isFinite(v)) return '∞';
+
+                                    const threshold = Math.pow(10, -decimals);
+
+                                    // Show < threshold for very small values
+                                    if (v > 0 && v < threshold) {
+                                        return `<${threshold.toFixed(decimals)}`;
+                                    }
+
+                                    // Use consistent formatting
+                                    const formatted = v.toLocaleString('en-US', {
+                                        maximumFractionDigits: decimals,
+                                        minimumFractionDigits: Math.min(2, decimals)
+                                    });
+
+                                    // Safety check: if it rounds to 0.00 but is actually positive, show < threshold
+                                    if (formatted === '0.00' && v > 0) {
+                                        return `<${threshold.toFixed(decimals)}`;
+                                    }
+
+                                    return formatted;
+                                };
+
                                 // Ensure ascending display order regardless of base/inversion
                                 const minNum = parseFloat(minPrice);
                                 const maxNum = parseFloat(maxPrice);
-                                if (Number.isFinite(minNum) && Number.isFinite(maxNum) && minNum > maxNum) {
-                                    return `${maxPrice} - ${minPrice}`;
-                                }
-                                return `${minPrice} - ${maxPrice}`;
+                                const leftVal = minNum <= maxNum ? formatVal(minPrice) : formatVal(maxPrice);
+                                const rightVal = minNum <= maxNum ? formatVal(maxPrice) : formatVal(minPrice);
+
+                                return (
+                                    <>
+                                        <span>{leftVal}</span>
+                                        <span className="text-muted-foreground">-</span>
+                                        <span>{rightVal}</span>
+                                    </>
+                                );
                             })()}
                         </span>
                         </TooltipTrigger>
