@@ -1,17 +1,35 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { X } from "lucide-react";
+import { X, ChevronLeft, RefreshCw as RefreshCwIcon, BadgeCheck, OctagonX, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { TokenStack } from "./TokenStack";
-import { formatUnits } from "viem";
-import { TOKEN_DEFINITIONS, getToken } from "@/lib/pools-config";
-import { cn } from "@/lib/utils";
+import { formatUnits, parseUnits as viemParseUnits, erc20Abi } from "viem";
+import { TOKEN_DEFINITIONS, TokenSymbol, getToken } from "@/lib/pools-config";
+import { cn, sanitizeDecimalInput } from "@/lib/utils";
+import { formatUSD } from "@/lib/format";
 import Image from "next/image";
 import { PositionChartV2 } from "./PositionChartV2";
 import { getOptimalBaseToken } from "@/lib/denomination-utils";
+import { AddLiquidityFormPanel } from "./AddLiquidityFormPanel";
+import { RemoveLiquidityFormPanel } from "./RemoveLiquidityFormPanel";
+import { CollectFeesFormPanel } from "./CollectFeesFormPanel";
+import { useAccount, useSignTypedData, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
+import { readContract } from '@wagmi/core';
+import { config } from '@/lib/wagmiConfig';
+import { useIncreaseLiquidity, type IncreasePositionData } from "./useIncreaseLiquidity";
+import { providePreSignedIncreaseBatchPermit } from './useIncreaseLiquidity';
+import { useDecreaseLiquidity, type DecreasePositionData } from "./useDecreaseLiquidity";
+import { preparePermit2BatchForNewPosition } from '@/lib/liquidity-utils';
+import { toast } from "sonner";
+import { motion, useAnimation } from "framer-motion";
+import { getTokenSymbolByAddress } from "@/lib/utils";
+
+// Define modal view types
+type ModalView = 'default' | 'add-liquidity' | 'remove-liquidity' | 'collect-fees';
 
 // Status indicator component
 function StatusIndicatorCircle({ className }: { className?: string }) {
@@ -44,6 +62,7 @@ type ProcessedPosition = {
   isInRange: boolean;
   ageSeconds: number;
   blockTimestamp: number;
+  liquidityRaw?: string;
 };
 
 interface PositionDetailsModalProps {
@@ -126,6 +145,470 @@ export function PositionDetailsModal({
 }: PositionDetailsModalProps) {
   const [mounted, setMounted] = useState(false);
   const [chartKey, setChartKey] = useState(0);
+  const [currentView, setCurrentView] = useState<ModalView>('default');
+
+  // Preview state for showing impact of actions
+  const [previewAddAmount0, setPreviewAddAmount0] = useState<number>(0);
+  const [previewAddAmount1, setPreviewAddAmount1] = useState<number>(0);
+  const [previewRemoveAmount0, setPreviewRemoveAmount0] = useState<number>(0);
+  const [previewRemoveAmount1, setPreviewRemoveAmount1] = useState<number>(0);
+  const [previewCollectFee0, setPreviewCollectFee0] = useState<number>(0);
+  const [previewCollectFee1, setPreviewCollectFee1] = useState<number>(0);
+
+  // Interim confirmation views (like the standalone modals)
+  const [showInterimConfirmation, setShowInterimConfirmation] = useState(false);
+  const [showTransactionOverview, setShowTransactionOverview] = useState(false);
+
+  // Add Liquidity transaction state (copied from AddLiquidityModal)
+  const [increaseAmount0, setIncreaseAmount0] = useState<string>("");
+  const [increaseAmount1, setIncreaseAmount1] = useState<string>("");
+  const [increaseStep, setIncreaseStep] = useState<'input' | 'approve' | 'permit' | 'deposit'>('input');
+  const [increasePreparedTxData, setIncreasePreparedTxData] = useState<any>(null);
+  const [increaseNeedsERC20Approvals, setIncreaseNeedsERC20Approvals] = useState<TokenSymbol[]>([]);
+  const [increaseIsWorking, setIncreaseIsWorking] = useState(false);
+  const [increaseBatchPermitSigned, setIncreaseBatchPermitSigned] = useState(false);
+  const [signedBatchPermit, setSignedBatchPermit] = useState<null | { owner: `0x${string}`; permitBatch: any; signature: string }>(null);
+  const [increaseCompletedERC20ApprovalsCount, setIncreaseCompletedERC20ApprovalsCount] = useState(0);
+  const [increaseInvolvedTokensCount, setIncreaseInvolvedTokensCount] = useState(0);
+  const [approvalWiggleCount, setApprovalWiggleCount] = useState(0);
+
+  // Hooks for transaction
+  const { address: accountAddress, chainId: walletChainId } = useAccount();
+  const { signTypedDataAsync } = useSignTypedData();
+  const { data: incApproveHash, writeContractAsync: approveERC20Async, reset: resetIncreaseApprove } = useWriteContract();
+  const { isLoading: isIncreaseApproving, isSuccess: isIncreaseApproved } = useWaitForTransactionReceipt({ hash: incApproveHash });
+  const approvalWiggleControls = useAnimation();
+
+  // useIncreaseLiquidity hook
+  const {
+    increaseLiquidity,
+    isLoading: isIncreasingLiquidity,
+    isSuccess: isIncreaseSuccess,
+    hash: increaseTxHash
+  } = useIncreaseLiquidity({
+    onLiquidityIncreased: (info) => {
+      console.log('[PositionDetailsModal] Liquidity increased:', info);
+      onAddLiquidity(); // Trigger parent refresh
+    },
+  });
+
+  // Remove Liquidity transaction state (copied from WithdrawLiquidityModal)
+  const [withdrawAmount0, setWithdrawAmount0] = useState<string>("");
+  const [withdrawAmount1, setWithdrawAmount1] = useState<string>("");
+  const [withdrawActiveInputSide, setWithdrawActiveInputSide] = useState<'amount0' | 'amount1' | null>(null);
+  const [isFullWithdraw, setIsFullWithdraw] = useState(false);
+  const [isWithdrawCalculating, setIsWithdrawCalculating] = useState(false);
+  const [txStarted, setTxStarted] = useState(false);
+  const [wasDecreasingLiquidity, setWasDecreasingLiquidity] = useState(false);
+  const [currentSessionTxHash, setCurrentSessionTxHash] = useState<string | null>(null);
+
+  // useDecreaseLiquidity hook
+  const {
+    decreaseLiquidity,
+    isLoading: isDecreasingLiquidity,
+    isSuccess: isDecreaseSuccess,
+    hash: decreaseTxHash
+  } = useDecreaseLiquidity({
+    onLiquidityDecreased: () => {
+      console.log('[PositionDetailsModal] Liquidity decreased');
+      onWithdraw(); // Trigger parent refresh
+    },
+  });
+
+  // Check what ERC20 approvals are needed (copied from AddLiquidityModal)
+  const checkIncreaseApprovals = useCallback(async (): Promise<TokenSymbol[]> => {
+    if (!accountAddress || !walletChainId) return [];
+
+    const needsApproval: TokenSymbol[] = [];
+    const tokens = [
+      { symbol: position.token0.symbol as TokenSymbol, amount: increaseAmount0 },
+      { symbol: position.token1.symbol as TokenSymbol, amount: increaseAmount1 }
+    ];
+
+    for (const token of tokens) {
+      if (!token.amount || parseFloat(token.amount) <= 0) continue;
+
+      const tokenDef = TOKEN_DEFINITIONS[token.symbol];
+      if (!tokenDef || tokenDef.address === "0x0000000000000000000000000000000000000000") continue;
+
+      try {
+        const allowance = await readContract(config, {
+          address: tokenDef.address as `0x${string}`,
+          abi: erc20Abi,
+          functionName: 'allowance',
+          args: [accountAddress, "0x000000000022D473030F116dDEE9F6B43aC78BA3"]
+        });
+
+        const requiredAmount = viemParseUnits(token.amount, tokenDef.decimals);
+        if (allowance < requiredAmount) {
+          needsApproval.push(token.symbol);
+        }
+      } catch (error) {
+        console.error(`Error checking allowance for ${token.symbol}:`, error);
+      }
+    }
+
+    return needsApproval;
+  }, [accountAddress, walletChainId, position, increaseAmount0, increaseAmount1]);
+
+  // Prepare increase transaction (copied from AddLiquidityModal)
+  const handlePrepareIncrease = useCallback(async () => {
+    setIncreaseIsWorking(true);
+    try {
+      const needsApprovals = await checkIncreaseApprovals();
+      setIncreaseNeedsERC20Approvals(needsApprovals);
+      setIncreaseInvolvedTokensCount(needsApprovals.length);
+
+      if (needsApprovals.length > 0) {
+        setIncreaseStep('approve');
+        setIncreasePreparedTxData({
+          needsApproval: true,
+          approvalType: 'ERC20_TO_PERMIT2',
+          approvalTokenSymbol: needsApprovals[0],
+          approvalTokenAddress: TOKEN_DEFINITIONS[needsApprovals[0]]?.address,
+          approvalAmount: "115792089237316195423570985008687907853269984665640564039457584007913129639935",
+          approveToAddress: "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+        });
+      } else {
+        setIncreaseStep('permit');
+        setIncreasePreparedTxData({ needsApproval: false });
+      }
+    } catch (error: any) {
+      console.error('Prepare increase error:', error);
+      toast.error("Preparation Error", { description: error.message || "Failed to prepare transaction", icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }) });
+    } finally {
+      setIncreaseIsWorking(false);
+    }
+  }, [checkIncreaseApprovals]);
+
+  // Handle ERC20 approvals (copied from AddLiquidityModal)
+  const handleIncreaseApprove = useCallback(async () => {
+    if (!increasePreparedTxData?.needsApproval || increasePreparedTxData.approvalType !== 'ERC20_TO_PERMIT2') return;
+
+    setIncreaseIsWorking(true);
+
+    try {
+      const tokenAddress = increasePreparedTxData.approvalTokenAddress as `0x${string}` | undefined;
+      if (!tokenAddress) throw new Error('Missing token address for approval');
+
+      toast("Confirm in Wallet", { icon: React.createElement(Info, { className: "h-4 w-4" }) });
+
+      await approveERC20Async({
+        address: tokenAddress,
+        abi: erc20Abi,
+        functionName: 'approve',
+        args: ["0x000000000022D473030F116dDEE9F6B43aC78BA3" as `0x${string}`, BigInt(increasePreparedTxData.approvalAmount || '0')],
+      });
+    } catch (error: any) {
+      const errorMessage = error?.shortMessage || error?.message || "Failed to approve token.";
+      toast.error("Approval Error", {
+        icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
+        description: errorMessage,
+      });
+      setIncreaseIsWorking(false);
+      resetIncreaseApprove();
+    }
+  }, [increasePreparedTxData, approveERC20Async, resetIncreaseApprove]);
+
+  // Handle permit signature (copied from AddLiquidityModal)
+  const handleIncreasePermit = useCallback(async () => {
+    if (!position || !accountAddress || !walletChainId) return;
+    if (increaseBatchPermitSigned || increaseStep !== 'permit') return;
+
+    setIncreaseIsWorking(true);
+    try {
+      const compositeId = position.positionId?.toString?.() || '';
+      let tokenIdHex = compositeId.includes('-') ? compositeId.split('-').pop() || '' : compositeId;
+      if (!tokenIdHex) throw new Error('Unable to derive position tokenId');
+
+      if (!tokenIdHex.startsWith('0x')) tokenIdHex = `0x${tokenIdHex}`;
+      const nftTokenId = BigInt(tokenIdHex);
+
+      const deadline = Math.floor(Date.now() / 1000) + (20 * 60);
+      const prepared = await preparePermit2BatchForNewPosition(
+        position.token0.symbol,
+        position.token1.symbol,
+        accountAddress as `0x${string}`,
+        walletChainId,
+        deadline
+      );
+
+      if (!prepared?.message?.details || prepared.message.details.length === 0) {
+        setIncreaseBatchPermitSigned(true);
+        setIncreaseStep('deposit');
+        setIncreaseIsWorking(false);
+        return;
+      }
+
+      toast("Sign in Wallet", { icon: React.createElement(Info, { className: "h-4 w-4" }) });
+
+      const signature = await signTypedDataAsync({
+        domain: prepared.domain as any,
+        types: prepared.types as any,
+        primaryType: prepared.primaryType,
+        message: prepared.message as any,
+      });
+
+      const payload = { owner: accountAddress as `0x${string}`, permitBatch: prepared.message, signature };
+      providePreSignedIncreaseBatchPermit(position.positionId, payload);
+      setSignedBatchPermit(payload);
+
+      toast.success("Batch Signature Complete", {
+        icon: React.createElement(BadgeCheck, { className: "h-4 w-4 text-green-500" }),
+      });
+
+      setIncreaseBatchPermitSigned(true);
+      setIncreaseStep('deposit');
+    } catch (error: any) {
+      const description = (error?.message || '').includes('User rejected') ? 'Permit signature was rejected.' : (error?.message || 'Failed to sign permit');
+      toast.error('Permit Error', {
+        icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
+        description
+      });
+    } finally {
+      setIncreaseIsWorking(false);
+    }
+  }, [position, accountAddress, walletChainId, signTypedDataAsync, increaseBatchPermitSigned, increaseStep]);
+
+  // Handle final transaction execution (copied from AddLiquidityModal)
+  const handleExecuteTransaction = async () => {
+    if (!position) return;
+
+    if (increaseStep === 'input') {
+      await handlePrepareIncrease();
+    } else if (increaseStep === 'approve') {
+      await handleIncreaseApprove();
+    } else if (increaseStep === 'permit') {
+      await handleIncreasePermit();
+    } else if (increaseStep === 'deposit') {
+      const data: IncreasePositionData = {
+        tokenId: position.positionId,
+        token0Symbol: position.token0.symbol as TokenSymbol,
+        token1Symbol: position.token1.symbol as TokenSymbol,
+        additionalAmount0: increaseAmount0 || '0',
+        additionalAmount1: increaseAmount1 || '0',
+        poolId: position.poolId,
+        tickLower: position.tickLower,
+        tickUpper: position.tickUpper,
+        feesForIncrease: { amount0: prefetchedRaw0 || '0', amount1: prefetchedRaw1 || '0' },
+      };
+
+      try {
+        // @ts-ignore
+        increaseLiquidity(data, signedBatchPermit ? { batchPermit: signedBatchPermit } : undefined);
+      } catch (e) {
+        console.error('[modal] increaseLiquidity call threw:', e);
+      }
+    }
+  };
+
+  // Monitor approval confirmations and update step (copied from AddLiquidityModal)
+  useEffect(() => {
+    if (!isIncreaseApproved || !increasePreparedTxData) return;
+
+    const recheckAllowances = async () => {
+      try {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        const stillNeedsApprovals: TokenSymbol[] = [];
+        const tokens = [
+          { symbol: position.token0.symbol as TokenSymbol, amount: increaseAmount0 },
+          { symbol: position.token1.symbol as TokenSymbol, amount: increaseAmount1 }
+        ];
+
+        for (const token of tokens) {
+          if (!token.amount || parseFloat(token.amount) <= 0) continue;
+
+          const tokenDef = TOKEN_DEFINITIONS[token.symbol];
+          if (!tokenDef || !accountAddress) continue;
+
+          try {
+            const allowance = await readContract(config, {
+              address: tokenDef.address as `0x${string}`,
+              abi: erc20Abi,
+              functionName: 'allowance',
+              args: [accountAddress, "0x000000000022D473030F116dDEE9F6B43aC78BA3" as `0x${string}`],
+              blockTag: 'latest'
+            });
+
+            const requiredAmount = viemParseUnits(token.amount, tokenDef.decimals);
+
+            if (allowance < requiredAmount) {
+              stillNeedsApprovals.push(token.symbol);
+            }
+          } catch (error) {
+            console.error(`Error checking allowance for ${token.symbol}:`, error);
+            stillNeedsApprovals.push(token.symbol);
+          }
+        }
+
+        if (stillNeedsApprovals.length > 0) {
+          if (stillNeedsApprovals.includes(increasePreparedTxData.approvalTokenSymbol as TokenSymbol)) {
+            setApprovalWiggleCount(prev => prev + 1);
+            toast.error("Insufficient Approval", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }) });
+          } else {
+            toast.success(`${increasePreparedTxData.approvalTokenSymbol} Approved`, { icon: React.createElement(BadgeCheck, { className: "h-4 w-4 text-green-500" }) });
+          }
+
+          setIncreaseNeedsERC20Approvals(stillNeedsApprovals);
+          const nextTokenSymbol = stillNeedsApprovals[0];
+          const nextTokenDef = TOKEN_DEFINITIONS[nextTokenSymbol];
+          const nextTokenAmount = nextTokenSymbol === position.token0.symbol ? increaseAmount0 : increaseAmount1;
+          const exactAmountNeeded = viemParseUnits(nextTokenAmount || '0', nextTokenDef.decimals);
+          const buffer = BigInt(Math.pow(10, Math.max(0, nextTokenDef.decimals - 6)));
+          const roundedUpAmount = exactAmountNeeded + buffer;
+
+          setIncreasePreparedTxData({
+            needsApproval: true,
+            approvalType: 'ERC20_TO_PERMIT2',
+            approvalTokenSymbol: nextTokenSymbol,
+            approvalTokenAddress: nextTokenDef.address,
+            approvalAmount: roundedUpAmount.toString(),
+            approveToAddress: "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+          });
+          setIncreaseStep('approve');
+        } else {
+          toast.success(`${increasePreparedTxData.approvalTokenSymbol} Approved`, { icon: React.createElement(BadgeCheck, { className: "h-4 w-4 text-green-500" }) });
+          setIncreaseNeedsERC20Approvals([]);
+          setIncreasePreparedTxData({ needsApproval: false });
+          setIncreaseStep('permit');
+        }
+
+        setIncreaseIsWorking(false);
+        setIncreaseCompletedERC20ApprovalsCount(prev => prev + 1);
+        resetIncreaseApprove();
+      } catch (error) {
+        console.error('Error re-checking allowances:', error);
+        toast.error("Approval Check Failed", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }) });
+        setIncreaseIsWorking(false);
+        resetIncreaseApprove();
+      }
+    };
+
+    recheckAllowances();
+  }, [isIncreaseApproved, increasePreparedTxData, accountAddress, position, increaseAmount0, increaseAmount1, resetIncreaseApprove]);
+
+  // Auto-prepare transaction when showing transaction overview (copied from AddLiquidityModal)
+  useEffect(() => {
+    if (showTransactionOverview && currentView === 'add-liquidity') {
+      if (increaseStep === 'input') {
+        handlePrepareIncrease();
+      }
+    }
+  }, [showTransactionOverview, currentView, increaseStep, handlePrepareIncrease]);
+
+  // Remove Liquidity handler functions (copied from WithdrawLiquidityModal)
+  const handleConfirmWithdraw = useCallback(() => {
+    if (!position || (!withdrawAmount0 && !withdrawAmount1)) {
+      toast.error("Invalid Amount", {
+        icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
+        description: "Please enter an amount to withdraw.",
+        duration: 4000
+      });
+      return;
+    }
+
+    // Check if amounts exceed position balance
+    const max0 = parseFloat(position.token0.amount || '0');
+    const max1 = parseFloat(position.token1.amount || '0');
+    const in0 = parseFloat(withdrawAmount0 || '0');
+    const in1 = parseFloat(withdrawAmount1 || '0');
+
+    if ((in0 > max0 + 1e-12) || (in1 > max1 + 1e-12)) {
+      toast.error("Insufficient Balance", {
+        icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
+        description: "Withdrawal amount exceeds position balance.",
+        duration: 4000
+      });
+      return;
+    }
+
+    // For out-of-range positions, ensure at least one amount is greater than 0
+    if (!position.isInRange) {
+      const amount0Num = parseFloat(withdrawAmount0 || "0");
+      const amount1Num = parseFloat(withdrawAmount1 || "0");
+      if (amount0Num <= 0 && amount1Num <= 0) {
+        toast.error("Invalid Amount", {
+          icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
+          description: "Please enter an amount to withdraw.",
+          duration: 4000
+        });
+        return;
+      }
+    }
+
+    // Show interim confirmation
+    setShowInterimConfirmation(true);
+  }, [position, withdrawAmount0, withdrawAmount1]);
+
+  const handleFinalConfirmWithdraw = useCallback(() => {
+    if (!position) return;
+
+    // Show transaction overview
+    setShowTransactionOverview(true);
+  }, [position]);
+
+  const handleExecuteWithdrawTransaction = useCallback(() => {
+    if (!position) return;
+
+    console.log('[PositionDetailsModal] handleExecuteWithdrawTransaction called');
+
+    // Map position token addresses to correct token symbols
+    const token0Symbol = getTokenSymbolByAddress(position.token0.address);
+    const token1Symbol = getTokenSymbolByAddress(position.token1.address);
+
+    if (!token0Symbol || !token1Symbol) {
+      toast.error("Configuration Error", {
+        icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
+        description: "Token configuration is invalid.",
+        action: {
+          label: "Open Ticket",
+          onClick: () => window.open('https://discord.gg/alphix', '_blank')
+        }
+      });
+      return;
+    }
+
+    // Compute effective percentage and full-burn intent
+    const amt0 = parseFloat(withdrawAmount0 || '0');
+    const amt1 = parseFloat(withdrawAmount1 || '0');
+    const max0Eff = parseFloat(position.token0.amount || '0');
+    const max1Eff = parseFloat(position.token1.amount || '0');
+    const pct0 = max0Eff > 0 ? amt0 / max0Eff : 0;
+    const pct1 = max1Eff > 0 ? amt1 / max1Eff : 0;
+    const effectivePct = Math.max(pct0, pct1) * 100;
+    const nearFull0 = max0Eff > 0 ? pct0 >= 0.99 : true;
+    const nearFull1 = max1Eff > 0 ? pct1 >= 0.99 : true;
+    const isBurnAllEffective = position.isInRange ? (nearFull0 && nearFull1) : (pct0 >= 0.99 || pct1 >= 0.99);
+
+    // Use decreaseLiquidity for both full and partial withdraw
+    const decreaseData: DecreasePositionData = {
+      tokenId: position.positionId,
+      token0Symbol: token0Symbol,
+      token1Symbol: token1Symbol,
+      decreaseAmount0: withdrawAmount0 || '0',
+      decreaseAmount1: withdrawAmount1 || '0',
+      isFullBurn: isBurnAllEffective,
+      poolId: position.poolId,
+      tickLower: position.tickLower,
+      tickUpper: position.tickUpper,
+      enteredSide: withdrawActiveInputSide === 'amount0' ? 'token0' : withdrawActiveInputSide === 'amount1' ? 'token1' : undefined,
+    };
+
+    toast("Confirm Withdraw", {
+      icon: React.createElement(Info, { className: "h-4 w-4" })
+    });
+
+    // In-range: use percentage flow (SDK), OOR: amounts mode
+    if (position.isInRange) {
+      const pctRounded = isBurnAllEffective ? 100 : Math.max(0, Math.min(100, Math.round(effectivePct)));
+      decreaseLiquidity(decreaseData, pctRounded);
+    } else {
+      decreaseLiquidity(decreaseData, 0);
+    }
+
+    setTxStarted(true);
+  }, [position, withdrawAmount0, withdrawAmount1, withdrawActiveInputSide, decreaseLiquidity]);
 
   // Format fee tier for display (exactly like pool stats bar)
   const feeTierDisplay = useMemo(() => {
@@ -141,12 +624,96 @@ export function PositionDetailsModal({
     return () => setMounted(false);
   }, []);
 
-  // Increment chartKey when modal opens to force data refetch
+  // Reset view and preview state when modal opens/closes
   useEffect(() => {
     if (isOpen) {
       setChartKey(prev => prev + 1);
+      setCurrentView('default');
+      setPreviewAddAmount0(0);
+      setPreviewAddAmount1(0);
+      setPreviewRemoveAmount0(0);
+      setPreviewRemoveAmount1(0);
+      setPreviewCollectFee0(0);
+      setPreviewCollectFee1(0);
+      setShowInterimConfirmation(false);
     }
   }, [isOpen]);
+
+  // Handlers for switching views
+  const handleAddLiquidityClick = () => {
+    setCurrentView('add-liquidity');
+    // Reset preview states when switching views
+    setPreviewAddAmount0(0);
+    setPreviewAddAmount1(0);
+    setPreviewRemoveAmount0(0);
+    setPreviewRemoveAmount1(0);
+    setPreviewCollectFee0(0);
+    setPreviewCollectFee1(0);
+    setShowInterimConfirmation(false);
+  };
+
+  const handleRemoveLiquidityClick = () => {
+    setCurrentView('remove-liquidity');
+    // Reset preview states when switching views
+    setPreviewAddAmount0(0);
+    setPreviewAddAmount1(0);
+    setPreviewRemoveAmount0(0);
+    setPreviewRemoveAmount1(0);
+    setPreviewCollectFee0(0);
+    setPreviewCollectFee1(0);
+    setShowInterimConfirmation(false);
+  };
+
+  const handleCollectFeesClick = () => {
+    setCurrentView('collect-fees');
+    // Reset preview states when switching views
+    setPreviewAddAmount0(0);
+    setPreviewAddAmount1(0);
+    setPreviewRemoveAmount0(0);
+    setPreviewRemoveAmount1(0);
+    setPreviewCollectFee0(0);
+    setPreviewCollectFee1(0);
+    setShowInterimConfirmation(false);
+  };
+
+  const handleBackToDefault = () => {
+    setCurrentView('default');
+    // Reset preview states
+    setPreviewAddAmount0(0);
+    setPreviewAddAmount1(0);
+    setPreviewRemoveAmount0(0);
+    setPreviewRemoveAmount1(0);
+    setPreviewCollectFee0(0);
+    setPreviewCollectFee1(0);
+    setShowInterimConfirmation(false);
+  };
+
+  // Handlers for form panel callbacks
+  const handleAddLiquiditySuccess = useCallback(() => {
+    onClose();
+    onAddLiquidity(); // Trigger parent refresh
+  }, [onClose, onAddLiquidity]);
+
+  const handleRemoveLiquiditySuccess = useCallback(() => {
+    onClose();
+    onWithdraw(); // Trigger parent refresh
+  }, [onClose, onWithdraw]);
+
+  const handleCollectFeesSuccess = useCallback(() => {
+    onClose();
+    onClaimFees(); // Trigger parent refresh
+  }, [onClose, onClaimFees]);
+
+  // Handlers for preview updates
+  const handleAddAmountsChange = useCallback((amount0: number, amount1: number) => {
+    setPreviewAddAmount0(amount0);
+    setPreviewAddAmount1(amount1);
+  }, []);
+
+  const handleRemoveAmountsChange = useCallback((amount0: number, amount1: number) => {
+    setPreviewRemoveAmount0(amount0);
+    setPreviewRemoveAmount1(amount1);
+  }, []);
 
   // Calculate fees
   const { feeAmount0, feeAmount1, feesUSD, hasZeroFees } = useMemo(() => {
@@ -265,16 +832,26 @@ export function PositionDetailsModal({
   const token0Color = getTokenColor(position.token0.symbol);
   const token1Color = getTokenColor(position.token1.symbol);
 
-  // Calculate percentage bars for position
+  // Calculate percentage bars for position (with preview adjustments)
   const positionBars = useMemo(() => {
-    const total = token0USD + token1USD;
+    // Calculate preview-adjusted amounts
+    const price0 = getUsdPriceForSymbol(position.token0.symbol);
+    const price1 = getUsdPriceForSymbol(position.token1.symbol);
+
+    const previewAdjustment0 = (previewAddAmount0 - previewRemoveAmount0) * price0;
+    const previewAdjustment1 = (previewAddAmount1 - previewRemoveAmount1) * price1;
+
+    const adjustedToken0USD = token0USD + previewAdjustment0;
+    const adjustedToken1USD = token1USD + previewAdjustment1;
+
+    const total = adjustedToken0USD + adjustedToken1USD;
     if (total === 0) return null;
 
-    const token0Percent = (token0USD / total) * 100;
-    const token1Percent = (token1USD / total) * 100;
+    const token0Percent = (adjustedToken0USD / total) * 100;
+    const token1Percent = (adjustedToken1USD / total) * 100;
 
     return { token0Percent, token1Percent };
-  }, [token0USD, token1USD]);
+  }, [token0USD, token1USD, previewAddAmount0, previewAddAmount1, previewRemoveAmount0, previewRemoveAmount1, position, getUsdPriceForSymbol]);
 
   // Calculate percentage bars for fees
   const feesBars = useMemo(() => {
@@ -361,30 +938,39 @@ export function PositionDetailsModal({
                 </div>
               </div>
 
-              {/* Action Buttons */}
+              {/* Action Buttons - Always visible */}
               <div className="flex items-center gap-2">
                 <Button
-                  onClick={onAddLiquidity}
+                  onClick={handleAddLiquidityClick}
                   variant="outline"
-                  className="h-10 px-4 text-sm bg-button border-sidebar-border hover:brightness-110"
+                  className={cn(
+                    "h-10 px-4 text-sm bg-button border-sidebar-border hover:brightness-110",
+                    currentView === 'add-liquidity' && "ring-2 ring-sidebar-primary"
+                  )}
                   style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: '200%', backgroundPosition: 'center' }}
                 >
                   Add Liquidity
                 </Button>
                 <Button
-                  onClick={onWithdraw}
+                  onClick={handleRemoveLiquidityClick}
                   variant="outline"
-                  className="h-10 px-4 text-sm bg-button border-sidebar-border hover:brightness-110"
+                  className={cn(
+                    "h-10 px-4 text-sm bg-button border-sidebar-border hover:brightness-110",
+                    currentView === 'remove-liquidity' && "ring-2 ring-sidebar-primary"
+                  )}
                   style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: '200%', backgroundPosition: 'center' }}
                 >
                   Remove Liquidity
                 </Button>
                 <div className="h-10 w-px bg-border flex-shrink-0" />
                 <Button
-                  onClick={onClaimFees}
+                  onClick={handleCollectFeesClick}
                   disabled={hasZeroFees}
                   variant="outline"
-                  className="h-10 px-4 text-sm bg-button border-sidebar-border hover:brightness-110 disabled:opacity-50"
+                  className={cn(
+                    "h-10 px-4 text-sm bg-button border-sidebar-border hover:brightness-110 disabled:opacity-50",
+                    currentView === 'collect-fees' && "ring-2 ring-sidebar-primary"
+                  )}
                   style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: '200%', backgroundPosition: 'center' }}
                 >
                   Collect Fees
@@ -392,43 +978,47 @@ export function PositionDetailsModal({
               </div>
             </div>
 
-            {/* Charts Section - Price Chart + Liquidity Depth */}
-            <div className="rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 p-2">
-              <div style={{ height: '220px' }} className="relative">
-                {selectedPoolId ? (
-                  <PositionChartV2
-                    token0={position.token0.symbol}
-                    token1={position.token1.symbol}
-                    denominationBase={calculatedDenominationBase}
-                    currentPrice={currentPriceActual ?? undefined}
-                    currentPoolTick={currentPoolTick ?? undefined}
-                    minPrice={minPriceActual}
-                    maxPrice={maxPriceActual}
-                    isInRange={position.isInRange}
-                    selectedPoolId={selectedPoolId}
-                    chartKey={chartKey}
-                  />
-                ) : (
-                  <div className="h-full flex flex-col items-center justify-center gap-2">
-                    <Image
-                      src="/LogoIconWhite.svg"
-                      alt="Loading chart"
-                      width={32}
-                      height={32}
-                      className="animate-pulse opacity-75"
+            {/* Charts Section - Only show in default view */}
+            {currentView === 'default' && (
+              <div className="rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 p-2">
+                <div style={{ height: '220px' }} className="relative">
+                  {selectedPoolId ? (
+                    <PositionChartV2
+                      token0={position.token0.symbol}
+                      token1={position.token1.symbol}
+                      denominationBase={calculatedDenominationBase}
+                      currentPrice={currentPriceActual ?? undefined}
+                      currentPoolTick={currentPoolTick ?? undefined}
+                      minPrice={minPriceActual}
+                      maxPrice={maxPriceActual}
+                      isInRange={position.isInRange}
+                      selectedPoolId={selectedPoolId}
+                      chartKey={chartKey}
                     />
-                    <span className="text-xs text-muted-foreground">
-                      Pool ID not provided
-                    </span>
-                  </div>
-                )}
+                  ) : (
+                    <div className="h-full flex flex-col items-center justify-center gap-2">
+                      <Image
+                        src="/LogoIconWhite.svg"
+                        alt="Loading chart"
+                        width={32}
+                        height={32}
+                        className="animate-pulse opacity-75"
+                      />
+                      <span className="text-xs text-muted-foreground">
+                        Pool ID not provided
+                      </span>
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
+            )}
 
-            {/* Position and Fees Sections - Horizontal Layout */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Position Section */}
-              <div className="bg-container-secondary border border-sidebar-border rounded-lg p-5">
+            {/* Position and Fees Sections - Layout changes based on view */}
+            {currentView === 'default' ? (
+              /* Default view: side-by-side grid */
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Position Section */}
+                <div className="bg-container-secondary border border-sidebar-border rounded-lg p-5">
                 <div className="flex flex-col gap-5">
                   {/* Label + Total USD */}
                   <div className="flex flex-col gap-2">
@@ -439,7 +1029,17 @@ export function PositionDetailsModal({
                         currency: 'USD',
                         minimumFractionDigits: 2,
                         maximumFractionDigits: 2
-                      }).format(Number.isFinite(valueUSD) ? valueUSD : 0)}
+                      }).format(
+                        !showInterimConfirmation && (previewAddAmount0 > 0 || previewAddAmount1 > 0)
+                          ? (Number.isFinite(valueUSD) ? valueUSD : 0) +
+                            (previewAddAmount0 * getUsdPriceForSymbol(position.token0.symbol)) +
+                            (previewAddAmount1 * getUsdPriceForSymbol(position.token1.symbol))
+                          : !showInterimConfirmation && (previewRemoveAmount0 > 0 || previewRemoveAmount1 > 0)
+                          ? (Number.isFinite(valueUSD) ? valueUSD : 0) -
+                            (previewRemoveAmount0 * getUsdPriceForSymbol(position.token0.symbol)) -
+                            (previewRemoveAmount1 * getUsdPriceForSymbol(position.token1.symbol))
+                          : (Number.isFinite(valueUSD) ? valueUSD : 0)
+                      )}
                     </div>
                   </div>
 
@@ -513,11 +1113,30 @@ export function PositionDetailsModal({
                             currency: 'USD',
                             minimumFractionDigits: 2,
                             maximumFractionDigits: 2
-                          }).format(token0USD)}
+                          }).format(
+                            !showInterimConfirmation && previewAddAmount0 > 0
+                              ? token0USD + (previewAddAmount0 * getUsdPriceForSymbol(position.token0.symbol))
+                              : !showInterimConfirmation && previewRemoveAmount0 > 0
+                              ? token0USD - (previewRemoveAmount0 * getUsdPriceForSymbol(position.token0.symbol))
+                              : token0USD
+                          )}
                         </span>
                       </div>
-                      <div className="text-xs text-muted-foreground">
-                        {formatTokenDisplayAmount(position.token0.amount)} {position.token0.symbol}
+                      <div className="flex items-center gap-2">
+                        <div className="text-xs text-muted-foreground">
+                          {formatTokenDisplayAmount(position.token0.amount)} {position.token0.symbol}
+                        </div>
+                        {/* Preview indicator for token 0 - only show when NOT in interim confirmation */}
+                        {!showInterimConfirmation && previewAddAmount0 > 0 && (
+                          <span className="text-xs font-medium text-green-500">
+                            +{previewAddAmount0.toFixed(4)}
+                          </span>
+                        )}
+                        {!showInterimConfirmation && previewRemoveAmount0 > 0 && (
+                          <span className="text-xs font-medium text-red-500">
+                            -{previewRemoveAmount0.toFixed(4)}
+                          </span>
+                        )}
                       </div>
                     </div>
 
@@ -538,30 +1157,58 @@ export function PositionDetailsModal({
                             currency: 'USD',
                             minimumFractionDigits: 2,
                             maximumFractionDigits: 2
-                          }).format(token1USD)}
+                          }).format(
+                            !showInterimConfirmation && previewAddAmount1 > 0
+                              ? token1USD + (previewAddAmount1 * getUsdPriceForSymbol(position.token1.symbol))
+                              : !showInterimConfirmation && previewRemoveAmount1 > 0
+                              ? token1USD - (previewRemoveAmount1 * getUsdPriceForSymbol(position.token1.symbol))
+                              : token1USD
+                          )}
                         </span>
                       </div>
-                      <div className="text-xs text-muted-foreground">
-                        {formatTokenDisplayAmount(position.token1.amount)} {position.token1.symbol}
+                      <div className="flex items-center gap-2">
+                        <div className="text-xs text-muted-foreground">
+                          {formatTokenDisplayAmount(position.token1.amount)} {position.token1.symbol}
+                        </div>
+                        {/* Preview indicator for token 1 - only show when NOT in interim confirmation */}
+                        {!showInterimConfirmation && previewAddAmount1 > 0 && (
+                          <span className="text-xs font-medium text-green-500">
+                            +{previewAddAmount1.toFixed(4)}
+                          </span>
+                        )}
+                        {!showInterimConfirmation && previewRemoveAmount1 > 0 && (
+                          <span className="text-xs font-medium text-red-500">
+                            -{previewRemoveAmount1.toFixed(4)}
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
                 </div>
-              </div>
+                </div>
 
-              {/* Fees Earned Section */}
-              <div className="bg-container-secondary border border-dashed border-sidebar-border rounded-lg p-5">
+                {/* Fees Earned Section */}
+                <div className="bg-container-secondary border border-dashed border-sidebar-border rounded-lg p-5">
                 <div className="flex flex-col gap-5">
                   {/* Label + Total Fees */}
                   <div className="flex flex-col gap-2">
                     <div className="text-[11px] text-muted-foreground uppercase tracking-wide">Fees Earned</div>
                     <div className="text-xl font-semibold">
-                      {new Intl.NumberFormat('en-US', {
-                        style: 'currency',
-                        currency: 'USD',
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2
-                      }).format(feesUSD)}
+                      {!showInterimConfirmation && (previewAddAmount0 > 0 || previewAddAmount1 > 0 || previewRemoveAmount0 > 0 || previewRemoveAmount1 > 0) ? (
+                        <>-{new Intl.NumberFormat('en-US', {
+                          style: 'currency',
+                          currency: 'USD',
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2
+                        }).format(feesUSD)}</>
+                      ) : (
+                        new Intl.NumberFormat('en-US', {
+                          style: 'currency',
+                          currency: 'USD',
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2
+                        }).format(feesUSD)
+                      )}
                     </div>
                   </div>
 
@@ -631,23 +1278,215 @@ export function PositionDetailsModal({
                             />
                           </div>
                           <span className="text-sm font-medium">
+                            {!showInterimConfirmation && (previewAddAmount0 > 0 || previewAddAmount1 > 0 || previewRemoveAmount0 > 0 || previewRemoveAmount1 > 0) ? (
+                              <>-{new Intl.NumberFormat('en-US', {
+                                style: 'currency',
+                                currency: 'USD',
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2
+                              }).format(fee0USD)}</>
+                            ) : (
+                              new Intl.NumberFormat('en-US', {
+                                style: 'currency',
+                                currency: 'USD',
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2
+                              }).format(fee0USD)
+                            )}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div className="text-xs text-muted-foreground">
+                            {!showInterimConfirmation && (previewAddAmount0 > 0 || previewAddAmount1 > 0 || previewRemoveAmount0 > 0 || previewRemoveAmount1 > 0)
+                              ? `-${feeAmount0 < 0.001 && feeAmount0 > 0 ? "< 0.001" : feeAmount0.toLocaleString("en-US", { maximumFractionDigits: 6, minimumFractionDigits: 0 })}`
+                              : feeAmount0 < 0.001 && feeAmount0 > 0
+                              ? "< 0.001"
+                              : feeAmount0.toLocaleString("en-US", { maximumFractionDigits: 6, minimumFractionDigits: 0 })
+                            } {position.token0.symbol}
+                          </div>
+                          {/* No fee preview indicators in default view */}
+                        </div>
+                      </div>
+
+                      {/* Fee 1 Row */}
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="relative w-6 h-6 rounded-full overflow-hidden">
+                            <Image
+                              src={getTokenLogo(position.token1.symbol)}
+                              alt={position.token1.symbol}
+                              width={24}
+                              height={24}
+                            />
+                          </div>
+                          <span className="text-sm font-medium">
+                            {!showInterimConfirmation && (previewAddAmount0 > 0 || previewAddAmount1 > 0 || previewRemoveAmount0 > 0 || previewRemoveAmount1 > 0) ? (
+                              <>-{new Intl.NumberFormat('en-US', {
+                                style: 'currency',
+                                currency: 'USD',
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2
+                              }).format(fee1USD)}</>
+                            ) : (
+                              new Intl.NumberFormat('en-US', {
+                                style: 'currency',
+                                currency: 'USD',
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2
+                              }).format(fee1USD)
+                            )}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div className="text-xs text-muted-foreground">
+                            {!showInterimConfirmation && (previewAddAmount0 > 0 || previewAddAmount1 > 0 || previewRemoveAmount0 > 0 || previewRemoveAmount1 > 0)
+                              ? `-${feeAmount1 < 0.001 && feeAmount1 > 0 ? "< 0.001" : feeAmount1.toLocaleString("en-US", { maximumFractionDigits: 6, minimumFractionDigits: 0 })}`
+                              : feeAmount1 < 0.001 && feeAmount1 > 0
+                              ? "< 0.001"
+                              : feeAmount1.toLocaleString("en-US", { maximumFractionDigits: 6, minimumFractionDigits: 0 })
+                            } {position.token1.symbol}
+                          </div>
+                          {/* No fee preview indicators in default view */}
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-xs text-muted-foreground">
+                      No fees earned yet
+                    </div>
+                  )}
+                </div>
+                </div>
+              </div>
+            ) : (
+              /* Action views: stacked left + form right */
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Left Column - Position and Fees stacked */}
+                <div className="flex flex-col gap-4">
+                  {/* Position Section */}
+                  <div className="bg-container-secondary border border-sidebar-border rounded-lg p-5">
+                  <div className="flex flex-col gap-5">
+                    {/* Label + Total USD */}
+                    <div className="flex flex-col gap-2">
+                      <div className="text-[11px] text-muted-foreground uppercase tracking-wide">Position</div>
+                      <div className="text-xl font-semibold">
+                        {new Intl.NumberFormat('en-US', {
+                          style: 'currency',
+                          currency: 'USD',
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2
+                        }).format(
+                          !showInterimConfirmation && (previewAddAmount0 > 0 || previewAddAmount1 > 0)
+                            ? (Number.isFinite(valueUSD) ? valueUSD : 0) +
+                              (previewAddAmount0 * getUsdPriceForSymbol(position.token0.symbol)) +
+                              (previewAddAmount1 * getUsdPriceForSymbol(position.token1.symbol))
+                            : !showInterimConfirmation && (previewRemoveAmount0 > 0 || previewRemoveAmount1 > 0)
+                            ? (Number.isFinite(valueUSD) ? valueUSD : 0) -
+                              (previewRemoveAmount0 * getUsdPriceForSymbol(position.token0.symbol)) -
+                              (previewRemoveAmount1 * getUsdPriceForSymbol(position.token1.symbol))
+                            : (Number.isFinite(valueUSD) ? valueUSD : 0)
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Stacked Bars */}
+                    {positionBars && (
+                      <div className="flex flex-col gap-2">
+                        <div className="flex h-1 rounded-full overflow-hidden gap-0.5">
+                          <div
+                            className="h-full"
+                            style={{
+                              width: `${positionBars.token0Percent}%`,
+                              backgroundColor: token0Color
+                            }}
+                          />
+                          <div
+                            className="h-full"
+                            style={{
+                              width: `${positionBars.token1Percent}%`,
+                              backgroundColor: token1Color
+                            }}
+                          />
+                        </div>
+                        {/* Legend */}
+                        <div className="flex items-center gap-3">
+                          <div className="flex items-center gap-1.5">
+                            <div className="relative w-4 h-4 rounded-full overflow-hidden">
+                              <Image
+                                src={getTokenLogo(position.token0.symbol)}
+                                alt={position.token0.symbol}
+                                width={16}
+                                height={16}
+                              />
+                            </div>
+                            <span className="text-[11px] text-muted-foreground">
+                              {positionBars.token0Percent.toFixed(0)}%
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <div className="relative w-4 h-4 rounded-full overflow-hidden">
+                              <Image
+                                src={getTokenLogo(position.token1.symbol)}
+                                alt={position.token1.symbol}
+                                width={16}
+                                height={16}
+                              />
+                            </div>
+                            <span className="text-[11px] text-muted-foreground">
+                              {positionBars.token1Percent.toFixed(0)}%
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Token Amounts */}
+                    <div className="flex flex-col gap-4">
+                      {/* Token 0 Row */}
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="relative w-6 h-6 rounded-full overflow-hidden">
+                            <Image
+                              src={getTokenLogo(position.token0.symbol)}
+                              alt={position.token0.symbol}
+                              width={24}
+                              height={24}
+                            />
+                          </div>
+                          <span className="text-sm font-medium">
                             {new Intl.NumberFormat('en-US', {
                               style: 'currency',
                               currency: 'USD',
                               minimumFractionDigits: 2,
                               maximumFractionDigits: 2
-                            }).format(fee0USD)}
+                            }).format(
+                              !showInterimConfirmation && previewAddAmount0 > 0
+                                ? token0USD + (previewAddAmount0 * getUsdPriceForSymbol(position.token0.symbol))
+                                : !showInterimConfirmation && previewRemoveAmount0 > 0
+                                ? token0USD - (previewRemoveAmount0 * getUsdPriceForSymbol(position.token0.symbol))
+                                : token0USD
+                            )}
                           </span>
                         </div>
-                        <div className="text-xs text-muted-foreground">
-                          {feeAmount0 < 0.001 && feeAmount0 > 0
-                            ? "< 0.001"
-                            : feeAmount0.toLocaleString("en-US", { maximumFractionDigits: 6, minimumFractionDigits: 0 })
-                          } {position.token0.symbol}
+                        <div className="flex items-center gap-2">
+                          <div className="text-xs text-muted-foreground">
+                            {formatTokenDisplayAmount(position.token0.amount)} {position.token0.symbol}
+                          </div>
+                          {/* Preview indicator for token 0 - only show when NOT in interim confirmation */}
+                          {!showInterimConfirmation && previewAddAmount0 > 0 && (
+                            <span className="text-xs font-medium text-green-500">
+                              +{previewAddAmount0.toFixed(4)}
+                            </span>
+                          )}
+                          {!showInterimConfirmation && previewRemoveAmount0 > 0 && (
+                            <span className="text-xs font-medium text-red-500">
+                              -{previewRemoveAmount0.toFixed(4)}
+                            </span>
+                          )}
                         </div>
                       </div>
 
-                      {/* Fee 1 Row */}
+                      {/* Token 1 Row */}
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
                           <div className="relative w-6 h-6 rounded-full overflow-hidden">
@@ -664,25 +1503,570 @@ export function PositionDetailsModal({
                               currency: 'USD',
                               minimumFractionDigits: 2,
                               maximumFractionDigits: 2
-                            }).format(fee1USD)}
+                            }).format(
+                              !showInterimConfirmation && previewAddAmount1 > 0
+                                ? token1USD + (previewAddAmount1 * getUsdPriceForSymbol(position.token1.symbol))
+                                : !showInterimConfirmation && previewRemoveAmount1 > 0
+                                ? token1USD - (previewRemoveAmount1 * getUsdPriceForSymbol(position.token1.symbol))
+                                : token1USD
+                            )}
                           </span>
                         </div>
-                        <div className="text-xs text-muted-foreground">
-                          {feeAmount1 < 0.001 && feeAmount1 > 0
-                            ? "< 0.001"
-                            : feeAmount1.toLocaleString("en-US", { maximumFractionDigits: 6, minimumFractionDigits: 0 })
-                          } {position.token1.symbol}
+                        <div className="flex items-center gap-2">
+                          <div className="text-xs text-muted-foreground">
+                            {formatTokenDisplayAmount(position.token1.amount)} {position.token1.symbol}
+                          </div>
+                          {/* Preview indicator for token 1 - only show when NOT in interim confirmation */}
+                          {!showInterimConfirmation && previewAddAmount1 > 0 && (
+                            <span className="text-xs font-medium text-green-500">
+                              +{previewAddAmount1.toFixed(4)}
+                            </span>
+                          )}
+                          {!showInterimConfirmation && previewRemoveAmount1 > 0 && (
+                            <span className="text-xs font-medium text-red-500">
+                              -{previewRemoveAmount1.toFixed(4)}
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>
-                  ) : (
-                    <div className="text-xs text-muted-foreground">
-                      No fees earned yet
+                  </div>
+                  </div>
+
+                  {/* Fees Earned Section */}
+                  <div className="bg-container-secondary border border-dashed border-sidebar-border rounded-lg p-5">
+                  <div className="flex flex-col gap-5">
+                    {/* Label + Total Fees */}
+                    <div className="flex flex-col gap-2">
+                      <div className="text-[11px] text-muted-foreground uppercase tracking-wide">Fees Earned</div>
+                      <div className="text-xl font-semibold">
+                        {!showInterimConfirmation && (previewAddAmount0 > 0 || previewAddAmount1 > 0 || previewRemoveAmount0 > 0 || previewRemoveAmount1 > 0 || currentView === 'collect-fees') ? (
+                          <>-{new Intl.NumberFormat('en-US', {
+                            style: 'currency',
+                            currency: 'USD',
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2
+                          }).format(feesUSD)}</>
+                        ) : (
+                          new Intl.NumberFormat('en-US', {
+                            style: 'currency',
+                            currency: 'USD',
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2
+                          }).format(feesUSD)
+                        )}
+                      </div>
                     </div>
+
+                    {/* Stacked Bars for Fees */}
+                    {feesBars && (
+                      <div className="flex flex-col gap-2">
+                        <div className="flex h-1 rounded-full overflow-hidden gap-0.5">
+                          <div
+                            className="h-full"
+                            style={{
+                              width: `${feesBars.fee0Percent}%`,
+                              backgroundColor: token0Color
+                            }}
+                          />
+                          <div
+                            className="h-full"
+                            style={{
+                              width: `${feesBars.fee1Percent}%`,
+                              backgroundColor: token1Color
+                            }}
+                          />
+                        </div>
+                        {/* Legend */}
+                        <div className="flex items-center gap-3">
+                          <div className="flex items-center gap-1.5">
+                            <div className="relative w-4 h-4 rounded-full overflow-hidden">
+                              <Image
+                                src={getTokenLogo(position.token0.symbol)}
+                                alt={position.token0.symbol}
+                                width={16}
+                                height={16}
+                              />
+                            </div>
+                            <span className="text-[11px] text-muted-foreground">
+                              {feesBars.fee0Percent.toFixed(0)}%
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <div className="relative w-4 h-4 rounded-full overflow-hidden">
+                              <Image
+                                src={getTokenLogo(position.token1.symbol)}
+                                alt={position.token1.symbol}
+                                width={16}
+                                height={16}
+                              />
+                            </div>
+                            <span className="text-[11px] text-muted-foreground">
+                              {feesBars.fee1Percent.toFixed(0)}%
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Fee Amounts */}
+                    {!hasZeroFees ? (
+                      <div className="flex flex-col gap-4">
+                        {/* Fee 0 Row */}
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <div className="relative w-6 h-6 rounded-full overflow-hidden">
+                              <Image
+                                src={getTokenLogo(position.token0.symbol)}
+                                alt={position.token0.symbol}
+                                width={24}
+                                height={24}
+                              />
+                            </div>
+                            <span className="text-sm font-medium">
+                              {!showInterimConfirmation && (previewAddAmount0 > 0 || previewAddAmount1 > 0 || previewRemoveAmount0 > 0 || previewRemoveAmount1 > 0 || currentView === 'collect-fees') ? (
+                                <>-{new Intl.NumberFormat('en-US', {
+                                  style: 'currency',
+                                  currency: 'USD',
+                                  minimumFractionDigits: 2,
+                                  maximumFractionDigits: 2
+                                }).format(fee0USD)}</>
+                              ) : (
+                                new Intl.NumberFormat('en-US', {
+                                  style: 'currency',
+                                  currency: 'USD',
+                                  minimumFractionDigits: 2,
+                                  maximumFractionDigits: 2
+                                }).format(fee0USD)
+                              )}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="text-xs text-muted-foreground">
+                              {!showInterimConfirmation && (previewAddAmount0 > 0 || previewAddAmount1 > 0 || previewRemoveAmount0 > 0 || previewRemoveAmount1 > 0 || currentView === 'collect-fees')
+                                ? `-${feeAmount0 < 0.001 && feeAmount0 > 0 ? "< 0.001" : feeAmount0.toLocaleString("en-US", { maximumFractionDigits: 6, minimumFractionDigits: 0 })}`
+                                : feeAmount0 < 0.001 && feeAmount0 > 0
+                                ? "< 0.001"
+                                : feeAmount0.toLocaleString("en-US", { maximumFractionDigits: 6, minimumFractionDigits: 0 })
+                              } {position.token0.symbol}
+                            </div>
+                            {/* Preview indicator when collecting fees - only show when NOT in interim confirmation */}
+                            {!showInterimConfirmation && currentView === 'collect-fees' && !hasZeroFees && (
+                              <span className="text-xs font-medium text-red-500">
+                                -{feeAmount0.toFixed(4)}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Fee 1 Row */}
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <div className="relative w-6 h-6 rounded-full overflow-hidden">
+                              <Image
+                                src={getTokenLogo(position.token1.symbol)}
+                                alt={position.token1.symbol}
+                                width={24}
+                                height={24}
+                              />
+                            </div>
+                            <span className="text-sm font-medium">
+                              {!showInterimConfirmation && (previewAddAmount0 > 0 || previewAddAmount1 > 0 || previewRemoveAmount0 > 0 || previewRemoveAmount1 > 0 || currentView === 'collect-fees') ? (
+                                <>-{new Intl.NumberFormat('en-US', {
+                                  style: 'currency',
+                                  currency: 'USD',
+                                  minimumFractionDigits: 2,
+                                  maximumFractionDigits: 2
+                                }).format(fee1USD)}</>
+                              ) : (
+                                new Intl.NumberFormat('en-US', {
+                                  style: 'currency',
+                                  currency: 'USD',
+                                  minimumFractionDigits: 2,
+                                  maximumFractionDigits: 2
+                                }).format(fee1USD)
+                              )}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="text-xs text-muted-foreground">
+                              {!showInterimConfirmation && (previewAddAmount0 > 0 || previewAddAmount1 > 0 || previewRemoveAmount0 > 0 || previewRemoveAmount1 > 0 || currentView === 'collect-fees')
+                                ? `-${feeAmount1 < 0.001 && feeAmount1 > 0 ? "< 0.001" : feeAmount1.toLocaleString("en-US", { maximumFractionDigits: 6, minimumFractionDigits: 0 })}`
+                                : feeAmount1 < 0.001 && feeAmount1 > 0
+                                ? "< 0.001"
+                                : feeAmount1.toLocaleString("en-US", { maximumFractionDigits: 6, minimumFractionDigits: 0 })
+                              } {position.token1.symbol}
+                            </div>
+                            {/* Preview indicator when collecting fees - only show when NOT in interim confirmation */}
+                            {!showInterimConfirmation && currentView === 'collect-fees' && !hasZeroFees && (
+                              <span className="text-xs font-medium text-red-500">
+                                -{feeAmount1.toFixed(4)}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-xs text-muted-foreground">
+                        No fees earned yet
+                      </div>
+                    )}
+                  </div>
+                  </div>
+                </div>
+
+              {/* Form Panel - Right side in action views */}
+              <div className="bg-container-secondary border border-sidebar-border rounded-lg p-5">
+                  {/* Keep FormPanel mounted but hidden to preserve state */}
+                  <div className={showInterimConfirmation ? "hidden" : ""}>
+                    {/* Back Button */}
+                    <button
+                      onClick={handleBackToDefault}
+                      className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors mb-4"
+                    >
+                      <ChevronLeft className="h-3.5 w-3.5" />
+                      Back
+                    </button>
+
+                    {/* Form Content Based on View */}
+                    {currentView === 'add-liquidity' && (
+                      <>
+                        {/* Use FormPanel for UI but intercept amounts for our state */}
+                        <AddLiquidityFormPanel
+                          position={position as any}
+                          feesForIncrease={{ amount0: prefetchedRaw0 || '0', amount1: prefetchedRaw1 || '0' }}
+                          onSuccess={handleAddLiquiditySuccess}
+                          onAmountsChange={(amt0, amt1) => {
+                            // Sync FormPanel amounts to our modal state
+                            setIncreaseAmount0(amt0.toString());
+                            setIncreaseAmount1(amt1.toString());
+                            // Also update preview
+                            handleAddAmountsChange(amt0, amt1);
+                          }}
+                          hideContinueButton={true}
+                        />
+
+                        {/* Our custom Continue button */}
+                        <Button
+                          onClick={() => {
+                            const amount0Num = parseFloat(increaseAmount0 || "0");
+                            const amount1Num = parseFloat(increaseAmount1 || "0");
+
+                            if (amount0Num <= 0 && amount1Num <= 0) {
+                              toast.error('Missing Amount', {
+                                icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
+                                description: 'Please enter at least one amount to add.'
+                              });
+                              return;
+                            }
+
+                            setShowInterimConfirmation(true);
+                          }}
+                          disabled={parseFloat(increaseAmount0 || "0") <= 0 && parseFloat(increaseAmount1 || "0") <= 0}
+                          className={cn(
+                            "w-full mt-4",
+                            (parseFloat(increaseAmount0 || "0") <= 0 && parseFloat(increaseAmount1 || "0") <= 0) ?
+                              "relative border border-sidebar-border bg-button px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75" :
+                              "text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90"
+                          )}
+                          style={(parseFloat(increaseAmount0 || "0") <= 0 && parseFloat(increaseAmount1 || "0") <= 0) ?
+                            { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } :
+                            undefined
+                          }
+                        >
+                          Continue
+                        </Button>
+                      </>
+                    )}
+
+                    {currentView === 'remove-liquidity' && (
+                      <>
+                        {/* Use FormPanel for UI but intercept amounts for our state */}
+                        <RemoveLiquidityFormPanel
+                          position={position as any}
+                          feesForWithdraw={{ amount0: prefetchedRaw0 || '0', amount1: prefetchedRaw1 || '0' }}
+                          onSuccess={handleRemoveLiquiditySuccess}
+                          onAmountsChange={(amt0, amt1) => {
+                            // Sync FormPanel amounts to our modal state
+                            setWithdrawAmount0(amt0.toString());
+                            setWithdrawAmount1(amt1.toString());
+                            // Also update preview
+                            handleRemoveAmountsChange(amt0, amt1);
+                          }}
+                          hideContinueButton={true}
+                        />
+
+                        {/* Our custom Continue button */}
+                        <Button
+                          onClick={handleConfirmWithdraw}
+                          disabled={isDecreasingLiquidity || (!withdrawAmount0 && !withdrawAmount1) || (parseFloat(withdrawAmount0 || '0') <= 0 && parseFloat(withdrawAmount1 || '0') <= 0)}
+                          className={cn(
+                            "w-full mt-4",
+                            (parseFloat(withdrawAmount0 || "0") <= 0 && parseFloat(withdrawAmount1 || "0") <= 0) ?
+                              "relative border border-sidebar-border bg-button px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75" :
+                              "text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90"
+                          )}
+                          style={(parseFloat(withdrawAmount0 || "0") <= 0 && parseFloat(withdrawAmount1 || "0") <= 0) ?
+                            { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } :
+                            undefined
+                          }
+                        >
+                          <span className={isDecreasingLiquidity ? "animate-pulse" : ""}>
+                            Continue
+                          </span>
+                        </Button>
+                      </>
+                    )}
+
+                    {currentView === 'collect-fees' && (
+                      <CollectFeesFormPanel
+                        position={position as any}
+                        prefetchedRaw0={prefetchedRaw0}
+                        prefetchedRaw1={prefetchedRaw1}
+                        onSuccess={handleCollectFeesSuccess}
+                        getUsdPriceForSymbol={getUsdPriceForSymbol}
+                      />
+                    )}
+                  </div>
+
+                  {showInterimConfirmation && (
+                    <>
+                      {/* Interim Confirmation View - "You Will Add/Remove/Collect" */}
+                      <div className="space-y-4">
+                        {/* Header with back arrow */}
+                        <div className="flex items-center gap-2">
+                          <ChevronLeft
+                            className="h-4 w-4 text-muted-foreground cursor-pointer hover:text-white transition-colors"
+                            onClick={() => setShowInterimConfirmation(false)}
+                          />
+                          <span className="text-sm font-medium">
+                            {currentView === 'add-liquidity' && 'You Will Add'}
+                            {currentView === 'remove-liquidity' && 'You Will Receive'}
+                            {currentView === 'collect-fees' && 'You Will Collect'}
+                          </span>
+                        </div>
+
+                        {/* Main amounts section with large icons */}
+                        <div className="rounded-lg bg-container p-4 border border-sidebar-border/60">
+                          <div className="space-y-4">
+                            {/* Token 0 */}
+                            <div className="flex justify-between items-start">
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-2">
+                                  <div className="text-xl font-medium">
+                                    {formatTokenDisplayAmount((previewAddAmount0 || previewRemoveAmount0 || 0).toString())}
+                                  </div>
+                                  <span className="text-sm text-muted-foreground">{position.token0.symbol}</span>
+                                </div>
+                                <div className="text-xs text-muted-foreground">
+                                  {formatUSD((previewAddAmount0 || previewRemoveAmount0 || 0) * getUsdPriceForSymbol(position.token0.symbol))}
+                                </div>
+                              </div>
+                              <Image
+                                src={getTokenLogo(position.token0.symbol)}
+                                alt={position.token0.symbol}
+                                width={40}
+                                height={40}
+                                className="rounded-full"
+                              />
+                            </div>
+
+                            {/* Token 1 */}
+                            <div className="flex justify-between items-start">
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-2">
+                                  <div className="text-xl font-medium">
+                                    {formatTokenDisplayAmount((previewAddAmount1 || previewRemoveAmount1 || 0).toString())}
+                                  </div>
+                                  <span className="text-sm text-muted-foreground">{position.token1.symbol}</span>
+                                </div>
+                                <div className="text-xs text-muted-foreground">
+                                  {formatUSD((previewAddAmount1 || previewRemoveAmount1 || 0) * getUsdPriceForSymbol(position.token1.symbol))}
+                                </div>
+                              </div>
+                              <Image
+                                src={getTokenLogo(position.token1.symbol)}
+                                alt={position.token1.symbol}
+                                width={40}
+                                height={40}
+                                className="rounded-full"
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Includes uncollected fees section - Only show for Add/Remove when fees exist */}
+                        {(currentView === 'add-liquidity' || currentView === 'remove-liquidity') && (() => {
+                          const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), TOKEN_DEFINITIONS[position.token0.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
+                          const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), TOKEN_DEFINITIONS[position.token1.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
+
+                          if (fee0Amount <= 0 && fee1Amount <= 0) return null;
+
+                          return (
+                            <div className="p-3 border border-dashed rounded-md bg-muted/10 space-y-2">
+                              <div className="text-xs font-medium text-muted-foreground mb-2">Includes uncollected fees:</div>
+
+                              <div className="flex justify-between items-center">
+                                <div className="flex items-center gap-2">
+                                  <Image src={getTokenLogo(position.token0.symbol)} alt={position.token0.symbol} width={16} height={16} className="rounded-full" />
+                                  <span className="text-xs text-muted-foreground">{position.token0.symbol} Fees</span>
+                                </div>
+                                <div className="text-right">
+                                  <div className="text-xs font-medium">
+                                    {fee0Amount === 0 ? '0' : fee0Amount > 0 && fee0Amount < 0.0001 ? '< 0.0001' : `+${fee0Amount.toFixed(6).replace(/\.?0+$/, '')}`}
+                                  </div>
+                                  <div className="text-xs text-muted-foreground">
+                                    {formatUSD(fee0Amount * getUsdPriceForSymbol(position.token0.symbol))}
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="flex justify-between items-center">
+                                <div className="flex items-center gap-2">
+                                  <Image src={getTokenLogo(position.token1.symbol)} alt={position.token1.symbol} width={16} height={16} className="rounded-full" />
+                                  <span className="text-xs text-muted-foreground">{position.token1.symbol} Fees</span>
+                                </div>
+                                <div className="text-right">
+                                  <div className="text-xs font-medium">
+                                    {fee1Amount === 0 ? '0' : fee1Amount > 0 && fee1Amount < 0.0001 ? '< 0.0001' : `+${fee1Amount.toFixed(6).replace(/\.?0+$/, '')}`}
+                                  </div>
+                                  <div className="text-xs text-muted-foreground">
+                                    {formatUSD(fee1Amount * getUsdPriceForSymbol(position.token1.symbol))}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })()}
+
+                        {/* Additional context info OR Transaction Steps (conditional) */}
+                        {!showTransactionOverview ? (
+                          <div className="space-y-1.5">
+                            <div className="flex items-center justify-between text-xs text-muted-foreground">
+                              <span>Current Price:</span>
+                              <span className="text-xs text-muted-foreground">
+                                {(() => {
+                                  const price0 = getUsdPriceForSymbol(position.token0.symbol);
+                                  const price1 = getUsdPriceForSymbol(position.token1.symbol);
+                                  if (price0 === 0 || price1 === 0) return "N/A";
+                                  const ratio = price0 / price1;
+                                  const decimals = ratio < 0.1 ? 3 : 2;
+                                  return `1 ${position.token0.symbol} = ${ratio.toFixed(decimals)} ${position.token1.symbol}`;
+                                })()}
+                              </span>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="space-y-1.5">
+                            <div className="flex items-center justify-between text-xs text-muted-foreground">
+                              <span>Token Approvals</span>
+                              <span>
+                                {(increaseStep === 'approve' && increaseIsWorking) ? (
+                                  <RefreshCwIcon className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <span className={cn("text-xs font-mono", increaseCompletedERC20ApprovalsCount === increaseInvolvedTokensCount && increaseInvolvedTokensCount > 0 ? 'text-green-500' : 'text-muted-foreground')}>
+                                    {`${increaseCompletedERC20ApprovalsCount}/${increaseInvolvedTokensCount > 0 ? increaseInvolvedTokensCount : '-'}`}
+                                  </span>
+                                )}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between text-xs text-muted-foreground">
+                              <span>Permit Signature</span>
+                              <span>
+                                {(increaseStep === 'permit' && increaseIsWorking) ? (
+                                  <RefreshCwIcon className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <span className={cn("text-xs font-mono", increaseBatchPermitSigned ? 'text-green-500' : 'text-muted-foreground')}>
+                                    {increaseBatchPermitSigned ? '1/1' : '0/1'}
+                                  </span>
+                                )}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between text-xs text-muted-foreground">
+                              <span>Deposit Transaction</span>
+                              <span>
+                                {(increaseStep === 'deposit' && isIncreasingLiquidity) ? (
+                                  <RefreshCwIcon className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <span className={cn("text-xs font-mono", isIncreaseSuccess ? 'text-green-500' : 'text-muted-foreground')}>
+                                    {isIncreaseSuccess ? '1/1' : '0/1'}
+                                  </span>
+                                )}
+                              </span>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Back/Confirm buttons */}
+                        <div className="grid grid-cols-2 gap-3 pt-2">
+                          <Button
+                            variant="outline"
+                            className="relative border border-sidebar-border bg-button px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75"
+                            onClick={() => {
+                              if (showTransactionOverview) {
+                                setShowTransactionOverview(false);
+                                setTxStarted(false);
+                              } else {
+                                setShowInterimConfirmation(false);
+                              }
+                            }}
+                            disabled={
+                              currentView === 'add-liquidity' ? (increaseIsWorking || isIncreasingLiquidity) :
+                              currentView === 'remove-liquidity' ? isDecreasingLiquidity :
+                              false
+                            }
+                            style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+                          >
+                            Back
+                          </Button>
+
+                          <Button
+                            id="modal-interim-confirm-button"
+                            className="text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90"
+                            onClick={() => {
+                              if (showTransactionOverview) {
+                                // Execute transaction based on current view
+                                if (currentView === 'add-liquidity') {
+                                  handleExecuteTransaction();
+                                } else if (currentView === 'remove-liquidity') {
+                                  handleExecuteWithdrawTransaction();
+                                }
+                              } else {
+                                // Show transaction overview
+                                if (currentView === 'add-liquidity') {
+                                  setShowTransactionOverview(true);
+                                } else if (currentView === 'remove-liquidity') {
+                                  handleFinalConfirmWithdraw();
+                                }
+                              }
+                            }}
+                            disabled={
+                              currentView === 'add-liquidity' ? (increaseIsWorking || isIncreasingLiquidity) :
+                              currentView === 'remove-liquidity' ? (isDecreasingLiquidity || isWithdrawCalculating) :
+                              false
+                            }
+                          >
+                            <span className={
+                              currentView === 'add-liquidity' ? (increaseIsWorking || isIncreasingLiquidity ? "animate-pulse" : "") :
+                              currentView === 'remove-liquidity' ? (isDecreasingLiquidity ? "animate-pulse" : "") :
+                              ""
+                            }>
+                              {currentView === 'add-liquidity' ? (
+                                increaseIsWorking || isIncreasingLiquidity ? "Processing..." :
+                                showTransactionOverview ? (increaseStep === 'permit' ? "Sign Permit" : "Add Liquidity") :
+                                "Confirm"
+                              ) : currentView === 'remove-liquidity' ? (
+                                isDecreasingLiquidity ? "Processing..." : "Confirm"
+                              ) : "Confirm"}
+                            </span>
+                          </Button>
+                        </div>
+                      </div>
+                    </>
                   )}
                 </div>
               </div>
-            </div>
+            )}
           </div>
         </div>
       </div>
