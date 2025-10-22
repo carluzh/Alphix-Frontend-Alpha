@@ -37,30 +37,19 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Maintenance mode: Only '/' and '/login' (and static) are freely accessible.
+  // Maintenance mode: Redirect everything to /maintenance (full lockdown)
   if (maintenanceEnabled) {
-    // Allow login page and Next internal/static assets
+    // Allow maintenance page itself, maintenance status API, and Next internal/static assets
     if (
-      pathname.startsWith('/login') ||
+      pathname.startsWith('/maintenance') ||
+      pathname.startsWith('/api/maintenance-status') ||
       pathname.startsWith('/_next') ||
-      pathname.includes('.')
+      pathname.includes('.') // Static files like images, fonts, etc.
     ) {
       return NextResponse.next();
     }
 
-    // All other paths require auth during maintenance
-    if (!authToken || authToken.value !== 'valid') {
-      console.log(`[MIDDLEWARE] (Maintenance) Redirecting ${pathname} to login - no valid auth`);
-      const loginUrl = new URL('/login', request.url);
-      return NextResponse.redirect(loginUrl);
-    }
-
-    // If already on /maintenance, allow
-    if (pathname.startsWith('/maintenance')) {
-      return NextResponse.next();
-    }
-
-    // Redirect any other path to /maintenance
+    // Redirect everything else (including /login) to /maintenance
     console.log(`[MIDDLEWARE] (Maintenance) Redirecting ${pathname} to /maintenance`);
     const maintenanceUrl = new URL('/maintenance', request.url);
     return NextResponse.redirect(maintenanceUrl);
