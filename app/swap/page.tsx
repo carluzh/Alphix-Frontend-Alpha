@@ -43,7 +43,7 @@ export default function Page() {
       
       <div className="flex flex-1 flex-col relative"> {/* Added relative positioning */}
         <div className="flex flex-1 justify-center py-10 md:py-16">
-          <div className="w-full max-w-lg">
+          <div className="w-full max-w-2xl">
             <SwapInterface 
               currentRoute={currentRoute}
               setCurrentRoute={setCurrentRoute}

@@ -159,7 +159,7 @@ export function PositionDetailsModal({
   const [showInterimConfirmation, setShowInterimConfirmation] = useState(false);
   const [showTransactionOverview, setShowTransactionOverview] = useState(false);
 
-  // Add Liquidity transaction state (copied from AddLiquidityModal)
+  // Add Liquidity transaction state
   const [increaseAmount0, setIncreaseAmount0] = useState<string>("");
   const [increaseAmount1, setIncreaseAmount1] = useState<string>("");
   const [increaseStep, setIncreaseStep] = useState<'input' | 'approve' | 'permit' | 'deposit'>('input');
@@ -170,6 +170,7 @@ export function PositionDetailsModal({
   const [signedBatchPermit, setSignedBatchPermit] = useState<null | { owner: `0x${string}`; permitBatch: any; signature: string }>(null);
   const [increaseCompletedERC20ApprovalsCount, setIncreaseCompletedERC20ApprovalsCount] = useState(0);
   const [increaseInvolvedTokensCount, setIncreaseInvolvedTokensCount] = useState(0);
+  const [increaseAlreadyApprovedCount, setIncreaseAlreadyApprovedCount] = useState(0);
   const [approvalWiggleCount, setApprovalWiggleCount] = useState(0);
 
   // Hooks for transaction
@@ -179,21 +180,16 @@ export function PositionDetailsModal({
   const { isLoading: isIncreaseApproving, isSuccess: isIncreaseApproved } = useWaitForTransactionReceipt({ hash: incApproveHash });
   const approvalWiggleControls = useAnimation();
 
-  // useIncreaseLiquidity hook
   const {
     increaseLiquidity,
     isLoading: isIncreasingLiquidity,
     isSuccess: isIncreaseSuccess,
     hash: increaseTxHash
   } = useIncreaseLiquidity({
-    onLiquidityIncreased: (info) => {
-      console.log('[PositionDetailsModal] Liquidity increased:', info);
-      // Don't call onAddLiquidity() here - let AddLiquidityFormPanel handle the success flow
-      // onAddLiquidity() will be called when user clicks "Done" in the success view
-    },
+    onLiquidityIncreased: () => setShowInterimConfirmation(false),
   });
 
-  // Remove Liquidity transaction state (copied from WithdrawLiquidityModal)
+  // Remove Liquidity transaction state
   const [withdrawAmount0, setWithdrawAmount0] = useState<string>("");
   const [withdrawAmount1, setWithdrawAmount1] = useState<string>("");
   const [withdrawActiveInputSide, setWithdrawActiveInputSide] = useState<'amount0' | 'amount1' | null>(null);
@@ -211,12 +207,11 @@ export function PositionDetailsModal({
     hash: decreaseTxHash
   } = useDecreaseLiquidity({
     onLiquidityDecreased: () => {
-      console.log('[PositionDetailsModal] Liquidity decreased');
       onWithdraw(); // Trigger parent refresh
     },
   });
 
-  // Check what ERC20 approvals are needed (copied from AddLiquidityModal)
+  // Check what ERC20 approvals are needed
   const checkIncreaseApprovals = useCallback(async (): Promise<TokenSymbol[]> => {
     if (!accountAddress || !walletChainId) return [];
 
@@ -245,20 +240,30 @@ export function PositionDetailsModal({
           needsApproval.push(token.symbol);
         }
       } catch (error) {
-        console.error(`Error checking allowance for ${token.symbol}:`, error);
+        // Skip token if allowance check fails
       }
     }
 
     return needsApproval;
   }, [accountAddress, walletChainId, position, increaseAmount0, increaseAmount1]);
 
-  // Prepare increase transaction (copied from AddLiquidityModal)
+  // Prepare increase transaction
   const handlePrepareIncrease = useCallback(async () => {
     setIncreaseIsWorking(true);
     try {
       const needsApprovals = await checkIncreaseApprovals();
+
+      // Calculate total tokens with amounts
+      const tokens = [
+        { symbol: position.token0.symbol, amount: increaseAmount0 },
+        { symbol: position.token1.symbol, amount: increaseAmount1 }
+      ];
+      const tokensWithAmounts = tokens.filter(t => t.amount && parseFloat(t.amount) > 0);
+      const alreadyApproved = tokensWithAmounts.length - needsApprovals.length;
+
       setIncreaseNeedsERC20Approvals(needsApprovals);
-      setIncreaseInvolvedTokensCount(needsApprovals.length);
+      setIncreaseInvolvedTokensCount(tokensWithAmounts.length);
+      setIncreaseAlreadyApprovedCount(alreadyApproved);
 
       if (needsApprovals.length > 0) {
         setIncreaseStep('approve');
@@ -275,14 +280,13 @@ export function PositionDetailsModal({
         setIncreasePreparedTxData({ needsApproval: false });
       }
     } catch (error: any) {
-      console.error('Prepare increase error:', error);
       toast.error("Preparation Error", { description: error.message || "Failed to prepare transaction", icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }) });
     } finally {
       setIncreaseIsWorking(false);
     }
-  }, [checkIncreaseApprovals]);
+  }, [checkIncreaseApprovals, position.token0.symbol, position.token1.symbol, increaseAmount0, increaseAmount1]);
 
-  // Handle ERC20 approvals (copied from AddLiquidityModal)
+  // Handle ERC20 approvals
   const handleIncreaseApprove = useCallback(async () => {
     if (!increasePreparedTxData?.needsApproval || increasePreparedTxData.approvalType !== 'ERC20_TO_PERMIT2') return;
 
@@ -311,7 +315,7 @@ export function PositionDetailsModal({
     }
   }, [increasePreparedTxData, approveERC20Async, resetIncreaseApprove]);
 
-  // Handle permit signature (copied from AddLiquidityModal)
+  // Handle permit signature
   const handleIncreasePermit = useCallback(async () => {
     if (!position || !accountAddress || !walletChainId) return;
     if (increaseBatchPermitSigned || increaseStep !== 'permit') return;
@@ -371,7 +375,7 @@ export function PositionDetailsModal({
     }
   }, [position, accountAddress, walletChainId, signTypedDataAsync, increaseBatchPermitSigned, increaseStep]);
 
-  // Handle final transaction execution (copied from AddLiquidityModal)
+  // Handle final transaction execution
   const handleExecuteTransaction = async () => {
     if (!position) return;
 
@@ -398,12 +402,11 @@ export function PositionDetailsModal({
         // @ts-ignore
         increaseLiquidity(data, signedBatchPermit ? { batchPermit: signedBatchPermit } : undefined);
       } catch (e) {
-        console.error('[modal] increaseLiquidity call threw:', e);
       }
     }
   };
 
-  // Monitor approval confirmations and update step (copied from AddLiquidityModal)
+  // Monitor approval confirmations and update step
   useEffect(() => {
     if (!isIncreaseApproved || !increasePreparedTxData) return;
 
@@ -438,7 +441,6 @@ export function PositionDetailsModal({
               stillNeedsApprovals.push(token.symbol);
             }
           } catch (error) {
-            console.error(`Error checking allowance for ${token.symbol}:`, error);
             stillNeedsApprovals.push(token.symbol);
           }
         }
@@ -479,7 +481,6 @@ export function PositionDetailsModal({
         setIncreaseCompletedERC20ApprovalsCount(prev => prev + 1);
         resetIncreaseApprove();
       } catch (error) {
-        console.error('Error re-checking allowances:', error);
         toast.error("Approval Check Failed", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }) });
         setIncreaseIsWorking(false);
         resetIncreaseApprove();
@@ -489,7 +490,7 @@ export function PositionDetailsModal({
     recheckAllowances();
   }, [isIncreaseApproved, increasePreparedTxData, accountAddress, position, increaseAmount0, increaseAmount1, resetIncreaseApprove]);
 
-  // Auto-prepare transaction when showing transaction overview (copied from AddLiquidityModal)
+  // Auto-prepare transaction when showing transaction overview
   useEffect(() => {
     if (showTransactionOverview && currentView === 'add-liquidity') {
       if (increaseStep === 'input') {
@@ -498,7 +499,7 @@ export function PositionDetailsModal({
     }
   }, [showTransactionOverview, currentView, increaseStep, handlePrepareIncrease]);
 
-  // Remove Liquidity handler functions (copied from WithdrawLiquidityModal)
+  // Remove Liquidity handler functions
   const handleConfirmWithdraw = useCallback(() => {
     if (!position || (!withdrawAmount0 && !withdrawAmount1)) {
       toast.error("Invalid Amount", {
@@ -552,7 +553,6 @@ export function PositionDetailsModal({
   const handleExecuteWithdrawTransaction = useCallback(() => {
     if (!position) return;
 
-    console.log('[PositionDetailsModal] handleExecuteWithdrawTransaction called');
 
     // Map position token addresses to correct token symbols
     const token0Symbol = getTokenSymbolByAddress(position.token0.address);
@@ -691,14 +691,20 @@ export function PositionDetailsModal({
 
   // Handlers for form panel callbacks
   const handleAddLiquiditySuccess = useCallback(() => {
-    onClose();
-    onAddLiquidity(); // Trigger parent refresh
-  }, [onClose, onAddLiquidity]);
+    // Reset to default view instead of closing modal
+    setCurrentView('default');
+    setIncreaseAmount0("");
+    setIncreaseAmount1("");
+    setShowInterimConfirmation(false);
+    setShowTransactionOverview(false);
+  }, []);
 
   const handleRemoveLiquiditySuccess = useCallback(() => {
-    onClose();
-    onWithdraw(); // Trigger parent refresh
-  }, [onClose, onWithdraw]);
+    // Reset to default view instead of closing modal
+    setCurrentView('default');
+    setWithdrawAmount0("");
+    setWithdrawAmount1("");
+  }, []);
 
   const handleCollectFeesSuccess = useCallback(() => {
     onClose();
@@ -1734,6 +1740,7 @@ export function PositionDetailsModal({
                       <>
                         {/* Use FormPanel for UI but intercept amounts for our state */}
                         <AddLiquidityFormPanel
+                          key="add-liquidity-form"
                           position={position as any}
                           feesForIncrease={{ amount0: prefetchedRaw0 || '0', amount1: prefetchedRaw1 || '0' }}
                           onSuccess={handleAddLiquiditySuccess}
@@ -1745,38 +1752,42 @@ export function PositionDetailsModal({
                             handleAddAmountsChange(amt0, amt1);
                           }}
                           hideContinueButton={true}
+                          externalIsSuccess={isIncreaseSuccess}
+                          externalTxHash={increaseTxHash}
                         />
 
-                        {/* Our custom Continue button */}
-                        <Button
-                          onClick={() => {
-                            const amount0Num = parseFloat(increaseAmount0 || "0");
-                            const amount1Num = parseFloat(increaseAmount1 || "0");
+                        {/* Our custom Continue button - hide when transaction succeeds */}
+                        {!isIncreaseSuccess && (
+                          <Button
+                            onClick={() => {
+                              const amount0Num = parseFloat(increaseAmount0 || "0");
+                              const amount1Num = parseFloat(increaseAmount1 || "0");
 
-                            if (amount0Num <= 0 && amount1Num <= 0) {
-                              toast.error('Missing Amount', {
-                                icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
-                                description: 'Please enter at least one amount to add.'
-                              });
-                              return;
+                              if (amount0Num <= 0 && amount1Num <= 0) {
+                                toast.error('Missing Amount', {
+                                  icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
+                                  description: 'Please enter at least one amount to add.'
+                                });
+                                return;
+                              }
+
+                              setShowInterimConfirmation(true);
+                            }}
+                            disabled={parseFloat(increaseAmount0 || "0") <= 0 && parseFloat(increaseAmount1 || "0") <= 0}
+                            className={cn(
+                              "w-full mt-4",
+                              (parseFloat(increaseAmount0 || "0") <= 0 && parseFloat(increaseAmount1 || "0") <= 0) ?
+                                "relative border border-sidebar-border bg-button px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75" :
+                                "text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90"
+                            )}
+                            style={(parseFloat(increaseAmount0 || "0") <= 0 && parseFloat(increaseAmount1 || "0") <= 0) ?
+                              { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } :
+                              undefined
                             }
-
-                            setShowInterimConfirmation(true);
-                          }}
-                          disabled={parseFloat(increaseAmount0 || "0") <= 0 && parseFloat(increaseAmount1 || "0") <= 0}
-                          className={cn(
-                            "w-full mt-4",
-                            (parseFloat(increaseAmount0 || "0") <= 0 && parseFloat(increaseAmount1 || "0") <= 0) ?
-                              "relative border border-sidebar-border bg-button px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75" :
-                              "text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90"
-                          )}
-                          style={(parseFloat(increaseAmount0 || "0") <= 0 && parseFloat(increaseAmount1 || "0") <= 0) ?
-                            { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } :
-                            undefined
-                          }
-                        >
+                          >
                           Continue
-                        </Button>
+                          </Button>
+                        )}
                       </>
                     )}
 
@@ -1965,8 +1976,8 @@ export function PositionDetailsModal({
                                 {(increaseStep === 'approve' && increaseIsWorking) ? (
                                   <RefreshCwIcon className="h-4 w-4 animate-spin" />
                                 ) : (
-                                  <span className={cn("text-xs font-mono", increaseCompletedERC20ApprovalsCount === increaseInvolvedTokensCount && increaseInvolvedTokensCount > 0 ? 'text-green-500' : 'text-muted-foreground')}>
-                                    {`${increaseCompletedERC20ApprovalsCount}/${increaseInvolvedTokensCount > 0 ? increaseInvolvedTokensCount : '-'}`}
+                                  <span className={cn("text-xs font-mono", (increaseAlreadyApprovedCount + increaseCompletedERC20ApprovalsCount) === increaseInvolvedTokensCount && increaseInvolvedTokensCount > 0 ? 'text-green-500' : 'text-muted-foreground')}>
+                                    {`${increaseAlreadyApprovedCount + increaseCompletedERC20ApprovalsCount}/${increaseInvolvedTokensCount > 0 ? increaseInvolvedTokensCount : '-'}`}
                                   </span>
                                 )}
                               </span>

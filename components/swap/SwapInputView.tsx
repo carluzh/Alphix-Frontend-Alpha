@@ -215,8 +215,8 @@ export function SwapInputView({
       <div className="mb-2">
         <motion.div
           className={cn(
-            "group rounded-lg bg-surface p-4 border transition-colors hover:border-primary",
-            isSellInputFocused ? "border-primary" : "border-transparent"
+            "group rounded-lg bg-surface p-4 border transition-colors hover:border-sidebar-primary",
+            isSellInputFocused ? "border-sidebar-primary" : "border-transparent"
           )}
           animate={wiggleControls}
         >
@@ -313,8 +313,8 @@ export function SwapInputView({
       <div className="mt-2">
         <div
           className={cn(
-            "group rounded-lg bg-surface p-4 border transition-colors hover:border-primary",
-            isBuyInputFocused ? "border-primary" : "border-transparent"
+            "group rounded-lg bg-surface p-4 border transition-colors hover:border-sidebar-primary",
+            isBuyInputFocused ? "border-sidebar-primary" : "border-transparent"
           )}
         >
         <div className="flex items-center justify-between mb-2">

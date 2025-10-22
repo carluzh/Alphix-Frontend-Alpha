@@ -10,22 +10,16 @@ import { useAccount, useBalance, useSignTypedData } from "wagmi";
 import { toast } from "sonner";
 import { usePercentageInput } from "@/hooks/usePercentageInput";
 import { TOKEN_DEFINITIONS, TokenSymbol } from "@/lib/pools-config";
-import { useIncreaseLiquidity, type IncreasePositionData } from "./useIncreaseLiquidity";
+import { useIncreaseLiquidity, type IncreasePositionData, providePreSignedIncreaseBatchPermit } from "./useIncreaseLiquidity";
 import { motion, useAnimation } from "framer-motion";
 import type { ProcessedPosition } from "../../pages/api/liquidity/get-positions";
 import { useAllPrices } from "@/components/data/hooks";
 import { sanitizeDecimalInput, cn, getTokenSymbolByAddress } from "@/lib/utils";
 import { preparePermit2BatchForNewPosition } from '@/lib/liquidity-utils';
-import { providePreSignedIncreaseBatchPermit } from './useIncreaseLiquidity';
 import { formatUnits } from "viem";
 import {
-  getTokenIcon,
-  formatCalculatedAmount,
-  getUSDPriceForSymbol,
-  calculateCorrespondingAmount,
-  PERMIT2_ADDRESS,
-  MAX_UINT256,
-  PERCENTAGE_OPTIONS
+  getTokenIcon, formatCalculatedAmount, getUSDPriceForSymbol,
+  calculateCorrespondingAmount, PERMIT2_ADDRESS, MAX_UINT256, PERCENTAGE_OPTIONS
 } from './liquidity-form-utils';
 
 interface AddLiquidityFormPanelProps {
@@ -34,6 +28,8 @@ interface AddLiquidityFormPanelProps {
   onSuccess: () => void;
   onAmountsChange?: (amount0: number, amount1: number) => void;
   hideContinueButton?: boolean;
+  externalIsSuccess?: boolean; // Success state from parent modal
+  externalTxHash?: string; // Tx hash from parent modal
 }
 
 export function AddLiquidityFormPanel({
@@ -41,7 +37,9 @@ export function AddLiquidityFormPanel({
   feesForIncrease,
   onSuccess,
   onAmountsChange,
-  hideContinueButton = false
+  hideContinueButton = false,
+  externalIsSuccess,
+  externalTxHash
 }: AddLiquidityFormPanelProps) {
   const { address: accountAddress, chainId } = useAccount();
   const { signTypedDataAsync } = useSignTypedData();
@@ -61,6 +59,8 @@ export function AddLiquidityFormPanel({
   const [increaseInvolvedTokensCount, setIncreaseInvolvedTokensCount] = useState(0);
   const [increaseAlreadyApprovedCount, setIncreaseAlreadyApprovedCount] = useState(0);
   const [isCalculating, setIsCalculating] = useState(false);
+  const [canAddToken0, setCanAddToken0] = useState(true);
+  const [canAddToken1, setCanAddToken1] = useState(true);
 
   const wiggleControls0 = useAnimation();
   const wiggleControls1 = useAnimation();
@@ -105,14 +105,24 @@ export function AddLiquidityFormPanel({
     }
   });
 
-  // Watch for transaction success (since PositionDetailsModal might be executing the tx)
   useEffect(() => {
-    if (isIncreaseSuccess && !showSuccessView) {
-      console.log('[AddLiquidityFormPanel] Transaction succeeded, showing success view');
-      setShowTransactionOverview(false); // Hide transaction overview
-      setShowSuccessView(true); // Show success view
+    if (externalIsSuccess || isIncreaseSuccess) {
+      setShowTransactionOverview(false);
+      setShowSuccessView(true);
     }
-  }, [isIncreaseSuccess, showSuccessView]);
+  }, [isIncreaseSuccess, externalIsSuccess]);
+
+  useEffect(() => {
+    if (!position.isInRange) {
+      const hasToken0 = parseFloat(position.token0.amount) > 0;
+      const hasToken1 = parseFloat(position.token1.amount) > 0;
+      setCanAddToken0(hasToken0 || (!hasToken0 && !hasToken1));
+      setCanAddToken1(hasToken1 && !hasToken0);
+    } else {
+      setCanAddToken0(true);
+      setCanAddToken1(true);
+    }
+  }, [position]);
 
   // Notify parent of amount changes for preview
   useEffect(() => {
@@ -125,51 +135,35 @@ export function AddLiquidityFormPanel({
 
   const calculateIncreaseAmount = useCallback(async (inputAmount: string, inputSide: 'amount0' | 'amount1') => {
     const version = ++calcVersionRef.current;
-
     if (!position || !inputAmount || parseFloat(inputAmount) <= 0) {
-      if (inputSide === 'amount0') setIncreaseAmount1("");
-      else setIncreaseAmount0("");
+      setIncreaseAmount0(inputSide === 'amount1' ? increaseAmount0 : "");
+      setIncreaseAmount1(inputSide === 'amount0' ? increaseAmount1 : "");
       return;
     }
 
     setIsCalculating(true);
-
     try {
-      // For out-of-range positions, don't calculate corresponding amount
       if (!position.isInRange) {
-        if (inputSide === 'amount0') {
-          setIncreaseAmount1("0");
-        } else {
-          setIncreaseAmount0("0");
-        }
+        inputSide === 'amount0' ? setIncreaseAmount1("0") : setIncreaseAmount0("0");
         setIsCalculating(false);
         return;
       }
 
-      // Get token symbols from position addresses
       const token0Symbol = getTokenSymbolByAddress(position.token0.address);
       const token1Symbol = getTokenSymbolByAddress(position.token1.address);
 
       if (!token0Symbol || !token1Symbol) {
-        // Fallback to simple ratio if token mapping fails
-        const correspondingAmount = calculateCorrespondingAmount(inputAmount, inputSide, position);
-        if (inputSide === 'amount0') {
-          setIncreaseAmount1(correspondingAmount);
-        } else {
-          setIncreaseAmount0(correspondingAmount);
-        }
+        const amount = calculateCorrespondingAmount(inputAmount, inputSide, position);
+        inputSide === 'amount0' ? setIncreaseAmount1(amount) : setIncreaseAmount0(amount);
         setIsCalculating(false);
         return;
       }
 
-      // Use API calculation that matches useIncreaseLiquidity hook logic
       const response = await fetch('/api/liquidity/calculate-liquidity-parameters', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          token0Symbol: token0Symbol,
-          token1Symbol: token1Symbol,
-          inputAmount: inputAmount,
+          token0Symbol, token1Symbol, inputAmount,
           inputTokenSymbol: inputSide === 'amount0' ? token0Symbol : token1Symbol,
           userTickLower: position.tickLower,
           userTickUpper: position.tickUpper,
@@ -177,46 +171,21 @@ export function AddLiquidityFormPanel({
         }),
       });
 
-      if (!response.ok) {
-        throw new Error(`API error: ${response.status}`);
+      if (response.ok && version === calcVersionRef.current) {
+        const result = await response.json();
+        const decimals = TOKEN_DEFINITIONS[inputSide === 'amount0' ? token1Symbol : token0Symbol]?.decimals || 18;
+        const amount = formatUnits(BigInt(result[inputSide === 'amount0' ? 'amount1' : 'amount0'] || '0'), decimals);
+        inputSide === 'amount0' ? setIncreaseAmount1(amount) : setIncreaseAmount0(amount);
       }
-
-      const result = await response.json();
-
-      // Only update if this is still the latest calculation
+    } catch (e) {
+      const fallback = calculateCorrespondingAmount(inputAmount, inputSide, position);
       if (version === calcVersionRef.current) {
-        if (inputSide === 'amount0') {
-          const token1Decimals = TOKEN_DEFINITIONS[token1Symbol]?.decimals || 18;
-          const amount1Display = formatUnits(BigInt(result.amount1 || '0'), token1Decimals);
-          setIncreaseAmount1(amount1Display);
-        } else {
-          const token0Decimals = TOKEN_DEFINITIONS[token0Symbol]?.decimals || 18;
-          const amount0Display = formatUnits(BigInt(result.amount0 || '0'), token0Decimals);
-          setIncreaseAmount0(amount0Display);
-        }
-      }
-    } catch (error) {
-      console.error('[AddLiquidityFormPanel] Error calculating increase amount:', error);
-
-      // Fallback to simple ratio calculation on API error
-      try {
-        const correspondingAmount = calculateCorrespondingAmount(inputAmount, inputSide, position);
-        if (version === calcVersionRef.current) {
-          if (inputSide === 'amount0') {
-            setIncreaseAmount1(correspondingAmount);
-          } else {
-            setIncreaseAmount0(correspondingAmount);
-          }
-        }
-      } catch (fallbackError) {
-        console.error('[AddLiquidityFormPanel] Fallback calculation error:', fallbackError);
+        inputSide === 'amount0' ? setIncreaseAmount1(fallback) : setIncreaseAmount0(fallback);
       }
     } finally {
-      if (version === calcVersionRef.current) {
-        setIsCalculating(false);
-      }
+      if (version === calcVersionRef.current) setIsCalculating(false);
     }
-  }, [position, chainId]);
+  }, [position, chainId, increaseAmount0, increaseAmount1]);
 
   const handleIncreaseAmountChangeWithWiggle = (e: React.ChangeEvent<HTMLInputElement>, side: 'amount0' | 'amount1') => {
     const sanitized = sanitizeDecimalInput(e.target.value);
@@ -269,7 +238,7 @@ export function AddLiquidityFormPanel({
             needsApproval.push(token.symbol);
           }
         } catch (error) {
-          console.error(`Error checking allowance for ${token.symbol}:`, error);
+          // Skip token if allowance check fails
         }
       }
 
@@ -295,7 +264,6 @@ export function AddLiquidityFormPanel({
         setIncreasePreparedTxData({ needsApproval: false });
       }
     } catch (error: any) {
-      console.error('Prepare increase error:', error);
       toast.error("Preparation Error", { description: error.message || "Failed to prepare transaction", icon: <OctagonX className="h-4 w-4 text-red-500" /> });
     } finally {
       setIncreaseIsWorking(false);
@@ -443,36 +411,21 @@ export function AddLiquidityFormPanel({
         // @ts-ignore opts supported by hook
         increaseLiquidity(data, signedBatchPermit ? { batchPermit: signedBatchPermit } : undefined);
       } catch (e) {
-        console.error('[AddLiquidityFormPanel] increaseLiquidity call threw', e);
+        // Error already handled by hook
       }
     }
   };
 
-  // Success view (SwapSuccessView-style layout)
   if (showSuccessView) {
     return (
-      <motion.div
-        key="success"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        transition={{ duration: 0.2 }}
-        className="space-y-4"
-      >
-        {/* Token Summary Card */}
+      <div className="space-y-4">
         <div className="rounded-lg border border-primary p-4 bg-muted/30">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <Image
-                src={getTokenIcon(position.token0.symbol)}
-                alt={position.token0.symbol}
-                width={32}
-                height={32}
-                className="rounded-full"
-              />
-              <div className="text-left flex flex-col">
-                <div className="font-medium flex items-baseline">
-                  <span className="text-sm">{increaseAmount0 || "0"}</span>
+              <Image src={getTokenIcon(position.token0.symbol)} alt="" width={32} height={32} className="rounded-full" />
+              <div>
+                <div className="font-medium">
+                  <span className="text-sm">{(parseFloat(increaseAmount0 || "0") || 0).toFixed(6)}</span>
                   <span className="ml-1 text-xs text-muted-foreground">{position.token0.symbol}</span>
                 </div>
                 <div className="text-xs text-muted-foreground">
@@ -480,84 +433,44 @@ export function AddLiquidityFormPanel({
                 </div>
               </div>
             </div>
-            <PlusIcon className="h-4 w-4 text-muted-foreground mx-2" />
+            <PlusIcon className="h-4 w-4 text-muted-foreground" />
             <div className="flex items-center gap-3">
-              <div className="text-right flex flex-col">
-                <div className="font-medium flex items-baseline">
-                  <span className="text-sm">{increaseAmount1 || "0"}</span>
+              <div className="text-right">
+                <div className="font-medium">
+                  <span className="text-sm">{(parseFloat(increaseAmount1 || "0") || 0).toFixed(6)}</span>
                   <span className="ml-1 text-xs text-muted-foreground">{position.token1.symbol}</span>
                 </div>
                 <div className="text-xs text-muted-foreground">
                   {formatCalculatedAmount(parseFloat(increaseAmount1 || "0") * getUSDPriceForSymbol(position.token1.symbol, allPrices))}
                 </div>
               </div>
-              <Image
-                src={getTokenIcon(position.token1.symbol)}
-                alt={position.token1.symbol}
-                width={32}
-                height={32}
-                className="rounded-full"
-              />
+              <Image src={getTokenIcon(position.token1.symbol)} alt="" width={32} height={32} className="rounded-full" />
             </div>
           </div>
         </div>
-
-        {/* Success Icon & Message */}
-        <div className="my-8 flex flex-col items-center justify-center">
-          <motion.div
-            className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-button border border-primary overflow-hidden"
-            initial={{ scale: 0.8 }}
-            animate={{ scale: 1 }}
-            transition={{ type: "spring", stiffness: 300, damping: 20 }}
-            style={{
-              backgroundImage: 'url(/pattern_wide.svg)',
-              backgroundSize: 'cover',
-              backgroundPosition: 'center'
-            }}
-          >
-            <BadgeCheck className="h-8 w-8 text-sidebar-primary" />
-          </motion.div>
-          <div className="text-center">
-            <h3 className="text-lg font-medium">Liquidity Added!</h3>
-            <p className="text-muted-foreground mt-1">
-              Position successfully increased
-            </p>
+        <div className="my-6 text-center">
+          <div className="mb-3 inline-flex h-12 w-12 items-center justify-center rounded-full bg-green-500/10">
+            <BadgeCheck className="h-6 w-6 text-green-500" />
           </div>
+          <h3 className="text-lg font-medium">Liquidity Added!</h3>
+          {(externalTxHash || increaseTxHash) && (
+            <a
+              href={`https://sepolia.basescan.org/tx/${externalTxHash || increaseTxHash}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-muted-foreground hover:underline"
+            >
+              View on Explorer
+            </a>
+          )}
         </div>
-
-        {/* Explorer Link */}
-        <div className="mb-2 flex items-center justify-center">
-          <Button
-            variant="link"
-            className="text-xs font-normal text-muted-foreground hover:text-muted-foreground/80"
-            onClick={() => window.open(
-              increaseTxHash
-                ? `https://sepolia.basescan.org/tx/${increaseTxHash}`
-                : "https://sepolia.basescan.org/",
-              "_blank"
-            )}
-          >
-            View on Explorer
-          </Button>
-        </div>
-
-        {/* Continue Button */}
         <Button
-          variant="outline"
-          className="w-full relative border border-primary bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 text-white/75"
-          onClick={() => {
-            // Call onSuccess to close modal and trigger parent refresh
-            onSuccess();
-          }}
-          style={{
-            backgroundImage: 'url(/pattern_wide.svg)',
-            backgroundSize: 'cover',
-            backgroundPosition: 'center'
-          }}
+          className="w-full text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90"
+          onClick={() => onSuccess()}
         >
           Continue
         </Button>
-      </motion.div>
+      </div>
     );
   }
 
@@ -680,6 +593,7 @@ export function AddLiquidityFormPanel({
                 id="increase-amount0"
                 placeholder="0.0"
                 value={increaseAmount0}
+                disabled={!canAddToken0}
                 autoComplete="off"
                 autoCorrect="off"
                 spellCheck={false}
@@ -770,6 +684,7 @@ export function AddLiquidityFormPanel({
                 id="increase-amount1"
                 placeholder="0.0"
                 value={increaseAmount1}
+                disabled={!canAddToken1}
                 autoComplete="off"
                 autoCorrect="off"
                 spellCheck={false}

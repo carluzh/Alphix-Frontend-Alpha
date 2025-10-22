@@ -17,7 +17,7 @@ import { parseAbi, type Abi, type Hex, getAddress } from "viem";
 import { ethers } from "ethers";
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract } from "wagmi";
 import { baseSepolia } from "@/lib/wagmiConfig";
-import { useUserPositions, useActivity, useAllPrices, useUncollectedFeesBatch } from "@/components/data/hooks";
+import { useUserPositions, useAllPrices, useUncollectedFeesBatch } from "@/components/data/hooks";
 import { prefetchService } from "@/lib/prefetch-service";
 import { setIndexingBarrier, invalidateUserPositionIdsCache } from "@/lib/client-cache";
 import { toast } from "sonner";
@@ -677,9 +677,8 @@ export default function PortfolioPage() {
   const [positionsRefresh, setPositionsRefresh] = useState(0);
   const { address: accountAddress, isConnected } = useAccount();
 
-  // Centralized hooks for positions and activity (Category 2: user-action invalidated)
+  // Centralized hooks for positions (Category 2: user-action invalidated)
   const { data: userPositionsData, isLoading: isLoadingUserPositions } = useUserPositions(accountAddress || '');
-  const { data: activityData, isLoading: isLoadingActivity } = useActivity(accountAddress || '', 50);
 
   // Centralized hook for prices (Category 1: infrequent)
   const { data: pricesData, isLoading: isLoadingPrices } = useAllPrices();
@@ -826,7 +825,7 @@ export default function PortfolioPage() {
     return { pool: 22, amounts: 22, apr: 12, range: 17, value: 27 };
   }, [viewportWidth]);
   
-  // NEW: local state for positions and activity
+  // NEW: local state for positions
   const { address: userAddress, isConnected: userIsConnected, chainId: currentChainId } = useAccount();
   const { writeContract } = useWriteContract();
   const faucetAbi = parseAbi(['function faucet() external']);
@@ -904,10 +903,7 @@ export default function PortfolioPage() {
       return new Set<string>();
     }
   }, []);
-  const [activityItems, setActivityItems] = useState<any[]>([]);
-  const [isLoadingActivityLocal, setIsLoadingActivityLocal] = useState<boolean>(false);
   const [positionsError, setPositionsError] = useState<string | undefined>(undefined);
-  const [activityError, setActivityError] = useState<string | undefined>(undefined);
   const [unclaimedFeesMap, setUnclaimedFeesMap] = useState<Record<string, { amount0: string; amount1: string }>>({});
   const [isLoadingUnclaimedFees, setIsLoadingUnclaimedFees] = useState<boolean>(false);
 
@@ -942,24 +938,12 @@ export default function PortfolioPage() {
 
 
   
-  const ACTIVITY_PAGE_SIZE = 10;
-  const [activityPage, setActivityPage] = useState<number>(0);
-  
-  // Apply the same token filter to Activity items (Swaps & Liquidity)
-  useEffect(() => { setActivityPage(0); }, [activityItems.length]);
-
-  const totalActivityPages = Math.max(1, Math.ceil((activityItems.length || 0) / ACTIVITY_PAGE_SIZE));
-  const pagedActivityItems = useMemo(() => {
-    const start = activityPage * ACTIVITY_PAGE_SIZE;
-    return activityItems.slice(start, start + ACTIVITY_PAGE_SIZE);
-  }, [activityItems, activityPage]);
-  
   // NEW: selector state for switching between sections
   const [selectedSection, setSelectedSection] = useState<string>('Active Positions');
   const isMobile = viewportWidth <= 768;
   const isIntegrateBalances = viewportWidth < 1400 && !isMobile;
   const sectionsList = useMemo(() => {
-    const base = ['Active Positions', 'Activity'];
+    const base = ['Active Positions'];
     return isIntegrateBalances ? [...base, 'Balances'] : base;
   }, [isIntegrateBalances]);
   useEffect(() => {
@@ -1501,9 +1485,6 @@ export default function PortfolioPage() {
     return () => document.removeEventListener('pointerdown', onDocPointerDown);
   }, [openPositionMenuKey]);
 
-  // Activity filter state
-  const [activityTokenFilter, setActivityTokenFilter] = useState<string | null>(null);
-  const [activityTypeFilter, setActivityTypeFilter] = useState<'all' | 'Swap' | 'Liquidity'>('all');
   // Wallet balances (for Balances UI only; excluded from global portfolio worth)
   const [walletPriceMap, setWalletPriceMap] = useState<Record<string, number>>({});
   const [walletPriceChange24hPctMap, setWalletPriceChange24hPctMap] = useState<Record<string, number>>({});
@@ -1758,70 +1739,6 @@ export default function PortfolioPage() {
     return price || (stable(symbolU) ? 1 : 0);
   }, [portfolioData.priceMap]);
 
-  // Apply filters to Activity items (Swaps & Liquidity)
-  const filteredActivityItems = useMemo(() => {
-    let filtered = activityItems;
-
-    // Apply token filter (from portfolio visualization)
-    if (activeTokenFilter) {
-      const token = activeTokenFilter.toUpperCase();
-
-      if (token === 'OTHERS') {
-        const total = portfolioData.totalValue;
-        const topThreeTokens = (portfolioData.tokenBalances || [])
-          .map(tb => ({ symbol: tb.symbol, pct: total > 0 ? (tb.usdValue / total) * 100 : 0 }))
-          .filter(item => item.pct >= 1)
-          .sort((a, b) => b.pct - a.pct)
-          .slice(0, 3)
-          .map(tb => (tb.symbol || '').toUpperCase());
-
-        filtered = filtered.filter((it: any) => {
-          const [sym0Raw, sym1Raw] = String(it?.poolSymbols || '').split('/');
-          const sym0 = sym0Raw?.trim()?.toUpperCase?.();
-          const sym1 = sym1Raw?.trim()?.toUpperCase?.();
-          return (sym0 && !topThreeTokens.includes(sym0)) || (sym1 && !topThreeTokens.includes(sym1));
-        });
-      } else {
-        filtered = filtered.filter((it: any) => {
-          const [sym0Raw, sym1Raw] = String(it?.poolSymbols || '').split('/');
-          const sym0 = sym0Raw?.trim()?.toUpperCase?.();
-          const sym1 = sym1Raw?.trim()?.toUpperCase?.();
-          return sym0 === token || sym1 === token;
-        });
-      }
-    }
-
-    // Apply Activity-specific token filter
-    if (activityTokenFilter) {
-      const token = activityTokenFilter.toUpperCase();
-      filtered = filtered.filter((it: any) => {
-        const [sym0Raw, sym1Raw] = String(it?.poolSymbols || '').split('/');
-        const sym0 = sym0Raw?.trim()?.toUpperCase?.();
-        const sym1 = sym1Raw?.trim()?.toUpperCase?.();
-        return sym0 === token || sym1 === token;
-      });
-    }
-
-    // Apply type filter
-    if (activityTypeFilter !== 'all') {
-      if (activityTypeFilter === 'Liquidity') {
-        filtered = filtered.filter((it: any) => it.type === 'Add' || it.type === 'Withdraw');
-      } else {
-        filtered = filtered.filter((it: any) => it.type === activityTypeFilter);
-      }
-    }
-
-    return filtered;
-  }, [activityItems, activeTokenFilter, activityTokenFilter, activityTypeFilter, portfolioData.tokenBalances, portfolioData.totalValue]);
-
-  // Reset activity pagination on filter change
-  useEffect(() => { setActivityPage(0); }, [filteredActivityItems.length]);
-
-  const filteredTotalActivityPages = Math.max(1, Math.ceil((filteredActivityItems.length || 0) / ACTIVITY_PAGE_SIZE));
-  const pagedFilteredActivityItems = useMemo(() => {
-    const start = activityPage * ACTIVITY_PAGE_SIZE;
-    return filteredActivityItems.slice(start, start + ACTIVITY_PAGE_SIZE);
-  }, [filteredActivityItems, activityPage]);
 
 
 
@@ -1943,62 +1860,6 @@ export default function PortfolioPage() {
     run();
     return () => { cancelled = true; };
   }, [activePositions.length, isConnected, accountAddress]);
-  // Load activity (best-effort): mints, burns, collects, swaps for owner
-  useEffect(() => {
-    let isCancelled = false;
-    const fetchActivity = async () => {
-      if (!isConnected || !accountAddress) {
-        if (!isCancelled) {
-          setActivityItems([]);
-          setActivityError(undefined);
-        }
-        return;
-      }
-      setIsLoadingActivityLocal(true);
-      setActivityError(undefined);
-      try {
-        const variables = {
-          owner: accountAddress?.toLowerCase(),
-          poolIds: Array.from(allowedPoolIds),
-          first: 300,
-        } as const;
-        const cacheKey = `activity:${variables.owner}:${variables.first}:${variables.poolIds.join(',')}`;
-        try {
-          const cached = localStorage.getItem(cacheKey);
-          if (cached && !isCancelled) {
-            const parsed = JSON.parse(cached);
-            const cachedItems = Array.isArray(parsed?.items) ? parsed.items : [];
-            const gatedCached = cachedItems.filter((it: any) => {
-              const pid = String(it?.poolId || it?.pool_id || '').toLowerCase();
-              return pid && allowedPoolIds.has(pid);
-            });
-            setActivityItems(gatedCached);
-          }
-        } catch {}
-        const res = await fetch('/api/portfolio/get-activity', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(variables),
-        });
-        if (!res.ok) throw new Error(await res.text());
-        const rows = await res.json();
-        if (!isCancelled && Array.isArray(rows)) {
-          const gated = rows.filter((it: any) => {
-            const pid = String(it?.poolId || it?.pool_id || '').toLowerCase();
-            return pid && allowedPoolIds.has(pid);
-          });
-          setActivityItems(gated);
-          try { localStorage.setItem(cacheKey, JSON.stringify({ items: gated, ts: Date.now() })); } catch {}
-        }
-      } catch (e: any) {
-        if (!isCancelled) setActivityError(e?.message || 'Failed to load activity');
-      } finally {
-        if (!isCancelled) setIsLoadingActivityLocal(false);
-      }
-    };
-    fetchActivity();
-    return () => { isCancelled = true; };
-  }, [isConnected, accountAddress, allowedPoolIds && false]);
 
   // Set initial responsive states before paint to avoid layout flicker
   useLayoutEffect(() => {
@@ -3285,259 +3146,6 @@ export default function PortfolioPage() {
                 </div>
               )}
 
-              {/* Old Positions removed */}
-
-              {/* Activity */}
-              {selectedSection === 'Activity' && (
-                !isConnected ? (
-                  <div className="border border-dashed rounded-lg bg-muted/10 p-8 w-full flex items-center justify-center">
-                    <div className="w-48">
-                      <ConnectWalletButton />
-                    </div>
-                  </div>
-                ) : (filteredActivityItems.length === 0 && !isLoadingActivityLocal) ? (
-                  <div className="border border-dashed rounded-lg bg-muted/10 p-8 w-full flex items-center justify-center">
-                    <div className="text-sm text-white/75">No Activity</div>
-                  </div>
-                ) : (
-                  <div>
-                    <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 overflow-hidden">
-                      <div className="border-b border-sidebar-border/60 text-xs text-muted-foreground">
-                        <div
-                          className="grid gap-3 px-2 pl-6 pr-6 py-3"
-                          style={{
-                            gridTemplateColumns: isMobile
-                              ? '88px minmax(0,1fr) minmax(0,2fr)'
-                              : (viewportWidth <= 1200
-                                  ? '88px minmax(0,1fr) minmax(0,1.4fr) 90px 100px'
-                                  : '88px minmax(0,1fr) minmax(0,2fr) 120px 140px')
-                          }}
-                        >
-                          <div className="tracking-wider font-mono font-bold uppercase">Type</div>
-                          <div className="tracking-wider font-mono font-bold uppercase">Pool</div>
-                          <div className="tracking-wider font-mono font-bold uppercase">Details</div>
-                          {!isMobile && (
-                            <div className="text-center tracking-wider font-mono font-bold uppercase">Time</div>
-                          )}
-                          {!isMobile && (
-                            <div className="text-right tracking-wider font-mono font-bold uppercase">Txn</div>
-                          )}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="flex flex-col">
-                          <div className="divide-y divide-sidebar-border/60">
-                            {pagedFilteredActivityItems.map((it, idx) => (
-                              <div
-                                key={it.id || idx}
-                                className="grid items-center gap-3 px-2 pl-6 pr-6 py-3 hover:bg-muted/10"
-                                style={{
-                                  gridTemplateColumns: isMobile
-                                    ? '88px minmax(0,1fr) minmax(0,2fr)'
-                                    : (viewportWidth <= 1200
-                                        ? '88px minmax(0,1fr) minmax(0,1.4fr) 90px 100px'
-                                        : '88px minmax(0,1fr) minmax(0,2fr) 120px 140px')
-                                }}
-                                onClick={() => {
-                                  if (isMobile && it.tx) {
-                                    window.open(`https://sepolia.basescan.org/tx/${it.tx}`, '_blank');
-                                  }
-                                }}
-                              >
-                                {/* Type */}
-                                <div className="min-w-0 text-left">
-                                  {it.type === 'Swap' ? (
-                                    <span
-                                      className="px-1.5 py-0.5 text-xs font-normal rounded-md border border-sidebar-border bg-button text-muted-foreground"
-                                      style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
-                                    >
-                                      Swap
-                                    </span>
-                                  ) : (
-                                    <span className={`px-1.5 py-0.5 text-xs font-normal rounded-md border ${it.type === 'Add' ? 'text-green-500 border-green-500 bg-green-500/10' : 'text-red-500 border-red-500 bg-red-500/10'}`}>
-                                      Liquidity
-                                    </span>
-                                  )}
-                                </div>
-                                {/* Pool */}
-                                <div className="text-sm text-foreground min-w-0 truncate">{it.poolSymbols}</div>
-                                {/* Details */}
-                                <div className="text-xs text-muted-foreground min-w-0 truncate" style={{ maxWidth: viewportWidth <= 1200 ? 280 : undefined }}>
-                                  {(() => {
-                                    if (it.type === 'Swap') {
-                                      const sym0 = (it.poolSymbols || '').split('/')[0] || '';
-                                      const sym1 = (it.poolSymbols || '').split('/')[1] || '';
-                                      const d0 = getTokenCfg(sym0);
-                                      const d1 = getTokenCfg(sym1);
-                                      const inferDecimalsFromSymbol = (symbol: string) => {
-                                        const s = (symbol || '').toUpperCase();
-                                        if (s.includes('USDC') || s.includes('USDT')) return 6;
-                                        if (s.includes('BTC')) return 8;
-                                        return 18;
-                                      };
-                                      const getDisplayDecimals = (symbol: string) => {
-                                        const s = (symbol || '').toUpperCase();
-                                        if (s.includes('USDC') || s.includes('USDT')) return 2;
-                                        if (s.includes('ETH')) return 4;
-                                        if (s.includes('BTC')) return 6;
-                                        return 4;
-                                      };
-                                      const getSafeDecimals = (symbol: string, dec?: number) => {
-                                        const n = Number(dec);
-                                        if (Number.isInteger(n) && n >= 1 && n <= 36) return n;
-                                        return inferDecimalsFromSymbol(symbol);
-                                      };
-                                      const dec0 = getSafeDecimals(sym0, d0?.decimals);
-                                      const dec1 = getSafeDecimals(sym1, d1?.decimals);
-                                      const isNeg0Raw = String(it.amount0 || '').startsWith('-');
-                                      const isNeg1Raw = String(it.amount1 || '').startsWith('-');
-                                      // Uniswap v4 inversion semantics
-                                      const isNeg0 = !isNeg0Raw;
-                                      const isNeg1 = !isNeg1Raw;
-                                      const asReadable = (raw: any, dec: number) => {
-                                        const sRaw = String(raw ?? '0');
-                                        const s = sRaw.replace(/,/g, '');
-                                        const neg = s.startsWith('-');
-                                        const abs = neg ? s.slice(1) : s;
-
-                                        if (abs.includes('.')) {
-                                          return s;
-                                        }
-
-                                        try {
-                                          const val = viemFormatUnits(BigInt(abs), dec);
-                                          return neg ? `-${val}` : val;
-                                        } catch (e) {
-                                          console.error(`Could not parse amount: ${sRaw}`, e);
-                                          return sRaw;
-                                        }
-                                      };
-                                      const amt0 = asReadable(it.amount0, dec0);
-                                      const amt1 = asReadable(it.amount1, dec1);
-                                      const negPart = isNeg0
-                                        ? `${formatNumber(Math.abs(Number(amt0)), { max: getDisplayDecimals(sym0) })} ${sym0}`
-                                        : `${formatNumber(Math.abs(Number(amt1)), { max: getDisplayDecimals(sym1) })} ${sym1}`;
-                                      const posPart = isNeg0
-                                        ? `${formatNumber(Math.abs(Number(amt1)), { max: getDisplayDecimals(sym1) })} ${sym1}`
-                                        : `${formatNumber(Math.abs(Number(amt0)), { max: getDisplayDecimals(sym0) })} ${sym0}`;
-                                      return (
-                                        <span className="inline-flex items-center gap-1">
-                                          <span>{negPart}</span>
-                                          <ChevronRight className="h-3 w-3 text-muted-foreground" />
-                                          <span>{posPart}</span>
-                                        </span>
-                                      );
-                                    }
-                                    // Determine if it's mint/burn vs addition/removal based on position existence
-                                    const isAdd = it.type === 'Add';
-                                    const isWithdraw = it.type === 'Withdraw';
-                                    
-                                    if (isAdd || isWithdraw) {
-                                      // Check if this position (tickLower, tickUpper, poolId) exists in current positions
-                                      const currentPositionExists = activePositions.some((pos: any) => 
-                                        pos.tickLower === it.tickLower && 
-                                        pos.tickUpper === it.tickUpper && 
-                                        pos.poolId === it.poolId
-                                      );
-                                      
-                                      if (isAdd) {
-                                        return currentPositionExists ? 'Added to Position' : 'Position Created';
-                                      } else {
-                                        return currentPositionExists ? 'Withdrawn from Position' : 'Position Burned';
-                                      }
-                                    }
-                                    return '';
-                                  })()}
-                                </div>
-                                {/* Time */}
-                                {!isMobile && (
-                                  <div className="text-xs text-muted-foreground text-center">
-                                    {(() => {
-                                      const secs = Number(it.ts || 0);
-                                      if (!secs) return '';
-                                      const now = Math.floor(Date.now() / 1000);
-                                      const diff = Math.max(0, now - secs);
-                                      const y = Math.floor(diff / (365*24*3600));
-                                      const m = Math.floor((diff % (365*24*3600)) / (30*24*3600));
-                                      const d = Math.floor((diff % (30*24*3600)) / (24*3600));
-                                      const h = Math.floor((diff % (24*3600)) / 3600);
-                                      const min = Math.floor((diff % 3600) / 60);
-                                      const s = diff % 60;
-                                      let label = '';
-                                      if (y) label += `${y}y `;
-                                      if (m) label += `${m}m `;
-                                      if (d && !y) label += `${d}d `;
-                                      if (!y && !m) {
-                                        if (h) label += `${h}h `;
-                                        if (!h && min) label += `${min}m `;
-                                        if (!h && !min && s) label += `${s}s `;
-                                      }
-                                      label = label.trim() + ' ago';
-                                      const full = new Date(secs * 1000).toLocaleString();
-                                      const fullNoComma = full.replace(/,\s*/g, ' ');
-                                      return (
-                                        <TooltipProvider>
-                                          <Tooltip>
-                                            <TooltipTrigger asChild>
-                                              <span className="text-xs cursor-default">{label}</span>
-                                            </TooltipTrigger>
-                                            <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">{fullNoComma}</TooltipContent>
-                                          </Tooltip>
-                                        </TooltipProvider>
-                                      );
-                                    })()}
-                                  </div>
-                                )}
-                                {/* Txn */}
-                                {!isMobile && (
-                                  <div className="text-xs text-muted-foreground text-right">
-                                    {it.tx ? (
-                                      <a href={`https://sepolia.basescan.org/tx/${it.tx}`} target="_blank" rel="noreferrer" className="hover:underline">
-                                        {it.tx.slice(0, 10)}…
-                                      </a>
-                                    ) : (
-                                      <span className="opacity-60">—</span>
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                    {filteredTotalActivityPages > 1 && (
-                                            <div className="flex justify-between px-4 py-3">
-                        <div></div>
-                        <div className="flex items-center gap-4">
-                                                      <button
-                            type="button"
-                            className={`text-xs font-medium transition-colors ${
-                              activityPage === 0
-                                ? 'text-white/90'
-                                : 'text-muted-foreground hover:text-white/90'
-                            }`}
-                            onClick={() => setActivityPage(0)}
-                          >
-                            1
-                          </button>
-                          <button
-                            type="button"
-                            className={`text-xs font-medium transition-colors ${
-                              activityPage === 1
-                                ? 'text-white/90'
-                                : 'text-muted-foreground hover:text-white/90'
-                            }`}
-                            onClick={() => setActivityPage(1)}
-                          >
-                            2
-                          </button>
-                          </div>
-                        </div>
-                    )}
-                  </div>
-                )
-              )}
               {/* Balances as a tab when integrated (desktop/tablet only) */}
               {isIntegrateBalances && selectedSection === 'Balances' && (
                 <div>

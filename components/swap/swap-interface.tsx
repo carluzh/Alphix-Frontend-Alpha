@@ -2769,7 +2769,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
 
   return (
     <div className="flex flex-col">
-      <div ref={containerRef} className="w-full max-w-md mx-auto">
+      <div ref={containerRef} className="w-full max-w-2xl mx-auto">
       {/* Main Swap Interface Card */}
       <Card className="w-full card-gradient z-10 rounded-lg bg-[var(--swap-background)] border-[var(--swap-border)]"> {/* Applied styling here */}
         {/* <CardHeader className="pt-6 pb-2">
