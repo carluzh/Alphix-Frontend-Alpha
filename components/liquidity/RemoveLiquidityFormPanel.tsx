@@ -8,14 +8,21 @@ import { Label } from "@/components/ui/label";
 import Image from "next/image";
 import { useAccount } from "wagmi";
 import { toast } from "sonner";
-import { TOKEN_DEFINITIONS, TokenSymbol, getToken } from "@/lib/pools-config";
+import { TOKEN_DEFINITIONS, TokenSymbol } from "@/lib/pools-config";
 import { useDecreaseLiquidity, type DecreasePositionData } from "./useDecreaseLiquidity";
 import { motion, useAnimation } from "framer-motion";
 import type { ProcessedPosition } from "../../pages/api/liquidity/get-positions";
 import { useAllPrices } from "@/components/data/hooks";
-import { formatUSD } from "@/lib/format";
 import { sanitizeDecimalInput, cn } from "@/lib/utils";
 import { calculatePercentageFromString } from "@/hooks/usePercentageInput";
+import {
+  getTokenIcon,
+  formatTokenDisplayAmount,
+  formatCalculatedAmount,
+  getUSDPriceForSymbol,
+  calculateCorrespondingAmount,
+  PERCENTAGE_OPTIONS
+} from './liquidity-form-utils';
 
 interface RemoveLiquidityFormPanelProps {
   position: ProcessedPosition;
@@ -24,46 +31,6 @@ interface RemoveLiquidityFormPanelProps {
   onAmountsChange?: (amount0: number, amount1: number) => void;
   hideContinueButton?: boolean;
 }
-
-const getTokenIcon = (symbol?: string) => {
-  if (!symbol) return "/placeholder-logo.svg";
-  const tokenConfig = getToken(symbol);
-  return tokenConfig?.icon || "/placeholder-logo.svg";
-};
-
-const formatTokenDisplayAmount = (amount: string, symbol?: TokenSymbol) => {
-  const num = parseFloat(amount);
-  if (isNaN(num)) return amount;
-  if (num === 0) return "0";
-  if (num > 0 && num < 0.000001) return "< 0.000001";
-  return num.toFixed(6);
-};
-
-const formatCalculatedAmount = (value: number): React.ReactNode => {
-  if (!Number.isFinite(value) || value <= 0) return formatUSD(0);
-
-  const formatted = formatUSD(value);
-
-  const match = formatted.match(/\$([0-9,]+\.?[0-9]*)/);
-  if (!match) return formatted;
-
-  const [, numericPart] = match;
-  const [integerPart, decimalPart] = numericPart.split('.');
-
-  if (!decimalPart || decimalPart.length <= 9) {
-    return formatted;
-  }
-
-  const truncatedDecimal = decimalPart.substring(0, 9);
-  const truncatedFormatted = `$${integerPart}.${truncatedDecimal}`;
-
-  return (
-    <span>
-      {truncatedFormatted}
-      <span className="text-muted-foreground">...</span>
-    </span>
-  );
-};
 
 export function RemoveLiquidityFormPanel({
   position,
@@ -85,20 +52,11 @@ export function RemoveLiquidityFormPanel({
   const wiggleControls0 = useAnimation();
   const wiggleControls1 = useAnimation();
 
-  const getUSDPriceForSymbol = useCallback((symbol?: string): number => {
-    if (!symbol) return 0;
-    const s = symbol.toUpperCase();
-    if (s.includes('BTC')) return allPrices?.BTC?.usd ?? 0;
-    if (s.includes('ETH')) return allPrices?.ETH?.usd ?? 0;
-    if (s.includes('USDC')) return allPrices?.USDC?.usd ?? 1;
-    if (s.includes('USDT')) return allPrices?.USDT?.usd ?? 1;
-    return 0;
-  }, [allPrices]);
-
   const { decreaseLiquidity, isLoading: isDecreasingLiquidity, isSuccess: isDecreaseSuccess, hash: decreaseTxHash } = useDecreaseLiquidity({
     onLiquidityDecreased: (info) => {
+      // Only set success view - don't call onSuccess() yet
+      // onSuccess() will be called when user clicks "Done" button in success view
       setShowSuccessView(true);
-      onSuccess();
     }
   });
 
@@ -112,20 +70,23 @@ export function RemoveLiquidityFormPanel({
   }, [withdrawAmount0, withdrawAmount1, onAmountsChange]);
 
   const calculateWithdrawAmount = useCallback((inputAmount: string, inputSide: 'amount0' | 'amount1') => {
-    // Calculate the percentage being withdrawn
-    const posAmount0 = parseFloat(position.token0.amount);
-    const posAmount1 = parseFloat(position.token1.amount);
-    const input = parseFloat(inputAmount);
+    if (!inputAmount || parseFloat(inputAmount) <= 0) {
+      if (inputSide === 'amount0') setWithdrawAmount1("");
+      else setWithdrawAmount0("");
+      setIsFullWithdraw(false);
+      return;
+    }
 
-    if (inputSide === 'amount0' && posAmount0 > 0) {
-      const percentage = (input / posAmount0) * 100;
-      const amount1 = (percentage / 100) * posAmount1;
-      setWithdrawAmount1(amount1.toFixed(6));
+    const correspondingAmount = calculateCorrespondingAmount(inputAmount, inputSide, position);
+
+    if (inputSide === 'amount0') {
+      setWithdrawAmount1(correspondingAmount);
+      // Check if this is a full withdraw (within 0.1% tolerance)
+      const percentage = (parseFloat(inputAmount) / parseFloat(position.token0.amount)) * 100;
       setIsFullWithdraw(percentage >= 99.9);
-    } else if (inputSide === 'amount1' && posAmount1 > 0) {
-      const percentage = (input / posAmount1) * 100;
-      const amount0 = (percentage / 100) * posAmount0;
-      setWithdrawAmount0(amount0.toFixed(6));
+    } else {
+      setWithdrawAmount0(correspondingAmount);
+      const percentage = (parseFloat(inputAmount) / parseFloat(position.token1.amount)) * 100;
       setIsFullWithdraw(percentage >= 99.9);
     }
   }, [position]);
@@ -201,6 +162,15 @@ export function RemoveLiquidityFormPanel({
             View on Explorer
           </a>
         )}
+        <Button
+          className="w-full text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90"
+          onClick={() => {
+            // Call onSuccess to close modal and trigger parent refresh
+            onSuccess();
+          }}
+        >
+          Done
+        </Button>
       </div>
     );
   }
@@ -311,11 +281,11 @@ export function RemoveLiquidityFormPanel({
                     <div className={cn("text-muted-foreground transition-opacity duration-100", {
                       "group-hover:opacity-0": parseFloat(position.token0.amount) > 0
                     })}>
-                      {formatCalculatedAmount(parseFloat(withdrawAmount0 || "0") * getUSDPriceForSymbol(position.token0.symbol))}
+                      {formatCalculatedAmount(parseFloat(withdrawAmount0 || "0") * getUSDPriceForSymbol(position.token0.symbol, allPrices))}
                     </div>
                     {parseFloat(position.token0.amount) > 0 && (
                       <div className="absolute right-0 top-[3px] flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
-                        {[25, 50, 75, 100].map((percentage, index) => (
+                        {PERCENTAGE_OPTIONS.map((percentage, index) => (
                           <motion.div
                             key={percentage}
                             className="opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0"
@@ -406,11 +376,11 @@ export function RemoveLiquidityFormPanel({
                     <div className={cn("text-muted-foreground transition-opacity duration-100", {
                       "group-hover:opacity-0": parseFloat(position.token1.amount) > 0
                     })}>
-                      {formatCalculatedAmount(parseFloat(withdrawAmount1 || "0") * getUSDPriceForSymbol(position.token1.symbol))}
+                      {formatCalculatedAmount(parseFloat(withdrawAmount1 || "0") * getUSDPriceForSymbol(position.token1.symbol, allPrices))}
                     </div>
                     {parseFloat(position.token1.amount) > 0 && (
                       <div className="absolute right-0 top-[3px] flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
-                        {[25, 50, 75, 100].map((percentage, index) => (
+                        {PERCENTAGE_OPTIONS.map((percentage, index) => (
                           <motion.div
                             key={percentage}
                             className="opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0"

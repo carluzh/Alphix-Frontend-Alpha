@@ -188,7 +188,8 @@ export function PositionDetailsModal({
   } = useIncreaseLiquidity({
     onLiquidityIncreased: (info) => {
       console.log('[PositionDetailsModal] Liquidity increased:', info);
-      onAddLiquidity(); // Trigger parent refresh
+      // Don't call onAddLiquidity() here - let AddLiquidityFormPanel handle the success flow
+      // onAddLiquidity() will be called when user clicks "Done" in the success view
     },
   });
 
