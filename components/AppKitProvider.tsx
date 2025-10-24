@@ -19,8 +19,9 @@ const queryClient = new QueryClient({
     queries: {
       retry: 0, // Disable retries to prevent duplicate calls
       refetchOnWindowFocus: false,
-      refetchOnMount: false, // Disable refetch on mount
+      refetchOnMount: true, // Refetch only if stale (respects staleTime)
       refetchOnReconnect: false, // Disable refetch on reconnect
+      staleTime: 0, // Default to always refetch unless hook overrides
       gcTime: 10 * 60 * 1000,
       networkMode: 'online',
     },

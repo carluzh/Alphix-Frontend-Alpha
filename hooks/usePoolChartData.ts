@@ -7,7 +7,7 @@ interface ChartDataPoint {
 
 export function usePoolChartData(token0?: string, token1?: string) {
   return useQuery({
-    queryKey: ['pool-chart', token0, token1],
+    queryKey: ['pools', 'chart', token0, token1],
     queryFn: async ({ signal }) => {
       if (!token0 || !token1) {
         console.log('[usePoolChartData] Missing tokens:', { token0, token1 });
@@ -49,7 +49,7 @@ export function usePoolChartData(token0?: string, token1?: string) {
       }
     },
     enabled: !!token0 && !!token1,
-    staleTime: 5 * 60 * 1000, // 5 minutes - matches server cache
+    staleTime: 15 * 60 * 1000, // 15 minutes - historical data changes slowly
     gcTime: 10 * 60 * 1000, // 10 minutes - keep in cache longer
     retry: 1,
   });

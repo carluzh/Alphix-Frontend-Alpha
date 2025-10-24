@@ -5,7 +5,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  *
  * Fetches 7-day price data from CoinGecko for token pairs.
  * Returns prices in blockchain format (token1/token0).
- * Includes 5-minute server-side caching.
+ * Includes 15-minute server-side caching.
  */
 
 interface PriceDataPoint {
@@ -20,7 +20,7 @@ interface CachedData {
 
 // Simple in-memory server cache
 const cache = new Map<string, CachedData>();
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes - matches client staleTime
 
 // CoinGecko token ID mappings
 const COINGECKO_IDS: Record<string, string> = {
@@ -62,6 +62,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (cached && (Date.now() - cached.timestamp) < CACHE_TTL_MS) {
     console.log(`[get-pool-chart] Serving cached data for ${token0}/${token1}`);
     res.setHeader('X-Cache', 'HIT');
+    res.setHeader('Cache-Control', 'public, s-maxage=900, stale-while-revalidate=1800');
     return res.status(200).json({ data: cached.data, cached: true });
   }
 
@@ -205,7 +206,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     });
 
     res.setHeader('X-Cache', 'MISS');
-    res.setHeader('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=600');
+    res.setHeader('Cache-Control', 'public, s-maxage=900, stale-while-revalidate=1800');
     return res.status(200).json({ data: parsedData, cached: false });
 
   } catch (error: any) {

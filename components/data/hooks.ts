@@ -78,11 +78,11 @@ export function usePoolState(poolId: string) {
   return useQuery({
     queryKey: qk.poolState(poolId),
     queryFn: async () => {
-      const resp = await fetch(`/api/liquidity/get-pool-state?poolId=${encodeURIComponent(poolId)}`, { cache: 'no-store' as any } as any)
+      const resp = await fetch(`/api/liquidity/get-pool-state?poolId=${encodeURIComponent(poolId)}`)
       if (!resp.ok) throw new Error('Failed to load pool state')
       return resp.json()
     },
-    staleTime: 0,
+    staleTime: 15000,
     gcTime: 10 * 60 * 1000,
     enabled: !!poolId && poolId.length > 0,
   })
