@@ -216,7 +216,7 @@ export function SwapInputView({
         <motion.div
           className={cn(
             "group rounded-lg bg-surface p-4 border transition-colors hover:border-sidebar-primary",
-            isSellInputFocused ? "border-sidebar-primary" : "border-transparent"
+            isSellInputFocused ? "border-sidebar-primary" : "border-sidebar-border/60"
           )}
           animate={wiggleControls}
         >
@@ -314,7 +314,7 @@ export function SwapInputView({
         <div
           className={cn(
             "group rounded-lg bg-surface p-4 border transition-colors hover:border-sidebar-primary",
-            isBuyInputFocused ? "border-sidebar-primary" : "border-transparent"
+            isBuyInputFocused ? "border-sidebar-primary" : "border-sidebar-border/60"
           )}
         >
         <div className="flex items-center justify-between mb-2">

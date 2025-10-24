@@ -2215,7 +2215,7 @@ export function AddLiquidityForm({
               {/* Input for Token 0 */}
               <div className="space-y-2">
                 <motion.div
-                  className={cn("rounded-lg bg-muted/30 border border-white/30 p-4 group", { "outline outline-1 outline-muted": isAmount0Focused })}
+                  className={cn("rounded-lg bg-muted/30 p-4 group", { "outline outline-1 outline-muted": isAmount0Focused })}
                   animate={balanceWiggleControls0}
                 >
                   <div className="flex items-center justify-between mb-2">
@@ -2351,7 +2351,7 @@ export function AddLiquidityForm({
               {/* Input for Token 1 */}
               <div className="space-y-2 mb-4">
                 <motion.div
-                  className={cn("rounded-lg bg-muted/30 border border-white/30 p-4 group", { "outline outline-1 outline-muted": isAmount1Focused })}
+                  className={cn("rounded-lg bg-muted/30 p-4 group", { "outline outline-1 outline-muted": isAmount1Focused })}
                   animate={balanceWiggleControls1}
                 >
                   <div className="flex items-center justify-between mb-2">
