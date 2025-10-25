@@ -18,7 +18,9 @@ export function useAllPrices() {
         return result;
       } catch (error) {
         const duration = Date.now() - startTime;
-        logger.error('useAllPrices query failed', error as Error, { duration });
+        if (!(error instanceof Error && error.name === 'AbortError')) {
+          logger.error('useAllPrices query failed', error as Error, { duration });
+        }
         throw error;
       }
     },

@@ -30,6 +30,7 @@ interface PositionChartV2Props {
   minPrice?: string; // Already in display denomination from parent
   maxPrice?: string; // Already in display denomination from parent
   isInRange?: boolean;
+  isFullRange?: boolean;
   selectedPoolId: string;
   className?: string;
   chartKey?: number;
@@ -234,6 +235,7 @@ export function PositionChartV2({
   minPrice,
   maxPrice,
   isInRange,
+  isFullRange,
   selectedPoolId,
   className,
   chartKey = 0,
@@ -270,16 +272,6 @@ export function PositionChartV2({
   } = usePoolChartData(token0, token1);
 
   const rawPriceData = priceResult?.data || [];
-
-  // Force refetch when modal opens
-  useEffect(() => {
-    if (chartKey > 0 && chartContainerRef.current) {
-      const timer = setTimeout(() => {
-        refetchPrice();
-      }, 100);
-      return () => clearTimeout(timer);
-    }
-  }, [chartKey, refetchPrice]);
 
   // Transform inherited prices if user flipped denomination
   const parsedPrices = useMemo(() => {
@@ -380,7 +372,10 @@ export function PositionChartV2({
     const inRangeSegments: PriceDataPoint[][] = [];
     const outRangeSegments: PriceDataPoint[][] = [];
 
-    if (minPriceNum === null || maxPriceNum === null) {
+    if (isFullRange) {
+      // Full Range: entire line is green
+      inRangeSegments.push(priceData);
+    } else if (minPriceNum === null || maxPriceNum === null) {
       // No range defined, everything is out of range
       outRangeSegments.push(priceData);
     } else {

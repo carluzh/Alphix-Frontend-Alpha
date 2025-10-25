@@ -28,9 +28,9 @@ import { formatUnits } from "viem";
 import { TokenStack } from "./TokenStack";
 import { TOKEN_DEFINITIONS } from '@/lib/pools-config';
 import { cn } from "@/lib/utils";
-import { usePositionAPY as useSimplePositionAPY } from '@/hooks/useLifetimeFees';
 import { MiniPoolChart } from './MiniPoolChart';
 import { getDecimalsForDenomination, getOptimalBaseToken } from '@/lib/denomination-utils';
+import { calculateClientAPY } from '@/lib/client-apy';
 
 // Status indicator circle component
 function StatusIndicatorCircle({ className }: { className?: string }) {
@@ -63,25 +63,29 @@ type ProcessedPosition = {
     isInRange: boolean;
     ageSeconds: number;
     blockTimestamp: number;
+    lastTimestamp: number; // Last modification timestamp (for APY calculation)
+    // Optimistic UI state - added dynamically during liquidity modifications
+    isOptimisticallyUpdating?: boolean;
 };
 
 interface PositionCardCompactProps {
     position: ProcessedPosition;
     valueUSD: number;
-    poolKey: string;
-    getUsdPriceForSymbol: (symbol?: string) => number;
     onClick: () => void;
-    isLoadingPrices: boolean;
-    isLoadingPoolStates: boolean;
-    prefetchedRaw0?: string | null;
-    prefetchedRaw1?: string | null;
-    currentPrice?: string | null;
-    currentPoolTick?: number | null;
-    currentPoolSqrtPriceX96?: string | null;
-    poolLiquidity?: string | null;
-    chainId?: number;
+    getUsdPriceForSymbol: (symbol?: string) => number;
     convertTickToPrice: (tick: number, currentPoolTick: number | null, currentPrice: string | null, baseTokenForPriceDisplay: string, token0Symbol: string, token1Symbol: string) => string;
-    onDenominationData?: (data: { denominationBase: string; minPrice: string; maxPrice: string; displayedCurrentPrice: string | null }) => void;
+    poolContext: {
+        currentPrice: string | null;
+        currentPoolTick: number | null;
+        poolAPY: number | null;
+        isLoadingPrices: boolean;
+        isLoadingPoolStates: boolean;
+    };
+    fees: {
+        raw0: string | null;
+        raw1: string | null;
+    };
+    onDenominationData?: (data: { denominationBase: string; minPrice: string; maxPrice: string; displayedCurrentPrice: string | null; feesUSD: number; formattedAPY: string; isAPYFallback: boolean; isLoadingAPY: boolean }) => void;
 }
 
 const SDK_MIN_TICK = -887272;
@@ -90,24 +94,17 @@ const SDK_MAX_TICK = 887272;
 export function PositionCardCompact({
     position,
     valueUSD,
-    poolKey,
-    getUsdPriceForSymbol,
     onClick,
-    isLoadingPrices,
-    isLoadingPoolStates,
-    currentPrice,
-    currentPoolTick,
-    currentPoolSqrtPriceX96,
-    poolLiquidity,
-    chainId = 4002,
+    getUsdPriceForSymbol,
     convertTickToPrice,
-    prefetchedRaw0,
-    prefetchedRaw1,
+    poolContext,
+    fees,
     onDenominationData,
 }: PositionCardCompactProps) {
     const [isHovered, setIsHovered] = useState(false);
+    const { currentPrice, currentPoolTick, poolAPY, isLoadingPrices, isLoadingPoolStates } = poolContext;
+    const { raw0: prefetchedRaw0, raw1: prefetchedRaw1 } = fees;
 
-    // Calculate fees
     const { feesUSD, hasZeroFees } = React.useMemo(() => {
         if (prefetchedRaw0 === null || prefetchedRaw1 === null) {
             return { feesUSD: 0, hasZeroFees: false };
@@ -134,27 +131,15 @@ export function PositionCardCompact({
         }
     }, [prefetchedRaw0, prefetchedRaw1, position, getUsdPriceForSymbol]);
 
-    // Calculate APY (simplified approach)
-    // Use current timestamp minus ageSeconds as creation timestamp
-    const positionCreationTimestamp = React.useMemo(() => {
-        const now = Math.floor(Date.now() / 1000);
-        return now - position.ageSeconds;
-    }, [position.ageSeconds]);
+    const { formattedAPY, isFallback: isAPYFallback, isLoading: isLoadingAPY } = React.useMemo(() => {
+        const loading = isLoadingPrices || valueUSD <= 0 || poolAPY === undefined;
+        if (loading) {
+            return { formattedAPY: '—', isFallback: false, isLoading: true };
+        }
+        const result = calculateClientAPY(feesUSD, valueUSD, position.lastTimestamp || position.blockTimestamp, poolAPY);
+        return { ...result, isLoading: false };
+    }, [feesUSD, valueUSD, position.lastTimestamp, position.blockTimestamp, poolAPY, isLoadingPrices]);
 
-    const { formattedAPY, isLoading: isLoadingAPY, durationDays } = useSimplePositionAPY({
-        owner: position.owner,
-        tickLower: position.tickLower,
-        tickUpper: position.tickUpper,
-        poolId: position.poolId,
-        uncollectedFeesUSD: feesUSD,
-        positionValueUSD: valueUSD,
-        positionCreationTimestamp,
-        enabled: !isLoadingPrices && feesUSD !== undefined && valueUSD > 0,
-    });
-
-    const apyWarning = durationDays !== null && durationDays < 7;
-
-    // MASTER DENOMINATION STATE - All child components inherit this
     const denominationBase = React.useMemo(() => {
         const priceNum = currentPrice ? parseFloat(currentPrice) : undefined;
         return getOptimalBaseToken(position.token0.symbol, position.token1.symbol, priceNum);
@@ -173,32 +158,22 @@ export function PositionCardCompact({
         const isFull = Math.abs(position.tickLower - SDK_MIN_TICK) < 1000 &&
                        Math.abs(position.tickUpper - SDK_MAX_TICK) < 1000;
 
-        let minPoolPrice: number;
-        let maxPoolPrice: number;
+        const lowerPriceStr = convertTickToPrice(
+            position.tickLower, currentPoolTick ?? null, currentPrice ?? null,
+            denominationBase, position.token0.symbol, position.token1.symbol
+        );
 
-        if (currentPrice && currentPoolTick !== null && currentPoolTick !== undefined) {
-            const currentPriceNum = parseFloat(currentPrice);
-            if (isFinite(currentPriceNum)) {
-                minPoolPrice = currentPriceNum * Math.pow(1.0001, position.tickLower - currentPoolTick);
-                maxPoolPrice = currentPriceNum * Math.pow(1.0001, position.tickUpper - currentPoolTick);
-            } else {
-                minPoolPrice = Math.pow(1.0001, position.tickLower);
-                maxPoolPrice = Math.pow(1.0001, position.tickUpper);
-            }
-        } else {
-            minPoolPrice = Math.pow(1.0001, position.tickLower);
-            maxPoolPrice = Math.pow(1.0001, position.tickUpper);
-        }
-
-        const minDisplay = shouldInvert ? (1 / maxPoolPrice) : minPoolPrice;
-        const maxDisplay = shouldInvert ? (1 / minPoolPrice) : maxPoolPrice;
+        const upperPriceStr = convertTickToPrice(
+            position.tickUpper, currentPoolTick ?? null, currentPrice ?? null,
+            denominationBase, position.token0.symbol, position.token1.symbol
+        );
 
         return {
-            minPrice: isFinite(minDisplay) ? minDisplay.toString() : '0',
-            maxPrice: isFinite(maxDisplay) ? maxDisplay.toString() : '∞',
+            minPrice: shouldInvert ? upperPriceStr : lowerPriceStr,
+            maxPrice: shouldInvert ? lowerPriceStr : upperPriceStr,
             isFullRange: isFull
         };
-    }, [position.tickLower, position.tickUpper, currentPrice, currentPoolTick, shouldInvert]);
+    }, [position.tickLower, position.tickUpper, currentPrice, currentPoolTick, denominationBase, position.token0.symbol, position.token1.symbol, convertTickToPrice, shouldInvert]);
 
     // Notify parent of denomination data for modal usage
     React.useEffect(() => {
@@ -207,10 +182,15 @@ export function PositionCardCompact({
                 denominationBase,
                 minPrice,
                 maxPrice,
-                displayedCurrentPrice: displayedCurrentPrice?.toString() || null
+                displayedCurrentPrice: displayedCurrentPrice?.toString() || null,
+                feesUSD,
+                formattedAPY,
+                isAPYFallback,
+                isLoadingAPY
             });
         }
-    }, [denominationBase, minPrice, maxPrice, displayedCurrentPrice, onDenominationData]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [denominationBase, minPrice, maxPrice, displayedCurrentPrice, feesUSD, formattedAPY, isAPYFallback, isLoadingAPY]);
 
     // Determine status
     const statusText = isFullRange ? 'Full Range' : position.isInRange ? 'In Range' : 'Out of Range';
@@ -227,7 +207,7 @@ export function PositionCardCompact({
             onMouseLeave={() => setIsHovered(false)}
         >
             {/* Loading overlay */}
-            {(position as any).isOptimisticallyUpdating && (
+            {position.isOptimisticallyUpdating && (
                 <div className="absolute inset-0 bg-muted/20 backdrop-blur-sm rounded-lg flex items-center justify-center z-10">
                     <Image src="/LogoIconWhite.svg" alt="Updating..." width={24} height={24} className="animate-pulse opacity-75" />
                 </div>
@@ -244,7 +224,7 @@ export function PositionCardCompact({
                         <div className="h-8 w-16 bg-muted/60 rounded-full animate-pulse flex-shrink-0" />
                     ) : (
                         <div className="flex items-center flex-shrink-0 mr-2">
-                            <TokenStack position={position as any} />
+                            <TokenStack position={position} />
                         </div>
                     )}
                     <div className="flex flex-col justify-center gap-0.5 min-w-0">
@@ -270,6 +250,7 @@ export function PositionCardCompact({
                         minPrice={minPrice}
                         maxPrice={maxPrice}
                         isInRange={position.isInRange}
+                        isFullRange={isFullRange}
                         className="w-full h-full"
                     />
                 </div>
@@ -302,17 +283,25 @@ export function PositionCardCompact({
                     {isLoadingPrices || prefetchedRaw0 === null || prefetchedRaw1 === null || prefetchedRaw0 === undefined || prefetchedRaw1 === undefined ? (
                         <div className="h-4 w-14 bg-muted/60 rounded animate-pulse mb-0.5" />
                     ) : (
-                        <div className="text-xs font-medium font-mono">${feesUSD.toFixed(2)}</div>
+                        <div className={cn(
+                            "text-xs font-medium font-mono",
+                            feesUSD === 0 && "text-white/50"
+                        )}>
+                            ${feesUSD.toFixed(2)}
+                        </div>
                     )}
                     <div className="text-[10px] text-muted-foreground">Fees</div>
                 </div>
 
                 {/* APY */}
                 <div className="flex flex-col gap-0.5 flex-1 min-w-0">
-                    {isLoadingAPY || isLoadingPrices || prefetchedRaw0 === null || prefetchedRaw1 === null || prefetchedRaw0 === undefined || prefetchedRaw1 === undefined ? (
-                        <div className="h-4 w-10 bg-muted/60 rounded animate-pulse mb-0.5" />
+                    {isLoadingAPY ? (
+                        <div className="h-4 w-12 bg-muted/60 rounded animate-pulse" />
                     ) : (
-                        <div className="text-xs font-medium font-mono" title={apyWarning ? "Based on limited data (<7 days)" : undefined}>
+                        <div className={cn(
+                            "text-xs font-medium font-mono",
+                            isAPYFallback && "text-white/50"
+                        )}>
                             {formattedAPY}
                         </div>
                     )}

@@ -736,6 +736,18 @@ export default function PoolDetailPage() {
   const [selectedPositionForDetails, setSelectedPositionForDetails] = useState<ProcessedPosition | null>(null);
   const [isPositionDetailsModalOpen, setIsPositionDetailsModalOpen] = useState(false);
 
+  // Store denomination data per position ID
+  const [denominationDataByPositionId, setDenominationDataByPositionId] = useState<Record<string, {
+    denominationBase: string;
+    minPrice: string;
+    maxPrice: string;
+    displayedCurrentPrice: string | null;
+    feesUSD: number;
+    formattedAPY: string;
+    isAPYFallback: boolean;
+    isLoadingAPY: boolean;
+  }>>({});
+
   // Debounce versioning to avoid stale API results applying to current inputs
   const increaseCalcVersionRef = React.useRef(0);
   const withdrawCalcVersionRef = React.useRef(0);
@@ -814,13 +826,13 @@ export default function PoolDetailPage() {
 
   const refetchPositionsOnly = useCallback(async () => {
     try {
-      if (Date.now() < positionsWriteLockRef.current) return;
-      if (!poolId || !isConnected || !accountAddress) return;
+      if (Date.now() < positionsWriteLockRef.current) return null;
+      if (!poolId || !isConnected || !accountAddress) return null;
       const basePoolInfo = getPoolConfiguration(poolId);
-      if (!basePoolInfo) return;
+      if (!basePoolInfo) return null;
       const ids = await loadUserPositionIds(accountAddress);
       const data = await derivePositionsFromIds(accountAddress, ids);
-      if (!Array.isArray(data)) return;
+      if (!Array.isArray(data)) return null;
       const subgraphId = (basePoolInfo.subgraphId || '').toLowerCase();
       const [poolToken0Raw, poolToken1Raw] = basePoolInfo.pair.split(' / ');
       const poolToken0 = poolToken0Raw?.trim().toUpperCase();
@@ -830,11 +842,117 @@ export default function PoolDetailPage() {
         return poolMatch;
       });
       refreshTombstonesFromFetched(filtered as any);
-      setUserPositions(applyTombstones(filtered as any));
+      const updatedPositions = applyTombstones(filtered as any);
+      setUserPositions(updatedPositions);
+      return updatedPositions;
     } catch (e) {
       console.warn('Refetch positions failed', e);
+      return null;
     }
   }, [poolId, isConnected, accountAddress]);
+
+  // Backoff refresh for a single position after transaction
+  const backoffRefreshSinglePosition = useCallback(async (positionId: string) => {
+    try {
+      if (!poolId || !isConnected || !accountAddress) return;
+
+      // Prevent rapid position refreshes (cooldown: 5 seconds)
+      const now = Date.now();
+      if (now - lastPositionRefreshRef.current < 5000) {
+        return;
+      }
+      lastPositionRefreshRef.current = now;
+
+      const baseInfo = getPoolConfiguration(poolId);
+      const subId = (baseInfo?.subgraphId || '').toLowerCase();
+      if (!subId) return;
+
+      // Fingerprint function to detect actual changes
+      const fingerprint = (pos: ProcessedPosition) => {
+        try {
+          return JSON.stringify({
+            id: pos.positionId,
+            a0: pos.token0.amount,
+            a1: pos.token1.amount,
+            l: (pos as any)?.liquidity || (pos as any)?.liquidityRaw,
+            lo: pos.tickLower,
+            up: pos.tickUpper
+          });
+        } catch { return ''; }
+      };
+
+      const baseline = userPositions.find(p => p.positionId === positionId);
+      const baselineFp = baseline ? fingerprint(baseline) : '';
+
+      // Set optimistic updating flag
+      setUserPositions(prev => prev.map(p =>
+        p.positionId === positionId
+          ? { ...p, isOptimisticallyUpdating: true }
+          : p
+      ));
+
+      // Retry with backoff: 0ms, 2s, 5s, 10s, 15s
+      const result = await RetryUtility.execute(
+        async () => {
+          if (!accountAddress) throw new Error('Missing account');
+
+          // Use gated loader to avoid stale cache writes
+          const ids = await loadUserPositionIds(accountAddress);
+          const data = await derivePositionsFromIds(accountAddress, ids);
+          const filtered = data.filter((pos: any) =>
+            String(pos?.poolId || '').toLowerCase() === subId
+          );
+
+          const updated = filtered.find(p => p.positionId === positionId);
+          if (!updated) throw new Error('Position not found');
+
+          const nextFp = fingerprint(updated);
+
+          // Only update if data actually changed
+          if (nextFp !== baselineFp) {
+            refreshTombstonesFromFetched(filtered as any);
+            const updatedPositions = applyTombstones(filtered as any);
+            setUserPositions(updatedPositions);
+
+            // Update the modal's selected position if it's open
+            setSelectedPositionForDetails(prev =>
+              prev?.positionId === positionId ? updated : prev
+            );
+
+            return updated; // Success
+          }
+
+          throw new Error('No changes detected yet');
+        },
+        {
+          attempts: 5,
+          backoffStrategy: 'custom',
+          baseDelay: 1000,
+          customDelays: [0, 2000, 5000, 10000, 15000],
+          shouldRetry: (attempt, error) => {
+            return !error.message.includes('Invalid response format');
+          },
+          throwOnFailure: false // Silent failure is ok
+        }
+      );
+
+      // After all attempts, remove optimistic updating flag
+      setUserPositions(prev => prev.map(p =>
+        p.positionId === positionId
+          ? { ...p, isOptimisticallyUpdating: undefined }
+          : p
+      ));
+
+    } catch (error) {
+      console.warn('Backoff refresh failed for position:', positionId, error);
+      // Always clear optimistic flag
+      setUserPositions(prev => prev.map(p =>
+        p.positionId === positionId
+          ? { ...p, isOptimisticallyUpdating: undefined }
+          : p
+      ));
+    }
+  }, [poolId, isConnected, accountAddress, userPositions]);
 
   const onLiquidityBurnedCallback = useCallback(() => {
     if (pendingActionRef.current?.type !== 'burn') return; // ignore stale callback
@@ -1326,13 +1444,13 @@ export default function PoolDetailPage() {
       if (isNaN(apy) || !isFinite(apy)) {
         calculatedApr = '0.00%';
       } else if (apy >= 1000) {
-        calculatedApr = `~${Math.round(apy)}%`;
+        calculatedApr = `${Math.round(apy)}%`;
       } else if (apy >= 100) {
-        calculatedApr = `~${apy.toFixed(0)}%`;
+        calculatedApr = `${apy.toFixed(0)}%`;
       } else if (apy >= 10) {
-        calculatedApr = `~${apy.toFixed(1)}%`;
+        calculatedApr = `${apy.toFixed(1)}%`;
       } else if (apy > 0) {
-        calculatedApr = `~${apy.toFixed(2)}%`;
+        calculatedApr = `${apy.toFixed(2)}%`;
       } else {
         calculatedApr = '0.00%';
       }
@@ -3271,39 +3389,55 @@ export default function PoolDetailPage() {
                       token1Symbol={pendingPos.token1Symbol}
                     />
                   ))}
-                  {/* Then render existing positions */}
-                  {userPositions.map((position) => {
-                    // Get prefetched fee data for this position
-                    const feeData = getFeesForPosition(position.positionId);
+                  {(() => {
+                    const aprNum = parseFloat(currentPoolData?.apr?.replace(/[~%]/g, '') || '');
+                    const poolAPY = isFinite(aprNum) ? aprNum : null;
 
-                    // Add fee data to position object (like portfolio page does)
-                    const positionWithFees = {
-                      ...position,
-                      unclaimedRaw0: feeData?.amount0,
-                      unclaimedRaw1: feeData?.amount1,
-                    };
+                    return userPositions.map((position) => {
+                      const feeData = getFeesForPosition(position.positionId);
+                      const positionWithFees = {
+                        ...position,
+                        unclaimedRaw0: feeData?.amount0,
+                        unclaimedRaw1: feeData?.amount1,
+                      };
 
                     return (
                       <PositionCardCompact
                         key={position.positionId}
                         position={positionWithFees as any}
                         valueUSD={calculatePositionUsd(position)}
-                        poolKey={poolId}
                         getUsdPriceForSymbol={getUsdPriceForSymbol}
+                        convertTickToPrice={convertTickToPrice}
                         onClick={() => {
+                          setUserPositions(prev => prev.map(p =>
+                            p.positionId === position.positionId
+                              ? { ...p, isOptimisticallyUpdating: true }
+                              : p
+                          ));
                           setSelectedPositionForDetails(positionWithFees as any);
                           setIsPositionDetailsModalOpen(true);
                         }}
-                        isLoadingPrices={isLoadingPrices}
-                        isLoadingPoolStates={!currentPoolData}
-                        currentPrice={currentPrice}
-                        currentPoolTick={currentPoolTick}
-                        convertTickToPrice={convertTickToPrice}
-                        prefetchedRaw0={feeData?.amount0}
-                        prefetchedRaw1={feeData?.amount1}
+                        poolContext={{
+                          currentPrice,
+                          currentPoolTick,
+                          poolAPY,
+                          isLoadingPrices,
+                          isLoadingPoolStates: !currentPoolData
+                        }}
+                        fees={{
+                          raw0: feeData?.amount0 ?? null,
+                          raw1: feeData?.amount1 ?? null
+                        }}
+                        onDenominationData={(data) => {
+                          setDenominationDataByPositionId(prev => ({
+                            ...prev,
+                            [position.positionId]: data
+                          }));
+                        }}
                       />
                     );
-                  })}
+                    });
+                  })()}
                 </div>
               </div>
             ) : (
@@ -3701,6 +3835,7 @@ export default function PoolDetailPage() {
           onClose={() => {
             setIsPositionDetailsModalOpen(false);
             setSelectedPositionForDetails(null);
+            setUserPositions(prev => prev.map(p => ({ ...p, isOptimisticallyUpdating: undefined })));
           }}
           position={selectedPositionForDetails}
           valueUSD={calculatePositionUsd(selectedPositionForDetails)}
@@ -3708,38 +3843,22 @@ export default function PoolDetailPage() {
           prefetchedRaw1={getFeesForPosition(selectedPositionForDetails.positionId)?.amount1}
           formatTokenDisplayAmount={formatTokenDisplayAmount}
           getUsdPriceForSymbol={getUsdPriceForSymbol}
-          onAddLiquidity={() => {
-            setIsPositionDetailsModalOpen(false);
-            handleIncreasePosition(selectedPositionForDetails);
-          }}
-          onWithdraw={() => {
-            setIsPositionDetailsModalOpen(false);
-            handleBurnPosition(selectedPositionForDetails);
-          }}
-          onClaimFees={async () => {
-            try {
-              await claimFees(selectedPositionForDetails.positionId);
-              toast.success('Fees Claimed', {
-                description: 'Your fees have been successfully claimed.',
-                duration: 4000
-              });
-              setIsPositionDetailsModalOpen(false);
-            } catch (err: any) {
-              toast.error('Claim Failed', {
-                icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
-                description: err?.message || 'Failed to claim fees.',
-                action: {
-                  label: "Copy Error",
-                  onClick: () => navigator.clipboard.writeText(err?.message || 'Failed to claim fees')
-                }
-              });
-            }
+          onRefreshPosition={async () => {
+            // Use backoff refresh for proper retry logic with cache invalidation
+            await backoffRefreshSinglePosition(selectedPositionForDetails.positionId);
           }}
           currentPrice={currentPrice}
           currentPoolTick={currentPoolTick}
           convertTickToPrice={convertTickToPrice}
           selectedPoolId={selectedPositionForDetails.poolId}
           chainId={chainId}
+          denominationBase={denominationDataByPositionId[selectedPositionForDetails.positionId]?.denominationBase}
+          initialMinPrice={denominationDataByPositionId[selectedPositionForDetails.positionId]?.minPrice}
+          initialMaxPrice={denominationDataByPositionId[selectedPositionForDetails.positionId]?.maxPrice}
+          initialCurrentPrice={denominationDataByPositionId[selectedPositionForDetails.positionId]?.displayedCurrentPrice}
+          prefetchedFormattedAPY={denominationDataByPositionId[selectedPositionForDetails.positionId]?.formattedAPY}
+          prefetchedIsAPYFallback={denominationDataByPositionId[selectedPositionForDetails.positionId]?.isAPYFallback}
+          prefetchedIsLoadingAPY={denominationDataByPositionId[selectedPositionForDetails.positionId]?.isLoadingAPY}
         />
       )}
 

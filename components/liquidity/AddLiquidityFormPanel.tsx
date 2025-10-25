@@ -632,12 +632,12 @@ export function AddLiquidityFormPanel({
                           className="h-5 px-2 text-[10px] font-medium rounded-md border-sidebar-border bg-muted/20 hover:bg-muted/40 transition-colors"
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleToken0Percentage(percentage);
-                                      setTimeout(() => {
-                              if (increaseAmount0 && parseFloat(increaseAmount0) > 0) {
-                                calculateIncreaseAmount(increaseAmount0, 'amount0');
-                              }
-                            }, 0);
+                            // Get the calculated value from the percentage handler
+                            const calculatedValue = handleToken0Percentage(percentage);
+                            // Trigger API calculation with the new value
+                            if (calculatedValue && parseFloat(calculatedValue) > 0) {
+                              calculateIncreaseAmount(calculatedValue, 'amount0');
+                            }
                           }}
                         >
                           {percentage === 100 ? 'MAX' : `${percentage}%`}
@@ -723,12 +723,12 @@ export function AddLiquidityFormPanel({
                           className="h-5 px-2 text-[10px] font-medium rounded-md border-sidebar-border bg-muted/20 hover:bg-muted/40 transition-colors"
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleToken1Percentage(percentage);
-                                      setTimeout(() => {
-                              if (increaseAmount1 && parseFloat(increaseAmount1) > 0) {
-                                calculateIncreaseAmount(increaseAmount1, 'amount1');
-                              }
-                            }, 0);
+                            // Get the calculated value from the percentage handler
+                            const calculatedValue = handleToken1Percentage(percentage);
+                            // Trigger API calculation with the new value
+                            if (calculatedValue && parseFloat(calculatedValue) > 0) {
+                              calculateIncreaseAmount(calculatedValue, 'amount1');
+                            }
                           }}
                         >
                           {percentage === 100 ? 'MAX' : `${percentage}%`}

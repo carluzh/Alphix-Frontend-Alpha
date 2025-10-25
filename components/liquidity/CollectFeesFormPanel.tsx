@@ -216,7 +216,7 @@ export function CollectFeesFormPanel({
             }
           >
             <span className={isClaimingFees ? "animate-pulse" : ""}>
-              {isClaimingFees ? "Collecting..." : "Collect All Fees"}
+              {isClaimingFees ? "Collecting..." : "Collect"}
             </span>
           </Button>
         </>

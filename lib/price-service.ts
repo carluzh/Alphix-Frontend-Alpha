@@ -99,9 +99,10 @@ async function fetchAllPrices(signal?: AbortSignal): Promise<AllPricesData> {
       
     } catch (error) {
       clearTimeout(timeoutId);
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw error;
+      }
       console.error('[PriceService] Error fetching all prices:', error);
-      
-      // Return fallback prices on error
       throw error;
     }
   })();

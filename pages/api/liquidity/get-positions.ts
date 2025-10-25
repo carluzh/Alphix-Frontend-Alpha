@@ -74,6 +74,7 @@ export interface ProcessedPosition { // Export for frontend type usage
     liquidityRaw: string;
     ageSeconds: number;
     blockTimestamp: number;
+    lastTimestamp: number; // Last modification timestamp (for APY calculation)
     isInRange: boolean;
 }
 
@@ -235,6 +236,7 @@ async function fetchAndProcessUserPositionsForApi(ownerAddress: string): Promise
                             liquidityRaw: ((r as any).liquidity ?? details.liquidity.toString()).toString(),
                             ageSeconds: Math.max(0, Math.floor(Date.now()/1000) - createdTs),
                             blockTimestamp: createdTs || 0,
+                            lastTimestamp: lastTs || createdTs || 0, // Use lastTimestamp from subgraph, fallback to creation
                             isInRange: state.tick >= details.tickLower && state.tick < details.tickUpper,
                         });
                     } catch (e: any) {

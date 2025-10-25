@@ -39,6 +39,7 @@ type ProcessedPosition = {
     isInRange: boolean;
     ageSeconds: number;
     blockTimestamp: number;
+    lastTimestamp: number;
 };
 
 interface PositionCardWithModalsProps {
@@ -63,6 +64,7 @@ interface PositionCardWithModalsProps {
     prefetchedRaw0?: string | null;
     prefetchedRaw1?: string | null;
     chainId?: number;
+    poolAPY?: number | null;
 }
 
 export function PositionCardWithModals(props: PositionCardWithModalsProps) {
@@ -85,7 +87,8 @@ export function PositionCardWithModals(props: PositionCardWithModalsProps) {
         prefetchedRaw1,
         chainId,
         openWithdraw,
-        openAddLiquidity
+        openAddLiquidity,
+        poolAPY
     } = props;
 
     // Modal state
@@ -165,6 +168,10 @@ export function PositionCardWithModals(props: PositionCardWithModalsProps) {
         minPrice: string;
         maxPrice: string;
         displayedCurrentPrice: string | null;
+        feesUSD: number;
+        formattedAPY: string;
+        isAPYFallback: boolean;
+        isLoadingAPY: boolean;
     } | null>(null);
 
     return (
@@ -173,19 +180,20 @@ export function PositionCardWithModals(props: PositionCardWithModalsProps) {
             <PositionCardCompact
                 position={position}
                 valueUSD={valueUSD}
-                poolKey={poolKey}
                 getUsdPriceForSymbol={getUsdPriceForSymbol}
-                onClick={handleCardClick}
-                isLoadingPrices={isLoadingPrices}
-                isLoadingPoolStates={isLoadingPoolStates}
-                prefetchedRaw0={prefetchedRaw0}
-                prefetchedRaw1={prefetchedRaw1}
-                currentPrice={currentPrice}
-                currentPoolTick={currentPoolTick}
-                currentPoolSqrtPriceX96={currentPoolSqrtPriceX96}
-                poolLiquidity={poolLiquidity}
-                chainId={chainId}
                 convertTickToPrice={convertTickToPrice}
+                onClick={handleCardClick}
+                poolContext={{
+                    currentPrice: currentPrice ?? null,
+                    currentPoolTick: currentPoolTick ?? null,
+                    poolAPY: poolAPY ?? null,
+                    isLoadingPrices,
+                    isLoadingPoolStates
+                }}
+                fees={{
+                    raw0: prefetchedRaw0 ?? null,
+                    raw1: prefetchedRaw1 ?? null
+                }}
                 onDenominationData={setDenominationData}
             />
 
@@ -199,9 +207,10 @@ export function PositionCardWithModals(props: PositionCardWithModalsProps) {
                 prefetchedRaw1={prefetchedRaw1}
                 formatTokenDisplayAmount={formatTokenDisplayAmount}
                 getUsdPriceForSymbol={getUsdPriceForSymbol}
-                onAddLiquidity={handleAddLiquidity}
-                onWithdraw={handleWithdraw}
-                onClaimFees={handleClaimFees}
+                onRefreshPosition={() => {
+                    // This component is deprecated - stub implementation
+                    console.warn('PositionCardWithModals is deprecated, use PositionCardCompact with PositionDetailsModal');
+                }}
                 currentPrice={currentPrice}
                 currentPoolTick={currentPoolTick}
                 convertTickToPrice={convertTickToPrice}
@@ -214,6 +223,9 @@ export function PositionCardWithModals(props: PositionCardWithModalsProps) {
                 initialMinPrice={denominationData?.minPrice}
                 initialMaxPrice={denominationData?.maxPrice}
                 initialCurrentPrice={denominationData?.displayedCurrentPrice}
+                prefetchedFormattedAPY={denominationData?.formattedAPY}
+                prefetchedIsAPYFallback={denominationData?.isAPYFallback}
+                prefetchedIsLoadingAPY={denominationData?.isLoadingAPY}
             />
         </>
     );

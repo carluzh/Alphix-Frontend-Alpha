@@ -1068,15 +1068,6 @@ export function useAddLiquidityTransaction({
     return completedApprovals.length;
   }, [completedApprovals.length]);
 
-  // Debug logging for return values
-  console.log('[useAddLiquidityTransaction] Return values:', {
-    step,
-    isWorking,
-    batchPermitSigned,
-    hasSignatureInData: !!preparedTxData?.batchPermitOptions?.batchPermit?.signature,
-    needsERC20Approvals: needsERC20Approvals.length
-  });
-
   return {
     // Transaction state
     isWorking,

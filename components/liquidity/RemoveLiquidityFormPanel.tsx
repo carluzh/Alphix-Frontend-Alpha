@@ -31,6 +31,8 @@ interface RemoveLiquidityFormPanelProps {
   onSuccess: () => void;
   onAmountsChange?: (amount0: number, amount1: number) => void;
   hideContinueButton?: boolean;
+  externalIsSuccess?: boolean;
+  externalTxHash?: string;
 }
 
 export function RemoveLiquidityFormPanel({
@@ -38,7 +40,9 @@ export function RemoveLiquidityFormPanel({
   feesForWithdraw,
   onSuccess,
   onAmountsChange,
-  hideContinueButton = false
+  hideContinueButton = false,
+  externalIsSuccess = false,
+  externalTxHash
 }: RemoveLiquidityFormPanelProps) {
   const { address: accountAddress } = useAccount();
   const { data: allPrices } = useAllPrices();
@@ -314,10 +318,10 @@ export function RemoveLiquidityFormPanel({
     }
   };
 
-  // Success view
-  if (showSuccessView) {
+  // Success view - use external success state if provided, otherwise use internal state
+  if (showSuccessView || externalIsSuccess) {
     return (
-      <div className="flex flex-col items-center justify-center py-12 space-y-6">
+      <div className="flex flex-col items-center justify-center space-y-6">
         <div className="flex items-center justify-center w-16 h-16 rounded-full bg-green-500/10">
           <BadgeCheck className="w-8 h-8 text-green-500" />
         </div>
@@ -336,9 +340,9 @@ export function RemoveLiquidityFormPanel({
             })()}
           </p>
         </div>
-        {decreaseTxHash && (
+        {(externalTxHash || decreaseTxHash) && (
           <a
-            href={`https://ftmscan.com/tx/${decreaseTxHash}`}
+            href={`https://ftmscan.com/tx/${externalTxHash || decreaseTxHash}`}
             target="_blank"
             rel="noopener noreferrer"
             className="text-xs text-muted-foreground hover:text-foreground underline"

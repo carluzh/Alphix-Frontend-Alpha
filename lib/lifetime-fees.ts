@@ -9,6 +9,9 @@
  * 3. APY = (Current Uncollected Fees USD / Position Value USD) × (365 / Duration Days) × 100
  *
  * This naturally resets when user adds/removes liquidity, giving accurate "current rate".
+ *
+ * Fallback: If fee-based calculation fails (duration < 6h or no fees), falls back to
+ * pool-wide APY: (volume24h * feeRate * 365 / TVL) * 100
  */
 
 import { getSubgraphUrlForPool } from './subgraph-url-helper';
@@ -36,6 +39,7 @@ interface ModifyLiquidityEvent {
  * @param uncollectedFeesUSD - Current uncollected fees in USD
  * @param positionValueUSD - Current position value in USD
  * @param positionCreationTimestamp - Position creation timestamp (fallback)
+ * @param poolAPY - Pre-calculated pool APY to use as fallback (from get-pools-batch cache)
  * @returns APY result with duration info
  */
 export async function calculatePositionAPY(
@@ -45,7 +49,8 @@ export async function calculatePositionAPY(
   poolId: string,
   uncollectedFeesUSD: number,
   positionValueUSD: number,
-  positionCreationTimestamp: number
+  positionCreationTimestamp: number,
+  poolAPY?: number | null
 ): Promise<PositionAPYResult> {
   try {
     // Get the appropriate subgraph URL for this pool
@@ -109,8 +114,14 @@ export async function calculatePositionAPY(
     const durationSeconds = nowTimestamp - lastModificationTimestamp;
     const durationDays = durationSeconds / 86400;
 
-    // Calculate APY
-    const apy = calculateAPY(uncollectedFeesUSD, positionValueUSD, durationDays);
+    // Calculate APY (fee-based)
+    let apy = calculateAPY(uncollectedFeesUSD, positionValueUSD, durationDays);
+
+    // If fee-based APY fails, use the pre-calculated pool APY
+    if (apy === null && poolAPY !== undefined && poolAPY !== null) {
+      console.log('[calculatePositionAPY] Fee-based APY unavailable, using pre-calculated pool APY:', poolAPY);
+      apy = poolAPY;
+    }
 
     return {
       apy,
@@ -124,7 +135,13 @@ export async function calculatePositionAPY(
     const nowTimestamp = Math.floor(Date.now() / 1000);
     const durationSeconds = nowTimestamp - positionCreationTimestamp;
     const durationDays = durationSeconds / 86400;
-    const apy = calculateAPY(uncollectedFeesUSD, positionValueUSD, durationDays);
+    let apy = calculateAPY(uncollectedFeesUSD, positionValueUSD, durationDays);
+
+    // If fee-based APY still fails, use the pre-calculated pool APY
+    if (apy === null && poolAPY !== undefined && poolAPY !== null) {
+      console.log('[calculatePositionAPY] Using pre-calculated pool APY after error:', poolAPY);
+      apy = poolAPY;
+    }
 
     return {
       apy,
@@ -143,8 +160,8 @@ function calculateAPY(
   positionValueUSD: number,
   durationDays: number
 ): number | null {
-  // Need at least 1 day of data
-  if (durationDays < 1) {
+  // Need at least 6 hours of data (0.25 days)
+  if (durationDays < 0.25) {
     return null;
   }
 

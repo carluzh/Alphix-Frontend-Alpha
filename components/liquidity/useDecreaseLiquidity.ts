@@ -27,7 +27,7 @@ const safeParseUnits = (amount: string, decimals: number): bigint => {
 import JSBI from 'jsbi';
 
 interface UseDecreaseLiquidityProps {
-  onLiquidityDecreased: (info?: { txHash?: `0x${string}`; blockNumber?: bigint; isFullBurn?: boolean }) => void;
+  onLiquidityDecreased?: (info?: { txHash?: `0x${string}`; blockNumber?: bigint; isFullBurn?: boolean }) => void;
   onFeesCollected?: (info?: { txHash?: `0x${string}`; blockNumber?: bigint }) => void;
 }
 
@@ -712,7 +712,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
         } catch {}
         if (lastWasCollectOnly.current && onFeesCollected) {
           onFeesCollected({ txHash: hash as `0x${string}`, blockNumber });
-        } else {
+        } else if (onLiquidityDecreased) {
           onLiquidityDecreased({ txHash: hash as `0x${string}`, blockNumber, isFullBurn: lastIsFullBurn.current } as any);
         }
         

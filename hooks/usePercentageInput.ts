@@ -51,11 +51,11 @@ export function usePercentageInput(
   setAmount: (value: string) => void
 ) {
   return useCallback(
-    (percentage: number) => {
+    (percentage: number): string | undefined => {
       // Validate balance data exists
       if (!balanceData?.value || !balanceData?.formatted) {
         console.warn(`No valid balance data for ${token.symbol}`);
-        return;
+        return undefined;
       }
 
       const balanceValue = balanceData.value;
@@ -63,24 +63,26 @@ export function usePercentageInput(
       // Check for zero or negative balance
       if (balanceValue <= 0n) {
         console.warn(`Invalid or zero balance for ${token.symbol}`);
-        return;
+        return undefined;
       }
+
+      let calculatedAmount: string;
 
       // For 100%, use the exact blockchain formatted value
       if (percentage === 100) {
-        setAmount(balanceData.formatted);
-        return;
+        calculatedAmount = balanceData.formatted;
+      } else {
+        // For other percentages, use bigint arithmetic to avoid floating point errors
+        // Calculate: (balance * percentage) / 100
+        const percentageAmount = (balanceValue * BigInt(percentage)) / 100n;
+
+        // Format the bigint back to a string using the token's decimals
+        calculatedAmount = formatUnits(percentageAmount, token.decimals);
       }
 
-      // For other percentages, use bigint arithmetic to avoid floating point errors
-      // Calculate: (balance * percentage) / 100
-      const percentageAmount = (balanceValue * BigInt(percentage)) / 100n;
-
-      // Format the bigint back to a string using the token's decimals
-      const formattedAmount = formatUnits(percentageAmount, token.decimals);
-
       // Use the raw formatted amount without any truncation or abbreviation
-      setAmount(formattedAmount);
+      setAmount(calculatedAmount);
+      return calculatedAmount;
     },
     [balanceData, token.decimals, token.symbol, setAmount]
   );

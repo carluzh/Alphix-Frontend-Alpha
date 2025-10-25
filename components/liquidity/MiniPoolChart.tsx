@@ -13,6 +13,7 @@ interface MiniPoolChartProps {
   minPrice?: string; // Already in display denomination
   maxPrice?: string; // Already in display denomination
   isInRange?: boolean;
+  isFullRange?: boolean;
   className?: string;
 }
 
@@ -24,6 +25,7 @@ export function MiniPoolChart({
   minPrice,
   maxPrice,
   isInRange,
+  isFullRange,
   className
 }: MiniPoolChartProps) {
   const { data: priceResult, isLoading, error: priceError } = usePoolChartData(token0, token1);
@@ -79,9 +81,25 @@ export function MiniPoolChart({
 
   // Color each data point based on whether it's in range
   const dataWithRange = useMemo(() => {
-    if (!minPriceNum || !maxPriceNum || data.length === 0) {
+    if (data.length === 0) {
+      return [];
+    }
+
+    // If Full Range, entire line is green
+    if (isFullRange) {
+      return data.map((point: any) => ({
+        ...point,
+        inRange: true,
+        priceGreen: point.price,
+        priceRed: null
+      }));
+    }
+
+    // Otherwise, use min/max price logic
+    if (!minPriceNum || !maxPriceNum) {
       return data.map((point: any) => ({ ...point, inRange: false, priceGreen: null, priceRed: point.price }));
     }
+
     return data.map((point: any, idx: number) => {
       const pointInRange = point.price >= minPriceNum && point.price <= maxPriceNum;
       const prevInRange = idx > 0 && data[idx - 1].price >= minPriceNum && data[idx - 1].price <= maxPriceNum;
@@ -99,7 +117,7 @@ export function MiniPoolChart({
         priceRed: showRed ? point.price : null
       };
     });
-  }, [data, minPriceNum, maxPriceNum]);
+  }, [data, minPriceNum, maxPriceNum, isFullRange]);
 
   if (isLoading) {
     return (

@@ -15,6 +15,7 @@ export interface UsePositionAPYProps {
   uncollectedFeesUSD: number | undefined;
   positionValueUSD: number | undefined;
   positionCreationTimestamp: number | undefined;
+  poolAPY?: number | null; // Optional: Pre-calculated pool APY to use as fallback
   enabled?: boolean;
 }
 
@@ -38,6 +39,7 @@ export function usePositionAPY({
   uncollectedFeesUSD,
   positionValueUSD,
   positionCreationTimestamp,
+  poolAPY,
   enabled = true,
 }: UsePositionAPYProps): UsePositionAPYReturn {
   const { data, isLoading, error } = useQuery({
@@ -50,6 +52,7 @@ export function usePositionAPY({
       uncollectedFeesUSD,
       positionValueUSD,
       positionCreationTimestamp,
+      poolAPY,
     ],
     queryFn: async (): Promise<PositionAPYResult> => {
       if (!owner || tickLower === undefined || tickUpper === undefined || !poolId ||
@@ -73,6 +76,7 @@ export function usePositionAPY({
           uncollectedFeesUSD,
           positionValueUSD,
           positionCreationTimestamp,
+          poolAPY, // Pass the pre-calculated pool APY to the API
         }),
       });
 
