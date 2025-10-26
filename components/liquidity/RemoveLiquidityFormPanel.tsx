@@ -173,26 +173,16 @@ export function RemoveLiquidityFormPanel({
           return;
         }
 
-        // Use proper API calculation for in-range positions
-        const response = await fetch('/api/liquidity/calculate-liquidity-parameters', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            token0Symbol: token0Symbol,
-            token1Symbol: token1Symbol,
-            inputAmount: inputAmount,
-            inputTokenSymbol: inputSide === 'amount0' ? token0Symbol : token1Symbol,
-            userTickLower: position.tickLower,
-            userTickUpper: position.tickUpper,
-            chainId: 8453, // Base chain
-          }),
+        const { calculateLiquidityParameters } = await import('@/lib/liquidity-math');
+        const result = await calculateLiquidityParameters({
+          token0Symbol,
+          token1Symbol,
+          inputAmount,
+          inputTokenSymbol: inputSide === 'amount0' ? token0Symbol : token1Symbol,
+          userTickLower: position.tickLower,
+          userTickUpper: position.tickUpper,
+          chainId: 8453,
         });
-
-        if (!response.ok) {
-          throw new Error(`API error: ${response.status}`);
-        }
-
-        const result = await response.json();
 
         if (version === withdrawCalcVersionRef.current) {
           if (inputSide === 'amount0') {

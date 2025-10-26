@@ -78,7 +78,7 @@ export function StarrySkyBackground() {
         }
       };
       revealRafRef.current = requestAnimationFrame(step);
-    }, 3000); // 3 second delay before appearing
+    }, 1000); // 1 second delay before appearing
 
     return () => {
       clearTimeout(timer);

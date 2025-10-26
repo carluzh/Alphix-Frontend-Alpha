@@ -58,6 +58,8 @@ export function useAddLiquidityTransactionV2({
           amount0: formatUnits(BigInt(calculatedData.amount0 || '0'), TOKEN_DEFINITIONS[token0Symbol]?.decimals || 18),
           amount1: formatUnits(BigInt(calculatedData.amount1 || '0'), TOKEN_DEFINITIONS[token1Symbol]?.decimals || 18),
           chainId,
+          tickLower: calculatedData.finalTickLower ?? parseInt(tickLower),
+          tickUpper: calculatedData.finalTickUpper ?? parseInt(tickUpper),
         }
       : undefined,
     {
@@ -175,7 +177,14 @@ export function useAddLiquidityTransactionV2({
 
         const result = await response.json();
 
+        // Check if API is requesting permit signature (should not happen if flow is correct)
+        if (result.needsApproval && result.approvalType === 'PERMIT2_BATCH_SIGNATURE') {
+          console.error('[handleDeposit] API returned permit request but permit should have been obtained already');
+          throw new Error('Permit signature required. Please refresh and try again.');
+        }
+
         if (!result.transaction || !result.transaction.to || !result.transaction.data) {
+          console.error('[handleDeposit] Invalid API response:', result);
           throw new Error('Invalid transaction data from API');
         }
 
@@ -206,8 +215,8 @@ export function useAddLiquidityTransactionV2({
 
         const hash = await depositAsync(depositConfig);
 
-        // Callback immediately after submission
-        onLiquidityAdded(token0Symbol, token1Symbol);
+        // Note: onLiquidityAdded will be called after confirmation in the useEffect below
+        // This prevents duplicate skeleton creation
       } catch (error: any) {
         console.error('Deposit error:', error);
 
@@ -284,28 +293,23 @@ export function useAddLiquidityTransactionV2({
     }
   }, [isDepositConfirmed, depositTxHash, accountAddress, token0Symbol, token1Symbol, onLiquidityAdded, onOpenChange, queryClient]);
 
+  const resetAll = React.useCallback(() => {
+    resetApprove();
+    resetDeposit();
+    setIsWorking(false);
+    processedDepositHashRef.current = null;
+  }, [resetApprove, resetDeposit]);
+
   return {
-    // Data
     approvalData,
     isCheckingApprovals,
-
-    // Status flags
     isWorking: isWorking || isApprovePending || isApproving || isDepositPending || isDepositConfirming,
     isApproving,
     isDepositConfirming,
     isDepositSuccess: isDepositConfirmed,
-
-    // Actions
     handleApprove,
     handleDeposit,
     refetchApprovals,
-
-    // Reset
-    reset: () => {
-      resetApprove();
-      resetDeposit();
-      setIsWorking(false);
-      processedDepositHashRef.current = null;
-    },
+    reset: resetAll,
   };
 }

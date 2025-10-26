@@ -5,16 +5,11 @@ import { useRouter } from "next/navigation";
 import { AppLayout } from "@/components/app-layout";
 import Image from "next/image";
 import { useMemo, useState, useEffect, useRef, useCallback, useLayoutEffect } from "react";
-import { formatUSD as formatUSDShared, formatUSDHeader as formatUSDHeaderShared, formatNumber, formatPercent, formatTokenAmount } from "@/lib/format";
-import JSBI from "jsbi";
-import { Token } from "@uniswap/sdk-core";
+import { formatUSD as formatUSDShared, formatUSDHeader as formatUSDHeaderShared, formatNumber, formatPercent } from "@/lib/format";
 import { Pool as V4Pool, Position as V4Position } from "@uniswap/v4-sdk";
 import { publicClient } from "@/lib/viemClient";
-import { getAllPools, getToken, getPoolById, CHAIN_ID, getStateViewAddress, getPositionManagerAddress, getAllTokens, NATIVE_TOKEN_ADDRESS, getContracts } from "@/lib/pools-config";
-import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from "@/lib/abis/state_view_abi";
-// position_manager_abi is no longer needed here; hooks encapsulate calldata
-import { parseAbi, type Abi, type Hex, getAddress } from "viem";
-import { ethers } from "ethers";
+import { getAllPools, getToken, CHAIN_ID, getAllTokens, NATIVE_TOKEN_ADDRESS } from "@/lib/pools-config";
+import { parseAbi, type Abi } from "viem";
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract } from "wagmi";
 import { baseSepolia } from "@/lib/wagmiConfig";
 import { useUserPositions, useAllPrices, useUncollectedFeesBatch } from "@/components/data/hooks";
@@ -23,7 +18,7 @@ import { setIndexingBarrier, invalidateUserPositionIdsCache } from "@/lib/client
 import { toast } from "sonner";
 import { FAUCET_CONTRACT_ADDRESS, faucetContractAbi } from "@/pages/api/misc/faucet";
 import poolsConfig from "@/config/pools.json";
-import { ChevronUpIcon, ChevronDownIcon, ChevronsUpDownIcon, ChevronRight, OctagonX, OctagonAlert, EllipsisVertical, PlusIcon, RefreshCwIcon, BadgeCheck, Menu, ArrowUpRight, ArrowDownRight, X } from "lucide-react";
+import { ChevronUpIcon, ChevronDownIcon, ChevronsUpDownIcon, OctagonX, BadgeCheck, ArrowUpRight, ArrowDownRight, X } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { PortfolioTickBar } from "@/components/portfolio/PortfolioTickBar";
 import { ConnectWalletButton } from "@/components/ConnectWalletButton";
@@ -34,9 +29,10 @@ import { useIncreaseLiquidity } from "@/components/liquidity/useIncreaseLiquidit
 import { useDecreaseLiquidity } from "@/components/liquidity/useDecreaseLiquidity";
 import { AddLiquidityModal } from "@/components/liquidity/AddLiquidityModal";
 import { WithdrawLiquidityModal } from "@/components/liquidity/WithdrawLiquidityModal";
-
-import { PositionCard } from "@/components/liquidity/PositionCard";
+import { PositionCardCompact } from "@/components/liquidity/PositionCardCompact";
+import { PositionDetailsModal } from "@/components/liquidity/PositionDetailsModal";
 import { batchGetTokenPrices } from '@/lib/price-service';
+import { cn } from '@/lib/utils';
 
 // Loading phases for skeleton system
 type LoadPhases = { phase: 0 | 1 | 2 | 3 | 4; startedAt: number };
@@ -1011,44 +1007,30 @@ export default function PortfolioPage() {
   // Enhanced refetching functions (based on pool page logic)
   const refreshSinglePosition = useCallback(async (positionId: string) => {
     if (!accountAddress) return;
-
     try {
-      // Fetch updated data for just this position
       const updatedPositions = await derivePositionsFromIds(accountAddress, [positionId]);
       const updatedPosition = updatedPositions[0];
-      
+
       if (updatedPosition) {
-        // Update only this position in the array, keeping others untouched
-        // Preserve the original ageSeconds if the refreshed data doesn't have it or it's 0
         setActivePositions(prev => {
-          const preservedAgeSeconds = updatedPosition.ageSeconds && updatedPosition.ageSeconds > 0 
-            ? updatedPosition.ageSeconds 
+          const preservedAgeSeconds = updatedPosition.ageSeconds && updatedPosition.ageSeconds > 0
+            ? updatedPosition.ageSeconds
             : prev.find(p => p.positionId === positionId)?.ageSeconds;
-            
-          return prev.map(p => 
-            p.positionId === positionId 
-              ? { ...updatedPosition, 
-                  isOptimisticallyUpdating: undefined,
-                  ageSeconds: preservedAgeSeconds || updatedPosition.ageSeconds
-                }
+          return prev.map(p =>
+            p.positionId === positionId
+              ? { ...updatedPosition, isOptimisticallyUpdating: undefined, ageSeconds: preservedAgeSeconds || updatedPosition.ageSeconds }
               : p
           );
         });
+        setSelectedPosition(prev => prev?.positionId === positionId ? updatedPosition : prev);
       } else {
-        // If position not found, just clear loading state
-        setActivePositions(prev => prev.map(p => 
-          p.positionId === positionId
-            ? { ...p, isOptimisticallyUpdating: undefined }
-            : p
+        setActivePositions(prev => prev.map(p =>
+          p.positionId === positionId ? { ...p, isOptimisticallyUpdating: undefined } : p
         ));
       }
     } catch (error) {
-      console.error('[refreshSinglePosition] failed:', error);
-      // Clear loading state on error
-      setActivePositions(prev => prev.map(p => 
-        p.positionId === positionId
-          ? { ...p, isOptimisticallyUpdating: undefined }
-          : p
+      setActivePositions(prev => prev.map(p =>
+        p.positionId === positionId ? { ...p, isOptimisticallyUpdating: undefined } : p
       ));
     }
   }, [accountAddress]);
@@ -1065,8 +1047,7 @@ export default function PortfolioPage() {
       // Trigger server revalidation
       try { 
         const revalidateResp = await fetch('/api/internal/revalidate-pools', { method: 'POST' });
-        const revalidateData = await revalidateResp.json();
-        console.log('[Portfolio refreshAfterMutation] Server cache revalidated:', revalidateData);
+        await revalidateResp.json();
       } catch (error) {
         console.error('[Portfolio refreshAfterMutation] Failed to revalidate server cache:', error);
       }
@@ -1108,32 +1089,12 @@ export default function PortfolioPage() {
 
   // Enhanced liquidity hooks with optimistic updates and proper error handling
   const onLiquidityIncreasedCallback = useCallback(async (info?: { txHash?: `0x${string}`; blockNumber?: bigint, increaseAmounts?: { amount0: string; amount1: string }, positionId?: string }) => {
-    console.log('[Portfolio] onLiquidityIncreasedCallback called:', { 
-      pendingActionType: pendingActionRef.current?.type, 
-      txHash: info?.txHash?.slice(0, 10) + '...',
-      hasIncreaseAmounts: !!info?.increaseAmounts 
-    });
-    
-    // Require valid hash to proceed and prevent duplicates
-    if (!info?.txHash) {
-      console.log('[Portfolio] Skipping - missing txHash');
-      return;
-    }
-    if (handledIncreaseHashRef.current === info.txHash) {
-      console.log('[Portfolio] Skipping - already handled this txHash');
-      return;
-    }
+    if (!info?.txHash) return;
+    if (handledIncreaseHashRef.current === info.txHash) return;
     handledIncreaseHashRef.current = info.txHash;
-
-    if (pendingActionRef.current?.type !== 'increase') {
-      console.log('[Portfolio] Skipping - not increase type');
-      return;
-    }
+    if (pendingActionRef.current?.type !== 'increase') return;
     const now = Date.now();
-    if (now - lastRevalidationRef.current < 15000) {
-      console.log('[Portfolio] Skipping - cooldown active');
-      return;
-    }
+    if (now - lastRevalidationRef.current < 15000) return;
     lastRevalidationRef.current = now;
 
     // IMMEDIATE OPTIMISTIC UPDATES (happen with toast)
@@ -1182,8 +1143,6 @@ export default function PortfolioPage() {
       }
     }
 
-    // Close modal (success toast is handled by useIncreaseLiquidity hook)
-    console.log('[Portfolio] Transaction successful, clearing pendingActionRef');
     setShowIncreaseModal(false);
     pendingActionRef.current = null;
     
@@ -1200,9 +1159,7 @@ export default function PortfolioPage() {
       const { poolId, subgraphId } = modifiedPositionPoolInfoRef.current;
       try { 
         fetch('/api/internal/revalidate-pools', { method: 'POST' })
-          .then(resp => resp.json())
-          .then(data => console.log('[onLiquidityIncreasedCallback] Pool stats refreshed:', data))
-          .catch(error => console.warn('[onLiquidityIncreasedCallback] Failed to refresh pool stats:', error));
+          .catch(() => {});
       } catch (error) {
         console.warn('[onLiquidityIncreasedCallback] Failed to refresh pool stats:', error);
       }
@@ -1234,28 +1191,10 @@ export default function PortfolioPage() {
     setShowIncreaseModal(false);
   }, [bumpPositionsRefresh]);
   const onLiquidityDecreasedCallback = useCallback(async (info?: { txHash?: `0x${string}`; blockNumber?: bigint; isFullBurn?: boolean }) => {
-    console.log('[Portfolio] onLiquidityDecreasedCallback called:', {
-      pendingActionType: pendingActionRef.current?.type,
-      txHash: info?.txHash?.slice(0, 10) + '...',
-      isFullBurn: info?.isFullBurn,
-      positionToWithdraw: positionToWithdraw?.positionId
-    });
-    
-    // Require a valid tx hash and dedupe by hash to support rapid successive burns
-    if (!info?.txHash) {
-      console.log('[Portfolio] Skipping - missing txHash');
-      return;
-    }
-    if (handledDecreaseHashRef.current === info.txHash) {
-      console.log('[Portfolio] Skipping - already handled this txHash');
-      return;
-    }
+    if (!info?.txHash) return;
+    if (handledDecreaseHashRef.current === info.txHash) return;
     handledDecreaseHashRef.current = info.txHash;
-
-    if (pendingActionRef.current?.type !== 'decrease' && pendingActionRef.current?.type !== 'withdraw') {
-      console.log('[Portfolio] Skipping - not withdraw/decrease type');
-      return;
-    }
+    if (pendingActionRef.current?.type !== 'decrease' && pendingActionRef.current?.type !== 'withdraw') return;
 
     const closing = info?.isFullBurn ?? !!lastDecreaseWasFullRef.current;
     const targetPositionId = positionToWithdraw?.positionId;
@@ -1327,9 +1266,7 @@ export default function PortfolioPage() {
       const { poolId, subgraphId } = modifiedPositionPoolInfoRef.current;
       try { 
         fetch('/api/internal/revalidate-pools', { method: 'POST' })
-          .then(resp => resp.json())
-          .then(data => console.log('[onLiquidityDecreasedCallback] Pool stats refreshed:', data))
-          .catch(error => console.warn('[onLiquidityDecreasedCallback] Failed to refresh pool stats:', error));
+          .catch(() => {});
       } catch (error) {
         console.warn('[onLiquidityDecreasedCallback] Failed to refresh pool stats:', error);
       }
@@ -1337,12 +1274,7 @@ export default function PortfolioPage() {
     }
   }, [refreshAfterMutation, refreshSinglePosition, bumpPositionsRefresh, positionToWithdraw]);
 
-  // Legacy callback for compatibility - DISABLED to prevent position folding
-  const onLiquidityDecreased = useCallback(async () => {
-    // This callback is disabled to prevent position folding
-    // All logic is handled by onLiquidityDecreasedCallback now
-    console.log('[Portfolio] Legacy onLiquidityDecreased called - doing nothing to prevent folding');
-  }, []);
+  const onLiquidityDecreased = useCallback(async () => {}, []);
   // Enhanced liquidity hooks with proper callbacks
   const { increaseLiquidity, isLoading: isIncreasingLiquidity, isSuccess: isIncreaseSuccess, hash: increaseTxHash } = useIncreaseLiquidity({ 
     onLiquidityIncreased: onLiquidityIncreasedCallback 
@@ -1458,6 +1390,9 @@ export default function PortfolioPage() {
   const [positionMenuOpenUp, setPositionMenuOpenUp] = useState(false);
   const [balancesSortDir, setBalancesSortDir] = useState<'asc' | 'desc'>('desc');
   const [openPositionMenuKey, setOpenPositionMenuKey] = useState<string | null>(null);
+  const [selectedPosition, setSelectedPosition] = useState<any | null>(null);
+  const [isPositionModalOpen, setIsPositionModalOpen] = useState(false);
+  const [denominationDataByPositionId, setDenominationDataByPositionId] = useState<Record<string, any>>({});
 
   // Close the group-row action menu when clicking anywhere outside it
   useEffect(() => {
@@ -1634,14 +1569,11 @@ export default function PortfolioPage() {
       poolCounts.set(poolKey, (poolCounts.get(poolKey) || 0) + 1);
     });
 
-    // Only update expanded state for NEW pools (not already in expandedPools)
-    // Preserve user's manual expand/collapse choices
     setExpandedPools(prev => {
       const newExpanded = { ...prev };
       poolCounts.forEach((count, poolKey) => {
-        // Only set default if this pool isn't already tracked
         if (!(poolKey in prev)) {
-          newExpanded[poolKey] = count <= 2;
+          newExpanded[poolKey] = count < 3;
         }
       });
       return newExpanded;
@@ -1749,7 +1681,6 @@ export default function PortfolioPage() {
 
   // Enhanced menu actions with pending action tracking
   const openAddLiquidity = useCallback((pos: any, onModalClose?: () => void) => {
-    console.log('[Portfolio] Opening add liquidity modal for position:', pos.positionId);
     setPositionToModify(pos);
     pendingActionRef.current = { type: 'increase' };
     setShowIncreaseModal(true);
@@ -2928,23 +2859,9 @@ export default function PortfolioPage() {
           )}
 
           <div className="flex-1 min-w-0">
-          {/* Section selector above the container */}
-          <div className="flex items-center gap-2 mb-2 justify-between">
-            {/* Left: section tabs */}
-            {sectionsList.map((section) => (
-                      <button
-          key={section}
-          onClick={() => setSelectedSection(section)}
-          className={`px-2 py-1 text-xs rounded-md transition-all duration-200 cursor-pointer ${
-            selectedSection === section
-              ? 'border border-sidebar-border bg-button text-foreground brightness-110'
-              : 'text-muted-foreground hover:text-foreground'
-          }`}
-          style={selectedSection === section ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
-        >
-                {section}
-              </button>
-            ))}
+          {/* Your Positions title */}
+          <div className="flex items-center gap-2 mb-4 justify-between">
+            <h3 className="text-lg font-medium">Your Positions</h3>
             {/* Right: token filter badge area + Faucet (only show faucet when Balances tab active in integrated mode) */}
             <div className="ml-auto flex items-center gap-2">
               {activeTokenFilter && (
@@ -2994,144 +2911,125 @@ export default function PortfolioPage() {
                         {groupedByPool.map(({ poolId, items, totalUSD }) => {
                           const poolKey = String(poolId).toLowerCase();
                           const first = items[0];
+                          const isSinglePosition = items.length === 1;
                           const isExpanded = !!expandedPools[poolKey];
                           const token0Icon = getToken(first?.token0?.symbol || '')?.icon || '/placeholder.svg';
                           const token1Icon = getToken(first?.token1?.symbol || '')?.icon || '/placeholder.svg';
                           return (
                             <React.Fragment key={`pool-group-${poolKey}`}>
-                              <div
-                                className={`flex items-center justify-between px-4 py-3 rounded-lg border border-sidebar-border/60 bg-muted/30 hover:bg-muted/40 cursor-pointer`}
-                                onClick={() => togglePoolExpanded(poolKey)}
-                              >
-                                <div className="flex items-center gap-3 min-w-0">
-                                  <div className="relative" style={{ width: '3.5rem', height: '1.75rem' }}>
-                                    <div className="absolute top-1/2 -translate-y-1/2 left-0 rounded-full overflow-hidden bg-background z-10" style={{ width: 28, height: 28 }}>
-                                      <Image src={token0Icon} alt={first?.token0?.symbol || ''} width={28} height={28} className="w-full h-full object-cover" />
-                                    </div>
-                                    <div className="absolute top-1/2 -translate-y-1/2" style={{ left: '1rem', width: '1.75rem', height: '1.75rem' }}>
-                                      <div className="absolute inset-0 rounded-full overflow-hidden bg-background z-30">
-                                        <Image src={token1Icon} alt={first?.token1?.symbol || ''} width={28} height={28} className="w-full h-full object-cover" />
+                              {!isSinglePosition && (
+                                <div
+                                  className={`flex items-center justify-between px-4 py-3 rounded-lg border border-sidebar-border/60 bg-muted/30 hover:bg-muted/40 cursor-pointer`}
+                                  onClick={() => togglePoolExpanded(poolKey)}
+                                >
+                                  <div className="flex items-center gap-3 min-w-0">
+                                    <div className="relative" style={{ width: '3.5rem', height: '1.75rem' }}>
+                                      <div className="absolute top-1/2 -translate-y-1/2 left-0 rounded-full overflow-hidden bg-background z-10" style={{ width: 28, height: 28 }}>
+                                        <Image src={token0Icon} alt={first?.token0?.symbol || ''} width={28} height={28} className="w-full h-full object-cover" />
                                       </div>
-                                      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-main z-20" style={{ width: 32, height: 32 }}></div>
-                                    </div>
-                                  </div>
-                                  <div className="truncate font-normal text-sm">{first?.token0?.symbol}/{first?.token1?.symbol}</div>
-                                  {/* Position Count (moved to left bound) */}
-                                  <TooltipProvider delayDuration={0}>
-                                    <Tooltip>
-                                      <TooltipTrigger asChild>
-                                        <span
-                                          className="ml-1 w-5 h-5 flex items-center justify-center text-[10px] rounded bg-button text-muted-foreground cursor-default"
-                                        >
-                                          {items.length}
-                                        </span>
-                                      </TooltipTrigger>
-                                      <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
-                                        Position Count
-                                      </TooltipContent>
-                                    </Tooltip>
-                                  </TooltipProvider>
-                                </div>
-                                <div className="flex items-center gap-3">
-                                  {/* Position Value (right bound - first) */}
-                                  <TooltipProvider delayDuration={0}>
-                                    <Tooltip>
-                                      <TooltipTrigger asChild>
-                                        <div className="text-xs text-muted-foreground whitespace-nowrap cursor-default">{formatUSD(totalUSD)}</div>
-                                      </TooltipTrigger>
-                                      <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
-                                        Total Value
-                                      </TooltipContent>
-                                    </Tooltip>
-                                    <Tooltip>
-                                      {/* APY badge (right bound - after value) */}
-                                      <TooltipTrigger asChild>
-                                        <div>
-                                          {(() => {
-                                            const aprStr = aprByPoolId[poolKey];
-                                            const showApr = typeof aprStr === 'string' && aprStr !== 'N/A' && aprStr !== 'Loading...';
-                                            const formatAprShort = (s: string): string => {
-                                              const n = parseFloat(String(s).replace('%', ''));
-                                              if (!Number.isFinite(n)) return '—';
-                                              if (n >= 1000) return `${(n / 1000).toFixed(1)}K%`;
-                                              if (n > 99.99) return `${Math.round(n)}%`;
-                                              if (n > 9.99) return `${n.toFixed(1)}%`;
-                                              return `${n.toFixed(2)}%`;
-                                            };
-                                            return showApr ? (
-                                              <span className="h-5 px-2 flex items-center justify-center text-[10px] rounded bg-green-500/20 text-green-500 font-medium">{formatAprShort(aprStr)}</span>
-                                            ) : (
-                                              <span className="text-xs text-muted-foreground">—</span>
-                                            );
-                                          })()}
+                                      <div className="absolute top-1/2 -translate-y-1/2" style={{ left: '1rem', width: '1.75rem', height: '1.75rem' }}>
+                                        <div className="absolute inset-0 rounded-full overflow-hidden bg-background z-30">
+                                          <Image src={token1Icon} alt={first?.token1?.symbol || ''} width={28} height={28} className="w-full h-full object-cover" />
                                         </div>
-                                      </TooltipTrigger>
-                                      <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
-                                        APY
-                                      </TooltipContent>
-                                    </Tooltip>
-                                  </TooltipProvider>
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`transition-transform ${isExpanded ? 'rotate-90' : ''}`}>
-                                    <path d="m9 18 6-6-6-6" />
-                                  </svg>
+                                        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-main z-20" style={{ width: 32, height: 32 }}></div>
+                                      </div>
+                                    </div>
+                                    <div className="truncate font-normal text-sm">{first?.token0?.symbol}/{first?.token1?.symbol}</div>
+                                    <TooltipProvider delayDuration={0}>
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <span className="ml-1 w-5 h-5 flex items-center justify-center text-[10px] rounded bg-button text-muted-foreground cursor-default">
+                                            {items.length}
+                                          </span>
+                                        </TooltipTrigger>
+                                        <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">Position Count</TooltipContent>
+                                      </Tooltip>
+                                    </TooltipProvider>
+                                  </div>
+                                  <div className="flex items-center gap-3">
+                                    <TooltipProvider delayDuration={0}>
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <div className="text-xs text-muted-foreground whitespace-nowrap cursor-default">{formatUSD(totalUSD)}</div>
+                                        </TooltipTrigger>
+                                        <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">Total Value</TooltipContent>
+                                      </Tooltip>
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <div>
+                                            {(() => {
+                                              const aprStr = aprByPoolId[poolKey];
+                                              const showApr = typeof aprStr === 'string' && aprStr !== 'N/A' && aprStr !== 'Loading...';
+                                              const formatAprShort = (s: string): string => {
+                                                const n = parseFloat(String(s).replace('%', ''));
+                                                if (!Number.isFinite(n)) return '—';
+                                                if (n >= 1000) return `${(n / 1000).toFixed(1)}K%`;
+                                                if (n > 99.99) return `${Math.round(n)}%`;
+                                                if (n > 9.99) return `${n.toFixed(1)}%`;
+                                                return `${n.toFixed(2)}%`;
+                                              };
+                                              return showApr ? (
+                                                <span className="h-5 px-2 flex items-center justify-center text-[10px] rounded bg-green-500/20 text-green-500 font-medium">{formatAprShort(aprStr)}</span>
+                                              ) : (
+                                                <span className="text-xs text-muted-foreground">—</span>
+                                              );
+                                            })()}
+                                          </div>
+                                        </TooltipTrigger>
+                                        <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">APY</TooltipContent>
+                                      </Tooltip>
+                                    </TooltipProvider>
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`transition-transform ${isExpanded ? 'rotate-90' : ''}`}>
+                                      <path d="m9 18 6-6-6-6" />
+                                    </svg>
+                                  </div>
                                 </div>
-                              </div>
-                              {isExpanded && (
-                                <div className="flex flex-col gap-3 lg:gap-4 pl-4 border-l border-dashed border-sidebar-border/60 ml-4">
+                              )}
+                              {(isSinglePosition || isExpanded) && (
+                                <div className={cn("flex flex-col gap-3 lg:gap-4", !isSinglePosition && "pl-4 border-l border-dashed border-sidebar-border/60 ml-4")}>
                                   {items.map((position) => {
                                     const valueUSD = (() => {
-                                      try {
-                                        const sym0 = position?.token0?.symbol as string | undefined;
-                                        const sym1 = position?.token1?.symbol as string | undefined;
-                                        const amt0 = parseFloat(position?.token0?.amount || '0');
-                                        const amt1 = parseFloat(position?.token1?.amount || '0');
-                                        const price0 = (sym0 && portfolioData.priceMap[sym0]) || 0;
-                                        const price1 = (sym1 && portfolioData.priceMap[sym1]) || 0;
-                                        // Ensure both sides are accounted for; numeric safety
-                                        const a0 = isFinite(amt0) ? amt0 : 0;
-                                        const a1 = isFinite(amt1) ? amt1 : 0;
-                                        const p0 = isFinite(price0) ? price0 : 0;
-                                        const p1 = isFinite(price1) ? price1 : 0;
-                                        return a0 * p0 + a1 * p1;
-                                      } catch (e) {
-                                        return 0;
-                                      }
+                                      const sym0 = position?.token0?.symbol as string | undefined;
+                                      const sym1 = position?.token1?.symbol as string | undefined;
+                                      const amt0 = parseFloat(position?.token0?.amount || '0');
+                                      const amt1 = parseFloat(position?.token1?.amount || '0');
+                                      const price0 = (sym0 && portfolioData.priceMap[sym0]) || 0;
+                                      const price1 = (sym1 && portfolioData.priceMap[sym1]) || 0;
+                                      const a0 = isFinite(amt0) ? amt0 : 0;
+                                      const a1 = isFinite(amt1) ? amt1 : 0;
+                                      const p0 = isFinite(price0) ? price0 : 0;
+                                      const p1 = isFinite(price1) ? price1 : 0;
+                                      return a0 * p0 + a1 * p1;
                                     })();
-                                    // attach prefetched raw fees for FeesCell
                                     const feesPref = (() => {
-                                      try {
-                                        const rec = unclaimedFeesMap[String(position.positionId)];
-                                        return rec ? { unclaimedRaw0: rec.amount0, unclaimedRaw1: rec.amount1 } : {};
-                                      } catch { return {}; }
+                                      const rec = unclaimedFeesMap[String(position.positionId)];
+                                      return rec ? { raw0: rec.amount0, raw1: rec.amount1 } : { raw0: null, raw1: null };
                                     })();
                                     return (
-                                      <PositionCard
+                                      <PositionCardCompact
                                         key={position.positionId}
-                                        position={{ ...(position as any), ...feesPref } as any}
+                                        position={position}
                                         valueUSD={valueUSD}
-                                        poolKey={poolKey}
+                                        onClick={() => {
+                                          setSelectedPosition(position);
+                                          setIsPositionModalOpen(true);
+                                        }}
                                         getUsdPriceForSymbol={getUsdPriceForSymbol}
-                                        determineBaseTokenForPriceDisplay={determineBaseTokenForPriceDisplay}
                                         convertTickToPrice={convertTickToPrice}
-                                        poolDataByPoolId={poolDataByPoolId}
-                                        formatTokenDisplayAmount={formatTokenDisplayAmount}
-                                        formatAgeShort={formatAgeShort}
-                                        openWithdraw={openWithdraw}
-                                        openAddLiquidity={openAddLiquidity}
-                                        claimFees={enhancedClaimFees}
-                                        toast={toast}
-                                        openPositionMenuKey={openPositionMenuKey}
-                                        setOpenPositionMenuKey={setOpenPositionMenuKey}
-                                        positionMenuOpenUp={positionMenuOpenUp}
-                                        setPositionMenuOpenUp={setPositionMenuOpenUp}
-                                        onClick={() => navigateToPoolBySubgraphId(position.poolId)}
-                                        isLoadingPrices={!readiness.prices}
-                                        isLoadingPoolStates={isLoadingPoolStates}
-                                        // New props for ascending range logic
-                                        currentPrice={poolDataByPoolId[poolKey]?.price ? String(poolDataByPoolId[poolKey].price) : null}
-                                        currentPoolTick={typeof poolDataByPoolId[poolKey]?.tick === 'number' ? poolDataByPoolId[poolKey].tick : null}
-                                        // Prefetch fees for FeesCell via centralized batch map
-                                        // Note: PositionCard doesn't accept these props directly; FeesCell will accept via spread below
+                                        poolContext={{
+                                          currentPrice: poolDataByPoolId[poolKey]?.price ? String(poolDataByPoolId[poolKey].price) : null,
+                                          currentPoolTick: typeof poolDataByPoolId[poolKey]?.tick === 'number' ? poolDataByPoolId[poolKey].tick : null,
+                                          poolAPY: aprByPoolId[poolKey] ? parseFloat(aprByPoolId[poolKey].replace('%', '')) : null,
+                                          isLoadingPrices: !readiness.prices,
+                                          isLoadingPoolStates: isLoadingPoolStates,
+                                        }}
+                                        fees={feesPref}
+                                        onDenominationData={(data) => {
+                                          setDenominationDataByPositionId(prev => ({
+                                            ...prev,
+                                            [position.positionId]: data
+                                          }));
+                                        }}
                                       />
                                     );
                                   })}
@@ -3359,8 +3257,6 @@ export default function PortfolioPage() {
           isOpen={showIncreaseModal}
           onOpenChange={setShowIncreaseModal}
           onLiquidityAdded={() => {
-            // This will only be called for new positions (when no positionToModify)
-            console.log('[Portfolio] Modal onLiquidityAdded called for new position');
             const poolSubgraphId = positionToModify?.poolId;
             if (poolSubgraphId) {
                 const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === poolSubgraphId.toLowerCase());
@@ -3373,7 +3269,6 @@ export default function PortfolioPage() {
           positionToModify={positionToModify}
           feesForIncrease={feesForIncrease}
           increaseLiquidity={positionToModify ? (data) => {
-            console.log('[Portfolio] Setting pendingActionRef to increase and calling increaseLiquidity');
             pendingActionRef.current = { type: 'increase' };
             increaseLiquidity(data);
           } : undefined}
@@ -3396,8 +3291,6 @@ export default function PortfolioPage() {
           isDecreaseSuccess={isDecreaseSuccess}
           decreaseTxHash={decreaseTxHash}
           onLiquidityWithdrawn={() => {
-            // This will only be called for internal transactions (fallback)
-            console.log('[Portfolio] Modal onLiquidityWithdrawn called (fallback)');
             const poolSubgraphId = positionToWithdraw?.poolId;
             if (poolSubgraphId) {
                 const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === poolSubgraphId.toLowerCase());
@@ -3408,6 +3301,61 @@ export default function PortfolioPage() {
             publicClient.getBlockNumber().then(block => lastTxBlockRef.current = block);
           }}
         />
+
+      {selectedPosition && (
+        <PositionDetailsModal
+          isOpen={isPositionModalOpen}
+          onClose={() => {
+            setIsPositionModalOpen(false);
+            setSelectedPosition(null);
+          }}
+          position={selectedPosition}
+          valueUSD={(() => {
+            const sym0 = selectedPosition.token0?.symbol;
+            const sym1 = selectedPosition.token1?.symbol;
+            const price0 = getUsdPriceForSymbol(sym0);
+            const price1 = getUsdPriceForSymbol(sym1);
+            const amt0 = parseFloat(selectedPosition.token0?.amount || '0');
+            const amt1 = parseFloat(selectedPosition.token1?.amount || '0');
+            return amt0 * price0 + amt1 * price1;
+          })()}
+          prefetchedRaw0={unclaimedFeesMap[selectedPosition.positionId]?.amount0 || null}
+          prefetchedRaw1={unclaimedFeesMap[selectedPosition.positionId]?.amount1 || null}
+          formatTokenDisplayAmount={formatTokenDisplayAmount}
+          getUsdPriceForSymbol={getUsdPriceForSymbol}
+          onRefreshPosition={() => refreshSinglePosition(selectedPosition.positionId)}
+          currentPrice={poolDataByPoolId[selectedPosition.poolId?.toLowerCase()]?.price?.toString() || null}
+          currentPoolTick={poolDataByPoolId[selectedPosition.poolId?.toLowerCase()]?.tick || null}
+          selectedPoolId={(() => {
+            const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === selectedPosition.poolId?.toLowerCase());
+            return poolConfig?.id;
+          })()}
+          chainId={CHAIN_ID}
+          currentPoolSqrtPriceX96={poolDataByPoolId[selectedPosition.poolId?.toLowerCase()]?.sqrtPriceX96?.toString() || null}
+          poolToken0={(() => {
+            const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === selectedPosition.poolId?.toLowerCase());
+            return poolConfig ? getToken(poolConfig.currency0.symbol) : undefined;
+          })()}
+          poolToken1={(() => {
+            const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === selectedPosition.poolId?.toLowerCase());
+            return poolConfig ? getToken(poolConfig.currency1.symbol) : undefined;
+          })()}
+          denominationBase={denominationDataByPositionId[selectedPosition.positionId]?.denominationBase}
+          initialMinPrice={denominationDataByPositionId[selectedPosition.positionId]?.minPrice}
+          initialMaxPrice={denominationDataByPositionId[selectedPosition.positionId]?.maxPrice}
+          initialCurrentPrice={denominationDataByPositionId[selectedPosition.positionId]?.displayedCurrentPrice}
+          prefetchedFormattedAPY={denominationDataByPositionId[selectedPosition.positionId]?.formattedAPY}
+          prefetchedIsAPYFallback={denominationDataByPositionId[selectedPosition.positionId]?.isAPYFallback}
+          prefetchedIsLoadingAPY={denominationDataByPositionId[selectedPosition.positionId]?.isLoadingAPY}
+          showViewPoolButton={true}
+          onViewPool={() => {
+            const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === selectedPosition.poolId?.toLowerCase());
+            if (poolConfig) {
+              router.push(`/liquidity/${poolConfig.id}`);
+            }
+          }}
+        />
+      )}
 
       </AppLayout>
     </PortfolioFilterContext.Provider>

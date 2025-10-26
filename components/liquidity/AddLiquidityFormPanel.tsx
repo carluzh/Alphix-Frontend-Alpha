@@ -159,20 +159,16 @@ export function AddLiquidityFormPanel({
         return;
       }
 
-      const response = await fetch('/api/liquidity/calculate-liquidity-parameters', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          token0Symbol, token1Symbol, inputAmount,
-          inputTokenSymbol: inputSide === 'amount0' ? token0Symbol : token1Symbol,
-          userTickLower: position.tickLower,
-          userTickUpper: position.tickUpper,
-          chainId: chainId || 8453,
-        }),
+      const { calculateLiquidityParameters } = await import('@/lib/liquidity-math');
+      const result = await calculateLiquidityParameters({
+        token0Symbol, token1Symbol, inputAmount,
+        inputTokenSymbol: inputSide === 'amount0' ? token0Symbol : token1Symbol,
+        userTickLower: position.tickLower,
+        userTickUpper: position.tickUpper,
+        chainId: chainId || 8453,
       });
 
-      if (response.ok && version === calcVersionRef.current) {
-        const result = await response.json();
+      if (version === calcVersionRef.current) {
         const decimals = TOKEN_DEFINITIONS[inputSide === 'amount0' ? token1Symbol : token0Symbol]?.decimals || 18;
         const amount = formatUnits(BigInt(result[inputSide === 'amount0' ? 'amount1' : 'amount0'] || '0'), decimals);
         inputSide === 'amount0' ? setIncreaseAmount1(amount) : setIncreaseAmount0(amount);

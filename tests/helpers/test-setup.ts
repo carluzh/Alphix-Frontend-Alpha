@@ -40,12 +40,13 @@ async function setupMetaMaskWallet(wallet: any, testAccount: TestAccount): Promi
   await wallet.importPK(testAccount.privateKey)
 
   // Add localhost network (Anvil fork of Base Sepolia)
+  // IMPORTANT: Chain ID must match the Anvil fork chain ID AND wagmiConfig.ts E2E mode (1337)
   const LOCAL_RPC = process.env.LOCAL_RPC || 'http://127.0.0.1:8545'
   try {
     await wallet.addNetwork({
       networkName: 'Localhost 8545',
       rpc: LOCAL_RPC,
-      chainId: 1337,
+      chainId: 1337, // Must match Anvil fork chain ID and wagmiConfig E2E chain ID
       symbol: 'ETH',
     })
   } catch (error) {

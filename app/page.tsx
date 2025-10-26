@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Menu, X, Github, Clock4 } from "lucide-react";
 import { getLatestVersion, getLatestVersionSummary, getTimeAgo } from "@/lib/version-log";
-import { RequestAccessButton } from "@/components/RequestAccessButton";
 import DisplayCards from "@/components/ui/display-cards";
 import { toast } from "sonner";
 import { PulsatingDot } from "@/components/pulsating-dot";
@@ -261,9 +260,9 @@ export default function Home() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.6, delay: 2.1, ease: "easeOut" }}
               >
-                <Button 
+                <Button
                   variant="alphix"
-                  className="text-base flex items-center px-4 py-4 h-11 rounded-md cursor-pointer" 
+                  className="text-base flex items-center px-4 py-4 h-11 rounded-md cursor-pointer"
                   style={{ fontFamily: 'Inter, sans-serif' }}
                   onClick={() => router.push('/swap')}
                 >
@@ -271,11 +270,6 @@ export default function Home() {
                     Open App
                   </div>
                 </Button>
-                <RequestAccessButton 
-                  style={{ 
-                    fontFamily: 'Inter, sans-serif'
-                  }}
-                />
               </motion.div>
             </div>
             
@@ -779,7 +773,7 @@ function Navbar({
                   featuresLayout={true}
                   footerContent={
                     <Link
-                      href="/login"
+                      href="/swap"
                       className="group mt-2 px-3 py-2 rounded-md transition-colors hover:bg-[#1e1d1b] flex flex-col gap-y-1"
                     >
                       <div className="flex items-center justify-between">
@@ -819,12 +813,12 @@ function Navbar({
               </li>
             </ul>
 
-            {/* Log In button on right */}
+            {/* Launch App button on right */}
             <button
-              onClick={() => router.push('/login')}
+              onClick={() => router.push('/swap')}
               className="text-white text-sm px-3 py-1.5 rounded-lg hover:bg-[#1e1d1b] transition-colors"
             >
-              Log In
+              Launch App
             </button>
           </div>
         </div>
@@ -869,10 +863,10 @@ function Navbar({
               </NavLink>
             </div>
             <NavLink
-              href="/login"
+              href="/swap"
               className="text-xl tracking-tight"
             >
-              Login
+              Launch App
             </NavLink>
           </div>
         </div>

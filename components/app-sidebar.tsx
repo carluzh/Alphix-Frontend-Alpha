@@ -139,20 +139,6 @@ export function AppSidebar({ variant = "floating", onBetaClick, ...props }: AppS
   // Get latest version info
   const latestVersion = getLatestVersion();
 
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const flag = sessionStorage.getItem('came_from_login');
-        if (flag === '1' || flag === 'true') {
-          setShowVersionInitial(true);
-          try { sessionStorage.removeItem('came_from_login'); } catch {}
-          const timer = setTimeout(() => setShowVersionInitial(false), 1000);
-          return () => clearTimeout(timer);
-        }
-      } catch {}
-    }
-  }, []);
-
   return (
     <Sidebar variant={variant} collapsible="offcanvas" {...props}>
       <SidebarHeader className="!pt-2.5 !px-0">

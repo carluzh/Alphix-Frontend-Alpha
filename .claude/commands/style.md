@@ -86,7 +86,15 @@ For Tailwind integration, use `border-sidebar-border` which references `--sideba
   Confirm Swap
 </Button>
 ```
-**Used in**: Main action buttons (Swap, Add Liquidity, Confirm)
+**Used in**: Main action buttons (Swap, Add Liquidity, Deposit, Sign Permit, Confirm)
+
+**Key classes**:
+- `bg-button-primary` - Background color (#3d271b)
+- `border-sidebar-primary` - Brand orange border (#f45502)
+- `text-sidebar-primary` - Brand orange text (#f45502)
+- `hover-button-primary` - Hover state (changes to #312015)
+
+**Hover behavior**: Background instantly changes from `#3d271b` to `#312015` on hover (no transition/animation)
 
 #### Secondary Buttons
 ```tsx

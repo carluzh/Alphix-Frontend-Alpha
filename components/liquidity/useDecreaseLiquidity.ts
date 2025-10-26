@@ -485,21 +485,16 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
                   ? { amount: adjustedPositionData.decreaseAmount1, symbol: adjustedPositionData.token1Symbol }
                   : null;
               if (!inputSide) throw new Error('No non-zero decrease amount specified');
-              const calcResponse = await fetch('/api/liquidity/calculate-liquidity-parameters', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  token0Symbol: adjustedPositionData.token0Symbol,
-                  token1Symbol: adjustedPositionData.token1Symbol,
-                  inputAmount: inputSide.amount,
-                  inputTokenSymbol: inputSide.symbol,
-                  userTickLower: adjustedPositionData.tickLower,
-                  userTickUpper: adjustedPositionData.tickUpper,
-                  chainId: chainId,
-                }),
+              const { calculateLiquidityParameters } = await import('@/lib/liquidity-math');
+              const result = await calculateLiquidityParameters({
+                token0Symbol: adjustedPositionData.token0Symbol,
+                token1Symbol: adjustedPositionData.token1Symbol,
+                inputAmount: inputSide.amount,
+                inputTokenSymbol: inputSide.symbol,
+                userTickLower: adjustedPositionData.tickLower,
+                userTickUpper: adjustedPositionData.tickUpper,
+                chainId,
               });
-              if (!calcResponse.ok) throw new Error(await calcResponse.text());
-              const result = await calcResponse.json();
               liquidityJSBI = JSBI.BigInt(result.liquidity);
             }
           } catch (e2) {

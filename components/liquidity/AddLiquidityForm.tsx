@@ -13,7 +13,7 @@ import { toast } from "sonner";
 import { useEthersSigner } from "@/hooks/useEthersSigner";
 import { usePercentageInput } from "@/hooks/usePercentageInput";
 import { V4_POOL_FEE, V4_POOL_TICK_SPACING, V4_POOL_HOOKS } from "@/lib/swap-constants";
-import { TOKEN_DEFINITIONS, TokenSymbol } from "@/lib/pools-config";
+import { TOKEN_DEFINITIONS, TokenSymbol, NATIVE_TOKEN_ADDRESS } from "@/lib/pools-config";
 import { getPoolById, getToken } from "@/lib/pools-config";
 import { formatUnits as viemFormatUnits, parseUnits as viemParseUnits, getAddress, type Hex } from "viem";
 
@@ -1014,19 +1014,28 @@ export function AddLiquidityForm({
         await refetchApprovals();
         return;
       }
-      if ((approvalData.needsToken0Permit || approvalData.needsToken1Permit) && !permitSignature) {
+
+      // After ERC20 approvals, check if permit signature is needed
+      // The hook auto-fetches permit data, but if it's still loading, wait for it
+      if (!permitSignature) {
+        // Wait a moment for the useEffect to populate permit data
+        await new Promise(resolve => setTimeout(resolve, 100));
+        await refetchApprovals(); // Force a refresh to get latest approval state
+      }
+
+      // Now check if permit signature is needed (using permitBatchData as indicator)
+      if (approvalData.permitBatchData && !permitSignature) {
         setCurrentTransactionStep('signing_permit');
         try {
           await signPermit();
-          // After signing, don't refetch - the signature is enough for the deposit
           setCurrentTransactionStep('idle');
         } catch (error) {
-          // Reset state on error (user rejection or failure)
           setCurrentTransactionStep('idle');
           return;
         }
         return;
       }
+
       // All approvals/permits done, execute deposit
       setCurrentTransactionStep('depositing');
       await handleDeposit(permitSignature);
@@ -1050,18 +1059,21 @@ export function AddLiquidityForm({
         icon: React.createElement(InfoIcon, { className: 'h-4 w-4' })
       });
 
+      // Use 'values' from permitBatchData for signing (the actual permit data)
+      const valuesToSign = approvalData.permitBatchData.values || approvalData.permitBatchData;
+
       const signature = await (signer as any)._signTypedData(
         approvalData.signatureDetails.domain,
         approvalData.signatureDetails.types,
-        approvalData.permitBatchData
+        valuesToSign
       );
 
       setPermitSignature(signature);
 
       // Show success toast
       const currentTime = Math.floor(Date.now() / 1000);
-      const sigDeadline = parseInt(approvalData.permitBatchData.sigDeadline || '0');
-      const durationSeconds = sigDeadline - currentTime;
+      const sigDeadline = valuesToSign?.sigDeadline || valuesToSign?.details?.[0]?.expiration || 0;
+      const durationSeconds = Number(sigDeadline) - currentTime;
 
       let durationFormatted = "";
       if (durationSeconds >= 86400) {
@@ -1131,7 +1143,8 @@ export function AddLiquidityForm({
     if (approvalData.needsToken1ERC20Approval) {
       return `Approve ${token1Symbol}`;
     }
-    if ((approvalData.needsToken0Permit || approvalData.needsToken1Permit) && !permitSignature) {
+    // Check if permit is needed (permitBatchData indicates permit is required)
+    if (approvalData.permitBatchData && !permitSignature) {
       return 'Sign Permit';
     }
     return 'Deposit';
@@ -1666,26 +1679,16 @@ export function AddLiquidityForm({
       setCalculatedData(null); 
 
       try {
-        const calcResponse = await fetch('/api/liquidity/calculate-liquidity-parameters', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            token0Symbol,
-            token1Symbol,
-            inputAmount: primaryAmount,
-            inputTokenSymbol: primaryTokenSymbol,
-            userTickLower: tl,
-            userTickUpper: tu,
-            chainId,
-          }),
+        const { calculateLiquidityParameters } = await import('@/lib/liquidity-math');
+        const result = await calculateLiquidityParameters({
+          token0Symbol,
+          token1Symbol,
+          inputAmount: primaryAmount,
+          inputTokenSymbol: primaryTokenSymbol,
+          userTickLower: tl,
+          userTickUpper: tu,
+          chainId,
         });
-
-        if (!calcResponse.ok) {
-          const errorData = await calcResponse.json();
-          throw new Error(errorData.message || "Failed to calculate parameters.");
-        }
-
-        const result = await calcResponse.json();
         
         setCalculatedData({
           liquidity: result.liquidity, 
@@ -1843,14 +1846,20 @@ export function AddLiquidityForm({
     resetTransaction,
   ]);
 
-  // Reset to range view when deposit succeeds
   useEffect(() => {
     if (isDepositSuccess) {
+      setAmount0("");
+      setAmount1("");
+      setAmount0FullPrecision("");
+      setAmount1FullPrecision("");
+      setCalculatedData(null);
       setShowingTransactionSteps(false);
       setCurrentTransactionStep('idle');
       setPermitSignature(undefined);
+      resetTransaction();
+      refetchApprovals();
     }
-  }, [isDepositSuccess]);
+  }, [isDepositSuccess, resetTransaction, refetchApprovals]);
 
   // Check for insufficient balance
   useEffect(() => {
@@ -2506,9 +2515,14 @@ export function AddLiquidityForm({
                                 : !approvalData
                                 ? '-'
                                 : (() => {
+                                    // Calculate total approvals needed based on whether tokens are native
+                                    const token0IsNative = TOKEN_DEFINITIONS[token0Symbol]?.address === NATIVE_TOKEN_ADDRESS;
+                                    const token1IsNative = TOKEN_DEFINITIONS[token1Symbol]?.address === NATIVE_TOKEN_ADDRESS;
+                                    const maxNeeded = (token0IsNative ? 0 : 1) + (token1IsNative ? 0 : 1);
+
                                     const totalNeeded = [approvalData.needsToken0ERC20Approval, approvalData.needsToken1ERC20Approval].filter(Boolean).length;
-                                    const completed = 2 - totalNeeded;
-                                    return `${completed}/2`;
+                                    const completed = maxNeeded - totalNeeded;
+                                    return `${completed}/${maxNeeded}`;
                                   })()}
                             </motion.span>
                           )
@@ -2522,16 +2536,14 @@ export function AddLiquidityForm({
                       <span>
                         { currentTransactionStep === 'signing_permit'
                           ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
-                          : (
-                            <span className={`text-xs font-mono ${
-                              permitSignature || (!approvalData?.needsToken0Permit && !approvalData?.needsToken1Permit)
-                                ? 'text-green-500'
-                                : ''
-                            }`}>
-                              {/* Show 1/1 if we have signature OR if no permit is needed (pre-existing permits) */}
-                              {permitSignature || (!approvalData?.needsToken0Permit && !approvalData?.needsToken1Permit) ? '1/1' : '0/1'}
-                            </span>
-                          )
+                          : isCheckingApprovals
+                          ? <span className="text-xs font-mono text-muted-foreground">Checking...</span>
+                          : (approvalData?.needsToken0Permit || approvalData?.needsToken1Permit)
+                          ? (permitSignature
+                              ? <span className="text-xs font-mono text-green-500">1/1</span>
+                              : <span className="text-xs font-mono">0/1</span>
+                            )
+                          : <span className="text-xs font-mono text-green-500">✓</span>
                         }
                       </span>
                     </div>
@@ -2586,7 +2598,7 @@ export function AddLiquidityForm({
                       isInsufficientBalance) ?
                         "relative border border-sidebar-border bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 !opacity-100 cursor-default text-white/75"
                         :
-                        "text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90"
+                        "text-sidebar-primary border border-sidebar-primary bg-button-primary hover-button-primary"
                     )}
                     onClick={handlePrepareAndSubmit}
                     disabled={isWorking ||
@@ -2619,7 +2631,7 @@ export function AddLiquidityForm({
                     isInsufficientBalance) ?
                       "relative border border-sidebar-border bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 !opacity-100 cursor-default text-white/75"
                       :
-                      "text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90"
+                      "text-sidebar-primary border border-sidebar-primary bg-button-primary hover-button-primary"
                   )}
                   onClick={handlePrepareAndSubmit}
                   disabled={isWorking ||

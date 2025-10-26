@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import Image from "next/image";
+import Link from "next/link";
 import { useRouter, useParams } from "next/navigation";
 import { useAccount, useBalance } from "wagmi";
 import { toast } from "sonner";
@@ -2392,11 +2393,7 @@ export default function PoolDetailPage() {
             {/* Mobile layout < 768px */}
             <div className="md:hidden space-y-3 overflow-x-hidden mb-2">
                 {/* Identification above for mobile */}
-                <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 cursor-pointer"
-                     onClick={() => router.push('/liquidity')}
-                     role="button"
-                     tabIndex={0}
-                     onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); router.push('/liquidity'); } }}>
+                <Link href="/liquidity" className="rounded-lg bg-muted/30 border border-sidebar-border/60 cursor-pointer block">
                   <div className="px-4 py-3 flex items-center w-full">
                     <div className="flex items-center gap-1 min-w-0">
                       <ChevronLeft className="h-4 w-4 text-muted-foreground mr-1 flex-shrink-0" />
@@ -2432,7 +2429,7 @@ export default function PoolDetailPage() {
                       </div>
                     </div>
                   </div>
-                </div>
+                </Link>
                 {/* Dotted container grid 2x2 */}
                 <div className="rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 p-4 mb-2 w-full">
                   <div className="grid grid-cols-2 gap-3">
@@ -2504,14 +2501,13 @@ export default function PoolDetailPage() {
                   <div className="rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 p-4 mb-3 w-full">
                     <div className="flex items-stretch gap-3 min-w-0">
                       {/* Back arrow square */}
-                      <div className="flex-shrink-0 rounded-lg bg-muted/30 border border-sidebar-border/60 hover:border-white/30 transition-colors cursor-pointer flex items-center justify-center"
+                      <Link
+                        href="/liquidity"
+                        className="flex-shrink-0 rounded-lg bg-muted/30 border border-sidebar-border/60 hover:border-white/30 transition-colors cursor-pointer flex items-center justify-center"
                         style={{ width: '74px', height: '74px', minWidth: '74px', minHeight: '74px' }}
-                        onClick={() => router.push('/liquidity')}
-                        role="button"
-                        tabIndex={0}
-                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); router.push('/liquidity'); } }}>
+                      >
                         <ChevronLeft className="h-5 w-5 text-muted-foreground" />
-                      </div>
+                      </Link>
 
                       {/* Token info container inside dotted container */}
                       <div className="min-w-0 basis-0 flex-1 overflow-hidden rounded-lg bg-muted/30 border border-sidebar-border/60">
@@ -3503,13 +3499,13 @@ export default function PoolDetailPage() {
         isIncreasingLiquidity={showIncreaseModal ? isIncreasingLiquidity : undefined}
         isIncreaseSuccess={showIncreaseModal ? isIncreaseSuccess : undefined}
         increaseTxHash={showIncreaseModal ? increaseTxHash : undefined}
-        onLiquidityAdded={() => {
+        onLiquidityAdded={(token0Symbol?: string, token1Symbol?: string) => {
           if (showIncreaseModal) {
             // For increase operations, do nothing here - let the transaction callback handle everything
             // This prevents premature toasts and modal closure
           } else {
             setAddLiquidityOpen(false);
-            refreshAfterLiquidityAddedWithSkeleton();
+            refreshAfterLiquidityAddedWithSkeleton(token0Symbol, token1Symbol);
           }
         }}
       />
@@ -3529,7 +3525,7 @@ export default function PoolDetailPage() {
               poolApr={currentPoolData?.apr}
               onLiquidityAdded={(token0Symbol?: string, token1Symbol?: string) => {
                 setAddLiquidityFormOpen(false);
-                refreshAfterLiquidityAddedWithSkeleton();
+                refreshAfterLiquidityAddedWithSkeleton(token0Symbol, token1Symbol);
               }}
               sdkMinTick={SDK_MIN_TICK}
               sdkMaxTick={SDK_MAX_TICK}

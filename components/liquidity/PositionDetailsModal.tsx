@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { X, ChevronLeft, RefreshCw as RefreshCwIcon, BadgeCheck, OctagonX, Info } from "lucide-react";
+import { X, ChevronLeft, RefreshCw as RefreshCwIcon, BadgeCheck, OctagonX, Info, ArrowUpRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -82,7 +82,7 @@ interface PositionDetailsModalProps {
   convertTickToPrice?: (tick: number, currentPoolTick: number | null, currentPrice: string | null, baseTokenForPriceDisplay: string, token0Symbol: string, token1Symbol: string) => string;
   apr?: number | null;
   isLoadingAPR?: boolean;
-  feeTier?: number | null; // Fee in basis points (e.g., 30 for 0.30%)
+  feeTier?: number | null;
   selectedPoolId?: string;
   chainId?: number;
   currentPoolSqrtPriceX96?: string | null;
@@ -91,15 +91,15 @@ interface PositionDetailsModalProps {
   defaultTickSpacing?: number;
   poolToken0?: any;
   poolToken1?: any;
-  // NEW: Denomination data from parent PositionCard
   denominationBase?: string;
   initialMinPrice?: string;
   initialMaxPrice?: string;
   initialCurrentPrice?: string | null;
-  // APY from parent PositionCard (for header display)
   prefetchedFormattedAPY?: string;
   prefetchedIsAPYFallback?: boolean;
   prefetchedIsLoadingAPY?: boolean;
+  showViewPoolButton?: boolean;
+  onViewPool?: () => void;
 }
 
 // Helper to extract average color from token icon (fallback to hardcoded colors)
@@ -147,6 +147,8 @@ export function PositionDetailsModal({
   prefetchedFormattedAPY,
   prefetchedIsAPYFallback,
   prefetchedIsLoadingAPY,
+  showViewPoolButton,
+  onViewPool,
 }: PositionDetailsModalProps) {
   const [mounted, setMounted] = useState(false);
   const [chartKey, setChartKey] = useState(0);
@@ -640,10 +642,9 @@ export function PositionDetailsModal({
     return () => setMounted(false);
   }, []);
 
-  // Reset view and preview state when modal opens/closes
   useEffect(() => {
+    setChartKey(prev => prev + 1);
     if (isOpen) {
-      setChartKey(prev => prev + 1);
       setCurrentView('default');
       setPreviewAddAmount0(0);
       setPreviewAddAmount1(0);
@@ -653,7 +654,7 @@ export function PositionDetailsModal({
       setPreviewCollectFee1(0);
       setShowInterimConfirmation(false);
     }
-  }, [isOpen]);
+  }, [isOpen, position.positionId]);
 
   // Handlers for switching views
   const handleAddLiquidityClick = () => {
@@ -1006,11 +1007,25 @@ export function PositionDetailsModal({
           <div className="overflow-y-auto px-4 pt-4 pb-4 space-y-4 flex-1 min-h-0">
             {/* Top Bar - Token Info with Status and Fee Tier */}
             <div className="flex items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
+              <div
+                className={cn(
+                  "flex items-center gap-3",
+                  showViewPoolButton && onViewPool && "cursor-pointer hover:opacity-80 transition-opacity"
+                )}
+                onClick={() => {
+                  if (showViewPoolButton && onViewPool) {
+                    onViewPool();
+                    onClose();
+                  }
+                }}
+              >
                 <TokenStack position={position as any} />
                 <div className="flex flex-col gap-1">
-                  <h3 className="text-base font-semibold">
+                  <h3 className="text-base font-semibold flex items-center gap-1.5">
                     {position.token0.symbol} / {position.token1.symbol}
+                    {showViewPoolButton && onViewPool && (
+                      <ArrowUpRight className="h-3.5 w-3.5 text-muted-foreground" />
+                    )}
                   </h3>
                   <div className="flex items-center gap-2">
                     {feeTierDisplay && (
@@ -1118,7 +1133,6 @@ export function PositionDetailsModal({
                     {mounted && (
                       <div className="absolute top-0 right-0 border border-dashed border-sidebar-border/60 rounded-lg p-2 flex items-center gap-1 group/apy cursor-help">
                         <div className="flex flex-col items-start gap-0">
-                          <div className="text-[10px] text-muted-foreground font-normal">APY</div>
                           {prefetchedIsLoadingAPY ? (
                             <div className="h-4 w-10 bg-muted/60 rounded animate-pulse" />
                           ) : (
@@ -1127,14 +1141,13 @@ export function PositionDetailsModal({
                             </div>
                           )}
                         </div>
-                        <Info className="h-3 w-3 text-muted-foreground" />
 
                         {/* Tooltip */}
                         <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 px-3 py-2 bg-popover border border-sidebar-border rounded-md shadow-lg opacity-0 group-hover/apy:opacity-100 pointer-events-none transition-opacity duration-200 w-48 text-xs text-popover-foreground z-[100]">
                           {prefetchedIsAPYFallback ? (
-                            <p>Pool-wide estimate. Actual APY calculated from position fees.</p>
+                            <p><span className="font-bold">APY:</span> Pool-wide estimate. Actual APY calculated from position fees.</p>
                           ) : (
-                            <p>Calculated from your position's accumulated fees.</p>
+                            <p><span className="font-bold">APY:</span> Calculated from your position's accumulated fees.</p>
                           )}
                           {/* Tooltip arrow */}
                           <div className="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-sidebar-border"></div>

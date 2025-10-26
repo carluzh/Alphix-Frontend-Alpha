@@ -1,13 +1,19 @@
 {
-  "name": "my-v0-project",
-  "version": "0.1.0",
+  "name": "@alphix/frontend",
+  "version": "1.3.0",
   "private": true,
+  "description": "Alphix Frontend - Decentralized AMM built on Uniswap V4 with dynamic fee hooks",
+  "author": "Alphix Team",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alphix/frontend"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "e2e:install": "playwright install --with-deps",
-    "e2e:fork": "anvil --fork-url %BASE_SEPOLIA_RPC% --chain-id 84532 --block-time 1",
+    "e2e:fork": "anvil --fork-url https://base-sepolia.drpc.org --chain-id 1337 --block-time 1",
     "e2e:fork:unix": "anvil --fork-url $BASE_SEPOLIA_RPC --chain-id 84532 --block-time 1",
     "e2e:build": "cross-env NEXT_PUBLIC_RPC_URL=http://127.0.0.1:8545 next build",
     "e2e:start": "cross-env NEXT_PUBLIC_RPC_URL=http://127.0.0.1:8545 next start -p 3000",
@@ -15,7 +21,10 @@
     "e2e:quick": "npm run e2e:build && start-server-and-test e2e:start http://127.0.0.1:3000 'playwright test tests/swap.spec.ts -c tests/playwright.config.ts --grep \"Session 1\" --reporter=line'",
     "e2e:session3": "npm run e2e:build && start-server-and-test e2e:start http://127.0.0.1:3000 'playwright test tests/swap.spec.ts -c tests/playwright.config.ts --grep \"Session 3\" --reporter=line'",
     "e2e:full": "npm run e2e:build && start-server-and-test e2e:start http://127.0.0.1:3000 'playwright test tests/swap.spec.ts -c tests/playwright.config.ts --reporter=line'",
-    "e2e:ci": "npm run e2e:build && start-server-and-test e2e:start http://127.0.0.1:3000 'playwright test tests/swap.spec.ts -c tests/playwright.config.ts --reporter=line'"
+    "e2e:ci": "npm run e2e:build && start-server-and-test e2e:start http://127.0.0.1:3000 'playwright test tests/swap.spec.ts -c tests/playwright.config.ts --reporter=line'",
+    "e2e:liquidity": "npm run e2e:build && start-server-and-test e2e:start http://127.0.0.1:3000 'playwright test tests/liquidity-complete.spec.ts -c tests/playwright.config.ts --reporter=line'",
+    "e2e:liquidity:manual": "npm run e2e:build && start-server-and-test e2e:start http://127.0.0.1:3000 'playwright test tests/liquidity-complete.spec.ts -c tests/playwright.config.ts --reporter=line'",
+    "e2e:all": "npm run e2e:build && start-server-and-test e2e:start http://127.0.0.1:3000 'playwright test tests/ -c tests/playwright.config.ts --reporter=line'"
   },
   "dependencies": {
     "@dnd-kit/core": "latest",

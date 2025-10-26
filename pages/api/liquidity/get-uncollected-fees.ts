@@ -143,7 +143,6 @@ export default async function handler(
       }
 
       // 7) Optional formatted (display)
-      const { getToken } = await import('@/lib/pools-config');
       const token0Config = getToken(token0Symbol);
       const token1Config = getToken(token1Symbol);
 
@@ -165,18 +164,123 @@ export default async function handler(
       } as const;
     };
 
-    // Batch path
+    // Batch path with multicall optimization
     if (Array.isArray(positionIds) && positionIds.length > 0) {
-      const items: Array<{ positionId: string; amount0: string; amount1: string; token0Symbol: string; token1Symbol: string; formattedAmount0?: string; formattedAmount1?: string }> = [];
-      for (const pid of positionIds) {
-        try {
-          const item = await computeFor(pid);
-          items.push({ ...item });
-        } catch (e: any) {
-          // Skip failures per-position to return partial data
+      const pmAddress = getPositionManagerAddress();
+      const stateView = getStateViewAddress();
+      const stateViewAbiParsed = parseAbi(STATE_VIEW_ABI);
+
+      try {
+        const pmCalls = positionIds.map(pid => {
+          const tokenIdStr = pid.includes('-') ? pid.split('-').pop()! : pid;
+          return {
+            address: pmAddress as `0x${string}`,
+            abi: PM_ABI,
+            functionName: 'getPoolAndPositionInfo',
+            args: [BigInt(tokenIdStr)]
+          };
+        });
+
+        const pmResults = await publicClient.multicall({ contracts: pmCalls });
+
+        const stateViewCalls: Array<{ address: `0x${string}`; abi: any; functionName: string; args: any[] }> = [];
+        const positionMetadata: Array<{ positionId: string; poolIdBytes32: `0x${string}`; tickLower: number; tickUpper: number; salt: `0x${string}`; pmResultIndex: number }> = [];
+
+        for (let i = 0; i < positionIds.length; i++) {
+          if (!pmResults[i].status || pmResults[i].status === 'failure') continue;
+
+          const pmResult = pmResults[i].result as readonly [any, bigint];
+          const poolKey = pmResult[0];
+          const infoPacked = pmResult[1];
+
+          const encodedPoolKey = encodeAbiParameters([{
+            type: 'tuple',
+            components: [
+              { name: 'currency0', type: 'address' },
+              { name: 'currency1', type: 'address' },
+              { name: 'fee', type: 'uint24' },
+              { name: 'tickSpacing', type: 'int24' },
+              { name: 'hooks', type: 'address' },
+            ],
+          }], [{
+            currency0: getAddress(poolKey.currency0),
+            currency1: getAddress(poolKey.currency1),
+            fee: Number(poolKey.fee),
+            tickSpacing: Number(poolKey.tickSpacing),
+            hooks: getAddress(poolKey.hooks),
+          }]);
+          const poolIdBytes32 = keccak256(encodedPoolKey) as `0x${string}`;
+
+          const { tickLower, tickUpper } = decodePositionInfo(infoPacked);
+          const tokenIdStr = positionIds[i].includes('-') ? positionIds[i].split('-').pop()! : positionIds[i];
+          const salt = `0x${BigInt(tokenIdStr).toString(16).padStart(64, '0')}` as `0x${string}`;
+
+          positionMetadata.push({ positionId: positionIds[i], poolIdBytes32, tickLower, tickUpper, salt, pmResultIndex: i });
+
+          stateViewCalls.push(
+            {
+              address: stateView as `0x${string}`,
+              abi: stateViewAbiParsed,
+              functionName: 'getPositionInfo',
+              args: [poolIdBytes32, pmAddress as `0x${string}`, tickLower, tickUpper, salt]
+            },
+            {
+              address: stateView as `0x${string}`,
+              abi: stateViewAbiParsed,
+              functionName: 'getFeeGrowthInside',
+              args: [poolIdBytes32, tickLower, tickUpper]
+            }
+          );
         }
+
+        const stateResults = await publicClient.multicall({ contracts: stateViewCalls });
+
+        const items: Array<{ positionId: string; amount0: string; amount1: string; token0Symbol: string; token1Symbol: string; formattedAmount0?: string; formattedAmount1?: string }> = [];
+
+        for (let i = 0; i < positionMetadata.length; i++) {
+          try {
+            const meta = positionMetadata[i];
+            const posInfoResult = stateResults[i * 2];
+            const feeInsideResult = stateResults[i * 2 + 1];
+
+            if (posInfoResult.status === 'failure' || feeInsideResult.status === 'failure') continue;
+
+            const posInfo = posInfoResult.result as readonly [bigint, bigint, bigint];
+            const feeInside = feeInsideResult.result as readonly [bigint, bigint];
+
+            const { token0Fees: rawAmount0, token1Fees: rawAmount1 } = calculateUnclaimedFeesV4(
+              posInfo[0], feeInside[0], feeInside[1], posInfo[1], posInfo[2]
+            );
+
+            const pmResult = pmResults[meta.pmResultIndex].result as readonly [any, bigint];
+            const poolKey = pmResult[0];
+
+            const token0Symbol = getTokenSymbolByAddress(poolKey.currency0) || 'T0';
+            const token1Symbol = getTokenSymbolByAddress(poolKey.currency1) || 'T1';
+            const token0Config = getToken(token0Symbol);
+            const token1Config = getToken(token1Symbol);
+
+            if (!token0Config || !token1Config) continue;
+
+            const formattedAmount0 = formatUnits(rawAmount0, token0Config.decimals);
+            const formattedAmount1 = formatUnits(rawAmount1, token1Config.decimals);
+
+            items.push({
+              positionId: meta.positionId,
+              amount0: rawAmount0.toString(),
+              amount1: rawAmount1.toString(),
+              token0Symbol,
+              token1Symbol,
+              formattedAmount0,
+              formattedAmount1
+            });
+          } catch {}
+        }
+
+        return res.status(200).json({ success: true, items });
+      } catch (e: any) {
+        return res.status(500).json({ success: false, error: e?.message || 'Batch fetch failed' });
       }
-      return res.status(200).json({ success: true, items });
     }
 
     // Single path (backward-compat)
@@ -307,7 +411,6 @@ export default async function handler(
     }
 
     // Import token config to get decimals
-    const { getToken } = await import('@/lib/pools-config');
     const token0Config = getToken(token0Symbol);
     const token1Config = getToken(token1Symbol);
 

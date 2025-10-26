@@ -143,6 +143,7 @@ export async function rejectMetaMaskTransaction(
 
 /**
  * Connect MetaMask wallet to the application
+ * Works on both swap page (modal button) and liquidity/portfolio pages (header button)
  */
 export async function connectMetaMaskWallet(
   page: Page,
@@ -150,22 +151,37 @@ export async function connectMetaMaskWallet(
 ): Promise<void> {
   console.log('\nStep 8: Connect wallet')
 
-  // Target the Connect Wallet button in the swap interface (not the sidebar)
-  const swapContainer = page.locator('[data-swap-container="true"]')
-  const connectBtn = swapContainer.getByRole('button', {
-    name: /connect wallet/i,
-  })
+  // Wait for page to fully load
+  await page.waitForLoadState('networkidle')
+  await page.waitForTimeout(3000)
+
+  // Try to find connect button - could be in header/sidebar OR in swap modal
+  // Priority: Try swap modal first (data-swap-container), then fallback to header
+  let connectBtn = page.locator('[data-swap-container="true"]').getByRole('button', { name: /connect wallet/i }).first()
+  let isSwapPage = await connectBtn.isVisible().catch(() => false)
+
+  if (!isSwapPage) {
+    // Not on swap page or swap container not visible - use header/sidebar button
+    console.log('  Using header/sidebar Connect Wallet button')
+    connectBtn = page.getByRole('button', { name: /connect wallet/i }).first()
+  } else {
+    console.log('  Using swap modal Connect Wallet button')
+  }
 
   try {
-    await connectBtn.waitFor({ state: 'visible', timeout: 5000 })
-    console.log('  Clicking connect button')
+    await connectBtn.waitFor({ state: 'visible', timeout: 15000 })
+    console.log('  ✓ Connect button found')
     await connectBtn.click()
   } catch (error) {
     console.log('  Error: Connect button not found')
+    // Take screenshot for debugging
+    await page.screenshot({ path: `test-results/connect-button-not-found-${Date.now()}.png`, fullPage: true })
     throw new Error(
-      'Connect Wallet button not visible - page may not have loaded'
+      'Connect Wallet button not visible - page may not have loaded. Check test-results/ for screenshot.'
     )
   }
+
+  await page.waitForTimeout(1000)
 
   console.log('  Selecting MetaMask')
   const metamaskOption = page.getByText(/metamask/i).first()
@@ -196,12 +212,57 @@ export async function connectMetaMaskWallet(
 
   if (metamaskConnectPage) {
     await metamaskConnectPage.waitForLoadState('domcontentloaded')
+    await page.waitForTimeout(1000)
+
+    // MetaMask connection flow may have "Next" → "Connect" or just "Connect"
+    const nextBtn = metamaskConnectPage.getByRole('button', { name: /next/i }).first()
+    const nextBtnVisible = await nextBtn.isVisible().catch(() => false)
+
+    if (nextBtnVisible) {
+      console.log('  Clicking Next button')
+      await nextBtn.click()
+      await page.waitForTimeout(500)
+    }
+
     const connectBtn = metamaskConnectPage
       .getByRole('button', { name: /connect/i })
       .first()
     await connectBtn.waitFor({ state: 'visible', timeout: 5000 })
+    console.log('  Clicking Connect button')
     await connectBtn.click()
-    await metamaskConnectPage.waitForEvent('close', { timeout: 10000 })
+
+    // Wait for popup to close OR for main page to show connected state
+    try {
+      await metamaskConnectPage.waitForEvent('close', { timeout: 5000 })
+      console.log('  ✓ MetaMask popup closed')
+    } catch {
+      // Popup might not close immediately - could be network approval screen
+      console.log('  Popup still open - checking for network approval...')
+      await page.waitForTimeout(2000)
+
+      // Check if there's a network approval request (Add network or Approve buttons)
+      const approveBtn = metamaskConnectPage.getByRole('button', { name: /approve|add network/i }).first()
+      const approveBtnVisible = await approveBtn.isVisible().catch(() => false)
+
+      if (approveBtnVisible) {
+        console.log('  Found network approval, clicking Approve')
+        await approveBtn.click()
+        await page.waitForTimeout(2000)
+
+        // After approving, might need to switch network
+        const switchBtn = metamaskConnectPage.getByRole('button', { name: /switch|confirm/i }).first()
+        const switchBtnVisible = await switchBtn.isVisible().catch(() => false)
+
+        if (switchBtnVisible) {
+          console.log('  Clicking Switch/Confirm button')
+          await switchBtn.click()
+          await page.waitForTimeout(2000)
+        }
+      }
+
+      // Give extra time for connection to complete
+      await page.waitForTimeout(2000)
+    }
   }
 
   console.log('  ✓ Step 8 complete')
