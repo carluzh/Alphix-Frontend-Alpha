@@ -416,9 +416,9 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
         );
 
         const actualTickSpacing = poolConfig.tickSpacing;
-        const isStable = presetOptions.includes("±1%");
+        const isStable = presetOptions.includes("±0.5%");
         const rangeTypes = isStable
-          ? ["Full Range", "±3%", "±1%", "Custom"]
+          ? ["Full Range", "±3%", "±0.5%", "Custom"]
           : ["Full Range", "±15%", "±3%", "Custom"];
 
         const metrics: PoolMetrics = {
@@ -445,7 +445,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
             const percentages: Record<string, number> = {
               "±15%": 0.15,
               "±3%": 0.03,
-              "±1%": 0.01
+              "±0.5%": 0.005
             };
             const pct = percentages[rangeType];
             if (pct && currentPoolTick !== null) {
@@ -638,9 +638,9 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
               <div className="grid grid-cols-4 gap-2">
                 {(() => {
                   // Determine which range types to show based on presetOptions
-                  const isStable = presetOptions.includes("±1%");
+                  const isStable = presetOptions.includes("±0.5%");
                   const rangeTypes = isStable
-                    ? ["Full Range", "±3%", "±1%", "Custom"]
+                    ? ["Full Range", "±3%", "±0.5%", "Custom"]
                     : ["Full Range", "±15%", "±3%", "Custom"];
 
                   return rangeTypes.map((rangeType) => {
@@ -648,7 +648,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                       "Full Range": "Full Range",
                       "±15%": "Wide",
                       "±3%": isStable ? "Wide" : "Narrow",
-                      "±1%": "Narrow",
+                      "±0.5%": "Narrow",
                       "Custom": "Custom"
                     };
 

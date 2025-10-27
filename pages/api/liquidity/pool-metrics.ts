@@ -263,11 +263,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       currentFeeRateBps: day.currentFeeRateBps || '0' // Not available in Satsuma schema
     }));
 
-    console.log('[pool-metrics] Found', dayDatas.length, 'days of data');
-    console.log('[pool-metrics] Found', feeEvents.length, 'fee events');
-    console.log('[pool-metrics] Pool:', pool);
-    console.log('[pool-metrics] Sample day:', dayDatas[0]);
-    console.log('[pool-metrics] Sample fee event:', feeEvents[0]);
 
     if (dayDatas.length === 0) {
       return res.status(200).json({
@@ -291,7 +286,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     let totalFeesToken0 = 0;
     const sortedDayDatas = [...dayDatas].sort((a, b) => a.date - b.date);
 
-    console.log('[pool-metrics] Fee calculation details:');
     for (const day of sortedDayDatas) {
       const dayEndTimestamp = day.date + 86400; // End of day in seconds
 
@@ -312,8 +306,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const feeRate = feeBps / 1_000_000; // Convert to decimal
       const dayFees = volumeToken0 * feeRate;
 
-      console.log(`[pool-metrics] Day ${new Date(day.date * 1000).toISOString().split('T')[0]}: volume=${volumeToken0.toFixed(6)}, feeBps=${feeBps}, feeRate=${(feeRate * 100).toFixed(3)}%, fees=${dayFees.toFixed(6)}`);
-
       totalFeesToken0 += dayFees;
     }
 
@@ -322,11 +314,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (isDAI && pool?.totalValueLockedToken0) {
       // For Satsuma schema, use current pool TVL (day data doesn't have TVL)
       avgTVLToken0 = parseFloat(pool.totalValueLockedToken0);
-      console.log('[pool-metrics] Using current pool TVL for DAI pool:', avgTVLToken0);
     } else {
       // For original schema, average the daily TVL values
       avgTVLToken0 = dayDatas.reduce((sum, day) => sum + parseFloat(day.tvlToken0 || '0'), 0) / dayDatas.length;
-      console.log('[pool-metrics] Using averaged daily TVL:', avgTVLToken0);
     }
 
     const totalVolumeToken0 = dayDatas.reduce((sum, day) => sum + parseFloat(day.volumeToken0 || '0'), 0);
@@ -344,8 +334,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       currentFeeBps: currentActualFeeBps, // Actual current fee in basis points (millionths converted)
       days: dayDatas.length
     };
-
-    console.log('[pool-metrics] Calculated metrics:', metrics);
 
     // Cache for 5 minutes (300 seconds) at the edge, revalidate in background
     // This means Vercel CDN will serve cached response for 5 min, then revalidate

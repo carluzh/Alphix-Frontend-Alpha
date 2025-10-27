@@ -124,56 +124,11 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
     // Store position ID for fee refresh after transaction
     currentPositionIdRef.current = positionData.tokenId.toString();
 
-    // Add unclaimed fees to amounts - user wants to spend their input amount PLUS use available fees
-    // CRITICAL: Use exact BigInt arithmetic to prevent any rounding errors that cause DeltaNotNegative
-    let finalAdditionalAmount0 = positionData.additionalAmount0 || '0';
-    let finalAdditionalAmount1 = positionData.additionalAmount1 || '0';
-
-    if (positionData.feesForIncrease) {
-      try {
-        // Use the token symbols we already have from positionData  
-        const token0Decimals = TOKEN_DEFINITIONS[positionData.token0Symbol]?.decimals || 18;
-        const token1Decimals = TOKEN_DEFINITIONS[positionData.token1Symbol]?.decimals || 18;
-
-        // Work entirely in raw units to avoid any precision loss
-        const userAmount0Raw = safeParseUnits(positionData.additionalAmount0 || '0', token0Decimals);
-        const userAmount1Raw = safeParseUnits(positionData.additionalAmount1 || '0', token1Decimals);
-        
-        // Fees are already in raw units (wei), use them directly
-        const fee0Raw = BigInt(positionData.feesForIncrease.amount0 || '0');
-        const fee1Raw = BigInt(positionData.feesForIncrease.amount1 || '0');
-
-        // Add fees to user amounts - this is exact BigInt arithmetic, no rounding possible
-        const totalAmount0Raw = userAmount0Raw + fee0Raw;
-        const totalAmount1Raw = userAmount1Raw + fee1Raw;
-
-        // Convert back to display format - formatUnits handles this precisely
-        finalAdditionalAmount0 = formatUnits(totalAmount0Raw, token0Decimals);
-        finalAdditionalAmount1 = formatUnits(totalAmount1Raw, token1Decimals);
-
-        console.log('[DEBUG] Fee addition details:', {
-          user0: positionData.additionalAmount0,
-          user1: positionData.additionalAmount1,
-          fee0Wei: positionData.feesForIncrease.amount0,
-          fee1Wei: positionData.feesForIncrease.amount1,
-          userAmount0Raw: userAmount0Raw.toString(),
-          userAmount1Raw: userAmount1Raw.toString(),
-          fee0Raw: fee0Raw.toString(),
-          fee1Raw: fee1Raw.toString(),
-          totalAmount0Raw: totalAmount0Raw.toString(),
-          totalAmount1Raw: totalAmount1Raw.toString(),
-          total0: finalAdditionalAmount0,
-          total1: finalAdditionalAmount1,
-          token0Decimals,
-          token1Decimals
-        });
-      } catch (error) {
-        console.error('Error adding fees to increase amounts:', error);
-        // Fall back to original amounts if fee calculation fails
-        finalAdditionalAmount0 = positionData.additionalAmount0 || '0';
-        finalAdditionalAmount1 = positionData.additionalAmount1 || '0';
-      }
-    }
+    // IMPORTANT: In Uniswap V4, fee revenue is automatically credited to a position when increasing liquidity
+    // We should NOT manually add fees to the amounts - the V4 SDK handles this automatically
+    // See: https://docs.uniswap.org/contracts/v4/quickstart/manage-liquidity/increase-liquidity
+    const finalAdditionalAmount0 = positionData.additionalAmount0 || '0';
+    const finalAdditionalAmount1 = positionData.additionalAmount1 || '0';
 
     // Store the user input amounts for the callback (fees will be auto-compounded by v4)
     increaseAmountsRef.current = {
@@ -300,9 +255,9 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
 
           // If token1 is binding (L1 < L0) while user provided token0, bump amt1 to required
           if (JSBI.greaterThan(L0, L1) && amountC0Raw > 0n) {
-            // required1 = ceil(L0 * (sqrtP - sqrtA))
-            const req1 = ceilDiv(mul(L0, den1), JSBI.BigInt(1));
-            const req1Big = BigInt(JSBI.toNumber(req1));
+            // required1 = L0 * (sqrtP - sqrtA)
+            const req1 = mul(L0, den1);
+            const req1Big = BigInt(req1.toString()); // Fix: use toString() instead of toNumber() to prevent overflow
             if (req1Big > amountC1Raw) {
               amountC1Raw = req1Big;
             }
@@ -313,7 +268,7 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
             const num = mul(L1, sub(sqrtB, sqrtP));
             const den = mul(sqrtP, sqrtB);
             const req0 = ceilDiv(num, den);
-            const req0Big = BigInt(JSBI.toNumber(req0));
+            const req0Big = BigInt(req0.toString()); // Fix: use toString() instead of toNumber() to prevent overflow
             if (req0Big > amountC0Raw) {
               amountC0Raw = req0Big;
             }
@@ -388,7 +343,7 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
             if (!(amt >= amountC1Raw && Number(exp) > now)) needPermit = true;
           }
           if (needPermit) {
-            const prepared = await preparePermit2BatchForPosition(nftTokenId, accountAddress as `0x${string}`, chainId, deadline);
+            const prepared = await preparePermit2BatchForPosition(nftTokenId, accountAddress as `0x${string}`, chainId, deadline, amountC0Raw, amountC1Raw);
             if (prepared?.message?.details && prepared.message.details.length > 0) {
               // Inform user about batch signature request
               toast("Sign in Wallet", {

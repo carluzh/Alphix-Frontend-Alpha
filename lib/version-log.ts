@@ -3,10 +3,42 @@ export interface VersionEntry {
   title: string;
   newFeatures: string[];
   improvements: string[];
+  bugFixes?: string[];
+  breaking?: string[];
   releaseDate: string;
 }
 
 export const VERSION_LOG: VersionEntry[] = [
+  {
+    version: "1.3",
+    title: "Beta Update - v1.3 What's New",
+    newFeatures: [
+      "Complete Position Management System - All-in-one modal for add/remove liquidity and fee collection",
+      "Real-time APY/APR Calculator - Live calculations based on pool volume and fees",
+      "Interactive Position Charts - Visual range and liquidity depth displays",
+      "Comprehensive Testing Suite - Full E2E tests for swap and liquidity flows",
+      "Enhanced Pool Analytics - Lifetime fees tracking and detailed metrics"
+    ],
+    improvements: [
+      "Swap Interface Redesign - Better input handling and token selection",
+      "Liquidity Math Engine - Accurate tick-to-price conversions and depth calculations",
+      "Performance Optimization - 46% code reduction (20,909 lines removed)",
+      "Mobile Responsiveness - Enhanced layouts across all pages",
+      "Portfolio Page Overhaul - Cleaner layout with better position cards",
+      "Toast Notifications - Improved feedback system with Sonner integration"
+    ],
+    bugFixes: [
+      "Position information display fixes",
+      "Liquidity addition transaction flow corrections",
+      "Pool loading performance improvements",
+      "Range selection calculations"
+    ],
+    breaking: [
+      "Authentication System Removed - Beta login requirement removed, app is now publicly accessible",
+      "Legacy APIs Deprecated - Old batch transaction and permit utilities removed"
+    ],
+    releaseDate: "2025-10-27"
+  },
   {
     version: "1.1",
     title: "Beta Update - v1.1 What's New",
@@ -22,7 +54,7 @@ export const VERSION_LOG: VersionEntry[] = [
   },
   {
     version: "1.0",
-    title: "New Update - 1.0 ", 
+    title: "New Update - 1.0 ",
     newFeatures: [
       "Core Swap Functionality",
       "Liquidity Provision",

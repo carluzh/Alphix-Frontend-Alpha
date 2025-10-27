@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { PlusIcon, RefreshCwIcon, MinusIcon, ActivityIcon, CheckIcon, InfoIcon, ArrowLeftIcon, OctagonX, BadgeCheck, Maximize } from "lucide-react";
+import { PlusIcon, RefreshCwIcon, MinusIcon, ActivityIcon, CheckIcon, InfoIcon, ArrowLeftIcon, OctagonX, BadgeCheck, Maximize, CircleHelp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -75,6 +75,7 @@ import poolsConfig from "../../config/pools.json";
 import { useAllPrices } from "@/components/data/hooks";
 import { formatUSD } from "@/lib/format";
 import { getOptimalBaseToken, getDecimalsForDenomination } from "@/lib/denomination-utils";
+import { calculateUserPositionAPY, formatUserAPY, type PoolMetrics } from "@/lib/user-position-apy";
 
 // Utility functions
 const getTokenIcon = (symbol?: string) => {
@@ -193,7 +194,11 @@ export function AddLiquidityForm({
   const [initialDefaultApplied, setInitialDefaultApplied] = useState(false);
   const [baseTokenForPriceDisplay, setBaseTokenForPriceDisplay] = useState<TokenSymbol>(() =>
     getOptimalBaseToken(initialTokens.token0, initialTokens.token1));
-  
+  const [estimatedApy, setEstimatedApy] = useState<string>("0.00");
+  const [isCalculatingApy, setIsCalculatingApy] = useState(false);
+  // Cache pool metrics and state (fetched once per pool)
+  const [cachedPoolMetrics, setCachedPoolMetrics] = useState<{ poolId: string; metrics: any; poolLiquidity: string } | null>(null);
+
   // UI flow management
   const [showingTransactionSteps, setShowingTransactionSteps] = useState(false);
   const [showRangeModal, setShowRangeModal] = useState(false);
@@ -446,7 +451,7 @@ export function AddLiquidityForm({
           setActiveInputSide(null);
           setCurrentPrice(null);
           setInitialDefaultApplied(false);
-          setActivePreset(isStablePool ? "±1%" : "±15%"); // Reset preset on pool change
+          setActivePreset(isStablePool ? "±3%" : "±15%"); // Reset preset on pool change (Wide for stable pools)
           setBaseTokenForPriceDisplay(t0); // Reset base token for price display
           // Reset chart specific states too
           setCurrentPriceLine(null);
@@ -481,7 +486,7 @@ export function AddLiquidityForm({
     setCalculatedData(null);
     setCurrentPoolTick(null);
     setCurrentPrice(null);
-    setActivePreset(isStablePool ? "±1%" : "±15%"); // Reset preset based on pool type
+    setActivePreset(isStablePool ? "±3%" : "±15%"); // Reset preset based on pool type (Wide for stable pools)
     setBaseTokenForPriceDisplay(token0Symbol); // Reset base token for price display
     // Reset chart specific states too
     setCurrentPriceLine(null);
@@ -1195,8 +1200,8 @@ export function AddLiquidityForm({
         }
 
         // Align and clamp
-        newTickLower = Math.ceil(newTickLower / defaultTickSpacing) * defaultTickSpacing;
-        newTickUpper = Math.floor(newTickUpper / defaultTickSpacing) * defaultTickSpacing;
+        newTickLower = Math.floor(newTickLower / defaultTickSpacing) * defaultTickSpacing;
+        newTickUpper = Math.ceil(newTickUpper / defaultTickSpacing) * defaultTickSpacing;
 
         newTickLower = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTickLower));
         newTickUpper = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTickUpper));
@@ -1925,6 +1930,154 @@ export function AddLiquidityForm({
     setIsInsufficientBalance(insufficient);
   }, [amount0, amount1, token0Symbol, token1Symbol, calculatedData, token0BalanceData, token1BalanceData]);
 
+  // Fetch pool metrics and state ONCE per pool (cached)
+  useEffect(() => {
+    const fetchPoolData = async () => {
+      if (!selectedPoolId) return;
+
+      // Check if already cached for this pool
+      if (cachedPoolMetrics?.poolId === selectedPoolId) return;
+
+      try {
+        const [metricsResponse, stateResponse] = await Promise.all([
+          fetch('/api/liquidity/pool-metrics', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ poolId: selectedPoolId, days: 7 })
+          }),
+          fetch(`/api/liquidity/get-pool-state?poolId=${encodeURIComponent(selectedPoolId)}`)
+        ]);
+
+        if (metricsResponse.ok) {
+          const data = await metricsResponse.json();
+          let poolLiquidity = "0";
+
+          if (stateResponse.ok) {
+            const stateData = await stateResponse.json();
+            poolLiquidity = stateData.liquidity || "0";
+          }
+
+          setCachedPoolMetrics({
+            poolId: selectedPoolId,
+            metrics: data.metrics,
+            poolLiquidity
+          });
+        }
+      } catch (error) {
+        // Silently fail - APY will show as unavailable
+      }
+    };
+
+    fetchPoolData();
+  }, [selectedPoolId, cachedPoolMetrics]);
+
+  // Calculate APY client-side (instant, no API calls)
+  useEffect(() => {
+    const calculateApy = async () => {
+      // Basic validation
+      if (!selectedPoolId || !tickLower || !tickUpper || !currentPoolSqrtPriceX96 || currentPoolTick === null) {
+        setEstimatedApy("0.00");
+        return;
+      }
+
+      const lowerTick = parseInt(tickLower);
+      const upperTick = parseInt(tickUpper);
+
+      if (isNaN(lowerTick) || isNaN(upperTick) || lowerTick >= upperTick) {
+        setEstimatedApy("0.00");
+        return;
+      }
+
+      // Check user input
+      const amount0Num = parseFloat(amount0 || '0');
+      const amount1Num = parseFloat(amount1 || '0');
+
+      if (amount0Num <= 0 && amount1Num <= 0) {
+        setEstimatedApy("0.00");
+        return;
+      }
+
+      // Wait for pool data to be cached
+      if (!cachedPoolMetrics || cachedPoolMetrics.poolId !== selectedPoolId) {
+        setIsCalculatingApy(true);
+        return;
+      }
+
+      if (!cachedPoolMetrics.metrics || cachedPoolMetrics.metrics.days === 0) {
+        setEstimatedApy("—");
+        return;
+      }
+
+      setIsCalculatingApy(true);
+
+      try {
+        const poolConfig = getPoolById(selectedPoolId);
+        if (!poolConfig) {
+          setEstimatedApy("—");
+          setIsCalculatingApy(false);
+          return;
+        }
+
+        const token0Def = TOKEN_DEFINITIONS[token0Symbol];
+        const token1Def = TOKEN_DEFINITIONS[token1Symbol];
+
+        if (!token0Def || !token1Def) {
+          setEstimatedApy("—");
+          setIsCalculatingApy(false);
+          return;
+        }
+
+        const sdkToken0 = new Token(
+          4002,
+          getAddress(token0Def.address),
+          token0Def.decimals,
+          token0Symbol,
+          token0Symbol
+        );
+
+        const sdkToken1 = new Token(
+          4002,
+          getAddress(token1Def.address),
+          token1Def.decimals,
+          token1Symbol,
+          token1Symbol
+        );
+
+        const sdkPool = new V4PoolSDK(
+          sdkToken0,
+          sdkToken1,
+          V4_POOL_FEE,
+          V4_POOL_TICK_SPACING,
+          V4_POOL_HOOKS,
+          JSBI.BigInt(currentPoolSqrtPriceX96),
+          JSBI.BigInt(cachedPoolMetrics.poolLiquidity),
+          currentPoolTick
+        );
+
+        const userLiquidity = calculatedData?.liquidity;
+
+        const apy = await calculateUserPositionAPY(
+          sdkPool,
+          lowerTick,
+          upperTick,
+          amount0,
+          amount1,
+          cachedPoolMetrics.metrics as PoolMetrics,
+          userLiquidity
+        );
+
+        const formattedApy = formatUserAPY(apy);
+        setEstimatedApy(formattedApy);
+      } catch (error) {
+        setEstimatedApy("—");
+      } finally {
+        setIsCalculatingApy(false);
+      }
+    };
+
+    calculateApy();
+  }, [selectedPoolId, tickLower, tickUpper, currentPoolSqrtPriceX96, currentPoolTick, token0Symbol, token1Symbol, amount0, amount1, calculatedData, cachedPoolMetrics]);
+
   // Calculate price range in optimal denomination for display
   const getPriceRangeDisplay = useCallback(() => {
     if (currentPoolTick === null || !currentPrice || !tickLower || !tickUpper) {
@@ -2146,7 +2299,7 @@ export function AddLiquidityForm({
                       const presetValue = (() => {
                         if (preset === "Full Range") return "Full Range";
                         if (preset === "Wide") return isStablePool ? "±3%" : "±15%";
-                        if (preset === "Narrow") return isStablePool ? "±1%" : "±3%";
+                        if (preset === "Narrow") return isStablePool ? "±0.5%" : "±3%";
                         return null; // Custom
                       })();
 
@@ -2492,6 +2645,35 @@ export function AddLiquidityForm({
                   </div>
                 </motion.div>
               </div>
+
+              {/* Estimated APY Display - Only show in first view, not in transaction steps */}
+              {!showingTransactionSteps && (
+                <div className="flex items-center justify-between mb-4 px-1">
+                  <TooltipProvider delayDuration={0}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                          <span>Estimated APY</span>
+                          <CircleHelp className="h-3 w-3" />
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="max-w-[240px] text-xs">
+                        <p>
+                          APY is calculated from historical fee data over the last 7 days,
+                          accounting for the liquidity depth change from your position.
+                        </p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                  <div className="text-xs font-medium">
+                    {isCalculatingApy ? (
+                      <div className="h-3.5 w-12 bg-muted/50 rounded animate-pulse" />
+                    ) : (
+                      <span className="text-foreground">{estimatedApy}%</span>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {/* Current Price Display removed per updated UI */}
 

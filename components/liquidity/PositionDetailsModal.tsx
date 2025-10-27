@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { TokenStack } from "./TokenStack";
 import { formatUnits, parseUnits as viemParseUnits, erc20Abi } from "viem";
-import { TOKEN_DEFINITIONS, TokenSymbol, getToken } from "@/lib/pools-config";
+import { TOKEN_DEFINITIONS, TokenSymbol, getToken, NATIVE_TOKEN_ADDRESS } from "@/lib/pools-config";
 import { cn, sanitizeDecimalInput } from "@/lib/utils";
 import { formatUSD } from "@/lib/format";
 import Image from "next/image";
@@ -24,6 +24,8 @@ import { useIncreaseLiquidity, type IncreasePositionData } from "./useIncreaseLi
 import { providePreSignedIncreaseBatchPermit } from './useIncreaseLiquidity';
 import { useDecreaseLiquidity, type DecreasePositionData } from "./useDecreaseLiquidity";
 import { preparePermit2BatchForNewPosition } from '@/lib/liquidity-utils';
+import { useCheckIncreaseLiquidityApprovals } from "./useCheckIncreaseLiquidityApprovals";
+import { useEthersSigner } from "@/hooks/useEthersSigner";
 import { toast } from "sonner";
 import { motion, useAnimation } from "framer-motion";
 import { getTokenSymbolByAddress } from "@/lib/utils";
@@ -187,6 +189,38 @@ export function PositionDetailsModal({
   const { data: incApproveHash, writeContractAsync: approveERC20Async, reset: resetIncreaseApprove } = useWriteContract();
   const { isLoading: isIncreaseApproving, isSuccess: isIncreaseApproved } = useWaitForTransactionReceipt({ hash: incApproveHash });
   const approvalWiggleControls = useAnimation();
+
+  // Get ethers signer for permit signing (matching AddLiquidityForm)
+  const signer = useEthersSigner();
+
+  // State for permit signature (matching AddLiquidityForm)
+  const [currentTransactionStep, setCurrentTransactionStep] = useState<'idle' | 'approving_token0' | 'approving_token1' | 'signing_permit' | 'depositing'>('idle');
+  const [permitSignature, setPermitSignature] = useState<string>();
+
+  // Check approvals for increase liquidity (matching AddLiquidityForm pattern)
+  const {
+    data: increaseApprovalData,
+    isLoading: isCheckingIncreaseApprovals,
+    refetch: refetchIncreaseApprovals,
+  } = useCheckIncreaseLiquidityApprovals(
+    accountAddress && walletChainId && position?.positionId
+      ? {
+          userAddress: accountAddress,
+          tokenId: BigInt(position.positionId),
+          token0Symbol: position.token0.symbol as TokenSymbol,
+          token1Symbol: position.token1.symbol as TokenSymbol,
+          amount0: increaseAmount0,
+          amount1: increaseAmount1,
+          fee0: prefetchedRaw0 || undefined,
+          fee1: prefetchedRaw1 || undefined,
+          chainId: walletChainId,
+        }
+      : undefined,
+    {
+      enabled: Boolean(accountAddress && walletChainId && position?.positionId && (parseFloat(increaseAmount0 || '0') > 0 || parseFloat(increaseAmount1 || '0') > 0)),
+      staleTime: 5000,
+    }
+  );
 
   const {
     increaseLiquidity,
@@ -361,8 +395,13 @@ export function PositionDetailsModal({
       });
 
       const payload = { owner: accountAddress as `0x${string}`, permitBatch: prepared.message, signature };
-      providePreSignedIncreaseBatchPermit(position.positionId, payload);
-      setSignedBatchPermit(payload);
+      // Only store permit if it has details
+      if (prepared.message.details.length > 0) {
+        providePreSignedIncreaseBatchPermit(position.positionId, payload);
+        setSignedBatchPermit(payload);
+      } else {
+        setSignedBatchPermit(null);
+      }
 
       toast.success("Batch Signature Complete", {
         icon: React.createElement(BadgeCheck, { className: "h-4 w-4 text-green-500" }),
@@ -379,9 +418,193 @@ export function PositionDetailsModal({
     } finally {
       setIncreaseIsWorking(false);
     }
-  }, [position, accountAddress, walletChainId, signTypedDataAsync, increaseBatchPermitSigned, increaseStep]);
+  }, [position, accountAddress, walletChainId, signTypedDataAsync, increaseBatchPermitSigned, increaseStep, increaseAmount0, increaseAmount1]);
 
-  // Handle final transaction execution
+  // Handle ERC20 approval to Permit2 (matching AddLiquidityForm) - V2
+  const handleIncreaseApproveV2 = useCallback(async (tokenSymbol: TokenSymbol) => {
+    const tokenConfig = TOKEN_DEFINITIONS[tokenSymbol];
+    if (!tokenConfig) throw new Error(`Token ${tokenSymbol} not found`);
+
+    toast('Confirm in Wallet', {
+      icon: React.createElement(Info, { className: 'h-4 w-4' })
+    });
+
+    await approveERC20Async({
+      address: tokenConfig.address as `0x${string}`,
+      abi: erc20Abi,
+      functionName: 'approve',
+      args: ["0x000000000022D473030F116dDEE9F6B43aC78BA3" as `0x${string}`, BigInt("115792089237316195423570985008687907853269984665640564039457584007913129639935")],
+    });
+
+    // Wait for confirmation
+    // The useEffect monitoring isIncreaseApproved will handle the next steps
+  }, [approveERC20Async]);
+
+  // Sign the batch permit using ethers signer (EXACT copy from AddLiquidityForm)
+  const signPermitV2 = useCallback(async () => {
+    if (!increaseApprovalData?.permitBatchData || !increaseApprovalData?.signatureDetails) {
+      return;
+    }
+
+    if (!signer) {
+      toast.error("Wallet not connected", {
+        icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
+      });
+      return;
+    }
+
+    try {
+      toast('Sign in Wallet', {
+        icon: React.createElement(Info, { className: 'h-4 w-4' })
+      });
+
+      // Use 'values' from permitBatchData for signing (the actual permit data)
+      const valuesToSign = increaseApprovalData.permitBatchData.values || increaseApprovalData.permitBatchData;
+
+      const signature = await (signer as any)._signTypedData(
+        increaseApprovalData.signatureDetails.domain,
+        increaseApprovalData.signatureDetails.types,
+        valuesToSign
+      );
+
+      setPermitSignature(signature);
+
+      // Show success toast
+      const currentTime = Math.floor(Date.now() / 1000);
+      const sigDeadline = valuesToSign?.sigDeadline || valuesToSign?.details?.[0]?.expiration || 0;
+      const durationSeconds = Number(sigDeadline) - currentTime;
+
+      let durationFormatted = "";
+      if (durationSeconds >= 86400) {
+        const days = Math.ceil(durationSeconds / 86400);
+        durationFormatted = `${days} day${days > 1 ? 's' : ''}`;
+      } else if (durationSeconds >= 3600) {
+        const hours = Math.ceil(durationSeconds / 3600);
+        durationFormatted = `${hours} hour${hours > 1 ? 's' : ''}`;
+      } else {
+        const minutes = Math.ceil(durationSeconds / 60);
+        durationFormatted = `${minutes} minute${minutes > 1 ? 's' : ''}`;
+      }
+
+      toast.success('Batch Signature Complete', {
+        icon: React.createElement(BadgeCheck, { className: 'h-4 w-4 text-green-500' }),
+        description: `Batch permit signed successfully for ${durationFormatted}`
+      });
+    } catch (error: any) {
+      const isUserRejection =
+        error.message?.toLowerCase().includes('user rejected') ||
+        error.message?.toLowerCase().includes('user denied') ||
+        error.code === 4001;
+
+      if (!isUserRejection) {
+        toast.error("Signature Error", {
+          icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
+          description: error.message
+        });
+      }
+      throw error;
+    }
+  }, [increaseApprovalData, signer]);
+
+  // Handle final transaction execution (matching AddLiquidityForm pattern)
+  const handleIncreaseTransactionV2 = async () => {
+    if (!position) return;
+
+    // Wait for approval data to load
+    if (!increaseApprovalData || isCheckingIncreaseApprovals) {
+      return;
+    }
+
+    // Determine next step based on current state and approval data
+    if (currentTransactionStep === 'idle') {
+      // Check what's needed
+      if (increaseApprovalData.needsToken0ERC20Approval) {
+        setCurrentTransactionStep('approving_token0');
+        await handleIncreaseApproveV2(position.token0.symbol as TokenSymbol);
+        setCurrentTransactionStep('idle');
+        await refetchIncreaseApprovals();
+        return;
+      }
+      if (increaseApprovalData.needsToken1ERC20Approval) {
+        setCurrentTransactionStep('approving_token1');
+        await handleIncreaseApproveV2(position.token1.symbol as TokenSymbol);
+        setCurrentTransactionStep('idle');
+        await refetchIncreaseApprovals();
+        return;
+      }
+
+      // After ERC20 approvals, check if permit signature is needed
+      // The hook auto-fetches permit data, but if it's still loading, wait for it
+      if (!permitSignature) {
+        // Wait a moment for the useEffect to populate permit data
+        await new Promise(resolve => setTimeout(resolve, 100));
+        await refetchIncreaseApprovals(); // Force a refresh to get latest approval state
+      }
+
+      // Now check if permit signature is needed (using permitBatchData as indicator)
+      if (increaseApprovalData.permitBatchData && !permitSignature) {
+        setCurrentTransactionStep('signing_permit');
+        try {
+          await signPermitV2();
+          setCurrentTransactionStep('idle');
+        } catch (error) {
+          setCurrentTransactionStep('idle');
+          return;
+        }
+        return;
+      }
+
+      // All approvals/permits done, execute deposit
+      setCurrentTransactionStep('depositing');
+      const data: IncreasePositionData = {
+        tokenId: position.positionId,
+        token0Symbol: position.token0.symbol as TokenSymbol,
+        token1Symbol: position.token1.symbol as TokenSymbol,
+        additionalAmount0: increaseAmount0 || '0',
+        additionalAmount1: increaseAmount1 || '0',
+        poolId: position.poolId,
+        tickLower: position.tickLower,
+        tickUpper: position.tickUpper,
+        feesForIncrease: { amount0: prefetchedRaw0 || '0', amount1: prefetchedRaw1 || '0' },
+      };
+
+      try {
+        // Pass the permit signature if we have one
+        const opts = permitSignature && increaseApprovalData.permitBatchData ? {
+          batchPermit: {
+            owner: accountAddress as `0x${string}`,
+            permitBatch: increaseApprovalData.permitBatchData.values || increaseApprovalData.permitBatchData,
+            signature: permitSignature,
+          }
+        } : undefined;
+
+        increaseLiquidity(data, opts);
+      } catch (e) {
+        console.error('[increase] transaction error:', e);
+      }
+      setCurrentTransactionStep('idle');
+    }
+  };
+
+  // Get button text based on current step (matching AddLiquidityForm pattern)
+  const getIncreaseButtonText = () => {
+    if (!position) return 'Preparing...';
+
+    if (currentTransactionStep === 'approving_token0') return `Approving ${position.token0.symbol}...`;
+    if (currentTransactionStep === 'approving_token1') return `Approving ${position.token1.symbol}...`;
+    if (currentTransactionStep === 'signing_permit') return 'Signing...';
+    if (currentTransactionStep === 'depositing' || isIncreasingLiquidity) return 'Depositing...';
+
+    if (!increaseApprovalData) return 'Preparing...';
+
+    if (increaseApprovalData.needsToken0ERC20Approval) return `Approve ${position.token0.symbol}`;
+    if (increaseApprovalData.needsToken1ERC20Approval) return `Approve ${position.token1.symbol}`;
+    if (increaseApprovalData.permitBatchData && !permitSignature) return 'Sign Permit';
+
+    return 'Add Liquidity';
+  };
+
+  // OLD handler - keep for backwards compatibility
   const handleExecuteTransaction = async () => {
     if (!position) return;
 
@@ -662,6 +885,13 @@ export function PositionDetailsModal({
     setPreviewCollectFee0(0);
     setPreviewCollectFee1(0);
     setShowInterimConfirmation(false);
+    // Reset transaction states (old)
+    setIncreaseStep('input');
+    setIncreaseBatchPermitSigned(false);
+    setSignedBatchPermit(null);
+    // Reset V2 transaction states
+    setCurrentTransactionStep('idle');
+    setPermitSignature(undefined);
   };
 
   const handleRemoveLiquidityClick = () => {
@@ -2224,24 +2454,52 @@ export function PositionDetailsModal({
                             <div className="flex items-center justify-between text-xs text-muted-foreground">
                               <span>Token Approvals</span>
                               <span>
-                                {(increaseStep === 'approve' && increaseIsWorking) ? (
+                                {(currentTransactionStep === 'approving_token0' || currentTransactionStep === 'approving_token1') ? (
                                   <RefreshCwIcon className="h-4 w-4 animate-spin" />
                                 ) : (
-                                  <span className={cn("text-xs font-mono", (increaseAlreadyApprovedCount + increaseCompletedERC20ApprovalsCount) === increaseInvolvedTokensCount && increaseInvolvedTokensCount > 0 ? 'text-green-500' : 'text-muted-foreground')}>
-                                    {`${increaseAlreadyApprovedCount + increaseCompletedERC20ApprovalsCount}/${increaseInvolvedTokensCount > 0 ? increaseInvolvedTokensCount : '-'}`}
-                                  </span>
+                                  <motion.span
+                                    animate={approvalWiggleControls}
+                                    className={cn("text-xs font-mono",
+                                      !increaseApprovalData?.needsToken0ERC20Approval && !increaseApprovalData?.needsToken1ERC20Approval
+                                        ? 'text-green-500'
+                                        : approvalWiggleCount > 0
+                                        ? 'text-red-500'
+                                        : 'text-muted-foreground'
+                                    )}
+                                  >
+                                    {isCheckingIncreaseApprovals ? (
+                                      'Checking...'
+                                    ) : !increaseApprovalData ? (
+                                      '-'
+                                    ) : (() => {
+                                      // Calculate total approvals needed based on whether tokens are native
+                                      const token0IsNative = TOKEN_DEFINITIONS[position.token0.symbol as TokenSymbol]?.address === NATIVE_TOKEN_ADDRESS;
+                                      const token1IsNative = TOKEN_DEFINITIONS[position.token1.symbol as TokenSymbol]?.address === NATIVE_TOKEN_ADDRESS;
+                                      const maxNeeded = (token0IsNative ? 0 : 1) + (token1IsNative ? 0 : 1);
+
+                                      const totalNeeded = [increaseApprovalData.needsToken0ERC20Approval, increaseApprovalData.needsToken1ERC20Approval].filter(Boolean).length;
+                                      const completed = maxNeeded - totalNeeded;
+                                      return `${completed}/${maxNeeded}`;
+                                    })()}
+                                  </motion.span>
                                 )}
                               </span>
                             </div>
                             <div className="flex items-center justify-between text-xs text-muted-foreground">
                               <span>Permit Signature</span>
                               <span>
-                                {(increaseStep === 'permit' && increaseIsWorking) ? (
+                                {currentTransactionStep === 'signing_permit' ? (
                                   <RefreshCwIcon className="h-4 w-4 animate-spin" />
+                                ) : isCheckingIncreaseApprovals ? (
+                                  <span className="text-xs font-mono text-muted-foreground">Checking...</span>
+                                ) : (increaseApprovalData?.needsToken0Permit || increaseApprovalData?.needsToken1Permit) ? (
+                                  permitSignature ? (
+                                    <span className="text-xs font-mono text-green-500">1/1</span>
+                                  ) : (
+                                    <span className="text-xs font-mono">0/1</span>
+                                  )
                                 ) : (
-                                  <span className={cn("text-xs font-mono", increaseBatchPermitSigned ? 'text-green-500' : 'text-muted-foreground')}>
-                                    {increaseBatchPermitSigned ? '1/1' : '0/1'}
-                                  </span>
+                                  <span className="text-xs font-mono text-green-500">✓</span>
                                 )}
                               </span>
                             </div>
@@ -2293,27 +2551,25 @@ export function PositionDetailsModal({
                               } else if (currentView === 'add-liquidity') {
                                 // Add Liquidity: Use transaction overview flow
                                 if (showTransactionOverview) {
-                                  handleExecuteTransaction();
+                                  handleIncreaseTransactionV2();
                                 } else {
                                   setShowTransactionOverview(true);
                                 }
                               }
                             }}
                             disabled={
-                              currentView === 'add-liquidity' ? (increaseIsWorking || isIncreasingLiquidity) :
+                              currentView === 'add-liquidity' ? (currentTransactionStep !== 'idle' || isIncreasingLiquidity || isCheckingIncreaseApprovals) :
                               currentView === 'remove-liquidity' ? (isDecreasingLiquidity || isWithdrawCalculating) :
                               false
                             }
                           >
                             <span className={
-                              currentView === 'add-liquidity' ? (increaseIsWorking || isIncreasingLiquidity ? "animate-pulse" : "") :
+                              currentView === 'add-liquidity' ? ((currentTransactionStep !== 'idle' || isIncreasingLiquidity) ? "animate-pulse" : "") :
                               currentView === 'remove-liquidity' ? (isDecreasingLiquidity ? "animate-pulse" : "") :
                               ""
                             }>
                               {currentView === 'add-liquidity' ? (
-                                increaseIsWorking || isIncreasingLiquidity ? "Processing..." :
-                                showTransactionOverview ? (increaseStep === 'permit' ? "Sign Permit" : "Add Liquidity") :
-                                "Confirm"
+                                showTransactionOverview ? getIncreaseButtonText() : "Confirm"
                               ) : currentView === 'remove-liquidity' ? (
                                 isDecreasingLiquidity ? "Processing..." : (isWithdrawBurn ? "Burn Position" : "Withdraw")
                               ) : "Confirm"}

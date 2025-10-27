@@ -174,42 +174,88 @@ export default function LiquidityPage() {
             const tvlYesterdayUSD = typeof batchPoolData.tvlYesterdayUSD === 'number' ? batchPoolData.tvlYesterdayUSD : undefined;
             const volume24hUSD = typeof batchPoolData.volume24hUSD === 'number' ? batchPoolData.volume24hUSD : undefined;
             const volumePrev24hUSD = typeof batchPoolData.volumePrev24hUSD === 'number' ? batchPoolData.volumePrev24hUSD : undefined;
+
+            // Calculate 24h fees from volume and dynamic fee (matching pool detail page)
             let fees24hUSD: number | undefined = undefined;
+            let dynamicFeeBps: number | null = null;
+            try {
+              dynamicFeeBps = await getPoolFeeBps(apiPoolId);
+              if (typeof dynamicFeeBps === 'number' && dynamicFeeBps >= 0 && typeof volume24hUSD === 'number') {
+                const feeRate = dynamicFeeBps / 10_000;
+                fees24hUSD = volume24hUSD * feeRate;
+              }
+            } catch (e) {
+              console.error(`[LiquidityPage] Failed to get dynamic fee for pool ${pool.id}:`, e);
+            }
+
             let aprStr: string = 'Loading...';
 
-            if (typeof volume24hUSD === 'number') {
-              try {
-                const bps = await getPoolFeeBps(apiPoolId);
-                const feeRate = Math.max(0, bps) / 10_000;
-                fees24hUSD = volume24hUSD * feeRate;
-                
-                // Calculate APY directly: (Daily Fees * 365) / TVL * 100
-                if (tvlUSD && tvlUSD > 0 && fees24hUSD !== undefined && !isNaN(fees24hUSD)) {
-                  const annualFees = fees24hUSD * 365;
-                  const apy = (annualFees / tvlUSD) * 100;
-                  
-                  // Format APY
-                  if (isNaN(apy) || !isFinite(apy)) {
-                    aprStr = '0.00%';
-                  } else if (apy >= 1000) {
-                    aprStr = `~${Math.round(apy)}%`;
-                  } else if (apy >= 100) {
-                    aprStr = `~${apy.toFixed(0)}%`;
-                  } else if (apy >= 10) {
-                    aprStr = `~${apy.toFixed(1)}%`;
-                  } else if (apy > 0) {
-                    aprStr = `~${apy.toFixed(2)}%`;
-                  } else {
-                    aprStr = '0.00%';
-                  }
-                } else {
-                  aprStr = '0.00%';
-                }
-              } catch {
-                aprStr = '0.00%';
-              }
+            // Check cache first (15 minute TTL for historical metrics)
+            const aprCacheKey = `poolApr_${pool.id}_7d`;
+            const cachedApr = getFromCacheWithTtl<string>(aprCacheKey, 15 * 60 * 1000); // 15 minutes
+
+            if (cachedApr && cachedApr !== 'Loading...' && cachedApr !== '0.00%') {
+              // Only use cached value if it's a valid non-zero APY
+              aprStr = cachedApr;
             } else {
-              aprStr = '0.00%';
+              // Fetch 7-day pool metrics for accurate APY calculation
+              try {
+                const metricsResponse = await fetch('/api/liquidity/pool-metrics', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ poolId: pool.id, days: 7 })
+                });
+
+                if (metricsResponse.ok) {
+                  const metricsData = await metricsResponse.json();
+                  const { totalFeesToken0, avgTVLToken0, days } = metricsData.metrics || {};
+
+                  if (avgTVLToken0 && avgTVLToken0 > 0 && days > 0) {
+                    // Calculate APY from 7-day data: (Daily Fees * 365) / TVL * 100
+                    const feesPerDay = totalFeesToken0 / days;
+                    const annualFees = feesPerDay * 365;
+                    const apy = (annualFees / avgTVLToken0) * 100;
+
+                    // Format APY (matching pool detail page)
+                    let calculatedApr = 'Loading...';
+                    if (isNaN(apy) || !isFinite(apy)) {
+                      // Invalid calculation - keep "Loading..." to retry
+                      calculatedApr = 'Loading...';
+                    } else if (apy >= 1000) {
+                      calculatedApr = `${Math.round(apy)}%`;
+                    } else if (apy >= 100) {
+                      calculatedApr = `${apy.toFixed(0)}%`;
+                    } else if (apy >= 10) {
+                      calculatedApr = `${apy.toFixed(1)}%`;
+                    } else if (apy > 0) {
+                      calculatedApr = `${apy.toFixed(2)}%`;
+                    } else {
+                      // APY is 0 or negative - keep "Loading..." to retry later
+                      calculatedApr = 'Loading...';
+                    }
+
+                    // Only cache valid non-zero APY values (never cache "Loading..." or "0.00%")
+                    if (calculatedApr !== 'Loading...' && calculatedApr !== '0.00%') {
+                      setToCache(aprCacheKey, calculatedApr);
+                      aprStr = calculatedApr;
+                    }
+                    // Otherwise keep aprStr as "Loading..." to show skeleton and retry later
+                  } else {
+                    console.warn(`[LiquidityPage] Pool ${pool.id}: Invalid metrics data - avgTVL: ${avgTVLToken0}, days: ${days}`);
+                    // Keep "Loading..." to retry on next render
+                  }
+                } else if (metricsResponse.status === 429) {
+                  console.warn(`[LiquidityPage] Pool ${pool.id}: Rate limited (429) - will retry later`);
+                  // Rate limit hit - keep "Loading..." to retry on next render
+                } else {
+                  const errorText = await metricsResponse.text();
+                  console.error(`[LiquidityPage] Pool ${pool.id}: Metrics API failed with ${metricsResponse.status}: ${errorText}`);
+                  // Other error - keep "Loading..." to retry on next render
+                }
+              } catch (e) {
+                console.error(`[LiquidityPage] Pool ${pool.id}: Failed to fetch metrics:`, e);
+                // Network error - keep "Loading..." to retry on next render
+              }
             }
             return { 
               ...pool, 

@@ -1431,31 +1431,51 @@ export default function PoolDetailPage() {
       dynamicFeeBps = null;
     }
 
-    const feeRate = (typeof dynamicFeeBps === 'number' && dynamicFeeBps >= 0) ? dynamicFeeBps / 10_000 : 0;
     const vol24 = Number(poolStats?.volume24hUSD || 0);
     const tvlNow = Number(poolStats?.tvlUSD || 0);
+
+    // Calculate 24h fees for display
+    const feeRate = (typeof dynamicFeeBps === 'number' && dynamicFeeBps >= 0) ? dynamicFeeBps / 10_000 : 0;
     const fees24hUSD = vol24 * feeRate;
 
-    // Calculate APY directly: (Daily Fees * 365) / TVL * 100
+    // Fetch 7-day pool metrics for accurate APY calculation (same as range selector)
     let calculatedApr = '0.00%';
-    if (tvlNow > 0 && !isNaN(fees24hUSD) && isFinite(fees24hUSD)) {
-      const annualFees = fees24hUSD * 365;
-      const apy = (annualFees / tvlNow) * 100;
-      
-      // Format APY
-      if (isNaN(apy) || !isFinite(apy)) {
-        calculatedApr = '0.00%';
-      } else if (apy >= 1000) {
-        calculatedApr = `${Math.round(apy)}%`;
-      } else if (apy >= 100) {
-        calculatedApr = `${apy.toFixed(0)}%`;
-      } else if (apy >= 10) {
-        calculatedApr = `${apy.toFixed(1)}%`;
-      } else if (apy > 0) {
-        calculatedApr = `${apy.toFixed(2)}%`;
-      } else {
-        calculatedApr = '0.00%';
+    try {
+      const metricsResponse = await fetch('/api/liquidity/pool-metrics', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ poolId, days: 7 })
+      });
+
+      if (metricsResponse.ok) {
+        const metricsData = await metricsResponse.json();
+        const { totalFeesToken0, avgTVLToken0, days } = metricsData.metrics || {};
+
+        if (avgTVLToken0 && avgTVLToken0 > 0 && days > 0) {
+          // Calculate APY from 7-day data: (Daily Fees * 365) / TVL * 100
+          const feesPerDay = totalFeesToken0 / days;
+          const annualFees = feesPerDay * 365;
+          const apy = (annualFees / avgTVLToken0) * 100;
+
+          // Format APY
+          if (isNaN(apy) || !isFinite(apy)) {
+            calculatedApr = '0.00%';
+          } else if (apy >= 1000) {
+            calculatedApr = `${Math.round(apy)}%`;
+          } else if (apy >= 100) {
+            calculatedApr = `${apy.toFixed(0)}%`;
+          } else if (apy >= 10) {
+            calculatedApr = `${apy.toFixed(1)}%`;
+          } else if (apy > 0) {
+            calculatedApr = `${apy.toFixed(2)}%`;
+          } else {
+            calculatedApr = '0.00%';
+          }
+        }
       }
+    } catch (e) {
+      console.error('Failed to fetch pool metrics for APY:', e);
+      calculatedApr = '0.00%';
     }
 
     const combinedPoolData = {
@@ -2480,20 +2500,29 @@ export default function PoolDetailPage() {
                       </div>
                     </div>
                     {/* APY */}
-                    <div className="rounded-lg bg-muted/30 border border-sidebar-border/60">
-                      <div className="flex items-center justify-between px-4 h-9">
-                        <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">APY</h2>
-                      </div>
-                      <div className="px-4 py-1">
-                        <div className="text-lg font-medium truncate">
-                          {currentPoolData.apr === "Loading..." ? (
-                            <span className="inline-block h-5 w-20 bg-muted/60 rounded animate-pulse" />
-                          ) : (
-                            currentPoolData.apr
-                          )}
-                        </div>
-                      </div>
-                    </div>
+                    <UITooltipProvider delayDuration={0}>
+                      <UITooltip>
+                        <UITooltipTrigger asChild>
+                          <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 cursor-default">
+                            <div className="flex items-center justify-between px-4 h-9">
+                              <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">APY</h2>
+                            </div>
+                            <div className="px-4 py-1">
+                              <div className="text-lg font-medium truncate">
+                                {currentPoolData.apr === "Loading..." ? (
+                                  <span className="inline-block h-5 w-20 bg-muted/60 rounded animate-pulse" />
+                                ) : (
+                                  currentPoolData.apr
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </UITooltipTrigger>
+                        <UITooltipContent side="bottom" sideOffset={6} className="px-2 py-1 text-xs">
+                          <div className="font-medium text-foreground">Average over last 7 days</div>
+                        </UITooltipContent>
+                      </UITooltip>
+                    </UITooltipProvider>
                   </div>
                 </div>
               </div>
@@ -2643,20 +2672,29 @@ export default function PoolDetailPage() {
                   </div>
 
                       {/* APY (always) - fixed width */}
-                      <div className="w-[160px] flex-shrink-0 rounded-lg bg-muted/30 border border-sidebar-border/60">
-                        <div className="flex items-center justify-between px-3 h-9">
-                      <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">APY</h2>
-                    </div>
-                        <div className="px-3 py-1">
-                      <div className="text-lg font-medium truncate">
-                        {currentPoolData.apr === "Loading..." ? (
-                          <span className="inline-block h-5 w-20 bg-muted/60 rounded animate-pulse" />
-                        ) : (
-                          currentPoolData.apr
-                        )}
-                      </div>
-                    </div>
-                  </div>
+                      <UITooltipProvider delayDuration={0}>
+                        <UITooltip>
+                          <UITooltipTrigger asChild>
+                            <div className="w-[160px] flex-shrink-0 rounded-lg bg-muted/30 border border-sidebar-border/60 cursor-default">
+                              <div className="flex items-center justify-between px-3 h-9">
+                                <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">APY</h2>
+                              </div>
+                              <div className="px-3 py-1">
+                                <div className="text-lg font-medium truncate">
+                                  {currentPoolData.apr === "Loading..." ? (
+                                    <span className="inline-block h-5 w-20 bg-muted/60 rounded animate-pulse" />
+                                  ) : (
+                                    currentPoolData.apr
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </UITooltipTrigger>
+                          <UITooltipContent side="bottom" sideOffset={6} className="px-2 py-1 text-xs">
+                            <div className="font-medium text-foreground">Average over last 7 days</div>
+                          </UITooltipContent>
+                        </UITooltip>
+                      </UITooltipProvider>
                 </div>
               </div>
             </div>

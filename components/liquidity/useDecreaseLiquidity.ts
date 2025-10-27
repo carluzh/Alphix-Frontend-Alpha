@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import React from 'react';
-import { OctagonX } from 'lucide-react';
+import { OctagonX, BadgeCheck } from 'lucide-react';
 import { useAccount, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -698,7 +698,37 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
     if (isDecreaseConfirmed) {
       // Mark transaction as processed immediately
       processedTransactions.current.add(hashString);
-      
+
+      // Show success toast based on action type
+      if (lastWasCollectOnly.current) {
+        toast.success("Fees Collected", {
+          icon: React.createElement(BadgeCheck, { className: "h-4 w-4 text-green-500" }),
+          description: "Fees collected successfully",
+          action: hash ? {
+            label: "View Transaction",
+            onClick: () => window.open(`https://sepolia.basescan.org/tx/${hash}`, '_blank')
+          } : undefined
+        });
+      } else if (lastIsFullBurn.current) {
+        toast.success("Position Closed", {
+          icon: React.createElement(BadgeCheck, { className: "h-4 w-4 text-green-500" }),
+          description: "Position burned and liquidity withdrawn successfully",
+          action: hash ? {
+            label: "View Transaction",
+            onClick: () => window.open(`https://sepolia.basescan.org/tx/${hash}`, '_blank')
+          } : undefined
+        });
+      } else {
+        toast.success("Liquidity Withdrawn", {
+          icon: React.createElement(BadgeCheck, { className: "h-4 w-4 text-green-500" }),
+          description: "Liquidity removed from position successfully",
+          action: hash ? {
+            label: "View Transaction",
+            onClick: () => window.open(`https://sepolia.basescan.org/tx/${hash}`, '_blank')
+          } : undefined
+        });
+      }
+
       (async () => {
         let blockNumber: bigint | undefined = undefined;
         try {

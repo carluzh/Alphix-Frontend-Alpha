@@ -53,6 +53,10 @@ export async function calculatePositionAPY(
       return 0;
     }
 
+    // Fetch USD prices for both tokens
+    const token0Symbol = pool.token0.symbol || '';
+    const token1Symbol = pool.token1.symbol || '';
+
     // Calculate annual fees for the pool
     const feesPerDay = poolMetrics.totalFeesToken0 / poolMetrics.days;
     const annualFees = feesPerDay * 365;
@@ -63,13 +67,8 @@ export async function calculatePositionAPY(
     const poolL = parseFloat(poolLiquidityStr);
 
     if (poolL === 0 || isNaN(poolL) || !isFinite(poolL)) {
-      console.warn('[calculatePositionAPY] Invalid pool liquidity:', poolLiquidityStr);
       return 0;
     }
-
-    // Fetch USD prices for both tokens
-    const token0Symbol = pool.token0.symbol || '';
-    const token1Symbol = pool.token1.symbol || '';
 
     let token0PriceUSD: number;
     let token1PriceUSD: number;
@@ -138,26 +137,7 @@ export async function calculatePositionAPY(
       const testLiquidity = parseFloat(testPosition.liquidity.toString());
       myL = testLiquidity * scaleFactor;
 
-      console.log('[calculatePositionAPY] Liquidity calculation:', {
-        tickLower,
-        tickUpper,
-        currentTick,
-        tickRange: tickUpper - tickLower,
-        token0: token0Symbol,
-        token1: token1Symbol,
-        token0PriceUSD,
-        token1PriceUSD,
-        actualAmount0,
-        actualAmount1,
-        totalUSDValue: totalUSDValue.toFixed(2),
-        targetUSD: investmentAmountUSD,
-        scaleFactor,
-        testLiquidity: testLiquidity.toExponential(2),
-        finalLiquidity: myL.toExponential(2)
-      });
-
       if (isNaN(myL) || !isFinite(myL) || myL <= 0) {
-        console.warn('[calculatePositionAPY] Invalid user liquidity:', myL);
         throw new Error('Invalid liquidity calculation');
       }
     } catch (error) {
@@ -184,19 +164,6 @@ export async function calculatePositionAPY(
 
     // My APR = (my annual fees in USD / my investment in USD) × 100
     const apr = (myAnnualFeesUSD / investmentAmountUSD) * 100;
-
-    console.log('[calculatePositionAPY] Liquidity share calculation:', {
-      tickRange: { tickLower, tickUpper, currentTick },
-      investment: investmentAmountUSD,
-      poolL: poolL.toExponential(2),
-      myL: myL.toExponential(2),
-      feeShare: (feeShare * 100).toFixed(6) + '%',
-      annualFeesToken0: annualFees.toFixed(6),
-      myAnnualFeesToken0: myAnnualFeesToken0.toFixed(6),
-      myAnnualFeesUSD: myAnnualFeesUSD.toFixed(6),
-      token0PriceUSD: token0PriceUSD.toFixed(2),
-      apr: apr.toFixed(2) + '%'
-    });
 
     return Math.min(Math.max(apr, 0), 9999);
 
