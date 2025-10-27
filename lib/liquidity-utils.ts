@@ -33,7 +33,7 @@ import { STATE_VIEW_ABI } from './abis/state_view_abi';
 import { parseAbi } from 'viem';
 import { position_manager_abi } from './abis/PositionManager_abi';
 import type { Abi } from 'viem';
-import { PERMIT2_ADDRESS, PERMIT2_DOMAIN_NAME, Permit2Abi_allowance } from './swap-constants';
+import { PERMIT2_ADDRESS, PERMIT2_DOMAIN_NAME, Permit2Abi_allowance, PERMIT_EXPIRATION_DURATION_SECONDS, PERMIT_SIG_DEADLINE_DURATION_SECONDS } from './swap-constants';
 
 // --- Constants (placeholders kept only where required by examples) ---
 
@@ -381,124 +381,112 @@ export type PreparedPermit2Batch = {
     message: { details: Permit2Details[]; spender: Address; sigDeadline: string };
 };
 
-/**
- * Builds EIP-712 Permit2 batch data for PositionManager spending the two pool tokens.
- * Caller should sign with signTypedData and pass signature via v4 options.batchPermit.
- */
 export async function preparePermit2BatchForPosition(
     tokenId: bigint,
     userAddress: Address,
     chainId: number,
     sigDeadlineSeconds: number,
+    amount0?: bigint,
+    amount1?: bigint,
 ): Promise<PreparedPermit2Batch> {
     const pm = getPositionManagerAddress() as Address;
     const details = await getPositionDetails(tokenId);
-
     const tokens: Address[] = [getAddress(details.poolKey.currency0), getAddress(details.poolKey.currency1)];
+    const amounts = [amount0 || 0n, amount1 || 0n];
+    const now = Math.floor(Date.now() / 1000);
 
-    // Query Permit2 allowance tuples to get current nonces
     const detailEntries: Permit2Details[] = [];
-    for (const t of tokens) {
+    for (let i = 0; i < tokens.length; i++) {
+        const t = tokens[i];
+        const requiredAmount = amounts[i];
+        if (requiredAmount === 0n) continue;
+
         try {
-            const allowance = (await publicClient.readContract({
+            const [currentAmount, currentExpiration, nonce] = (await publicClient.readContract({
                 address: PERMIT2_ADDRESS,
                 abi: Permit2Abi_allowance,
                 functionName: 'allowance',
                 args: [getAddress(userAddress), getAddress(t), getAddress(pm)],
-            })) as readonly [bigint, bigint, bigint]; // amount, expiration, nonce
+            })) as readonly [bigint, bigint, bigint];
 
-            const nonce = allowance?.[2] ?? 0n;
+            if (currentAmount >= requiredAmount && currentExpiration > now) continue;
+
             detailEntries.push({
                 token: getAddress(t),
-                amount: (2n ** 160n - 1n).toString(),
-                expiration: BigInt(sigDeadlineSeconds).toString(),
+                amount: (requiredAmount + 1n).toString(),
+                expiration: (now + PERMIT_EXPIRATION_DURATION_SECONDS).toString(),
                 nonce: nonce.toString(),
             });
-        } catch {
-            // If token is native (no ERC20 at this address) or call fails, skip
-        }
+        } catch {}
     }
 
-    const message = {
-        details: detailEntries,
-        spender: pm,
-        sigDeadline: BigInt(sigDeadlineSeconds).toString(),
-    };
-
-    const domain = { name: PERMIT2_DOMAIN_NAME, chainId, verifyingContract: PERMIT2_ADDRESS } as const;
-
     return {
-        domain: domain as unknown as { name: string; chainId: number; verifyingContract: Address },
+        domain: { name: PERMIT2_DOMAIN_NAME, chainId, verifyingContract: PERMIT2_ADDRESS } as unknown as { name: string; chainId: number; verifyingContract: Address },
         types: PERMIT2_TYPES,
         primaryType: 'PermitBatch',
-        message,
+        message: {
+            details: detailEntries,
+            spender: pm,
+            sigDeadline: BigInt(sigDeadlineSeconds).toString(),
+        },
     };
 }
 
-/**
- * Builds EIP-712 Permit2 batch data for new liquidity positions with specified token symbols.
- * Similar to preparePermit2BatchForPosition but for new positions where we specify tokens directly.
- */
 export async function preparePermit2BatchForNewPosition(
     token0Symbol: string,
     token1Symbol: string,
     userAddress: Address,
     chainId: number,
     sigDeadlineSeconds: number,
+    amount0?: bigint,
+    amount1?: bigint,
 ): Promise<PreparedPermit2Batch> {
     const pm = getPositionManagerAddress() as Address;
-    
-    // Get token definitions
     const token0Def = getToken(token0Symbol);
     const token1Def = getToken(token1Symbol);
-    
+
     if (!token0Def || !token1Def) {
         throw new Error(`Token definitions not found for ${token0Symbol} or ${token1Symbol}`);
     }
 
     const tokens: Address[] = [getAddress(token0Def.address), getAddress(token1Def.address)];
+    const amounts = [amount0 || 0n, amount1 || 0n];
+    const now = Math.floor(Date.now() / 1000);
 
-    // Query Permit2 allowance tuples to get current nonces
     const detailEntries: Permit2Details[] = [];
-    for (const t of tokens) {
-        try {
-            // Skip native ETH
-            if (t === getAddress('0x0000000000000000000000000000000000000000')) {
-                continue;
-            }
+    for (let i = 0; i < tokens.length; i++) {
+        const t = tokens[i];
+        const requiredAmount = amounts[i];
+        if (t === getAddress('0x0000000000000000000000000000000000000000') || requiredAmount === 0n) continue;
 
-            const allowance = (await publicClient.readContract({
+        try {
+            const [currentAmount, currentExpiration, nonce] = (await publicClient.readContract({
                 address: PERMIT2_ADDRESS,
                 abi: Permit2Abi_allowance,
                 functionName: 'allowance',
                 args: [getAddress(userAddress), getAddress(t), getAddress(pm)],
-            })) as readonly [bigint, bigint, bigint]; // amount, expiration, nonce
+            })) as readonly [bigint, bigint, bigint];
 
-            const nonce = allowance?.[2] ?? 0n;
+            if (currentAmount >= requiredAmount && currentExpiration > now) continue;
+
             detailEntries.push({
                 token: getAddress(t),
-                amount: (2n ** 160n - 1n).toString(),
-                expiration: BigInt(sigDeadlineSeconds).toString(),
+                amount: (requiredAmount + 1n).toString(),
+                expiration: (now + PERMIT_EXPIRATION_DURATION_SECONDS).toString(),
                 nonce: nonce.toString(),
             });
-        } catch {
-            // If token is native (no ERC20 at this address) or call fails, skip
-        }
+        } catch {}
     }
 
-    const message = {
-        details: detailEntries,
-        spender: pm,
-        sigDeadline: BigInt(sigDeadlineSeconds).toString(),
-    };
-
-    const domain = { name: PERMIT2_DOMAIN_NAME, chainId, verifyingContract: PERMIT2_ADDRESS } as const;
-
     return {
-        domain: domain as unknown as { name: string; chainId: number; verifyingContract: Address },
+        domain: { name: PERMIT2_DOMAIN_NAME, chainId, verifyingContract: PERMIT2_ADDRESS } as unknown as { name: string; chainId: number; verifyingContract: Address },
         types: PERMIT2_TYPES,
         primaryType: 'PermitBatch',
-        message,
+        message: {
+            details: detailEntries,
+            spender: pm,
+            sigDeadline: BigInt(sigDeadlineSeconds).toString(),
+        },
     };
 }
 

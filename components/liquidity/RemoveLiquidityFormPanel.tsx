@@ -427,7 +427,7 @@ export function RemoveLiquidityFormPanel({
                   className="text-xs text-muted-foreground hover:text-white transition-colors cursor-pointer"
                   onClick={() => handleMaxWithdraw('amount0')}
                 >
-                  Balance: {formatTokenDisplayAmount(position.token0.amount, position.token0.symbol as TokenSymbol)} {position.token0.symbol}
+                  {formatTokenDisplayAmount(position.token0.amount, position.token0.symbol as TokenSymbol)} {position.token0.symbol}
                 </button>
               </div>
               <div className="flex items-center gap-2">
@@ -525,7 +525,7 @@ export function RemoveLiquidityFormPanel({
                   className="text-xs text-muted-foreground hover:text-white transition-colors cursor-pointer"
                   onClick={() => handleMaxWithdraw('amount1')}
                 >
-                  Balance: {formatTokenDisplayAmount(position.token1.amount, position.token1.symbol as TokenSymbol)} {position.token1.symbol}
+                  {formatTokenDisplayAmount(position.token1.amount, position.token1.symbol as TokenSymbol)} {position.token1.symbol}
                 </button>
               </div>
               <div className="flex items-center gap-2">
@@ -622,7 +622,7 @@ export function RemoveLiquidityFormPanel({
                     className="text-xs text-muted-foreground hover:text-white transition-colors cursor-pointer"
                     onClick={() => handleMaxWithdraw('amount0')}
                   >
-                    Balance: {formatTokenDisplayAmount(position.token0.amount, position.token0.symbol as TokenSymbol)} {position.token0.symbol}
+                    {formatTokenDisplayAmount(position.token0.amount, position.token0.symbol as TokenSymbol)} {position.token0.symbol}
                   </button>
                 </div>
                 <div className="flex items-center gap-2">
@@ -671,7 +671,7 @@ export function RemoveLiquidityFormPanel({
                     className="text-xs text-muted-foreground hover:text-white transition-colors cursor-pointer"
                     onClick={() => handleMaxWithdraw('amount1')}
                   >
-                    Balance: {formatTokenDisplayAmount(position.token1.amount, position.token1.symbol as TokenSymbol)} {position.token1.symbol}
+                    {formatTokenDisplayAmount(position.token1.amount, position.token1.symbol as TokenSymbol)} {position.token1.symbol}
                   </button>
                 </div>
                 <div className="flex items-center gap-2">

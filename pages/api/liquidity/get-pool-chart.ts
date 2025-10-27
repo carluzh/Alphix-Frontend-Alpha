@@ -105,18 +105,37 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const prices0 = result0.prices || [];
       const prices1 = result1.prices || [];
 
-      const token0PriceMap = new Map<number, number>(
-        prices0.map((p: [number, number]) => [
-          Math.floor(p[0] / 3600000) * 3600000,
-          p[1]
-        ])
-      );
+      // Build sorted array for nearest-timestamp lookup
+      const token0Prices = prices0
+        .map((p: [number, number]) => ({
+          timestamp: p[0],
+          price: p[1]
+        }))
+        .sort((a, b) => a.timestamp - b.timestamp);
+
+      // Helper to find nearest token0 price by timestamp
+      const findNearestToken0Price = (targetTimestamp: number): number => {
+        if (token0Prices.length === 0) return 1;
+
+        let nearestPrice = token0Prices[0].price;
+        let minDiff = Math.abs(token0Prices[0].timestamp - targetTimestamp);
+
+        for (const entry of token0Prices) {
+          const diff = Math.abs(entry.timestamp - targetTimestamp);
+          if (diff < minDiff) {
+            minDiff = diff;
+            nearestPrice = entry.price;
+          }
+          if (diff > minDiff) break; // Array is sorted, no point continuing
+        }
+
+        return nearestPrice;
+      };
 
       parsedData = prices1.map((p: [number, number]) => {
-        const timestamp = Math.floor(p[0] / 3600000) * 3600000;
+        const timestamp = p[0];
         const token1Price: number = p[1];
-        const token0PriceRaw = token0PriceMap.get(timestamp);
-        const token0Price: number = token0PriceRaw !== undefined ? token0PriceRaw : 1;
+        const token0Price = findNearestToken0Price(timestamp);
 
         return {
           timestamp: Math.floor(p[0] / 1000),
@@ -178,18 +197,37 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const prices0 = result0.prices || [];
       const prices1 = result1.prices || [];
 
-      const token0PriceMap = new Map<number, number>(
-        prices0.map((p: [number, number]) => [
-          Math.floor(p[0] / 3600000) * 3600000,
-          p[1]
-        ])
-      );
+      // Build sorted array for nearest-timestamp lookup
+      const token0Prices = prices0
+        .map((p: [number, number]) => ({
+          timestamp: p[0],
+          price: p[1]
+        }))
+        .sort((a, b) => a.timestamp - b.timestamp);
+
+      // Helper to find nearest token0 price by timestamp
+      const findNearestToken0Price = (targetTimestamp: number): number => {
+        if (token0Prices.length === 0) return 1;
+
+        let nearestPrice = token0Prices[0].price;
+        let minDiff = Math.abs(token0Prices[0].timestamp - targetTimestamp);
+
+        for (const entry of token0Prices) {
+          const diff = Math.abs(entry.timestamp - targetTimestamp);
+          if (diff < minDiff) {
+            minDiff = diff;
+            nearestPrice = entry.price;
+          }
+          if (diff > minDiff) break; // Array is sorted, no point continuing
+        }
+
+        return nearestPrice;
+      };
 
       parsedData = prices1.map((p: [number, number]) => {
-        const timestamp = Math.floor(p[0] / 3600000) * 3600000;
+        const timestamp = p[0];
         const token1Price: number = p[1];
-        const token0PriceRaw = token0PriceMap.get(timestamp);
-        const token0Price: number = token0PriceRaw !== undefined ? token0PriceRaw : 1;
+        const token0Price = findNearestToken0Price(timestamp);
 
         return {
           timestamp: Math.floor(p[0] / 1000),

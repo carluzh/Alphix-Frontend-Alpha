@@ -695,19 +695,21 @@ export function AddLiquidityForm({
   // Handle selecting a preset from dropdown
   const handleSelectPreset = (preset: string) => {
     resetTransaction();
-    
     setActivePreset(preset);
-    setShowPresetSelector(false); // Close the selector
-    
-    // Apply the selected preset
+    setShowPresetSelector(false);
+
     if (preset === "Full Range") {
       setTickLower(sdkMinTick.toString());
       setTickUpper(sdkMaxTick.toString());
       setInitialDefaultApplied(true);
-      // Reset viewbox to the ±15% centered style for consistency
-      resetChartViewbox(sdkMinTick, sdkMaxTick);
+      if (currentPoolTick !== null) {
+        const widePct = isStablePool ? 0.03 : 0.15;
+        const tickDelta = Math.round(Math.log(1 + widePct) / Math.log(1.0001));
+        const viewportLower = Math.floor((currentPoolTick - tickDelta) / defaultTickSpacing) * defaultTickSpacing;
+        const viewportUpper = Math.ceil((currentPoolTick + tickDelta) / defaultTickSpacing) * defaultTickSpacing;
+        resetChartViewbox(viewportLower, viewportUpper, 1/3, 1/3);
+      }
     } else {
-      // The percentage presets will be applied by the useEffect that watches activePreset
       setInitialDefaultApplied(true);
     }
   };
@@ -1218,12 +1220,17 @@ export function AddLiquidityForm({
             resetTransaction();
             setTickLower(sdkMinTick.toString());
             setTickUpper(sdkMaxTick.toString());
-            setInitialDefaultApplied(true); 
-            // Reset viewbox for full range
-            resetChartViewbox(sdkMinTick, sdkMaxTick);
+            setInitialDefaultApplied(true);
+            if (currentPoolTick !== null) {
+                const widePct = isStablePool ? 0.03 : 0.15;
+                const tickDelta = Math.round(Math.log(1 + widePct) / Math.log(1.0001));
+                const viewportLower = Math.floor((currentPoolTick - tickDelta) / defaultTickSpacing) * defaultTickSpacing;
+                const viewportUpper = Math.ceil((currentPoolTick + tickDelta) / defaultTickSpacing) * defaultTickSpacing;
+                resetChartViewbox(viewportLower, viewportUpper, 1/3, 1/3);
+            }
         }
     }
-  }, [currentPrice, currentPoolTick, activePreset, defaultTickSpacing, sdkMinTick, sdkMaxTick, tickLower, tickUpper, resetTransaction]);
+  }, [currentPrice, currentPoolTick, activePreset, defaultTickSpacing, sdkMinTick, sdkMaxTick, tickLower, tickUpper, resetTransaction, isStablePool, resetChartViewbox]);
 
   // Effect to calculate Capital Efficiency and Enhanced APR
   useEffect(() => {

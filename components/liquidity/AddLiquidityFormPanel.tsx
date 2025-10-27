@@ -573,10 +573,11 @@ export function AddLiquidityFormPanel({
             <Label htmlFor="increase-amount0" className="text-sm font-medium">Add</Label>
             <button
               type="button"
-              className="text-xs text-muted-foreground hover:text-white transition-colors cursor-pointer"
+              className="text-xs text-muted-foreground hover:text-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:text-muted-foreground"
               onClick={() => handleToken0Percentage(100)}
+              disabled={!canAddToken0}
             >
-              Balance: {token0BalanceData?.formatted || "0"} {position.token0.symbol}
+{token0BalanceData?.formatted || "0"} {position.token0.symbol}
             </button>
           </div>
           <div className="flex items-center gap-2">
@@ -606,11 +607,11 @@ export function AddLiquidityFormPanel({
               />
               <div className="relative text-right text-xs min-h-5">
                 <div className={cn("text-muted-foreground transition-opacity duration-100", {
-                  "group-hover:opacity-0": token0BalanceData && parseFloat(token0BalanceData.formatted || "0") > 0
+                  "group-hover:opacity-0": token0BalanceData && parseFloat(token0BalanceData.formatted || "0") > 0 && canAddToken0
                 })}>
                   {formatCalculatedAmount(parseFloat(increaseAmount0 || "0") * getUSDPriceForSymbol(position.token0.symbol, allPrices))}
                 </div>
-                {token0BalanceData && parseFloat(token0BalanceData.formatted || "0") > 0 && (
+                {token0BalanceData && parseFloat(token0BalanceData.formatted || "0") > 0 && canAddToken0 && (
                   <div className="absolute right-0 top-[3px] flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
                     {PERCENTAGE_OPTIONS.map((percentage, index) => (
                       <motion.div
@@ -664,10 +665,11 @@ export function AddLiquidityFormPanel({
             <Label htmlFor="increase-amount1" className="text-sm font-medium">Add</Label>
             <button
               type="button"
-              className="text-xs text-muted-foreground hover:text-white transition-colors cursor-pointer"
+              className="text-xs text-muted-foreground hover:text-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:text-muted-foreground"
               onClick={() => handleToken1Percentage(100)}
+              disabled={!canAddToken1}
             >
-              Balance: {token1BalanceData?.formatted || "0"} {position.token1.symbol}
+{token1BalanceData?.formatted || "0"} {position.token1.symbol}
             </button>
           </div>
           <div className="flex items-center gap-2">
@@ -697,11 +699,11 @@ export function AddLiquidityFormPanel({
               />
               <div className="relative text-right text-xs min-h-5">
                 <div className={cn("text-muted-foreground transition-opacity duration-100", {
-                  "group-hover:opacity-0": token1BalanceData && parseFloat(token1BalanceData.formatted || "0") > 0
+                  "group-hover:opacity-0": token1BalanceData && parseFloat(token1BalanceData.formatted || "0") > 0 && canAddToken1
                 })}>
                   {formatCalculatedAmount(parseFloat(increaseAmount1 || "0") * getUSDPriceForSymbol(position.token1.symbol, allPrices))}
                 </div>
-                {token1BalanceData && parseFloat(token1BalanceData.formatted || "0") > 0 && (
+                {token1BalanceData && parseFloat(token1BalanceData.formatted || "0") > 0 && canAddToken1 && (
                   <div className="absolute right-0 top-[3px] flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
                     {PERCENTAGE_OPTIONS.map((percentage, index) => (
                       <motion.div

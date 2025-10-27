@@ -31,15 +31,13 @@ export function MiniPoolChart({
   const { data: priceResult, isLoading, error: priceError } = usePoolChartData(token0, token1);
   const error = !!priceError;
 
-  // Transform API data - NO inversion needed
-  // The API already returns data in the correct display format
+  // API returns token1/token0; invert if denominationBase is token1
   const data = useMemo(() => {
     const rawData = priceResult?.data || [];
     if (rawData.length === 0) return [];
-
-    // Don't invert - API returns data ready for display
-    return rawData;
-  }, [priceResult]);
+    const needsInvert = denominationBase === token1;
+    return needsInvert ? rawData.map(d => ({ ...d, price: 1 / d.price })) : rawData;
+  }, [priceResult, denominationBase, token1]);
 
   // Parse price bounds (already in display denomination from parent)
   const currentPriceNum = useMemo(() => {
@@ -60,24 +58,28 @@ export function MiniPoolChart({
     return isFinite(parsed) ? parsed : null;
   }, [maxPrice]);
 
-  // Calculate chart bounds with padding
-  // Focus on actual price data, not range bounds
   const { chartMinPrice, chartMaxPrice } = useMemo(() => {
     if (data.length === 0) return { chartMinPrice: 0, chartMaxPrice: 1 };
 
     const prices = data.map((d: any) => d.price);
     const dataMin = Math.min(...prices);
     const dataMax = Math.max(...prices);
-
-    // Use only the actual price data for chart bounds
     const range = dataMax - dataMin;
-    const padding = range * 0.1; // 10% padding
+    const padding = range * 0.05;
 
-    return {
-      chartMinPrice: dataMin - padding,
-      chartMaxPrice: dataMax + padding
-    };
-  }, [data]);
+    let minBound = dataMin - padding;
+    let maxBound = dataMax + padding;
+
+    if (isInRange === false && currentPriceNum && minPriceNum && maxPriceNum) {
+      if (currentPriceNum < minPriceNum) {
+        maxBound = minPriceNum + (minPriceNum - dataMin) * 0.05;
+      } else if (currentPriceNum > maxPriceNum) {
+        minBound = maxPriceNum - (dataMax - maxPriceNum) * 0.05;
+      }
+    }
+
+    return { chartMinPrice: minBound, chartMaxPrice: maxBound };
+  }, [data, isInRange, currentPriceNum, minPriceNum, maxPriceNum]);
 
   // Color each data point based on whether it's in range
   const dataWithRange = useMemo(() => {
@@ -137,7 +139,6 @@ export function MiniPoolChart({
     );
   }
 
-  // Check if range bounds are visible in chart
   const showMinLine = minPriceNum !== null && minPriceNum >= chartMinPrice && minPriceNum <= chartMaxPrice;
   const showMaxLine = maxPriceNum !== null && maxPriceNum >= chartMinPrice && maxPriceNum <= chartMaxPrice;
 
@@ -153,37 +154,34 @@ export function MiniPoolChart({
             hide={true}
           />
 
-          {/* Green area between position bounds (always shown if bounds exist) */}
           {minPriceNum !== null && maxPriceNum !== null && (
             <ReferenceArea
               y1={minPriceNum}
               y2={maxPriceNum}
               fill="#22c55e"
               fillOpacity={0.1}
-              ifOverflow="hidden"
+              ifOverflow="visible"
             />
           )}
 
 
-          {/* Position lower bound line */}
           {showMinLine && (
             <ReferenceLine
               y={minPriceNum}
               stroke="#22c55e"
               strokeWidth={1}
               strokeOpacity={0.6}
-              ifOverflow="hidden"
+              ifOverflow="visible"
             />
           )}
 
-          {/* Position upper bound line */}
           {showMaxLine && (
             <ReferenceLine
               y={maxPriceNum}
               stroke="#22c55e"
               strokeWidth={1}
               strokeOpacity={0.6}
-              ifOverflow="hidden"
+              ifOverflow="visible"
             />
           )}
 

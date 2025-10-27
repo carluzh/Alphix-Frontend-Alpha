@@ -254,7 +254,9 @@ export function PositionChartV2({
     setLocalDenominationBase(inheritedDenominationBase);
   }, [inheritedDenominationBase]);
 
-  const needsFlipFromInherited = localDenominationBase !== inheritedDenominationBase;
+  // API returns token1/token0; check if we need to invert based on denomination
+  const apiNeedsInvert = inheritedDenominationBase === token1;
+  const userFlipped = localDenominationBase !== inheritedDenominationBase;
 
   // Reset chart view to fit all content
   const resetChartView = useCallback(() => {
@@ -273,37 +275,30 @@ export function PositionChartV2({
 
   const rawPriceData = priceResult?.data || [];
 
-  // Transform inherited prices if user flipped denomination
   const parsedPrices = useMemo(() => {
     const minNum = minPrice ? parseFloat(minPrice) : null;
     const maxNum = maxPrice ? parseFloat(maxPrice) : null;
     const currentNum = currentPrice ? parseFloat(currentPrice) : null;
-
-    // If user flipped from inherited, invert the inherited prices
-    if (needsFlipFromInherited) {
+    if (userFlipped) {
       return {
         minPriceNum: maxNum ? (1 / maxNum) : null,
         maxPriceNum: minNum ? (1 / minNum) : null,
         currentPriceNum: currentNum ? (1 / currentNum) : null
       };
     }
-
-    // Otherwise use as-is
-    return {
-      minPriceNum: minNum,
-      maxPriceNum: maxNum,
-      currentPriceNum: currentNum
-    };
-  }, [minPrice, maxPrice, currentPrice, needsFlipFromInherited]);
+    return { minPriceNum: minNum, maxPriceNum: maxNum, currentPriceNum: currentNum };
+  }, [minPrice, maxPrice, currentPrice, userFlipped]);
 
   const { minPriceNum, maxPriceNum, currentPriceNum } = parsedPrices;
 
   const priceData: PriceDataPoint[] = useMemo(() => {
     return rawPriceData.map((point: any) => {
-      const displayPrice = needsFlipFromInherited ? (1 / point.price) : point.price;
-      return { time: point.timestamp as UTCTimestamp, value: displayPrice };
+      let price = point.price;
+      if (apiNeedsInvert) price = 1 / price;
+      if (userFlipped) price = 1 / price;
+      return { time: point.timestamp as UTCTimestamp, value: price };
     });
-  }, [rawPriceData, needsFlipFromInherited]);
+  }, [rawPriceData, apiNeedsInvert, userFlipped]);
 
   // Initialize and update chart
   useEffect(() => {

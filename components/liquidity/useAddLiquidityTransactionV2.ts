@@ -91,10 +91,13 @@ export function useAddLiquidityTransactionV2({
   const {
     isLoading: isDepositConfirming,
     isSuccess: isDepositConfirmed,
+    isError: isDepositError,
+    error: depositReceiptError,
   } = useWaitForTransactionReceipt({ hash: depositTxHash });
 
   const [isWorking, setIsWorking] = useState(false);
   const processedDepositHashRef = useRef<string | null>(null);
+  const processedFailedHashRef = useRef<string | null>(null);
 
   // Handle ERC20 approval for a specific token
   const handleApprove = useCallback(
@@ -248,6 +251,28 @@ export function useAddLiquidityTransactionV2({
     },
     [accountAddress, chainId, token0Symbol, token1Symbol, amount0, amount1, tickLower, tickUpper, calculatedData, approvalData, depositAsync, onLiquidityAdded]
   );
+
+  // Handle deposit transaction failure
+  React.useEffect(() => {
+    if (isDepositError && depositTxHash) {
+      // Guard against duplicate processing
+      if (processedFailedHashRef.current === depositTxHash) return;
+      processedFailedHashRef.current = depositTxHash;
+
+      console.error('Transaction reverted:', depositTxHash, depositReceiptError);
+
+      toast.error('Transaction Failed', {
+        icon: React.createElement(OctagonX, { className: 'h-4 w-4 text-red-500' }),
+        description: `Transaction was submitted but reverted on-chain.`,
+        action: {
+          label: 'View on Explorer',
+          onClick: () => window.open(`https://sepolia.basescan.org/tx/${depositTxHash}`, '_blank'),
+        },
+      });
+
+      setIsWorking(false);
+    }
+  }, [isDepositError, depositTxHash, depositReceiptError]);
 
   // Handle successful deposit confirmation
   React.useEffect(() => {

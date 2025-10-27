@@ -131,15 +131,6 @@ export function PositionCardCompact({
         }
     }, [prefetchedRaw0, prefetchedRaw1, position, getUsdPriceForSymbol]);
 
-    const { formattedAPY, isFallback: isAPYFallback, isLoading: isLoadingAPY } = React.useMemo(() => {
-        const loading = isLoadingPrices || valueUSD <= 0 || poolAPY === undefined;
-        if (loading) {
-            return { formattedAPY: '—', isFallback: false, isLoading: true };
-        }
-        const result = calculateClientAPY(feesUSD, valueUSD, position.lastTimestamp || position.blockTimestamp, poolAPY);
-        return { ...result, isLoading: false };
-    }, [feesUSD, valueUSD, position.lastTimestamp, position.blockTimestamp, poolAPY, isLoadingPrices]);
-
     const denominationBase = React.useMemo(() => {
         const priceNum = currentPrice ? parseFloat(currentPrice) : undefined;
         return getOptimalBaseToken(position.token0.symbol, position.token1.symbol, priceNum);
@@ -174,6 +165,17 @@ export function PositionCardCompact({
             isFullRange: isFull
         };
     }, [position.tickLower, position.tickUpper, currentPrice, currentPoolTick, denominationBase, position.token0.symbol, position.token1.symbol, convertTickToPrice, shouldInvert]);
+
+    const { formattedAPY, isFallback: isAPYFallback, isLoading: isLoadingAPY } = React.useMemo(() => {
+        if (isLoadingPrices || valueUSD <= 0 || poolAPY === undefined) {
+            return { formattedAPY: '—', isFallback: false, isLoading: true };
+        }
+        if (!position.isInRange && !isFullRange) {
+            return { formattedAPY: '0.00%', isFallback: false, isLoading: false };
+        }
+        const result = calculateClientAPY(feesUSD, valueUSD, position.lastTimestamp || position.blockTimestamp, poolAPY);
+        return { ...result, isLoading: false };
+    }, [feesUSD, valueUSD, position.lastTimestamp, position.blockTimestamp, poolAPY, isLoadingPrices, position.isInRange, isFullRange]);
 
     // Notify parent of denomination data for modal usage
     React.useEffect(() => {
@@ -241,7 +243,7 @@ export function PositionCardCompact({
                 </div>
 
                 {/* Right: Mini Chart */}
-                <div className="hidden lg:flex flex-1 max-w-[200px] h-9 ml-auto">
+                <div className="hidden lg:flex flex-1 max-w-[200px] h-9 ml-auto cursor-pointer">
                     <MiniPoolChart
                         token0={position.token0.symbol}
                         token1={position.token1.symbol}

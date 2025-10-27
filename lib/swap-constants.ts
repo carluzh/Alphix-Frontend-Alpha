@@ -57,23 +57,17 @@ export const V4_POOL_TICK_SPACING = 60;
 export const V4_POOL_HOOKS_RAW = '0xd450f7f8e4C11EE8620a349f73e7aC3905Dfd000';
 export const V4_POOL_HOOKS: Address = getAddress(V4_POOL_HOOKS_RAW);
 
-// --- Timing Constants (in seconds) ---
-// These might be more dynamic or configured elsewhere in a real app,
-// but for now, they can reside here or be determined by API routes.
-export const PERMIT_EXPIRATION_DURATION_SECONDS = 60 * 60 * 24 * 30; // 30 days
-export const PERMIT_SIG_DEADLINE_DURATION_SECONDS = 60 * 30; // 30 minutes
-export const TX_DEADLINE_SECONDS = 60 * 30; // 30 minutes
+export const PERMIT_EXPIRATION_DURATION_SECONDS = 60 * 10;
+export const PERMIT_SIG_DEADLINE_DURATION_SECONDS = 60 * 10;
+export const TX_DEADLINE_SECONDS = 60 * 30;
 
-// --- EIP-712 Permit2 Domain and Types ---
-// The domain will be constructed in the API route if chainId can vary.
-// For now, if CHAIN_ID is constant here, this is usable.
 export const getPermit2Domain = (chainId: number, verifyingContract: Address) => ({
     name: "Permit2",
-    chainId: chainId,
-    verifyingContract: verifyingContract,
+    chainId,
+    verifyingContract,
 } as const);
 
-export const PERMIT2_DOMAIN_NAME = "Permit2"; // Used if constructing domain dynamically
+export const PERMIT2_DOMAIN_NAME = "Permit2";
 
 export const PERMIT_TYPES = {
     PermitDetails: [

@@ -84,12 +84,9 @@ interface FeeHistoryPoint {
   dynamicFee: number;
 }
 
-const TARGET_CHAIN_ID = baseSepolia.id; // Changed from 1301 to baseSepolia.id
-const MaxUint160 = BigInt('0xffffffffffffffffffffffffffffffffffffffff'); // 2**160 - 1
+const TARGET_CHAIN_ID = baseSepolia.id;
 
-// Helper function to get price mapping for tokens
 const getTokenPriceMapping = (tokenSymbol: string): 'BTC' | 'USDC' | 'ETH' | 'DAI' => {
-  // Map our tokens to coingecko price types
   switch (tokenSymbol) {
     case 'aBTC':
       return 'BTC';
@@ -1365,36 +1362,25 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       return;
     }
 
-    // --- Helper to fetch permit data (can be extracted if used elsewhere) ---
     const fetchPermitData = async (): Promise<any> => {
       try {
-        const requestBody = {
-          userAddress: accountAddress,
-          fromTokenAddress: fromToken.address,
-          fromTokenSymbol: fromToken.symbol,
-          toTokenSymbol: toToken.symbol,
-          chainId: currentChainId,
-        };
-
-        console.log("DEBUG: fetchPermitData request body:", requestBody);
-        console.log("DEBUG: Individual values:", {
-          accountAddress,
-          fromTokenAddress: fromToken.address,
-          fromTokenSymbol: fromToken.symbol,
-          toTokenSymbol: toToken.symbol,
-          currentChainId
-        });
-
+        const parsedAmount = safeParseUnits(fromAmount, fromToken.decimals);
         const response = await fetch('/api/swap/prepare-permit', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(requestBody),
+          body: JSON.stringify({
+            userAddress: accountAddress,
+            fromTokenAddress: fromToken.address,
+            fromTokenSymbol: fromToken.symbol,
+            toTokenSymbol: toToken.symbol,
+            chainId: currentChainId,
+            amountIn: parsedAmount.toString(),
+          }),
         });
         const data = await response.json();
         if (!response.ok) throw new Error(data.message || 'Failed to fetch permit data');
         return data;
       } catch (fetchError: any) {
-        console.error("[fetchPermitData] Error:", fetchError);
         throw new Error("Could not retrieve permit information.");
       }
     };
@@ -1591,21 +1577,18 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
 
             setCompletedSteps(prev => [...prev, "approval_complete"]);
 
-            // --- CRITICAL: Re-fetch Permit Data AFTER approval ---
             const freshPermitData = await fetchPermitData();
-            setCurrentPermitDetailsForSign(freshPermitData); // Store fresh permit data
-            setObtainedSignature(null); // Clear any previous signature
+            setCurrentPermitDetailsForSign(freshPermitData);
+            setObtainedSignature(null);
 
-            const needsSigAfterApproval = !freshPermitData.hasValidPermit || BigInt(freshPermitData.currentPermitInfo.amount) < MaxUint160;
-
-            if (needsSigAfterApproval) {
+            if (freshPermitData.needsPermit) {
                 setSwapProgressState("needs_signature");
             } else {
                 setSwapProgressState("ready_to_swap");
                 setCompletedSteps(prev => prev.includes("signature_complete") ? prev : [...prev, "signature_complete"]);
             }
-            setIsSwapping(false); // Re-enable button for next distinct step
-            return; // Wait for next user click
+            setIsSwapping(false);
+            return;
         }
 
         // ACTION: Need to Sign
@@ -1641,27 +1624,22 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
 
             setSwapProgressState("signing_permit");
 
-            console.log("DEBUG: permitDataForSigning structure:", permitDataForSigning);
-
-            // Check if permitData exists (only present when needsPermit is true)
             if (!permitDataForSigning.permitData) {
                 throw new Error("Permit data is missing when signature is required");
             }
 
-            // Use the permitData structure from the new API response
             const permitMessage = permitDataForSigning.permitData.message;
             const messageToSign = {
                 details: {
                     token: getAddress(fromToken.address),
-                    amount: MaxUint160,
+                    amount: BigInt(permitMessage.details.amount),
                     expiration: permitMessage.details.expiration,
                     nonce: permitMessage.details.nonce,
                 },
-                spender: getAddress(permitDataForSigning.permitData.message.spender),
-                sigDeadline: BigInt(permitMessage.sigDeadline), // Convert string back to BigInt
+                spender: getAddress(permitMessage.spender),
+                sigDeadline: BigInt(permitMessage.sigDeadline),
             };
 
-            // Inform user about signature request
             toast("Sign in Wallet", {
                 icon: <InfoIcon className="h-4 w-4" />
             });
@@ -1675,43 +1653,19 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
 
             if (!signatureFromSigning) throw new Error("Signature process did not return a valid signature.");
             setObtainedSignature(signatureFromSigning);
-            await new Promise(resolve => setTimeout(resolve, 50));
 
-            // Show signature success toast with deadline duration
-            const currentTime = Math.floor(Date.now() / 1000);
-            const deadlineSeconds = Number(messageToSign.sigDeadline);
-            const durationSeconds = deadlineSeconds - currentTime;
-
-            // Format duration in human-readable format (round UP within the chosen unit)
-            let durationFormatted = "";
-            if (durationSeconds >= 31536000) {
-                const years = Math.ceil(durationSeconds / 31536000);
-                durationFormatted = `${years} year${years > 1 ? 's' : ''}`;
-            } else if (durationSeconds >= 2592000) {
-                const months = Math.ceil(durationSeconds / 2592000);
-                durationFormatted = `${months} month${months > 1 ? 's' : ''}`;
-            } else if (durationSeconds >= 604800) {
-                const weeks = Math.ceil(durationSeconds / 604800);
-                durationFormatted = `${weeks} week${weeks > 1 ? 's' : ''}`;
-            } else if (durationSeconds >= 86400) {
-                const days = Math.ceil(durationSeconds / 86400);
-                durationFormatted = `${days} day${days > 1 ? 's' : ''}`;
-            } else if (durationSeconds >= 3600) {
-                const hours = Math.ceil(durationSeconds / 3600);
-                durationFormatted = `${hours} hour${hours > 1 ? 's' : ''}`;
-            } else {
-                const minutes = Math.ceil(durationSeconds / 60);
-                durationFormatted = `${minutes} minute${minutes > 1 ? 's' : ''}`;
-            }
+            const now = Math.floor(Date.now() / 1000);
+            const durationSeconds = Number(messageToSign.sigDeadline) - now;
+            const minutes = Math.ceil(durationSeconds / 60);
 
             toast.success("Signature Complete", {
                 icon: <BadgeCheck className="h-4 w-4 text-green-500" />,
-                description: `${fromToken.symbol} permit signed successfully for ${durationFormatted}`
+                description: `${fromToken.symbol} permit signed for ${minutes} minute${minutes > 1 ? 's' : ''}`
             });
 
             setCompletedSteps(prev => [...prev, "signature_complete"]);
-            setSwapProgressState("ready_to_swap"); 
-            setIsSwapping(false); 
+            setSwapProgressState("ready_to_swap");
+            setIsSwapping(false);
             return; 
         }
 
@@ -2065,13 +2019,17 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 maximumInputStr = maxInNum2.toFixed(fromDecimals2);
             }
 
-            // Extract permit information - always use fresh permit data (never reuse existing permits)
-            let permitNonce, permitExpiration, permitSigDeadline;
+            let permitNonce, permitExpiration, permitSigDeadline, permitAmount;
             if (permitDetailsToUse.needsPermit === true && permitDetailsToUse.permitData) {
-                // Use fresh permit data from signature
                 permitNonce = permitDetailsToUse.permitData.message.details.nonce;
                 permitExpiration = permitDetailsToUse.permitData.message.details.expiration;
                 permitSigDeadline = permitDetailsToUse.permitData.message.sigDeadline.toString();
+                permitAmount = permitDetailsToUse.permitData.message.details.amount;
+            } else if (permitDetailsToUse.needsPermit === false && permitDetailsToUse.existingPermit) {
+                permitNonce = permitDetailsToUse.existingPermit.nonce;
+                permitExpiration = permitDetailsToUse.existingPermit.expiration;
+                permitSigDeadline = permitExpiration.toString();
+                permitAmount = permitDetailsToUse.existingPermit.amount;
             } else {
                 throw new Error("Invalid permit data structure - fresh signature required");
             }
@@ -2083,12 +2041,12 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                  swapType: isExactOut2 ? 'ExactOut' : 'ExactIn',
                  amountDecimalsStr: isExactOut2 ? toAmount : fromAmount,
                  limitAmountDecimalsStr: isExactOut2 ? maximumInputStr : minimumReceivedStr,
-                 
-                 permitSignature: signatureToUse || "0x", 
-                 permitTokenAddress: fromToken.address, // Token that was permitted (fromToken)
-                 permitAmount: MaxUint160.toString(),   // The amount specified in the signed permit (always MaxUint160)
-                 permitNonce: permitNonce, 
-                 permitExpiration: permitExpiration, 
+
+                 permitSignature: signatureToUse || "0x",
+                 permitTokenAddress: fromToken.address,
+                 permitAmount: permitAmount,
+                 permitNonce: permitNonce,
+                 permitExpiration: permitExpiration,
                  permitSigDeadline: permitSigDeadline,
                  chainId: currentChainId,
                  dynamicSwapFee: fetchedDynamicFee, // <<< PASS THE FETCHED FEE

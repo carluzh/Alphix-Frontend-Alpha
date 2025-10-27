@@ -4,19 +4,12 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Menu, X, Github, Clock4 } from "lucide-react";
-import { getLatestVersion, getLatestVersionSummary, getTimeAgo } from "@/lib/version-log";
+import { Menu, X, ShieldCheck } from "lucide-react";
 import DisplayCards from "@/components/ui/display-cards";
 import { toast } from "sonner";
 import { PulsatingDot } from "@/components/pulsating-dot";
 import { MockSwapComponent } from "@/components/swap/MockSwapComponent";
-import { useRouter, usePathname } from 'next/navigation';
-import { NavPopover, NavPopoverSection } from "@/components/NavPopover";
-import Link from 'next/link';
-
-
-
-
+import { useRouter } from 'next/navigation';
 
 export default function Home() {
   const router = useRouter();
@@ -125,7 +118,6 @@ export default function Home() {
 
   return (
     <div className="bg-black" style={{background: '#0a0908'}}>
-      {/* CSS Keyframes for interactive animations */}
       <style>{`
         @keyframes swapSlideIn {
           0% {
@@ -150,7 +142,6 @@ export default function Home() {
         }
       `}</style>
 
-      {/* Navbar */}
       <Navbar 
         showNavbar={showNavbar} 
         isMobileMenuOpen={isMobileMenuOpen}
@@ -440,7 +431,7 @@ export default function Home() {
             <div className="w-full h-0.5 bg-white/5 -mt-12"></div>
           </div>
 
-          <div className="mt-32">
+          <div className="mt-32" data-section="product">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-x-16 items-start">
               {/* Left side with title and description */}
               <div className="space-y-6">
@@ -614,32 +605,6 @@ export default function Home() {
   );
 }
 
-// Helper component for nav links
-const NavLink = ({ href, children, className, isActive: _isActive, target }: {
-  href: string
-  children: React.ReactNode
-  className?: string
-  isActive?: (pathname: string) => boolean
-  target?: '_blank'
-}) => {
-  const pathname = usePathname()
-  const isActive = _isActive ? _isActive(pathname) : pathname.startsWith(href)
-  const isExternal = href.startsWith('http')
-
-  return (
-    <Link
-      href={href}
-      target={isExternal ? '_blank' : target}
-      prefetch
-      className={`-m-1 flex items-center gap-x-2 p-1 text-gray-500 transition-colors hover:text-white focus:outline-none ${
-        isActive && 'text-white'
-      } ${className || ''}`}
-    >
-      {children}
-    </Link>
-  )
-}
-
 function Navbar({
   showNavbar,
   isMobileMenuOpen,
@@ -650,112 +615,21 @@ function Navbar({
   setIsMobileMenuOpen: (open: boolean) => void;
 }) {
   const router = useRouter()
-  const pathname = usePathname()
-  const latestVersion = getLatestVersion()
 
-  // Features popover sections
-  const featuresSections: NavPopoverSection[] = [
-    {
-      title: 'Core',
-      items: [
-        {
-          href: '/swap',
-          label: 'Unified Pool',
-          subtitle: 'Consolidate liquidity across features',
-        },
-      ],
-    },
-    {
-      title: 'Products',
-      items: [
-        {
-          href: '/swap',
-          label: 'Dynamic Fees',
-          subtitle: 'Adaptive fee optimization',
-        },
-        {
-          href: '/liquidity',
-          label: 'Rehypothecation',
-          subtitle: 'Capital efficient liquidity',
-        },
-      ],
-    },
-  ]
-
-  // Docs popover sections - Flipped layout: grid on left, list on right
-  const docsSections: NavPopoverSection[] = [
-    {
-      title: 'Explore',
-      items: [
-        {
-          href: 'https://alphix.gitbook.io/docs/',
-          label: 'Overview',
-          subtitle: 'Introduction to Alphix',
-          target: '_blank',
-        },
-        {
-          href: 'https://alphix.gitbook.io/docs/the-basics/architecture',
-          label: 'Architecture',
-          subtitle: 'System design',
-          target: '_blank',
-        },
-        {
-          href: 'https://alphix.gitbook.io/docs/quick-start',
-          label: 'Quick Start',
-          subtitle: 'Get started quickly',
-          target: '_blank',
-        },
-        {
-          href: 'https://alphix.gitbook.io/docs/more/support',
-          label: 'Support',
-          subtitle: 'Get help',
-          target: '_blank',
-        },
-      ],
-    },
-    {
-      title: 'Resources',
-      items: [
-        {
-          href: 'https://github.com/alphixfi',
-          label: 'GitHub',
-          target: '_blank',
-        },
-        {
-          href: '/brand',
-          label: 'Brand Kit',
-        },
-      ],
-    },
-  ]
-
-  // Security popover sections
-  const securitySections: NavPopoverSection[] = [
-    {
-      items: [
-        {
-          href: '#',
-          label: 'Audits',
-          subtitle: 'Security audit reports',
-        },
-        {
-          href: '#',
-          label: 'Bug Bounty',
-          subtitle: 'Report vulnerabilities',
-        },
-      ],
-    },
-  ]
+  const scrollToProduct = () => {
+    const productSection = document.querySelector('[data-section="product"]')
+    if (productSection) {
+      productSection.scrollIntoView({ behavior: 'smooth' })
+    }
+  }
 
   return (
     <>
-      {/* Desktop Navigation */}
       <nav className={`hidden md:flex fixed top-0 left-0 right-0 z-50 bg-[#0a0908] transition-transform duration-300 ease-in-out ${
         showNavbar ? 'transform translate-y-0' : 'transform -translate-y-full'
       }`}>
         <div className="w-full flex flex-col items-center gap-12 py-8">
           <div className="relative flex w-full max-w-5xl 2xl:max-w-screen-xl flex-row items-center justify-between px-4 sm:px-6 md:px-8">
-            {/* Logo on left - Full logo */}
             <img
               src="/Logo Type (white).svg"
               alt="Alphix"
@@ -763,49 +637,30 @@ function Navbar({
               onClick={() => router.push('/')}
             />
 
-            {/* Centered nav items */}
             <ul className="absolute left-1/2 mx-auto flex -translate-x-1/2 flex-row gap-x-8 text-sm text-white/60">
               <li>
-                <NavPopover
-                  trigger="Features"
-                  sections={featuresSections}
-                  isActive={pathname.startsWith('/swap') || pathname.startsWith('/liquidity') || pathname.startsWith('/portfolio')}
-                  featuresLayout={true}
-                  footerContent={
-                    <Link
-                      href="/swap"
-                      className="group mt-2 px-3 py-2 rounded-md transition-colors hover:bg-[#1e1d1b] flex flex-col gap-y-1"
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs text-white">
-                          Beta <span className="text-white">v{latestVersion.version}</span>
-                        </span>
-                        <div className="flex items-center gap-1 text-white/60 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <Clock4 size={11} className="flex-shrink-0" />
-                          <span className="text-[10px]">{getTimeAgo(latestVersion.releaseDate)}</span>
-                        </div>
-                      </div>
-                      <span className="text-xs text-white/60">
-                        {getLatestVersionSummary()}
-                      </span>
-                    </Link>
-                  }
-                />
+                <button
+                  onClick={scrollToProduct}
+                  className="-m-1 flex cursor-pointer items-center gap-x-2 px-3 py-2 transition-colors hover:text-white focus:outline-none"
+                >
+                  Features
+                </button>
               </li>
               <li>
-                <NavPopover
-                  trigger="Docs"
-                  sections={docsSections}
-                  layout="flex"
-                  socialLinks={[
-                    { href: 'https://x.com/AlphixFi', icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M16.9947 2H20.1115L13.5007 9.5L21.2209 20H15.2302L10.5 13.7L5.07938 20H1.96154L9.00025 12L1.60059 2H7.74871L11.9502 7.7L16.9947 2ZM16.0947 18.2L18.0947 18.2L6.89474 3.8L4.79474 3.8L16.0947 18.2Z" fill="currentColor"/></svg>, label: 'X (Twitter)' },
-                    { href: 'https://discord.gg/alphix', icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M20.317 4.3698a19.7913 19.7913 0 00-4.8851-1.5152.0741.0741 0 00-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 00-.0785-.037 19.7363 19.7363 0 00-4.8852 1.515.0699.0699 0 00-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 00.0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 00.0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 00-.0416-.1057c-.6528-.2476-1.2743-.5499-1.8722-.8923a.077.077 0 01-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 01.0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 01.0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 01-.0066.1276 12.2986 12.2986 0 01-1.873.8914.0766.0766 0 00-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 00.0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 00.0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 00-.0312-.0286zM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419-.019 1.3332-.9555 2.4189-2.1569 2.4189zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1568 2.4189Z" fill="currentColor"/></svg>, label: 'Discord' },
-                  ]}
-                />
+                <a
+                  href="https://alphix.gitbook.io/docs/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="-m-1 flex cursor-pointer items-center gap-x-2 px-3 py-2 transition-colors hover:text-white focus:outline-none"
+                >
+                  Docs
+                </a>
               </li>
               <li>
                 <button
-                  onClick={() => toast("Coming Soon")}
+                  onClick={() => toast("Coming Soon", {
+                    icon: <ShieldCheck className="h-4 w-4 text-muted-foreground" />
+                  })}
                   className="-m-1 flex cursor-pointer items-center gap-x-2 px-3 py-2 transition-colors hover:text-white focus:outline-none"
                 >
                   Security
@@ -813,13 +668,14 @@ function Navbar({
               </li>
             </ul>
 
-            {/* Launch App button on right */}
-            <button
+            <Button
+              variant="alphix"
+              className="text-sm flex items-center px-3 py-2 h-auto rounded-md cursor-pointer"
+              style={{ fontFamily: 'Inter, sans-serif' }}
               onClick={() => router.push('/swap')}
-              className="text-white text-sm px-3 py-1.5 rounded-lg hover:bg-[#1e1d1b] transition-colors"
             >
-              Launch App
-            </button>
+              Open App
+            </Button>
           </div>
         </div>
       </nav>
@@ -844,30 +700,26 @@ function Navbar({
         </div>
       </nav>
 
-      {/* Mobile Menu */}
       {isMobileMenuOpen && (
         <div className="md:hidden fixed inset-0 z-40 bg-[#0a0908] pt-20">
           <div className="flex flex-col gap-y-6 px-6 py-2">
             <div className="flex flex-col gap-y-1">
-              <NavLink href="/" isActive={(pathname) => pathname === '/'} className="text-xl tracking-tight">
+              <button onClick={() => { router.push('/'); setIsMobileMenuOpen(false); }} className="-m-1 flex items-center gap-x-2 p-1 text-gray-500 transition-colors hover:text-white text-xl tracking-tight">
                 Overview
-              </NavLink>
-              <NavLink href="/swap" className="text-xl tracking-tight">
+              </button>
+              <button onClick={() => { router.push('/swap'); setIsMobileMenuOpen(false); }} className="-m-1 flex items-center gap-x-2 p-1 text-gray-500 transition-colors hover:text-white text-xl tracking-tight">
                 Swap
-              </NavLink>
-              <NavLink href="/liquidity" className="text-xl tracking-tight">
+              </button>
+              <button onClick={() => { router.push('/liquidity'); setIsMobileMenuOpen(false); }} className="-m-1 flex items-center gap-x-2 p-1 text-gray-500 transition-colors hover:text-white text-xl tracking-tight">
                 Liquidity
-              </NavLink>
-              <NavLink href="https://alphix.gitbook.io/docs/" target="_blank" className="text-xl tracking-tight">
+              </button>
+              <a href="https://alphix.gitbook.io/docs/" target="_blank" rel="noopener noreferrer" className="-m-1 flex items-center gap-x-2 p-1 text-gray-500 transition-colors hover:text-white text-xl tracking-tight">
                 Documentation
-              </NavLink>
+              </a>
             </div>
-            <NavLink
-              href="/swap"
-              className="text-xl tracking-tight"
-            >
-              Launch App
-            </NavLink>
+            <button onClick={() => { router.push('/swap'); setIsMobileMenuOpen(false); }} className="-m-1 flex items-center gap-x-2 p-1 text-gray-500 transition-colors hover:text-white text-xl tracking-tight">
+              Open App
+            </button>
           </div>
         </div>
       )}

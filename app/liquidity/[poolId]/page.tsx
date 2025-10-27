@@ -1116,8 +1116,9 @@ export default function PoolDetailPage() {
   // Fetch user positions for this pool and pool stats
   const fetchPageData = useCallback(async (force?: boolean, skipPositions?: boolean, keepLoading?: boolean) => {
     if (!poolId) return;
+    const poolInfo = getPoolConfiguration(poolId);
+    if (!poolInfo) return;
 
-    // Start position loading immediately (non-blocking)
     if (!skipPositions && isConnected && accountAddress) {
       setIsLoadingPositions(true);
       (async () => {
@@ -1129,8 +1130,8 @@ export default function PoolDetailPage() {
           console.error("Failed to derive user positions:", error);
           allUserPositions = [];
         }
-        if (allUserPositions && allUserPositions.length > 0) {
-          const subgraphId = (basePoolInfo.subgraphId || '').toLowerCase();
+        if (allUserPositions && allUserPositions.length > 0 && poolInfo) {
+          const subgraphId = (poolInfo.subgraphId || '').toLowerCase();
           const filteredPositions = allUserPositions.filter(pos => String(pos.poolId || '').toLowerCase() === subgraphId);
           setUserPositions(filteredPositions);
         } else {
@@ -1366,10 +1367,10 @@ export default function PoolDetailPage() {
       }
     })();
 
-    const basePoolInfo = getPoolConfiguration(poolId);
-    if (!basePoolInfo) {
-      toast.error("Pool Not Found", { 
-        icon: <OctagonX className="h-4 w-4 text-red-500" />, 
+    const poolInfoLocal = getPoolConfiguration(poolId);
+    if (!poolInfoLocal) {
+      toast.error("Pool Not Found", {
+        icon: <OctagonX className="h-4 w-4 text-red-500" />,
         description: "Pool configuration not found for this ID.",
         action: {
           label: "Open Ticket",
@@ -1381,7 +1382,7 @@ export default function PoolDetailPage() {
     }
 
     // Use the subgraph ID from the pool configuration for API calls
-    const apiPoolIdToUse = basePoolInfo.subgraphId; 
+    const apiPoolIdToUse = poolInfoLocal.subgraphId; 
 
     // Pool state now handled by usePoolState hook at component level
 
@@ -1458,14 +1459,14 @@ export default function PoolDetailPage() {
     }
 
     const combinedPoolData = {
-        ...basePoolInfo,
+        ...poolInfo,
         ...(poolStats || {}),
         apr: calculatedApr,
         dynamicFeeBps: dynamicFeeBps,
         tickSpacing: getPoolById(poolId)?.tickSpacing || DEFAULT_TICK_SPACING,
-        volume24h: isFinite(vol24) ? formatUSD(vol24) : basePoolInfo.volume24h,
-        fees24h: isFinite(fees24hUSD) ? formatUSD(fees24hUSD) : basePoolInfo.fees24h,
-        liquidity: isFinite(tvlNow) ? formatUSD(tvlNow) : basePoolInfo.liquidity,
+        volume24h: isFinite(vol24) ? formatUSD(vol24) : poolInfo.volume24h,
+        fees24h: isFinite(fees24hUSD) ? formatUSD(fees24hUSD) : poolInfo.fees24h,
+        liquidity: isFinite(tvlNow) ? formatUSD(tvlNow) : poolInfo.liquidity,
         highlighted: false,
     } as PoolDetailData;
 

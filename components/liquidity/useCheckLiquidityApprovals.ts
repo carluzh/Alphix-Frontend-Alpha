@@ -145,18 +145,34 @@ export function useCheckLiquidityApprovals(
   const needsToken0Permit = !isToken0Native && !needsToken0ERC20Approval && amount0Wei > 0n && (() => {
     if (!token0PermitData) return false;
     const [amount, expiration] = token0PermitData as readonly [bigint, number, bigint];
-    return amount < amount0Wei || (expiration !== 0 && expiration < now);
+    const hasValidPermit = amount > amount0Wei && expiration > now;
+    return !hasValidPermit;
   })();
 
   const needsToken1Permit = !isToken1Native && !needsToken1ERC20Approval && amount1Wei > 0n && (() => {
     if (!token1PermitData) return false;
     const [amount, expiration] = token1PermitData as readonly [bigint, number, bigint];
-    return amount < amount1Wei || (expiration !== 0 && expiration < now);
+    const hasValidPermit = amount > amount1Wei && expiration > now;
+    return !hasValidPermit;
   })();
 
   const [permitData, setPermitData] = useState<{ permitBatchData?: any; signatureDetails?: any }>({});
 
+  // Clear permitData when pool/tokens change
   useEffect(() => {
+    console.log('[POOL CHANGE] Clearing permitData');
+    setPermitData({});
+  }, [params?.token0Symbol, params?.token1Symbol, params?.userAddress]);
+
+  // Track permitData changes
+  useEffect(() => {
+    console.log('[STATE] permitData changed, hasData:', !!permitData.permitBatchData);
+  }, [permitData]);
+
+  useEffect(() => {
+    const willFetch = (needsToken0Permit || needsToken1Permit) && !needsToken0ERC20Approval && !needsToken1ERC20Approval && !!params?.userAddress;
+    console.log('[EFFECT] triggered, willFetch:', willFetch, { needsToken0Permit, needsToken1Permit });
+
     if ((needsToken0Permit || needsToken1Permit) && !needsToken0ERC20Approval && !needsToken1ERC20Approval && params?.userAddress) {
       fetch('/api/liquidity/prepare-mint-tx', {
         method: 'POST',
@@ -175,31 +191,34 @@ export function useCheckLiquidityApprovals(
         .then(res => res.ok ? res.json() : null)
         .then(result => {
           if (result?.needsApproval && result.approvalType === 'PERMIT2_BATCH_SIGNATURE') {
-            setPermitData({ permitBatchData: result.permitBatchData, signatureDetails: result.signatureDetails });
-          } else {
-            setPermitData({});
+            const newPermitData = { permitBatchData: result.permitBatchData, signatureDetails: result.signatureDetails };
+            console.log('[API] Setting permitData');
+            setPermitData(newPermitData);
           }
         })
-        .catch(() => setPermitData({}));
-    } else {
-      setPermitData({});
+        .catch((err) => {
+          console.error('[API] Error:', err);
+        });
     }
   }, [needsToken0Permit, needsToken1Permit, needsToken0ERC20Approval, needsToken1ERC20Approval, params?.userAddress, params?.token0Symbol, params?.token1Symbol, params?.amount0, params?.amount1, params?.tickLower, params?.tickUpper, params?.chainId]);
 
-  const data = useMemo((): CheckLiquidityApprovalsResponse => ({
-    needsToken0ERC20Approval,
-    needsToken1ERC20Approval,
-    needsToken0Permit,
-    needsToken1Permit,
-    ...permitData,
-  }), [needsToken0ERC20Approval, needsToken1ERC20Approval, needsToken0Permit, needsToken1Permit, permitData]);
+  const data = useMemo((): CheckLiquidityApprovalsResponse => {
+    console.log('[MEMO] Building data, hasPermitBatchData:', !!permitData.permitBatchData);
+    return {
+      needsToken0ERC20Approval,
+      needsToken1ERC20Approval,
+      needsToken0Permit,
+      needsToken1Permit,
+      ...permitData,
+    };
+  }, [needsToken0ERC20Approval, needsToken1ERC20Approval, needsToken0Permit, needsToken1Permit, permitData]);
 
   return {
     data,
     isLoading: isLoadingToken0 || isLoadingToken1 || isLoadingToken0Permit || isLoadingToken1Permit,
     refetch: async () => {
       await Promise.all([refetchToken0(), refetchToken1(), refetchToken0Permit(), refetchToken1Permit()]);
-      setPermitData({});
+      // Don't clear permitData here - it's needed for the deposit transaction
     },
   };
 }
