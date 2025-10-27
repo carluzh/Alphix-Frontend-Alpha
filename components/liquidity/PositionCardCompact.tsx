@@ -31,8 +31,8 @@ import { cn } from "@/lib/utils";
 import { MiniPoolChart } from './MiniPoolChart';
 import { getDecimalsForDenomination, getOptimalBaseToken } from '@/lib/denomination-utils';
 import { calculateClientAPY } from '@/lib/client-apy';
+import { ArrowUpRight } from 'lucide-react';
 
-// Status indicator circle component
 function StatusIndicatorCircle({ className }: { className?: string }) {
   return (
     <svg width="8" height="8" viewBox="0 0 8 8" fill="none" className={className}>
@@ -86,6 +86,8 @@ interface PositionCardCompactProps {
         raw1: string | null;
     };
     onDenominationData?: (data: { denominationBase: string; minPrice: string; maxPrice: string; displayedCurrentPrice: string | null; feesUSD: number; formattedAPY: string; isAPYFallback: boolean; isLoadingAPY: boolean }) => void;
+    showMenuButton?: boolean;
+    onVisitPool?: () => void;
 }
 
 const SDK_MIN_TICK = -887272;
@@ -100,6 +102,8 @@ export function PositionCardCompact({
     poolContext,
     fees,
     onDenominationData,
+    showMenuButton = false,
+    onVisitPool,
 }: PositionCardCompactProps) {
     const [isHovered, setIsHovered] = useState(false);
     const { currentPrice, currentPoolTick, poolAPY, isLoadingPrices, isLoadingPoolStates } = poolContext;
@@ -201,7 +205,8 @@ export function PositionCardCompact({
     return (
         <div
             className={cn(
-                "relative flex flex-col rounded-lg border border-sidebar-border bg-muted/30 cursor-pointer group transition-colors overflow-hidden",
+                "relative flex flex-col rounded-lg border border-sidebar-border bg-muted/30 cursor-pointer group transition-colors",
+                showMenuButton ? "overflow-visible" : "overflow-hidden",
                 isHovered && "border-white/20"
             )}
             onClick={onClick}
@@ -217,7 +222,7 @@ export function PositionCardCompact({
 
             {/* TOP SECTION - Token Info */}
             <div className={cn(
-                "relative flex items-center justify-between gap-4 p-4 overflow-hidden transition-colors",
+                "relative flex items-center justify-between gap-4 p-4 overflow-visible transition-colors",
                 isHovered && "bg-muted/35"
             )}>
                 {/* Left: Token Images + Token Info */}
@@ -256,6 +261,19 @@ export function PositionCardCompact({
                         className="w-full h-full"
                     />
                 </div>
+
+                {/* Visit Pool Button (Portfolio only) */}
+                {showMenuButton && isHovered && (
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onVisitPool?.();
+                        }}
+                        className="absolute top-2 right-2 p-1.5 rounded bg-muted/60 hover:bg-muted transition-all z-10"
+                    >
+                        <ArrowUpRight className="h-4 w-4" />
+                    </button>
+                )}
             </div>
 
             {/* BOTTOM SECTION - Position, Fees, APR, Range */}

@@ -3030,6 +3030,13 @@ export default function PortfolioPage() {
                                             [position.positionId]: data
                                           }));
                                         }}
+                                        showMenuButton={true}
+                                        onVisitPool={() => {
+                                          const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === position.poolId.toLowerCase());
+                                          if (poolConfig) {
+                                            window.open(`/liquidity/${poolConfig.id}`, '_blank');
+                                          }
+                                        }}
                                       />
                                     );
                                   })}

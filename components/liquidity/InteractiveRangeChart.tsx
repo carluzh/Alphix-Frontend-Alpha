@@ -640,11 +640,20 @@ export function InteractiveRangeChart({
     e.stopPropagation();
     setIsDragging(side);
     if (onDragStateChange) onDragStateChange(side);
-    setDragStart({
-      x: e.clientX,
-      tickLower: parseInt(tickLower),
-      tickUpper: parseInt(tickUpper)
-    });
+    let adjustedTickLower = parseInt(tickLower);
+    let adjustedTickUpper = parseInt(tickUpper);
+    const [minTick, maxTick] = xDomain;
+    if (side !== 'center') {
+      const isLeft = side === 'left';
+      const actualTick = (isLeft === leftIsLower) ? adjustedTickLower : adjustedTickUpper;
+      const outOfBounds = actualTick < minTick || actualTick > maxTick;
+      if (outOfBounds) {
+        const snappedTick = alignToTickSpacing(actualTick < minTick ? minTick : maxTick);
+        if (isLeft === leftIsLower) adjustedTickLower = snappedTick; else adjustedTickUpper = snappedTick;
+        scheduleRangeChange(adjustedTickLower.toString(), adjustedTickUpper.toString());
+      }
+    }
+    setDragStart({ x: e.clientX, tickLower: adjustedTickLower, tickUpper: adjustedTickUpper });
   };
 
   const handleBackgroundMouseDown = (e: React.MouseEvent) => {
@@ -694,11 +703,20 @@ export function InteractiveRangeChart({
     const touch = e.touches[0];
     setIsDragging(side);
     if (onDragStateChange) onDragStateChange(side);
-    setDragStart({
-      x: touch.clientX,
-      tickLower: parseInt(tickLower),
-      tickUpper: parseInt(tickUpper)
-    });
+    let adjustedTickLower = parseInt(tickLower);
+    let adjustedTickUpper = parseInt(tickUpper);
+    const [minTick, maxTick] = xDomain;
+    if (side !== 'center') {
+      const isLeft = side === 'left';
+      const actualTick = (isLeft === leftIsLower) ? adjustedTickLower : adjustedTickUpper;
+      const outOfBounds = actualTick < minTick || actualTick > maxTick;
+      if (outOfBounds) {
+        const snappedTick = alignToTickSpacing(actualTick < minTick ? minTick : maxTick);
+        if (isLeft === leftIsLower) adjustedTickLower = snappedTick; else adjustedTickUpper = snappedTick;
+        scheduleRangeChange(adjustedTickLower.toString(), adjustedTickUpper.toString());
+      }
+    }
+    setDragStart({ x: touch.clientX, tickLower: adjustedTickLower, tickUpper: adjustedTickUpper });
   };
 
   const handleMouseMove = (e: MouseEvent) => {

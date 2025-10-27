@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { X, ChevronLeft, RefreshCw as RefreshCwIcon, BadgeCheck, OctagonX, Info, ArrowUpRight } from "lucide-react";
+import { X, ChevronLeft, RefreshCw as RefreshCwIcon, BadgeCheck, OctagonX, Info, ArrowUpRight, CornerRightUp, Minus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -198,11 +198,9 @@ export function PositionDetailsModal({
     onLiquidityIncreased: () => setShowInterimConfirmation(false),
   });
 
-  // Remove Liquidity transaction state
   const [withdrawAmount0, setWithdrawAmount0] = useState<string>("");
   const [withdrawAmount1, setWithdrawAmount1] = useState<string>("");
   const [withdrawActiveInputSide, setWithdrawActiveInputSide] = useState<'amount0' | 'amount1' | null>(null);
-  const [isFullWithdraw, setIsFullWithdraw] = useState(false);
   const [isWithdrawCalculating, setIsWithdrawCalculating] = useState(false);
   const [txStarted, setTxStarted] = useState(false);
   const [wasDecreasingLiquidity, setWasDecreasingLiquidity] = useState(false);
@@ -578,7 +576,6 @@ export function PositionDetailsModal({
       return;
     }
 
-    // Compute effective percentage and full-burn intent
     const amt0 = parseFloat(withdrawAmount0 || '0');
     const amt1 = parseFloat(withdrawAmount1 || '0');
     const max0Eff = parseFloat(position.token0.amount || '0');
@@ -586,40 +583,30 @@ export function PositionDetailsModal({
     const pct0 = max0Eff > 0 ? amt0 / max0Eff : 0;
     const pct1 = max1Eff > 0 ? amt1 / max1Eff : 0;
     const effectivePct = Math.max(pct0, pct1) * 100;
-    const nearFull0 = max0Eff > 0 ? pct0 >= 0.99 : true;
-    const nearFull1 = max1Eff > 0 ? pct1 >= 0.99 : true;
-    const isBurnAllEffective = position.isInRange ? (nearFull0 && nearFull1) : (pct0 >= 0.99 || pct1 >= 0.99);
-
-    // Format amounts to prevent scientific notation (viem doesn't accept it)
+    const isExactly100 = (max0Eff > 0 ? Math.abs(pct0 - 1.0) < 0.0001 : true) && (max1Eff > 0 ? Math.abs(pct1 - 1.0) < 0.0001 : true);
     const formatAmount = (amt: string | number): string => {
       if (!amt) return '0';
       const num = typeof amt === 'string' ? parseFloat(amt) : amt;
-      if (isNaN(num) || num === 0) return '0';
-      // Use toFixed to avoid scientific notation, then remove trailing zeros
-      return num.toFixed(18).replace(/\.?0+$/, '');
+      return (isNaN(num) || num === 0) ? '0' : num.toFixed(18).replace(/\.?0+$/, '');
     };
 
-    // Use decreaseLiquidity for both full and partial withdraw
     const decreaseData: DecreasePositionData = {
       tokenId: position.positionId,
       token0Symbol: token0Symbol,
       token1Symbol: token1Symbol,
       decreaseAmount0: formatAmount(withdrawAmount0),
       decreaseAmount1: formatAmount(withdrawAmount1),
-      isFullBurn: isBurnAllEffective,
+      isFullBurn: isExactly100,
       poolId: position.poolId,
       tickLower: position.tickLower,
       tickUpper: position.tickUpper,
       enteredSide: withdrawActiveInputSide === 'amount0' ? 'token0' : withdrawActiveInputSide === 'amount1' ? 'token1' : undefined,
     };
 
-    toast("Confirm Withdraw", {
-      icon: React.createElement(Info, { className: "h-4 w-4" })
-    });
+    toast("Confirm Withdraw", { icon: React.createElement(Info, { className: "h-4 w-4" }) });
 
-    // In-range: use percentage flow (SDK), OOR: amounts mode
     if (position.isInRange) {
-      const pctRounded = isBurnAllEffective ? 100 : Math.max(0, Math.min(100, Math.round(effectivePct)));
+      const pctRounded = isExactly100 ? 100 : Math.max(0, Math.min(100, Math.round(effectivePct)));
       decreaseLiquidity(decreaseData, pctRounded);
     } else {
       decreaseLiquidity(decreaseData, 0);
@@ -628,14 +615,22 @@ export function PositionDetailsModal({
     setTxStarted(true);
   }, [position, withdrawAmount0, withdrawAmount1, withdrawActiveInputSide, decreaseLiquidity]);
 
-  // Format fee tier for display (exactly like pool stats bar)
   const feeTierDisplay = useMemo(() => {
     if (feeTier === null || feeTier === undefined) return null;
-    // feeTier is dynamicFeeBps, divide by 100 to get percentage
     const pct = feeTier / 100;
     const formatted = pct < 0.1 ? pct.toFixed(3) : pct.toFixed(2);
     return `${formatted}%`;
   }, [feeTier]);
+
+  const isWithdrawBurn = useMemo(() => {
+    const amt0 = parseFloat(withdrawAmount0 || '0');
+    const amt1 = parseFloat(withdrawAmount1 || '0');
+    const max0 = parseFloat(position.token0.amount || '0');
+    const max1 = parseFloat(position.token1.amount || '0');
+    const pct0 = max0 > 0 ? amt0 / max0 : 0;
+    const pct1 = max1 > 0 ? amt1 / max1 : 0;
+    return (max0 > 0 ? Math.abs(pct0 - 1.0) < 0.0001 : true) && (max1 > 0 ? Math.abs(pct1 - 1.0) < 0.0001 : true);
+  }, [withdrawAmount0, withdrawAmount1, position.token0.amount, position.token1.amount]);
 
   useEffect(() => {
     setMounted(true);
@@ -937,23 +932,25 @@ export function PositionDetailsModal({
     return { fee0Percent, fee1Percent };
   }, [fee0USD, fee1USD, hasZeroFees]);
 
-  // Consolidated fee display logic - when adding/removing/collecting liquidity, fees become $0.00
-  const isFeesBeingCollected = (previewAddAmount0 > 0 || previewAddAmount1 > 0 || previewRemoveAmount0 > 0 || previewRemoveAmount1 > 0 || currentView === 'collect-fees');
-  const displayFeesUSD = isFeesBeingCollected ? Math.abs(0) : feesUSD;
-  const displayFee0USD = isFeesBeingCollected ? Math.abs(0) : fee0USD;
-  const displayFee1USD = isFeesBeingCollected ? Math.abs(0) : fee1USD;
+  const isAddingLiquidity = previewAddAmount0 > 0 || previewAddAmount1 > 0;
+  const isRemovingLiquidity = previewRemoveAmount0 > 0 || previewRemoveAmount1 > 0;
+  const isCollectingFees = currentView === 'collect-fees';
 
-  // Format fee amounts for display - show "0" when collected (not "< 0.0001")
-  const displayFeeAmount0 = isFeesBeingCollected ? '0' :
-    feeAmount0 === 0 ? '0' :
+  const hasZeroToken0 = parseFloat(position.token0.amount) === 0;
+  const hasZeroToken1 = parseFloat(position.token1.amount) === 0;
+
+  const displayFeesUSD = feesUSD;
+  const displayFee0USD = fee0USD;
+  const displayFee1USD = fee1USD;
+
+  const displayFeeAmount0 = feeAmount0 === 0 ? '0' :
     feeAmount0 > 0 && feeAmount0 < 0.0001 ? "< 0.0001" :
-    Math.abs(feeAmount0) < 0.000001 ? '0' : // Handle floating point precision issues
+    Math.abs(feeAmount0) < 0.000001 ? '0' :
     feeAmount0.toLocaleString("en-US", { maximumFractionDigits: 6, minimumFractionDigits: 0 });
 
-  const displayFeeAmount1 = isFeesBeingCollected ? '0' :
-    feeAmount1 === 0 ? '0' :
+  const displayFeeAmount1 = feeAmount1 === 0 ? '0' :
     feeAmount1 > 0 && feeAmount1 < 0.0001 ? "< 0.0001" :
-    Math.abs(feeAmount1) < 0.000001 ? '0' : // Handle floating point precision issues
+    Math.abs(feeAmount1) < 0.000001 ? '0' :
     feeAmount1.toLocaleString("en-US", { maximumFractionDigits: 6, minimumFractionDigits: 0 });
 
   if (!mounted || !isOpen) {
@@ -1165,7 +1162,6 @@ export function PositionDetailsModal({
                       }).format(
                         (previewAddAmount0 > 0 || previewAddAmount1 > 0)
                           ? (() => {
-                              // Include fees when adding liquidity since they're added to position
                               const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), TOKEN_DEFINITIONS[position.token0.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
                               const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), TOKEN_DEFINITIONS[position.token1.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
                               return (Number.isFinite(valueUSD) ? valueUSD : 0) +
@@ -1254,7 +1250,6 @@ export function PositionDetailsModal({
                           }).format(
                             previewAddAmount0 > 0
                               ? (() => {
-                                  // Include fees when adding liquidity since they're added to position
                                   const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), TOKEN_DEFINITIONS[position.token0.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
                                   return token0USD + ((previewAddAmount0 + fee0Amount) * getUsdPriceForSymbol(position.token0.symbol));
                                 })()
@@ -1264,24 +1259,31 @@ export function PositionDetailsModal({
                           )}
                         </span>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <div className="text-xs text-muted-foreground">
-                          {formatTokenDisplayAmount(position.token0.amount)} {position.token0.symbol}
-                        </div>
-                        {/* Preview indicator for token 0 */}
-                        {previewAddAmount0 > 0 && (
-                          <span className="text-xs font-medium text-green-500">
-                            {(() => {
-                              // Include fees when adding liquidity since they're added to position
-                              const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), TOKEN_DEFINITIONS[position.token0.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
-                              return (previewAddAmount0 + fee0Amount).toFixed(4);
-                            })()}
-                          </span>
-                        )}
-                        {previewRemoveAmount0 > 0 && (
-                          <span className="text-xs font-medium text-red-500">
-                            -{previewRemoveAmount0.toFixed(4)}
-                          </span>
+                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        {previewAddAmount0 > 0 ? (
+                          <>
+                            <span>{formatTokenDisplayAmount(position.token0.amount)}</span>
+                            <span className="text-green-500">+</span>
+                            <span className="text-green-500 font-medium">
+                              {(() => {
+                                const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), TOKEN_DEFINITIONS[position.token0.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
+                                const total = previewAddAmount0 + fee0Amount;
+                                return total > 0 && total < 0.0001 ? '< 0.0001' : total.toFixed(4);
+                              })()}
+                            </span>
+                            <span>{position.token0.symbol}</span>
+                          </>
+                        ) : previewRemoveAmount0 > 0 ? (
+                          <>
+                            <span>{formatTokenDisplayAmount(position.token0.amount)}</span>
+                            <span className="text-red-500">-</span>
+                            <span className="text-red-500 font-medium">
+                              {previewRemoveAmount0 > 0 && previewRemoveAmount0 < 0.0001 ? '< 0.0001' : previewRemoveAmount0.toFixed(4)}
+                            </span>
+                            <span>{position.token0.symbol}</span>
+                          </>
+                        ) : (
+                          <span>{formatTokenDisplayAmount(position.token0.amount)} {position.token0.symbol}</span>
                         )}
                       </div>
                     </div>
@@ -1306,7 +1308,6 @@ export function PositionDetailsModal({
                           }).format(
                             previewAddAmount1 > 0
                               ? (() => {
-                                  // Include fees when adding liquidity since they're added to position
                                   const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), TOKEN_DEFINITIONS[position.token1.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
                                   return token1USD + ((previewAddAmount1 + fee1Amount) * getUsdPriceForSymbol(position.token1.symbol));
                                 })()
@@ -1316,24 +1317,31 @@ export function PositionDetailsModal({
                           )}
                         </span>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <div className="text-xs text-muted-foreground">
-                          {formatTokenDisplayAmount(position.token1.amount)} {position.token1.symbol}
-                        </div>
-                        {/* Preview indicator for token 1 */}
-                        {previewAddAmount1 > 0 && (
-                          <span className="text-xs font-medium text-green-500">
-                            {(() => {
-                              // Include fees when adding liquidity since they're added to position
-                              const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), TOKEN_DEFINITIONS[position.token1.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
-                              return (previewAddAmount1 + fee1Amount).toFixed(4);
-                            })()}
-                          </span>
-                        )}
-                        {previewRemoveAmount1 > 0 && (
-                          <span className="text-xs font-medium text-red-500">
-                            -{previewRemoveAmount1.toFixed(4)}
-                          </span>
+                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        {previewAddAmount1 > 0 ? (
+                          <>
+                            <span>{formatTokenDisplayAmount(position.token1.amount)}</span>
+                            <span className="text-green-500">+</span>
+                            <span className="text-green-500 font-medium">
+                              {(() => {
+                                const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), TOKEN_DEFINITIONS[position.token1.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
+                                const total = previewAddAmount1 + fee1Amount;
+                                return total > 0 && total < 0.0001 ? '< 0.0001' : total.toFixed(4);
+                              })()}
+                            </span>
+                            <span>{position.token1.symbol}</span>
+                          </>
+                        ) : previewRemoveAmount1 > 0 ? (
+                          <>
+                            <span>{formatTokenDisplayAmount(position.token1.amount)}</span>
+                            <span className="text-red-500">-</span>
+                            <span className="text-red-500 font-medium">
+                              {previewRemoveAmount1 > 0 && previewRemoveAmount1 < 0.0001 ? '< 0.0001' : previewRemoveAmount1.toFixed(4)}
+                            </span>
+                            <span>{position.token1.symbol}</span>
+                          </>
+                        ) : (
+                          <span>{formatTokenDisplayAmount(position.token1.amount)} {position.token1.symbol}</span>
                         )}
                       </div>
                     </div>
@@ -1342,12 +1350,47 @@ export function PositionDetailsModal({
                 </div>
 
                 {/* Fees Earned Section */}
-                <div className="bg-container-secondary border border-dashed border-sidebar-border rounded-lg p-5">
+                <div className="bg-container-secondary border border-dashed border-sidebar-border rounded-lg p-5 relative">
                 <div className="flex flex-col gap-5">
+                  {/* Badge - Top Right */}
+                  {isAddingLiquidity && !hasZeroFees && (
+                    <div className="absolute top-5 right-5 group">
+                      <div className="flex items-center justify-center w-6 h-6 rounded bg-green-500/20 text-green-500">
+                        <CornerRightUp className="h-3.5 w-3.5" strokeWidth={2.5} />
+                      </div>
+                      <div className="absolute bottom-full right-0 mb-2 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100 w-max px-2 py-1 text-xs bg-container border border-sidebar-border rounded shadow-lg z-10 pointer-events-none">
+                        Fees are compounded
+                      </div>
+                    </div>
+                  )}
+                  {isRemovingLiquidity && !hasZeroFees && (
+                    <div className="absolute top-5 right-5 group">
+                      <div className="flex items-center justify-center w-6 h-6 rounded bg-red-500/20 text-red-500">
+                        <Minus className="h-3.5 w-3.5" strokeWidth={2.5} />
+                      </div>
+                      <div className="absolute bottom-full right-0 mb-2 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100 w-max px-2 py-1 text-xs bg-container border border-sidebar-border rounded shadow-lg z-10 pointer-events-none">
+                        Fees are withdrawn
+                      </div>
+                    </div>
+                  )}
+                  {isCollectingFees && !hasZeroFees && (
+                    <div className="absolute top-5 right-5 group">
+                      <div className="flex items-center justify-center w-6 h-6 rounded bg-red-500/20 text-red-500">
+                        <Minus className="h-3.5 w-3.5" strokeWidth={2.5} />
+                      </div>
+                      <div className="absolute bottom-full right-0 mb-2 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100 w-max px-2 py-1 text-xs bg-container border border-sidebar-border rounded shadow-lg z-10 pointer-events-none">
+                        Fees are withdrawn
+                      </div>
+                    </div>
+                  )}
+
                   {/* Label + Total Fees */}
                   <div className="flex flex-col gap-2">
                     <div className="text-[11px] text-muted-foreground uppercase tracking-wide">Fees Earned</div>
-                    <div className="text-xl font-semibold">
+                    <div className={cn("text-xl font-semibold",
+                      isAddingLiquidity && !hasZeroFees && "text-green-500",
+                      (isRemovingLiquidity || isCollectingFees) && !hasZeroFees && "text-red-500"
+                    )}>
                       {new Intl.NumberFormat('en-US', {
                         style: 'currency',
                         currency: 'USD',
@@ -1435,11 +1478,15 @@ export function PositionDetailsModal({
                           <div className="text-xs text-muted-foreground">
                             {displayFeeAmount0} {position.token0.symbol}
                           </div>
-                          {/* Red minus indicator when fees are being collected */}
-                          {isFeesBeingCollected && feeAmount0 > 0 && (
-                            <span className="text-xs font-medium text-red-500">
-                              -{feeAmount0.toFixed(4)}
-                            </span>
+                          {isAddingLiquidity && !position.isInRange && hasZeroToken0 && feeAmount0 > 0 && (
+                            <div className="relative group">
+                              <div className="flex items-center justify-center w-4 h-4 rounded bg-red-500/20 text-red-500">
+                                <Minus className="h-2.5 w-2.5" strokeWidth={2} />
+                              </div>
+                              <div className="absolute bottom-full right-0 mb-2 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100 w-max px-2 py-1 text-xs bg-container border border-sidebar-border rounded shadow-lg z-10 pointer-events-none">
+                                Fee is withdrawn
+                              </div>
+                            </div>
                           )}
                         </div>
                       </div>
@@ -1468,11 +1515,15 @@ export function PositionDetailsModal({
                           <div className="text-xs text-muted-foreground">
                             {displayFeeAmount1} {position.token1.symbol}
                           </div>
-                          {/* Red minus indicator when fees are being collected */}
-                          {isFeesBeingCollected && feeAmount1 > 0 && (
-                            <span className="text-xs font-medium text-red-500">
-                              -{feeAmount1 > 0 && feeAmount1 < 0.0001 ? '< 0.0001' : feeAmount1.toFixed(4)}
-                            </span>
+                          {isAddingLiquidity && !position.isInRange && hasZeroToken1 && feeAmount1 > 0 && (
+                            <div className="relative group">
+                              <div className="flex items-center justify-center w-4 h-4 rounded bg-red-500/20 text-red-500">
+                                <Minus className="h-2.5 w-2.5" strokeWidth={2} />
+                              </div>
+                              <div className="absolute bottom-full right-0 mb-2 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100 w-max px-2 py-1 text-xs bg-container border border-sidebar-border rounded shadow-lg z-10 pointer-events-none">
+                                Fee is withdrawn
+                              </div>
+                            </div>
                           )}
                         </div>
                       </div>
@@ -1505,7 +1556,6 @@ export function PositionDetailsModal({
                         }).format(
                           (previewAddAmount0 > 0 || previewAddAmount1 > 0)
                             ? (() => {
-                                // Include fees when adding liquidity since they're added to position
                                 const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), TOKEN_DEFINITIONS[position.token0.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
                                 const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), TOKEN_DEFINITIONS[position.token1.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
                                 return (Number.isFinite(valueUSD) ? valueUSD : 0) +
@@ -1594,7 +1644,6 @@ export function PositionDetailsModal({
                             }).format(
                               previewAddAmount0 > 0
                                 ? (() => {
-                                    // Include fees when adding liquidity since they're added to position
                                     const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), TOKEN_DEFINITIONS[position.token0.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
                                     return token0USD + ((previewAddAmount0 + fee0Amount) * getUsdPriceForSymbol(position.token0.symbol));
                                   })()
@@ -1604,24 +1653,31 @@ export function PositionDetailsModal({
                             )}
                           </span>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <div className="text-xs text-muted-foreground">
-                            {formatTokenDisplayAmount(position.token0.amount)} {position.token0.symbol}
-                          </div>
-                          {/* Preview indicator for token 0 */}
-                          {previewAddAmount0 > 0 && (
-                            <span className="text-xs font-medium text-green-500">
-                              {(() => {
-                                // Include fees when adding liquidity since they're added to position
-                                const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), TOKEN_DEFINITIONS[position.token0.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
-                                return (previewAddAmount0 + fee0Amount).toFixed(4);
-                              })()}
-                            </span>
-                          )}
-                          {previewRemoveAmount0 > 0 && (
-                            <span className="text-xs font-medium text-red-500">
-                              -{previewRemoveAmount0.toFixed(4)}
-                            </span>
+                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                          {previewAddAmount0 > 0 ? (
+                            <>
+                              <span>{formatTokenDisplayAmount(position.token0.amount)}</span>
+                              <span className="text-green-500">+</span>
+                              <span className="text-green-500 font-medium">
+                                {(() => {
+                                  const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), TOKEN_DEFINITIONS[position.token0.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
+                                  const total = previewAddAmount0 + fee0Amount;
+                                  return total > 0 && total < 0.0001 ? '< 0.0001' : total.toFixed(4);
+                                })()}
+                              </span>
+                              <span>{position.token0.symbol}</span>
+                            </>
+                          ) : previewRemoveAmount0 > 0 ? (
+                            <>
+                              <span>{formatTokenDisplayAmount(position.token0.amount)}</span>
+                              <span className="text-red-500">-</span>
+                              <span className="text-red-500 font-medium">
+                                {previewRemoveAmount0 > 0 && previewRemoveAmount0 < 0.0001 ? '< 0.0001' : previewRemoveAmount0.toFixed(4)}
+                              </span>
+                              <span>{position.token0.symbol}</span>
+                            </>
+                          ) : (
+                            <span>{formatTokenDisplayAmount(position.token0.amount)} {position.token0.symbol}</span>
                           )}
                         </div>
                       </div>
@@ -1646,7 +1702,6 @@ export function PositionDetailsModal({
                             }).format(
                               previewAddAmount1 > 0
                                 ? (() => {
-                                    // Include fees when adding liquidity since they're added to position
                                     const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), TOKEN_DEFINITIONS[position.token1.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
                                     return token1USD + ((previewAddAmount1 + fee1Amount) * getUsdPriceForSymbol(position.token1.symbol));
                                   })()
@@ -1656,24 +1711,31 @@ export function PositionDetailsModal({
                             )}
                           </span>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <div className="text-xs text-muted-foreground">
-                            {formatTokenDisplayAmount(position.token1.amount)} {position.token1.symbol}
-                          </div>
-                          {/* Preview indicator for token 1 */}
-                          {previewAddAmount1 > 0 && (
-                            <span className="text-xs font-medium text-green-500">
-                              {(() => {
-                                // Include fees when adding liquidity since they're added to position
-                                const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), TOKEN_DEFINITIONS[position.token1.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
-                                return (previewAddAmount1 + fee1Amount).toFixed(4);
-                              })()}
-                            </span>
-                          )}
-                          {previewRemoveAmount1 > 0 && (
-                            <span className="text-xs font-medium text-red-500">
-                              -{previewRemoveAmount1.toFixed(4)}
-                            </span>
+                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                          {previewAddAmount1 > 0 ? (
+                            <>
+                              <span>{formatTokenDisplayAmount(position.token1.amount)}</span>
+                              <span className="text-green-500">+</span>
+                              <span className="text-green-500 font-medium">
+                                {(() => {
+                                  const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), TOKEN_DEFINITIONS[position.token1.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
+                                  const total = previewAddAmount1 + fee1Amount;
+                                  return total > 0 && total < 0.0001 ? '< 0.0001' : total.toFixed(4);
+                                })()}
+                              </span>
+                              <span>{position.token1.symbol}</span>
+                            </>
+                          ) : previewRemoveAmount1 > 0 ? (
+                            <>
+                              <span>{formatTokenDisplayAmount(position.token1.amount)}</span>
+                              <span className="text-red-500">-</span>
+                              <span className="text-red-500 font-medium">
+                                {previewRemoveAmount1 > 0 && previewRemoveAmount1 < 0.0001 ? '< 0.0001' : previewRemoveAmount1.toFixed(4)}
+                              </span>
+                              <span>{position.token1.symbol}</span>
+                            </>
+                          ) : (
+                            <span>{formatTokenDisplayAmount(position.token1.amount)} {position.token1.symbol}</span>
                           )}
                         </div>
                       </div>
@@ -1682,12 +1744,47 @@ export function PositionDetailsModal({
                   </div>
 
                   {/* Fees Earned Section */}
-                  <div className="bg-container-secondary border border-dashed border-sidebar-border rounded-lg p-5">
+                  <div className="bg-container-secondary border border-dashed border-sidebar-border rounded-lg p-5 relative">
                   <div className="flex flex-col gap-5">
+                    {/* Badge - Top Right */}
+                    {isAddingLiquidity && !hasZeroFees && (
+                      <div className="absolute top-5 right-5 group">
+                        <div className="flex items-center justify-center w-6 h-6 rounded bg-green-500/20 text-green-500">
+                          <CornerRightUp className="h-3.5 w-3.5" strokeWidth={2.5} />
+                        </div>
+                        <div className="absolute bottom-full right-0 mb-2 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100 w-max px-2 py-1 text-xs bg-container border border-sidebar-border rounded shadow-lg z-10 pointer-events-none">
+                          Fees are compounded
+                        </div>
+                      </div>
+                    )}
+                    {isRemovingLiquidity && !hasZeroFees && (
+                      <div className="absolute top-5 right-5 group">
+                        <div className="flex items-center justify-center w-6 h-6 rounded bg-red-500/20 text-red-500">
+                          <Minus className="h-3.5 w-3.5" strokeWidth={2.5} />
+                        </div>
+                        <div className="absolute bottom-full right-0 mb-2 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100 w-max px-2 py-1 text-xs bg-container border border-sidebar-border rounded shadow-lg z-10 pointer-events-none">
+                          Fees are withdrawn
+                        </div>
+                      </div>
+                    )}
+                    {isCollectingFees && !hasZeroFees && (
+                      <div className="absolute top-5 right-5 group">
+                        <div className="flex items-center justify-center w-6 h-6 rounded bg-red-500/20 text-red-500">
+                          <Minus className="h-3.5 w-3.5" strokeWidth={2.5} />
+                        </div>
+                        <div className="absolute bottom-full right-0 mb-2 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100 w-max px-2 py-1 text-xs bg-container border border-sidebar-border rounded shadow-lg z-10 pointer-events-none">
+                          Fees are withdrawn
+                        </div>
+                      </div>
+                    )}
+
                     {/* Label + Total Fees */}
                     <div className="flex flex-col gap-2">
                       <div className="text-[11px] text-muted-foreground uppercase tracking-wide">Fees Earned</div>
-                      <div className="text-xl font-semibold">
+                      <div className={cn("text-xl font-semibold",
+                        isAddingLiquidity && !hasZeroFees && "text-green-500",
+                        (isRemovingLiquidity || isCollectingFees) && !hasZeroFees && "text-red-500"
+                      )}>
                         {new Intl.NumberFormat('en-US', {
                           style: 'currency',
                           currency: 'USD',
@@ -1775,11 +1872,15 @@ export function PositionDetailsModal({
                             <div className="text-xs text-muted-foreground">
                               {displayFeeAmount0} {position.token0.symbol}
                             </div>
-                            {/* Red minus indicator when fees are being collected */}
-                            {isFeesBeingCollected && feeAmount0 > 0 && (
-                              <span className="text-xs font-medium text-red-500">
-                                -{feeAmount0 > 0 && feeAmount0 < 0.0001 ? '< 0.0001' : feeAmount0.toFixed(4)}
-                              </span>
+                            {isAddingLiquidity && !position.isInRange && hasZeroToken0 && feeAmount0 > 0 && (
+                              <div className="relative group">
+                                <div className="flex items-center justify-center w-4 h-4 rounded bg-red-500/20 text-red-500">
+                                  <Minus className="h-2.5 w-2.5" strokeWidth={2} />
+                                </div>
+                                <div className="absolute bottom-full right-0 mb-2 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100 w-max px-2 py-1 text-xs bg-container border border-sidebar-border rounded shadow-lg z-10 pointer-events-none">
+                                  Fee is withdrawn
+                                </div>
+                              </div>
                             )}
                           </div>
                         </div>
@@ -1808,11 +1909,15 @@ export function PositionDetailsModal({
                             <div className="text-xs text-muted-foreground">
                               {displayFeeAmount1} {position.token1.symbol}
                             </div>
-                            {/* Red minus indicator when fees are being collected */}
-                            {isFeesBeingCollected && feeAmount1 > 0 && (
-                              <span className="text-xs font-medium text-red-500">
-                                -{feeAmount1 > 0 && feeAmount1 < 0.0001 ? '< 0.0001' : feeAmount1.toFixed(4)}
-                              </span>
+                            {isAddingLiquidity && !position.isInRange && hasZeroToken1 && feeAmount1 > 0 && (
+                              <div className="relative group">
+                                <div className="flex items-center justify-center w-4 h-4 rounded bg-red-500/20 text-red-500">
+                                  <Minus className="h-2.5 w-2.5" strokeWidth={2} />
+                                </div>
+                                <div className="absolute bottom-full right-0 mb-2 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100 w-max px-2 py-1 text-xs bg-container border border-sidebar-border rounded shadow-lg z-10 pointer-events-none">
+                                  Fee is withdrawn
+                                </div>
+                              </div>
                             )}
                           </div>
                         </div>
@@ -2210,7 +2315,7 @@ export function PositionDetailsModal({
                                 showTransactionOverview ? (increaseStep === 'permit' ? "Sign Permit" : "Add Liquidity") :
                                 "Confirm"
                               ) : currentView === 'remove-liquidity' ? (
-                                isDecreasingLiquidity ? "Processing..." : "Withdraw"
+                                isDecreasingLiquidity ? "Processing..." : (isWithdrawBurn ? "Burn Position" : "Withdraw")
                               ) : "Confirm"}
                             </span>
                           </Button>

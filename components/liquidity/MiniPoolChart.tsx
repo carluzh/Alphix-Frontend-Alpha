@@ -70,10 +70,11 @@ export function MiniPoolChart({
     let minBound = dataMin - padding;
     let maxBound = dataMax + padding;
 
-    if (isInRange === false && currentPriceNum && minPriceNum && maxPriceNum) {
-      if (currentPriceNum < minPriceNum) {
+    if (isInRange === false && minPriceNum && maxPriceNum) {
+      const priceRef = currentPriceNum ?? dataMax;
+      if (priceRef < minPriceNum) {
         maxBound = minPriceNum + (minPriceNum - dataMin) * 0.05;
-      } else if (currentPriceNum > maxPriceNum) {
+      } else if (priceRef > maxPriceNum) {
         minBound = maxPriceNum - (dataMax - maxPriceNum) * 0.05;
       }
     }

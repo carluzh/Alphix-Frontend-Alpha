@@ -270,7 +270,6 @@ export function RemoveLiquidityFormPanel({
   };
 
   const handleExecuteTransaction = async () => {
-    // Compute effective percentage and full-burn intent from current inputs
     const amt0 = parseFloat(withdrawAmount0 || '0');
     const amt1 = parseFloat(withdrawAmount1 || '0');
     const max0Eff = parseFloat(position.token0.amount || '0');
@@ -278,9 +277,7 @@ export function RemoveLiquidityFormPanel({
     const pct0 = max0Eff > 0 ? amt0 / max0Eff : 0;
     const pct1 = max1Eff > 0 ? amt1 / max1Eff : 0;
     const effectivePct = Math.max(pct0, pct1) * 100;
-    const nearFull0 = max0Eff > 0 ? pct0 >= 0.99 : true;
-    const nearFull1 = max1Eff > 0 ? pct1 >= 0.99 : true;
-    const isBurnAllEffective = position.isInRange ? (nearFull0 && nearFull1) : (pct0 >= 0.99 || pct1 >= 0.99);
+    const isExactly100 = (max0Eff > 0 ? Math.abs(pct0 - 1.0) < 0.0001 : true) && (max1Eff > 0 ? Math.abs(pct1 - 1.0) < 0.0001 : true);
 
     const data: DecreasePositionData = {
       tokenId: position.positionId,
@@ -288,7 +285,7 @@ export function RemoveLiquidityFormPanel({
       token1Symbol: position.token1.symbol as TokenSymbol,
       decreaseAmount0: withdrawAmount0 || '0',
       decreaseAmount1: withdrawAmount1 || '0',
-      isFullBurn: isBurnAllEffective,
+      isFullBurn: isExactly100,
       poolId: position.poolId,
       tickLower: position.tickLower,
       tickUpper: position.tickUpper,
@@ -296,16 +293,13 @@ export function RemoveLiquidityFormPanel({
     };
 
     try {
-      // In-range: use percentage flow (SDK), OOR: amounts mode
       if (position.isInRange) {
-        const pctRounded = isBurnAllEffective ? 100 : Math.max(0, Math.min(100, Math.round(effectivePct)));
+        const pctRounded = isExactly100 ? 100 : Math.max(0, Math.min(100, Math.round(effectivePct)));
         decreaseLiquidity(data, pctRounded);
       } else {
         decreaseLiquidity(data, 0);
       }
-    } catch (e) {
-      // Error already handled by hook
-    }
+    } catch (e) {}
   };
 
   // Success view - use external success state if provided, otherwise use internal state
@@ -643,12 +637,48 @@ export function RemoveLiquidityFormPanel({
                       onChange={(e) => {
                         handleWithdrawAmountChangeWithWiggle(e, 'amount0');
                         setWithdrawActiveInputSide('amount0');
-                        // No calculation needed for OOR positions
                       }}
                       className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
                     />
-                    <div className="text-right text-xs text-muted-foreground">
-                      {formatCalculatedAmount(parseFloat(withdrawAmount0 || "0") * getUSDPriceForSymbol(position.token0.symbol, allPrices))}
+                    <div className="relative text-right text-xs min-h-5">
+                      <div className={cn("text-muted-foreground transition-opacity duration-100", {
+                        "group-hover:opacity-0": parseFloat(position.token0.amount) > 0
+                      })}>
+                        {formatCalculatedAmount(parseFloat(withdrawAmount0 || "0") * getUSDPriceForSymbol(position.token0.symbol, allPrices))}
+                      </div>
+                      {parseFloat(position.token0.amount) > 0 && (
+                        <div className="absolute right-0 top-[3px] flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
+                          {PERCENTAGE_OPTIONS.map((percentage, index) => (
+                            <motion.div
+                              key={percentage}
+                              className="opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0"
+                              style={{
+                                transitionDelay: `${index * 40}ms`,
+                                transitionDuration: '200ms',
+                                transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)'
+                              }}
+                            >
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-5 px-2 text-[10px] font-medium rounded-md border-sidebar-border bg-muted/20 hover:bg-muted/40 transition-colors"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const token0Decimals = TOKEN_DEFINITIONS[position.token0.symbol as TokenSymbol]?.decimals || 18;
+                                  const amount = calculatePercentageFromString(position.token0.amount, percentage, token0Decimals);
+                                  const syntheticEvent = {
+                                    target: { value: amount }
+                                  } as React.ChangeEvent<HTMLInputElement>;
+                                  handleWithdrawAmountChangeWithWiggle(syntheticEvent, 'amount0');
+                                  setWithdrawActiveInputSide('amount0');
+                                }}
+                              >
+                                {percentage === 100 ? 'MAX' : `${percentage}%`}
+                              </Button>
+                            </motion.div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -692,12 +722,48 @@ export function RemoveLiquidityFormPanel({
                       onChange={(e) => {
                         handleWithdrawAmountChangeWithWiggle(e, 'amount1');
                         setWithdrawActiveInputSide('amount1');
-                        // No calculation needed for OOR positions
                       }}
                       className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
                     />
-                    <div className="text-right text-xs text-muted-foreground">
-                      {formatCalculatedAmount(parseFloat(withdrawAmount1 || "0") * getUSDPriceForSymbol(position.token1.symbol, allPrices))}
+                    <div className="relative text-right text-xs min-h-5">
+                      <div className={cn("text-muted-foreground transition-opacity duration-100", {
+                        "group-hover:opacity-0": parseFloat(position.token1.amount) > 0
+                      })}>
+                        {formatCalculatedAmount(parseFloat(withdrawAmount1 || "0") * getUSDPriceForSymbol(position.token1.symbol, allPrices))}
+                      </div>
+                      {parseFloat(position.token1.amount) > 0 && (
+                        <div className="absolute right-0 top-[3px] flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
+                          {PERCENTAGE_OPTIONS.map((percentage, index) => (
+                            <motion.div
+                              key={percentage}
+                              className="opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0"
+                              style={{
+                                transitionDelay: `${index * 40}ms`,
+                                transitionDuration: '200ms',
+                                transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)'
+                              }}
+                            >
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-5 px-2 text-[10px] font-medium rounded-md border-sidebar-border bg-muted/20 hover:bg-muted/40 transition-colors"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const token1Decimals = TOKEN_DEFINITIONS[position.token1.symbol as TokenSymbol]?.decimals || 18;
+                                  const amount = calculatePercentageFromString(position.token1.amount, percentage, token1Decimals);
+                                  const syntheticEvent = {
+                                    target: { value: amount }
+                                  } as React.ChangeEvent<HTMLInputElement>;
+                                  handleWithdrawAmountChangeWithWiggle(syntheticEvent, 'amount1');
+                                  setWithdrawActiveInputSide('amount1');
+                                }}
+                              >
+                                {percentage === 100 ? 'MAX' : `${percentage}%`}
+                              </Button>
+                            </motion.div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
