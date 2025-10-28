@@ -54,7 +54,7 @@ export function formatPercent(value: number, opts?: { min?: number; max?: number
   return `${s}%`;
 }
 
-export function formatTokenAmount(value: number, displayDecimals = 4) {
+export function formatTokenAmount(value: number, displayDecimals = 6) {
   if (!Number.isFinite(value)) return '0';
   const threshold = Math.pow(10, -displayDecimals);
   if (value > 0 && value < threshold) return `< ${threshold.toLocaleString(LOCALE)}`;

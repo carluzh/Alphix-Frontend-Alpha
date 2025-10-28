@@ -172,7 +172,10 @@ export function NavMain({
 
   useEffect(() => {
     if (isConfirmed) {
-      toast.success("Faucet Claimed", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
+      toast.success("Faucet Claimed", {
+        icon: <BadgeCheck className="h-4 w-4 text-sidebar-primary" />,
+        className: 'faucet-claimed'
+      });
       resetWriteContract();
       // On successful claim, update local cache and refetch from contract
       const now = Math.floor(Date.now() / 1000);
@@ -346,7 +349,7 @@ export function NavMain({
   }
 
   return (
-    <SidebarMenu className="flex flex-col gap-1 px-3">
+    <SidebarMenu className="flex flex-col gap-0.5 px-2">
       {items.map((item) => {
         const isActive = (() => {
           if (!item.url) return false;
@@ -360,11 +363,14 @@ export function NavMain({
             {item.disabled ? (
               <SidebarMenuButton
                 onClick={() => handleLockedClick(item.title)}
-                className="opacity-75 w-full flex items-center"
+                className={cn(
+                  "w-full flex items-center rounded-lg px-2 py-2 transition-colors hover:bg-[#1f1f1f] hover:text-white",
+                  "text-muted-foreground"
+                )}
                 tooltip={item.title}
               >
-                {item.icon && <item.icon />}
-                <span className="flex-1 truncate">{item.title}</span>
+                {item.icon && <item.icon className="h-4 w-4 flex-shrink-0" />}
+                <span className="flex-1 truncate ml-2 text-sm font-medium">{item.title}</span>
                 {lockedItem === item.title && (
                   <span className="flex items-center">
                     <CustomLockIcon className="h-4 w-4 flex-shrink-0 text-muted-foreground mr-0.5" />
@@ -375,18 +381,21 @@ export function NavMain({
             ) : item.isFaucet ? (
               <SidebarMenuButton
                 onClick={handleFaucetClick}
-                className="group/faucet w-full flex items-center"
+                className={cn(
+                  "group/faucet w-full flex items-center rounded-lg px-2 py-2 transition-colors hover:bg-[#1f1f1f] hover:text-white",
+                  "text-muted-foreground"
+                )}
                 tooltip={item.title}
                 disabled={isTxPending || isConfirming}
               >
-                {item.icon && <item.icon />}
-                <span className="flex-1 truncate">
+                {item.icon && <item.icon className="h-4 w-4 flex-shrink-0" />}
+                <span className="flex-1 truncate ml-2.5 text-sm font-medium">
                   {isTxPending || isConfirming ? "Processing..." : item.title}
                 </span>
                 {item.isFaucet && faucetCooldown && (
                   faucetCooldown === "Claim" ? (
                     isFaucetUnread && (
-                      <SidebarMenuBadge className="bg-[#3d271b] text-sidebar-primary border border-sidebar-primary">1</SidebarMenuBadge>
+                      <SidebarMenuBadge className="bg-button-primary text-sidebar-primary border border-sidebar-primary">1</SidebarMenuBadge>
                     )
                   ) : (
                     <>
@@ -440,29 +449,67 @@ export function NavMain({
                 )}
               </SidebarMenuButton>
             ) : item.title === "Portfolio" ? (
-              <SidebarMenuButton tooltip={item.title} asChild className="w-full" isActive={isActive}>
+              <SidebarMenuButton
+                tooltip={item.title}
+                asChild
+                className={cn(
+                  "w-full rounded-lg px-2 py-2 transition-colors hover:bg-[#1f1f1f] hover:text-white",
+                  isActive
+                    ? "bg-[#1f1f1f] text-white"
+                    : "text-muted-foreground"
+                )}
+              >
                 <Link href={item.url!} className="flex items-center w-full">
-                  {item.icon && <item.icon />}
-                  <span className="flex-1 truncate">{item.title}</span>
+                  {item.icon && <item.icon className={cn(
+                    "h-4 w-4 flex-shrink-0",
+                    isActive ? "text-white" : ""
+                  )} />}
+                  <span className="flex-1 truncate ml-2 text-sm font-medium">{item.title}</span>
                 </Link>
               </SidebarMenuButton>
             ) : item.title === "Swap" ? (
               <SidebarMenuButton
                 tooltip="Swap"
-                className="w-full"
                 asChild
-                isActive={isActive}
+                className={cn(
+                  "w-full rounded-lg px-2 py-2 transition-colors hover:bg-[#1f1f1f] hover:text-white",
+                  isActive
+                    ? "bg-[#1f1f1f] text-white"
+                    : "text-muted-foreground"
+                )}
               >
                 <Link href={item.url!} className="flex items-center w-full">
-                  {item.icon ? <item.icon /> : <PlusCircleIcon />}
-                  <span className="flex-1 truncate">Swap</span>
+                  {item.icon ? (
+                    <item.icon className={cn(
+                      "h-4 w-4 flex-shrink-0",
+                      isActive ? "text-white" : ""
+                    )} />
+                  ) : (
+                    <PlusCircleIcon className={cn(
+                      "h-4 w-4 flex-shrink-0",
+                      isActive ? "text-white" : ""
+                    )} />
+                  )}
+                  <span className="flex-1 truncate ml-2 text-sm font-medium">Swap</span>
                 </Link>
               </SidebarMenuButton>
             ) : (
-              <SidebarMenuButton tooltip={item.title} asChild className="w-full" isActive={isActive}>
+              <SidebarMenuButton
+                tooltip={item.title}
+                asChild
+                className={cn(
+                  "w-full rounded-lg px-2 py-2 transition-colors hover:bg-[#1f1f1f] hover:text-white",
+                  isActive
+                    ? "bg-[#1f1f1f] text-white"
+                    : "text-muted-foreground"
+                )}
+              >
                 <Link href={item.url!} className="flex items-center w-full">
-                  {item.icon && <item.icon />}
-                  <span className="flex-1 truncate">{item.title}</span>
+                  {item.icon && <item.icon className={cn(
+                    "h-4 w-4 flex-shrink-0",
+                    isActive ? "text-white" : ""
+                  )} />}
+                  <span className="flex-1 truncate ml-2 text-sm font-medium">{item.title}</span>
                 </Link>
               </SidebarMenuButton>
             )}

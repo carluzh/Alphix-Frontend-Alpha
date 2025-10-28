@@ -10,10 +10,11 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import Image from "next/image";
+import Link from "next/link";
 import { useRouter, useParams } from "next/navigation";
 import { useAccount, useBalance } from "wagmi";
 import { toast } from "sonner";
-import { useIsMobile } from "@/hooks/use-is-mobile";
+import { useIsMobile } from "@/hooks/use-mobile";
 import type { ProcessedPosition } from "../../../pages/api/liquidity/get-positions";
 import { TOKEN_DEFINITIONS, TokenSymbol } from "@/lib/pools-config";
 import { Tooltip as UITooltip, TooltipContent as UITooltipContent, TooltipProvider as UITooltipProvider, TooltipTrigger as UITooltipTrigger } from "@/components/ui/tooltip";
@@ -21,10 +22,9 @@ import { motion, AnimatePresence } from "framer-motion";
 import { formatUnits, type Hex } from "viem";
 import { Bar, BarChart, Line, LineChart, CartesianGrid, XAxis, YAxis, ResponsiveContainer, ComposedChart, Area, ReferenceLine, ReferenceArea } from "recharts";
 import { getPoolById, getPoolSubgraphId, getToken, getAllTokens } from "@/lib/pools-config";
-import { usePoolState, useAllPrices, useUncollectedFees, useUncollectedFeesBatch } from "@/components/data/hooks";
+import { usePoolState, useAllPrices, useUncollectedFeesBatch } from "@/components/data/hooks";
 import { getPoolFeeBps } from "@/lib/client-cache";
 import { SafeStorage } from "@/lib/safe-storage";
-import "@/lib/cache-keys"; // Ensure global CacheKeys is loaded
 import { RetryUtility } from "@/lib/retry-utility";
 import {
   ChartConfig,
@@ -48,59 +48,45 @@ import { position_manager_abi } from '@/lib/abis/PositionManager_abi';
 import { getFromCache, setToCache, getFromCacheWithTtl, getUserPositionsCacheKey, getPoolStatsCacheKey, getPoolDynamicFeeCacheKey, getPoolChartDataCacheKey, loadUserPositionIds, derivePositionsFromIds, invalidateCacheEntry, waitForSubgraphBlock, setIndexingBarrier, invalidateUserPositionIdsCache, refreshFeesAfterTransaction } from "../../../lib/client-cache";
 
 import type { Pool } from "../../../types";
-import { AddLiquidityForm } from "../../../components/liquidity/AddLiquidityForm"; // AddLiquidityForm for right panel
+import { AddLiquidityForm } from "../../../components/liquidity/AddLiquidityForm";
 import { AddLiquidityModal } from "../../../components/liquidity/AddLiquidityModal";
 import { WithdrawLiquidityModal } from "../../../components/liquidity/WithdrawLiquidityModal";
 import React from "react";
-import { useBurnLiquidity, type BurnPositionData } from "@/components/liquidity/useBurnLiquidity";
 import { useIncreaseLiquidity, type IncreasePositionData } from "@/components/liquidity/useIncreaseLiquidity";
 import { useDecreaseLiquidity, type DecreasePositionData } from "@/components/liquidity/useDecreaseLiquidity";
 import { prefetchService } from "@/lib/prefetch-service";
 import { publicClient } from "@/lib/viemClient";
 
 
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { ChevronDownIcon } from "lucide-react";
 
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { PositionSkeleton } from '@/components/liquidity/PositionSkeleton';
-import { PositionCard } from '@/components/liquidity/PositionCard';
+import { PositionCardCompact } from '@/components/liquidity/PositionCardCompact';
+import { PositionDetailsModal } from '@/components/liquidity/PositionDetailsModal';
 
 
-// Define the structure of the chart data points from the API
 interface ChartDataPoint {
-  date: string; // YYYY-MM-DD
+  date: string;
   volumeUSD: number;
   tvlUSD: number;
   volumeTvlRatio: number;
   emaRatio: number;
-  dynamicFee: number; // Fee percentage (e.g., 0.31 for 0.31%)
+  dynamicFee: number;
 }
 
-// SDK constants
 const SDK_MIN_TICK = -887272;
 const SDK_MAX_TICK = 887272;
 const DEFAULT_TICK_SPACING = 60;
 
-// Format token amounts for display
 const formatTokenDisplayAmount = (amount: string) => {
   const num = parseFloat(amount);
   if (isNaN(num)) return amount;
-  if (num === 0) return "0.00";
-  if (num > 0 && num < 0.0001) return "< 0.0001";
-  return num.toFixed(4);
+  if (num === 0) return "0";
+  if (num > 0 && num < 0.000001) return "< 0.000001";
+  return num.toFixed(6);
 };
 
-// Get token icon for display
 const getTokenIcon = (symbol?: string) => {
   if (!symbol) return "/placeholder-logo.svg";
   
@@ -187,9 +173,7 @@ const convertTickToPrice = (tick: number, currentPoolTick: number | null, curren
       if (isFinite(priceAtTick)) {
         if (priceAtTick < 1e-11 && priceAtTick > 0) return "0";
         if (priceAtTick > 1e30) return "∞";
-        const displayDecimals = baseTokenForPriceDisplay === token0Symbol 
-          ? (TOKEN_DEFINITIONS[token0Symbol as TokenSymbol]?.displayDecimals ?? 4)
-          : (TOKEN_DEFINITIONS[token1Symbol as TokenSymbol]?.displayDecimals ?? 4);
+        const displayDecimals = 6;
         return priceAtTick.toFixed(displayDecimals);
       }
     }
@@ -215,7 +199,7 @@ const convertTickToPrice = (tick: number, currentPoolTick: number | null, curren
     if (!isFinite(displayVal) || isNaN(displayVal)) return 'N/A';
     if (displayVal < 1e-11 && displayVal > 0) return '0';
     if (displayVal > 1e30) return '∞';
-    const displayDecimals = (TOKEN_DEFINITIONS[baseTokenForPriceDisplay as TokenSymbol]?.displayDecimals ?? 4);
+    const displayDecimals = 6;
     return displayVal.toFixed(displayDecimals);
   } catch {
     return 'N/A';
@@ -584,37 +568,33 @@ export default function PoolDetailPage() {
     } else if (numericBalance > 0 && numericBalance < 0.001) {
       return "< 0.001";
     } else {
-      const displayDecimals = TOKEN_DEFINITIONS[tokenSymbolForDecimals]?.displayDecimals ?? 4;
+      const displayDecimals = 6;
       return numericBalance.toFixed(displayDecimals);
     }
   };
 
-  // Display balance calculations
-  const displayToken0Balance = isLoadingToken0Balance 
-    ? "Loading..." 
-    : (token0BalanceData ? getFormattedDisplayBalance(parseFloat(token0BalanceData.formatted), 'aUSDC' as TokenSymbol) : "~");
-  
-  const displayToken1Balance = isLoadingToken1Balance 
-    ? "Loading..." 
-    : (token1BalanceData ? getFormattedDisplayBalance(parseFloat(token1BalanceData.formatted), 'aUSDT' as TokenSymbol) : "~");
 
-  const leftColumnRef = useRef<HTMLDivElement>(null); // Ref for the entire left column
-  const topBarRef = useRef<HTMLDivElement>(null); // Ref for top bar overflow detection
-  const tokenInfoRef = useRef<HTMLDivElement>(null); // Ref to measure token info width
+  // Get base pool info first (synchronous, no loading needed)
+  const basePoolInfo = getPoolConfiguration(poolId);
 
-  // State for the pool's detailed data (including fetched stats)
-  const [currentPoolData, setCurrentPoolData] = useState<PoolDetailData | null>(null);
-  
+  // State for the pool's detailed data (initialized with base config for immediate render)
+  const [currentPoolData, setCurrentPoolData] = useState<PoolDetailData | null>(() => {
+    if (!basePoolInfo) return null;
+    const poolConfig = getPoolById(poolId);
+    return {
+      ...basePoolInfo,
+      highlighted: false,
+      tickSpacing: poolConfig?.tickSpacing || DEFAULT_TICK_SPACING,
+      dynamicFeeBps: undefined, // Will be loaded
+    } as PoolDetailData;
+  });
 
   const [apiChartData, setApiChartData] = useState<ChartDataPoint[]>([]);
   const [isLoadingChartData, setIsLoadingChartData] = useState(false);
   const [currentPoolTick, setCurrentPoolTick] = useState<number | null>(null);
   const [currentPrice, setCurrentPrice] = useState<string | null>(null);
-
-  const basePoolInfo = getPoolConfiguration(poolId);
   const apiPoolIdToUse = basePoolInfo?.subgraphId || '';
-  const { data: poolStateData } = usePoolState(String(apiPoolIdToUse));
-  const { data: poolState } = poolStateData || {};
+  const { data: poolState } = usePoolState(String(apiPoolIdToUse));
 
   useEffect(() => {
     if (poolState?.currentPrice && typeof poolState?.currentPoolTick === 'number') {
@@ -622,8 +602,6 @@ export default function PoolDetailPage() {
       setCurrentPoolTick(Number(poolState.currentPoolTick));
     }
   }, [poolState]);
-  // REMOVED: useBlockRefetch causing unnecessary RPC polling to sepolia.base.org
-  // useBlockRefetch({ poolIds: apiPoolIdToUse ? [apiPoolIdToUse] : [] });
 
   const { data: allPrices } = useAllPrices();
   const isLoadingPrices = !allPrices;
@@ -748,23 +726,28 @@ export default function PoolDetailPage() {
 
   const isMobile = useIsMobile();
 
-
-
-  const [windowWidth, setWindowWidth] = useState<number>(1200);
-  // Dynamic overflow detection states
-  const [showFeesCard, setShowFeesCard] = useState(true);
-  const [showVolumeCard, setShowVolumeCard] = useState(true);
-  const [showTvlCard, setShowTvlCard] = useState(true);
+  const [windowWidth, setWindowWidth] = useState<number>(
+    typeof window !== 'undefined' ? window.innerWidth : 1200
+  );
 
 
 
 
-  // State for position menu
-  const [showPositionMenu, setShowPositionMenu] = useState<string | null>(null);
-  const [positionMenuOpenUp, setPositionMenuOpenUp] = useState<boolean>(false);
+  // State for position details modal
+  const [selectedPositionForDetails, setSelectedPositionForDetails] = useState<ProcessedPosition | null>(null);
+  const [isPositionDetailsModalOpen, setIsPositionDetailsModalOpen] = useState(false);
 
-  // PositionCard compatible state and functions
-  const [openPositionMenuKey, setOpenPositionMenuKey] = useState<string | null>(null);
+  // Store denomination data per position ID
+  const [denominationDataByPositionId, setDenominationDataByPositionId] = useState<Record<string, {
+    denominationBase: string;
+    minPrice: string;
+    maxPrice: string;
+    displayedCurrentPrice: string | null;
+    feesUSD: number;
+    formattedAPY: string;
+    isAPYFallback: boolean;
+    isLoadingAPY: boolean;
+  }>>({});
 
   // Debounce versioning to avoid stale API results applying to current inputs
   const increaseCalcVersionRef = React.useRef(0);
@@ -778,124 +761,6 @@ export default function PoolDetailPage() {
       return () => window.removeEventListener('resize', handleResize);
     }
   }, []);
-
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (showPositionMenu && !(event.target as Element).closest('.position-menu-trigger')) {
-          setShowPositionMenu(null);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [showPositionMenu]);
-
-  // Dynamic overflow detection for top bar to prevent AddLiquidityForm overflow
-  useEffect(() => {
-    const checkOverflow = () => {
-      if (windowWidth < 1500) return; // Only check when AddLiquidityForm is visible
-      
-      // Use actual container measurements instead of assumptions
-      const mainContainer = document.querySelector('.flex.flex-1.flex-col.p-3.sm\\:p-6.sm\\:px-10');
-      if (!mainContainer) return;
-      
-      const containerRect = mainContainer.getBoundingClientRect();
-      const availableWidth = containerRect.width;
-      
-      // Fixed widths
-      const addLiqFormWidth = 450; // AddLiquidityForm width
-      const columnGap = 24; // gap-6
-      const safetyMargin = 60; // Extra safety margin
-      
-      // Available width for left column
-      const maxLeftColumnWidth = availableWidth - addLiqFormWidth - columnGap - safetyMargin;
-      
-      // Calculate required width for top bar content (use a stable baseline to avoid feedback loops)
-      const tokenInfoWidth = 280; // includes chevron + icons + labels
-      const apyWidth = 160; // APY card width
-      const optionalCardWidth = 160; // Width for each optional card
-      const cardGap = 12; // gap-3 between cards
-      const topBarPadding = 32; // p-4 padding inside top bar
-
-      // Start with minimal required width (token info + APY + padding)
-      let requiredWidth = tokenInfoWidth + apyWidth + cardGap + topBarPadding;
-      
-      // Add width for visible optional cards
-      const optionalCards = [
-        { show: showTvlCard, name: 'TVL' },
-        { show: showVolumeCard, name: 'Volume' },
-        { show: showFeesCard, name: 'Fees' }
-      ];
-      
-      const visibleOptionalCount = optionalCards.filter(card => card.show).length;
-      requiredWidth += visibleOptionalCount * (optionalCardWidth + cardGap);
-      
-      // Determine if we need to hide cards or can show more
-      const exceedsSpace = requiredWidth > maxLeftColumnWidth;
-      const hasSpaceForMore = requiredWidth + optionalCardWidth + cardGap + 40 < maxLeftColumnWidth; // 40px buffer
-      
-      // Always hide Fees card below 1900px width
-      if (windowWidth < 1900 && showFeesCard) {
-        setShowFeesCard(false);
-      } else if (exceedsSpace) {
-        // Hide cards in priority order: Fees → Volume → TVL
-        if (showFeesCard) {
-          setShowFeesCard(false);
-        } else if (showVolumeCard) {
-          setShowVolumeCard(false);
-        } else if (showTvlCard) {
-          setShowTvlCard(false);
-        }
-      } else if (hasSpaceForMore && windowWidth >= 1900) {
-        // Show cards back in reverse priority: TVL → Volume → Fees
-        // Only show Fees card if width is >= 1900px
-        if (!showTvlCard) {
-          setShowTvlCard(true);
-        } else if (!showVolumeCard && showTvlCard) {
-          setShowVolumeCard(true);
-        } else if (!showFeesCard && showVolumeCard && showTvlCard) {
-          setShowFeesCard(true);
-        }
-      }
-    };
-
-    // Debounce the check to avoid rapid firing
-    const timeoutId = setTimeout(() => {
-      requestAnimationFrame(checkOverflow);
-    }, 150);
-    
-    return () => clearTimeout(timeoutId);
-  }, [windowWidth, currentPoolData, showFeesCard, showVolumeCard, showTvlCard]);
-
-  // Initialize card visibility based on screen size (fallback for non-1500px+ screens)
-  useEffect(() => {
-    if (windowWidth < 1500) {
-      // For screens without AddLiquidityForm, use simple breakpoints
-      if (windowWidth >= 1200) {
-        setShowFeesCard(true);
-        setShowVolumeCard(true);
-        setShowTvlCard(true);
-      } else if (windowWidth >= 1000) {
-        setShowFeesCard(false);
-        setShowVolumeCard(true);
-        setShowTvlCard(true);
-      } else if (windowWidth >= 800) {
-        setShowFeesCard(false);
-        setShowVolumeCard(false);
-        setShowTvlCard(true);
-      } else {
-        setShowFeesCard(false);
-        setShowVolumeCard(false);
-        setShowTvlCard(false);
-      }
-    } else {
-      // For screens with AddLiquidityForm, start with all visible and let overflow detection handle it
-      setShowFeesCard(true);
-      setShowVolumeCard(true);
-      setShowTvlCard(true);
-    }
-  }, [windowWidth]);
-
-
 
   const processChartDataForScreenSize = useCallback((data: ChartDataPoint[]) => {
     if (!data?.length) return [];
@@ -962,13 +827,13 @@ export default function PoolDetailPage() {
 
   const refetchPositionsOnly = useCallback(async () => {
     try {
-      if (Date.now() < positionsWriteLockRef.current) return;
-      if (!poolId || !isConnected || !accountAddress) return;
+      if (Date.now() < positionsWriteLockRef.current) return null;
+      if (!poolId || !isConnected || !accountAddress) return null;
       const basePoolInfo = getPoolConfiguration(poolId);
-      if (!basePoolInfo) return;
+      if (!basePoolInfo) return null;
       const ids = await loadUserPositionIds(accountAddress);
       const data = await derivePositionsFromIds(accountAddress, ids);
-      if (!Array.isArray(data)) return;
+      if (!Array.isArray(data)) return null;
       const subgraphId = (basePoolInfo.subgraphId || '').toLowerCase();
       const [poolToken0Raw, poolToken1Raw] = basePoolInfo.pair.split(' / ');
       const poolToken0 = poolToken0Raw?.trim().toUpperCase();
@@ -978,20 +843,118 @@ export default function PoolDetailPage() {
         return poolMatch;
       });
       refreshTombstonesFromFetched(filtered as any);
-      setUserPositions(applyTombstones(filtered as any));
+      const updatedPositions = applyTombstones(filtered as any);
+      setUserPositions(updatedPositions);
+      return updatedPositions;
     } catch (e) {
       console.warn('Refetch positions failed', e);
+      return null;
     }
   }, [poolId, isConnected, accountAddress]);
 
-  // Subscribe once to centralized positions refresh events
-  // useEffect(() => {
-  //   if (!isConnected || !accountAddress) return;
-  //   const unsubscribe = prefetchService.addPositionsListener(accountAddress, () => {
-  //     refetchPositionsOnly();
-  //   });
-  //   return unsubscribe;
-  // }, [isConnected, accountAddress, refetchPositionsOnly]); // Temporarily disabled to prevent infinite loops
+  // Backoff refresh for a single position after transaction
+  const backoffRefreshSinglePosition = useCallback(async (positionId: string) => {
+    try {
+      if (!poolId || !isConnected || !accountAddress) return;
+
+      // Prevent rapid position refreshes (cooldown: 5 seconds)
+      const now = Date.now();
+      if (now - lastPositionRefreshRef.current < 5000) {
+        return;
+      }
+      lastPositionRefreshRef.current = now;
+
+      const baseInfo = getPoolConfiguration(poolId);
+      const subId = (baseInfo?.subgraphId || '').toLowerCase();
+      if (!subId) return;
+
+      // Fingerprint function to detect actual changes
+      const fingerprint = (pos: ProcessedPosition) => {
+        try {
+          return JSON.stringify({
+            id: pos.positionId,
+            a0: pos.token0.amount,
+            a1: pos.token1.amount,
+            l: (pos as any)?.liquidity || (pos as any)?.liquidityRaw,
+            lo: pos.tickLower,
+            up: pos.tickUpper
+          });
+        } catch { return ''; }
+      };
+
+      const baseline = userPositions.find(p => p.positionId === positionId);
+      const baselineFp = baseline ? fingerprint(baseline) : '';
+
+      // Set optimistic updating flag
+      setUserPositions(prev => prev.map(p =>
+        p.positionId === positionId
+          ? { ...p, isOptimisticallyUpdating: true }
+          : p
+      ));
+
+      // Retry with backoff: 0ms, 2s, 5s, 10s, 15s
+      const result = await RetryUtility.execute(
+        async () => {
+          if (!accountAddress) throw new Error('Missing account');
+
+          // Use gated loader to avoid stale cache writes
+          const ids = await loadUserPositionIds(accountAddress);
+          const data = await derivePositionsFromIds(accountAddress, ids);
+          const filtered = data.filter((pos: any) =>
+            String(pos?.poolId || '').toLowerCase() === subId
+          );
+
+          const updated = filtered.find(p => p.positionId === positionId);
+          if (!updated) throw new Error('Position not found');
+
+          const nextFp = fingerprint(updated);
+
+          // Only update if data actually changed
+          if (nextFp !== baselineFp) {
+            refreshTombstonesFromFetched(filtered as any);
+            const updatedPositions = applyTombstones(filtered as any);
+            setUserPositions(updatedPositions);
+
+            // Update the modal's selected position if it's open
+            setSelectedPositionForDetails(prev =>
+              prev?.positionId === positionId ? updated : prev
+            );
+
+            return updated; // Success
+          }
+
+          throw new Error('No changes detected yet');
+        },
+        {
+          attempts: 5,
+          backoffStrategy: 'custom',
+          baseDelay: 1000,
+          customDelays: [0, 2000, 5000, 10000, 15000],
+          shouldRetry: (attempt, error) => {
+            return !error.message.includes('Invalid response format');
+          },
+          throwOnFailure: false // Silent failure is ok
+        }
+      );
+
+      // After all attempts, remove optimistic updating flag
+      setUserPositions(prev => prev.map(p =>
+        p.positionId === positionId
+          ? { ...p, isOptimisticallyUpdating: undefined }
+          : p
+      ));
+
+    } catch (error) {
+      console.warn('Backoff refresh failed for position:', positionId, error);
+      // Always clear optimistic flag
+      setUserPositions(prev => prev.map(p =>
+        p.positionId === positionId
+          ? { ...p, isOptimisticallyUpdating: undefined }
+          : p
+      ));
+    }
+  }, [poolId, isConnected, accountAddress, userPositions]);
+
   const onLiquidityBurnedCallback = useCallback(() => {
     if (pendingActionRef.current?.type !== 'burn') return; // ignore stale callback
     toast.success("Position Closed", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
@@ -1015,7 +978,6 @@ export default function PoolDetailPage() {
       // Prevent rapid silent position refreshes (cooldown: 5 seconds)
       const now = Date.now();
       if (now - lastPositionRefreshRef.current < 5000) {
-        console.log('Skipping silent position refresh due to cooldown');
         return;
       }
       lastPositionRefreshRef.current = now;
@@ -1091,7 +1053,6 @@ export default function PoolDetailPage() {
       // Prevent rapid position refreshes (cooldown: 10 seconds)
       const now = Date.now();
       if (now - lastPositionRefreshRef.current < 10000) {
-        console.log('Skipping position refresh due to cooldown');
         return;
       }
       lastPositionRefreshRef.current = now;
@@ -1155,6 +1116,33 @@ export default function PoolDetailPage() {
   // Fetch user positions for this pool and pool stats
   const fetchPageData = useCallback(async (force?: boolean, skipPositions?: boolean, keepLoading?: boolean) => {
     if (!poolId) return;
+    const poolInfo = getPoolConfiguration(poolId);
+    if (!poolInfo) return;
+
+    if (!skipPositions && isConnected && accountAddress) {
+      setIsLoadingPositions(true);
+      (async () => {
+        let allUserPositions: any[] = [];
+        try {
+          const ids = await loadUserPositionIds(accountAddress);
+          allUserPositions = await derivePositionsFromIds(accountAddress, ids);
+        } catch (error) {
+          console.error("Failed to derive user positions:", error);
+          allUserPositions = [];
+        }
+        if (allUserPositions && allUserPositions.length > 0 && poolInfo) {
+          const subgraphId = (poolInfo.subgraphId || '').toLowerCase();
+          const filteredPositions = allUserPositions.filter(pos => String(pos.poolId || '').toLowerCase() === subgraphId);
+          setUserPositions(filteredPositions);
+        } else {
+          setUserPositions([]);
+        }
+        setIsLoadingPositions(false);
+      })();
+    } else if (!skipPositions && (!isConnected || !accountAddress)) {
+      setUserPositions([]);
+      setIsLoadingPositions(false);
+    }
 
     // Only show loading on initial load (when no chart data exists)
     if (apiChartData.length === 0) {
@@ -1290,7 +1278,6 @@ export default function PoolDetailPage() {
         // Map fee events to per-day overlays over the same date domain
         const feeByDate = new Map<string, { ratio: number; ema: number; feePct: number }>();
         const events: any[] = Array.isArray(feeJson) ? feeJson : [];
-        console.log('[PoolPage] Subgraph fee events:', events);
         const evAsc = [...events].sort((a, b) => Number(a?.timestamp || 0) - Number(b?.timestamp || 0));
         const scaleRatio = (val: any): number => {
           const n = typeof val === 'string' ? Number(val) : (typeof val === 'number' ? val : 0);
@@ -1380,10 +1367,10 @@ export default function PoolDetailPage() {
       }
     })();
 
-    const basePoolInfo = getPoolConfiguration(poolId);
-    if (!basePoolInfo) {
-      toast.error("Pool Not Found", { 
-        icon: <OctagonX className="h-4 w-4 text-red-500" />, 
+    const poolInfoLocal = getPoolConfiguration(poolId);
+    if (!poolInfoLocal) {
+      toast.error("Pool Not Found", {
+        icon: <OctagonX className="h-4 w-4 text-red-500" />,
         description: "Pool configuration not found for this ID.",
         action: {
           label: "Open Ticket",
@@ -1395,7 +1382,7 @@ export default function PoolDetailPage() {
     }
 
     // Use the subgraph ID from the pool configuration for API calls
-    const apiPoolIdToUse = basePoolInfo.subgraphId; 
+    const apiPoolIdToUse = poolInfoLocal.subgraphId; 
 
     // Pool state now handled by usePoolState hook at component level
 
@@ -1414,11 +1401,9 @@ export default function PoolDetailPage() {
       }
 
       // Use versioned URL to avoid stale cache
-      console.log('[PoolDetail] Fetching versioned batch for header stats...');
       const versionResponse = await fetch('/api/cache-version', { cache: 'no-store' as any } as any);
       const versionData = await versionResponse.json();
       const resp = await fetch(versionData.cacheUrl);
-      console.log('[PoolDetail] Batch URL', versionData.cacheUrl, 'status', resp.status);
       if (resp.ok) {
         const data = await resp.json();
         const poolIdLc = String(apiPoolIdToUse || '').toLowerCase();
@@ -1446,91 +1431,86 @@ export default function PoolDetailPage() {
       dynamicFeeBps = null;
     }
 
-    const feeRate = (typeof dynamicFeeBps === 'number' && dynamicFeeBps >= 0) ? dynamicFeeBps / 10_000 : 0;
     const vol24 = Number(poolStats?.volume24hUSD || 0);
     const tvlNow = Number(poolStats?.tvlUSD || 0);
+
+    // Calculate 24h fees for display
+    const feeRate = (typeof dynamicFeeBps === 'number' && dynamicFeeBps >= 0) ? dynamicFeeBps / 10_000 : 0;
     const fees24hUSD = vol24 * feeRate;
 
-    // Calculate APY directly: (Daily Fees * 365) / TVL * 100
+    // Fetch 7-day pool metrics for accurate APY calculation (same as range selector)
     let calculatedApr = '0.00%';
-    if (tvlNow > 0 && !isNaN(fees24hUSD) && isFinite(fees24hUSD)) {
-      const annualFees = fees24hUSD * 365;
-      const apy = (annualFees / tvlNow) * 100;
-      
-      // Format APY
-      if (isNaN(apy) || !isFinite(apy)) {
-        calculatedApr = '0.00%';
-      } else if (apy >= 1000) {
-        calculatedApr = `~${Math.round(apy)}%`;
-      } else if (apy >= 100) {
-        calculatedApr = `~${apy.toFixed(0)}%`;
-      } else if (apy >= 10) {
-        calculatedApr = `~${apy.toFixed(1)}%`;
-      } else if (apy > 0) {
-        calculatedApr = `~${apy.toFixed(2)}%`;
-      } else {
-        calculatedApr = '0.00%';
+    try {
+      const metricsResponse = await fetch('/api/liquidity/pool-metrics', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ poolId, days: 7 })
+      });
+
+      if (metricsResponse.ok) {
+        const metricsData = await metricsResponse.json();
+        const { totalFeesToken0, avgTVLToken0, days } = metricsData.metrics || {};
+
+        if (avgTVLToken0 && avgTVLToken0 > 0 && days > 0) {
+          // Calculate APY from 7-day data: (Daily Fees * 365) / TVL * 100
+          const feesPerDay = totalFeesToken0 / days;
+          const annualFees = feesPerDay * 365;
+          const apy = (annualFees / avgTVLToken0) * 100;
+
+          // Format APY
+          if (isNaN(apy) || !isFinite(apy)) {
+            calculatedApr = '0.00%';
+          } else if (apy >= 1000) {
+            calculatedApr = `${Math.round(apy)}%`;
+          } else if (apy >= 100) {
+            calculatedApr = `${apy.toFixed(0)}%`;
+          } else if (apy >= 10) {
+            calculatedApr = `${apy.toFixed(1)}%`;
+          } else if (apy > 0) {
+            calculatedApr = `${apy.toFixed(2)}%`;
+          } else {
+            calculatedApr = '0.00%';
+          }
+        }
       }
+    } catch (e) {
+      console.error('Failed to fetch pool metrics for APY:', e);
+      calculatedApr = '0.00%';
     }
 
     const combinedPoolData = {
-        ...basePoolInfo,
+        ...poolInfo,
         ...(poolStats || {}),
         apr: calculatedApr,
         dynamicFeeBps: dynamicFeeBps,
         tickSpacing: getPoolById(poolId)?.tickSpacing || DEFAULT_TICK_SPACING,
-        volume24h: isFinite(vol24) ? formatUSD(vol24) : basePoolInfo.volume24h,
-        fees24h: isFinite(fees24hUSD) ? formatUSD(fees24hUSD) : basePoolInfo.fees24h,
-        liquidity: isFinite(tvlNow) ? formatUSD(tvlNow) : basePoolInfo.liquidity,
+        volume24h: isFinite(vol24) ? formatUSD(vol24) : poolInfo.volume24h,
+        fees24h: isFinite(fees24hUSD) ? formatUSD(fees24hUSD) : poolInfo.fees24h,
+        liquidity: isFinite(tvlNow) ? formatUSD(tvlNow) : poolInfo.liquidity,
         highlighted: false,
     } as PoolDetailData;
 
+    // Set pool data immediately
     setCurrentPoolData(combinedPoolData);
-    if (!skipPositions && isConnected && accountAddress) {
-      setIsLoadingPositions(true);
-      let allUserPositions: any[] = [];
-      try {
-        const ids = await loadUserPositionIds(accountAddress);
-        allUserPositions = await derivePositionsFromIds(accountAddress, ids);
-      } catch (error) {
-        console.error("Failed to derive user positions:", error);
-        allUserPositions = [];
-      }
-
-      if (allUserPositions && allUserPositions.length > 0) {
-        const subgraphId = (basePoolInfo.subgraphId || '').toLowerCase();
-        const filteredPositions = allUserPositions.filter(pos => String(pos.poolId || '').toLowerCase() === subgraphId);
-        setUserPositions(filteredPositions);
-      } else {
-        setUserPositions([]);
-      }
-      setIsLoadingPositions(false);
-    } else if (!skipPositions && (!isConnected || !accountAddress)) {
-      setUserPositions([]);
-      setIsLoadingPositions(false);
-    }
   }, [poolId, isConnected, accountAddress, router]);
 
   // Simple refresh function that adds skeleton and starts aggressive position polling
   const refreshAfterLiquidityAddedWithSkeleton = useCallback(async (token0Symbol?: string, token1Symbol?: string) => {
-    console.log(`[SKELETON] refreshAfterLiquidityAddedWithSkeleton called with tokens:`, token0Symbol, token1Symbol);
-    
     // Prevent duplicate calls within 2 seconds
     const now = Date.now();
     const timeSinceLastCall = now - (refreshAfterLiquidityAddedWithSkeleton as any).lastCallTime;
     if ((refreshAfterLiquidityAddedWithSkeleton as any).lastCallTime && timeSinceLastCall < 2000) {
-      console.log(`[SKELETON] SKIPPED - duplicate call within ${timeSinceLastCall}ms`);
       return;
     }
     (refreshAfterLiquidityAddedWithSkeleton as any).lastCallTime = now;
-    
+
     // 1. Immediately add skeleton if we have token info
     if (token0Symbol && token1Symbol) {
       const skeletonId = `skeleton-${Date.now()}`;
       const createdAt = Date.now();
       // Capture current baseline at the time of skeleton creation, not at callback creation
       const currentBaselineIds = userPositions.map(p => p.positionId);
-      
+
       setPendingNewPositions(prev => {
         const newSkeletons = [...prev, {
           id: skeletonId,
@@ -1539,7 +1519,6 @@ export default function PoolDetailPage() {
           createdAt,
           baselineIds: currentBaselineIds
         }];
-        console.log(`[SKELETON] ADDED skeleton ${skeletonId}. Total skeletons: ${prev.length} -> ${newSkeletons.length}`);
         return newSkeletons;
       });
     }
@@ -1568,41 +1547,34 @@ export default function PoolDetailPage() {
       
       const pollForNewPositions = async (): Promise<boolean> => {
         attempts++;
-        console.log(`[AggressiveRefresh] Attempt ${attempts}/${maxAttempts}`);
-        
+
         try {
           // Force fresh cache invalidation each attempt
           invalidateUserPositionIdsCache(accountAddress);
-          
+
           // Load fresh position IDs
           const ids = await loadUserPositionIds(accountAddress);
-          console.log(`[AggressiveRefresh] Loaded ${ids.length} position IDs`);
-          
+
           // Derive position data
           const allDerived = await derivePositionsFromIds(accountAddress, ids);
           const filtered = allDerived.filter((pos: any) => String(pos.poolId || '').toLowerCase() === subId);
-          
-          console.log(`[AggressiveRefresh] Found ${filtered.length} positions for pool (baseline: ${baselineCount})`);
-          
+
           // Success condition: we have MORE positions than baseline OR we have validated new position data
           const hasNewPosition = filtered.length > baselineCount;
-          const hasValidatedNewPosition = filtered.some(p => 
+          const hasValidatedNewPosition = filtered.some(p =>
             !userPositions.some(existing => existing.positionId === p.positionId) &&
-            p.token0?.amount !== undefined && 
+            p.token0?.amount !== undefined &&
             p.token1?.amount !== undefined &&
-            p.tickLower !== undefined && 
+            p.tickLower !== undefined &&
             p.tickUpper !== undefined
           );
-          
+
           if (hasNewPosition || hasValidatedNewPosition) {
-            console.log(`[AggressiveRefresh] SUCCESS: Found new position!`);
             setUserPositions(filtered);
-            // Clear skeletons immediately when we have real data
-            console.log(`[SKELETON] CLEARED by AggressiveRefresh - found new positions`);
             setPendingNewPositions([]);
             return true;
           }
-          
+
           return false;
         } catch (error) {
           console.warn(`[AggressiveRefresh] Attempt ${attempts} failed:`, error);
@@ -1622,14 +1594,10 @@ export default function PoolDetailPage() {
       }
       
       // Fallback: clear skeletons even if we didn't find new positions
-      console.warn(`[AggressiveRefresh] Max attempts reached, clearing skeletons anyway`);
-      console.log(`[SKELETON] CLEARED by AggressiveRefresh - max attempts reached`);
       setPendingNewPositions([]);
-      
+
     } catch (error) {
       console.error('[AggressiveRefresh] Complete failure:', error);
-      // Always clear skeletons on complete failure
-      console.log(`[SKELETON] CLEARED by AggressiveRefresh - complete failure`);
       setPendingNewPositions([]);
     }
   }, [poolId, isConnected, accountAddress, userPositions]);
@@ -1645,38 +1613,29 @@ export default function PoolDetailPage() {
 
   // Simple fetch wrapper - no more complex backoff logic
   const fetchWithBackoffIfNeeded = async (force?: boolean, skipPositions?: boolean) => {
-    await fetchPageData(force, skipPositions);
+    await fetchPageData(true, skipPositions);
   };
 
   const refreshAfterMutation = useCallback(async (info?: { txHash?: `0x${string}`; blockNumber?: bigint }) => {
     // This function orchestrates the entire post-transaction refresh sequence.
-    console.log('[DEBUG] refreshAfterMutation called with info:', info);
-    
     if (!poolId || !isConnected || !accountAddress) {
-      console.log('[DEBUG] refreshAfterMutation skipped - missing requirements:', { poolId, isConnected, accountAddress });
       return;
     }
 
     try {
-      console.log('[DEBUG] Starting refresh sequence...');
       const targetBlock = info?.blockNumber ?? await publicClient.getBlockNumber();
-      console.log('[DEBUG] Waiting for subgraph block:', targetBlock);
-      
+
       const barrier = waitForSubgraphBlock(Number(targetBlock), { timeoutMs: 45000, minWaitMs: 3000, maxIntervalMs: 3000 });
       if (accountAddress) setIndexingBarrier(accountAddress, barrier);
       await barrier;
-      console.log('[DEBUG] Subgraph block reached, proceeding with refresh');
-      
+
       // Additional delay to ensure subgraph has fully processed the transaction
-      console.log('[DEBUG] Adding extra delay for subgraph processing...');
       await new Promise(resolve => setTimeout(resolve, 2000));
 
       // Trigger server revalidation
-      try { 
-        console.log('[DEBUG] Triggering server revalidation...');
+      try {
         const revalidateResp = await fetch('/api/internal/revalidate-pools', { method: 'POST' });
         const revalidateData = await revalidateResp.json();
-        console.log('[refreshAfterMutation] Server cache revalidated:', revalidateData);
         
         // Store cache version for subsequent fetches
         if (revalidateData.cacheVersion) {
@@ -1690,35 +1649,28 @@ export default function PoolDetailPage() {
       }
 
       // Refresh pool data (TVL, fees) - critical for withdrawals
-      console.log('[DEBUG] Refreshing pool data...');
       await fetchWithBackoffIfNeeded(true, false); // Force refresh, include positions
 
       // Canonical positions refresh: invalidate and fetch fresh ids
       if (accountAddress) {
-        console.log('[DEBUG] Refreshing user positions...');
         invalidateUserPositionIdsCache(accountAddress);
         const ids = await loadUserPositionIds(accountAddress);
-        console.log('[DEBUG] Loaded position IDs:', ids);
         const allDerived = await derivePositionsFromIds(accountAddress, ids);
-        console.log('[DEBUG] Derived positions:', allDerived.length);
         const subId = (getPoolConfiguration(poolId)?.subgraphId || '').toLowerCase();
         const filtered = allDerived.filter((pos: any) => String(pos.poolId || '').toLowerCase() === subId);
-        console.log('[DEBUG] Filtered positions for pool:', filtered.length);
         setUserPositions(filtered);
       }
-      
+
       // Clear any optimistic loading states
       setUserPositions(prev => prev.map(p => ({ ...p, isOptimisticallyUpdating: undefined })));
-      
+
       // Clear optimistically cleared fees since fresh data has been loaded
       setOptimisticallyClearedFees(new Set());
-      
+
       // Notify other components/pages of position changes
       if (accountAddress) {
         prefetchService.notifyPositionsRefresh(accountAddress, 'liquidity-withdrawn');
       }
-      
-      console.log('[DEBUG] Refresh sequence completed successfully');
       
     } catch (error) {
       console.error('[refreshAfterMutation] failed:', error);
@@ -1768,81 +1720,60 @@ export default function PoolDetailPage() {
 
   // Refresh for position increases - similar to withdrawal with longer delays and fee clearing
   const refreshAfterIncrease = useCallback(async (info?: { txHash?: `0x${string}`; blockNumber?: bigint }) => {
-    console.log('[DEBUG] refreshAfterIncrease called with info:', info);
     if (!poolId || !isConnected || !accountAddress) return;
 
     try {
-      console.log('[DEBUG] Starting refresh sequence...');
       const targetBlock = info?.blockNumber ?? await publicClient.getBlockNumber();
-      console.log('[DEBUG] Waiting for subgraph block:', targetBlock);
-      
+
       const barrier = waitForSubgraphBlock(Number(targetBlock), { timeoutMs: 45000, minWaitMs: 3000, maxIntervalMs: 3000 });
       if (accountAddress) setIndexingBarrier(accountAddress, barrier);
       await barrier;
-      console.log('[DEBUG] Subgraph block reached, proceeding with refresh');
-      
+
       // Additional delay to ensure subgraph has fully processed the transaction
-      console.log('[DEBUG] Adding extra delay for subgraph processing...');
       await new Promise(resolve => setTimeout(resolve, 2000));
 
       // Trigger server revalidation
-      try { 
-        console.log('[DEBUG] Triggering server revalidation...');
+      try {
         const revalidateResp = await fetch('/api/internal/revalidate-pools', { method: 'POST' });
         const revalidateData = await revalidateResp.json();
-        console.log('[DEBUG] Server cache revalidated:', revalidateData);
         
         if (revalidateData.cacheVersion) {
           SafeStorage.set('pools-cache-version', revalidateData.cacheVersion.toString());
         }
         SafeStorage.set('cache:pools-batch:invalidated', 'true');
       } catch (error) {
-        console.error('[DEBUG] Failed to revalidate server cache:', error);
+        console.error('[refreshAfterIncrease] Failed to revalidate server cache:', error);
       }
 
-      console.log('[DEBUG] Refreshing pool data...');
       await fetchWithBackoffIfNeeded(true, false); // Force refresh, include positions
-      
+
       // Refresh user positions to get updated data including fees
       if (accountAddress) {
-        console.log('[DEBUG] Refreshing user positions...');
         invalidateUserPositionIdsCache(accountAddress);
         const refreshedIds = await loadUserPositionIds(accountAddress);
-        console.log('[DEBUG] Loaded position IDs:', refreshedIds);
         if (refreshedIds && refreshedIds.length > 0) {
           const allDerived = await derivePositionsFromIds(accountAddress, refreshedIds);
-          console.log('[DEBUG] All derived positions:', allDerived.length);
           const subId = poolId.toLowerCase();
-          console.log('[DEBUG] Filtering for poolId:', subId);
           const filtered = allDerived.filter((pos: any) => {
             const posPoolId = String(pos.poolId || '').toLowerCase();
-            console.log('[DEBUG] Position poolId:', posPoolId, 'matches:', posPoolId === subId);
             return posPoolId === subId;
           });
-          console.log('[DEBUG] Filtered positions for pool:', filtered.length);
           if (filtered.length > 0) {
             setUserPositions(filtered);
-          } else {
-            console.warn('[DEBUG] No positions found after filtering, keeping existing positions');
-            // Don't clear positions if no new ones are found
           }
-        } else {
-          console.warn('[DEBUG] No position IDs loaded, keeping existing positions');
         }
       }
-      
+
       // Clear any optimistic loading states
       setUserPositions(prev => prev.map(p => ({ ...p, isOptimisticallyUpdating: undefined })));
-      
+
       // Clear optimistically cleared fees since fresh data has been loaded
       setOptimisticallyClearedFees(new Set());
-      
+
       // Notify other components/pages of position changes
       if (accountAddress) {
         prefetchService.notifyPositionsRefresh(accountAddress, 'liquidity-added');
       }
-      
-      console.log('[DEBUG] Refresh sequence completed successfully');
       
     } catch (error) {
       console.error('[refreshAfterIncrease] failed:', error);
@@ -1857,24 +1788,16 @@ export default function PoolDetailPage() {
 
   const handledIncreaseHashRef = useRef<string | null>(null);
   const onLiquidityIncreasedCallback = useCallback((info?: { txHash?: `0x${string}`; blockNumber?: bigint, increaseAmounts?: { amount0: string; amount1: string } }) => {
-    console.log('[DEBUG] onLiquidityIncreasedCallback called:', { 
-      pendingActionType: pendingActionRef.current?.type, 
-      txHash: info?.txHash?.slice(0, 10) + '...',
-      hasIncreaseAmounts: !!info?.increaseAmounts 
-    });
     // Require valid hash to proceed and prevent duplicates
     if (!info?.txHash) {
-      console.log('[DEBUG] Skipping - missing txHash');
       return;
     }
     if (handledIncreaseHashRef.current === info.txHash) {
-      console.log('[DEBUG] Skipping - already handled this txHash');
       return;
     }
     handledIncreaseHashRef.current = info.txHash;
 
     if (pendingActionRef.current?.type !== 'increase') {
-      console.log('[DEBUG] Skipping - not increase type');
       return;
     }
 
@@ -1926,33 +1849,24 @@ export default function PoolDetailPage() {
     }
 
     // Show toast immediately but let Success View handle modal closure
-    console.log('[DEBUG] Transaction successful, triggering immediate refetch');
     // Toast is shown by useIncreaseLiquidity hook already - don't duplicate
     // IMMEDIATE refetch for increases - fees are critical and must be fresh
-    console.log('[DEBUG] onLiquidityIncreasedCallback: Triggering immediate refetch after increase');
-    console.log('[DEBUG] onLiquidityIncreasedCallback: Info passed to refreshAfterIncrease:', info);
     refreshAfterIncrease(info);
     pendingActionRef.current = null; // Moved here to ensure it's cleared AFTER refresh logic
   }, [refreshAfterIncrease, positionToModify]);
-  
+
   const handledDecreaseHashRef = useRef<string | null>(null);
   const onLiquidityDecreasedCallback = useCallback((info?: { txHash?: `0x${string}`; blockNumber?: bigint; isFullBurn?: boolean }) => {
-    console.log('[DEBUG] onLiquidityDecreasedCallback called with info:', info);
-    console.log('[DEBUG] pendingActionRef.current:', pendingActionRef.current);
-    
     // Require a valid tx hash and dedupe by hash to support rapid successive burns
     if (!info?.txHash) {
-      console.log('[DEBUG] No txHash provided, skipping callback');
       return;
     }
     if (handledDecreaseHashRef.current === info.txHash) {
-      console.log('[DEBUG] Hash already handled, skipping:', info.txHash);
       return;
     }
     handledDecreaseHashRef.current = info.txHash;
 
     if (pendingActionRef.current?.type !== 'decrease' && pendingActionRef.current?.type !== 'withdraw') {
-      console.log('[DEBUG] Wrong pending action type, skipping. Expected: decrease/withdraw, Got:', pendingActionRef.current?.type);
       return;
     }
 
@@ -1998,16 +1912,10 @@ export default function PoolDetailPage() {
     pendingActionRef.current = null;
 
     // IMMEDIATE refetch for withdrawals - fees are critical and must be fresh
-    console.log('[DEBUG] onLiquidityDecreasedCallback: Triggering immediate refetch after withdrawal');
-    console.log('[DEBUG] onLiquidityDecreasedCallback: Info passed to refreshAfterMutation:', info);
     refreshAfterMutation(info);
   }, [isFullBurn, refreshAfterMutation, positionToBurn, calculatePositionUsd, currentPoolData]);
 
   // Initialize the liquidity modification hooks (moved here after callback definitions)
-  const { burnLiquidity, isLoading: isBurningLiquidity } = useBurnLiquidity({
-    onLiquidityBurned: onLiquidityBurnedCallback
-  });
-
   const { increaseLiquidity, isLoading: isIncreasingLiquidity, isSuccess: isIncreaseSuccess, hash: increaseTxHash, reset: resetIncreaseLiquidity } = useIncreaseLiquidity({
     onLiquidityIncreased: onLiquidityIncreasedCallback,
   });
@@ -2038,7 +1946,6 @@ export default function PoolDetailPage() {
   // Reset transaction states when increase modal opens to prevent stale state
   useEffect(() => {
     if (showIncreaseModal) {
-      console.log('[DEBUG] Increase modal opened, resetting transaction states');
       resetIncreaseLiquidity();
     }
   }, [showIncreaseModal, resetIncreaseLiquidity]);
@@ -2048,7 +1955,7 @@ export default function PoolDetailPage() {
     if (pendingNewPositions.length === 0) return;
 
     // Find the oldest pending skeleton
-    const oldestSkeleton = pendingNewPositions.reduce((oldest, current) => 
+    const oldestSkeleton = pendingNewPositions.reduce((oldest, current) =>
       current.createdAt < oldest.createdAt ? current : oldest
     );
 
@@ -2056,7 +1963,6 @@ export default function PoolDetailPage() {
     const age = Date.now() - oldestSkeleton.createdAt;
     if (age > 20000) { // 20 seconds
       console.warn('[SkeletonBackup] Clearing stale skeletons after 20s timeout');
-      console.log(`[SKELETON] CLEARED by backup timeout (20s)`);
       setPendingNewPositions([]);
     }
   }, [pendingNewPositions]);
@@ -2139,11 +2045,6 @@ export default function PoolDetailPage() {
     }
     setPositionToModify(position);
     setShowIncreaseModal(true);
-    
-    // TODO: Implement menu close callback when modal architecture supports it
-    // if (onModalClose) {
-    //   setMenuCloseCallback(() => onModalClose);
-    // }
   };
 
   // Handle decrease position
@@ -2329,8 +2230,6 @@ export default function PoolDetailPage() {
       try {
         // For out-of-range positions, allow single-token withdrawal
         if (!positionToModify.isInRange) {
-          console.log("Position is out of range, using single-token withdrawal approach");
-          
           const maxAmount0 = parseFloat(positionToModify.token0.amount);
           const maxAmount1 = parseFloat(positionToModify.token1.amount);
           const inputAmountNum = parseFloat(inputAmount);
@@ -2483,43 +2382,39 @@ export default function PoolDetailPage() {
   };
 
 
-  // Early return for loading state AFTER all hooks have been called
-  if (!poolId || !currentPoolData) return (
-      <AppLayout>
-        <div className="flex flex-1 justify-center items-center p-6">
-          <Image 
-            src="/LogoIconWhite.svg" 
-            alt="Loading..." 
-            width={48}
-            height={48}
-            className="animate-pulse opacity-75"
-          />
-        </div>
-      </AppLayout>
-    );
+  // Early return only if pool config doesn't exist (invalid poolId)
+  if (!currentPoolData) return (
+    <AppLayout>
+      <div className="flex flex-1 justify-center items-center p-6">
+        <Image
+          src="/LogoIconWhite.svg"
+          alt="Loading..."
+          width={48}
+          height={48}
+          className="animate-pulse opacity-75"
+        />
+      </div>
+    </AppLayout>
+  );
 
   
 
   return (
     <AppLayout>
       <div className="flex flex-1 flex-col">
-        <div className="flex flex-1 flex-col p-3 sm:p-6 sm:px-10 max-w-full overflow-hidden">
+        <div className="flex flex-1 flex-col p-3 sm:p-6 max-w-full overflow-hidden">
 
           
           {/* Main content area with two columns (row layout only at >=1500px) */}
           <div className="flex flex-col min-[1500px]:flex-row gap-6 min-w-0 max-w-full overflow-hidden">
             {/* Left Column: Header + Graph (flexible, takes remaining space) */}
-            <div ref={leftColumnRef} className="flex-1 min-w-0 flex flex-col space-y-3">
+            <div className="flex-1 min-w-0 flex flex-col space-y-3">
           {/* Header: Token info container + Stats in dotted container */}
           <div className="mt-3 sm:mt-0">
-            {windowWidth < 768 ? (
-              <div className="space-y-3 overflow-x-hidden mb-2">
+            {/* Mobile layout < 768px */}
+            <div className="md:hidden space-y-3 overflow-x-hidden mb-2">
                 {/* Identification above for mobile */}
-                <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 cursor-pointer"
-                     onClick={() => router.push('/liquidity')}
-                     role="button"
-                     tabIndex={0}
-                     onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); router.push('/liquidity'); } }}>
+                <Link href="/liquidity" className="rounded-lg bg-muted/30 border border-sidebar-border/60 cursor-pointer block">
                   <div className="px-4 py-3 flex items-center w-full">
                     <div className="flex items-center gap-1 min-w-0">
                       <ChevronLeft className="h-4 w-4 text-muted-foreground mr-1 flex-shrink-0" />
@@ -2538,13 +2433,13 @@ export default function PoolDetailPage() {
                           <span className="font-medium mb-0.5 truncate">{currentPoolData.pair}</span>
                           <div className="flex items-center gap-3">
                             {(getPoolById(poolId)?.type || currentPoolData?.type) && (
-                              <span className="px-1.5 py-0.5 text-xs font-normal rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-muted-foreground" style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}>
+                              <span className="px-1.5 py-0.5 text-xs font-normal rounded-md border border-sidebar-border bg-button text-muted-foreground" style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}>
                                 {getPoolById(poolId)?.type || (currentPoolData as any)?.type}
                               </span>
                             )}
                             <span className="text-xs text-muted-foreground">
                               {(() => {
-                                if (currentPoolData.dynamicFeeBps === undefined) return "Loading...";
+                                if (currentPoolData.dynamicFeeBps === undefined) return <span className="inline-block h-3 w-12 bg-muted/60 rounded animate-pulse" />;
                                 const pct = (currentPoolData.dynamicFeeBps as number) / 100;
                                 const formatted = pct < 0.1 ? pct.toFixed(3) : pct.toFixed(2);
                                 return `${formatted}%`;
@@ -2555,7 +2450,7 @@ export default function PoolDetailPage() {
                       </div>
                     </div>
                   </div>
-                </div>
+                </Link>
                 {/* Dotted container grid 2x2 */}
                 <div className="rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 p-4 mb-2 w-full">
                   <div className="grid grid-cols-2 gap-3">
@@ -2564,47 +2459,88 @@ export default function PoolDetailPage() {
                       <div className="flex items-center justify-between px-4 h-9">
                         <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">VOLUME (24H)</h2>
                       </div>
-                      <div className="px-4 py-1"><div className="text-lg font-medium truncate">{currentPoolData.volume24h}</div></div>
+                      <div className="px-4 py-1">
+                        <div className="text-lg font-medium truncate">
+                          {currentPoolData.volume24h === "Loading..." ? (
+                            <span className="inline-block h-5 w-20 bg-muted/60 rounded animate-pulse" />
+                          ) : (
+                            currentPoolData.volume24h
+                          )}
+                        </div>
+                      </div>
                     </div>
                     {/* Fees */}
                     <div className="rounded-lg bg-muted/30 border border-sidebar-border/60">
                       <div className="flex items-center justify-between px-4 h-9">
                         <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">FEES (24H)</h2>
                       </div>
-                      <div className="px-4 py-1"><div className="text-lg font-medium truncate">{currentPoolData.fees24h}</div></div>
+                      <div className="px-4 py-1">
+                        <div className="text-lg font-medium truncate">
+                          {currentPoolData.fees24h === "Loading..." ? (
+                            <span className="inline-block h-5 w-20 bg-muted/60 rounded animate-pulse" />
+                          ) : (
+                            currentPoolData.fees24h
+                          )}
+                        </div>
+                      </div>
                     </div>
                     {/* TVL */}
                     <div className="rounded-lg bg-muted/30 border border-sidebar-border/60">
                       <div className="flex items-center justify-between px-4 h-9">
                         <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">TVL</h2>
                       </div>
-                      <div className="px-4 py-1"><div className="text-lg font-medium truncate">{currentPoolData.liquidity}</div></div>
+                      <div className="px-4 py-1">
+                        <div className="text-lg font-medium truncate">
+                          {currentPoolData.liquidity === "Loading..." ? (
+                            <span className="inline-block h-5 w-20 bg-muted/60 rounded animate-pulse" />
+                          ) : (
+                            currentPoolData.liquidity
+                          )}
+                        </div>
+                      </div>
                     </div>
                     {/* APY */}
-                    <div className="rounded-lg bg-muted/30 border border-sidebar-border/60">
-                      <div className="flex items-center justify-between px-4 h-9">
-                        <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">APY</h2>
-                      </div>
-                      <div className="px-4 py-1"><div className="text-lg font-medium truncate">{currentPoolData.apr}</div></div>
-                    </div>
+                    <UITooltipProvider delayDuration={0}>
+                      <UITooltip>
+                        <UITooltipTrigger asChild>
+                          <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 cursor-default">
+                            <div className="flex items-center justify-between px-4 h-9">
+                              <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">APY</h2>
+                            </div>
+                            <div className="px-4 py-1">
+                              <div className="text-lg font-medium truncate">
+                                {currentPoolData.apr === "Loading..." ? (
+                                  <span className="inline-block h-5 w-20 bg-muted/60 rounded animate-pulse" />
+                                ) : (
+                                  currentPoolData.apr
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </UITooltipTrigger>
+                        <UITooltipContent side="bottom" sideOffset={6} className="px-2 py-1 text-xs">
+                          <div className="font-medium text-foreground">Average over last 7 days</div>
+                        </UITooltipContent>
+                      </UITooltip>
+                    </UITooltipProvider>
                   </div>
                 </div>
               </div>
-            ) : (
-                  <div ref={topBarRef} className="rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 p-4 mb-3 w-full overflow-hidden">
-                    <div className="flex items-stretch gap-3 min-w-0 overflow-x-auto">
+            {/* Desktop layout >= 768px */}
+            <div className="hidden md:block">
+                  <div className="rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 p-4 mb-3 w-full">
+                    <div className="flex items-stretch gap-3 min-w-0">
                       {/* Back arrow square */}
-                      <div className="flex-shrink-0 rounded-lg bg-muted/30 border border-sidebar-border/60 hover:border-white/30 transition-colors cursor-pointer flex items-center justify-center"
+                      <Link
+                        href="/liquidity"
+                        className="flex-shrink-0 rounded-lg bg-muted/30 border border-sidebar-border/60 hover:border-white/30 transition-colors cursor-pointer flex items-center justify-center"
                         style={{ width: '74px', height: '74px', minWidth: '74px', minHeight: '74px' }}
-                        onClick={() => router.push('/liquidity')}
-                        role="button"
-                        tabIndex={0}
-                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); router.push('/liquidity'); } }}>
+                      >
                         <ChevronLeft className="h-5 w-5 text-muted-foreground" />
-                      </div>
+                      </Link>
 
                       {/* Token info container inside dotted container */}
-                      <div ref={tokenInfoRef} className="min-w-0 basis-0 flex-1 overflow-hidden rounded-lg bg-muted/30 border border-sidebar-border/60">
+                      <div className="min-w-0 basis-0 flex-1 overflow-hidden rounded-lg bg-muted/30 border border-sidebar-border/60">
                         <div className="px-4 py-3 flex items-center w-full min-w-0">
                           <div className="flex items-center gap-1 min-w-0 flex-1">
                             <div className="relative w-16 h-8 mr-0.5 flex-shrink-0">
@@ -2625,7 +2561,7 @@ export default function PoolDetailPage() {
                                 <UITooltipProvider delayDuration={0}>
                                   <UITooltip>
                                     <UITooltipTrigger asChild>
-                                      <span className="px-1.5 py-0.5 text-xs font-normal rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-muted-foreground flex-shrink-0 cursor-default" style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}>
+                                      <span className="px-1.5 py-0.5 text-xs font-normal rounded-md border border-sidebar-border bg-button text-muted-foreground flex-shrink-0 cursor-default" style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}>
                                         {getPoolById(poolId)?.type || (currentPoolData as any)?.type}
                                       </span>
                                     </UITooltipTrigger>
@@ -2639,38 +2575,29 @@ export default function PoolDetailPage() {
                               {/* Divider */}
                               <div className="h-3 w-px bg-border flex-shrink-0" />
 
-                              {/* Feature indicator square */}
+                              {/* Dynamic Fee indicator with percentage */}
                               <UITooltipProvider delayDuration={0}>
                                 <UITooltip>
                                   <UITooltipTrigger asChild>
-                                    <div
-                                      className="flex-shrink-0 rounded-md bg-sidebar-primary/10 border border-sidebar-border flex items-center justify-center cursor-pointer hover:bg-sidebar-primary/20 transition-colors"
-                                      style={{ width: '20px', height: '20px', minWidth: '20px', minHeight: '20px' }}
-                                      onClick={() => setIsDynamicFeeModalOpen(true)}
-                                    >
-                                      <Image src="/Dynamic Fee.svg" alt="Dynamic Fee" width={12} height={12} />
+                                    <div className="flex items-center gap-1.5 cursor-pointer" onClick={() => setIsDynamicFeeModalOpen(true)}>
+                                      <div
+                                        className="flex-shrink-0 rounded-md bg-sidebar-primary/10 border border-sidebar-border flex items-center justify-center hover:bg-sidebar-primary/20 transition-colors"
+                                        style={{ width: '20px', height: '20px', minWidth: '20px', minHeight: '20px' }}
+                                      >
+                                        <Image src="/Dynamic Fee.svg" alt="Dynamic Fee" width={12} height={12} />
+                                      </div>
+                                      <span className="text-xs text-muted-foreground flex-shrink-0">
+                                        {(() => {
+                                          if (currentPoolData.dynamicFeeBps === undefined) return <span className="inline-block h-3 w-12 bg-muted/60 rounded animate-pulse" />;
+                                          const pct = (currentPoolData.dynamicFeeBps as number) / 100;
+                                          const formatted = pct < 0.1 ? pct.toFixed(3) : pct.toFixed(2);
+                                          return `${formatted}%`;
+                                        })()}
+                                      </span>
                                     </div>
                                   </UITooltipTrigger>
                                   <UITooltipContent side="bottom" sideOffset={6} className="px-2 py-1 text-xs">
                                     <div className="font-medium text-foreground">Dynamic Fee</div>
-                                  </UITooltipContent>
-                                </UITooltip>
-                              </UITooltipProvider>
-
-                              <UITooltipProvider delayDuration={0}>
-                                <UITooltip>
-                                  <UITooltipTrigger asChild>
-                                    <span className="text-xs text-muted-foreground flex-shrink-0 cursor-default">
-                                      {(() => {
-                                        if (currentPoolData.dynamicFeeBps === undefined) return "Loading...";
-                                        const pct = (currentPoolData.dynamicFeeBps as number) / 100;
-                                        const formatted = pct < 0.1 ? pct.toFixed(3) : pct.toFixed(2);
-                                        return `${formatted}%`;
-                                      })()}
-                                    </span>
-                                  </UITooltipTrigger>
-                                  <UITooltipContent side="bottom" sideOffset={6} className="px-2 py-1 text-xs">
-                                    <div className="font-medium text-foreground">Current Fee</div>
                                   </UITooltipContent>
                                 </UITooltip>
                               </UITooltipProvider>
@@ -2684,75 +2611,102 @@ export default function PoolDetailPage() {
                   {/* Vertical divider */}
                       <div className="w-0 border-l border-dashed border-sidebar-border/60 self-stretch mx-1 flex-shrink-0" />
 
-                  {/* Volume */}
-                  {showVolumeCard && (
-                        <div
-                          className="w-[160px] flex-shrink-0 rounded-lg bg-muted/30 border border-sidebar-border/60 hover:border-white/30 transition-colors cursor-pointer"
-                          onClick={() => setActiveChart('volume')}
-                          role="button"
-                          tabIndex={0}
-                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActiveChart('volume'); } }}
-                        >
-                          <div className="flex items-center justify-between px-3 h-9">
-                            <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">VOLUME (24H)</h2>
-                          </div>
-                          <div className="px-3 py-1">
-                            <div className="text-lg font-medium truncate">{currentPoolData.volume24h}</div>
-                          </div>
-                        </div>
-                  )}
-
-                  {/* Fees */}
-                  {showFeesCard && (
-                        <div className="w-[160px] flex-shrink-0 rounded-lg bg-muted/30 border border-sidebar-border/60">
-                          <div className="flex items-center justify-between px-3 h-9">
-                        <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">FEES (24H)</h2>
-                      </div>
-                          <div className="px-3 py-1">
-                        <div className="text-lg font-medium truncate">{currentPoolData.fees24h}</div>
-                      </div>
+                  {/* Volume - Show at: >= 1100px when no AddLiqForm, >= 1700px when AddLiqForm visible */}
+                  <div
+                    className="w-[160px] flex-shrink-0 rounded-lg bg-muted/30 border border-sidebar-border/60 hover:border-white/30 transition-colors cursor-pointer hidden min-[1100px]:max-[1499px]:block min-[1700px]:block"
+                    onClick={() => setActiveChart('volume')}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActiveChart('volume'); } }}
+                  >
+                    <div className="flex items-center justify-between px-3 h-9">
+                      <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">VOLUME (24H)</h2>
                     </div>
-                  )}
-
-                  {/* TVL */}
-                  {showTvlCard && (
-                        <div
-                          className="w-[160px] flex-shrink-0 rounded-lg bg-muted/30 border border-sidebar-border/60 hover:border-white/30 transition-colors cursor-pointer"
-                          onClick={() => setActiveChart('tvl')}
-                          role="button"
-                          tabIndex={0}
-                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActiveChart('tvl'); } }}
-                        >
-                          <div className="flex items-center justify-between px-3 h-9">
-                            <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">TVL</h2>
-                          </div>
-                          <div className="px-3 py-1">
-                            <div className="text-lg font-medium truncate">{currentPoolData.liquidity}</div>
-                          </div>
-                        </div>
-                  )}
-
-                      {/* APY (always) - fixed width */}
-                      <div className="w-[160px] flex-shrink-0 rounded-lg bg-muted/30 border border-sidebar-border/60">
-                        <div className="flex items-center justify-between px-3 h-9">
-                      <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">APY</h2>
-                    </div>
-                        <div className="px-3 py-1">
-                      <div className="text-lg font-medium truncate">{currentPoolData.apr}</div>
+                    <div className="px-3 py-1">
+                      <div className="text-lg font-medium truncate">
+                        {currentPoolData.volume24h === "Loading..." ? (
+                          <span className="inline-block h-5 w-20 bg-muted/60 rounded animate-pulse" />
+                        ) : (
+                          currentPoolData.volume24h
+                        )}
+                      </div>
                     </div>
                   </div>
+
+                  {/* Fees - Show only on very large screens >= 2000px */}
+                  <div className="w-[160px] flex-shrink-0 rounded-lg bg-muted/30 border border-sidebar-border/60 hidden min-[2000px]:block">
+                    <div className="flex items-center justify-between px-3 h-9">
+                      <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">FEES (24H)</h2>
+                    </div>
+                    <div className="px-3 py-1">
+                      <div className="text-lg font-medium truncate">
+                        {currentPoolData.fees24h === "Loading..." ? (
+                          <span className="inline-block h-5 w-20 bg-muted/60 rounded animate-pulse" />
+                        ) : (
+                          currentPoolData.fees24h
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* TVL - Show at: >= 768px when no AddLiqForm, >= 1500px when AddLiqForm visible */}
+                  <div
+                    className="w-[160px] flex-shrink-0 rounded-lg bg-muted/30 border border-sidebar-border/60 hover:border-white/30 transition-colors cursor-pointer hidden sm:max-[1499px]:block min-[1500px]:block"
+                    onClick={() => setActiveChart('tvl')}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActiveChart('tvl'); } }}
+                  >
+                    <div className="flex items-center justify-between px-3 h-9">
+                      <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">TVL</h2>
+                    </div>
+                    <div className="px-3 py-1">
+                      <div className="text-lg font-medium truncate">
+                        {currentPoolData.liquidity === "Loading..." ? (
+                          <span className="inline-block h-5 w-20 bg-muted/60 rounded animate-pulse" />
+                        ) : (
+                          currentPoolData.liquidity
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                      {/* APY (always) - fixed width */}
+                      <UITooltipProvider delayDuration={0}>
+                        <UITooltip>
+                          <UITooltipTrigger asChild>
+                            <div className="w-[160px] flex-shrink-0 rounded-lg bg-muted/30 border border-sidebar-border/60 cursor-default">
+                              <div className="flex items-center justify-between px-3 h-9">
+                                <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">APY</h2>
+                              </div>
+                              <div className="px-3 py-1">
+                                <div className="text-lg font-medium truncate">
+                                  {currentPoolData.apr === "Loading..." ? (
+                                    <span className="inline-block h-5 w-20 bg-muted/60 rounded animate-pulse" />
+                                  ) : (
+                                    currentPoolData.apr
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </UITooltipTrigger>
+                          <UITooltipContent side="bottom" sideOffset={6} className="px-2 py-1 text-xs">
+                            <div className="font-medium text-foreground">Average over last 7 days</div>
+                          </UITooltipContent>
+                        </UITooltip>
+                      </UITooltipProvider>
                 </div>
               </div>
-            )}
+            </div>
           </div>
           
               {/* Pool Overview Section */}
               <div className="flex-1 min-h-0">
-                <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 transition-colors flex flex-col h-full min-h-[300px] sm:min-h-[350px] sm:max-h-none">
+                <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 transition-colors flex flex-col h-full min-h-[300px] sm:min-h-[350px]">
                   <div className="flex items-center justify-between px-4 py-2 border-b border-sidebar-border/60">
                     <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">POOL ACTIVITY</h2>
-                    {windowWidth < 1500 ? (
-                      // Dropdown for smaller screens
+                    {/* Dropdown for smaller screens < 1500px */}
+                    <div className="min-[1500px]:hidden">
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button
@@ -2794,9 +2748,9 @@ export default function PoolDetailPage() {
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
-                    ) : (
-                      // Buttons for larger screens - mimic category tabs styling
-                      <div className="flex items-center gap-2">
+                    </div>
+                    {/* Buttons for larger screens >= 1500px - mimic category tabs styling */}
+                    <div className="hidden min-[1500px]:flex items-center gap-2">
                         <button 
                           className={`px-2 py-1 text-xs rounded-md transition-colors ${
                             activeChart === 'volumeTvlRatio' 
@@ -2829,7 +2783,6 @@ export default function PoolDetailPage() {
                           TVL
                         </button>
                       </div>
-                    )}
                   </div>
                   <div className="p-0 flex-1 min-h-0">
                     <ChartContainer
@@ -2914,7 +2867,7 @@ export default function PoolDetailPage() {
                                       if (!dataPoint) return null;
 
                                       return (
-                                        <div className="grid min-w-[8rem] items-start gap-1.5 rounded-lg border border-sidebar-border bg-[#0f0f0f] px-2.5 py-1.5 text-xs shadow-xl">
+                                        <div className="grid min-w-[8rem] items-start gap-1.5 rounded-lg border border-sidebar-border bg-main px-2.5 py-1.5 text-xs shadow-xl">
                                           <div className="font-medium">
                                             {new Date(dataPoint.date).toLocaleDateString("en-US", {
                                               month: "long",
@@ -3046,7 +2999,7 @@ export default function PoolDetailPage() {
                                 content={
                                   <ChartTooltipContent 
                                     indicator="line"
-                                    className="!bg-[#0f0f0f] !text-card-foreground border border-sidebar-border shadow-lg rounded-lg"
+                                    className="!bg-main !text-card-foreground border border-sidebar-border shadow-lg rounded-lg"
                                     formatter={(value, name, item, index, payload) => {
                                       const itemConfig = chartConfig[name as keyof typeof chartConfig];
                                       const indicatorColor = item?.color || (itemConfig && 'color' in itemConfig ? itemConfig.color : '#404040');
@@ -3207,7 +3160,7 @@ export default function PoolDetailPage() {
                                       if (!dataPoint) return null;
 
                                       return (
-                                        <div className="grid min-w-[8rem] items-start gap-1.5 rounded-lg border border-sidebar-border bg-[#0f0f0f] px-2.5 py-1.5 text-xs shadow-xl">
+                                        <div className="grid min-w-[8rem] items-start gap-1.5 rounded-lg border border-sidebar-border bg-main px-2.5 py-1.5 text-xs shadow-xl">
                                           <div className="font-medium">
                                             {new Date(dataPoint.date).toLocaleDateString("en-US", {
                                               month: "long",
@@ -3339,7 +3292,7 @@ export default function PoolDetailPage() {
                                 content={
                                   <ChartTooltipContent 
                                     indicator="line"
-                                    className="!bg-[#0f0f0f] !text-card-foreground border border-sidebar-border shadow-lg rounded-lg"
+                                    className="!bg-main !text-card-foreground border border-sidebar-border shadow-lg rounded-lg"
                                     formatter={(value, name, item, index, payload) => {
                                       const itemConfig = chartConfig[name as keyof typeof chartConfig];
                                       const indicatorColor = item?.color || (itemConfig && 'color' in itemConfig ? itemConfig.color : '#404040');
@@ -3408,17 +3361,16 @@ export default function PoolDetailPage() {
               </div>
             </div>
 
-            {/* Right Column: Add Liquidity Form (fixed width at >=1500px) */}
-            <div className="w-full min-[1500px]:w-[450px] min-[1500px]:flex-shrink-0 min-[1500px]:min-w-[450px]">
-
-
-              {poolId && currentPoolData && windowWidth >= 1500 && (
-                <div className="w-full rounded-lg bg-muted/30 border border-sidebar-border/60 transition-colors overflow-hidden relative">
+            {/* Right Column: Add Liquidity Form (fixed width at >=1500px, hidden below) */}
+            {/* Key trick: Fixed width prevents layout shift from form content loading */}
+            <div className="hidden min-[1500px]:block w-[450px] flex-shrink-0">
+              {poolId && currentPoolData && (
+                <div className="w-full rounded-lg bg-muted/30 border border-sidebar-border/60 transition-colors relative">
                   {/* Container header to match novel layout */}
                   <div className="flex items-center justify-between px-4 py-2 border-b border-sidebar-border/60">
                     <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">ADD LIQUIDITY</h2>
                   </div>
-                  {/* Content */}
+                  {/* Content - contained within fixed width parent */}
                   <div className="p-3 sm:p-4">
                     <AddLiquidityFormMemo
                       selectedPoolId={poolId}
@@ -3432,10 +3384,8 @@ export default function PoolDetailPage() {
                       activeTab={'deposit'} // Always pass 'deposit'
                     />
                   </div>
-
                 </div>
               )}
-              
             </div>
           </div>
           
@@ -3444,19 +3394,18 @@ export default function PoolDetailPage() {
             {/* Static title - always visible */}
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-medium">Your Positions</h3>
-              {windowWidth < 1500 && (
-                <a
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setAddLiquidityFormOpen(true);
-                  }}
-                  className="flex h-9 cursor-pointer items-center justify-center gap-2 rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30"
-                  style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
-                >
-                  <PlusIcon className="h-4 w-4 relative z-0" />
-                  <span className="relative z-0 whitespace-nowrap">Add Liquidity</span>
-                </a>
-              )}
+              {/* Add Liquidity button - only show below 1500px */}
+              <a
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setAddLiquidityFormOpen(true);
+                }}
+                className="flex h-9 cursor-pointer items-center justify-center gap-2 rounded-md border border-sidebar-border bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 min-[1500px]:hidden"
+                style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+              >
+                <PlusIcon className="h-4 w-4 relative z-0" />
+                <span className="relative z-0 whitespace-nowrap">Add Liquidity</span>
+              </a>
             </div>
             
             {isLoadingPositions ? (
@@ -3468,10 +3417,6 @@ export default function PoolDetailPage() {
                 {/* Replace Table with individual position segments */}
                 <div className="grid gap-3 lg:gap-4 min-[1360px]:grid-cols-2 min-[1360px]:gap-4 responsive-grid">
                   {/* Render pending position skeletons first */}
-                  {(() => {
-                    console.log(`[SKELETON] RENDER: ${pendingNewPositions.length} skeletons, ${userPositions.length} positions`);
-                    return null;
-                  })()}
                   {pendingNewPositions.map((pendingPos) => (
                     <PositionSkeleton
                       key={pendingPos.id}
@@ -3479,49 +3424,55 @@ export default function PoolDetailPage() {
                       token1Symbol={pendingPos.token1Symbol}
                     />
                   ))}
-                  {/* Then render existing positions */}
-                  {userPositions.map((position) => {
-                    // Get prefetched fee data for this position
-                    const feeData = getFeesForPosition(position.positionId);
+                  {(() => {
+                    const aprNum = parseFloat(currentPoolData?.apr?.replace(/[~%]/g, '') || '');
+                    const poolAPY = isFinite(aprNum) ? aprNum : null;
 
-                    // Add fee data to position object (like portfolio page does)
-                    const positionWithFees = {
-                      ...position,
-                      unclaimedRaw0: feeData?.amount0,
-                      unclaimedRaw1: feeData?.amount1,
-                    };
+                    return userPositions.map((position) => {
+                      const feeData = getFeesForPosition(position.positionId);
+                      const positionWithFees = {
+                        ...position,
+                        unclaimedRaw0: feeData?.amount0,
+                        unclaimedRaw1: feeData?.amount1,
+                      };
 
                     return (
-                      <PositionCard
-                            key={position.positionId}
+                      <PositionCardCompact
+                        key={position.positionId}
                         position={positionWithFees as any}
                         valueUSD={calculatePositionUsd(position)}
-                        poolKey={poolId}
                         getUsdPriceForSymbol={getUsdPriceForSymbol}
-                        determineBaseTokenForPriceDisplay={determineBaseTokenForPriceDisplay}
                         convertTickToPrice={convertTickToPrice}
-                        poolDataByPoolId={poolDataByPoolId}
-                        formatTokenDisplayAmount={formatTokenDisplayAmount}
-                        formatAgeShort={formatAgeShort}
-                        openWithdraw={handleBurnPosition}
-                        openAddLiquidity={handleIncreasePosition}
-                        claimFees={claimFees}
-                        toast={toast}
-                        openPositionMenuKey={showPositionMenu}
-                        setOpenPositionMenuKey={setShowPositionMenu}
-                        positionMenuOpenUp={positionMenuOpenUp}
-                        setPositionMenuOpenUp={setPositionMenuOpenUp}
-                        onClick={() => {}}
-                        isLoadingPrices={isLoadingPrices}
-                        isLoadingPoolStates={!currentPoolData}
-                        currentPrice={currentPrice}
-                        currentPoolTick={currentPoolTick}
-                        // Prefetch fee data to avoid loading states
-                        prefetchedRaw0={feeData?.amount0}
-                        prefetchedRaw1={feeData?.amount1}
+                        onClick={() => {
+                          setUserPositions(prev => prev.map(p =>
+                            p.positionId === position.positionId
+                              ? { ...p, isOptimisticallyUpdating: true }
+                              : p
+                          ));
+                          setSelectedPositionForDetails(positionWithFees as any);
+                          setIsPositionDetailsModalOpen(true);
+                        }}
+                        poolContext={{
+                          currentPrice,
+                          currentPoolTick,
+                          poolAPY,
+                          isLoadingPrices,
+                          isLoadingPoolStates: !currentPoolData
+                        }}
+                        fees={{
+                          raw0: feeData?.amount0 ?? null,
+                          raw1: feeData?.amount1 ?? null
+                        }}
+                        onDenominationData={(data) => {
+                          setDenominationDataByPositionId(prev => ({
+                            ...prev,
+                            [position.positionId]: data
+                          }));
+                        }}
                       />
-                        );
-                  })}
+                    );
+                    });
+                  })()}
                 </div>
               </div>
             ) : (
@@ -3541,7 +3492,7 @@ export default function PoolDetailPage() {
         isOpen={showBurnConfirmDialog}
         onOpenChange={(open) => {
         // Only allow closing if not currently processing transaction
-        if (!isBurningLiquidity && !isDecreasingLiquidity) {
+        if (!isDecreasingLiquidity) {
           setShowBurnConfirmDialog(open);
           // Reset position when modal is actually closed
           if (!open) {
@@ -3581,22 +3532,19 @@ export default function PoolDetailPage() {
         positionToModify={showIncreaseModal ? positionToModify : null}
         feesForIncrease={showIncreaseModal ? feesForIncrease : null}
         increaseLiquidity={showIncreaseModal ? (data) => {
-          console.log('[DEBUG] Page: Setting pendingActionRef to increase and calling increaseLiquidity');
           pendingActionRef.current = { type: 'increase' };
           increaseLiquidity(data);
         } : undefined}
         isIncreasingLiquidity={showIncreaseModal ? isIncreasingLiquidity : undefined}
         isIncreaseSuccess={showIncreaseModal ? isIncreaseSuccess : undefined}
         increaseTxHash={showIncreaseModal ? increaseTxHash : undefined}
-        onLiquidityAdded={() => {
+        onLiquidityAdded={(token0Symbol?: string, token1Symbol?: string) => {
           if (showIncreaseModal) {
             // For increase operations, do nothing here - let the transaction callback handle everything
             // This prevents premature toasts and modal closure
-            console.log('[DEBUG] Page: Modal onLiquidityAdded called for increase - doing nothing');
           } else {
-            console.log('[DEBUG] Page: Modal onLiquidityAdded called for new position');
             setAddLiquidityOpen(false);
-            refreshAfterLiquidityAddedWithSkeleton();
+            refreshAfterLiquidityAddedWithSkeleton(token0Symbol, token1Symbol);
           }
         }}
       />
@@ -3615,9 +3563,8 @@ export default function PoolDetailPage() {
               selectedPoolId={poolId}
               poolApr={currentPoolData?.apr}
               onLiquidityAdded={(token0Symbol?: string, token1Symbol?: string) => {
-                console.log('[DEBUG] Page: Form onLiquidityAdded called for new position');
                 setAddLiquidityFormOpen(false);
-                refreshAfterLiquidityAddedWithSkeleton();
+                refreshAfterLiquidityAddedWithSkeleton(token0Symbol, token1Symbol);
               }}
               sdkMinTick={SDK_MIN_TICK}
               sdkMaxTick={SDK_MAX_TICK}
@@ -3842,7 +3789,7 @@ export default function PoolDetailPage() {
                               ? `${hoveredFee.toFixed(3)}%`
                               : currentPoolData?.dynamicFeeBps !== undefined
                                 ? `${((currentPoolData.dynamicFeeBps as number) / 100).toFixed(3)}%`
-                                : 'Loading...'}
+                                : <span className="inline-block h-7 w-16 bg-muted/60 rounded animate-pulse" />}
                           </p>
                         </div>
 
@@ -3903,7 +3850,7 @@ export default function PoolDetailPage() {
 
                   {/* Learn More Button */}
                   <div
-                    className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:bg-accent hover:brightness-110 hover:border-white/30 text-white"
+                    className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md border border-sidebar-border bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:bg-accent hover:brightness-110 hover:border-white/30 text-white"
                     style={{ backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
                     onClick={() => window.open('https://alphix.gitbook.io/docs/products/dynamic-fee', '_blank')}
                   >
@@ -3915,6 +3862,40 @@ export default function PoolDetailPage() {
             </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Position Details Modal */}
+      {selectedPositionForDetails && (
+        <PositionDetailsModal
+          isOpen={isPositionDetailsModalOpen}
+          onClose={() => {
+            setIsPositionDetailsModalOpen(false);
+            setSelectedPositionForDetails(null);
+            setUserPositions(prev => prev.map(p => ({ ...p, isOptimisticallyUpdating: undefined })));
+          }}
+          position={selectedPositionForDetails}
+          valueUSD={calculatePositionUsd(selectedPositionForDetails)}
+          prefetchedRaw0={getFeesForPosition(selectedPositionForDetails.positionId)?.amount0}
+          prefetchedRaw1={getFeesForPosition(selectedPositionForDetails.positionId)?.amount1}
+          formatTokenDisplayAmount={formatTokenDisplayAmount}
+          getUsdPriceForSymbol={getUsdPriceForSymbol}
+          onRefreshPosition={async () => {
+            // Use backoff refresh for proper retry logic with cache invalidation
+            await backoffRefreshSinglePosition(selectedPositionForDetails.positionId);
+          }}
+          currentPrice={currentPrice}
+          currentPoolTick={currentPoolTick}
+          convertTickToPrice={convertTickToPrice}
+          selectedPoolId={selectedPositionForDetails.poolId}
+          chainId={chainId}
+          denominationBase={denominationDataByPositionId[selectedPositionForDetails.positionId]?.denominationBase}
+          initialMinPrice={denominationDataByPositionId[selectedPositionForDetails.positionId]?.minPrice}
+          initialMaxPrice={denominationDataByPositionId[selectedPositionForDetails.positionId]?.maxPrice}
+          initialCurrentPrice={denominationDataByPositionId[selectedPositionForDetails.positionId]?.displayedCurrentPrice}
+          prefetchedFormattedAPY={denominationDataByPositionId[selectedPositionForDetails.positionId]?.formattedAPY}
+          prefetchedIsAPYFallback={denominationDataByPositionId[selectedPositionForDetails.positionId]?.isAPYFallback}
+          prefetchedIsLoadingAPY={denominationDataByPositionId[selectedPositionForDetails.positionId]?.isLoadingAPY}
+        />
+      )}
 
     </AppLayout>
   );

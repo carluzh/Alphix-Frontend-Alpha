@@ -18,58 +18,14 @@ export function useAllPrices() {
         return result;
       } catch (error) {
         const duration = Date.now() - startTime;
-        logger.error('useAllPrices query failed', error as Error, { duration });
+        if (!(error instanceof Error && error.name === 'AbortError')) {
+          logger.error('useAllPrices query failed', error as Error, { duration });
+        }
         throw error;
       }
     },
     staleTime: 5 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
-  })
-}
-
-export function usePoolStats(poolId: string) {
-  return useQuery({
-    queryKey: qk.poolStats(poolId),
-    queryFn: async () => {
-      const resp = await fetch('/api/liquidity/get-pools-batch', { cache: 'no-store' as any } as any)
-      if (!resp.ok) throw new Error('Failed to load pool stats')
-      const json = await resp.json()
-      const arr = Array.isArray(json?.pools) ? json.pools : []
-      const idLc = String(poolId || '').toLowerCase()
-      const m = arr.find((p: any) => String(p?.poolId || '').toLowerCase() === idLc)
-      return m || null
-    },
-    staleTime: 60 * 60 * 1000, // 1 hour (your recommendation)
-    gcTime: 6 * 60 * 60 * 1000, // 6 hours GC
-    enabled: typeof poolId === 'string' && poolId.length > 0,
-  })
-}
-
-export function usePoolChart(poolId: string, days: number = 60) {
-  return useQuery({
-    queryKey: qk.poolChart(poolId, days),
-    queryFn: async () => {
-      const resp = await fetch(`/api/liquidity/chart-volume?poolId=${encodeURIComponent(poolId)}&days=${days}`, { cache: 'no-store' as any } as any)
-      if (!resp.ok) throw new Error('Failed to load chart data')
-      return resp.json()
-    },
-    staleTime: 6 * 60 * 60 * 1000, // 6 hours (your recommendation)
-    gcTime: 24 * 60 * 60 * 1000, // 24 hours GC
-    enabled: !!poolId,
-  })
-}
-
-export function useDynamicFeeHistory(poolId: string, days: number = 60) {
-  return useQuery({
-    queryKey: qk.dynamicFeeHistory(poolId, days),
-    queryFn: async () => {
-      const resp = await fetch(`/api/liquidity/get-historical-dynamic-fees?poolId=${encodeURIComponent(poolId)}&days=${days}`, { cache: 'no-store' as any } as any)
-      if (!resp.ok) throw new Error('Failed to load dynamic fee history')
-      return resp.json()
-    },
-    staleTime: 6 * 60 * 60 * 1000, // 6 hours (consistent with chart data)
-    gcTime: 24 * 60 * 60 * 1000,
-    enabled: !!poolId,
   })
 }
 
@@ -102,19 +58,6 @@ export function useUncollectedFeesBatch(positionIds: string[], ttlMs: number = 6
   })
 }
 
-export function useUncollectedFees(positionId: string, ttlMs: number = 60_000) {
-  return useQuery({
-    queryKey: qk.uncollectedFees(positionId),
-    queryFn: async () => {
-      const cache = await import('@/lib/client-cache')
-      return cache.loadUncollectedFees(positionId, ttlMs)
-    },
-    staleTime: ttlMs,
-    gcTime: Math.max(ttlMs * 10, 10 * 60 * 1000),
-    enabled: typeof positionId === 'string' && positionId.length > 0,
-  })
-}
-
 export function useActivity(ownerAddress: string, first: number = 20) {
   return useQuery({
     queryKey: qk.activity(ownerAddress || '', first),
@@ -137,57 +80,13 @@ export function usePoolState(poolId: string) {
   return useQuery({
     queryKey: qk.poolState(poolId),
     queryFn: async () => {
-      const resp = await fetch(`/api/liquidity/get-pool-state?poolId=${encodeURIComponent(poolId)}`, { cache: 'no-store' as any } as any)
+      const resp = await fetch(`/api/liquidity/get-pool-state?poolId=${encodeURIComponent(poolId)}`)
       if (!resp.ok) throw new Error('Failed to load pool state')
       return resp.json()
     },
-    staleTime: 0,
+    staleTime: 15000,
     gcTime: 10 * 60 * 1000,
     enabled: !!poolId && poolId.length > 0,
-  })
-}
-
-export function useDynamicFeeNow(poolId: string) {
-  return useQuery({
-    queryKey: qk.dynamicFeeNow(poolId),
-    queryFn: async () => {
-      // Reuse get-dynamic-fee by deriving tokens from pool config server-side if needed later
-      const resp = await fetch(`/api/liquidity/get-pool-state?poolId=${encodeURIComponent(poolId)}`, { cache: 'no-store' as any } as any)
-      if (!resp.ok) throw new Error('Failed to load current fee context')
-      const json = await resp.json()
-      // It includes lpFee in millionths; return bps for consistency
-      const lpFeeMillionths = Number(json?.lpFee)
-      const bps = Math.max(0, Math.round((lpFeeMillionths / 1_000_000) * 10_000))
-      return { dynamicFeeBps: bps }
-    },
-    staleTime: 0,
-    gcTime: 10 * 60 * 1000,
-    enabled: !!poolId,
-  })
-}
-
-export function useQuote(params: { from: string; to: string; amount: string; swapType?: 'ExactIn' | 'ExactOut'; chainId: number; enabled?: boolean }) {
-  const { from, to, amount, swapType = 'ExactIn', chainId, enabled = true } = params
-  return useQuery({
-    queryKey: qk.quote(from, to, amount),
-    queryFn: async ({ signal }) => {
-      const controller = new AbortController()
-      const resp = await fetch('/api/swap/get-quote', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fromTokenSymbol: from, toTokenSymbol: to, amountDecimalsStr: amount, swapType, chainId }),
-        signal: signal ?? controller.signal,
-      } as any)
-      if (!resp.ok) {
-        const j = await resp.json().catch(() => ({}))
-        throw new Error(j?.message || 'Failed to get quote')
-      }
-      return resp.json()
-    },
-    enabled: Boolean(enabled && from && to && amount),
-    staleTime: 0,
-    gcTime: 5 * 60 * 1000,
-    refetchOnWindowFocus: false,
   })
 }
 

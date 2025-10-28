@@ -743,6 +743,7 @@ export async function derivePositionsFromIds(ownerAddress: string, tokenIds: Arr
       out.push({
         positionId: tokenIdStr,
         poolId: positionData.poolId,
+        owner: ownerAddress,
         token0: { address: tok0.address, symbol: tok0.symbol || 'T0', amount: formatUnits(raw0, tok0.decimals), rawAmount: raw0.toString() },
         token1: { address: tok1.address, symbol: tok1.symbol || 'T1', amount: formatUnits(raw1, tok1.decimals), rawAmount: raw1.toString() },
         tickLower,

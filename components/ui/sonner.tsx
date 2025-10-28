@@ -2,6 +2,7 @@
 
 import { useTheme } from "next-themes"
 import { Toaster as Sonner } from "sonner"
+import { BadgeCheck, OctagonX, Info, AlertCircle } from "lucide-react"
 
 type ToasterProps = React.ComponentProps<typeof Sonner>
 
@@ -10,7 +11,7 @@ const Toaster = ({ ...props }: ToasterProps) => {
 
   return (
     <>
-      <style jsx global>{`
+      <style>{`
         @keyframes toastSlideIn {
           0% { transform: translateX(120%); opacity: 0; }
           70% { transform: translateX(-4px); }
@@ -30,6 +31,11 @@ const Toaster = ({ ...props }: ToasterProps) => {
           overflow: hidden;
           display: flex;
           align-items: center;
+        }
+
+        /* Center content vertically for single-line toasts */
+        [data-sonner-toast]:not(:has([data-description])) [data-content] {
+          align-items: center !important;
         }
 
         [data-sonner-toast]:not([data-type])[data-styled="true"],
@@ -60,6 +66,12 @@ const Toaster = ({ ...props }: ToasterProps) => {
           box-shadow: inset 1px 0 0 0 rgba(34, 197, 94, 0.15), inset 0 0 0 1px var(--sidebar-border);
         }
 
+        /* Special styling for Faucet Claimed toast */
+        [data-sonner-toast].faucet-claimed[data-styled="true"] {
+          background-image: linear-gradient(135deg, rgba(244, 85, 2, 0.08) 0%, transparent 60%) !important;
+          box-shadow: inset 1px 0 0 0 rgba(244, 85, 2, 0.15), inset 0 0 0 1px var(--sidebar-border) !important;
+        }
+
         [data-sonner-toast][data-type="error"][data-styled="true"] {
           background-image: linear-gradient(135deg, rgba(239, 68, 68, 0.08) 0%, transparent 60%) !important;
           box-shadow: inset 1px 0 0 0 rgba(239, 68, 68, 0.15), inset 0 0 0 1px var(--sidebar-border);
@@ -77,9 +89,15 @@ const Toaster = ({ ...props }: ToasterProps) => {
           height: 1.25rem !important;
         }
 
-        [data-sonner-toast][data-type="success"] [data-icon],
-        [data-sonner-toast][data-type="error"] [data-icon] {
+        [data-sonner-toast][data-type="success"]:has([data-description]) [data-icon],
+        [data-sonner-toast][data-type="error"]:has([data-description]) [data-icon] {
           align-self: flex-start !important;
+        }
+
+        /* Center icon for single-line success/error toasts */
+        [data-sonner-toast][data-type="success"]:not(:has([data-description])) [data-icon],
+        [data-sonner-toast][data-type="error"]:not(:has([data-description])) [data-icon] {
+          align-self: center !important;
         }
 
         [data-sonner-toast] [data-close-button] {
@@ -102,10 +120,17 @@ const Toaster = ({ ...props }: ToasterProps) => {
           left: auto !important;
         }
 
-        [data-sonner-toast][data-type="success"] [data-close-button],
-        [data-sonner-toast][data-type="error"] [data-close-button] {
+        [data-sonner-toast][data-type="success"]:has([data-description]) [data-close-button],
+        [data-sonner-toast][data-type="error"]:has([data-description]) [data-close-button] {
           top: 1rem !important;
           transform: none !important;
+        }
+
+        /* Keep centered close button for single-line toasts */
+        [data-sonner-toast][data-type="success"]:not(:has([data-description])) [data-close-button],
+        [data-sonner-toast][data-type="error"]:not(:has([data-description])) [data-close-button] {
+          top: 50% !important;
+          transform: translateY(-50%) !important;
         }
 
         [data-sonner-toast] [data-close-button]:hover {
@@ -177,6 +202,12 @@ const Toaster = ({ ...props }: ToasterProps) => {
         className="toaster group"
         closeButton
         dir="auto"
+        icons={{
+          success: <BadgeCheck className="h-5 w-5 text-green-500" />,
+          error: <OctagonX className="h-5 w-5 text-red-500" />,
+          info: <Info className="h-5 w-5 text-white" />,
+          warning: <AlertCircle className="h-5 w-5 text-yellow-500" />
+        }}
         {...props}
       />
     </>

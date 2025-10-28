@@ -330,8 +330,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
   if (alwaysShowSkeleton) {
     return (
       <div
-        className="w-full rounded-lg border border-sidebar-border/60 transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow"
-        style={{ backgroundColor: '#161616' }}
+        className="w-full rounded-lg border border-primary transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow bg-container-secondary"
         onClick={handleClick}
         onMouseEnter={(e) => {
           const arrow = e.currentTarget.querySelector('[data-arrow]') as HTMLElement;
@@ -342,7 +341,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
           if (arrow) arrow.style.color = '';
         }}
       >
-        <div className="flex items-center justify-between px-4 py-2 border-b border-sidebar-border/60">
+        <div className="flex items-center justify-between px-4 py-2 border-b border-primary">
           <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">DYNAMIC FEE TREND</h2>
                      <div className="flex items-center gap-3">
              {poolInfo && (
@@ -385,8 +384,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
   if (!hasMinimumData && !isActuallyLoading) {
     return (
       <div
-        className="w-full rounded-lg border border-sidebar-border/60 transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow"
-        style={{ backgroundColor: '#161616' }}
+        className="w-full rounded-lg border border-primary transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow bg-container-secondary"
         onClick={handleClick}
         onMouseEnter={(e) => {
           const arrow = e.currentTarget.querySelector('[data-arrow]') as HTMLElement;
@@ -397,7 +395,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
           if (arrow) arrow.style.color = '';
         }}
       >
-        <div className="flex items-center justify-between px-4 py-2 border-b border-sidebar-border/60">
+        <div className="flex items-center justify-between px-4 py-2 border-b border-primary">
           <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">DYNAMIC FEE TREND</h2>
                      <div className="flex items-center gap-3">
              {poolInfo && (
@@ -444,8 +442,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
 
     return (
       <div
-        className="w-full rounded-lg border border-sidebar-border/60 transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow"
-        style={{ backgroundColor: '#161616' }}
+        className="w-full rounded-lg border border-primary transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow bg-container-secondary"
         onClick={handleClick}
         onMouseEnter={(e) => {
           const arrow = e.currentTarget.querySelector('[data-arrow]') as HTMLElement;
@@ -456,7 +453,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
           if (arrow) arrow.style.color = '';
         }}
       >
-        <div className="flex items-center justify-between px-4 py-2 border-b border-sidebar-border/60">
+        <div className="flex items-center justify-between px-4 py-2 border-b border-primary">
           <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">DYNAMIC FEE TREND</h2>
                      <div className="flex items-center gap-3">
              {poolInfo && (
@@ -550,8 +547,8 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
                   />
                   <defs>
                     <linearGradient id="hoverFeeShade" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#e85102" stopOpacity={0.12} />
-                      <stop offset="100%" stopColor="#e85102" stopOpacity={0} />
+                      <stop offset="0%" stopColor="var(--sidebar-primary)" stopOpacity={0.12} />
+                      <stop offset="100%" stopColor="var(--sidebar-primary)" stopOpacity={0} />
                     </linearGradient>
                   </defs>
                   <Tooltip
@@ -599,7 +596,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
                     yAxisId="right"
                     type="stepAfter"
                     dataKey="fee"
-                    stroke="#e85102"
+                    stroke="var(--sidebar-primary)"
                     strokeWidth={1.5}
                     strokeOpacity={hoveredIndex === null ? 1 : 0.6}
                     dot={false}
@@ -616,7 +613,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
                       type="stepAfter"
                       dataKey="fee"
                       data={overlaySegmentData}
-                      stroke="#e85102"
+                      stroke="var(--sidebar-primary)"
                       strokeWidth={1.5}
                       dot={false}
                       activeDot={false}
@@ -630,10 +627,10 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
           </div>
           {/* External portal for hover footer */}
           {portalEl && footerDisplay && createPortal(
-            <div className="rounded-md border border-sidebar-border bg-[var(--token-container-background)] px-2.5 py-1.5 shadow-sm inline-flex">
+            <div className="rounded-md border border-primary bg-container-secondary px-2.5 py-1.5 shadow-sm inline-flex">
               <div className="flex items-center gap-4 text-[10px] md:text-xs font-mono">
                 <span className="text-muted-foreground">{footerDisplay.daysAgoLabel}</span>
-                <span className="text-[#e85102] font-medium">{footerDisplay.pct}</span>
+                <span className="text-sidebar-primary font-medium">{footerDisplay.pct}</span>
               </div>
             </div>,
             portalEl

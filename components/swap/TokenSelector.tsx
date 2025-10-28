@@ -50,8 +50,8 @@ const formatCurrency = (value: string): string => {
   return `$${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
-// Helper function for formatting balance display using displayDecimals from pools.json
-const getFormattedDisplayBalance = (numericBalance: number | undefined, tokenSymbol: string): string => {
+// Helper function for formatting balance display
+const getFormattedDisplayBalance = (numericBalance: number | undefined): string => {
   if (numericBalance === undefined || isNaN(numericBalance)) {
     numericBalance = 0;
   }
@@ -60,9 +60,8 @@ const getFormattedDisplayBalance = (numericBalance: number | undefined, tokenSym
   } else if (numericBalance > 0 && numericBalance < 0.001) {
     return "< 0.001";
   } else {
-    // Use displayDecimals from pools.json config
-    const tokenConfig = getToken(tokenSymbol);
-    const displayDecimals = tokenConfig?.displayDecimals || 4;
+    // Default to 4 decimals for display
+    const displayDecimals = 4;
     return numericBalance.toFixed(displayDecimals);
   }
 };
@@ -227,7 +226,7 @@ export function TokenSelector({
           return {
             address: token.address,
             data: {
-              balance: getFormattedDisplayBalance(numericBalance, token.symbol),
+              balance: getFormattedDisplayBalance(numericBalance),
               usdValue,
               isLoading: false
             }
@@ -306,33 +305,24 @@ export function TokenSelector({
       </Button>
 
       {/* Token Selection Modal */}
-      <AnimatePresence>
-        {isOpen && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="fixed inset-0 z-50"
-            onClick={() => setIsOpen(false)} // Directly close isOpen
+      {isOpen && (
+        <div
+          className="fixed inset-0 z-50"
+          onClick={() => setIsOpen(false)}
+        >
+          {/* Modal positioned to overlay SwapInputView */}
+          <div
+            className="fixed rounded-lg shadow-2xl border border-primary overflow-hidden bg-popover"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              top: swapContainerRect.top,
+              left: swapContainerRect.left,
+              width: swapContainerRect.width,
+              height: swapContainerRect.height,
+            }}
           >
-            {/* Modal positioned to overlay SwapInputView */}
-            <motion.div
-              initial={{ opacity: 0, scale: 0.98 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.98 }}
-              transition={{ duration: 0.2 }}
-              className="fixed rounded-lg shadow-2xl border border-border overflow-hidden bg-popover" // Changed to fixed and bg-popover
-              onClick={(e) => e.stopPropagation()}
-              style={{
-                top: swapContainerRect.top,
-                left: swapContainerRect.left,
-                width: swapContainerRect.width,
-                height: swapContainerRect.height,
-              }}
-            >
               {/* Header */}
-              <div className="flex items-center justify-between p-4 border-b border-border">
+              <div className="flex items-center justify-between p-4 border-b border-primary">
                 <h2 className="text-sm font-medium">
                   {excludeToken ? 'Swap From Token' : 'Swap To Token'} {/* Reverted header text logic */}
                 </h2>
@@ -431,10 +421,9 @@ export function TokenSelector({
                   </div>
                 )}
               </div>
-            </motion.div>
-          </motion.div>
+            </div>
+          </div>
         )}
-      </AnimatePresence>
     </div>
   );
 } 

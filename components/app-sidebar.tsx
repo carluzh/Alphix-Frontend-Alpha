@@ -23,7 +23,6 @@ import {
 import { ReactSVG } from "react-svg"
 import { useTheme } from "next-themes"
 import { NavMain } from "./nav-main"
-import { NavSecondary } from "./nav-secondary"
 import { NavGovernance } from "./nav-governance"
 import { AccountStatus } from "./AccountStatus"
 import { ConnectWalletButton } from "./ConnectWalletButton"
@@ -140,20 +139,6 @@ export function AppSidebar({ variant = "floating", onBetaClick, ...props }: AppS
   // Get latest version info
   const latestVersion = getLatestVersion();
 
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const flag = sessionStorage.getItem('came_from_login');
-        if (flag === '1' || flag === 'true') {
-          setShowVersionInitial(true);
-          try { sessionStorage.removeItem('came_from_login'); } catch {}
-          const timer = setTimeout(() => setShowVersionInitial(false), 1000);
-          return () => clearTimeout(timer);
-        }
-      } catch {}
-    }
-  }, []);
-
   return (
     <Sidebar variant={variant} collapsible="offcanvas" {...props}>
       <SidebarHeader className="!pt-2.5 !px-0">
@@ -185,7 +170,7 @@ export function AppSidebar({ variant = "floating", onBetaClick, ...props }: AppS
                   {/* Show 'Beta' by default; on hover swap to version text without resizing */}
                   <Badge
                     variant="outline"
-                    className="bg-[#3d271b] text-sidebar-primary border-sidebar-primary rounded-md font-normal hover:bg-[#4a2f1f] transition-colors cursor-pointer inline-block"
+                    className="bg-button-primary text-sidebar-primary border-sidebar-primary rounded-md font-normal hover-button-primary transition-colors cursor-pointer inline-block"
                     style={{ fontFamily: 'Consolas, monospace' }}
                     title="Click to show update info"
                     onMouseEnter={() => setBadgeHovered(true)}
@@ -230,32 +215,41 @@ export function AppSidebar({ variant = "floating", onBetaClick, ...props }: AppS
             >
               Links
             </div>
-            <SidebarMenu className="mt-1 flex flex-col gap-1 px-3">
+            <SidebarMenu className="mt-1 flex flex-col gap-0 px-2.5">
                 <SidebarMenuItem className="list-none">
-                  <SidebarMenuButton asChild size="sm" className="h-7">
-                    <a href="https://alphix.gitbook.io/docs/" target="_blank" rel="noopener noreferrer" className="w-full flex items-center">
-                      <BookTextIcon className="h-4 w-4" />
-                      <span>Documentation</span>
+                  <SidebarMenuButton
+                    asChild
+                    className="w-full rounded-lg px-1.5 py-1 transition-colors hover:bg-[#1f1f1f] hover:text-white text-muted-foreground"
+                  >
+                    <a href="https://alphix.gitbook.io/docs/" target="_blank" rel="noopener noreferrer" className="flex items-center">
+                      <BookTextIcon className="h-3.5 w-3.5 flex-shrink-0" />
+                      <span className="flex-1 truncate ml-2 text-xs font-normal">Documentation</span>
                     </a>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
                 <SidebarMenuItem className="list-none">
-                  <SidebarMenuButton asChild size="sm" className="h-7">
-                    <a href="https://x.com/AlphixFi" target="_blank" rel="noopener noreferrer" className="w-full flex items-center">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <SidebarMenuButton
+                    asChild
+                    className="w-full rounded-lg px-1.5 py-1 transition-colors hover:bg-[#1f1f1f] hover:text-white text-muted-foreground"
+                  >
+                    <a href="https://x.com/AlphixFi" target="_blank" rel="noopener noreferrer" className="flex items-center">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="flex-shrink-0">
                         <path d="M16.9947 2H20.1115L13.5007 9.5L21.2209 20H15.2302L10.5 13.7L5.07938 20H1.96154L9.00025 12L1.60059 2H7.74871L11.9502 7.7L16.9947 2ZM16.0947 18.2L18.0947 18.2L6.89474 3.8L4.79474 3.8L16.0947 18.2Z" fill="currentColor"/>
                       </svg>
-                      <span>Twitter</span>
+                      <span className="flex-1 truncate ml-2 text-xs font-normal">Twitter</span>
                     </a>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
                 <SidebarMenuItem className="list-none">
-                  <SidebarMenuButton asChild size="sm" className="h-7">
-                    <a href="https://discord.gg/NTXRarFbTr" target="_blank" rel="noopener noreferrer" className="w-full flex items-center">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <SidebarMenuButton
+                    asChild
+                    className="w-full rounded-lg px-1.5 py-1 transition-colors hover:bg-[#1f1f1f] hover:text-white text-muted-foreground"
+                  >
+                    <a href="https://discord.gg/NTXRarFbTr" target="_blank" rel="noopener noreferrer" className="flex items-center">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="flex-shrink-0">
                         <path d="M20.317 4.3698a19.7913 19.7913 0 00-4.8851-1.5152.0741.0741 0 00-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 00-.0785-.037 19.7363 19.7363 0 00-4.8852 1.515.0699.0699 0 00-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 00.0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 00.0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 00-.0416-.1057c-.6528-.2476-1.2743-.5499-1.8722-.8923a.077.077 0 01-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 01.0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 01.0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 01-.0066.1276 12.2986 12.2986 0 01-1.873.8914.0766.0766 0 00-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 00.0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 00.0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 00-.0312-.0286zM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419-.019 1.3332-.9555 2.4189-2.1569 2.4189zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1568 2.4189Z" fill="currentColor"/>
                       </svg>
-                      <span>Discord</span>
+                      <span className="flex-1 truncate ml-2 text-xs font-normal">Discord</span>
                     </a>
                   </SidebarMenuButton>
                 </SidebarMenuItem>

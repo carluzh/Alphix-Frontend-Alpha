@@ -3,18 +3,16 @@
 import { useState, useRef, useEffect } from 'react';
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Menu, X, Download, Copy, Check } from "lucide-react";
+import { Menu, X, Download, Copy, Check, Clock4 } from "lucide-react";
 import { toast } from "sonner";
+import { useRouter, usePathname } from 'next/navigation';
+import { NavPopover, NavPopoverSection } from "@/components/NavPopover";
+import Link from 'next/link';
+import { getLatestVersion, getLatestVersionSummary, getTimeAgo } from "@/lib/version-log";
 
 export default function BrandsPage() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [copiedItems, setCopiedItems] = useState<Set<string>>(new Set());
-
-  const handleComingSoon = () => {
-    toast.info("Coming Soon", {
-      position: "bottom-right",
-    });
-  };
 
   const copyToClipboard = async (text: string, itemId: string) => {
     try {
@@ -80,9 +78,9 @@ export default function BrandsPage() {
     <div className="bg-black min-h-screen" style={{background: '#0a0908'}}>
       {/* Navbar */}
       <Navbar
+        showNavbar={true}
         isMobileMenuOpen={isMobileMenuOpen}
         setIsMobileMenuOpen={setIsMobileMenuOpen}
-        handleComingSoon={handleComingSoon}
       />
 
       {/* Main Content */}
@@ -337,140 +335,260 @@ export default function BrandsPage() {
   );
 }
 
+// Helper component for nav links
+const NavLink = ({ href, children, className, isActive: _isActive, target }: {
+  href: string
+  children: React.ReactNode
+  className?: string
+  isActive?: (pathname: string) => boolean
+  target?: '_blank'
+}) => {
+  const pathname = usePathname()
+  const isActive = _isActive ? _isActive(pathname ?? '') : (pathname ?? '').startsWith(href)
+  const isExternal = href.startsWith('http')
+
+  return (
+    <Link
+      href={href}
+      target={isExternal ? '_blank' : target}
+      prefetch
+      className={`-m-1 flex items-center gap-x-2 p-1 text-gray-500 transition-colors hover:text-white focus:outline-none ${
+        isActive && 'text-white'
+      } ${className || ''}`}
+    >
+      {children}
+    </Link>
+  )
+}
+
 function Navbar({
+  showNavbar,
   isMobileMenuOpen,
-  setIsMobileMenuOpen,
-  handleComingSoon
+  setIsMobileMenuOpen
 }: {
+  showNavbar: boolean;
   isMobileMenuOpen: boolean;
   setIsMobileMenuOpen: (open: boolean) => void;
-  handleComingSoon: () => void;
 }) {
+  const router = useRouter()
+  const pathname = usePathname()
+  const latestVersion = getLatestVersion()
+
+  // Features popover sections
+  const featuresSections: NavPopoverSection[] = [
+    {
+      title: 'Core',
+      items: [
+        {
+          href: '/swap',
+          label: 'Unified Pool',
+          subtitle: 'Consolidate liquidity across features',
+        },
+      ],
+    },
+    {
+      title: 'Products',
+      items: [
+        {
+          href: '/swap',
+          label: 'Dynamic Fees',
+          subtitle: 'Adaptive fee optimization',
+        },
+        {
+          href: '/liquidity',
+          label: 'Rehypothecation',
+          subtitle: 'Capital efficient liquidity',
+        },
+      ],
+    },
+  ]
+
+  // Docs popover sections - Flipped layout: grid on left, list on right
+  const docsSections: NavPopoverSection[] = [
+    {
+      title: 'Explore',
+      items: [
+        {
+          href: 'https://alphix.gitbook.io/docs/',
+          label: 'Overview',
+          subtitle: 'Introduction to Alphix',
+          target: '_blank',
+        },
+        {
+          href: 'https://alphix.gitbook.io/docs/the-basics/architecture',
+          label: 'Architecture',
+          subtitle: 'System design',
+          target: '_blank',
+        },
+        {
+          href: 'https://alphix.gitbook.io/docs/quick-start',
+          label: 'Quick Start',
+          subtitle: 'Get started quickly',
+          target: '_blank',
+        },
+        {
+          href: 'https://alphix.gitbook.io/docs/more/support',
+          label: 'Support',
+          subtitle: 'Get help',
+          target: '_blank',
+        },
+      ],
+    },
+    {
+      title: 'Resources',
+      items: [
+        {
+          href: 'https://github.com/alphixfi',
+          label: 'GitHub',
+          target: '_blank',
+        },
+        {
+          href: '/brand',
+          label: 'Brand Kit',
+        },
+      ],
+    },
+  ]
+
+  // Security popover sections
+  const securitySections: NavPopoverSection[] = [
+    {
+      items: [
+        {
+          href: '#',
+          label: 'Audits',
+          subtitle: 'Security audit reports',
+        },
+        {
+          href: '#',
+          label: 'Bug Bounty',
+          subtitle: 'Report vulnerabilities',
+        },
+      ],
+    },
+  ]
+
   return (
     <>
-      <nav className="fixed top-0 left-0 right-0 z-50 bg-[#0a0907]">
-        <div className="w-full max-w-5xl 2xl:max-w-screen-xl mx-auto py-4 flex justify-between items-center px-4 sm:px-6 md:px-8">
-          {/* Logo */}
-          <div className="flex items-center gap-2">
-            <div className="h-7 sm:h-8 md:h-6">
-              <img
-                src="/Logo Type (white).svg"
-                alt="Alphix Logotype"
-                className="h-full w-auto"
-              />
-            </div>
-          </div>
+      {/* Desktop Navigation */}
+      <nav className={`hidden md:flex fixed top-0 left-0 right-0 z-50 bg-[#0a0908] transition-transform duration-300 ease-in-out ${
+        showNavbar ? 'transform translate-y-0' : 'transform -translate-y-full'
+      }`}>
+        <div className="w-full flex flex-col items-center gap-12 py-8">
+          <div className="relative flex w-full max-w-5xl 2xl:max-w-screen-xl flex-row items-center justify-between px-4 sm:px-6 md:px-8">
+            {/* Logo on left - Full logo */}
+            <img
+              src="/Logo Type (white).svg"
+              alt="Alphix"
+              className="h-6 cursor-pointer"
+              onClick={() => router.push('/')}
+            />
 
-          {/* Desktop Navigation Links */}
-          <div className="hidden md:flex items-center gap-4">
-            <a
-              href="https://alphix.gitbook.io/docs/"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-sm px-4 py-2 h-auto bg-transparent hover:bg-[#1e1d1b] text-[#a5a5a5] hover:text-white rounded-md cursor-pointer transition-colors"
-              style={{ fontFamily: 'Consolas, monospace', fontWeight: 500 }}
-            >
-              Documentation
-            </a>
-            <Button
-              variant="ghost"
-              className="text-sm px-4 py-2 h-auto bg-transparent hover:bg-[#1e1d1b] text-[#a5a5a5] hover:text-white rounded-md cursor-pointer"
-              style={{ fontFamily: 'Consolas, monospace', fontWeight: 500 }}
-              onClick={handleComingSoon}
-            >
-              Analytics
-            </Button>
-            <Button
-              variant="ghost"
-              className="text-sm px-4 py-2 h-auto bg-transparent hover:bg-[#1e1d1b] text-[#a5a5a5] hover:text-white rounded-md cursor-pointer"
-              style={{ fontFamily: 'Consolas, monospace', fontWeight: 500 }}
-              onClick={handleComingSoon}
-            >
-              Security
-            </Button>
-            <a
-              href="https://x.com/AlphixFi"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="ml-2 flex items-center justify-center w-8 h-8 rounded-full hover:bg-[#1e1d1b] transition-colors cursor-pointer group"
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M16.9947 2H20.1115L13.5007 9.5L21.2209 20H15.2302L10.5 13.7L5.07938 20H1.96154L9.00025 12L1.60059 2H7.74871L11.9502 7.7L16.9947 2ZM16.0947 18.2L18.0947 18.2L6.89474 3.8L4.79474 3.8L16.0947 18.2Z" fill="#a5a5a5" className="group-hover:fill-white transition-colors"/>
-              </svg>
-            </a>
-            <a
-              href="https://discord.gg/NTXRarFbTr"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="ml-2 flex items-center justify-center w-8 h-8 rounded-full hover:bg-[#1e1d1b] transition-colors cursor-pointer group"
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M20.317 4.3698a19.7913 19.7913 0 00-4.8851-1.5152.0741.0741 0 00-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 00-.0785-.037 19.7363 19.7363 0 00-4.8852 1.515.0699.0699 0 00-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 00.0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 00.0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 00-.0416-.1057c-.6528-.2476-1.2743-.5499-1.8722-.8923a.077.077 0 01-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 01.0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 01.0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 01-.0066.1276 12.2986 12.2986 0 01-1.873.8914.0766.0766 0 00-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 00.0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 00.0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 00-.0312-.0286zM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419-.019 1.3332-.9555 2.4189-2.1569 2.4189zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1568 2.4189Z" fill="#a5a5a5" className="group-hover:fill-white transition-colors"/>
-              </svg>
-            </a>
-          </div>
+            {/* Centered nav items */}
+            <ul className="absolute left-1/2 mx-auto flex -translate-x-1/2 flex-row gap-x-8 text-sm text-white/60">
+              <li>
+                <NavPopover
+                  trigger="Features"
+                  sections={featuresSections}
+                  isActive={(pathname ?? '').startsWith('/swap') || (pathname ?? '').startsWith('/liquidity') || (pathname ?? '').startsWith('/portfolio')}
+                  featuresLayout={true}
+                  footerContent={
+                    <Link
+                      href="/login"
+                      className="group mt-2 px-3 py-2 rounded-md transition-colors hover:bg-[#1e1d1b] flex flex-col gap-y-1"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-white">
+                          Beta <span className="text-white">v{latestVersion.version}</span>
+                        </span>
+                        <div className="flex items-center gap-1 text-white/60 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <Clock4 size={11} className="flex-shrink-0" />
+                          <span className="text-[10px]">{getTimeAgo(latestVersion.releaseDate)}</span>
+                        </div>
+                      </div>
+                      <span className="text-xs text-white/60">
+                        {getLatestVersionSummary()}
+                      </span>
+                    </Link>
+                  }
+                />
+              </li>
+              <li>
+                <NavPopover
+                  trigger="Docs"
+                  sections={docsSections}
+                  layout="flex"
+                  socialLinks={[
+                    { href: 'https://x.com/AlphixFi', icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M16.9947 2H20.1115L13.5007 9.5L21.2209 20H15.2302L10.5 13.7L5.07938 20H1.96154L9.00025 12L1.60059 2H7.74871L11.9502 7.7L16.9947 2ZM16.0947 18.2L18.0947 18.2L6.89474 3.8L4.79474 3.8L16.0947 18.2Z" fill="currentColor"/></svg>, label: 'X (Twitter)' },
+                    { href: 'https://discord.gg/alphix', icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M20.317 4.3698a19.7913 19.7913 0 00-4.8851-1.5152.0741.0741 0 00-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 00-.0785-.037 19.7363 19.7363 0 00-4.8852 1.515.0699.0699 0 00-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 00.0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 00.0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 00-.0416-.1057c-.6528-.2476-1.2743-.5499-1.8722-.8923a.077.077 0 01-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 01.0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 01.0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 01-.0066.1276 12.2986 12.2986 0 01-1.873.8914.0766.0766 0 00-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 00.0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 00.0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 00-.0312-.0286zM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419-.019 1.3332-.9555 2.4189-2.1569 2.4189zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1568 2.4189Z" fill="currentColor"/></svg>, label: 'Discord' },
+                  ]}
+                />
+              </li>
+              <li>
+                <button
+                  onClick={() => toast("Coming Soon")}
+                  className="-m-1 flex cursor-pointer items-center gap-x-2 px-3 py-2 transition-colors hover:text-white focus:outline-none"
+                >
+                  Security
+                </button>
+              </li>
+            </ul>
 
-          {/* Mobile Hamburger Menu Button */}
-          <button
-            className="md:hidden flex items-center justify-center w-10 h-10 rounded-md hover:bg-[#1e1d1b] transition-colors"
-            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-            aria-label="Toggle mobile menu"
-          >
-            {isMobileMenuOpen ? (
-              <X size={24} className="text-[#a5a5a5]" />
-            ) : (
-              <Menu size={24} className="text-[#a5a5a5]" />
-            )}
-          </button>
+            {/* Log In button on right */}
+            <button
+              onClick={() => router.push('/login')}
+              className="text-white text-sm px-3 py-1.5 rounded-lg hover:bg-[#1e1d1b] transition-colors"
+            >
+              Log In
+            </button>
+          </div>
         </div>
-        {/* 1px line below navbar */}
-        <div className="w-full h-px bg-white/10"></div>
       </nav>
 
-      {/* Mobile Menu Overlay */}
-      {isMobileMenuOpen && (
-        <div
-          className="fixed inset-0 z-40 bg-black/50 md:hidden"
-          onClick={() => setIsMobileMenuOpen(false)}
-        >
-          <div
-            className="fixed top-[73px] left-0 right-0 bg-[#0a0907] border-t border-white/10"
-            onClick={(e) => e.stopPropagation()}
+      {/* Mobile Navigation - Simple version */}
+      <nav className={`md:hidden fixed top-0 left-0 right-0 z-50 bg-[#0a0908] transition-transform duration-300 ease-in-out ${
+        showNavbar ? 'transform translate-y-0' : 'transform -translate-y-full'
+      }`}>
+        <div className="flex w-full flex-row items-center justify-between px-6 py-6">
+          <img
+            src="/Logo Type (white).svg"
+            alt="Alphix"
+            className="h-8"
+            onClick={() => router.push('/')}
+          />
+          <button
+            className="flex items-center justify-center w-10 h-10"
+            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
           >
-            <div className="px-4 py-6 space-y-4">
-              <a
-                href="https://alphix.gitbook.io/docs/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="w-full text-left justify-start text-base px-4 py-3 h-auto bg-transparent hover:bg-[#1e1d1b] text-[#a5a5a5] hover:text-white rounded-md cursor-pointer transition-colors flex"
-                style={{ fontFamily: 'Consolas, monospace', fontWeight: 500 }}
-                onClick={() => setIsMobileMenuOpen(false)}
-              >
+            {isMobileMenuOpen ? <X size={24} className="text-white" /> : <Menu size={24} className="text-white" />}
+          </button>
+        </div>
+      </nav>
+
+      {/* Mobile Menu */}
+      {isMobileMenuOpen && (
+        <div className="md:hidden fixed inset-0 z-40 bg-[#0a0908] pt-20">
+          <div className="flex flex-col gap-y-6 px-6 py-2">
+            <div className="flex flex-col gap-y-1">
+              <NavLink href="/" isActive={(pathname) => pathname === '/'} className="text-xl tracking-tight">
+                Overview
+              </NavLink>
+              <NavLink href="/swap" className="text-xl tracking-tight">
+                Swap
+              </NavLink>
+              <NavLink href="/liquidity" className="text-xl tracking-tight">
+                Liquidity
+              </NavLink>
+              <NavLink href="https://alphix.gitbook.io/docs/" target="_blank" className="text-xl tracking-tight">
                 Documentation
-              </a>
-              <Button
-                variant="ghost"
-                className="w-full text-left justify-start text-base px-4 py-3 h-auto bg-transparent hover:bg-[#1e1d1b] text-[#a5a5a5] hover:text-white rounded-md cursor-pointer"
-                style={{ fontFamily: 'Consolas, monospace', fontWeight: 500 }}
-                onClick={() => {
-                  setIsMobileMenuOpen(false);
-                  handleComingSoon();
-                }}
-              >
-                Analytics
-              </Button>
-              <Button
-                variant="ghost"
-                className="w-full text-left justify-start text-base px-4 py-3 h-auto bg-transparent hover:bg-[#1e1d1b] text-[#a5a5a5] hover:text-white rounded-md cursor-pointer"
-                style={{ fontFamily: 'Consolas, monospace', fontWeight: 500 }}
-                onClick={() => {
-                  setIsMobileMenuOpen(false);
-                  handleComingSoon();
-                }}
-              >
-                Security
-              </Button>
+              </NavLink>
             </div>
+            <NavLink
+              href="/login"
+              className="text-xl tracking-tight"
+            >
+              Login
+            </NavLink>
           </div>
         </div>
       )}

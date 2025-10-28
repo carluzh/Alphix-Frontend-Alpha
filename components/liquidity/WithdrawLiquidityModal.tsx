@@ -21,9 +21,10 @@ import type { ProcessedPosition } from "@/pages/api/liquidity/get-positions";
 import type { DecreasePositionData } from "./useDecreaseLiquidity";
 import { TOKEN_DEFINITIONS, type TokenSymbol } from "@/lib/pools-config";
 import { useDecreaseLiquidity } from "./useDecreaseLiquidity";
-import { formatTokenDisplayAmount, getTokenIcon, sanitizeDecimalInput, debounce, getTokenSymbolByAddress, formatUncollectedFee } from "@/lib/utils";
+import { formatTokenDisplayAmount, getTokenIcon, sanitizeDecimalInput, debounce, getTokenSymbolByAddress, formatUncollectedFee, cn } from "@/lib/utils";
 import { useAllPrices } from "@/components/data/hooks";
 import { formatUSD } from "@/lib/format";
+import { calculatePercentageFromString } from "@/hooks/usePercentageInput";
 
 
 interface WithdrawLiquidityModalProps {
@@ -376,26 +377,16 @@ export function WithdrawLiquidityModal({
           return;
         }
 
-        // Use proper API calculation for in-range positions
-        const response = await fetch('/api/liquidity/calculate-liquidity-parameters', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            token0Symbol: token0Symbol,
-            token1Symbol: token1Symbol,
-            inputAmount: inputAmount,
-            inputTokenSymbol: inputSide === 'amount0' ? token0Symbol : token1Symbol,
-            userTickLower: position.tickLower,
-            userTickUpper: position.tickUpper,
-            chainId: 8453, // Base chain
-          }),
+        const { calculateLiquidityParameters } = await import('@/lib/liquidity-math');
+        const result = await calculateLiquidityParameters({
+          token0Symbol,
+          token1Symbol,
+          inputAmount,
+          inputTokenSymbol: inputSide === 'amount0' ? token0Symbol : token1Symbol,
+          userTickLower: position.tickLower,
+          userTickUpper: position.tickUpper,
+          chainId: 8453,
         });
-
-        if (!response.ok) {
-          throw new Error(`API error: ${response.status}`);
-        }
-
-        const result = await response.json();
         
         if (version === withdrawCalcVersionRef.current) {
           if (inputSide === 'amount0') {
@@ -720,11 +711,11 @@ export function WithdrawLiquidityModal({
                         onClick={() => handleMaxWithdraw('amount0')}
                                 disabled={isWorking}
                       >
-                                Balance: {formatTokenDisplayAmount(position.token0.amount)} {position.token0.symbol}
+                                Balance: {formatTokenDisplayAmount(position.token0.amount, position.token0.symbol as TokenSymbol)} {position.token0.symbol}
                       </button>
                    </div>
-                  <motion.div 
-                    className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4"
+                  <motion.div
+                    className="group rounded-lg bg-muted/30 border border-sidebar-border/60 p-4"
                     animate={wiggleControls0}
                   >
                     <div className="flex items-center gap-2">
@@ -743,10 +734,11 @@ export function WithdrawLiquidityModal({
                           inputMode="decimal"
                           enterKeyHint="done"
                           onChange={(e) => {
-                            const cappedAmount = handleWithdrawAmountChangeWithWiggle(e, 'amount0');
+                            handleWithdrawAmountChangeWithWiggle(e, 'amount0');
                             setWithdrawActiveInputSide('amount0');
-                            if (cappedAmount && parseFloat(cappedAmount) > 0) {
-                              calculateWithdrawAmount(cappedAmount, 'amount0');
+                            const newAmount = sanitizeDecimalInput(e.target.value);
+                            if (newAmount && parseFloat(newAmount) > 0) {
+                              calculateWithdrawAmount(newAmount, 'amount0');
                             } else {
                               setWithdrawAmount1("");
                               setIsFullWithdraw(false);
@@ -755,12 +747,52 @@ export function WithdrawLiquidityModal({
                           disabled={isWorking}
                                     className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
                           />
-                            <div className="text-right text-xs text-muted-foreground">
-                              {(() => {
-                                const usdPrice = getUSDPriceForSymbol(position.token0.symbol);
-                                const numeric = parseFloat(withdrawAmount0 || "0");
-                                return formatCalculatedAmount(numeric * usdPrice);
-                              })()}
+                            <div className="relative text-right text-xs min-h-5">
+                              <div className={cn("text-muted-foreground transition-opacity duration-100", {
+                                "group-hover:opacity-0": parseFloat(position.token0.amount) > 0
+                              })}>
+                                {(() => {
+                                  const usdPrice = getUSDPriceForSymbol(position.token0.symbol);
+                                  const numeric = parseFloat(withdrawAmount0 || "0");
+                                  return formatCalculatedAmount(numeric * usdPrice);
+                                })()}
+                              </div>
+                              {parseFloat(position.token0.amount) > 0 && (
+                                <div className="absolute right-0 top-[3px] flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
+                                  {[25, 50, 75, 100].map((percentage, index) => (
+                                    <motion.div
+                                      key={percentage}
+                                      className="opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0"
+                                      style={{
+                                        transitionDelay: `${index * 40}ms`,
+                                        transitionDuration: '200ms',
+                                        transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)'
+                                      }}
+                                    >
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className="h-5 px-2 text-[10px] font-medium rounded-md border-sidebar-border bg-muted/20 hover:bg-muted/40 transition-colors"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          const token0Decimals = TOKEN_DEFINITIONS[getTokenSymbolByAddress(position.token0.address) as TokenSymbol]?.decimals || 18;
+                                          const amount = calculatePercentageFromString(position.token0.amount, percentage, token0Decimals);
+                                          const syntheticEvent = {
+                                            target: { value: amount }
+                                          } as React.ChangeEvent<HTMLInputElement>;
+                                          handleWithdrawAmountChangeWithWiggle(syntheticEvent, 'amount0');
+                                          setWithdrawActiveInputSide('amount0');
+                                          if (amount && parseFloat(amount) > 0) {
+                                            calculateWithdrawAmount(amount, 'amount0');
+                                          }
+                                        }}
+                                      >
+                                        {percentage === 100 ? 'MAX' : `${percentage}%`}
+                                      </Button>
+                                    </motion.div>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                       </div>
                     </div>
@@ -782,11 +814,11 @@ export function WithdrawLiquidityModal({
                                 onClick={() => handleMaxWithdraw('amount1')}
                                 disabled={isWorking}
                               >
-                                Balance: {formatTokenDisplayAmount(position.token1.amount)} {position.token1.symbol}
+                                Balance: {formatTokenDisplayAmount(position.token1.amount, position.token1.symbol as TokenSymbol)} {position.token1.symbol}
                               </button>
                    </div>
-                  <motion.div 
-                    className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4"
+                  <motion.div
+                    className="group rounded-lg bg-muted/30 border border-sidebar-border/60 p-4"
                     animate={wiggleControls1}
                   >
                     <div className="flex items-center gap-2">
@@ -805,10 +837,11 @@ export function WithdrawLiquidityModal({
                           inputMode="decimal"
                           enterKeyHint="done"
                           onChange={(e) => {
-                            const cappedAmount = handleWithdrawAmountChangeWithWiggle(e, 'amount1');
+                            handleWithdrawAmountChangeWithWiggle(e, 'amount1');
                             setWithdrawActiveInputSide('amount1');
-                            if (cappedAmount && parseFloat(cappedAmount) > 0) {
-                              calculateWithdrawAmount(cappedAmount, 'amount1');
+                            const newAmount = sanitizeDecimalInput(e.target.value);
+                            if (newAmount && parseFloat(newAmount) > 0) {
+                              calculateWithdrawAmount(newAmount, 'amount1');
                             } else {
                               setWithdrawAmount0("");
                               setIsFullWithdraw(false);
@@ -817,12 +850,52 @@ export function WithdrawLiquidityModal({
                           disabled={isWorking}
                                     className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
                           />
-                            <div className="text-right text-xs text-muted-foreground">
-                              {(() => {
-                                const usdPrice = getUSDPriceForSymbol(position.token1.symbol);
-                                const numeric = parseFloat(withdrawAmount1 || "0");
-                                return formatCalculatedAmount(numeric * usdPrice);
-                              })()}
+                            <div className="relative text-right text-xs min-h-5">
+                              <div className={cn("text-muted-foreground transition-opacity duration-100", {
+                                "group-hover:opacity-0": parseFloat(position.token1.amount) > 0
+                              })}>
+                                {(() => {
+                                  const usdPrice = getUSDPriceForSymbol(position.token1.symbol);
+                                  const numeric = parseFloat(withdrawAmount1 || "0");
+                                  return formatCalculatedAmount(numeric * usdPrice);
+                                })()}
+                              </div>
+                              {parseFloat(position.token1.amount) > 0 && (
+                                <div className="absolute right-0 top-[3px] flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
+                                  {[25, 50, 75, 100].map((percentage, index) => (
+                                    <motion.div
+                                      key={percentage}
+                                      className="opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0"
+                                      style={{
+                                        transitionDelay: `${index * 40}ms`,
+                                        transitionDuration: '200ms',
+                                        transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)'
+                                      }}
+                                    >
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className="h-5 px-2 text-[10px] font-medium rounded-md border-sidebar-border bg-muted/20 hover:bg-muted/40 transition-colors"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          const token1Decimals = TOKEN_DEFINITIONS[getTokenSymbolByAddress(position.token1.address) as TokenSymbol]?.decimals || 18;
+                                          const amount = calculatePercentageFromString(position.token1.amount, percentage, token1Decimals);
+                                          const syntheticEvent = {
+                                            target: { value: amount }
+                                          } as React.ChangeEvent<HTMLInputElement>;
+                                          handleWithdrawAmountChangeWithWiggle(syntheticEvent, 'amount1');
+                                          setWithdrawActiveInputSide('amount1');
+                                          if (amount && parseFloat(amount) > 0) {
+                                            calculateWithdrawAmount(amount, 'amount1');
+                                          }
+                                        }}
+                                      >
+                                        {percentage === 100 ? 'MAX' : `${percentage}%`}
+                                      </Button>
+                                    </motion.div>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                       </div>
                     </div>
@@ -844,7 +917,7 @@ export function WithdrawLiquidityModal({
                          onClick={() => handleMaxWithdraw('amount0')}
                          disabled={isWorking}
                        >
-                                  Balance: {formatTokenDisplayAmount(position.token0.amount)} {position.token0.symbol}
+                                  Balance: {formatTokenDisplayAmount(position.token0.amount, position.token0.symbol as TokenSymbol)} {position.token0.symbol}
                        </button>
                      </div>
                     <motion.div 
@@ -899,7 +972,7 @@ export function WithdrawLiquidityModal({
                          onClick={() => handleMaxWithdraw('amount1')}
                          disabled={isWorking}
                        >
-                                  Balance: {formatTokenDisplayAmount(position.token1.amount)} {position.token1.symbol}
+                                  Balance: {formatTokenDisplayAmount(position.token1.amount, position.token1.symbol as TokenSymbol)} {position.token1.symbol}
                        </button>
                      </div>
                     <motion.div 
@@ -949,7 +1022,7 @@ export function WithdrawLiquidityModal({
                     <div className="grid grid-cols-2 gap-3 pt-2">
           <Button 
             variant="outline" 
-            className="relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75 disabled:opacity-50" 
+            className="relative border border-sidebar-border bg-button px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75 disabled:opacity-50" 
             onClick={() => onOpenChange(false)} 
             disabled={isWorking}
             style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
@@ -959,8 +1032,8 @@ export function WithdrawLiquidityModal({
 
           <Button
             className={checkInsufficientBalanceWithdraw() ?
-              "relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75" :
-              "text-sidebar-primary border border-sidebar-primary bg-[#3d271b] hover:bg-[#3d271b]/90"
+              "relative border border-sidebar-border bg-button px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75" :
+              "text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90"
             }
             onClick={handleConfirmWithdraw}
             disabled={isWorking || !hasValidAmount || checkInsufficientBalanceWithdraw()}
@@ -983,7 +1056,7 @@ export function WithdrawLiquidityModal({
                       </div>
 
                       {/* Main Position Section */}
-                      <div className="rounded-lg bg-[var(--token-container-background)] p-4 border border-sidebar-border/60">
+                      <div className="rounded-lg bg-container p-4 border border-sidebar-border/60">
                         {/* Token Amounts with Large Icons - 2 Column Layout */}
                         <div className="space-y-4">
                           <div className="flex justify-between items-start">
@@ -1083,7 +1156,7 @@ export function WithdrawLiquidityModal({
 
                                   const formattedFee = feeNumber > 0 && feeNumber < 0.0001
                                     ? '< 0.0001'
-                                    : feeNumber.toFixed(4).replace(/\.?0+$/, '');
+                                    : feeNumber.toFixed(6).replace(/\.?0+$/, '');
 
                                   return `+${formattedFee}`;
                                 })()}
@@ -1112,7 +1185,7 @@ export function WithdrawLiquidityModal({
 
                                   const formattedFee = feeNumber > 0 && feeNumber < 0.0001
                                     ? '< 0.0001'
-                                    : feeNumber.toFixed(4).replace(/\.?0+$/, '');
+                                    : feeNumber.toFixed(6).replace(/\.?0+$/, '');
 
                                   return `+${formattedFee}`;
                                 })()}
@@ -1198,7 +1271,7 @@ export function WithdrawLiquidityModal({
                       <div className="grid grid-cols-2 gap-3 pt-2">
                         <Button 
                           variant="outline" 
-                          className="relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75 disabled:opacity-50" 
+                          className="relative border border-sidebar-border bg-button px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75 disabled:opacity-50" 
                           onClick={() => {
                             if (showTransactionOverview) {
                               setShowTransactionOverview(false);
@@ -1214,7 +1287,7 @@ export function WithdrawLiquidityModal({
                         </Button>
 
                         <Button
-                          className="text-sidebar-primary border border-sidebar-primary bg-[#3d271b] hover:bg-[#3d271b]/90"
+                          className="text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90"
                           onClick={showTransactionOverview ? handleExecuteTransaction : handleFinalConfirmWithdraw}
                           disabled={isWorking || isWithdrawCalculating}
                         >
@@ -1235,7 +1308,7 @@ export function WithdrawLiquidityModal({
           <div className="border rounded-lg p-6" style={{ backgroundColor: 'var(--modal-background)' }}>
             {/* Transaction Summary */}
             <div 
-              className="mb-6 flex items-center justify-between rounded-lg border border-[var(--swap-border)] p-4 hover:bg-muted/30 transition-colors cursor-pointer" 
+              className="mb-6 flex items-center justify-between rounded-lg border border-sidebar-border p-4 hover:bg-muted/30 transition-colors cursor-pointer" 
               onClick={() => {
                 // Don't call onLiquidityWithdrawn here to prevent auto-close
                 // The callback was already called when transaction confirmed
@@ -1306,7 +1379,7 @@ export function WithdrawLiquidityModal({
             {/* Success Icon and Message */}
             <div className="my-8 flex flex-col items-center justify-center">
               <div
-                className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-[var(--sidebar-connect-button-bg)] border border-sidebar-border overflow-hidden"
+                className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-button border border-sidebar-border overflow-hidden"
                 style={{
                   backgroundImage: 'url(/pattern_wide.svg)',
                   backgroundSize: 'cover',
@@ -1353,7 +1426,7 @@ export function WithdrawLiquidityModal({
             {/* Action Button */}
             <Button
               variant="outline"
-              className="w-full relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 text-white/75"
+              className="w-full relative border border-sidebar-border bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 text-white/75"
               onClick={() => {
                 // Don't call onLiquidityWithdrawn here to prevent auto-close
                 // The callback was already called when transaction confirmed

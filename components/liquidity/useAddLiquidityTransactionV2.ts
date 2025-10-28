@@ -58,10 +58,12 @@ export function useAddLiquidityTransactionV2({
           amount0: formatUnits(BigInt(calculatedData.amount0 || '0'), TOKEN_DEFINITIONS[token0Symbol]?.decimals || 18),
           amount1: formatUnits(BigInt(calculatedData.amount1 || '0'), TOKEN_DEFINITIONS[token1Symbol]?.decimals || 18),
           chainId,
+          tickLower: calculatedData.finalTickLower ?? parseInt(tickLower),
+          tickUpper: calculatedData.finalTickUpper ?? parseInt(tickUpper),
         }
       : undefined,
     {
-      enabled: Boolean(accountAddress && chainId && calculatedData && BigInt(calculatedData.amount0 || '0') > 0n && BigInt(calculatedData.amount1 || '0') > 0n),
+      enabled: Boolean(accountAddress && chainId && calculatedData && (BigInt(calculatedData.amount0 || '0') > 0n || BigInt(calculatedData.amount1 || '0') > 0n)),
       staleTime: 5000,
     }
   );
@@ -89,10 +91,14 @@ export function useAddLiquidityTransactionV2({
   const {
     isLoading: isDepositConfirming,
     isSuccess: isDepositConfirmed,
+    isError: isDepositError,
+    error: depositReceiptError,
   } = useWaitForTransactionReceipt({ hash: depositTxHash });
 
   const [isWorking, setIsWorking] = useState(false);
+  const [isRefetchingApprovals, setIsRefetchingApprovals] = useState(false);
   const processedDepositHashRef = useRef<string | null>(null);
+  const processedFailedHashRef = useRef<string | null>(null);
 
   // Handle ERC20 approval for a specific token
   const handleApprove = useCallback(
@@ -112,7 +118,7 @@ export function useAddLiquidityTransactionV2({
       });
 
       // Wait for confirmation
-      await publicClient.waitForTransactionReceipt({ hash });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
 
       toast.success(`${tokenSymbol} Approved`, {
         icon: React.createElement(BadgeCheck, { className: 'h-4 w-4 text-green-500' }),
@@ -123,10 +129,24 @@ export function useAddLiquidityTransactionV2({
         },
       });
 
-      // Refetch approvals after successful approval
+      // Wait for additional block confirmations to ensure RPC state propagation
+      // The transaction is confirmed, but different RPC nodes might not be synced yet
+      setIsRefetchingApprovals(true);
+      await new Promise(resolve => setTimeout(resolve, 1500));
+
+      // Invalidate and refetch approvals after successful approval
+      // Invalidate wagmi queries to force fresh reads from the blockchain
+      await queryClient.invalidateQueries({
+        predicate: (query) => {
+          // Invalidate all readContract queries for allowance checks
+          return query.queryKey[0] === 'readContract';
+        }
+      });
+
       await refetchApprovals();
+      setIsRefetchingApprovals(false);
     },
-    [approveAsync, refetchApprovals]
+    [approveAsync, refetchApprovals, queryClient]
   );
 
   // Handle deposit transaction (with optional permit signature)
@@ -142,8 +162,26 @@ export function useAddLiquidityTransactionV2({
       setIsWorking(true);
 
       try {
-        const inputAmount = amount0 && parseFloat(amount0) > 0 ? amount0 : amount1;
-        const inputTokenSymbol = amount0 && parseFloat(amount0) > 0 ? token0Symbol : token1Symbol;
+        const tl = calculatedData?.finalTickLower ?? parseInt(tickLower);
+        const tu = calculatedData?.finalTickUpper ?? parseInt(tickUpper);
+        const currentTick = calculatedData?.currentPoolTick;
+
+        let finalAmount0 = amount0;
+        let finalAmount1 = amount1;
+
+        if (currentTick !== null && currentTick !== undefined && !isNaN(tl) && !isNaN(tu)) {
+          const isOOR = currentTick < tl || currentTick > tu;
+          if (isOOR) {
+            if (currentTick >= tu) {
+              finalAmount0 = '0';
+            } else if (currentTick <= tl) {
+              finalAmount1 = '0';
+            }
+          }
+        }
+
+        const inputAmount = finalAmount0 && parseFloat(finalAmount0) > 0 ? finalAmount0 : finalAmount1;
+        const inputTokenSymbol = finalAmount0 && parseFloat(finalAmount0) > 0 ? token0Symbol : token1Symbol;
 
         const requestBody: any = {
           userAddress: accountAddress,
@@ -151,8 +189,8 @@ export function useAddLiquidityTransactionV2({
           token1Symbol,
           inputAmount,
           inputTokenSymbol,
-          userTickLower: calculatedData?.finalTickLower ?? parseInt(tickLower),
-          userTickUpper: calculatedData?.finalTickUpper ?? parseInt(tickUpper),
+          userTickLower: tl,
+          userTickUpper: tu,
           chainId,
         };
 
@@ -175,7 +213,14 @@ export function useAddLiquidityTransactionV2({
 
         const result = await response.json();
 
+        // Check if API is requesting permit signature (should not happen if flow is correct)
+        if (result.needsApproval && result.approvalType === 'PERMIT2_BATCH_SIGNATURE') {
+          console.error('[handleDeposit] API returned permit request but permit should have been obtained already');
+          throw new Error('Permit signature required. Please refresh and try again.');
+        }
+
         if (!result.transaction || !result.transaction.to || !result.transaction.data) {
+          console.error('[handleDeposit] Invalid API response:', result);
           throw new Error('Invalid transaction data from API');
         }
 
@@ -184,7 +229,7 @@ export function useAddLiquidityTransactionV2({
         });
 
         // Use writeContractAsync for multicall
-        const hash = await depositAsync({
+        const depositConfig: any = {
           address: result.transaction.to as `0x${string}`,
           abi: [
             {
@@ -197,11 +242,17 @@ export function useAddLiquidityTransactionV2({
           ],
           functionName: 'multicall',
           args: [[result.transaction.data as Hex]],
-          value: result.transaction.value ? BigInt(result.transaction.value) : undefined,
-        });
+        };
 
-        // Callback immediately after submission
-        onLiquidityAdded(token0Symbol, token1Symbol);
+        // Only add value if it exists
+        if (result.transaction.value) {
+          depositConfig.value = BigInt(result.transaction.value);
+        }
+
+        const hash = await depositAsync(depositConfig);
+
+        // Note: onLiquidityAdded will be called after confirmation in the useEffect below
+        // This prevents duplicate skeleton creation
       } catch (error: any) {
         console.error('Deposit error:', error);
 
@@ -233,6 +284,49 @@ export function useAddLiquidityTransactionV2({
     },
     [accountAddress, chainId, token0Symbol, token1Symbol, amount0, amount1, tickLower, tickUpper, calculatedData, approvalData, depositAsync, onLiquidityAdded]
   );
+
+  // Backup: Handle successful approval confirmation via useWaitForTransactionReceipt
+  // This is a safety net in case handleApprove's refetch doesn't trigger properly
+  React.useEffect(() => {
+    if (isApproved && approveTxHash) {
+      console.log('[Approval Backup] Transaction confirmed via useWaitForTransactionReceipt, invalidating queries...');
+      setIsRefetchingApprovals(true);
+
+      // Small delay to ensure RPC propagation
+      setTimeout(async () => {
+        // Invalidate wagmi queries to force fresh reads
+        await queryClient.invalidateQueries({
+          predicate: (query) => query.queryKey[0] === 'readContract'
+        });
+
+        await refetchApprovals();
+        setIsRefetchingApprovals(false);
+        console.log('[Approval Backup] Approval state refetched successfully');
+      }, 1000);
+    }
+  }, [isApproved, approveTxHash, refetchApprovals, queryClient]);
+
+  // Handle deposit transaction failure
+  React.useEffect(() => {
+    if (isDepositError && depositTxHash) {
+      // Guard against duplicate processing
+      if (processedFailedHashRef.current === depositTxHash) return;
+      processedFailedHashRef.current = depositTxHash;
+
+      console.error('Transaction reverted:', depositTxHash, depositReceiptError);
+
+      toast.error('Transaction Failed', {
+        icon: React.createElement(OctagonX, { className: 'h-4 w-4 text-red-500' }),
+        description: `Transaction was submitted but reverted on-chain.`,
+        action: {
+          label: 'View on Explorer',
+          onClick: () => window.open(`https://sepolia.basescan.org/tx/${depositTxHash}`, '_blank'),
+        },
+      });
+
+      setIsWorking(false);
+    }
+  }, [isDepositError, depositTxHash, depositReceiptError]);
 
   // Handle successful deposit confirmation
   React.useEffect(() => {
@@ -278,28 +372,23 @@ export function useAddLiquidityTransactionV2({
     }
   }, [isDepositConfirmed, depositTxHash, accountAddress, token0Symbol, token1Symbol, onLiquidityAdded, onOpenChange, queryClient]);
 
+  const resetAll = React.useCallback(() => {
+    resetApprove();
+    resetDeposit();
+    setIsWorking(false);
+    processedDepositHashRef.current = null;
+  }, [resetApprove, resetDeposit]);
+
   return {
-    // Data
     approvalData,
     isCheckingApprovals,
-
-    // Status flags
-    isWorking: isWorking || isApprovePending || isApproving || isDepositPending || isDepositConfirming,
-    isApproving,
+    isWorking: isWorking || isApprovePending || isApproving || isRefetchingApprovals || isDepositPending || isDepositConfirming,
+    isApproving: isApproving || isRefetchingApprovals,
     isDepositConfirming,
     isDepositSuccess: isDepositConfirmed,
-
-    // Actions
     handleApprove,
     handleDeposit,
     refetchApprovals,
-
-    // Reset
-    reset: () => {
-      resetApprove();
-      resetDeposit();
-      setIsWorking(false);
-      processedDepositHashRef.current = null;
-    },
+    reset: resetAll,
   };
 }

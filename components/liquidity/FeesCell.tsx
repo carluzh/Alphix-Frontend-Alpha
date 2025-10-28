@@ -5,11 +5,6 @@ import { useAccount } from "wagmi";
 import { formatUnits } from "viem";
 import { TOKEN_DEFINITIONS } from "@/lib/pools-config";
 import { loadUncollectedFees } from "@/lib/client-cache";
-import {
-  HoverCard,
-  HoverCardContent,
-  HoverCardTrigger,
-} from "@/components/ui/hover-card";
 
 interface FeesCellProps {
   positionId: string;

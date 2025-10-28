@@ -118,7 +118,7 @@ export function validateApiResponse<T>(
     return schema.parse(data);
   } catch (error) {
     if (error instanceof z.ZodError) {
-      console.error(`[Validation] ${apiName} response validation failed:`, error.errors);
+      console.error(`[Validation] ${apiName} response validation failed:`, error.issues);
       throw new Error(`Invalid ${apiName} response format: ${error.message}`);
     }
     throw error;

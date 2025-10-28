@@ -1,19 +1,19 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { PlusIcon, RefreshCwIcon, MinusIcon, ActivityIcon, CheckIcon, InfoIcon, ArrowLeftIcon, OctagonX, BadgeCheck } from "lucide-react";
+import { PlusIcon, RefreshCwIcon, MinusIcon, ActivityIcon, CheckIcon, InfoIcon, ArrowLeftIcon, OctagonX, BadgeCheck, Maximize, CircleHelp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { cn } from "@/lib/utils";
+import { cn, formatTokenDisplayAmount } from "@/lib/utils";
 import Image from "next/image";
 import { useAccount, useBalance } from "wagmi";
 import { toast } from "sonner";
 import { useEthersSigner } from "@/hooks/useEthersSigner";
+import { usePercentageInput } from "@/hooks/usePercentageInput";
 import { V4_POOL_FEE, V4_POOL_TICK_SPACING, V4_POOL_HOOKS } from "@/lib/swap-constants";
-import { TOKEN_DEFINITIONS, TokenSymbol } from "@/lib/pools-config";
-import { baseSepolia } from "@/lib/wagmiConfig";
+import { TOKEN_DEFINITIONS, TokenSymbol, NATIVE_TOKEN_ADDRESS } from "@/lib/pools-config";
 import { getPoolById, getToken } from "@/lib/pools-config";
 import { formatUnits as viemFormatUnits, parseUnits as viemParseUnits, getAddress, type Hex } from "viem";
 
@@ -38,15 +38,13 @@ const safeParseUnits = (amount: string, decimals: number): bigint => {
 };
 import { useAddLiquidityTransactionV2 } from "./useAddLiquidityTransactionV2";
 import { motion, AnimatePresence, useAnimation } from "framer-motion";
-import { InteractiveRangeChart } from "./InteractiveRangeChart";
-import { RangeSelectionModalV2 } from "./range-selection";
+import { RangeSelectionModalV2 } from "./range-selection/RangeSelectionModalV2";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-// import { useWeb3Modal } from '@web3modal/wagmi/react';
 
 // Toast utility functions matching swap-interface patterns
 const showErrorToast = (title: string, description?: string, action?: { label: string; onClick: () => void }) => {
@@ -70,48 +68,20 @@ const showInfoToast = (title: string) => {
   });
 };
 
-// Chart data interfaces
-interface CustomAxisLabel {
-  tickValue: number;    
-  displayLabel: string; 
-}
 import { Token } from '@uniswap/sdk-core';
 import { Pool as V4PoolSDK, Position as V4PositionSDK } from "@uniswap/v4-sdk";
 import JSBI from "jsbi";
 import poolsConfig from "../../config/pools.json";
 import { useAllPrices } from "@/components/data/hooks";
 import { formatUSD } from "@/lib/format";
+import { getOptimalBaseToken, getDecimalsForDenomination } from "@/lib/denomination-utils";
+import { calculateUserPositionAPY, formatUserAPY, type PoolMetrics } from "@/lib/user-position-apy";
 
 // Utility functions
 const getTokenIcon = (symbol?: string) => {
   if (!symbol) return "/placeholder-logo.svg";
   const tokenConfig = getToken(symbol);
   return tokenConfig?.icon || "/placeholder-logo.svg";
-};
-
-const formatTokenDisplayAmount = (amount: string, tokenSymbol: TokenSymbol) => {
-  const num = parseFloat(amount);
-  if (isNaN(num)) return amount;
-  if (num === 0) return "0";
-
-  const tokenConfig = TOKEN_DEFINITIONS[tokenSymbol];
-  const tokenDecimals = tokenConfig?.decimals ?? 18;
-
-  // Cap display at 10 decimals max, abbreviate if token has more
-  let displayDecimals, shouldAbbreviate;
-
-  if (tokenDecimals > 10) {
-    displayDecimals = 10;
-    shouldAbbreviate = true;
-  } else {
-    displayDecimals = tokenDecimals;
-    shouldAbbreviate = false;
-  }
-
-  const formatted = num.toFixed(displayDecimals);
-
-  // Add '...' if token has more than 10 decimals
-  return shouldAbbreviate ? formatted + '...' : formatted;
 };
 
 // Debounce function
@@ -197,6 +167,10 @@ export function AddLiquidityForm({
   const [isAmount1Focused, setIsAmount1Focused] = useState(false);
   const [isCalculating, setIsCalculating] = useState(false);
 
+  // OOR input field restrictions
+  const [canAddToken0, setCanAddToken0] = useState(true);
+  const [canAddToken1, setCanAddToken1] = useState(true);
+
   // API response data
   const [calculatedData, setCalculatedData] = useState<{
     liquidity: string;
@@ -212,8 +186,6 @@ export function AddLiquidityForm({
 
   // Price and range state
   const [currentPrice, setCurrentPrice] = useState<string | null>(null);
-  const [priceAtTickLower, setPriceAtTickLower] = useState<string | null>(null);
-  const [priceAtTickUpper, setPriceAtTickUpper] = useState<string | null>(null);
   const [currentPoolSqrtPriceX96, setCurrentPoolSqrtPriceX96] = useState<string | null>(null);
   
   // UI state
@@ -224,10 +196,14 @@ export function AddLiquidityForm({
   const [enhancedAprDisplay, setEnhancedAprDisplay] = useState<string>(poolApr || "Yield N/A");
   const [capitalEfficiencyFactor, setCapitalEfficiencyFactor] = useState<number>(1);
   const [initialDefaultApplied, setInitialDefaultApplied] = useState(false);
-  const [baseTokenForPriceDisplay, setBaseTokenForPriceDisplay] = useState<TokenSymbol>('aUSDC');
-  
+  const [baseTokenForPriceDisplay, setBaseTokenForPriceDisplay] = useState<TokenSymbol>(() =>
+    getOptimalBaseToken(initialTokens.token0, initialTokens.token1));
+  const [estimatedApy, setEstimatedApy] = useState<string>("0.00");
+  const [isCalculatingApy, setIsCalculatingApy] = useState(false);
+  // Cache pool metrics and state (fetched once per pool)
+  const [cachedPoolMetrics, setCachedPoolMetrics] = useState<{ poolId: string; metrics: any; poolLiquidity: string } | null>(null);
+
   // UI flow management
-  const [depositStep, setDepositStep] = useState<'range' | 'amount'>('amount');
   const [showingTransactionSteps, setShowingTransactionSteps] = useState(false);
   const [showRangeModal, setShowRangeModal] = useState(false);
   const [modalInitialFocusField, setModalInitialFocusField] = useState<'min' | 'max' | null>(null);
@@ -263,10 +239,7 @@ export function AddLiquidityForm({
   // Min/Max price input strings
   const [minPriceInputString, setMinPriceInputString] = useState<string>("");
   const [maxPriceInputString, setMaxPriceInputString] = useState<string>("");
-  
-  // Custom X-axis ticks for chart
-  const [customXAxisTicks, setCustomXAxisTicks] = useState<CustomAxisLabel[]>([]);
-  
+
   const { address: accountAddress, chainId, isConnected } = useAccount();
   const { data: allPrices } = useAllPrices();
   const signer = useEthersSigner();
@@ -349,7 +322,31 @@ export function AddLiquidityForm({
     chainId,
     query: { enabled: !!accountAddress && !!chainId && !!TOKEN_DEFINITIONS[token1Symbol] },
   });
-  
+
+  // Percentage input handlers using the new shared hook
+  // Wrapper to update both display and full precision states
+  const setAmount0WithPrecision = useCallback((value: string) => {
+    setAmount0(value);
+    setAmount0FullPrecision(value);
+  }, []);
+
+  const setAmount1WithPrecision = useCallback((value: string) => {
+    setAmount1(value);
+    setAmount1FullPrecision(value);
+  }, []);
+
+  const handleToken0Percentage = usePercentageInput(
+    token0BalanceData,
+    { decimals: TOKEN_DEFINITIONS[token0Symbol]?.decimals || 18, symbol: token0Symbol },
+    setAmount0WithPrecision
+  );
+
+  const handleToken1Percentage = usePercentageInput(
+    token1BalanceData,
+    { decimals: TOKEN_DEFINITIONS[token1Symbol]?.decimals || 18, symbol: token1Symbol },
+    setAmount1WithPrecision
+  );
+
   // Derived pool tokens (for labels/formatting)
   const { poolToken0, poolToken1 } = useMemo(() => {
     if (!token0Symbol || !token1Symbol || !chainId) return { poolToken0: null, poolToken1: null };
@@ -367,26 +364,6 @@ export function AddLiquidityForm({
       : [sdkBaseToken1, sdkBaseToken0];
     return { poolToken0: pt0, poolToken1: pt1 };
   }, [token0Symbol, token1Symbol, chainId]);
-  
-  // Function to remove number input arrows
-  useEffect(() => {
-    const style = document.createElement('style');
-    style.innerHTML = `
-      input[type=number]::-webkit-inner-spin-button,
-      input[type=number]::-webkit-outer-spin-button {
-        -webkit-appearance: none;
-        margin: 0;
-      }
-      input[type=number] {
-        -moz-appearance: textfield;
-      }
-    `;
-    document.head.appendChild(style);
-    
-    return () => {
-      document.head.removeChild(style);
-    };
-  }, []);
 
   // Approval wiggle animation effect
   useEffect(() => {
@@ -417,11 +394,6 @@ export function AddLiquidityForm({
     }
   }, [balanceWiggleCount1, balanceWiggleControls1]);
 
-  // Set initial state based on props
-  useEffect(() => {
-    setBaseTokenForPriceDisplay(token0Symbol);
-  }, [token0Symbol]);
-
   // Listen for balance refresh events
   useEffect(() => {
     if (!accountAddress) return;
@@ -437,46 +409,25 @@ export function AddLiquidityForm({
     };
   }, [accountAddress, refetchToken0Balance, refetchToken1Balance]);
 
-  // Auto flip denomination to match InteractiveRangeChart axis when beneficial
-  const shouldFlipDenomination = useMemo(() => {
-    if (!currentPrice) return false;
-    const currentPriceNum = parseFloat(currentPrice);
-    if (!isFinite(currentPriceNum) || currentPriceNum <= 0) return false;
-    const inverse = 1 / currentPriceNum;
-    return inverse > currentPriceNum;
-  }, [currentPrice]);
+  // Determine if prices should be inverted based on baseTokenForPriceDisplay
+  const isInverted = useMemo(() =>
+    baseTokenForPriceDisplay === token0Symbol, [baseTokenForPriceDisplay, token0Symbol]);
 
-  // Inversion state based on current price (same as shouldFlipDenomination for consistency)
-  const isInverted = useMemo(() => shouldFlipDenomination, [shouldFlipDenomination]);
-
-  // Keep denomination aligned with inversion (but freeze while editing)
+  // Keep denomination aligned with optimal base (but freeze while editing)
   useEffect(() => {
     if (editingSide) return;
-    const desiredBase = isInverted ? token0Symbol : token1Symbol;
+    const priceNum = currentPrice ? parseFloat(currentPrice) : undefined;
+    const desiredBase = getOptimalBaseToken(token0Symbol, token1Symbol, priceNum);
     if (desiredBase && desiredBase !== baseTokenForPriceDisplay) {
       setBaseTokenForPriceDisplay(desiredBase);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isInverted, token0Symbol, token1Symbol, editingSide]);
+  }, [token0Symbol, token1Symbol, currentPrice, editingSide]);
 
-  // Determine optimal denomination for display decimals (match chart priority)
   const optimalDenominationForDecimals = useMemo(() => {
-    const quotePriority: Record<string, number> = {
-      'aUSDC': 10,
-      'aUSDT': 9,
-      'USDC': 8,
-      'USDT': 7,
-      'aETH': 6,
-      'ETH': 5,
-      'YUSD': 4,
-      'mUSDT': 3,
-    };
-    const t0 = token0Symbol;
-    const t1 = token1Symbol;
-    const p0 = quotePriority[t0] || 0;
-    const p1 = quotePriority[t1] || 0;
-    return p1 > p0 ? t1 : t0;
-  }, [token0Symbol, token1Symbol]);
+    const priceNum = currentPrice ? parseFloat(currentPrice) : undefined;
+    return getOptimalBaseToken(token0Symbol, token1Symbol, priceNum);
+  }, [token0Symbol, token1Symbol, currentPrice]);
 
   // Setup tokens based on selectedPoolId
   useEffect(() => {
@@ -503,10 +454,8 @@ export function AddLiquidityForm({
           setCalculatedData(null);
           setActiveInputSide(null);
           setCurrentPrice(null);
-          setPriceAtTickLower(null);
-          setPriceAtTickUpper(null);
           setInitialDefaultApplied(false);
-          setActivePreset(isStablePool ? "±1%" : "±15%"); // Reset preset on pool change
+          setActivePreset(isStablePool ? "±3%" : "±15%"); // Reset preset on pool change (Wide for stable pools)
           setBaseTokenForPriceDisplay(t0); // Reset base token for price display
           // Reset chart specific states too
           setCurrentPriceLine(null);
@@ -529,23 +478,50 @@ export function AddLiquidityForm({
     }
   }, [initialTickLower, initialTickUpper, initialToken0Amount]);
 
+  useEffect(() => {
+    const tl = parseInt(tickLower);
+    const tu = parseInt(tickUpper);
+    if (currentPoolTick !== null && currentPoolTick !== undefined && !isNaN(tl) && !isNaN(tu)) {
+      const isOOR = currentPoolTick < tl || currentPoolTick > tu;
+      if (isOOR) {
+        if (currentPoolTick >= tu) {
+          setCanAddToken0(false);
+          setCanAddToken1(true);
+          if (parseFloat(amount0 || '0') > 0) {
+            setAmount0('');
+            setAmount0FullPrecision('');
+          }
+        } else if (currentPoolTick <= tl) {
+          setCanAddToken0(true);
+          setCanAddToken1(false);
+          if (parseFloat(amount1 || '0') > 0) {
+            setAmount1('');
+            setAmount1FullPrecision('');
+          }
+        }
+      } else {
+        setCanAddToken0(true);
+        setCanAddToken1(true);
+      }
+    } else {
+      setCanAddToken0(true);
+      setCanAddToken1(true);
+    }
+  }, [tickLower, tickUpper, currentPoolTick]);
+
   // Reset state when tokens change
   useEffect(() => {
     setInitialDefaultApplied(false);
     setTickLower(sdkMinTick.toString());
     setTickUpper(sdkMaxTick.toString());
-        setAmount0("");
-        setAmount1("");
-        setAmount0FullPrecision("");
-        setAmount1FullPrecision("");
+    setAmount0("");
+    setAmount1("");
     setAmount0FullPrecision("");
     setAmount1FullPrecision("");
     setCalculatedData(null);
     setCurrentPoolTick(null);
-    setPriceAtTickLower(null);
-    setPriceAtTickUpper(null);
     setCurrentPrice(null);
-    setActivePreset(isStablePool ? "±1%" : "±15%"); // Reset preset based on pool type
+    setActivePreset(isStablePool ? "±3%" : "±15%"); // Reset preset based on pool type (Wide for stable pools)
     setBaseTokenForPriceDisplay(token0Symbol); // Reset base token for price display
     // Reset chart specific states too
     setCurrentPriceLine(null);
@@ -613,89 +589,6 @@ export function AddLiquidityForm({
     }
   }, [selectedPoolId, chainId]);
 
-  // Effect to update custom X-axis ticks when domain changes
-  useEffect(() => {
-    if (xDomain && xDomain[0] !== undefined && xDomain[1] !== undefined && token0Symbol && token1Symbol) {
-      const [minTickDomain, maxTickDomain] = xDomain;
-      const desiredTickCount = 3; 
-      const newLabels: CustomAxisLabel[] = [];
-
-      const token0Def = TOKEN_DEFINITIONS[token0Symbol];
-      const token1Def = TOKEN_DEFINITIONS[token1Symbol];
-      const displayDecimals = baseTokenForPriceDisplay === token0Symbol 
-        ? (token0Def?.displayDecimals ?? 4) 
-        : (token1Def?.displayDecimals ?? 4);
-
-      if (minTickDomain === maxTickDomain) {
-        // Simplified: just show one label if domain is a single point
-        // Price calculation for a single tick
-        let priceAtTick = NaN;
-                  if (token0Def?.decimals !== undefined && token1Def?.decimals !== undefined) {
-            const decimalAdjFactor = baseTokenForPriceDisplay === token0Symbol 
-              ? Math.pow(10, token1Def.decimals - token0Def.decimals)
-              : Math.pow(10, token0Def.decimals - token1Def.decimals);
-            const rawPrice = baseTokenForPriceDisplay === token0Symbol 
-              ? Math.pow(1.0001, -minTickDomain)
-              : Math.pow(1.0001, minTickDomain);
-            priceAtTick = rawPrice * decimalAdjFactor;
-          }
-        let label = minTickDomain.toString();
-        if (!isNaN(priceAtTick)) {
-          if (priceAtTick > 0 && priceAtTick < 0.01) {
-            label = '<0.01';
-          } else {
-            const formatted = priceAtTick.toLocaleString('en-US', { maximumFractionDigits: displayDecimals, minimumFractionDigits: 2 });
-            // If it rounds to 0.00 but is actually positive, show <0.01
-            label = (formatted === '0.00' && priceAtTick > 0) ? '<0.01' : formatted;
-          }
-        }
-        newLabels.push({ 
-          tickValue: minTickDomain, 
-          displayLabel: label
-        });
-      } else if (isFinite(minTickDomain) && isFinite(maxTickDomain)) {
-        const range = maxTickDomain - minTickDomain;
-        const step = range / (desiredTickCount > 1 ? desiredTickCount - 1 : 1);
-        
-        for (let i = 0; i < desiredTickCount; i++) {
-          const tickVal = Math.round(minTickDomain + (i * step));
-          let priceAtTick = NaN;
-
-          if (currentPrice && currentPoolTick !== null) {
-            // Use currentPrice as reference (same approach as min/max prices)
-            const currentPriceNum = parseFloat(currentPrice);
-            const priceDelta = Math.pow(1.0001, tickVal - currentPoolTick);
-            
-            if (baseTokenForPriceDisplay === token0Symbol) {
-              priceAtTick = 1 / (currentPriceNum * priceDelta); // Invert for token0 denomination
-            } else {
-              priceAtTick = currentPriceNum * priceDelta; // Direct for token1 denomination
-            }
-          }
-          let label = tickVal.toString();
-          if (!isNaN(priceAtTick)) {
-            if (priceAtTick > 0 && priceAtTick < 0.01) {
-              label = '<0.01';
-            } else {
-              const formatted = priceAtTick.toLocaleString('en-US', { maximumFractionDigits: displayDecimals, minimumFractionDigits: Math.min(2, displayDecimals) });
-              // If it rounds to 0.00 but is actually positive, show <0.01
-              label = (formatted === '0.00' && priceAtTick > 0) ? '<0.01' : formatted;
-            }
-          }
-          newLabels.push({ 
-            tickValue: tickVal, 
-            displayLabel: label
-          });
-        }
-      } 
-      setCustomXAxisTicks(newLabels);
-    } else {
-      // Handle non-finite domains if necessary, for now, clear ticks
-      setCustomXAxisTicks([]);
-      return;
-    }
-  }, [xDomain, baseTokenForPriceDisplay, token0Symbol, token1Symbol]);
-
   // Effect to update price input strings when underlying ticks or base display token changes
   useEffect(() => {
     const numTickLower = parseInt(tickLower);
@@ -727,8 +620,8 @@ export function AddLiquidityForm({
     let valForMinInput: number | null = null;
     let valForMaxInput: number | null = null;
 
-    const decimalsForToken0Display = TOKEN_DEFINITIONS[token0Symbol]?.displayDecimals ?? 4;
-    const decimalsForToken1Display = TOKEN_DEFINITIONS[token1Symbol]?.displayDecimals ?? 4;
+    const decimalsForToken0Display = 6;
+    const decimalsForToken1Display = 6;
 
     const rawApiPriceAtTickLower = calculatedData?.priceAtTickLower ? parseFloat(calculatedData.priceAtTickLower) : null;
     const rawApiPriceAtTickUpper = calculatedData?.priceAtTickUpper ? parseFloat(calculatedData.priceAtTickUpper) : null;
@@ -780,11 +673,10 @@ export function AddLiquidityForm({
 
     let finalMinPriceString = "";
     let finalMaxPriceString = "";
-    // Use optimal denomination for decimals like the chart; force 2 for USD-denominated
+    // Use optimal denomination for decimals like the chart, considering pool type
     const baseDisplayToken = optimalDenominationForDecimals;
-    const baseDisplayDefault = TOKEN_DEFINITIONS[baseDisplayToken]?.displayDecimals ?? 4;
-    const isUSDDenom = baseDisplayToken === 'aUSDT' || baseDisplayToken === 'aUSDC' || baseDisplayToken === 'USDT' || baseDisplayToken === 'USDC' || baseDisplayToken === 'aDAI' || baseDisplayToken === 'DAI';
-    const displayDecimals = isUSDDenom ? 2 : baseDisplayDefault;
+    const poolCfg = selectedPoolId ? getPoolById(selectedPoolId) : null;
+    const displayDecimals = getDecimalsForDenomination(baseDisplayToken, poolCfg?.type);
 
     // Formatting for Min Price String
     if (valForMinInput !== null && !isNaN(valForMinInput)) {
@@ -826,41 +718,38 @@ export function AddLiquidityForm({
       return "0";
     }
 
-    // Use token's displayDecimals from pools.json
-    const tokenConfig = TOKEN_DEFINITIONS[tokenSymbolForDecimals];
-    const displayDecimals = tokenConfig?.displayDecimals ?? 4;
-
-    const formatted = numericBalance.toFixed(displayDecimals);
+    // Use 6-decimal cap for balance display
+    const formatted = numericBalance.toFixed(6);
     return formatted;
   };
 
   // Display balance calculations
-  const displayToken0Balance = isLoadingToken0Balance 
-    ? "Loading..." 
+  const displayToken0Balance = isLoadingToken0Balance
+    ? <span className="inline-block h-3 w-16 bg-muted/60 rounded animate-pulse" />
     : (token0BalanceData ? getFormattedDisplayBalance(parseFloat(token0BalanceData.formatted), token0Symbol) : "~");
-  
-  const displayToken1Balance = isLoadingToken1Balance 
-    ? "Loading..." 
+
+  const displayToken1Balance = isLoadingToken1Balance
+    ? <span className="inline-block h-3 w-16 bg-muted/60 rounded animate-pulse" />
     : (token1BalanceData ? getFormattedDisplayBalance(parseFloat(token1BalanceData.formatted), token1Symbol) : "~");
 
   // Handle selecting a preset from dropdown
   const handleSelectPreset = (preset: string) => {
     resetTransaction();
-    
     setActivePreset(preset);
-    setShowPresetSelector(false); // Close the selector
-    
-    // Apply the selected preset
+    setShowPresetSelector(false);
+
     if (preset === "Full Range") {
       setTickLower(sdkMinTick.toString());
       setTickUpper(sdkMaxTick.toString());
       setInitialDefaultApplied(true);
-      setPriceAtTickLower(null);
-      setPriceAtTickUpper(null);
-      // Reset viewbox to the ±15% centered style for consistency
-      resetChartViewbox(sdkMinTick, sdkMaxTick);
+      if (currentPoolTick !== null) {
+        const widePct = isStablePool ? 0.03 : 0.15;
+        const tickDelta = Math.round(Math.log(1 + widePct) / Math.log(1.0001));
+        const viewportLower = Math.floor((currentPoolTick - tickDelta) / defaultTickSpacing) * defaultTickSpacing;
+        const viewportUpper = Math.ceil((currentPoolTick + tickDelta) / defaultTickSpacing) * defaultTickSpacing;
+        resetChartViewbox(viewportLower, viewportUpper, 1/3, 1/3);
+      }
     } else {
-      // The percentage presets will be applied by the useEffect that watches activePreset
       setInitialDefaultApplied(true);
     }
   };
@@ -1071,16 +960,14 @@ export function AddLiquidityForm({
     setEditingMaxPrice("");
   };
 
-  // Handle direct click to edit price
   const handleClickToEditPrice = (side: 'min' | 'max') => {
     setShowPresetSelector(false);
     setEditingSide(side);
-    const labels = computeRangeLabels();
     if (side === 'min') {
-      const seed = labels ? labels.left : (minPriceInputString || "");
+      const seed = rangeLabels ? rangeLabels.left : (minPriceInputString || "");
       setEditingMinPrice(seed.replace(/,/g, ''));
     } else {
-      const seed = labels ? labels.right : (maxPriceInputString || "");
+      const seed = rangeLabels ? rangeLabels.right : (maxPriceInputString || "");
       setEditingMaxPrice(seed.replace(/,/g, ''));
     }
   };
@@ -1108,17 +995,17 @@ export function AddLiquidityForm({
   }, []);
 
   // Handle use full balance
-  const handleUseFullBalance = (balanceString: string, tokenSymbolForDecimals: TokenSymbol, isToken0: boolean) => { 
+  const handleUseFullBalance = (balanceString: string, tokenSymbolForDecimals: TokenSymbol, isToken0: boolean) => {
     try {
       const numericBalance = parseFloat(balanceString);
       if (isNaN(numericBalance) || numericBalance <= 0) return;
 
-      const formattedBalance = numericBalance.toFixed(TOKEN_DEFINITIONS[tokenSymbolForDecimals]?.decimals || 18);
+      const formattedBalance = formatTokenDisplayAmount(numericBalance.toString(), tokenSymbolForDecimals);
 
       if (isToken0) {
         setAmount0(formattedBalance);
         setActiveInputSide('amount0');
-      } else { 
+      } else {
         setAmount1(formattedBalance);
         setActiveInputSide('amount1');
       }
@@ -1150,52 +1037,74 @@ export function AddLiquidityForm({
       return;
     }
 
+    // Prevent concurrent execution - guard against multiple clicks
+    if (currentTransactionStep !== 'idle') {
+      return;
+    }
+
     // Determine next step based on current state and approval data
-    if (currentTransactionStep === 'idle') {
-      // Check what's needed
-      if (approvalData.needsToken0ERC20Approval) {
-        setCurrentTransactionStep('approving_token0');
+    // Check what's needed
+    if (approvalData.needsToken0ERC20Approval) {
+      setCurrentTransactionStep('approving_token0');
+      try {
         await handleApprove(token0Symbol);
+        // handleApprove already calls refetchApprovals, but add small delay for RPC propagation
+        await new Promise(resolve => setTimeout(resolve, 500));
+      } catch (error) {
+        console.error('Token0 approval failed:', error);
+      } finally {
         setCurrentTransactionStep('idle');
-        await refetchApprovals();
-        return;
       }
-      if (approvalData.needsToken1ERC20Approval) {
-        setCurrentTransactionStep('approving_token1');
+      return;
+    }
+    if (approvalData.needsToken1ERC20Approval) {
+      setCurrentTransactionStep('approving_token1');
+      try {
         await handleApprove(token1Symbol);
+        // handleApprove already calls refetchApprovals, but add small delay for RPC propagation
+        await new Promise(resolve => setTimeout(resolve, 500));
+      } catch (error) {
+        console.error('Token1 approval failed:', error);
+      } finally {
         setCurrentTransactionStep('idle');
-        await refetchApprovals();
-        return;
       }
-      if ((approvalData.needsToken0Permit || approvalData.needsToken1Permit) && !permitSignature) {
-        setCurrentTransactionStep('signing_permit');
-        try {
-          await signPermit();
-          // After signing, don't refetch - the signature is enough for the deposit
-          setCurrentTransactionStep('idle');
-        } catch (error) {
-          // Reset state on error (user rejection or failure)
+      return;
+    }
+
+    if (approvalData.permitBatchData && !permitSignature) {
+      setCurrentTransactionStep('signing_permit');
+      try {
+        const freshSignature = await signPermit();
+        if (!freshSignature) {
           setCurrentTransactionStep('idle');
           return;
         }
-        return;
+      } catch (error) {
+        console.error('Permit signing failed:', error);
+      } finally {
+        setCurrentTransactionStep('idle');
       }
-      // All approvals/permits done, execute deposit
-      setCurrentTransactionStep('depositing');
+      return;
+    }
+
+    setCurrentTransactionStep('depositing');
+    try {
       await handleDeposit(permitSignature);
+    } catch (error) {
+      console.error('Deposit failed:', error);
+    } finally {
       setCurrentTransactionStep('idle');
     }
   };
 
-  // Sign the batch permit
-  const signPermit = useCallback(async () => {
+  const signPermit = useCallback(async (): Promise<string | undefined> => {
     if (!approvalData?.permitBatchData || !approvalData?.signatureDetails) {
-      return;
+      return undefined;
     }
 
     if (!signer) {
       showErrorToast("Wallet not connected");
-      return;
+      return undefined;
     }
 
     try {
@@ -1203,19 +1112,17 @@ export function AddLiquidityForm({
         icon: React.createElement(InfoIcon, { className: 'h-4 w-4' })
       });
 
+      const valuesToSign = approvalData.permitBatchData.values || approvalData.permitBatchData;
       const signature = await (signer as any)._signTypedData(
         approvalData.signatureDetails.domain,
         approvalData.signatureDetails.types,
-        approvalData.permitBatchData
+        valuesToSign
       );
-
       setPermitSignature(signature);
 
-      // Show success toast
       const currentTime = Math.floor(Date.now() / 1000);
-      const sigDeadline = parseInt(approvalData.permitBatchData.sigDeadline || '0');
-      const durationSeconds = sigDeadline - currentTime;
-
+      const sigDeadline = valuesToSign?.sigDeadline || valuesToSign?.details?.[0]?.expiration || 0;
+      const durationSeconds = Number(sigDeadline) - currentTime;
       let durationFormatted = "";
       if (durationSeconds >= 86400) {
         const days = Math.ceil(durationSeconds / 86400);
@@ -1232,6 +1139,7 @@ export function AddLiquidityForm({
         icon: React.createElement(BadgeCheck, { className: 'h-4 w-4 text-green-500' }),
         description: `Batch permit signed successfully for ${durationFormatted}`
       });
+      return signature;
     } catch (error: any) {
       const isUserRejection =
         error.message?.toLowerCase().includes('user rejected') ||
@@ -1274,7 +1182,7 @@ export function AddLiquidityForm({
 
     // Waiting for approval data to load
     if (!approvalData) {
-      return 'Loading...';
+      return 'Preparing...';
     }
 
     // In transaction steps - show what will happen next
@@ -1284,7 +1192,8 @@ export function AddLiquidityForm({
     if (approvalData.needsToken1ERC20Approval) {
       return `Approve ${token1Symbol}`;
     }
-    if ((approvalData.needsToken0Permit || approvalData.needsToken1Permit) && !permitSignature) {
+    // Check if permit is needed (permitBatchData indicates permit is required)
+    if (approvalData.permitBatchData && !permitSignature) {
       return 'Sign Permit';
     }
     return 'Deposit';
@@ -1333,8 +1242,8 @@ export function AddLiquidityForm({
         }
 
         // Align and clamp
-        newTickLower = Math.ceil(newTickLower / defaultTickSpacing) * defaultTickSpacing;
-        newTickUpper = Math.floor(newTickUpper / defaultTickSpacing) * defaultTickSpacing;
+        newTickLower = Math.floor(newTickLower / defaultTickSpacing) * defaultTickSpacing;
+        newTickUpper = Math.ceil(newTickUpper / defaultTickSpacing) * defaultTickSpacing;
 
         newTickLower = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTickLower));
         newTickUpper = Math.max(sdkMinTick, Math.min(sdkMaxTick, newTickUpper));
@@ -1358,12 +1267,17 @@ export function AddLiquidityForm({
             resetTransaction();
             setTickLower(sdkMinTick.toString());
             setTickUpper(sdkMaxTick.toString());
-            setInitialDefaultApplied(true); 
-            // Reset viewbox for full range
-            resetChartViewbox(sdkMinTick, sdkMaxTick);
+            setInitialDefaultApplied(true);
+            if (currentPoolTick !== null) {
+                const widePct = isStablePool ? 0.03 : 0.15;
+                const tickDelta = Math.round(Math.log(1 + widePct) / Math.log(1.0001));
+                const viewportLower = Math.floor((currentPoolTick - tickDelta) / defaultTickSpacing) * defaultTickSpacing;
+                const viewportUpper = Math.ceil((currentPoolTick + tickDelta) / defaultTickSpacing) * defaultTickSpacing;
+                resetChartViewbox(viewportLower, viewportUpper, 1/3, 1/3);
+            }
         }
     }
-  }, [currentPrice, currentPoolTick, activePreset, defaultTickSpacing, sdkMinTick, sdkMaxTick, tickLower, tickUpper, resetTransaction]);
+  }, [currentPrice, currentPoolTick, activePreset, defaultTickSpacing, sdkMinTick, sdkMaxTick, tickLower, tickUpper, resetTransaction, isStablePool, resetChartViewbox]);
 
   // Effect to calculate Capital Efficiency and Enhanced APR
   useEffect(() => {
@@ -1816,13 +1730,33 @@ export function AddLiquidityForm({
       }
 
       setIsCalculating(true);
-      setCalculatedData(null); 
+      setCalculatedData(null);
 
       try {
-        const calcResponse = await fetch('/api/liquidity/calculate-liquidity-parameters', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+        // Check if position is OOR - follow Uniswap's pattern
+        const isOOR = currentPoolTick !== null && currentPoolTick !== undefined &&
+                      (currentPoolTick < tl || currentPoolTick > tu);
+
+        let result;
+
+        if (isOOR) {
+          const primaryTokenDef = TOKEN_DEFINITIONS[primaryTokenSymbol];
+          const primaryAmountWei = viemParseUnits(primaryAmount, primaryTokenDef.decimals);
+
+          result = {
+            liquidity: '0',
+            finalTickLower: tl,
+            finalTickUpper: tu,
+            amount0: inputSide === 'amount0' ? primaryAmountWei.toString() : '0',
+            amount1: inputSide === 'amount1' ? primaryAmountWei.toString() : '0',
+            currentPoolTick,
+            currentPrice: currentPrice || undefined,
+            priceAtTickLower: undefined,
+            priceAtTickUpper: undefined
+          };
+        } else {
+          const { calculateLiquidityParameters } = await import('@/lib/liquidity-math');
+          result = await calculateLiquidityParameters({
             token0Symbol,
             token1Symbol,
             inputAmount: primaryAmount,
@@ -1830,15 +1764,8 @@ export function AddLiquidityForm({
             userTickLower: tl,
             userTickUpper: tu,
             chainId,
-          }),
-        });
-
-        if (!calcResponse.ok) {
-          const errorData = await calcResponse.json();
-          throw new Error(errorData.message || "Failed to calculate parameters.");
+          });
         }
-
-        const result = await calcResponse.json();
         
         setCalculatedData({
           liquidity: result.liquidity, 
@@ -1866,15 +1793,27 @@ export function AddLiquidityForm({
         } else {
           setCurrentPriceLine(null);
         }
-        if (result.priceAtTickLower) setPriceAtTickLower(result.priceAtTickLower);
-        if (result.priceAtTickUpper) setPriceAtTickUpper(result.priceAtTickUpper);
 
         if (inputSide === 'amount0') {
           try {
-            const rawFormattedAmount = viemFormatUnits(BigInt(result.amount1), TOKEN_DEFINITIONS[secondaryTokenSymbol]?.decimals || 18);
-            const displayAmount = formatTokenDisplayAmount(rawFormattedAmount, secondaryTokenSymbol);
-            setAmount1(displayAmount);
-            setAmount1FullPrecision(rawFormattedAmount); // Store full precision
+            // Format amount1 using token1Symbol decimals (result.amount1 is always in token1 decimals)
+            const token1Decimals = TOKEN_DEFINITIONS[token1Symbol]?.decimals;
+            if (token1Decimals === undefined) {
+              throw new Error(`Missing decimals for token ${token1Symbol}`);
+            }
+            const amount1BigInt = BigInt(result.amount1);
+            // SDK returns maxUint256 for amounts not needed in single-sided (OOR) positions
+            const MAX_UINT256 = BigInt('0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff');
+            if (amount1BigInt >= MAX_UINT256 / 2n) {
+              // If amount is unreasonably large (>= half of maxUint256), treat as 0 (not needed)
+              setAmount1("0");
+              setAmount1FullPrecision("0");
+            } else {
+              const rawFormattedAmount = viemFormatUnits(amount1BigInt, token1Decimals);
+              const displayAmount = formatTokenDisplayAmount(rawFormattedAmount, token1Symbol);
+              setAmount1(displayAmount);
+              setAmount1FullPrecision(rawFormattedAmount); // Store full precision
+            }
           } catch (e) {
             console.error('Error formatting amount1:', e);
             setAmount1("Error");
@@ -1883,10 +1822,24 @@ export function AddLiquidityForm({
           }
         } else {
           try {
-            const rawFormattedAmount = viemFormatUnits(BigInt(result.amount0), TOKEN_DEFINITIONS[secondaryTokenSymbol]?.decimals || 18);
-            const displayAmount = formatTokenDisplayAmount(rawFormattedAmount, secondaryTokenSymbol);
-            setAmount0(displayAmount);
-            setAmount0FullPrecision(rawFormattedAmount); // Store full precision
+            // Format amount0 using token0Symbol decimals (result.amount0 is always in token0 decimals)
+            const token0Decimals = TOKEN_DEFINITIONS[token0Symbol]?.decimals;
+            if (token0Decimals === undefined) {
+              throw new Error(`Missing decimals for token ${token0Symbol}`);
+            }
+            const amount0BigInt = BigInt(result.amount0);
+            // SDK returns maxUint256 for amounts not needed in single-sided (OOR) positions
+            const MAX_UINT256 = BigInt('0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff');
+            if (amount0BigInt >= MAX_UINT256 / 2n) {
+              // If amount is unreasonably large (>= half of maxUint256), treat as 0 (not needed)
+              setAmount0("0");
+              setAmount0FullPrecision("0");
+            } else {
+              const rawFormattedAmount = viemFormatUnits(amount0BigInt, token0Decimals);
+              const displayAmount = formatTokenDisplayAmount(rawFormattedAmount, token0Symbol);
+              setAmount0(displayAmount);
+              setAmount0FullPrecision(rawFormattedAmount); // Store full precision
+            }
           } catch (e) {
             console.error('Error formatting amount0:', e);
             setAmount0("Error");
@@ -1897,10 +1850,8 @@ export function AddLiquidityForm({
       } catch (error: any) {
         showErrorToast("Calculation Error", "Estimation failed");
         setCalculatedData(null);
-        setCurrentPrice(null);      
-        setCurrentPoolTick(null);   
-        setPriceAtTickLower(null);  
-        setPriceAtTickUpper(null);  
+        setCurrentPrice(null);
+        setCurrentPoolTick(null);
         setCurrentPriceLine(null);  
         if (inputSide === 'amount0' && currentAmount1 !== "Error") setAmount1(""); 
         else if (inputSide === 'amount1' && currentAmount0 !== "Error") setAmount0("");
@@ -2000,14 +1951,20 @@ export function AddLiquidityForm({
     resetTransaction,
   ]);
 
-  // Reset to range view when deposit succeeds
   useEffect(() => {
     if (isDepositSuccess) {
+      setAmount0("");
+      setAmount1("");
+      setAmount0FullPrecision("");
+      setAmount1FullPrecision("");
+      setCalculatedData(null);
       setShowingTransactionSteps(false);
       setCurrentTransactionStep('idle');
       setPermitSignature(undefined);
+      resetTransaction();
+      refetchApprovals();
     }
-  }, [isDepositSuccess]);
+  }, [isDepositSuccess, resetTransaction, refetchApprovals]);
 
   // Check for insufficient balance
   useEffect(() => {
@@ -2066,184 +2023,165 @@ export function AddLiquidityForm({
     setIsInsufficientBalance(insufficient);
   }, [amount0, amount1, token0Symbol, token1Symbol, calculatedData, token0BalanceData, token1BalanceData]);
 
-  // Custom shape for ReferenceArea with rounded top corners
-  const RoundedTopReferenceArea = (props: any) => {
-    const { x, y, width, height, fill, fillOpacity, strokeOpacity } = props;
-    
-    // Validate all required numeric props
-    if (
-      typeof x !== 'number' || isNaN(x) ||
-      typeof y !== 'number' || isNaN(y) ||
-      typeof width !== 'number' || isNaN(width) ||
-      typeof height !== 'number' || isNaN(height) ||
-      width <= 0 || height <= 0
-    ) {
-      console.warn("[RoundedTopReferenceArea] Invalid props received:", { x, y, width, height });
-      return null;
-    }
+  // Fetch pool metrics and state ONCE per pool (cached)
+  useEffect(() => {
+    const fetchPoolData = async () => {
+      if (!selectedPoolId) return;
 
-    const r = 6;
+      // Check if already cached for this pool
+      if (cachedPoolMetrics?.poolId === selectedPoolId) return;
 
-    const path = `
-      M ${x},${y + height} 
-      L ${x + width},${y + height}
-      L ${x + width},${y + r}
-      Q ${x + width},${y} ${x + width - r},${y}
-      L ${x + r},${y}
-      Q ${x},${y} ${x},${y + r}
-      Z
-    `;
+      try {
+        const [metricsResponse, stateResponse] = await Promise.all([
+          fetch('/api/liquidity/pool-metrics', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ poolId: selectedPoolId, days: 7 })
+          }),
+          fetch(`/api/liquidity/get-pool-state?poolId=${encodeURIComponent(selectedPoolId)}`)
+        ]);
 
-    // Fallback for very small widths where arcs might look weird
-    if (width < 2 * r) {
-        return <rect x={x} y={y} width={width} height={height} fill={fill} fillOpacity={fillOpacity} strokeOpacity={strokeOpacity} />;
-    }
+        if (metricsResponse.ok) {
+          const data = await metricsResponse.json();
+          let poolLiquidity = "0";
 
-    return <path d={path} fill={fill} fillOpacity={fillOpacity} strokeOpacity={strokeOpacity} />;
-  };
+          if (stateResponse.ok) {
+            const stateData = await stateResponse.json();
+            poolLiquidity = stateData.liquidity || "0";
+          }
 
-  // Custom Recharts Tooltip
-  const CustomTooltip = ({ active, payload, label, poolToken0Symbol, token0, token1, baseTokenForPrice }: any) => { 
-    if (active && payload && payload.length && token0 && token1) {
-      const tooltipData = payload[0].payload; 
-      const currentTick = tooltipData.tick ?? label;
-      const formattedTickLabel = typeof currentTick === 'number' ? currentTick.toLocaleString() : 'N/A'; 
-      const displayPoolTokenSymbol = poolToken0Symbol || '';
-
-      let priceAtTickDisplay = "Price N/A";
-      const token0Def = TOKEN_DEFINITIONS[token0 as TokenSymbol];
-      const token1Def = TOKEN_DEFINITIONS[token1 as TokenSymbol];
-
-      if (token0Def && token1Def && typeof currentTick === 'number') {
-        const t0Dec = token0Def.decimals;
-        const t1Dec = token1Def.decimals;
-        let price = NaN;
-        let quoteTokenSymbol = "";
-        let priceOfTokenSymbol = "";
-
-        const sdkToken0 = new Token(baseSepolia.id, getAddress(token0Def.address), t0Dec, token0);
-        const sdkToken1 = new Token(baseSepolia.id, getAddress(token1Def.address), t1Dec, token1);
-
-        const formToken0IsPoolToken0 = sdkToken0.sortsBefore(sdkToken1);
-
-        if (baseTokenForPrice === token0) { // Show price denominated in token0
-            quoteTokenSymbol = token0;
-            priceOfTokenSymbol = token1;
-            const decimalAdjFactor = Math.pow(10, t1Dec - t0Dec);
-            const rawPrice = formToken0IsPoolToken0 
-                ? Math.pow(1.0001, -currentTick) 
-                : Math.pow(1.0001, currentTick);
-            price = rawPrice * decimalAdjFactor;
-        } else { // Show price denominated in token1
-            quoteTokenSymbol = token1;
-            priceOfTokenSymbol = token0;
-            const decimalAdjFactor = Math.pow(10, t0Dec - t1Dec);
-            const rawPrice = formToken0IsPoolToken0 
-                ? Math.pow(1.0001, currentTick)
-                : Math.pow(1.0001, -currentTick);
-            price = rawPrice * decimalAdjFactor;
+          setCachedPoolMetrics({
+            poolId: selectedPoolId,
+            metrics: data.metrics,
+            poolLiquidity
+          });
         }
+      } catch (error) {
+        // Silently fail - APY will show as unavailable
+      }
+    };
 
-        if (!isNaN(price)) {
-          const displayDecimals = TOKEN_DEFINITIONS[quoteTokenSymbol as TokenSymbol]?.displayDecimals || 4;
-          if (price === Infinity) priceAtTickDisplay = "∞";
-          else if (price < 1e-8 && price > 0) priceAtTickDisplay = "<0.00000001";
-          else if (price === 0) priceAtTickDisplay = "0";
-          else priceAtTickDisplay = price.toLocaleString('en-US', { maximumFractionDigits: displayDecimals, minimumFractionDigits: Math.min(2, displayDecimals) });
-          priceAtTickDisplay += ` ${priceOfTokenSymbol}/${quoteTokenSymbol}`;
-        } else {
-            priceAtTickDisplay = "Price Calc Error";
-        }
-      } else {
-        priceAtTickDisplay = "Price Data Missing";
+    fetchPoolData();
+  }, [selectedPoolId, cachedPoolMetrics]);
+
+  useEffect(() => {
+    const calculateApy = async () => {
+      if (!selectedPoolId || !tickLower || !tickUpper || !currentPoolSqrtPriceX96 || currentPoolTick === null) {
+        setEstimatedApy("0.00");
+        return;
       }
 
-      return (
-        <div className="bg-background border border-border shadow-lg p-2 rounded-md text-xs">
-          <p className="font-semibold text-foreground/90">{`Tick: ${formattedTickLabel}`}</p>
-          <p className="text-foreground/80 mt-0.5">{`Price: ${priceAtTickDisplay}`}</p>
-        </div>
-      );
-    }
-    return null;
-  };
+      const lowerTick = parseInt(tickLower);
+      const upperTick = parseInt(tickUpper);
 
-  // Chart data state - now handled in InteractiveRangeChart
+      if (isNaN(lowerTick) || isNaN(upperTick) || lowerTick >= upperTick) {
+        setEstimatedApy("0.00");
+        return;
+      }
 
-  // Calculate price range in optimal denomination for display
+      const amount0Num = parseFloat(amount0 || '0');
+      const amount1Num = parseFloat(amount1 || '0');
+      if (amount0Num <= 0 && amount1Num <= 0) {
+        setEstimatedApy("0.00");
+        return;
+      }
+
+      if (!cachedPoolMetrics || cachedPoolMetrics.poolId !== selectedPoolId) {
+        setIsCalculatingApy(true);
+        return;
+      }
+
+      if (!cachedPoolMetrics.metrics || cachedPoolMetrics.metrics.days === 0) {
+        setEstimatedApy("—");
+        return;
+      }
+
+      setIsCalculatingApy(true);
+
+      try {
+        const poolConfig = getPoolById(selectedPoolId);
+        if (!poolConfig) {
+          setEstimatedApy("—");
+          setIsCalculatingApy(false);
+          return;
+        }
+
+        const token0Def = TOKEN_DEFINITIONS[token0Symbol];
+        const token1Def = TOKEN_DEFINITIONS[token1Symbol];
+
+        if (!token0Def || !token1Def) {
+          setEstimatedApy("—");
+          setIsCalculatingApy(false);
+          return;
+        }
+
+        const sdkToken0 = poolToken0 || new Token(4002, getAddress(token0Def.address), token0Def.decimals, token0Symbol, token0Symbol);
+        const sdkToken1 = poolToken1 || new Token(4002, getAddress(token1Def.address), token1Def.decimals, token1Symbol, token1Symbol);
+
+        const sdkPool = new V4PoolSDK(
+          sdkToken0,
+          sdkToken1,
+          V4_POOL_FEE,
+          V4_POOL_TICK_SPACING,
+          V4_POOL_HOOKS,
+          JSBI.BigInt(currentPoolSqrtPriceX96),
+          JSBI.BigInt(cachedPoolMetrics.poolLiquidity),
+          currentPoolTick
+        );
+
+        const userLiquidity = calculatedData?.liquidity;
+
+        const apy = await calculateUserPositionAPY(
+          sdkPool,
+          lowerTick,
+          upperTick,
+          amount0,
+          amount1,
+          cachedPoolMetrics.metrics as PoolMetrics,
+          userLiquidity
+        );
+
+        const formattedApy = formatUserAPY(apy);
+        setEstimatedApy(formattedApy);
+      } catch (error) {
+        setEstimatedApy("—");
+      } finally {
+        setIsCalculatingApy(false);
+      }
+    };
+
+    const timer = setTimeout(() => calculateApy(), 1000);
+    return () => clearTimeout(timer);
+  }, [selectedPoolId, tickLower, tickUpper, currentPoolSqrtPriceX96, currentPoolTick, token0Symbol, token1Symbol, amount0, amount1, calculatedData, cachedPoolMetrics, poolToken0, poolToken1]);
+
   const getPriceRangeDisplay = useCallback(() => {
-    if (currentPoolTick === null || !currentPrice || !tickLower || !tickUpper) {
-      return null;
-    }
-
+    if (currentPoolTick === null || !currentPrice || !tickLower || !tickUpper) return null;
     const currentPriceNum = parseFloat(currentPrice);
     const lowerTick = parseInt(tickLower);
     const upperTick = parseInt(tickUpper);
-    
-    // Calculate prices at tick boundaries
     const lowerPriceDelta = Math.pow(1.0001, lowerTick - currentPoolTick);
     const upperPriceDelta = Math.pow(1.0001, upperTick - currentPoolTick);
-    
-    // Determine optimal denomination (same logic as InteractiveRangeChart)
-    // Follow inversion: denominate token0 when inverted, token1 otherwise
     const optimalDenomination = isInverted ? token0Symbol : token1Symbol;
-    
     let priceAtLowerTick, priceAtUpperTick;
-    
     if (isInverted) {
-      // When inverted, swap the displayed order and invert values
       priceAtLowerTick = 1 / (currentPriceNum * lowerPriceDelta);
       priceAtUpperTick = 1 / (currentPriceNum * upperPriceDelta);
     } else {
       priceAtLowerTick = currentPriceNum * lowerPriceDelta;
       priceAtUpperTick = currentPriceNum * upperPriceDelta;
     }
-    
-    // Get display decimals for the optimal denomination
-    // Increase precision for Stable pools when USD denominated
-    let displayDecimals = TOKEN_DEFINITIONS[optimalDenomination]?.displayDecimals || 4;
     const poolCfg = selectedPoolId ? getPoolById(selectedPoolId) : null;
-    const isStable = (poolCfg?.type || '').toLowerCase() === 'stable';
-    
-    // For USD-denominated tokens, always use 2 decimals
-    // Also check if the prices are in USD range (100-10000) which indicates USD denomination
-    const isUSDDenominated = (optimalDenomination === 'aUSDT' || optimalDenomination === 'aUSDC') || 
-                            (priceAtLowerTick >= 100 && priceAtLowerTick <= 10000 && priceAtUpperTick >= 100 && priceAtUpperTick <= 10000);
-    const finalDisplayDecimals = isUSDDenominated ? (isStable ? 6 : 2) : displayDecimals;
-    
-    // Temporarily disable console logs during development to reduce spam
-    // console.log("[AddLiquidityForm] Price range formatting:", {
-    //   optimalDenomination,
-    //   displayDecimals,
-    //   finalDisplayDecimals,
-    //   priceAtLowerTick,
-    //   priceAtUpperTick,
-    //   isUSDDenominated
-    // });
-    
-    // Format prices with proper decimals
-    const formattedLower = priceAtLowerTick.toLocaleString('en-US', { 
-      maximumFractionDigits: finalDisplayDecimals, 
-      minimumFractionDigits: finalDisplayDecimals 
-    });
-    const formattedUpper = priceAtUpperTick.toLocaleString('en-US', { 
-      maximumFractionDigits: finalDisplayDecimals, 
-      minimumFractionDigits: finalDisplayDecimals 
-    });
-    
-    if (tickLower === sdkMinTick.toString() && tickUpper === sdkMaxTick.toString()) {
-      return `0.00 - ∞`;
-    }
-
-    // Always display ascending by price (left = lower price, right = higher price)
+    const finalDisplayDecimals = getDecimalsForDenomination(optimalDenomination, poolCfg?.type);
+    const formattedLower = priceAtLowerTick.toLocaleString('en-US', { maximumFractionDigits: finalDisplayDecimals, minimumFractionDigits: finalDisplayDecimals });
+    const formattedUpper = priceAtUpperTick.toLocaleString('en-US', { maximumFractionDigits: finalDisplayDecimals, minimumFractionDigits: finalDisplayDecimals });
+    if (tickLower === sdkMinTick.toString() && tickUpper === sdkMaxTick.toString()) return `0.00 - ∞`;
     const lowFirst = priceAtLowerTick <= priceAtUpperTick;
     const leftVal = lowFirst ? formattedLower : formattedUpper;
     const rightVal = lowFirst ? formattedUpper : formattedLower;
     return `${leftVal} - ${rightVal}`;
   }, [currentPoolTick, currentPrice, tickLower, tickUpper, sdkMinTick, sdkMaxTick, token0Symbol, token1Symbol]);
 
-  // Compute precise left/right labels to mirror chart axis (ascending by price)
-  const computeRangeLabels = useCallback((): { left: string; right: string } | null => {
+  const rangeLabels = useMemo((): { left: string; right: string } | null => {
     if (currentPoolTick === null || !currentPrice || !tickLower || !tickUpper) return null;
     const currentNum = parseFloat(currentPrice);
     if (!isFinite(currentNum) || currentNum <= 0) return null;
@@ -2251,120 +2189,231 @@ export function AddLiquidityForm({
     const upper = parseInt(tickUpper);
     if (isNaN(lower) || isNaN(upper)) return null;
 
-    // Use baseTokenForPriceDisplay to determine inversion (user's chosen denomination)
     const shouldInvert = baseTokenForPriceDisplay === token0Symbol;
     const priceAt = (tickVal: number) => {
       const priceDelta = Math.pow(1.0001, tickVal - currentPoolTick);
       return shouldInvert ? 1 / (currentNum * priceDelta) : currentNum * priceDelta;
     };
-
-    // Full range special
-    if (tickLower === sdkMinTick.toString() && tickUpper === sdkMaxTick.toString()) {
-      return { left: '0.00', right: '∞' };
-    }
+    if (tickLower === sdkMinTick.toString() && tickUpper === sdkMaxTick.toString()) return { left: '0.00', right: '∞' };
 
     const pLower = priceAt(lower);
     const pUpper = priceAt(upper);
 
     const denomToken = shouldInvert ? token0Symbol : token1Symbol;
-    const isUsd = denomToken === 'aUSDT' || denomToken === 'aUSDC' || denomToken === 'USDT' || denomToken === 'USDC' || denomToken === 'aDAI' || denomToken === 'DAI';
     const poolCfg = selectedPoolId ? getPoolById(selectedPoolId) : null;
-    const isStablePoolType = (poolCfg?.type || '').toLowerCase() === 'stable';
-    const decimals = isUsd ? (isStablePoolType ? 6 : 2) : (TOKEN_DEFINITIONS[denomToken]?.displayDecimals ?? 4);
+    const decimals = getDecimalsForDenomination(denomToken, poolCfg?.type);
 
-    const points = [
-      { tick: lower, price: pLower },
-      { tick: upper, price: pUpper },
-    ].filter(p => isFinite(p.price) && !isNaN(p.price));
-
+    const points = [{ tick: lower, price: pLower }, { tick: upper, price: pUpper }].filter(p => isFinite(p.price) && !isNaN(p.price));
     if (points.length < 2) return null;
-
     points.sort((a, b) => a.price - b.price);
-
     const formatVal = (v: number) => {
       if (!isFinite(v)) return '∞';
-      if (v > 0 && v < 0.01) return '<0.01';
+      const threshold = Math.pow(10, -decimals);
+      if (v > 0 && v < threshold) return `<${threshold.toFixed(decimals)}`;
       const formatted = v.toLocaleString('en-US', { maximumFractionDigits: decimals, minimumFractionDigits: Math.min(2, decimals) });
-      // If it rounds to 0.00 but is actually positive, show <0.01
-      if (formatted === '0.00' && v > 0) return '<0.01';
+      if (formatted === '0.00' && v > 0) return `<${threshold.toFixed(decimals)}`;
       return formatted;
     };
-
-    // Always display ascending by price: left = lower, right = higher
     return { left: formatVal(points[0].price), right: formatVal(points[1].price) };
   }, [currentPoolTick, currentPrice, tickLower, tickUpper, token0Symbol, token1Symbol, sdkMinTick, sdkMaxTick, baseTokenForPriceDisplay, selectedPoolId]);
 
-  // const { open } = useWeb3Modal();
+  const formattedCurrentPrice = useMemo(() => {
+    if (!currentPrice) return null;
+    const shouldInvert = baseTokenForPriceDisplay === token0Symbol;
+    const denomToken = shouldInvert ? token0Symbol : token1Symbol;
+    const poolCfg = selectedPoolId ? getPoolById(selectedPoolId) : null;
+    const displayDecimals = getDecimalsForDenomination(denomToken, poolCfg?.type);
+    const numeric = shouldInvert ? (1 / parseFloat(currentPrice)) : parseFloat(currentPrice);
+    if (!isFinite(numeric)) return '∞';
+    return numeric.toLocaleString('en-US', { maximumFractionDigits: displayDecimals, minimumFractionDigits: Math.min(2, displayDecimals) });
+  }, [currentPrice, baseTokenForPriceDisplay, token0Symbol, selectedPoolId]);
 
   return (
     <div className="space-y-4">
-      {/* Tabs for Swap/Deposit/Withdraw - MOVED TO PARENT COMPONENT */}
-      {/*
-      <div className="flex border-b border-border mb-4">
-        <button
-          className={`py-2 px-4 text-sm font-medium ${activeTab === 'deposit' 
-            ? 'text-foreground border-b-2 border-primary' 
-            : 'text-muted-foreground hover:text-foreground/80'}`}
-          onClick={() => setActiveTab('deposit')}
-        >
-          Deposit
-        </button>
-        <button
-          className={`py-2 px-4 text-sm font-medium ${activeTab === 'withdraw' 
-            ? 'text-foreground border-b-2 border-primary' 
-            : 'text-muted-foreground hover:text-foreground/80'}`}
-          onClick={() => {
-            setActiveTab('withdraw');
-            showInfoToast("Withdraw Coming Soon");
-          }}
-        >
-          Withdraw
-        </button>
-        <button
-          className={`py-2 px-4 text-sm font-medium ${activeTab === 'swap' 
-            ? 'text-foreground border-b-2 border-primary' 
-            : 'text-muted-foreground hover:text-foreground/80'}`}
-          onClick={() => {
-            setActiveTab('swap');
-            showInfoToast("Swap Coming Soon");
-          }}
-        >
-          Swap
-        </button>
-      </div>
-      */}
-
       {/* Deposit Tab Content */}
       {activeTab === 'deposit' && (
         <>
           {/* Amount Input Step */}
             <>
             {/* Header removed; now provided by parent container */}
-              
-              {/* Input for Token 0 */}
-              <div className="space-y-2">
+
+              {/* Range Section - Step 1 - Hide when showing transaction steps */}
+              {!showingTransactionSteps && (
+              <div className="border border-dashed rounded-md mb-6 bg-muted/10 p-3">
+                {/* Range Label */}
                 <div className="flex items-center justify-between mb-2">
-                  <Button 
-                    variant="ghost" 
-                    className="h-auto p-0 text-sm font-medium text-foreground hover:bg-transparent hover:text-muted-foreground transition-colors" 
-                  >
-                    Amount
-                  </Button>
-                  <div className="flex items-center gap-1">
-                    <Button 
-                      variant="ghost" 
-                      className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent" 
-                      onClick={() => handleUseFullBalance(token0BalanceData?.formatted || "0", token0Symbol, true)} 
-                      disabled={isWorking || isCalculating}
-                    >  
-                      Balance: {displayToken0Balance} {token0Symbol}
-                    </Button>
+                  <Label className="text-sm font-medium">Range</Label>
+                  <div className="flex items-center gap-2">
+                    {!currentPrice || !minPriceInputString || !maxPriceInputString ? (
+                      // Loading skeletons
+                      <>
+                        <div className="h-4 w-12 bg-muted/50 rounded animate-pulse" />
+                        <div className="h-4 w-20 bg-muted/50 rounded animate-pulse" />
+                      </>
+                    ) : (
+                      <>
+                        {/* Clickable price range display - opens modal */}
+                        {getPriceRangeDisplay() && (
+                          <div className="flex items-center gap-1 text-xs">
+                            <div
+                              className={`${(isDraggingRange === 'left' || isDraggingRange === 'center') ? 'text-white' : 'text-muted-foreground'} hover:text-white px-1 py-1 transition-colors cursor-pointer`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setModalInitialFocusField('min');
+                                setShowRangeModal(true);
+                              }}
+                            >
+                              {rangeLabels ? rangeLabels.left : (minPriceInputString || "0.00")}
+                            </div>
+                            <span className="text-muted-foreground">-</span>
+                            <div
+                              className={`${(isDraggingRange === 'right' || isDraggingRange === 'center') ? 'text-white' : 'text-muted-foreground'} hover:text-white px-1 py-1 transition-colors cursor-pointer`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setModalInitialFocusField('max');
+                                setShowRangeModal(true);
+                              }}
+                            >
+                              {rangeLabels ? rangeLabels.right : (maxPriceInputString || "∞")}
+                            </div>
+                            {currentPrice && (
+                              <TooltipProvider delayDuration={0}>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <span className="ml-2 inline-flex items-center gap-1 text-[10px] px-1 py-0.5 rounded border border-sidebar-border text-muted-foreground">
+                                      <span className="inline-block w-[2px] h-2" style={{ background: '#e85102' }} />
+                                      <span className="select-none">
+                                        {formattedCurrentPrice}
+                                      </span>
+                                    </span>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
+                                    Current Pool Price
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            )}
+                          </div>
+                        )}
+                      </>
+                    )}
                   </div>
                 </div>
+
+                {/* Range Buttons */}
+                {!showingTransactionSteps ? (
+                  <div className="grid grid-cols-4 gap-2">
+                    {["Full Range", "Wide", "Narrow", "Custom"].map((preset) => {
+                      // Map labels to internal preset values
+                      const presetValue = (() => {
+                        if (preset === "Full Range") return "Full Range";
+                        if (preset === "Wide") return isStablePool ? "±3%" : "±15%";
+                        if (preset === "Narrow") return isStablePool ? "±0.5%" : "±3%";
+                        return null; // Custom
+                      })();
+
+                      const isActive = activePreset === presetValue;
+                      const isCustom = preset === "Custom";
+
+                      return (
+                        <button
+                          key={preset}
+                          type="button"
+                          onClick={() => {
+                            if (preset === "Custom") {
+                              setShowRangeModal(true);
+                            } else {
+                              handleSelectPreset(presetValue!);
+                            }
+                          }}
+                          className={`relative h-10 px-2 flex items-center justify-center gap-1.5 rounded-md border transition-all duration-200 overflow-hidden text-[11px] font-medium cursor-pointer ${
+                            isActive
+                              ? 'text-sidebar-primary border-sidebar-primary bg-button-primary'
+                              : 'border-sidebar-border bg-button hover:bg-accent hover:brightness-110 hover:border-white/30 text-white'
+                          }`}
+                          style={!isActive ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
+                        >
+                          {isCustom && <Maximize className={`w-3 h-3 relative z-10 ${isActive ? 'text-sidebar-primary' : 'text-muted-foreground'}`} />}
+                          <span className="relative z-10">{preset}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
+              )}
+
+              {/* Range Selection Modal - Only show when NOT in transaction steps */}
+              {!showingTransactionSteps && (
+                <RangeSelectionModalV2
+                  isOpen={showRangeModal}
+                  onClose={() => {
+                    setShowRangeModal(false);
+                    setModalInitialFocusField(null);
+                  }}
+                  onConfirm={(newTickLower, newTickUpper, selectedPreset, denomination) => {
+                    setTickLower(newTickLower);
+                    setTickUpper(newTickUpper);
+                    resetTransaction();
+                    setInitialDefaultApplied(true);
+                    // Set the preset from the modal instead of clearing it
+                    setActivePreset(selectedPreset || null);
+                    // Sync denomination with modal
+                    if (denomination) {
+                      setBaseTokenForPriceDisplay(denomination);
+                    }
+                    // Reset amount inputs when range changes
+                    setAmount0("");
+                    setAmount1("");
+                    setAmount0FullPrecision("");
+                    setAmount1FullPrecision("");
+                    setActiveInputSide(null);
+                    setCalculatedData(null);
+                    setModalInitialFocusField(null);
+                  }}
+                  initialTickLower={tickLower}
+                  initialTickUpper={tickUpper}
+                  initialActivePreset={activePreset}
+                  selectedPoolId={selectedPoolId}
+                  chainId={chainId}
+                  token0Symbol={token0Symbol}
+                  token1Symbol={token1Symbol}
+                  currentPrice={currentPrice}
+                  currentPoolTick={currentPoolTick}
+                  currentPoolSqrtPriceX96={currentPoolSqrtPriceX96}
+                  minPriceDisplay={minPriceInputString}
+                  maxPriceDisplay={maxPriceInputString}
+                  baseTokenSymbol={baseTokenForPriceDisplay}
+                  sdkMinTick={sdkMinTick}
+                  sdkMaxTick={sdkMaxTick}
+                  defaultTickSpacing={defaultTickSpacing}
+                  xDomain={xDomain}
+                  onXDomainChange={(newDomain) => setXDomain(newDomain)}
+                  poolToken0={poolToken0}
+                  poolToken1={poolToken1}
+                  presetOptions={presetOptions}
+                  isInverted={isInverted}
+                  initialFocusField={modalInitialFocusField}
+                />
+              )}
+
+              {/* Input for Token 0 */}
+              <div className="space-y-2">
                 <motion.div
-                  className={cn("rounded-lg bg-muted/30 p-4", { "outline outline-1 outline-muted": isAmount0Focused })}
+                  className={cn("rounded-lg bg-muted/30 p-4 group", { "outline outline-1 outline-muted": isAmount0Focused })}
                   animate={balanceWiggleControls0}
                 >
+                  <div className="flex items-center justify-between mb-2">
+                    <Label className="text-sm font-medium">Amount</Label>
+                    <Button
+                      variant="ghost"
+                      className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:text-muted-foreground"
+                      onClick={() => handleUseFullBalance(token0BalanceData?.formatted || "0", token0Symbol, true)}
+                      disabled={!canAddToken0 || isWorking || isCalculating}
+                    >
+                      {displayToken0Balance} {token0Symbol}
+                    </Button>
+                  </div>
                   <div className="flex items-center gap-2">
                     <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
                       <Image src={getTokenIcon(token0Symbol)} alt={token0Symbol} width={20} height={20} className="rounded-full"/>
@@ -2415,28 +2464,62 @@ export function AddLiquidityForm({
                         pattern="[0-9]*\.?[0-9]*"
                         inputMode="decimal"
                         autoComplete="off"
-                        disabled={isWorking || (isCalculating && activeInputSide === 'amount1')}
+                        disabled={!canAddToken0 || isWorking || (isCalculating && activeInputSide === 'amount1')}
                         className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
                       />
-                      <div className="text-right text-xs text-muted-foreground">
-                        {(() => {
-                          const usdPrice = getUSDPriceForSymbol(token0Symbol);
-                          
-                          // Use precise backend data when available, fallback to display amount
-                          if (calculatedData && calculatedData.amount0) {
-                            try {
-                              const preciseAmount = parseFloat(viemFormatUnits(BigInt(calculatedData.amount0), TOKEN_DEFINITIONS[token0Symbol]?.decimals || 18));
-                              return formatUSD(preciseAmount * usdPrice);
-                            } catch {
-                              // Fallback to display amount if parsing fails
+                      <div className="relative text-right text-xs min-h-5">
+                        {/* USD Value - hide on hover always */}
+                        <div className={cn("text-muted-foreground transition-opacity duration-100", {
+                          "group-hover:opacity-0": isConnected && token0BalanceData && parseFloat(token0BalanceData.formatted || "0") > 0 && canAddToken0
+                        })}>
+                          {(() => {
+                            const usdPrice = getUSDPriceForSymbol(token0Symbol);
+
+                            // Use precise backend data when available, fallback to display amount
+                            if (calculatedData && calculatedData.amount0) {
+                              try {
+                                const preciseAmount = parseFloat(viemFormatUnits(BigInt(calculatedData.amount0), TOKEN_DEFINITIONS[token0Symbol]?.decimals || 18));
+                                return formatUSD(preciseAmount * usdPrice);
+                              } catch {
+                                // Fallback to display amount if parsing fails
+                                const numeric = parseDisplayAmount(amount0);
+                                return formatUSD(numeric * usdPrice);
+                              }
+                            } else {
                               const numeric = parseDisplayAmount(amount0);
                               return formatUSD(numeric * usdPrice);
                             }
-                          } else {
-                            const numeric = parseDisplayAmount(amount0);
-                            return formatUSD(numeric * usdPrice);
-                          }
-                        })()}
+                          })()}
+                        </div>
+                        {/* Percentage buttons - show on hover always */}
+                        {isConnected && token0BalanceData && parseFloat(token0BalanceData.formatted || "0") > 0 && canAddToken0 && (
+                          <div className="absolute right-0 top-[3px] flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
+                            {[25, 50, 75, 100].map((percentage, index) => (
+                              <motion.div
+                                key={percentage}
+                                className="opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0"
+                                style={{
+                                  transitionDelay: `${index * 40}ms`,
+                                  transitionDuration: '200ms',
+                                  transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)'
+                                }}
+                              >
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-5 px-2 text-[10px] font-medium rounded-md border-sidebar-border bg-muted/20 hover:bg-muted/40 transition-colors"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleToken0Percentage(percentage);
+                                    setActiveInputSide('amount0');
+                                  }}
+                                >
+                                  {percentage === 100 ? 'MAX' : `${percentage}%`}
+                                </Button>
+                              </motion.div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -2452,28 +2535,21 @@ export function AddLiquidityForm({
 
               {/* Input for Token 1 */}
               <div className="space-y-2 mb-4">
-                <div className="flex items-center justify-between mb-2">
-                  <Button 
-                    variant="ghost" 
-                    className="h-auto p-0 text-sm font-medium text-foreground hover:bg-transparent hover:text-muted-foreground transition-colors" 
-                  >
-                    Amount
-                  </Button>
-                  <div className="flex items-center gap-1">
-                    <Button 
-                      variant="ghost" 
-                      className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent" 
-                      onClick={() => handleUseFullBalance(token1BalanceData?.formatted || "0", token1Symbol, false)} 
-                      disabled={isWorking || isCalculating}
-                    > 
-                      Balance: {displayToken1Balance} {token1Symbol}
-                    </Button>
-                  </div>
-                </div>
                 <motion.div
-                  className={cn("rounded-lg bg-muted/30 p-4", { "outline outline-1 outline-muted": isAmount1Focused })}
+                  className={cn("rounded-lg bg-muted/30 p-4 group", { "outline outline-1 outline-muted": isAmount1Focused })}
                   animate={balanceWiggleControls1}
                 >
+                  <div className="flex items-center justify-between mb-2">
+                    <Label className="text-sm font-medium">Amount</Label>
+                    <Button
+                      variant="ghost"
+                      className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:text-muted-foreground"
+                      onClick={() => handleUseFullBalance(token1BalanceData?.formatted || "0", token1Symbol, false)}
+                      disabled={!canAddToken1 || isWorking || isCalculating}
+                    >
+                      {displayToken1Balance} {token1Symbol}
+                    </Button>
+                  </div>
                   <div className="flex items-center gap-2">
                     <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
                       <Image src={getTokenIcon(token1Symbol)} alt={token1Symbol} width={20} height={20} className="rounded-full"/>
@@ -2524,337 +2600,241 @@ export function AddLiquidityForm({
                         pattern="[0-9]*\.?[0-9]*"
                         inputMode="decimal"
                         autoComplete="off"
-                        disabled={isWorking || (isCalculating && activeInputSide === 'amount0')}
+                        disabled={!canAddToken1 || isWorking || (isCalculating && activeInputSide === 'amount0')}
                         className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
                       />
-                      <div className="text-right text-xs text-muted-foreground">
-                        {(() => {
-                          const usdPrice = getUSDPriceForSymbol(token1Symbol);
-                          
-                          // Use precise backend data when available, fallback to display amount
-                          if (calculatedData && calculatedData.amount1) {
-                            try {
-                              const preciseAmount = parseFloat(viemFormatUnits(BigInt(calculatedData.amount1), TOKEN_DEFINITIONS[token1Symbol]?.decimals || 18));
-                              return formatUSD(preciseAmount * usdPrice);
-                            } catch {
-                              // Fallback to display amount if parsing fails
+                      <div className="relative text-right text-xs min-h-5">
+                        {/* USD Value - hide on hover always */}
+                        <div className={cn("text-muted-foreground transition-opacity duration-100", {
+                          "group-hover:opacity-0": isConnected && token1BalanceData && parseFloat(token1BalanceData.formatted || "0") > 0 && canAddToken1
+                        })}>
+                          {(() => {
+                            const usdPrice = getUSDPriceForSymbol(token1Symbol);
+
+                            // Use precise backend data when available, fallback to display amount
+                            if (calculatedData && calculatedData.amount1) {
+                              try {
+                                const preciseAmount = parseFloat(viemFormatUnits(BigInt(calculatedData.amount1), TOKEN_DEFINITIONS[token1Symbol]?.decimals || 18));
+                                return formatUSD(preciseAmount * usdPrice);
+                              } catch {
+                                // Fallback to display amount if parsing fails
+                                const numeric = parseDisplayAmount(amount1);
+                                return formatUSD(numeric * usdPrice);
+                              }
+                            } else {
                               const numeric = parseDisplayAmount(amount1);
                               return formatUSD(numeric * usdPrice);
                             }
-                          } else {
-                            const numeric = parseDisplayAmount(amount1);
-                            return formatUSD(numeric * usdPrice);
-                          }
-                        })()}
+                          })()}
+                        </div>
+                        {/* Percentage buttons - show on hover always */}
+                        {isConnected && token1BalanceData && parseFloat(token1BalanceData.formatted || "0") > 0 && canAddToken1 && (
+                          <div className="absolute right-0 top-[3px] flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
+                            {[25, 50, 75, 100].map((percentage, index) => (
+                              <motion.div
+                                key={percentage}
+                                className="opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0"
+                                style={{
+                                  transitionDelay: `${index * 40}ms`,
+                                  transitionDuration: '200ms',
+                                  transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)'
+                                }}
+                              >
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-5 px-2 text-[10px] font-medium rounded-md border-sidebar-border bg-muted/20 hover:bg-muted/40 transition-colors"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleToken1Percentage(percentage);
+                                    setActiveInputSide('amount1');
+                                  }}
+                                >
+                                  {percentage === 100 ? 'MAX' : `${percentage}%`}
+                                </Button>
+                              </motion.div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
                 </motion.div>
               </div>
 
-              {/* Price Range Label (outside container, matching Amount style) */}
-              <div className="flex items-center justify-between mb-2">
-                <Label className="text-sm font-medium">Price Range</Label>
-                <div className="flex items-center gap-2">
-                  {!currentPrice || !minPriceInputString || !maxPriceInputString ? (
-                    // Loading skeletons
-                    <>
-                      <div className="h-4 w-12 bg-muted/50 rounded animate-pulse" />
-                      <div className="w-px h-4 bg-border" />
-                      <div className="h-4 w-20 bg-muted/50 rounded animate-pulse" />
-                    </>
-                  ) : (
-                    <>
-                      {/* Range Type badge - opens modal */}
-                      <button
-                        type="button"
-                        className="px-2 py-0.5 text-xs font-medium rounded-md border border-sidebar-border bg-muted/30 text-foreground hover:bg-muted/50 transition-colors cursor-pointer"
-                        onClick={() => setShowRangeModal(true)}
-                        title="Click to change range"
-                      >
-                        {(() => {
-                          // Map presets to consistent labels (matches RangeSelectionModalV2)
-                          const presetLabels: Record<string, string> = isStablePool ? {
-                            "Full Range": "Full Range",
-                            "±3%": "Conservative",
-                            "±1%": "Concentrated"
-                          } : {
-                            "Full Range": "Full Range",
-                            "±15%": "Conservative",
-                            "±3%": "Concentrated"
-                          };
-                          return activePreset ? (presetLabels[activePreset] || activePreset) : "Custom";
-                        })()}
-                      </button>
-                      {getPriceRangeDisplay() && (
-                        <>
-                          <div className="w-px h-4 bg-border" />
-                          {/* Clickable price range display - opens modal */}
-                          <div className="flex items-center gap-1 text-xs">
-                            <div
-                              className={`${(isDraggingRange === 'left' || isDraggingRange === 'center') ? 'text-white' : 'text-muted-foreground'} hover:text-white px-1 py-1 transition-colors cursor-pointer`}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setModalInitialFocusField('min');
-                                setShowRangeModal(true);
-                              }}
-                            >
-                              {(() => {
-                                const labels = computeRangeLabels();
-                                return labels ? labels.left : (minPriceInputString || "0.00");
-                              })()}
-                            </div>
-                            <span className="text-muted-foreground">-</span>
-                            <div
-                              className={`${(isDraggingRange === 'right' || isDraggingRange === 'center') ? 'text-white' : 'text-muted-foreground'} hover:text-white px-1 py-1 transition-colors cursor-pointer`}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setModalInitialFocusField('max');
-                                setShowRangeModal(true);
-                              }}
-                            >
-                              {(() => {
-                                const labels = computeRangeLabels();
-                                return labels ? labels.right : (maxPriceInputString || "∞");
-                              })()}
-                            </div>
-                            {currentPrice && (
-                              <TooltipProvider delayDuration={0}>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <span className="ml-2 inline-flex items-center gap-1 text-[10px] px-1 py-0.5 rounded border border-sidebar-border text-muted-foreground">
-                                      <span className="inline-block w-[2px] h-2" style={{ background: '#e85102' }} />
-                                      <span className="select-none">
-                                        {(() => {
-                                          const inverse = 1 / parseFloat(currentPrice);
-                                          const flip = inverse > parseFloat(currentPrice);
-                                          const denomToken = flip ? token0Symbol : token1Symbol;
-                                          const isUsd = denomToken === 'aUSDT' || denomToken === 'aUSDC' || denomToken === 'USDT' || denomToken === 'USDC' || denomToken === 'aDAI' || denomToken === 'DAI';
-                                          const displayDecimals = isUsd ? 2 : (TOKEN_DEFINITIONS[denomToken]?.displayDecimals ?? 4);
-                                          const numeric = flip ? inverse : parseFloat(currentPrice);
-                                          return isFinite(numeric) ? numeric.toFixed(displayDecimals) : '∞';
-                                        })()}
-                                      </span>
-                                    </span>
-                                  </TooltipTrigger>
-                                  <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
-                                    Current Pool Price
-                                  </TooltipContent>
-                                </Tooltip>
-                              </TooltipProvider>
-                            )}
-                          </div>
-                        </>
-                      )}
-                    </>
-                  )}
-                </div>
-              </div>
-
-              {/* Range Preview Chart OR Transaction Steps (conditional based on flow state) */}
-              {!showingTransactionSteps ? (
-                <div
-                  className={`pt-3 px-3 pb-1.5 border border-dashed rounded-md mb-4 transition-all duration-200 group ${
-                    isPoolStateLoading || !isConnected
-                      ? 'bg-muted/10'
-                      : 'bg-muted/10 cursor-pointer hover:bg-primary/[0.025] hover:border-primary/10'
-                  }`}
-                  onClick={!isPoolStateLoading && isConnected ? () => setShowRangeModal(true) : undefined}
-                >
-                  {isPoolStateLoading || !isConnected ? (
-                    <div className="w-full h-[100px] relative overflow-hidden flex flex-col items-center justify-center bg-muted/50 rounded-md">
-                      <Image
-                        src="/LogoIconWhite.svg"
-                        alt="Alphix Logo"
-                        width={32}
-                        height={32}
-                        className="animate-pulse opacity-75"
-                      />
-                    </div>
-                  ) : (
-                    <div className="relative pointer-events-none h-[100px]">
-                      <InteractiveRangeChart
-                        key={`chart-${baseTokenForPriceDisplay}`}
-                        selectedPoolId={selectedPoolId}
-                        chainId={chainId}
-                        token0Symbol={token0Symbol}
-                        token1Symbol={token1Symbol}
-                        currentPoolTick={currentPoolTick}
-                        currentPrice={currentPrice}
-                        currentPoolSqrtPriceX96={currentPoolSqrtPriceX96}
-                        tickLower={tickLower}
-                        tickUpper={tickUpper}
-                        xDomain={xDomain}
-                        onRangeChange={(newLower, newUpper) => {
-                          setTickLower(newLower);
-                          setTickUpper(newUpper);
-                          resetTransaction();
-                          setInitialDefaultApplied(true);
-                          setActivePreset(null);
-                        }}
-                        onXDomainChange={(newDomain) => {
-                          setXDomain(newDomain);
-                        }}
-                        sdkMinTick={sdkMinTick}
-                        sdkMaxTick={sdkMaxTick}
-                        defaultTickSpacing={defaultTickSpacing}
-                        poolToken0={poolToken0}
-                        poolToken1={poolToken1}
-                        onDragStateChange={(state) => setIsDraggingRange(state)}
-                        onLoadingChange={(loading) => setIsChartLoading(loading)}
-                        forceDenominationBase={baseTokenForPriceDisplay}
-                        readOnly={true}
-                      />
-
-                      <RangeSelectionModalV2
-                        isOpen={showRangeModal}
-                        onClose={() => {
-                          setShowRangeModal(false);
-                          setModalInitialFocusField(null);
-                        }}
-                        onConfirm={(newTickLower, newTickUpper, selectedPreset, denomination) => {
-                          setTickLower(newTickLower);
-                          setTickUpper(newTickUpper);
-                          resetTransaction();
-                          setInitialDefaultApplied(true);
-                          // Set the preset from the modal instead of clearing it
-                          setActivePreset(selectedPreset || null);
-                          // Sync denomination with modal
-                          if (denomination) {
-                            setBaseTokenForPriceDisplay(denomination);
-                          }
-                          setModalInitialFocusField(null);
-                        }}
-                        initialTickLower={tickLower}
-                        initialTickUpper={tickUpper}
-                        initialActivePreset={activePreset}
-                        selectedPoolId={selectedPoolId}
-                        chainId={chainId}
-                        token0Symbol={token0Symbol}
-                        token1Symbol={token1Symbol}
-                        currentPrice={currentPrice}
-                        currentPoolTick={currentPoolTick}
-                        currentPoolSqrtPriceX96={currentPoolSqrtPriceX96}
-                        minPriceDisplay={minPriceInputString}
-                        maxPriceDisplay={maxPriceInputString}
-                        baseTokenSymbol={baseTokenForPriceDisplay}
-                        sdkMinTick={sdkMinTick}
-                        sdkMaxTick={sdkMaxTick}
-                        defaultTickSpacing={defaultTickSpacing}
-                        xDomain={xDomain}
-                        onXDomainChange={(newDomain) => setXDomain(newDomain)}
-                        poolToken0={poolToken0}
-                        poolToken1={poolToken1}
-                        presetOptions={presetOptions}
-                        isInverted={isInverted}
-                        initialFocusField={modalInitialFocusField}
-                      />
-
-                      {(isChartLoading || isCalculating) && (
-                        <div className="absolute inset-0 flex items-center justify-center bg-muted/20 rounded">
-                          <Image
-                            src="/LogoIconWhite.svg"
-                            alt="Loading"
-                            width={24}
-                            height={24}
-                            className="animate-pulse opacity-75"
-                          />
+              {/* Estimated APY Display - Only show in first view, not in transaction steps */}
+              {!showingTransactionSteps && (
+                <div className="flex items-center justify-between mb-4 px-1">
+                  <TooltipProvider delayDuration={0}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                          <span>Estimated APY</span>
+                          <CircleHelp className="h-3 w-3" />
                         </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="p-3 border border-dashed rounded-md bg-muted/10 mb-4">
-                <p className="text-sm font-medium mb-2 text-foreground/80">Transaction Steps</p>
-                  <div className="space-y-1.5 text-xs text-muted-foreground">
-                      {/* ERC20 Approvals to Permit2 */}
-                      <div className="flex items-center justify-between">
-                          <span>Token Approvals</span>
-                          <span>
-                            { isApproving || isCheckingApprovals
-                              ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
-                              : (
-                                <motion.span
-                                  animate={approvalWiggleControls}
-                                  className={`text-xs font-mono ${
-                                    !approvalData?.needsToken0ERC20Approval && !approvalData?.needsToken1ERC20Approval
-                                      ? 'text-green-500'
-                                      : approvalWiggleCount > 0
-                                      ? 'text-red-500'
-                                      : 'text-muted-foreground'
-                                  }`}
-                                >
-                                  {isCheckingApprovals
-                                    ? 'Checking...'
-                                    : !approvalData
-                                    ? '-'
-                                    : (() => {
-                                        const totalNeeded = [approvalData.needsToken0ERC20Approval, approvalData.needsToken1ERC20Approval].filter(Boolean).length;
-                                        const completed = 2 - totalNeeded;
-                                        return `${completed}/2`;
-                                      })()}
-                                </motion.span>
-                              )
-                            }
-                          </span>
-                      </div>
-
-                      {/* Permit2 Signature */}
-                      <div className="flex items-center justify-between">
-                          <span>Permit Signature</span>
-                          <span>
-                            { currentTransactionStep === 'signing_permit'
-                              ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
-                              : (
-                                <span className={`text-xs font-mono ${permitSignature ? 'text-green-500' : ''}`}>
-                                  {permitSignature ? '1/1' : '0/1'}
-                                </span>
-                              )
-                            }
-                          </span>
-                      </div>
-
-                      {/* Deposit Transaction */}
-                      <div className="flex items-center justify-between">
-                          <span>Deposit Transaction</span>
-                          <span>
-                            { isDepositConfirming
-                              ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
-                              : (
-                                <span className={`text-xs font-mono ${isDepositSuccess ? 'text-green-500' : ''}`}>
-                                  {isDepositSuccess ? '1/1' : '0/1'}
-                                </span>
-                              )
-                            }
-                          </span>
-                      </div>
-
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="max-w-[240px] text-xs">
+                        <p>
+                          APY is calculated from historical fee data over the last 7 days,
+                          accounting for the liquidity depth change from your position.
+                        </p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                  <div className="text-xs font-medium">
+                    {isCalculatingApy ? (
+                      <div className="h-3.5 w-12 bg-muted/50 rounded animate-pulse" />
+                    ) : (
+                      <span className="text-foreground">{estimatedApy}%</span>
+                    )}
                   </div>
                 </div>
               )}
 
               {/* Current Price Display removed per updated UI */}
 
+              {/* Transaction Steps - Show when user clicked deposit */}
+              {showingTransactionSteps && (
+                <div className="p-3 border border-dashed rounded-md bg-muted/10 mb-4">
+                  <p className="text-sm font-medium mb-2 text-foreground/80">Transaction Steps</p>
+                  <div className="space-y-1.5 text-xs text-muted-foreground">
+                    {/* ERC20 Approvals to Permit2 */}
+                    <div className="flex items-center justify-between">
+                      <span>Token Approvals</span>
+                      <span>
+                        { isApproving || isCheckingApprovals
+                          ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
+                          : (
+                            <motion.span
+                              animate={approvalWiggleControls}
+                              className={`text-xs font-mono ${
+                                !approvalData?.needsToken0ERC20Approval && !approvalData?.needsToken1ERC20Approval
+                                  ? 'text-green-500'
+                                  : approvalWiggleCount > 0
+                                  ? 'text-red-500'
+                                  : 'text-muted-foreground'
+                              }`}
+                            >
+                              {isCheckingApprovals
+                                ? 'Checking...'
+                                : !approvalData
+                                ? '-'
+                                : (() => {
+                                    // Calculate total approvals needed based on whether tokens are native AND amounts > 0 (single-sided)
+                                    const token0IsNative = TOKEN_DEFINITIONS[token0Symbol]?.address === NATIVE_TOKEN_ADDRESS;
+                                    const token1IsNative = TOKEN_DEFINITIONS[token1Symbol]?.address === NATIVE_TOKEN_ADDRESS;
+                                    const amount0Num = parseFloat(amount0 || '0');
+                                    const amount1Num = parseFloat(amount1 || '0');
+
+                                    // Only count non-native tokens with non-zero amounts
+                                    const maxNeeded = (token0IsNative || amount0Num === 0 ? 0 : 1) + (token1IsNative || amount1Num === 0 ? 0 : 1);
+                                    const totalNeeded = [approvalData.needsToken0ERC20Approval, approvalData.needsToken1ERC20Approval].filter(Boolean).length;
+                                    const completed = maxNeeded - totalNeeded;
+                                    return `${completed}/${maxNeeded}`;
+                                  })()}
+                            </motion.span>
+                          )
+                        }
+                      </span>
+                    </div>
+
+                    {/* Permit2 Signature */}
+                    <div className="flex items-center justify-between">
+                      <span>Permit Signature</span>
+                      <span>
+                        { currentTransactionStep === 'signing_permit'
+                          ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
+                          : permitSignature
+                          ? <span className="text-xs font-mono text-green-500">1/1</span>
+                          : <span className="text-xs font-mono">0/1</span>
+                        }
+                      </span>
+                    </div>
+
+                    {/* Deposit Transaction */}
+                    <div className="flex items-center justify-between">
+                      <span>Deposit Transaction</span>
+                      <span>
+                        { isDepositConfirming
+                          ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
+                          : (
+                            <span className={`text-xs font-mono ${isDepositSuccess ? 'text-green-500' : ''}`}>
+                              {isDepositSuccess ? '1/1' : '0/1'}
+                            </span>
+                          )
+                        }
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Continue Button */}
               {!isConnected ? (
-                <div className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30"
+                <div className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md border border-sidebar-border bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30"
                   style={{ backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
                 >
                   {/* @ts-ignore */}
                   <appkit-button className="absolute inset-0 z-10 block h-full w-full cursor-pointer p-0 opacity-0" />
                   <span className="relative z-0 pointer-events-none">Connect Wallet</span>
                 </div>
+              ) : showingTransactionSteps ? (
+                // Split button layout: Back | Deposit/Approve/etc
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    className="w-1/3 border-sidebar-border bg-button hover:bg-muted/30"
+                    onClick={() => {
+                      setShowingTransactionSteps(false);
+                      resetTransaction();
+                    }}
+                    disabled={isWorking}
+                    style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+                  >
+                    Back
+                  </Button>
+                  <Button
+                    className={cn(
+                      "flex-1",
+                      (isWorking || isCalculating || isPoolStateLoading || isCheckingApprovals ||
+                      (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0")) ||
+                      isInsufficientBalance) ?
+                        "relative border border-sidebar-border bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 !opacity-100 cursor-default text-white/75"
+                        :
+                        "text-sidebar-primary border border-sidebar-primary bg-button-primary hover-button-primary"
+                    )}
+                    onClick={handlePrepareAndSubmit}
+                    disabled={isWorking ||
+                      isCalculating ||
+                      isPoolStateLoading ||
+                      isCheckingApprovals ||
+                      (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0")) ||
+                      isInsufficientBalance
+                    }
+                    style={(isWorking || isCalculating || isPoolStateLoading || isCheckingApprovals ||
+                      (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0")) ||
+                      isInsufficientBalance) ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
+                  >
+                    <span className={cn(
+                      (isWorking || isCheckingApprovals || isPoolStateLoading)
+                        ? "animate-pulse"
+                        : ""
+                    )}>
+                      {getButtonText()}
+                    </span>
+                  </Button>
+                </div>
               ) : (
+                // Single button layout for initial view
                 <Button
                   className={cn(
                     "w-full",
                     (isWorking || isCalculating || isPoolStateLoading || isCheckingApprovals ||
                     (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0")) ||
                     isInsufficientBalance) ?
-                      "relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 !opacity-100 cursor-default text-white/75"
+                      "relative border border-sidebar-border bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 !opacity-100 cursor-default text-white/75"
                       :
-                      "text-sidebar-primary border border-sidebar-primary bg-[#3d271b] hover:bg-[#3d271b]/90"
+                      "text-sidebar-primary border border-sidebar-primary bg-button-primary hover-button-primary"
                   )}
                   onClick={handlePrepareAndSubmit}
                   disabled={isWorking ||

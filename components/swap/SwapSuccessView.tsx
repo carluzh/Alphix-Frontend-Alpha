@@ -156,7 +156,7 @@ export function SwapSuccessView({
   return (
     <motion.div key="success" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
       <div 
-        className="mb-6 flex items-center justify-between rounded-lg border border-[var(--swap-border)] p-4 hover:bg-muted/30 transition-colors cursor-pointer" 
+        className="mb-6 flex items-center justify-between rounded-lg border border-primary p-4 hover:bg-muted/30 transition-colors cursor-pointer" 
         onClick={handleChangeButton}
       >
         <div className="flex items-center gap-3">
@@ -191,7 +191,7 @@ export function SwapSuccessView({
       </div>
       <div className="my-8 flex flex-col items-center justify-center">
         <motion.div
-          className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-[var(--sidebar-connect-button-bg)] border border-sidebar-border overflow-hidden"
+          className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-button border border-primary overflow-hidden"
           initial={{ scale: 0.8 }}
           animate={{ scale: 1 }}
           transition={{ type: "spring", stiffness: 300, damping: 20 }}
@@ -219,7 +219,7 @@ export function SwapSuccessView({
       </div>
       <Button
         variant="outline"
-        className="w-full relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 text-white/75"
+        className="w-full relative border border-primary bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 text-white/75"
         onClick={handleChangeButton}
         style={{ backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
       >

@@ -1,7 +1,6 @@
 'use client';
 
 import React from 'react';
-import * as Sentry from '@sentry/nextjs';
 import { logger } from '@/lib/logger';
 
 interface ErrorBoundaryState {
@@ -32,15 +31,6 @@ class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundarySta
     logger.error('React Error Boundary caught an error', error, {
       componentStack: errorInfo.componentStack,
       errorBoundary: true,
-    });
-
-    // Report to Sentry
-    Sentry.captureException(error, {
-      contexts: {
-        react: {
-          componentStack: errorInfo.componentStack,
-        },
-      },
     });
   }
 
@@ -96,24 +86,18 @@ function DefaultErrorFallback({ error, resetError }: { error?: Error; resetError
 export function useErrorReporting() {
   const reportError = React.useCallback((error: Error, context?: Record<string, any>) => {
     logger.error('Manual error report', error, context);
-    Sentry.captureException(error, {
-      contexts: { manual_report: context },
-    });
   }, []);
 
   const reportMessage = React.useCallback((message: string, level: 'info' | 'warning' | 'error' = 'error', context?: Record<string, any>) => {
     switch (level) {
       case 'info':
         logger.info(message, context);
-        Sentry.captureMessage(message, { level: 'info', contexts: { manual_report: context } });
         break;
       case 'warning':
         logger.warn(message, context);
-        Sentry.captureMessage(message, { level: 'warning', contexts: { manual_report: context } });
         break;
       case 'error':
         logger.error(message, undefined, context);
-        Sentry.captureMessage(message, { level: 'error', contexts: { manual_report: context } });
         break;
     }
   }, []);

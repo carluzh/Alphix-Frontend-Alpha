@@ -32,7 +32,8 @@ import { config, baseSepolia } from "../../lib/wagmiConfig";
 import { toast } from "sonner";
 import { getAddress, parseUnits, formatUnits, maxUint256, type Address, type Hex } from "viem"
 import { publicClient } from "../../lib/viemClient";
-import { useIsMobile } from "@/hooks/use-is-mobile";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { useSwapPercentageInput } from "@/hooks/usePercentageInput";
 
 import {
   getAllTokens,
@@ -57,7 +58,7 @@ import { Label } from "@/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Badge } from "@/components/ui/badge"
-import { cn } from "@/lib/utils"
+import { cn, formatTokenDisplayAmount } from "@/lib/utils"
 
 // Modal Imports
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from "@/components/ui/dialog";
@@ -65,7 +66,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 // Chart Import
 import { DynamicFeeChart, generateMockFeeHistory } from "../dynamic-fee-chart";
 import { DynamicFeeChartPreview } from "../dynamic-fee-chart-preview";
-import { PulsatingDot } from "../pulsating-dot";
 import { getFromCache, setToCache, getFromCacheWithTtl, getPoolDynamicFeeCacheKey } from "@/lib/client-cache";
 import { getPoolByTokens } from "@/lib/pools-config";
 import { findBestRoute, SwapRoute, PoolHop } from "@/lib/routing-engine";
@@ -84,12 +84,9 @@ interface FeeHistoryPoint {
   dynamicFee: number;
 }
 
-const TARGET_CHAIN_ID = baseSepolia.id; // Changed from 1301 to baseSepolia.id
-const MaxUint160 = BigInt('0xffffffffffffffffffffffffffffffffffffffff'); // 2**160 - 1
+const TARGET_CHAIN_ID = baseSepolia.id;
 
-// Helper function to get price mapping for tokens
 const getTokenPriceMapping = (tokenSymbol: string): 'BTC' | 'USDC' | 'ETH' | 'DAI' => {
-  // Map our tokens to coingecko price types
   switch (tokenSymbol) {
     case 'aBTC':
       return 'BTC';
@@ -114,16 +111,12 @@ const createTokenFromConfig = (tokenSymbol: string, prices: { BTC: number; USDC:
   
   const priceType = getTokenPriceMapping(tokenSymbol);
   const usdPrice = prices[priceType] || 1;
-  
-  // Ensure displayDecimals has a proper fallback
-      const displayDecimals = tokenConfig.displayDecimals ?? (tokenSymbol === 'aBTC' ? 8 : 4);
-  
+
   return {
     address: tokenConfig.address as Address,
     symbol: tokenConfig.symbol,
     name: tokenConfig.name,
     decimals: tokenConfig.decimals,
-    displayDecimals: displayDecimals,
     balance: "0.000",
     value: "$0.00",
     icon: tokenConfig.icon,
@@ -145,7 +138,6 @@ export interface Token {
   symbol: string;
   name: string;
   decimals: number;
-  displayDecimals: number; // Add displayDecimals for proper formatting
   balance: string; // Fetched balance, formatted string
   value: string;   // USD value based on fetched balance and usdPrice, formatted string "$X.YZ"
   icon: string;
@@ -658,30 +650,32 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   const handleChangeButton = () => {
     // Force a full state reset by unmounting and remounting
     // Use a two-step approach
-    
+
     // First, clear any variables that might persist
     window.swapBuildData = undefined;
-    
+
     // Force reset of completedSteps (most important for visual feedback)
     setCompletedSteps([]);
-    
+
     // Then force back to input state immediately
     setSwapState("input");
-    
+
     // Reset all other states as well EXCEPT permit data
     setSwapProgressState("init");
     setSwapError(null);
     setIsSwapping(false);
-    
-    // Note: We're NOT clearing existingPermitData
-    // Explicitly refresh the quote for the current input so UI is consistent
-    if (fromAmount && parseFloat(fromAmount) > 0) {
-      fetchQuote(fromAmount);
-    } else {
-      setToAmount("0");
-      setQuoteError(null);
-      setRouteInfo(null);
-    }
+
+    // CRITICAL FIX: Don't re-fetch quote when returning from review
+    // The existing quote data (fromAmount, toAmount, routeInfo) is already correct
+    // Re-fetching would cause:
+    // 1. Rounding issues for ExactOut (user wants EXACT output preserved)
+    // 2. Potential failures for complex multihop routes
+    // The amounts and route remain unchanged from what was displayed in review
+
+    // Reset lastEditedSideRef to 'from' for any future edits after returning
+    lastEditedSideRef.current = 'from';
+
+    // Note: We're NOT clearing existingPermitData or re-fetching quotes
   };
 
   // Effect for handling wrong network notification
@@ -723,20 +717,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     }
   }, [swapState, swapTxInfo]);
 
-  // Helper function for formatting balance display
-  const getFormattedDisplayBalance = (numericBalance: number | undefined): string => {
-    if (numericBalance === undefined || isNaN(numericBalance)) {
-      numericBalance = 0;
-    }
-    if (numericBalance === 0) {
-      return "0.000";
-    } else if (numericBalance > 0 && numericBalance < 0.001) {
-      return "< 0.001";
-    } else {
-      return numericBalance.toFixed(3);
-    }
-  };
-
   // --- Dynamic Balance Fetching for current tokens ---
   const { data: fromTokenBalanceData, isLoading: isLoadingFromTokenBalance, error: fromTokenBalanceError, refetch: refetchFromTokenBalance } = useBalance({
     address: accountAddress,
@@ -751,6 +731,16 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     chainId: TARGET_CHAIN_ID,
     query: { enabled: !!accountAddress && !!toToken.address }
   });
+
+  // Use shared percentage input hook for both tokens
+  const { handleFromPercentage, handleToPercentage } = useSwapPercentageInput(
+    fromTokenBalanceData,
+    toTokenBalanceData,
+    fromToken,
+    toToken,
+    setFromAmount,
+    setToAmount
+  );
 
   // Listen for faucet claim to refresh balances
   useEffect(() => {
@@ -781,7 +771,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   // Update fromToken balance
   useEffect(() => {
     const numericBalance = fromTokenBalanceData ? parseFloat(fromTokenBalanceData.formatted) : 0;
-    const displayBalance = getFormattedDisplayBalance(numericBalance);
+    const displayBalance = formatTokenDisplayAmount(numericBalance.toString(), fromToken.symbol as TokenSymbol);
 
     setFromToken(prevToken => {
       // Only create a new object if the balance or value has actually changed
@@ -813,12 +803,12 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       // If no changes, return the existing token object to prevent re-renders
       return prevToken;
     });
-  }, [fromTokenBalanceData, fromTokenBalanceError, isLoadingFromTokenBalance, currentChainId, isConnected, getFormattedDisplayBalance]);
+  }, [fromTokenBalanceData, fromTokenBalanceError, isLoadingFromTokenBalance, currentChainId, isConnected, fromToken.symbol]);
 
   // Update toToken balance
   useEffect(() => {
     const numericBalance = toTokenBalanceData ? parseFloat(toTokenBalanceData.formatted) : 0;
-    const displayBalance = getFormattedDisplayBalance(numericBalance);
+    const displayBalance = formatTokenDisplayAmount(numericBalance.toString(), toToken.symbol as TokenSymbol);
 
     setToToken(prevToken => {
       // Only create a new object if the balance or value has actually changed
@@ -848,7 +838,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       
       return prevToken;
     });
-  }, [toTokenBalanceData, toTokenBalanceError, isLoadingToTokenBalance, currentChainId, isConnected, getFormattedDisplayBalance]);
+  }, [toTokenBalanceData, toTokenBalanceError, isLoadingToTokenBalance, currentChainId, isConnected, toToken.symbol]);
 
   // Helper function to format currency
   const formatCurrency = useCallback((valueString: string): string => {
@@ -867,7 +857,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   }, []); // Added useCallback with empty dependency array
 
   // Helper function to format token amount for display (Review, Success, Balances)
-  // Uses the token's actual displayDecimals from configuration and special < 0.001 display.
+  // Uses a 6-decimal cap for shortened display
   const formatTokenAmountDisplay = useCallback((amountString: string, token: Token): string => {
     try {
       const amount = parseFloat(amountString);
@@ -877,11 +867,8 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       // Handle very small positive numbers with special string FIRST
       if (amount > 0 && amount < 0.001) return "< 0.001";
 
-      // Use the token's actual displayDecimals from configuration
-      const displayDecimals = token.displayDecimals;
-
-      // Format with the token's configured decimals
-      return amount.toFixed(displayDecimals);
+      // Use 6-decimal cap for all tokens
+      return amount.toFixed(6);
 
     } catch (error) {
       console.error("Error formatting token amount display:", error);
@@ -924,7 +911,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
           const data = await response.json();
           
           if (response.ok && data.success) {
-            // Set the quoted amount in the UI
+            // Set the quoted amount in the UI (use raw value for full precision)
             setToAmount(data.toAmount);
             setQuoteError(null);
             
@@ -942,10 +929,10 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
             
             setQuoteError(data.error || 'Failed to get quote');
             setRouteInfo(null); // Clear route info on error
-            
+
             // Fallback to the calculation using current prices
             const calculatedTo = (fromValue * fromToken.usdPrice) / toToken.usdPrice;
-            setToAmount(calculatedTo.toFixed(toToken.decimals));
+            setToAmount(calculatedTo.toString());
           }
         } catch (error: any) {
           console.error('❌ V4 Quoter Exception:', error);
@@ -955,10 +942,10 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
           
           setQuoteError('Failed to fetch quote');
           setRouteInfo(null); // Clear route info on exception
-          
+
           // Fallback to the calculation using current prices
           const calculatedTo = (fromValue * fromToken.usdPrice) / toToken.usdPrice;
-          setToAmount(calculatedTo.toFixed(toToken.decimals));
+          setToAmount(calculatedTo.toString());
         } finally {
           // Clear loading state
           setQuoteLoading(false);
@@ -966,7 +953,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       } else {
         // Fallback to the calculation using current prices
         const calculatedTo = (fromValue * fromToken.usdPrice) / toToken.usdPrice;
-        setToAmount(calculatedTo.toFixed(toToken.decimals));
+        setToAmount(calculatedTo.toString());
         setRouteInfo(null); // No route info for calculated prices
       }
     }, 500); // 500ms debounce
@@ -1024,16 +1011,10 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
         if (data.swapType === 'ExactOut') {
           // When editing Buy, backfill Sell only;
           // never mutate Buy to preserve user typing (incl. trailing dot)
-          const raw = String(data.fromAmount ?? "");
-          const [intPart, decPart = ""] = raw.split(".");
-          const truncated = decPart.length > 9 ? `${intPart}.${decPart.slice(0,9)}` : raw;
-          setFromAmount(truncated);
+          setFromAmount(String(data.fromAmount ?? ""));
         } else {
           // ExactIn flow: update Buy value from quote
-          const rawTo = String(data.toAmount ?? "");
-          const [i2, d2 = ""] = rawTo.split(".");
-          const truncTo = d2.length > 9 ? `${i2}.${d2.slice(0,9)}` : rawTo;
-          setToAmount(truncTo);
+          setToAmount(String(data.toAmount ?? ""));
         }
         setRouteInfo(data.route || null);
         setQuoteError(null);
@@ -1267,7 +1248,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       minimumReceived: formattedMinimumReceived,
     }));
 
-  }, [fromAmount, toAmount, fromToken?.symbol, fromToken?.usdPrice, fromToken?.displayDecimals, toToken?.symbol, toToken?.usdPrice, toToken?.displayDecimals, formatCurrency, isConnected, currentChainId, dynamicFeeLoading, dynamicFeeError, dynamicFeeBps, routeFees, routeFeesLoading, formatTokenAmountDisplay, slippage]);
+  }, [fromAmount, toAmount, fromToken?.symbol, fromToken?.usdPrice, toToken?.symbol, toToken?.usdPrice, formatCurrency, isConnected, currentChainId, dynamicFeeLoading, dynamicFeeError, dynamicFeeBps, routeFees, routeFeesLoading, formatTokenAmountDisplay, slippage]);
 
   const handleFromAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
@@ -1381,37 +1362,25 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       return;
     }
 
-    // --- Helper to fetch permit data (can be extracted if used elsewhere) ---
     const fetchPermitData = async (): Promise<any> => {
       try {
-        const requestBody = {
-          userAddress: accountAddress,
-          fromTokenAddress: fromToken.address,
-          fromTokenSymbol: fromToken.symbol,
-          toTokenSymbol: toToken.symbol,
-          chainId: currentChainId,
-          checkExisting: true,
-        };
-        
-        console.log("DEBUG: fetchPermitData request body:", requestBody);
-        console.log("DEBUG: Individual values:", {
-          accountAddress,
-          fromTokenAddress: fromToken.address,
-          fromTokenSymbol: fromToken.symbol,
-          toTokenSymbol: toToken.symbol,
-          currentChainId
-        });
-        
+        const parsedAmount = safeParseUnits(fromAmount, fromToken.decimals);
         const response = await fetch('/api/swap/prepare-permit', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(requestBody),
+          body: JSON.stringify({
+            userAddress: accountAddress,
+            fromTokenAddress: fromToken.address,
+            fromTokenSymbol: fromToken.symbol,
+            toTokenSymbol: toToken.symbol,
+            chainId: currentChainId,
+            amountIn: parsedAmount.toString(),
+          }),
         });
         const data = await response.json();
         if (!response.ok) throw new Error(data.message || 'Failed to fetch permit data');
         return data;
       } catch (fetchError: any) {
-        console.error("[fetchPermitData] Error:", fetchError);
         throw new Error("Could not retrieve permit information.");
       }
     };
@@ -1472,36 +1441,15 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     }
   };
 
-  const handleUsePercentage = (percentage: number) => {
-    try {
-      // Use the dynamic fromToken balance data
-      if (fromTokenBalanceData && fromTokenBalanceData.formatted) {
-        // Parse the exact blockchain value
-        const exactBalance = fromTokenBalanceData.formatted;
-        const exactNumericBalance = parseFloat(exactBalance);
-        
-        if (isNaN(exactNumericBalance) || exactNumericBalance <= 0) {
-          console.warn(`Invalid or zero balance for ${fromToken.symbol}`);
-          return;
-        }
-
-        // Calculate the exact percentage amount
-        const exactAmount = exactNumericBalance * (percentage / 100);
-        
-        // Set the amount directly using the formatted string to preserve precision
-        // This matches the logic in handleUseFullBalance for consistency
-        if (percentage === 100) {
-          // For 100%, use the exact blockchain value directly
-          setFromAmount(exactBalance);
-        } else {
-          // For other percentages, calculate and format to the token's decimals
-          setFromAmount(exactAmount.toFixed(fromToken.decimals));
-        }
-      } else {
-        console.warn(`No valid balance data for ${fromToken.symbol}`);
-      }
-    } catch (error) {
-      console.error("Error using exact balance for percentage calculation:", error);
+  // Wrapper function to maintain compatibility with existing code
+  // Delegates to the shared hook handlers
+  const handleUsePercentage = (percentage: number, isFrom: boolean = true) => {
+    if (isFrom) {
+      handleFromPercentage(percentage);
+      lastEditedSideRef.current = 'from';
+    } else {
+      handleToPercentage(percentage);
+      lastEditedSideRef.current = 'to';
     }
   };
   
@@ -1509,14 +1457,17 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     try {
       // Use the appropriate dynamic balance data based on which token is being used
       const balanceData = isFrom ? fromTokenBalanceData : toTokenBalanceData;
-      
+
       // Use the exact formatted value from the blockchain if available
       if (balanceData && balanceData.formatted) {
         if (isFrom) {
           // Set EXACTLY what the blockchain reports - no parsing/formatting that might round
           setFromAmount(balanceData.formatted);
+          lastEditedSideRef.current = 'from';
         } else {
-          console.warn("Setting 'toAmount' based on 'toToken' balance is not directly supported");
+          // Set EXACTLY what the blockchain reports for the "to" token
+          setToAmount(balanceData.formatted);
+          lastEditedSideRef.current = 'to';
         }
       } else {
         console.warn(`No valid balance data for ${token.symbol}`);
@@ -1564,6 +1515,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
 
     // --- Helper Function Placeholder for fetching permit data ---
     // In a real scenario, this would likely call the '/api/swap/prepare-permit' endpoint
+    const parsedAmount = safeParseUnits(fromAmount, fromToken.decimals); // Needed in multiple branches
     const fetchPermitData = async (): Promise<any> => {
         try {
             const response = await fetch('/api/swap/prepare-permit', {
@@ -1575,7 +1527,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                     fromTokenSymbol: fromToken.symbol,
                     toTokenSymbol: toToken.symbol,
                     chainId: currentChainId,
-                    checkExisting: true, // Always check validity when fetching
+                    amountIn: parsedAmount.toString(),
                 }),
             });
             const data = await response.json();
@@ -1592,7 +1544,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
 
     try {
         // 2. Determine Action based on CURRENT progress state
-        const parsedAmount = safeParseUnits(fromAmount, fromToken.decimals); // Needed in multiple branches
 
         // ACTION: Need to Approve
         if (stateBeforeAction === "needs_approval") {
@@ -1627,21 +1578,18 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
 
             setCompletedSteps(prev => [...prev, "approval_complete"]);
 
-            // --- CRITICAL: Re-fetch Permit Data AFTER approval ---
             const freshPermitData = await fetchPermitData();
-            setCurrentPermitDetailsForSign(freshPermitData); // Store fresh permit data
-            setObtainedSignature(null); // Clear any previous signature
+            setCurrentPermitDetailsForSign(freshPermitData);
+            setObtainedSignature(null);
 
-            const needsSigAfterApproval = !freshPermitData.hasValidPermit || BigInt(freshPermitData.currentPermitInfo.amount) < MaxUint160;
-
-            if (needsSigAfterApproval) {
+            if (freshPermitData.needsPermit) {
                 setSwapProgressState("needs_signature");
             } else {
                 setSwapProgressState("ready_to_swap");
                 setCompletedSteps(prev => prev.includes("signature_complete") ? prev : [...prev, "signature_complete"]);
             }
-            setIsSwapping(false); // Re-enable button for next distinct step
-            return; // Wait for next user click
+            setIsSwapping(false);
+            return;
         }
 
         // ACTION: Need to Sign
@@ -1677,27 +1625,22 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
 
             setSwapProgressState("signing_permit");
 
-            console.log("DEBUG: permitDataForSigning structure:", permitDataForSigning);
-
-            // Check if permitData exists (only present when needsPermit is true)
             if (!permitDataForSigning.permitData) {
                 throw new Error("Permit data is missing when signature is required");
             }
 
-            // Use the permitData structure from the new API response
             const permitMessage = permitDataForSigning.permitData.message;
             const messageToSign = {
                 details: {
                     token: getAddress(fromToken.address),
-                    amount: MaxUint160,
+                    amount: BigInt(permitMessage.details.amount),
                     expiration: permitMessage.details.expiration,
                     nonce: permitMessage.details.nonce,
                 },
-                spender: getAddress(permitDataForSigning.permitData.message.spender),
-                sigDeadline: BigInt(permitMessage.sigDeadline), // Convert string back to BigInt
+                spender: getAddress(permitMessage.spender),
+                sigDeadline: BigInt(permitMessage.sigDeadline),
             };
 
-            // Inform user about signature request
             toast("Sign in Wallet", {
                 icon: <InfoIcon className="h-4 w-4" />
             });
@@ -1708,45 +1651,22 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 primaryType: 'PermitSingle',
                 message: messageToSign,
             });
-            
+
             if (!signatureFromSigning) throw new Error("Signature process did not return a valid signature.");
-            setObtainedSignature(signatureFromSigning); // Store the obtained signature
+            setObtainedSignature(signatureFromSigning);
 
-            // Show signature success toast with deadline duration
-            const currentTime = Math.floor(Date.now() / 1000);
-            const deadlineSeconds = Number(messageToSign.sigDeadline);
-            const durationSeconds = deadlineSeconds - currentTime;
-
-            // Format duration in human-readable format (round UP within the chosen unit)
-            let durationFormatted = "";
-            if (durationSeconds >= 31536000) {
-                const years = Math.ceil(durationSeconds / 31536000);
-                durationFormatted = `${years} year${years > 1 ? 's' : ''}`;
-            } else if (durationSeconds >= 2592000) {
-                const months = Math.ceil(durationSeconds / 2592000);
-                durationFormatted = `${months} month${months > 1 ? 's' : ''}`;
-            } else if (durationSeconds >= 604800) {
-                const weeks = Math.ceil(durationSeconds / 604800);
-                durationFormatted = `${weeks} week${weeks > 1 ? 's' : ''}`;
-            } else if (durationSeconds >= 86400) {
-                const days = Math.ceil(durationSeconds / 86400);
-                durationFormatted = `${days} day${days > 1 ? 's' : ''}`;
-            } else if (durationSeconds >= 3600) {
-                const hours = Math.ceil(durationSeconds / 3600);
-                durationFormatted = `${hours} hour${hours > 1 ? 's' : ''}`;
-            } else {
-                const minutes = Math.ceil(durationSeconds / 60);
-                durationFormatted = `${minutes} minute${minutes > 1 ? 's' : ''}`;
-            }
+            const now = Math.floor(Date.now() / 1000);
+            const durationSeconds = Number(messageToSign.sigDeadline) - now;
+            const minutes = Math.ceil(durationSeconds / 60);
 
             toast.success("Signature Complete", {
                 icon: <BadgeCheck className="h-4 w-4 text-green-500" />,
-                description: `${fromToken.symbol} permit signed successfully for ${durationFormatted}`
+                description: `${fromToken.symbol} permit signed for ${minutes} minute${minutes > 1 ? 's' : ''}`
             });
 
             setCompletedSteps(prev => [...prev, "signature_complete"]);
-            setSwapProgressState("ready_to_swap"); 
-            setIsSwapping(false); 
+            setSwapProgressState("ready_to_swap");
+            setIsSwapping(false);
             return; 
         }
 
@@ -1842,17 +1762,38 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 const effectiveTimestamp = BigInt(Math.floor(Date.now() / 1000));
                 const effectiveFallbackSigDeadline = effectiveTimestamp + BigInt(30 * 60); // 30 min fallback
 
-                // Prepare limits based on swap type
+                // Prepare limits based on swap type using BigInt to avoid precision issues
                 const isExactOut = lastEditedSideRef.current === 'to';
                 const toDecimals = toToken.decimals;
                 const fromDecimals = fromToken.decimals;
-                // ExactIn: compute minOut; ExactOut: compute maxIn
-                const quotedOutNum = parseFloat(toAmount || "0");
-                const quotedInNum = parseFloat(fromAmount || "0");
-                const minOutNum = quotedOutNum > 0 ? quotedOutNum * (1 - slippage / 100) : 0;
-                const maxInNum = quotedInNum > 0 ? quotedInNum * (1 + slippage / 100) : 0;
-                const minimumReceivedStr = minOutNum.toFixed(toDecimals);
-                const maximumInputStr = maxInNum.toFixed(fromDecimals);
+                
+                // Calculate slippage using BigInt math to avoid floating point precision issues
+                let minimumReceivedStr: string;
+                let maximumInputStr: string;
+                
+                try {
+                    // Parse the quoted amounts to BigInt (smallest units)
+                    const quotedOutBigInt = safeParseUnits(toAmount || "0", toDecimals);
+                    const quotedInBigInt = safeParseUnits(fromAmount || "0", fromDecimals);
+                    
+                    // Calculate min/max using BigInt arithmetic
+                    // minOut = quotedOut * (100 - slippage) / 100
+                    const minOutBigInt = (quotedOutBigInt * BigInt(Math.floor((100 - slippage) * 100))) / BigInt(10000);
+                    // maxIn = quotedIn * (100 + slippage) / 100
+                    const maxInBigInt = (quotedInBigInt * BigInt(Math.floor((100 + slippage) * 100))) / BigInt(10000);
+                    
+                    // Format back to decimal strings
+                    minimumReceivedStr = formatUnits(minOutBigInt, toDecimals);
+                    maximumInputStr = formatUnits(maxInBigInt, fromDecimals);
+                } catch (err) {
+                    // Fallback to floating point calculation if BigInt fails
+                    const quotedOutNum = parseFloat(toAmount || "0");
+                    const quotedInNum = parseFloat(fromAmount || "0");
+                    const minOutNum = quotedOutNum > 0 ? quotedOutNum * (1 - slippage / 100) : 0;
+                    const maxInNum = quotedInNum > 0 ? quotedInNum * (1 + slippage / 100) : 0;
+                    minimumReceivedStr = minOutNum.toFixed(toDecimals);
+                    maximumInputStr = maxInNum.toFixed(fromDecimals);
+                }
 
                 // Use dummy permit data for native ETH
                 const bodyForSwapTx = {
@@ -2046,31 +1987,52 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
             const effectiveTimestamp = BigInt(Math.floor(Date.now() / 1000));
             const effectiveFallbackSigDeadline = effectiveTimestamp + BigInt(30 * 60); // 30 min fallback
 
-            // Prepare limits based on swap type
+            // Prepare limits based on swap type using BigInt to avoid precision issues
             const isExactOut2 = lastEditedSideRef.current === 'to';
             const toDecimals2 = toToken.decimals;
             const fromDecimals2 = fromToken.decimals;
-            const quotedOutNum2 = parseFloat(toAmount || "0");
-            const quotedInNum2 = parseFloat(fromAmount || "0");
-            const minOutNum2 = quotedOutNum2 > 0 ? quotedOutNum2 * (1 - slippage / 100) : 0;
-            const maxInNum2 = quotedInNum2 > 0 ? quotedInNum2 * (1 + slippage / 100) : 0;
-            const minimumReceivedStr = minOutNum2.toFixed(toDecimals2);
-            const maximumInputStr = maxInNum2.toFixed(fromDecimals2);
+            
+            // Calculate slippage using BigInt math to avoid floating point precision issues
+            let minimumReceivedStr: string;
+            let maximumInputStr: string;
+            
+            try {
+                // Parse the quoted amounts to BigInt (smallest units)
+                const quotedOutBigInt = safeParseUnits(toAmount || "0", toDecimals2);
+                const quotedInBigInt = safeParseUnits(fromAmount || "0", fromDecimals2);
+                
+                // Calculate min/max using BigInt arithmetic
+                // minOut = quotedOut * (100 - slippage) / 100
+                const minOutBigInt = (quotedOutBigInt * BigInt(Math.floor((100 - slippage) * 100))) / BigInt(10000);
+                // maxIn = quotedIn * (100 + slippage) / 100
+                const maxInBigInt = (quotedInBigInt * BigInt(Math.floor((100 + slippage) * 100))) / BigInt(10000);
+                
+                // Format back to decimal strings
+                minimumReceivedStr = formatUnits(minOutBigInt, toDecimals2);
+                maximumInputStr = formatUnits(maxInBigInt, fromDecimals2);
+            } catch (err) {
+                // Fallback to floating point calculation if BigInt fails
+                const quotedOutNum2 = parseFloat(toAmount || "0");
+                const quotedInNum2 = parseFloat(fromAmount || "0");
+                const minOutNum2 = quotedOutNum2 > 0 ? quotedOutNum2 * (1 - slippage / 100) : 0;
+                const maxInNum2 = quotedInNum2 > 0 ? quotedInNum2 * (1 + slippage / 100) : 0;
+                minimumReceivedStr = minOutNum2.toFixed(toDecimals2);
+                maximumInputStr = maxInNum2.toFixed(fromDecimals2);
+            }
 
-            // Extract permit information based on the new API structure
-            let permitNonce, permitExpiration, permitSigDeadline;
-            if (permitDetailsToUse.needsPermit === false && permitDetailsToUse.existingPermit) {
-                // Use existing permit data
-                permitNonce = permitDetailsToUse.existingPermit.nonce;
-                permitExpiration = permitDetailsToUse.existingPermit.expiration;
-                permitSigDeadline = effectiveFallbackSigDeadline.toString(); // Use fallback for existing permits
-            } else if (permitDetailsToUse.needsPermit === true && permitDetailsToUse.permitData) {
-                // Use new permit data
+            let permitNonce, permitExpiration, permitSigDeadline, permitAmount;
+            if (permitDetailsToUse.needsPermit === true && permitDetailsToUse.permitData) {
                 permitNonce = permitDetailsToUse.permitData.message.details.nonce;
                 permitExpiration = permitDetailsToUse.permitData.message.details.expiration;
                 permitSigDeadline = permitDetailsToUse.permitData.message.sigDeadline.toString();
+                permitAmount = permitDetailsToUse.permitData.message.details.amount;
+            } else if (permitDetailsToUse.needsPermit === false && permitDetailsToUse.existingPermit) {
+                permitNonce = permitDetailsToUse.existingPermit.nonce;
+                permitExpiration = permitDetailsToUse.existingPermit.expiration;
+                permitSigDeadline = permitExpiration.toString();
+                permitAmount = permitDetailsToUse.existingPermit.amount;
             } else {
-                throw new Error("Invalid permit data structure");
+                throw new Error("Invalid permit data structure - fresh signature required");
             }
 
             const bodyForSwapTx = {
@@ -2080,16 +2042,17 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                  swapType: isExactOut2 ? 'ExactOut' : 'ExactIn',
                  amountDecimalsStr: isExactOut2 ? toAmount : fromAmount,
                  limitAmountDecimalsStr: isExactOut2 ? maximumInputStr : minimumReceivedStr,
-                 
-                 permitSignature: signatureToUse || "0x", 
-                 permitTokenAddress: fromToken.address, // Token that was permitted (fromToken)
-                 permitAmount: MaxUint160.toString(),   // The amount specified in the signed permit (always MaxUint160)
-                 permitNonce: permitNonce, 
-                 permitExpiration: permitExpiration, 
+
+                 permitSignature: signatureToUse || "0x",
+                 permitTokenAddress: fromToken.address,
+                 permitAmount: permitAmount,
+                 permitNonce: permitNonce,
+                 permitExpiration: permitExpiration,
                  permitSigDeadline: permitSigDeadline,
                  chainId: currentChainId,
-                 dynamicSwapFee: fetchedDynamicFee, // <<< PASS THE FETCHED FEE
             };
+
+            console.log("[DEBUG] bodyForSwapTx:", bodyForSwapTx);
 
             // --- Call Build TX API ---
             const buildTxApiResponse = await fetch('/api/swap/build-tx', {
@@ -2765,9 +2728,10 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   };
 
   return (
-    <div className="flex flex-col" ref={containerRef}> {/* Container ref wraps everything */}
+    <div className="flex flex-col">
+      <div ref={containerRef} className="w-full max-w-lg mx-auto">
       {/* Main Swap Interface Card */}
-      <Card className="w-full max-w-md card-gradient z-10 mx-auto rounded-lg bg-[var(--swap-background)] border-[var(--swap-border)]"> {/* Applied styling here */} 
+      <Card className="w-full card-gradient z-10 rounded-lg bg-[var(--swap-background)] border-[var(--swap-border)]"> {/* Applied styling here */}
         {/* <CardHeader className="pt-6 pb-2">
             <CardTitle className="text-center">Swap Tokens</CardTitle>
         </CardHeader> */}
@@ -2784,22 +2748,15 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 activelyEditedSide={lastEditedSideRef.current}
                 handleSwapTokens={handleSwapTokens}
                 handleUseFullBalance={handleUseFullBalance}
+                handleUsePercentage={handleUsePercentage}
                 availableTokens={tokenList}
                 onFromTokenSelect={handleFromTokenSelect}
                 onToTokenSelect={handleToTokenSelect}
-                handleCyclePercentage={handleCyclePercentage}
                 routeInfo={routeInfo}
                 routeFees={routeFees}
                 routeFeesLoading={routeFeesLoading}
                 selectedPoolIndexForChart={selectedPoolIndexForChart}
                 onSelectPoolForChart={handleSelectPoolForChart}
-                handleMouseEnterArc={handleMouseEnterArc}
-                handleMouseLeaveArc={handleMouseLeaveArc}
-                actualNumericPercentage={actualNumericPercentage}
-                currentSteppedPercentage={currentSteppedPercentage}
-                hoveredArcPercentage={hoveredArcPercentage}
-                isSellInputFocused={isSellInputFocused}
-                setIsSellInputFocused={setIsSellInputFocused}
                 onRouteHoverChange={undefined}
                 formatCurrency={formatCurrency}
                 isConnected={isConnected}
@@ -2854,7 +2811,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
 
       {/* Preview Chart Row with external nav arrows */}
       <div className="w-full relative">
-        <div className="w-full max-w-md mx-auto relative group">
+        <div className="w-full relative group">
           {/* Hover buffer extends horizontally so arrows remain clickable while visible */}
           <div className="absolute inset-y-0 left-[-2.75rem] right-[-2.75rem]"></div>
           <div className="relative">
@@ -2920,6 +2877,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
           )}
         </div>
         </div>
+      </div>
       </div>
 
       {/* Full Chart Modal - Controlled by isFeeChartModalOpen - Moved outside the mapping */}

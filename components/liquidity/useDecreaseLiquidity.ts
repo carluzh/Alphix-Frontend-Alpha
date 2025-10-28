@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import React from 'react';
-import { OctagonX } from 'lucide-react';
+import { OctagonX, BadgeCheck } from 'lucide-react';
 import { useAccount, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -27,7 +27,7 @@ const safeParseUnits = (amount: string, decimals: number): bigint => {
 import JSBI from 'jsbi';
 
 interface UseDecreaseLiquidityProps {
-  onLiquidityDecreased: (info?: { txHash?: `0x${string}`; blockNumber?: bigint; isFullBurn?: boolean }) => void;
+  onLiquidityDecreased?: (info?: { txHash?: `0x${string}`; blockNumber?: bigint; isFullBurn?: boolean }) => void;
   onFeesCollected?: (info?: { txHash?: `0x${string}`; blockNumber?: bigint }) => void;
 }
 
@@ -485,21 +485,16 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
                   ? { amount: adjustedPositionData.decreaseAmount1, symbol: adjustedPositionData.token1Symbol }
                   : null;
               if (!inputSide) throw new Error('No non-zero decrease amount specified');
-              const calcResponse = await fetch('/api/liquidity/calculate-liquidity-parameters', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  token0Symbol: adjustedPositionData.token0Symbol,
-                  token1Symbol: adjustedPositionData.token1Symbol,
-                  inputAmount: inputSide.amount,
-                  inputTokenSymbol: inputSide.symbol,
-                  userTickLower: adjustedPositionData.tickLower,
-                  userTickUpper: adjustedPositionData.tickUpper,
-                  chainId: chainId,
-                }),
+              const { calculateLiquidityParameters } = await import('@/lib/liquidity-math');
+              const result = await calculateLiquidityParameters({
+                token0Symbol: adjustedPositionData.token0Symbol,
+                token1Symbol: adjustedPositionData.token1Symbol,
+                inputAmount: inputSide.amount,
+                inputTokenSymbol: inputSide.symbol,
+                userTickLower: adjustedPositionData.tickLower,
+                userTickUpper: adjustedPositionData.tickUpper,
+                chainId,
               });
-              if (!calcResponse.ok) throw new Error(await calcResponse.text());
-              const result = await calcResponse.json();
               liquidityJSBI = JSBI.BigInt(result.liquidity);
             }
           } catch (e2) {
@@ -703,7 +698,37 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
     if (isDecreaseConfirmed) {
       // Mark transaction as processed immediately
       processedTransactions.current.add(hashString);
-      
+
+      // Show success toast based on action type
+      if (lastWasCollectOnly.current) {
+        toast.success("Fees Collected", {
+          icon: React.createElement(BadgeCheck, { className: "h-4 w-4 text-green-500" }),
+          description: "Fees collected successfully",
+          action: hash ? {
+            label: "View Transaction",
+            onClick: () => window.open(`https://sepolia.basescan.org/tx/${hash}`, '_blank')
+          } : undefined
+        });
+      } else if (lastIsFullBurn.current) {
+        toast.success("Position Closed", {
+          icon: React.createElement(BadgeCheck, { className: "h-4 w-4 text-green-500" }),
+          description: "Position burned and liquidity withdrawn successfully",
+          action: hash ? {
+            label: "View Transaction",
+            onClick: () => window.open(`https://sepolia.basescan.org/tx/${hash}`, '_blank')
+          } : undefined
+        });
+      } else {
+        toast.success("Liquidity Withdrawn", {
+          icon: React.createElement(BadgeCheck, { className: "h-4 w-4 text-green-500" }),
+          description: "Liquidity removed from position successfully",
+          action: hash ? {
+            label: "View Transaction",
+            onClick: () => window.open(`https://sepolia.basescan.org/tx/${hash}`, '_blank')
+          } : undefined
+        });
+      }
+
       (async () => {
         let blockNumber: bigint | undefined = undefined;
         try {
@@ -712,7 +737,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
         } catch {}
         if (lastWasCollectOnly.current && onFeesCollected) {
           onFeesCollected({ txHash: hash as `0x${string}`, blockNumber });
-        } else {
+        } else if (onLiquidityDecreased) {
           onLiquidityDecreased({ txHash: hash as `0x${string}`, blockNumber, isFullBurn: lastIsFullBurn.current } as any);
         }
         

@@ -3,6 +3,12 @@ import type { NextRequest } from 'next/server';
 // import { cookies } from 'next/headers'; // Not used in Middleware for reading cookies
 
 export function middleware(request: NextRequest) {
+  // Bypass auth for E2E tests (check for query parameter)
+  if (request.nextUrl.searchParams.get('e2e') === 'true') {
+    console.log('[MIDDLEWARE] E2E test detected - bypassing auth checks');
+    return NextResponse.next();
+  }
+
   // Handle CORS preflight universally to avoid 400s from OPTIONS
   if (request.method === 'OPTIONS') {
     const res = new NextResponse(null, { status: 204 });
@@ -27,21 +33,19 @@ export function middleware(request: NextRequest) {
 
   const authToken = request.cookies.get('site_auth_token');
   const { pathname } = request.nextUrl;
-  const maintenanceEnabled = process.env.NEXT_PUBLIC_MAINTENANCE === 'true' || process.env.MAINTENANCE === 'true';
-
-  console.log(`[MIDDLEWARE] Path: ${pathname}, Auth Token: ${authToken?.value || 'none'}`);
+  const maintenanceEnabled = process.env.MAINTENANCE === 'true';
 
   // ALWAYS allow access to the root path and brand page - marketing pages should be accessible to everyone
   if (pathname === '/' || pathname === '/brand') {
-    console.log(`[MIDDLEWARE] Allowing public path access: ${pathname}`);
     return NextResponse.next();
   }
 
-  // Maintenance mode: Redirect everything to /maintenance (full lockdown)
+  // Maintenance mode: Require authentication to bypass
   if (maintenanceEnabled) {
-    // Allow maintenance page itself, maintenance status API, and Next internal/static assets
+    // Allow maintenance page itself, login API, maintenance status API, and Next internal/static assets
     if (
       pathname.startsWith('/maintenance') ||
+      pathname.startsWith('/api/login') ||
       pathname.startsWith('/api/maintenance-status') ||
       pathname.startsWith('/_next') ||
       pathname.includes('.') // Static files like images, fonts, etc.
@@ -49,13 +53,18 @@ export function middleware(request: NextRequest) {
       return NextResponse.next();
     }
 
-    // Redirect everything else (including /login) to /maintenance
-    console.log(`[MIDDLEWARE] (Maintenance) Redirecting ${pathname} to /maintenance`);
+    // If authenticated, allow access to the app (bypass maintenance)
+    if (authToken && authToken.value === 'valid') {
+      return NextResponse.next();
+    }
+
+    // Otherwise redirect to maintenance page with login form
     const maintenanceUrl = new URL('/maintenance', request.url);
     return NextResponse.redirect(maintenanceUrl);
   }
 
-  // Normal mode: Allow login page, APIs, and static assets without auth check
+  // Normal mode (maintenance OFF): Allow all access without authentication
+  // Just allow APIs and static assets to pass through
   if (
     pathname.startsWith('/login') ||
     pathname.startsWith('/api') ||
@@ -65,15 +74,7 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // All other paths require authentication
-  if (!authToken || authToken.value !== 'valid') {
-    console.log(`[MIDDLEWARE] Redirecting ${pathname} to login - no valid auth`);
-    const loginUrl = new URL('/login', request.url);
-    return NextResponse.redirect(loginUrl);
-  }
-
-  // If the token is valid, allow the request to proceed
-  console.log(`[MIDDLEWARE] Allowing authenticated access to ${pathname}`);
+  // All other paths are freely accessible when maintenance is OFF
   return NextResponse.next();
 }
 

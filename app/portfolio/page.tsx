@@ -5,38 +5,38 @@ import { useRouter } from "next/navigation";
 import { AppLayout } from "@/components/app-layout";
 import Image from "next/image";
 import { useMemo, useState, useEffect, useRef, useCallback, useLayoutEffect } from "react";
-import { formatUSD as formatUSDShared, formatUSDHeader as formatUSDHeaderShared, formatNumber, formatPercent, formatTokenAmount } from "@/lib/format";
-import JSBI from "jsbi";
-import { Token } from "@uniswap/sdk-core";
+import { formatUSD as formatUSDShared, formatUSDHeader as formatUSDHeaderShared, formatNumber, formatPercent } from "@/lib/format";
 import { Pool as V4Pool, Position as V4Position } from "@uniswap/v4-sdk";
 import { publicClient } from "@/lib/viemClient";
-import { getAllPools, getToken, getPoolById, CHAIN_ID, getStateViewAddress, getPositionManagerAddress, getAllTokens, NATIVE_TOKEN_ADDRESS, getContracts } from "@/lib/pools-config";
-import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from "@/lib/abis/state_view_abi";
-// position_manager_abi is no longer needed here; hooks encapsulate calldata
-import { parseAbi, type Abi, type Hex, getAddress } from "viem";
-import { ethers } from "ethers";
+import { getAllPools, getToken, CHAIN_ID, getAllTokens, NATIVE_TOKEN_ADDRESS } from "@/lib/pools-config";
+import { parseAbi, type Abi } from "viem";
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract } from "wagmi";
 import { baseSepolia } from "@/lib/wagmiConfig";
-import { useUserPositions, useActivity, useAllPrices, useUncollectedFeesBatch } from "@/components/data/hooks";
+import { useUserPositions, useAllPrices, useUncollectedFeesBatch } from "@/components/data/hooks";
 import { prefetchService } from "@/lib/prefetch-service";
 import { setIndexingBarrier, invalidateUserPositionIdsCache } from "@/lib/client-cache";
 import { toast } from "sonner";
 import { FAUCET_CONTRACT_ADDRESS, faucetContractAbi } from "@/pages/api/misc/faucet";
 import poolsConfig from "@/config/pools.json";
-import { ChevronUpIcon, ChevronDownIcon, ChevronsUpDownIcon, ChevronRight, OctagonX, OctagonAlert, EllipsisVertical, PlusIcon, RefreshCwIcon, BadgeCheck, Menu, ArrowUpRight, ArrowDownRight, X } from "lucide-react";
-import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
+import { ChevronUpIcon, ChevronDownIcon, ChevronsUpDownIcon, OctagonX, BadgeCheck, ArrowUpRight, ArrowDownRight, X } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { PortfolioTickBar } from "@/components/portfolio/PortfolioTickBar";
 import { ConnectWalletButton } from "@/components/ConnectWalletButton";
 import { TOKEN_DEFINITIONS, type TokenSymbol, getToken as getTokenCfg } from "@/lib/pools-config";
+import { getOptimalBaseToken } from "@/lib/denomination-utils";
 import { formatUnits as viemFormatUnits } from "viem";
 import { useIncreaseLiquidity } from "@/components/liquidity/useIncreaseLiquidity";
 import { useDecreaseLiquidity } from "@/components/liquidity/useDecreaseLiquidity";
 import { AddLiquidityModal } from "@/components/liquidity/AddLiquidityModal";
 import { WithdrawLiquidityModal } from "@/components/liquidity/WithdrawLiquidityModal";
-
-import { PositionCard } from "@/components/liquidity/PositionCard";
+import { PositionCardCompact } from "@/components/liquidity/PositionCardCompact";
+import { PositionDetailsModal } from "@/components/liquidity/PositionDetailsModal";
+import { PositionSkeleton } from "@/components/liquidity/PositionSkeleton";
 import { batchGetTokenPrices } from '@/lib/price-service';
+import { cn } from '@/lib/utils';
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Folder, Rows3, Filter as FilterIcon, X as XIcon } from "lucide-react";
+import { Separator } from "@/components/ui/separator";
 
 // Loading phases for skeleton system
 type LoadPhases = { phase: 0 | 1 | 2 | 3 | 4; startedAt: number };
@@ -226,44 +226,10 @@ const BalancesListSkeleton = () => (
 
 const ActivePositionsSkeleton = () => (
   <div className="flex flex-col gap-3 lg:gap-4">
-      {[...Array(3)].map((_, idx) => (
-      <div key={idx} className="rounded-lg bg-muted/30 border border-sidebar-border/60 animate-pulse">
-        <div className="p-3 sm:p-4">
-          <div className="grid" style={{ gridTemplateColumns: 'min-content max-content max-content max-content 1fr min-content', columnGap: '1.25rem' }}>
-            <div className="flex items-center min-w-0 flex-none gap-0">
-              <div className="relative" style={{ width: 40, height: 24 }}>
-                <div className="absolute rounded-full bg-muted/50" style={{ width: 24, height: 24, left: 0, top: 0 }} />
-                <div className="absolute rounded-full bg-muted/40" style={{ width: 24, height: 24, left: 12, top: 0 }} />
-            </div>
-            </div>
-            <div className="flex flex-col min-w-0 items-start truncate pr-2 gap-1">
-              <div className="h-3 w-24 bg-muted/40 rounded" />
-              <div className="h-3 w-20 bg-muted/30 rounded" />
-          </div>
-            <div className="flex items-start pr-2">
-              <div className="flex flex-col gap-1 items-start">
-                <div className="h-3 w-16 bg-muted/40 rounded" />
-                <div className="h-3 w-20 bg-muted/30 rounded" />
-        </div>
-    </div>
-            <div className="flex items-start pr-2">
-              <div className="flex flex-col gap-1 items-start">
-                <div className="h-3 w-10 bg-muted/40 rounded" />
-                <div className="h-3 w-24 bg-muted/30 rounded" />
-                </div>
-                </div>
-            <div />
-            <div className="hidden sm:flex items-center justify-end gap-2 flex-none">
-              <div className="h-7 w-20 bg-muted/30 rounded-md border border-sidebar-border/60" />
-    </div>
-    </div>
-  </div>
-        <div className="py-1.5 px-3 bg-muted/10 border-t border-sidebar-border/30">
-          <div className="h-3 w-full bg-transparent" />
-                </div>
-                  </div>
+      {[...Array(4)].map((_, idx) => (
+        <PositionSkeleton key={idx} />
     ))}
-        </div>
+  </div>
 );
 
 // Context for portfolio token filter, so inner components can toggle it
@@ -677,9 +643,8 @@ export default function PortfolioPage() {
   const [positionsRefresh, setPositionsRefresh] = useState(0);
   const { address: accountAddress, isConnected } = useAccount();
 
-  // Centralized hooks for positions and activity (Category 2: user-action invalidated)
+  // Centralized hooks for positions (Category 2: user-action invalidated)
   const { data: userPositionsData, isLoading: isLoadingUserPositions } = useUserPositions(accountAddress || '');
-  const { data: activityData, isLoading: isLoadingActivity } = useActivity(accountAddress || '', 50);
 
   // Centralized hook for prices (Category 1: infrequent)
   const { data: pricesData, isLoading: isLoadingPrices } = useAllPrices();
@@ -742,16 +707,8 @@ export default function PortfolioPage() {
   const SDK_MIN_TICK = -887272;
   const SDK_MAX_TICK = 887272;
 
-  // Price helpers (approximate; match semantics from pool page)
-  const determineBaseTokenForPriceDisplay = useCallback((token0: string, token1: string): string => {
-    if (!token0 || !token1) return token0;
-    const quotePriority: Record<string, number> = {
-      'aUSDC': 10, 'aUSDT': 9, 'aDAI': 8, 'USDC': 7, 'USDT': 6, 'DAI': 5, 'aETH': 4, 'ETH': 3, 'YUSD': 2, 'mUSDT': 1,
-    };
-    const token0Priority = quotePriority[token0] || 0;
-    const token1Priority = quotePriority[token1] || 0;
-    return token1Priority > token0Priority ? token1 : token0;
-  }, []);
+  const determineBaseTokenForPriceDisplay = useCallback((token0: string, token1: string): string =>
+    getOptimalBaseToken(token0, token1), []);
 
   const convertTickToPrice = useCallback((tick: number, currentPoolTick: number | null, currentPrice: string | null, baseTokenForPriceDisplay: string, token0Symbol: string, token1Symbol: string): string => {
     if (tick === SDK_MAX_TICK) return '∞';
@@ -768,9 +725,7 @@ export default function PortfolioPage() {
         if (isFinite(priceAtTick)) {
           if (priceAtTick < 1e-11 && priceAtTick > 0) return '0';
           if (priceAtTick > 1e30) return '∞';
-          const displayDecimals = (baseTokenForPriceDisplay === token0Symbol
-            ? (TOKEN_DEFINITIONS[token0Symbol as TokenSymbol]?.displayDecimals ?? 4)
-            : (TOKEN_DEFINITIONS[token1Symbol as TokenSymbol]?.displayDecimals ?? 4));
+          const displayDecimals = 6;
           return priceAtTick.toFixed(displayDecimals);
         }
       }
@@ -798,7 +753,7 @@ export default function PortfolioPage() {
       if (!isFinite(displayVal) || isNaN(displayVal)) return 'N/A';
       if (displayVal < 1e-11 && displayVal > 0) return '0';
       if (displayVal > 1e30) return '∞';
-      const displayDecimals = (TOKEN_DEFINITIONS[baseTokenForPriceDisplay as TokenSymbol]?.displayDecimals ?? 4);
+      const displayDecimals = 6;
       return displayVal.toFixed(displayDecimals);
     } catch {
       return 'N/A';
@@ -836,7 +791,7 @@ export default function PortfolioPage() {
     return { pool: 22, amounts: 22, apr: 12, range: 17, value: 27 };
   }, [viewportWidth]);
   
-  // NEW: local state for positions and activity
+  // NEW: local state for positions
   const { address: userAddress, isConnected: userIsConnected, chainId: currentChainId } = useAccount();
   const { writeContract } = useWriteContract();
   const faucetAbi = parseAbi(['function faucet() external']);
@@ -867,7 +822,10 @@ export default function PortfolioPage() {
       setFaucetLastClaimTs(now);
       setIsFaucetBusy(false);
       // Success toast for faucet claim
-      toast.success('Faucet Claimed', { icon: <BadgeCheck className="h-4 w-4 text-sidebar-primary" /> });
+      toast.success('Faucet Claimed', {
+        icon: <BadgeCheck className="h-4 w-4 text-sidebar-primary" />,
+        className: 'faucet-claimed'
+      });
       // Also trigger wallet balances refetch after a brief delay to allow chain state to settle
       setTimeout(() => {
         try {
@@ -914,10 +872,7 @@ export default function PortfolioPage() {
       return new Set<string>();
     }
   }, []);
-  const [activityItems, setActivityItems] = useState<any[]>([]);
-  const [isLoadingActivityLocal, setIsLoadingActivityLocal] = useState<boolean>(false);
   const [positionsError, setPositionsError] = useState<string | undefined>(undefined);
-  const [activityError, setActivityError] = useState<string | undefined>(undefined);
   const [unclaimedFeesMap, setUnclaimedFeesMap] = useState<Record<string, { amount0: string; amount1: string }>>({});
   const [isLoadingUnclaimedFees, setIsLoadingUnclaimedFees] = useState<boolean>(false);
 
@@ -952,24 +907,12 @@ export default function PortfolioPage() {
 
 
   
-  const ACTIVITY_PAGE_SIZE = 10;
-  const [activityPage, setActivityPage] = useState<number>(0);
-  
-  // Apply the same token filter to Activity items (Swaps & Liquidity)
-  useEffect(() => { setActivityPage(0); }, [activityItems.length]);
-
-  const totalActivityPages = Math.max(1, Math.ceil((activityItems.length || 0) / ACTIVITY_PAGE_SIZE));
-  const pagedActivityItems = useMemo(() => {
-    const start = activityPage * ACTIVITY_PAGE_SIZE;
-    return activityItems.slice(start, start + ACTIVITY_PAGE_SIZE);
-  }, [activityItems, activityPage]);
-  
   // NEW: selector state for switching between sections
   const [selectedSection, setSelectedSection] = useState<string>('Active Positions');
   const isMobile = viewportWidth <= 768;
   const isIntegrateBalances = viewportWidth < 1400 && !isMobile;
   const sectionsList = useMemo(() => {
-    const base = ['Active Positions', 'Activity'];
+    const base = ['Active Positions'];
     return isIntegrateBalances ? [...base, 'Balances'] : base;
   }, [isIntegrateBalances]);
   useEffect(() => {
@@ -1023,9 +966,9 @@ export default function PortfolioPage() {
   const formatTokenDisplayAmount = (amount: string) => {
     const num = parseFloat(amount);
     if (isNaN(num)) return amount;
-    if (num === 0) return "0.00";
-    if (num > 0 && num < 0.0001) return "< 0.0001";
-    return num.toFixed(4);
+    if (num === 0) return "0";
+    if (num > 0 && num < 0.000001) return "< 0.000001";
+    return num.toFixed(6);
   };
 
   const getTokenIconSrc = (symbol?: string) => {
@@ -1037,44 +980,30 @@ export default function PortfolioPage() {
   // Enhanced refetching functions (based on pool page logic)
   const refreshSinglePosition = useCallback(async (positionId: string) => {
     if (!accountAddress) return;
-
     try {
-      // Fetch updated data for just this position
       const updatedPositions = await derivePositionsFromIds(accountAddress, [positionId]);
       const updatedPosition = updatedPositions[0];
-      
+
       if (updatedPosition) {
-        // Update only this position in the array, keeping others untouched
-        // Preserve the original ageSeconds if the refreshed data doesn't have it or it's 0
         setActivePositions(prev => {
-          const preservedAgeSeconds = updatedPosition.ageSeconds && updatedPosition.ageSeconds > 0 
-            ? updatedPosition.ageSeconds 
+          const preservedAgeSeconds = updatedPosition.ageSeconds && updatedPosition.ageSeconds > 0
+            ? updatedPosition.ageSeconds
             : prev.find(p => p.positionId === positionId)?.ageSeconds;
-            
-          return prev.map(p => 
-            p.positionId === positionId 
-              ? { ...updatedPosition, 
-                  isOptimisticallyUpdating: undefined,
-                  ageSeconds: preservedAgeSeconds || updatedPosition.ageSeconds
-                }
+          return prev.map(p =>
+            p.positionId === positionId
+              ? { ...updatedPosition, isOptimisticallyUpdating: undefined, ageSeconds: preservedAgeSeconds || updatedPosition.ageSeconds }
               : p
           );
         });
+        setSelectedPosition(prev => prev?.positionId === positionId ? updatedPosition : prev);
       } else {
-        // If position not found, just clear loading state
-        setActivePositions(prev => prev.map(p => 
-          p.positionId === positionId
-            ? { ...p, isOptimisticallyUpdating: undefined }
-            : p
+        setActivePositions(prev => prev.map(p =>
+          p.positionId === positionId ? { ...p, isOptimisticallyUpdating: undefined } : p
         ));
       }
     } catch (error) {
-      console.error('[refreshSinglePosition] failed:', error);
-      // Clear loading state on error
-      setActivePositions(prev => prev.map(p => 
-        p.positionId === positionId
-          ? { ...p, isOptimisticallyUpdating: undefined }
-          : p
+      setActivePositions(prev => prev.map(p =>
+        p.positionId === positionId ? { ...p, isOptimisticallyUpdating: undefined } : p
       ));
     }
   }, [accountAddress]);
@@ -1091,8 +1020,7 @@ export default function PortfolioPage() {
       // Trigger server revalidation
       try { 
         const revalidateResp = await fetch('/api/internal/revalidate-pools', { method: 'POST' });
-        const revalidateData = await revalidateResp.json();
-        console.log('[Portfolio refreshAfterMutation] Server cache revalidated:', revalidateData);
+        await revalidateResp.json();
       } catch (error) {
         console.error('[Portfolio refreshAfterMutation] Failed to revalidate server cache:', error);
       }
@@ -1134,32 +1062,12 @@ export default function PortfolioPage() {
 
   // Enhanced liquidity hooks with optimistic updates and proper error handling
   const onLiquidityIncreasedCallback = useCallback(async (info?: { txHash?: `0x${string}`; blockNumber?: bigint, increaseAmounts?: { amount0: string; amount1: string }, positionId?: string }) => {
-    console.log('[Portfolio] onLiquidityIncreasedCallback called:', { 
-      pendingActionType: pendingActionRef.current?.type, 
-      txHash: info?.txHash?.slice(0, 10) + '...',
-      hasIncreaseAmounts: !!info?.increaseAmounts 
-    });
-    
-    // Require valid hash to proceed and prevent duplicates
-    if (!info?.txHash) {
-      console.log('[Portfolio] Skipping - missing txHash');
-      return;
-    }
-    if (handledIncreaseHashRef.current === info.txHash) {
-      console.log('[Portfolio] Skipping - already handled this txHash');
-      return;
-    }
+    if (!info?.txHash) return;
+    if (handledIncreaseHashRef.current === info.txHash) return;
     handledIncreaseHashRef.current = info.txHash;
-
-    if (pendingActionRef.current?.type !== 'increase') {
-      console.log('[Portfolio] Skipping - not increase type');
-      return;
-    }
+    if (pendingActionRef.current?.type !== 'increase') return;
     const now = Date.now();
-    if (now - lastRevalidationRef.current < 15000) {
-      console.log('[Portfolio] Skipping - cooldown active');
-      return;
-    }
+    if (now - lastRevalidationRef.current < 15000) return;
     lastRevalidationRef.current = now;
 
     // IMMEDIATE OPTIMISTIC UPDATES (happen with toast)
@@ -1208,8 +1116,6 @@ export default function PortfolioPage() {
       }
     }
 
-    // Close modal (success toast is handled by useIncreaseLiquidity hook)
-    console.log('[Portfolio] Transaction successful, clearing pendingActionRef');
     setShowIncreaseModal(false);
     pendingActionRef.current = null;
     
@@ -1226,9 +1132,7 @@ export default function PortfolioPage() {
       const { poolId, subgraphId } = modifiedPositionPoolInfoRef.current;
       try { 
         fetch('/api/internal/revalidate-pools', { method: 'POST' })
-          .then(resp => resp.json())
-          .then(data => console.log('[onLiquidityIncreasedCallback] Pool stats refreshed:', data))
-          .catch(error => console.warn('[onLiquidityIncreasedCallback] Failed to refresh pool stats:', error));
+          .catch(() => {});
       } catch (error) {
         console.warn('[onLiquidityIncreasedCallback] Failed to refresh pool stats:', error);
       }
@@ -1260,28 +1164,10 @@ export default function PortfolioPage() {
     setShowIncreaseModal(false);
   }, [bumpPositionsRefresh]);
   const onLiquidityDecreasedCallback = useCallback(async (info?: { txHash?: `0x${string}`; blockNumber?: bigint; isFullBurn?: boolean }) => {
-    console.log('[Portfolio] onLiquidityDecreasedCallback called:', {
-      pendingActionType: pendingActionRef.current?.type,
-      txHash: info?.txHash?.slice(0, 10) + '...',
-      isFullBurn: info?.isFullBurn,
-      positionToWithdraw: positionToWithdraw?.positionId
-    });
-    
-    // Require a valid tx hash and dedupe by hash to support rapid successive burns
-    if (!info?.txHash) {
-      console.log('[Portfolio] Skipping - missing txHash');
-      return;
-    }
-    if (handledDecreaseHashRef.current === info.txHash) {
-      console.log('[Portfolio] Skipping - already handled this txHash');
-      return;
-    }
+    if (!info?.txHash) return;
+    if (handledDecreaseHashRef.current === info.txHash) return;
     handledDecreaseHashRef.current = info.txHash;
-
-    if (pendingActionRef.current?.type !== 'decrease' && pendingActionRef.current?.type !== 'withdraw') {
-      console.log('[Portfolio] Skipping - not withdraw/decrease type');
-      return;
-    }
+    if (pendingActionRef.current?.type !== 'decrease' && pendingActionRef.current?.type !== 'withdraw') return;
 
     const closing = info?.isFullBurn ?? !!lastDecreaseWasFullRef.current;
     const targetPositionId = positionToWithdraw?.positionId;
@@ -1353,9 +1239,7 @@ export default function PortfolioPage() {
       const { poolId, subgraphId } = modifiedPositionPoolInfoRef.current;
       try { 
         fetch('/api/internal/revalidate-pools', { method: 'POST' })
-          .then(resp => resp.json())
-          .then(data => console.log('[onLiquidityDecreasedCallback] Pool stats refreshed:', data))
-          .catch(error => console.warn('[onLiquidityDecreasedCallback] Failed to refresh pool stats:', error));
+          .catch(() => {});
       } catch (error) {
         console.warn('[onLiquidityDecreasedCallback] Failed to refresh pool stats:', error);
       }
@@ -1363,12 +1247,7 @@ export default function PortfolioPage() {
     }
   }, [refreshAfterMutation, refreshSinglePosition, bumpPositionsRefresh, positionToWithdraw]);
 
-  // Legacy callback for compatibility - DISABLED to prevent position folding
-  const onLiquidityDecreased = useCallback(async () => {
-    // This callback is disabled to prevent position folding
-    // All logic is handled by onLiquidityDecreasedCallback now
-    console.log('[Portfolio] Legacy onLiquidityDecreased called - doing nothing to prevent folding');
-  }, []);
+  const onLiquidityDecreased = useCallback(async () => {}, []);
   // Enhanced liquidity hooks with proper callbacks
   const { increaseLiquidity, isLoading: isIncreasingLiquidity, isSuccess: isIncreaseSuccess, hash: increaseTxHash } = useIncreaseLiquidity({ 
     onLiquidityIncreased: onLiquidityIncreasedCallback 
@@ -1475,6 +1354,9 @@ export default function PortfolioPage() {
   // Sorting state for Active Positions
   const [activeSort, setActiveSort] = useState<{ column: 'amounts' | 'value' | 'apr' | null; direction: 'asc' | 'desc' | null }>({ column: null, direction: null });
   const [hoveredTokenLabel, setHoveredTokenLabel] = useState<string | null>(null);
+  const [positionStatusFilter, setPositionStatusFilter] = useState<'all' | 'in-range' | 'out-of-range'>('all');
+  // const [positionSortBy, setPositionSortBy] = useState<'value' | 'fees' | 'apr'>('value');
+  const [viewMode, setViewMode] = useState<'folder' | 'list'>('folder');
 
 
 
@@ -1484,6 +1366,9 @@ export default function PortfolioPage() {
   const [positionMenuOpenUp, setPositionMenuOpenUp] = useState(false);
   const [balancesSortDir, setBalancesSortDir] = useState<'asc' | 'desc'>('desc');
   const [openPositionMenuKey, setOpenPositionMenuKey] = useState<string | null>(null);
+  const [selectedPosition, setSelectedPosition] = useState<any | null>(null);
+  const [isPositionModalOpen, setIsPositionModalOpen] = useState(false);
+  const [denominationDataByPositionId, setDenominationDataByPositionId] = useState<Record<string, any>>({});
 
   // Close the group-row action menu when clicking anywhere outside it
   useEffect(() => {
@@ -1511,9 +1396,6 @@ export default function PortfolioPage() {
     return () => document.removeEventListener('pointerdown', onDocPointerDown);
   }, [openPositionMenuKey]);
 
-  // Activity filter state
-  const [activityTokenFilter, setActivityTokenFilter] = useState<string | null>(null);
-  const [activityTypeFilter, setActivityTypeFilter] = useState<'all' | 'Swap' | 'Liquidity'>('all');
   // Wallet balances (for Balances UI only; excluded from global portfolio worth)
   const [walletPriceMap, setWalletPriceMap] = useState<Record<string, number>>({});
   const [walletPriceChange24hPctMap, setWalletPriceChange24hPctMap] = useState<Record<string, number>>({});
@@ -1663,14 +1545,11 @@ export default function PortfolioPage() {
       poolCounts.set(poolKey, (poolCounts.get(poolKey) || 0) + 1);
     });
 
-    // Only update expanded state for NEW pools (not already in expandedPools)
-    // Preserve user's manual expand/collapse choices
     setExpandedPools(prev => {
       const newExpanded = { ...prev };
       poolCounts.forEach((count, poolKey) => {
-        // Only set default if this pool isn't already tracked
         if (!(poolKey in prev)) {
-          newExpanded[poolKey] = count <= 2;
+          newExpanded[poolKey] = count < 3;
         }
       });
       return newExpanded;
@@ -1723,6 +1602,48 @@ export default function PortfolioPage() {
     ));
   }, [activePositions, activeTokenFilter, portfolioData.tokenBalances, portfolioData.totalValue]);
 
+  const statusAndSortFilteredPositions = useMemo(() => {
+    let positions = filteredPositions;
+
+    if (positionStatusFilter !== 'all') {
+      positions = positions.filter(p => {
+        const isInRange = p?.isInRange === true;
+        return positionStatusFilter === 'in-range' ? isInRange : !isInRange;
+      });
+    }
+
+    // Sort by value (default)
+    const getValueKey = (p: any) => {
+      const sym0 = p?.token0?.symbol as string | undefined;
+      const sym1 = p?.token1?.symbol as string | undefined;
+      const amt0 = Number.parseFloat(p?.token0?.amount || '0');
+      const amt1 = Number.parseFloat(p?.token1?.amount || '0');
+      const px0 = (sym0 && portfolioData.priceMap[sym0]) || 0;
+      const px1 = (sym1 && portfolioData.priceMap[sym1]) || 0;
+      return (isFinite(amt0) ? amt0 : 0) * px0 + (isFinite(amt1) ? amt1 : 0) * px1;
+    };
+
+    // TODO: Sorting by fees/APR - to be implemented
+    // const getFeesKey = (p: any) => {
+    //   const fees = getFeesForPosition(p.positionId);
+    //   if (!fees) return 0;
+    //   const sym0 = p?.token0?.symbol;
+    //   const sym1 = p?.token1?.symbol;
+    //   const px0 = (sym0 && portfolioData.priceMap[sym0]) || 0;
+    //   const px1 = (sym1 && portfolioData.priceMap[sym1]) || 0;
+    //   const amt0 = parseFloat((fees as any).amount0 || '0');
+    //   const amt1 = parseFloat((fees as any).amount1 || '0');
+    //   return amt0 * px0 + amt1 * px1;
+    // };
+    // const getAprKey = (p: any) => {
+    //   const aprStr = aprByPoolId[String(p?.poolId || '').toLowerCase()] || '';
+    //   const num = typeof aprStr === 'string' && aprStr.endsWith('%') ? parseFloat(aprStr.replace('%', '')) : 0;
+    //   return isFinite(num) ? num : 0;
+    // };
+
+    return [...positions].sort((a, b) => getValueKey(b) - getValueKey(a));
+  }, [filteredPositions, positionStatusFilter, portfolioData.priceMap]);
+
   // Unclaimed fees for the positions currently displayed (after filter)
   const displayedUnclaimedUsd = useMemo(() => {
     try {
@@ -1768,70 +1689,6 @@ export default function PortfolioPage() {
     return price || (stable(symbolU) ? 1 : 0);
   }, [portfolioData.priceMap]);
 
-  // Apply filters to Activity items (Swaps & Liquidity)
-  const filteredActivityItems = useMemo(() => {
-    let filtered = activityItems;
-
-    // Apply token filter (from portfolio visualization)
-    if (activeTokenFilter) {
-      const token = activeTokenFilter.toUpperCase();
-
-      if (token === 'OTHERS') {
-        const total = portfolioData.totalValue;
-        const topThreeTokens = (portfolioData.tokenBalances || [])
-          .map(tb => ({ symbol: tb.symbol, pct: total > 0 ? (tb.usdValue / total) * 100 : 0 }))
-          .filter(item => item.pct >= 1)
-          .sort((a, b) => b.pct - a.pct)
-          .slice(0, 3)
-          .map(tb => (tb.symbol || '').toUpperCase());
-
-        filtered = filtered.filter((it: any) => {
-          const [sym0Raw, sym1Raw] = String(it?.poolSymbols || '').split('/');
-          const sym0 = sym0Raw?.trim()?.toUpperCase?.();
-          const sym1 = sym1Raw?.trim()?.toUpperCase?.();
-          return (sym0 && !topThreeTokens.includes(sym0)) || (sym1 && !topThreeTokens.includes(sym1));
-        });
-      } else {
-        filtered = filtered.filter((it: any) => {
-          const [sym0Raw, sym1Raw] = String(it?.poolSymbols || '').split('/');
-          const sym0 = sym0Raw?.trim()?.toUpperCase?.();
-          const sym1 = sym1Raw?.trim()?.toUpperCase?.();
-          return sym0 === token || sym1 === token;
-        });
-      }
-    }
-
-    // Apply Activity-specific token filter
-    if (activityTokenFilter) {
-      const token = activityTokenFilter.toUpperCase();
-      filtered = filtered.filter((it: any) => {
-        const [sym0Raw, sym1Raw] = String(it?.poolSymbols || '').split('/');
-        const sym0 = sym0Raw?.trim()?.toUpperCase?.();
-        const sym1 = sym1Raw?.trim()?.toUpperCase?.();
-        return sym0 === token || sym1 === token;
-      });
-    }
-
-    // Apply type filter
-    if (activityTypeFilter !== 'all') {
-      if (activityTypeFilter === 'Liquidity') {
-        filtered = filtered.filter((it: any) => it.type === 'Add' || it.type === 'Withdraw');
-      } else {
-        filtered = filtered.filter((it: any) => it.type === activityTypeFilter);
-      }
-    }
-
-    return filtered;
-  }, [activityItems, activeTokenFilter, activityTokenFilter, activityTypeFilter, portfolioData.tokenBalances, portfolioData.totalValue]);
-
-  // Reset activity pagination on filter change
-  useEffect(() => { setActivityPage(0); }, [filteredActivityItems.length]);
-
-  const filteredTotalActivityPages = Math.max(1, Math.ceil((filteredActivityItems.length || 0) / ACTIVITY_PAGE_SIZE));
-  const pagedFilteredActivityItems = useMemo(() => {
-    const start = activityPage * ACTIVITY_PAGE_SIZE;
-    return filteredActivityItems.slice(start, start + ACTIVITY_PAGE_SIZE);
-  }, [filteredActivityItems, activityPage]);
 
 
 
@@ -1842,7 +1699,6 @@ export default function PortfolioPage() {
 
   // Enhanced menu actions with pending action tracking
   const openAddLiquidity = useCallback((pos: any, onModalClose?: () => void) => {
-    console.log('[Portfolio] Opening add liquidity modal for position:', pos.positionId);
     setPositionToModify(pos);
     pendingActionRef.current = { type: 'increase' };
     setShowIncreaseModal(true);
@@ -1953,62 +1809,6 @@ export default function PortfolioPage() {
     run();
     return () => { cancelled = true; };
   }, [activePositions.length, isConnected, accountAddress]);
-  // Load activity (best-effort): mints, burns, collects, swaps for owner
-  useEffect(() => {
-    let isCancelled = false;
-    const fetchActivity = async () => {
-      if (!isConnected || !accountAddress) {
-        if (!isCancelled) {
-          setActivityItems([]);
-          setActivityError(undefined);
-        }
-        return;
-      }
-      setIsLoadingActivityLocal(true);
-      setActivityError(undefined);
-      try {
-        const variables = {
-          owner: accountAddress?.toLowerCase(),
-          poolIds: Array.from(allowedPoolIds),
-          first: 300,
-        } as const;
-        const cacheKey = `activity:${variables.owner}:${variables.first}:${variables.poolIds.join(',')}`;
-        try {
-          const cached = localStorage.getItem(cacheKey);
-          if (cached && !isCancelled) {
-            const parsed = JSON.parse(cached);
-            const cachedItems = Array.isArray(parsed?.items) ? parsed.items : [];
-            const gatedCached = cachedItems.filter((it: any) => {
-              const pid = String(it?.poolId || it?.pool_id || '').toLowerCase();
-              return pid && allowedPoolIds.has(pid);
-            });
-            setActivityItems(gatedCached);
-          }
-        } catch {}
-        const res = await fetch('/api/portfolio/get-activity', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(variables),
-        });
-        if (!res.ok) throw new Error(await res.text());
-        const rows = await res.json();
-        if (!isCancelled && Array.isArray(rows)) {
-          const gated = rows.filter((it: any) => {
-            const pid = String(it?.poolId || it?.pool_id || '').toLowerCase();
-            return pid && allowedPoolIds.has(pid);
-          });
-          setActivityItems(gated);
-          try { localStorage.setItem(cacheKey, JSON.stringify({ items: gated, ts: Date.now() })); } catch {}
-        }
-      } catch (e: any) {
-        if (!isCancelled) setActivityError(e?.message || 'Failed to load activity');
-      } finally {
-        if (!isCancelled) setIsLoadingActivityLocal(false);
-      }
-    };
-    fetchActivity();
-    return () => { isCancelled = true; };
-  }, [isConnected, accountAddress, allowedPoolIds && false]);
 
   // Set initial responsive states before paint to avoid layout flicker
   useLayoutEffect(() => {
@@ -2263,8 +2063,14 @@ export default function PortfolioPage() {
 
   // Group positions by pool with sorting support
   const groupedByPool = useMemo(() => {
+    const positionsToUse = statusAndSortFilteredPositions;
+
+    if (viewMode === 'list') {
+      return positionsToUse.map(p => ({ poolId: p.poolId, items: [p], totalUSD: 0 }));
+    }
+
     const map = new Map<string, any[]>();
-    for (const p of sortedActivePositions) {
+    for (const p of positionsToUse) {
       const key = String(p?.poolId || '').toLowerCase();
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(p);
@@ -2332,7 +2138,16 @@ export default function PortfolioPage() {
       groups.sort((a, b) => b.totalUSD - a.totalUSD);
     }
     return groups;
-  }, [sortedActivePositions, portfolioData.priceMap, activeSort, activeTokenFilter, currentFilter]);
+  }, [statusAndSortFilteredPositions, viewMode, portfolioData.priceMap, activeSort, activeTokenFilter, currentFilter]);
+
+  const hasFolders = useMemo(() => {
+    const map = new Map<string, number>();
+    statusAndSortFilteredPositions.forEach(p => {
+      const key = String(p?.poolId || '').toLowerCase();
+      map.set(key, (map.get(key) || 0) + 1);
+    });
+    return Array.from(map.values()).some(count => count > 2);
+  }, [statusAndSortFilteredPositions]);
 
   // Filtered position count for metrics display
   const filteredPositionCount = useMemo(() => {
@@ -2560,7 +2375,7 @@ export default function PortfolioPage() {
                   onClick={() => setSelectedSection(section)}
                   className={`px-2 py-1 text-xs rounded-md transition-all duration-200 cursor-pointer ${
                     selectedSection === section
-                      ? 'border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-foreground brightness-110'
+                      ? 'border border-sidebar-border bg-button text-foreground brightness-110'
                       : 'text-muted-foreground hover:text-foreground'
                   }`}
                   style={selectedSection === section ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
@@ -2635,7 +2450,7 @@ export default function PortfolioPage() {
                 <div className="mb-2 flex items-center gap-2 justify-between">
                   <button
                     type="button"
-                    className="px-2 py-1 text-xs rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-foreground brightness-110"
+                    className="px-2 py-1 text-xs rounded-md border border-sidebar-border bg-button text-foreground brightness-110"
                     style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
                   >
                     Balances
@@ -2942,7 +2757,7 @@ export default function PortfolioPage() {
               <div className="mb-2 flex items-center gap-2 justify-between">
                 <button
                   type="button"
-                  className="px-2 py-1 text-xs rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-foreground brightness-110"
+                  className="px-2 py-1 text-xs rounded-md border border-sidebar-border bg-button text-foreground brightness-110"
                   style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
                 >
                   Balances
@@ -2995,8 +2810,8 @@ export default function PortfolioPage() {
                   // Disable only when processing/confirming, like sidebar
                   const disabled = Boolean(isFaucetBusy || isFaucetConfirming);
                   const className = canClaim
-                    ? `px-2 py-1 text-xs rounded-md border border-sidebar-primary bg-[#3d271b] text-sidebar-primary transition-colors ${disabled ? 'opacity-70 cursor-not-allowed' : 'hover:bg-[#4a2f22]'}`
-                    : `px-2 py-1 text-xs rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-muted-foreground transition-colors ${disabled || last < 0 ? 'opacity-70 cursor-not-allowed' : 'hover:bg-muted/60'}`;
+                    ? `px-2 py-1 text-xs rounded-md border border-sidebar-primary bg-button-primary text-sidebar-primary transition-colors ${disabled ? 'opacity-70 cursor-not-allowed' : 'hover-button-primary'}`
+                    : `px-2 py-1 text-xs rounded-md border border-sidebar-border bg-button text-muted-foreground transition-colors ${disabled || last < 0 ? 'opacity-70 cursor-not-allowed' : 'hover:bg-muted/60'}`;
                   const style = canClaim ? undefined : { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } as React.CSSProperties;
                   return (
                     <button type="button" onClick={handleClick} className={className} style={style} disabled={disabled || last < 0}>
@@ -3043,7 +2858,7 @@ export default function PortfolioPage() {
                         return c - c / denom;
                       })();
                       const isUp = deltaUsd >= 0;
-                      const amountDisplayDecimals = typeof tokenInfo?.displayDecimals === 'number' ? tokenInfo.displayDecimals : 4;
+                      const amountDisplayDecimals = 6;
                       return (
                         <div key={tb.symbol} className="flex items-center justify-between h-[64px] pl-6 pr-6 group">
                           <div className="flex items-center gap-2 min-w-0">
@@ -3077,25 +2892,112 @@ export default function PortfolioPage() {
           )}
 
           <div className="flex-1 min-w-0">
-          {/* Section selector above the container */}
-          <div className="flex items-center gap-2 mb-2 justify-between">
-            {/* Left: section tabs */}
-            {sectionsList.map((section) => (
-                      <button
-          key={section}
-          onClick={() => setSelectedSection(section)}
-          className={`px-2 py-1 text-xs rounded-md transition-all duration-200 cursor-pointer ${
-            selectedSection === section
-              ? 'border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-foreground brightness-110'
-              : 'text-muted-foreground hover:text-foreground'
-          }`}
-          style={selectedSection === section ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
-        >
-                {section}
-              </button>
-            ))}
+          {/* Your Positions title */}
+          <div className="flex items-center gap-2 mb-4 justify-between">
+            <h3 className="text-lg font-medium">Your Positions</h3>
             {/* Right: token filter badge area + Faucet (only show faucet when Balances tab active in integrated mode) */}
             <div className="ml-auto flex items-center gap-2">
+              {selectedSection === 'Active Positions' && activePositions.length > 0 && (
+                <>
+                  {hasFolders && (
+                    <div className="h-8 rounded-md border border-sidebar-border bg-container flex items-center p-0.5 gap-0.5">
+                      <button
+                        onClick={() => {
+                          setViewMode('folder');
+                        }}
+                        className={cn(
+                          "h-full px-2 rounded flex items-center justify-center transition-all",
+                          viewMode === 'folder' ? "bg-button text-foreground" : "bg-transparent text-muted-foreground hover:text-foreground"
+                        )}
+                        style={viewMode === 'folder' ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
+                      >
+                        <Folder className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        onClick={() => {
+                          setViewMode('list');
+                          setExpandedPools({});
+                        }}
+                        className={cn(
+                          "h-full px-2 rounded flex items-center justify-center transition-all",
+                          viewMode === 'list' ? "bg-button text-foreground" : "bg-transparent text-muted-foreground hover:text-foreground"
+                        )}
+                        style={viewMode === 'list' ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
+                      >
+                        <Rows3 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  )}
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <button className="h-8 px-3 rounded-md border border-sidebar-border bg-container hover:bg-surface text-muted-foreground hover:text-foreground flex items-center gap-2 text-xs transition-colors">
+                        <FilterIcon className="h-3.5 w-3.5" />
+                        <span>Filter</span>
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-64 p-0 bg-container border-sidebar-border" align="end">
+                      <div className="p-4 space-y-4">
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-sm font-medium text-foreground">Filters</h4>
+                          <button
+                            onClick={() => {
+                              setPositionStatusFilter('all');
+                            }}
+                            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                          >
+                            <XIcon className="h-3 w-3" />
+                            <span>Clear</span>
+                          </button>
+                        </div>
+                        <Separator className="bg-sidebar-border" />
+                        <div className="space-y-2">
+                          <label className="text-xs font-medium text-muted-foreground">Status</label>
+                          <div className="space-y-1">
+                            {[
+                              { value: 'all', label: 'All Positions' },
+                              { value: 'in-range', label: 'In Range' },
+                              { value: 'out-of-range', label: 'Out of Range' }
+                            ].map(option => (
+                              <button
+                                key={option.value}
+                                onClick={() => setPositionStatusFilter(option.value as any)}
+                                className={cn(
+                                  "w-full text-left px-2 py-1.5 rounded text-xs transition-colors",
+                                  positionStatusFilter === option.value
+                                    ? "bg-surface text-foreground font-medium"
+                                    : "text-muted-foreground hover:text-foreground hover:bg-surface/50"
+                                )}
+                              >
+                                {option.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        {/* TODO: Sort By - to be implemented */}
+                        {/* <Separator className="bg-sidebar-border" />
+                        <div className="space-y-2">
+                          <label className="text-xs font-medium text-muted-foreground">Sort By</label>
+                          <div className="space-y-1">
+                            {[
+                              { value: 'value', label: 'Position Size' },
+                              { value: 'fees', label: 'Fees' },
+                              { value: 'apr', label: 'APR' }
+                            ].map(option => (
+                              <button
+                                key={option.value}
+                                onClick={() => {}}
+                                className="w-full text-left px-2 py-1.5 rounded text-xs transition-colors text-muted-foreground hover:text-foreground hover:bg-surface/50"
+                              >
+                                {option.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div> */}
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+                </>
+              )}
               {activeTokenFilter && (
                 <button
                   type="button"
@@ -3139,148 +3041,137 @@ export default function PortfolioPage() {
                         <div className="text-sm text-white/75">No active positions.</div>
                       </div>
                     ) : (
-                      <div className="flex flex-col gap-3 lg:gap-4">
-                        {groupedByPool.map(({ poolId, items, totalUSD }) => {
+                      <div className="flex flex-col gap-3 lg:gap-4" key={`view-${viewMode}`}>
+                        {groupedByPool.map(({ poolId, items, totalUSD }, groupIndex) => {
                           const poolKey = String(poolId).toLowerCase();
                           const first = items[0];
+                          const isSinglePosition = items.length === 1;
                           const isExpanded = !!expandedPools[poolKey];
                           const token0Icon = getToken(first?.token0?.symbol || '')?.icon || '/placeholder.svg';
                           const token1Icon = getToken(first?.token1?.symbol || '')?.icon || '/placeholder.svg';
+                          const uniqueKey = viewMode === 'list' ? `list-${first?.positionId}` : `folder-${poolKey}`;
                           return (
-                            <React.Fragment key={`pool-group-${poolKey}`}>
-                              <div
-                                className={`flex items-center justify-between px-4 py-3 rounded-lg border border-sidebar-border/60 bg-muted/30 hover:bg-muted/40 cursor-pointer`}
-                                onClick={() => togglePoolExpanded(poolKey)}
-                              >
-                                <div className="flex items-center gap-3 min-w-0">
-                                  <div className="relative" style={{ width: '3.5rem', height: '1.75rem' }}>
-                                    <div className="absolute top-1/2 -translate-y-1/2 left-0 rounded-full overflow-hidden bg-background z-10" style={{ width: 28, height: 28 }}>
-                                      <Image src={token0Icon} alt={first?.token0?.symbol || ''} width={28} height={28} className="w-full h-full object-cover" />
-                                    </div>
-                                    <div className="absolute top-1/2 -translate-y-1/2" style={{ left: '1rem', width: '1.75rem', height: '1.75rem' }}>
-                                      <div className="absolute inset-0 rounded-full overflow-hidden bg-background z-30">
-                                        <Image src={token1Icon} alt={first?.token1?.symbol || ''} width={28} height={28} className="w-full h-full object-cover" />
+                            <React.Fragment key={uniqueKey}>
+                              {!isSinglePosition && (
+                                <div
+                                  className={`flex items-center justify-between px-4 py-3 rounded-lg border border-sidebar-border/60 bg-muted/30 hover:bg-muted/40 cursor-pointer`}
+                                  onClick={() => togglePoolExpanded(poolKey)}
+                                >
+                                  <div className="flex items-center gap-3 min-w-0">
+                                    <div className="relative" style={{ width: '3.5rem', height: '1.75rem' }}>
+                                      <div className="absolute top-1/2 -translate-y-1/2 left-0 rounded-full overflow-hidden bg-background z-10" style={{ width: 28, height: 28 }}>
+                                        <Image src={token0Icon} alt={first?.token0?.symbol || ''} width={28} height={28} className="w-full h-full object-cover" />
                                       </div>
-                                      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#111111] z-20" style={{ width: 32, height: 32 }}></div>
-                                    </div>
-                                  </div>
-                                  <div className="truncate font-normal text-sm">{first?.token0?.symbol}/{first?.token1?.symbol}</div>
-                                  {/* Position Count (moved to left bound) */}
-                                  <TooltipProvider delayDuration={0}>
-                                    <Tooltip>
-                                      <TooltipTrigger asChild>
-                                        <span
-                                          className="ml-1 w-5 h-5 flex items-center justify-center text-[10px] rounded bg-[var(--sidebar-connect-button-bg)] text-muted-foreground cursor-default"
-                                        >
-                                          {items.length}
-                                        </span>
-                                      </TooltipTrigger>
-                                      <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
-                                        Position Count
-                                      </TooltipContent>
-                                    </Tooltip>
-                                  </TooltipProvider>
-                                </div>
-                                <div className="flex items-center gap-3">
-                                  {/* Position Value (right bound - first) */}
-                                  <TooltipProvider delayDuration={0}>
-                                    <Tooltip>
-                                      <TooltipTrigger asChild>
-                                        <div className="text-xs text-muted-foreground whitespace-nowrap cursor-default">{formatUSD(totalUSD)}</div>
-                                      </TooltipTrigger>
-                                      <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
-                                        Total Value
-                                      </TooltipContent>
-                                    </Tooltip>
-                                    <Tooltip>
-                                      {/* APY badge (right bound - after value) */}
-                                      <TooltipTrigger asChild>
-                                        <div>
-                                          {(() => {
-                                            const aprStr = aprByPoolId[poolKey];
-                                            const showApr = typeof aprStr === 'string' && aprStr !== 'N/A' && aprStr !== 'Loading...';
-                                            const formatAprShort = (s: string): string => {
-                                              const n = parseFloat(String(s).replace('%', ''));
-                                              if (!Number.isFinite(n)) return '—';
-                                              if (n >= 1000) return `${(n / 1000).toFixed(1)}K%`;
-                                              if (n > 99.99) return `${Math.round(n)}%`;
-                                              if (n > 9.99) return `${n.toFixed(1)}%`;
-                                              return `${n.toFixed(2)}%`;
-                                            };
-                                            return showApr ? (
-                                              <span className="h-5 px-2 flex items-center justify-center text-[10px] rounded bg-green-500/20 text-green-500 font-medium">{formatAprShort(aprStr)}</span>
-                                            ) : (
-                                              <span className="text-xs text-muted-foreground">—</span>
-                                            );
-                                          })()}
+                                      <div className="absolute top-1/2 -translate-y-1/2" style={{ left: '1rem', width: '1.75rem', height: '1.75rem' }}>
+                                        <div className="absolute inset-0 rounded-full overflow-hidden bg-background z-30">
+                                          <Image src={token1Icon} alt={first?.token1?.symbol || ''} width={28} height={28} className="w-full h-full object-cover" />
                                         </div>
-                                      </TooltipTrigger>
-                                      <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
-                                        APY
-                                      </TooltipContent>
-                                    </Tooltip>
-                                  </TooltipProvider>
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`transition-transform ${isExpanded ? 'rotate-90' : ''}`}>
-                                    <path d="m9 18 6-6-6-6" />
-                                  </svg>
+                                        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-main z-20" style={{ width: 32, height: 32 }}></div>
+                                      </div>
+                                    </div>
+                                    <div className="truncate font-normal text-sm">{first?.token0?.symbol}/{first?.token1?.symbol}</div>
+                                    <TooltipProvider delayDuration={0}>
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <span className="ml-1 w-5 h-5 flex items-center justify-center text-[10px] rounded bg-button text-muted-foreground cursor-default">
+                                            {items.length}
+                                          </span>
+                                        </TooltipTrigger>
+                                        <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">Position Count</TooltipContent>
+                                      </Tooltip>
+                                    </TooltipProvider>
+                                  </div>
+                                  <div className="flex items-center gap-3">
+                                    <TooltipProvider delayDuration={0}>
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <div className="text-xs text-muted-foreground whitespace-nowrap cursor-default">{formatUSD(totalUSD)}</div>
+                                        </TooltipTrigger>
+                                        <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">Total Value</TooltipContent>
+                                      </Tooltip>
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <div>
+                                            {(() => {
+                                              const aprStr = aprByPoolId[poolKey];
+                                              const showApr = typeof aprStr === 'string' && aprStr !== 'N/A' && aprStr !== 'Loading...';
+                                              const formatAprShort = (s: string): string => {
+                                                const n = parseFloat(String(s).replace('%', ''));
+                                                if (!Number.isFinite(n)) return '—';
+                                                if (n >= 1000) return `${(n / 1000).toFixed(1)}K%`;
+                                                if (n > 99.99) return `${Math.round(n)}%`;
+                                                if (n > 9.99) return `${n.toFixed(1)}%`;
+                                                return `${n.toFixed(2)}%`;
+                                              };
+                                              return showApr ? (
+                                                <span className="h-5 px-2 flex items-center justify-center text-[10px] rounded bg-green-500/20 text-green-500 font-medium">{formatAprShort(aprStr)}</span>
+                                              ) : (
+                                                <span className="text-xs text-muted-foreground">—</span>
+                                              );
+                                            })()}
+                                          </div>
+                                        </TooltipTrigger>
+                                        <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">APY</TooltipContent>
+                                      </Tooltip>
+                                    </TooltipProvider>
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`transition-transform ${isExpanded ? 'rotate-90' : ''}`}>
+                                      <path d="m9 18 6-6-6-6" />
+                                    </svg>
+                                  </div>
                                 </div>
-                              </div>
-                              {isExpanded && (
-                                <div className="flex flex-col gap-3 lg:gap-4 pl-4 border-l border-dashed border-sidebar-border/60 ml-4">
+                              )}
+                              {(isSinglePosition || isExpanded) && (
+                                <div className={cn("flex flex-col gap-3 lg:gap-4", !isSinglePosition && "pl-4 border-l border-dashed border-sidebar-border/60 ml-4")}>
                                   {items.map((position) => {
                                     const valueUSD = (() => {
-                                      try {
-                                        const sym0 = position?.token0?.symbol as string | undefined;
-                                        const sym1 = position?.token1?.symbol as string | undefined;
-                                        const amt0 = parseFloat(position?.token0?.amount || '0');
-                                        const amt1 = parseFloat(position?.token1?.amount || '0');
-                                        const price0 = (sym0 && portfolioData.priceMap[sym0]) || 0;
-                                        const price1 = (sym1 && portfolioData.priceMap[sym1]) || 0;
-                                        // Ensure both sides are accounted for; numeric safety
-                                        const a0 = isFinite(amt0) ? amt0 : 0;
-                                        const a1 = isFinite(amt1) ? amt1 : 0;
-                                        const p0 = isFinite(price0) ? price0 : 0;
-                                        const p1 = isFinite(price1) ? price1 : 0;
-                                        return a0 * p0 + a1 * p1;
-                                      } catch (e) {
-                                        return 0;
-                                      }
+                                      const sym0 = position?.token0?.symbol as string | undefined;
+                                      const sym1 = position?.token1?.symbol as string | undefined;
+                                      const amt0 = parseFloat(position?.token0?.amount || '0');
+                                      const amt1 = parseFloat(position?.token1?.amount || '0');
+                                      const price0 = (sym0 && portfolioData.priceMap[sym0]) || 0;
+                                      const price1 = (sym1 && portfolioData.priceMap[sym1]) || 0;
+                                      const a0 = isFinite(amt0) ? amt0 : 0;
+                                      const a1 = isFinite(amt1) ? amt1 : 0;
+                                      const p0 = isFinite(price0) ? price0 : 0;
+                                      const p1 = isFinite(price1) ? price1 : 0;
+                                      return a0 * p0 + a1 * p1;
                                     })();
-                                    // attach prefetched raw fees for FeesCell
                                     const feesPref = (() => {
-                                      try {
-                                        const rec = unclaimedFeesMap[String(position.positionId)];
-                                        return rec ? { unclaimedRaw0: rec.amount0, unclaimedRaw1: rec.amount1 } : {};
-                                      } catch { return {}; }
+                                      const rec = unclaimedFeesMap[String(position.positionId)];
+                                      return rec ? { raw0: rec.amount0, raw1: rec.amount1 } : { raw0: null, raw1: null };
                                     })();
                                     return (
-                                      <PositionCard
+                                      <PositionCardCompact
                                         key={position.positionId}
-                                        position={{ ...(position as any), ...feesPref } as any}
+                                        position={position}
                                         valueUSD={valueUSD}
-                                        poolKey={poolKey}
+                                        onClick={() => {
+                                          setSelectedPosition(position);
+                                          setIsPositionModalOpen(true);
+                                        }}
                                         getUsdPriceForSymbol={getUsdPriceForSymbol}
-                                        determineBaseTokenForPriceDisplay={determineBaseTokenForPriceDisplay}
                                         convertTickToPrice={convertTickToPrice}
-                                        poolDataByPoolId={poolDataByPoolId}
-                                        formatTokenDisplayAmount={formatTokenDisplayAmount}
-                                        formatAgeShort={formatAgeShort}
-                                        openWithdraw={openWithdraw}
-                                        openAddLiquidity={openAddLiquidity}
-                                        claimFees={enhancedClaimFees}
-                                        toast={toast}
-                                        openPositionMenuKey={openPositionMenuKey}
-                                        setOpenPositionMenuKey={setOpenPositionMenuKey}
-                                        positionMenuOpenUp={positionMenuOpenUp}
-                                        setPositionMenuOpenUp={setPositionMenuOpenUp}
-                                        onClick={() => navigateToPoolBySubgraphId(position.poolId)}
-                                        isLoadingPrices={!readiness.prices}
-                                        isLoadingPoolStates={isLoadingPoolStates}
-                                        // New props for ascending range logic
-                                        currentPrice={poolDataByPoolId[poolKey]?.price ? String(poolDataByPoolId[poolKey].price) : null}
-                                        currentPoolTick={typeof poolDataByPoolId[poolKey]?.tick === 'number' ? poolDataByPoolId[poolKey].tick : null}
-                                        // Prefetch fees for FeesCell via centralized batch map
-                                        // Note: PositionCard doesn't accept these props directly; FeesCell will accept via spread below
+                                        poolContext={{
+                                          currentPrice: poolDataByPoolId[poolKey]?.price ? String(poolDataByPoolId[poolKey].price) : null,
+                                          currentPoolTick: typeof poolDataByPoolId[poolKey]?.tick === 'number' ? poolDataByPoolId[poolKey].tick : null,
+                                          poolAPY: aprByPoolId[poolKey] ? parseFloat(aprByPoolId[poolKey].replace('%', '')) : null,
+                                          isLoadingPrices: !readiness.prices,
+                                          isLoadingPoolStates: isLoadingPoolStates,
+                                        }}
+                                        fees={feesPref}
+                                        onDenominationData={(data) => {
+                                          setDenominationDataByPositionId(prev => ({
+                                            ...prev,
+                                            [position.positionId]: data
+                                          }));
+                                        }}
+                                        showMenuButton={true}
+                                        onVisitPool={() => {
+                                          const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === position.poolId.toLowerCase());
+                                          if (poolConfig) {
+                                            window.open(`/liquidity/${poolConfig.id}`, '_blank');
+                                          }
+                                        }}
                                       />
                                     );
                                   })}
@@ -3295,259 +3186,6 @@ export default function PortfolioPage() {
                 </div>
               )}
 
-              {/* Old Positions removed */}
-
-              {/* Activity */}
-              {selectedSection === 'Activity' && (
-                !isConnected ? (
-                  <div className="border border-dashed rounded-lg bg-muted/10 p-8 w-full flex items-center justify-center">
-                    <div className="w-48">
-                      <ConnectWalletButton />
-                    </div>
-                  </div>
-                ) : (filteredActivityItems.length === 0 && !isLoadingActivityLocal) ? (
-                  <div className="border border-dashed rounded-lg bg-muted/10 p-8 w-full flex items-center justify-center">
-                    <div className="text-sm text-white/75">No Activity</div>
-                  </div>
-                ) : (
-                  <div>
-                    <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 overflow-hidden">
-                      <div className="border-b border-sidebar-border/60 text-xs text-muted-foreground">
-                        <div
-                          className="grid gap-3 px-2 pl-6 pr-6 py-3"
-                          style={{
-                            gridTemplateColumns: isMobile
-                              ? '88px minmax(0,1fr) minmax(0,2fr)'
-                              : (viewportWidth <= 1200
-                                  ? '88px minmax(0,1fr) minmax(0,1.4fr) 90px 100px'
-                                  : '88px minmax(0,1fr) minmax(0,2fr) 120px 140px')
-                          }}
-                        >
-                          <div className="tracking-wider font-mono font-bold uppercase">Type</div>
-                          <div className="tracking-wider font-mono font-bold uppercase">Pool</div>
-                          <div className="tracking-wider font-mono font-bold uppercase">Details</div>
-                          {!isMobile && (
-                            <div className="text-center tracking-wider font-mono font-bold uppercase">Time</div>
-                          )}
-                          {!isMobile && (
-                            <div className="text-right tracking-wider font-mono font-bold uppercase">Txn</div>
-                          )}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="flex flex-col">
-                          <div className="divide-y divide-sidebar-border/60">
-                            {pagedFilteredActivityItems.map((it, idx) => (
-                              <div
-                                key={it.id || idx}
-                                className="grid items-center gap-3 px-2 pl-6 pr-6 py-3 hover:bg-muted/10"
-                                style={{
-                                  gridTemplateColumns: isMobile
-                                    ? '88px minmax(0,1fr) minmax(0,2fr)'
-                                    : (viewportWidth <= 1200
-                                        ? '88px minmax(0,1fr) minmax(0,1.4fr) 90px 100px'
-                                        : '88px minmax(0,1fr) minmax(0,2fr) 120px 140px')
-                                }}
-                                onClick={() => {
-                                  if (isMobile && it.tx) {
-                                    window.open(`https://sepolia.basescan.org/tx/${it.tx}`, '_blank');
-                                  }
-                                }}
-                              >
-                                {/* Type */}
-                                <div className="min-w-0 text-left">
-                                  {it.type === 'Swap' ? (
-                                    <span
-                                      className="px-1.5 py-0.5 text-xs font-normal rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-muted-foreground"
-                                      style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
-                                    >
-                                      Swap
-                                    </span>
-                                  ) : (
-                                    <span className={`px-1.5 py-0.5 text-xs font-normal rounded-md border ${it.type === 'Add' ? 'text-green-500 border-green-500 bg-green-500/10' : 'text-red-500 border-red-500 bg-red-500/10'}`}>
-                                      Liquidity
-                                    </span>
-                                  )}
-                                </div>
-                                {/* Pool */}
-                                <div className="text-sm text-foreground min-w-0 truncate">{it.poolSymbols}</div>
-                                {/* Details */}
-                                <div className="text-xs text-muted-foreground min-w-0 truncate" style={{ maxWidth: viewportWidth <= 1200 ? 280 : undefined }}>
-                                  {(() => {
-                                    if (it.type === 'Swap') {
-                                      const sym0 = (it.poolSymbols || '').split('/')[0] || '';
-                                      const sym1 = (it.poolSymbols || '').split('/')[1] || '';
-                                      const d0 = getTokenCfg(sym0);
-                                      const d1 = getTokenCfg(sym1);
-                                      const inferDecimalsFromSymbol = (symbol: string) => {
-                                        const s = (symbol || '').toUpperCase();
-                                        if (s.includes('USDC') || s.includes('USDT')) return 6;
-                                        if (s.includes('BTC')) return 8;
-                                        return 18;
-                                      };
-                                      const getDisplayDecimals = (symbol: string) => {
-                                        const s = (symbol || '').toUpperCase();
-                                        if (s.includes('USDC') || s.includes('USDT')) return 2;
-                                        if (s.includes('ETH')) return 4;
-                                        if (s.includes('BTC')) return 6;
-                                        return 4;
-                                      };
-                                      const getSafeDecimals = (symbol: string, dec?: number) => {
-                                        const n = Number(dec);
-                                        if (Number.isInteger(n) && n >= 1 && n <= 36) return n;
-                                        return inferDecimalsFromSymbol(symbol);
-                                      };
-                                      const dec0 = getSafeDecimals(sym0, d0?.decimals);
-                                      const dec1 = getSafeDecimals(sym1, d1?.decimals);
-                                      const isNeg0Raw = String(it.amount0 || '').startsWith('-');
-                                      const isNeg1Raw = String(it.amount1 || '').startsWith('-');
-                                      // Uniswap v4 inversion semantics
-                                      const isNeg0 = !isNeg0Raw;
-                                      const isNeg1 = !isNeg1Raw;
-                                      const asReadable = (raw: any, dec: number) => {
-                                        const sRaw = String(raw ?? '0');
-                                        const s = sRaw.replace(/,/g, '');
-                                        const neg = s.startsWith('-');
-                                        const abs = neg ? s.slice(1) : s;
-
-                                        if (abs.includes('.')) {
-                                          return s;
-                                        }
-
-                                        try {
-                                          const val = viemFormatUnits(BigInt(abs), dec);
-                                          return neg ? `-${val}` : val;
-                                        } catch (e) {
-                                          console.error(`Could not parse amount: ${sRaw}`, e);
-                                          return sRaw;
-                                        }
-                                      };
-                                      const amt0 = asReadable(it.amount0, dec0);
-                                      const amt1 = asReadable(it.amount1, dec1);
-                                      const negPart = isNeg0
-                                        ? `${formatNumber(Math.abs(Number(amt0)), { max: getDisplayDecimals(sym0) })} ${sym0}`
-                                        : `${formatNumber(Math.abs(Number(amt1)), { max: getDisplayDecimals(sym1) })} ${sym1}`;
-                                      const posPart = isNeg0
-                                        ? `${formatNumber(Math.abs(Number(amt1)), { max: getDisplayDecimals(sym1) })} ${sym1}`
-                                        : `${formatNumber(Math.abs(Number(amt0)), { max: getDisplayDecimals(sym0) })} ${sym0}`;
-                                      return (
-                                        <span className="inline-flex items-center gap-1">
-                                          <span>{negPart}</span>
-                                          <ChevronRight className="h-3 w-3 text-muted-foreground" />
-                                          <span>{posPart}</span>
-                                        </span>
-                                      );
-                                    }
-                                    // Determine if it's mint/burn vs addition/removal based on position existence
-                                    const isAdd = it.type === 'Add';
-                                    const isWithdraw = it.type === 'Withdraw';
-                                    
-                                    if (isAdd || isWithdraw) {
-                                      // Check if this position (tickLower, tickUpper, poolId) exists in current positions
-                                      const currentPositionExists = activePositions.some((pos: any) => 
-                                        pos.tickLower === it.tickLower && 
-                                        pos.tickUpper === it.tickUpper && 
-                                        pos.poolId === it.poolId
-                                      );
-                                      
-                                      if (isAdd) {
-                                        return currentPositionExists ? 'Added to Position' : 'Position Created';
-                                      } else {
-                                        return currentPositionExists ? 'Withdrawn from Position' : 'Position Burned';
-                                      }
-                                    }
-                                    return '';
-                                  })()}
-                                </div>
-                                {/* Time */}
-                                {!isMobile && (
-                                  <div className="text-xs text-muted-foreground text-center">
-                                    {(() => {
-                                      const secs = Number(it.ts || 0);
-                                      if (!secs) return '';
-                                      const now = Math.floor(Date.now() / 1000);
-                                      const diff = Math.max(0, now - secs);
-                                      const y = Math.floor(diff / (365*24*3600));
-                                      const m = Math.floor((diff % (365*24*3600)) / (30*24*3600));
-                                      const d = Math.floor((diff % (30*24*3600)) / (24*3600));
-                                      const h = Math.floor((diff % (24*3600)) / 3600);
-                                      const min = Math.floor((diff % 3600) / 60);
-                                      const s = diff % 60;
-                                      let label = '';
-                                      if (y) label += `${y}y `;
-                                      if (m) label += `${m}m `;
-                                      if (d && !y) label += `${d}d `;
-                                      if (!y && !m) {
-                                        if (h) label += `${h}h `;
-                                        if (!h && min) label += `${min}m `;
-                                        if (!h && !min && s) label += `${s}s `;
-                                      }
-                                      label = label.trim() + ' ago';
-                                      const full = new Date(secs * 1000).toLocaleString();
-                                      const fullNoComma = full.replace(/,\s*/g, ' ');
-                                      return (
-                                        <TooltipProvider>
-                                          <Tooltip>
-                                            <TooltipTrigger asChild>
-                                              <span className="text-xs cursor-default">{label}</span>
-                                            </TooltipTrigger>
-                                            <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">{fullNoComma}</TooltipContent>
-                                          </Tooltip>
-                                        </TooltipProvider>
-                                      );
-                                    })()}
-                                  </div>
-                                )}
-                                {/* Txn */}
-                                {!isMobile && (
-                                  <div className="text-xs text-muted-foreground text-right">
-                                    {it.tx ? (
-                                      <a href={`https://sepolia.basescan.org/tx/${it.tx}`} target="_blank" rel="noreferrer" className="hover:underline">
-                                        {it.tx.slice(0, 10)}…
-                                      </a>
-                                    ) : (
-                                      <span className="opacity-60">—</span>
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                    {filteredTotalActivityPages > 1 && (
-                                            <div className="flex justify-between px-4 py-3">
-                        <div></div>
-                        <div className="flex items-center gap-4">
-                                                      <button
-                            type="button"
-                            className={`text-xs font-medium transition-colors ${
-                              activityPage === 0
-                                ? 'text-white/90'
-                                : 'text-muted-foreground hover:text-white/90'
-                            }`}
-                            onClick={() => setActivityPage(0)}
-                          >
-                            1
-                          </button>
-                          <button
-                            type="button"
-                            className={`text-xs font-medium transition-colors ${
-                              activityPage === 1
-                                ? 'text-white/90'
-                                : 'text-muted-foreground hover:text-white/90'
-                            }`}
-                            onClick={() => setActivityPage(1)}
-                          >
-                            2
-                          </button>
-                          </div>
-                        </div>
-                    )}
-                  </div>
-                )
-              )}
               {/* Balances as a tab when integrated (desktop/tablet only) */}
               {isIntegrateBalances && selectedSection === 'Balances' && (
                 <div>
@@ -3582,7 +3220,7 @@ export default function PortfolioPage() {
                               return c - c / denom;
                             })();
                             const isUp = deltaUsd >= 0;
-                            const amountDisplayDecimals = typeof tokenInfo?.displayDecimals === 'number' ? tokenInfo.displayDecimals : 4;
+                            const amountDisplayDecimals = 6;
                             return (
                               <div key={tb.symbol} className="flex items-center justify-between h-[64px] pl-6 pr-6 group">
                                 <div className="flex items-center gap-2 min-w-0">
@@ -3622,7 +3260,7 @@ export default function PortfolioPage() {
             <div className="mb-2 flex items-center gap-2 justify-between">
               <button
                 type="button"
-                className="px-2 py-1 text-xs rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-foreground brightness-110"
+                className="px-2 py-1 text-xs rounded-md border border-sidebar-border bg-button text-foreground brightness-110"
                 style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
               >
                 Balances
@@ -3681,8 +3319,8 @@ export default function PortfolioPage() {
                 // Disable only when processing/confirming, like sidebar
                 const disabled = Boolean(isFaucetBusy || isFaucetConfirming);
                 const className = canClaim
-                  ? `px-2 py-1 text-xs rounded-md border border-sidebar-primary bg-[#3d271b] text-sidebar-primary transition-colors ${disabled ? 'opacity-70 cursor-not-allowed' : 'hover:bg-[#4a2f22]'}`
-                  : `px-2 py-1 text-xs rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-muted-foreground transition-colors ${disabled || last < 0 ? 'opacity-70 cursor-not-allowed' : 'hover:bg-muted/60'}`;
+                  ? `px-2 py-1 text-xs rounded-md border border-sidebar-primary bg-button-primary text-sidebar-primary transition-colors ${disabled ? 'opacity-70 cursor-not-allowed' : 'hover-button-primary'}`
+                  : `px-2 py-1 text-xs rounded-md border border-sidebar-border bg-button text-muted-foreground transition-colors ${disabled || last < 0 ? 'opacity-70 cursor-not-allowed' : 'hover:bg-muted/60'}`;
                 const style = canClaim ? undefined : { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } as React.CSSProperties;
                 return (
                   <button type="button" onClick={handleClick} className={className} style={style} disabled={disabled || last < 0}>
@@ -3722,7 +3360,7 @@ export default function PortfolioPage() {
                         return c - c / denom;
                       })();
                       const isUp = deltaUsd >= 0;
-                      const amountDisplayDecimals = typeof tokenInfo?.displayDecimals === 'number' ? tokenInfo.displayDecimals : 4;
+                      const amountDisplayDecimals = 6;
                       return (
                         <div key={tb.symbol} className="flex items-center justify-between h-[64px] pl-6 pr-6 group">
                           <div className="flex items-center gap-2 min-w-0">
@@ -3761,8 +3399,6 @@ export default function PortfolioPage() {
           isOpen={showIncreaseModal}
           onOpenChange={setShowIncreaseModal}
           onLiquidityAdded={() => {
-            // This will only be called for new positions (when no positionToModify)
-            console.log('[Portfolio] Modal onLiquidityAdded called for new position');
             const poolSubgraphId = positionToModify?.poolId;
             if (poolSubgraphId) {
                 const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === poolSubgraphId.toLowerCase());
@@ -3775,7 +3411,6 @@ export default function PortfolioPage() {
           positionToModify={positionToModify}
           feesForIncrease={feesForIncrease}
           increaseLiquidity={positionToModify ? (data) => {
-            console.log('[Portfolio] Setting pendingActionRef to increase and calling increaseLiquidity');
             pendingActionRef.current = { type: 'increase' };
             increaseLiquidity(data);
           } : undefined}
@@ -3798,8 +3433,6 @@ export default function PortfolioPage() {
           isDecreaseSuccess={isDecreaseSuccess}
           decreaseTxHash={decreaseTxHash}
           onLiquidityWithdrawn={() => {
-            // This will only be called for internal transactions (fallback)
-            console.log('[Portfolio] Modal onLiquidityWithdrawn called (fallback)');
             const poolSubgraphId = positionToWithdraw?.poolId;
             if (poolSubgraphId) {
                 const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === poolSubgraphId.toLowerCase());
@@ -3810,6 +3443,67 @@ export default function PortfolioPage() {
             publicClient.getBlockNumber().then(block => lastTxBlockRef.current = block);
           }}
         />
+
+      {selectedPosition && (
+        <PositionDetailsModal
+          isOpen={isPositionModalOpen}
+          onClose={() => {
+            setIsPositionModalOpen(false);
+            setSelectedPosition(null);
+          }}
+          position={selectedPosition}
+          valueUSD={(() => {
+            const sym0 = selectedPosition.token0?.symbol;
+            const sym1 = selectedPosition.token1?.symbol;
+            const price0 = getUsdPriceForSymbol(sym0);
+            const price1 = getUsdPriceForSymbol(sym1);
+            const amt0 = parseFloat(selectedPosition.token0?.amount || '0');
+            const amt1 = parseFloat(selectedPosition.token1?.amount || '0');
+            return amt0 * price0 + amt1 * price1;
+          })()}
+          prefetchedRaw0={unclaimedFeesMap[selectedPosition.positionId]?.amount0 || null}
+          prefetchedRaw1={unclaimedFeesMap[selectedPosition.positionId]?.amount1 || null}
+          formatTokenDisplayAmount={formatTokenDisplayAmount}
+          getUsdPriceForSymbol={getUsdPriceForSymbol}
+          onRefreshPosition={() => refreshSinglePosition(selectedPosition.positionId)}
+          onLiquidityDecreased={(info) => {
+            // Set positionToWithdraw and pendingActionRef so the callback knows which position to remove
+            setPositionToWithdraw(selectedPosition);
+            pendingActionRef.current = { type: 'withdraw' };
+            onLiquidityDecreasedCallback(info);
+          }}
+          currentPrice={poolDataByPoolId[selectedPosition.poolId?.toLowerCase()]?.price?.toString() || null}
+          currentPoolTick={poolDataByPoolId[selectedPosition.poolId?.toLowerCase()]?.tick || null}
+          selectedPoolId={(() => {
+            const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === selectedPosition.poolId?.toLowerCase());
+            return poolConfig?.id;
+          })()}
+          chainId={CHAIN_ID}
+          currentPoolSqrtPriceX96={poolDataByPoolId[selectedPosition.poolId?.toLowerCase()]?.sqrtPriceX96?.toString() || null}
+          poolToken0={(() => {
+            const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === selectedPosition.poolId?.toLowerCase());
+            return poolConfig ? getToken(poolConfig.currency0.symbol) : undefined;
+          })()}
+          poolToken1={(() => {
+            const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === selectedPosition.poolId?.toLowerCase());
+            return poolConfig ? getToken(poolConfig.currency1.symbol) : undefined;
+          })()}
+          denominationBase={denominationDataByPositionId[selectedPosition.positionId]?.denominationBase}
+          initialMinPrice={denominationDataByPositionId[selectedPosition.positionId]?.minPrice}
+          initialMaxPrice={denominationDataByPositionId[selectedPosition.positionId]?.maxPrice}
+          initialCurrentPrice={denominationDataByPositionId[selectedPosition.positionId]?.displayedCurrentPrice}
+          prefetchedFormattedAPY={denominationDataByPositionId[selectedPosition.positionId]?.formattedAPY}
+          prefetchedIsAPYFallback={denominationDataByPositionId[selectedPosition.positionId]?.isAPYFallback}
+          prefetchedIsLoadingAPY={denominationDataByPositionId[selectedPosition.positionId]?.isLoadingAPY}
+          showViewPoolButton={true}
+          onViewPool={() => {
+            const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === selectedPosition.poolId?.toLowerCase());
+            if (poolConfig) {
+              router.push(`/liquidity/${poolConfig.id}`);
+            }
+          }}
+        />
+      )}
 
       </AppLayout>
     </PortfolioFilterContext.Provider>

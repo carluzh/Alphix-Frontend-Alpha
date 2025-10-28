@@ -1,14 +1,7 @@
 "use client";
 
-import { useState } from "react";
 import Image from "next/image";
 import { motion } from "framer-motion";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { getToken as getTokenConfig } from "@/lib/pools-config";
 
 // This type might need to be moved to a shared types file later.
@@ -41,7 +34,6 @@ interface TokenStackProps {
 }
 
 export function TokenStack({ position }: TokenStackProps) {
-  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 
   const getTokenIcon = (positionToken: { symbol?: string; address?: string }) => {
     if (!positionToken?.symbol) return "/placeholder-logo.svg";
@@ -52,8 +44,8 @@ export function TokenStack({ position }: TokenStackProps) {
     return "/placeholder-logo.svg";
   };
 
-  const iconSize = 24;
-  const overlap = 0.3 * iconSize;
+  const iconSize = 32;
+  const overlap = 12; // Fixed 12px overlap (second image at left-5 = 20px, meaning 12px overlap from 32px)
   const step = iconSize - overlap;
   
   const tokens = [
@@ -79,48 +71,22 @@ export function TokenStack({ position }: TokenStackProps) {
         const leftPos = index * step;
         
         return (
-          <motion.div
+          <div
             key={token.symbol}
             className="absolute top-0"
             style={{
               zIndex: index + 1,
               left: `${leftPos}px`,
             }}
-            transition={{ type: "spring", stiffness: 300, damping: 30 }}
-            onHoverStart={() => setHoveredIndex(index)}
-            onHoverEnd={() => setHoveredIndex(null)}
           >
-            <TooltipProvider delayDuration={0}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <motion.div
-                    className="relative cursor-pointer"
-                    whileHover={{ scale: 1.08 }}
-                    style={{
-                      padding: `${iconSize * 0.1}px`,
-                      margin: `-${iconSize * 0.1}px`,
-                    }}
-                    transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                  >
-                    <Image
-                      src={token.icon}
-                      alt={token.symbol}
-                      width={iconSize}
-                      height={iconSize}
-                      className="rounded-full bg-background"
-                    />
-                  </motion.div>
-                </TooltipTrigger>
-                <TooltipContent
-                  side="top"
-                  sideOffset={6}
-                  className="px-2 py-1 text-xs"
-                >
-                  {token.symbol}
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          </motion.div>
+            <Image
+              src={token.icon}
+              alt={token.symbol}
+              width={iconSize}
+              height={iconSize}
+              className="rounded-full bg-background"
+            />
+          </div>
         );
       })}
     </motion.div>

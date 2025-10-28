@@ -2,7 +2,6 @@
 
 import { AppLayout } from "@/components/app-layout"
 import { SwapInterface } from "@/components/swap/swap-interface"
-import { ScrollRevealTransactions } from "@/components/scroll-reveal-transactions"
 import { StarrySkyBackground } from "@/components/StarrySkyBackground"
 import type { Metadata } from 'next'
 import React, { useState, useCallback, useEffect } from "react";
@@ -44,7 +43,7 @@ export default function Page() {
       
       <div className="flex flex-1 flex-col relative"> {/* Added relative positioning */}
         <div className="flex flex-1 justify-center py-10 md:py-16">
-          <div className="w-full max-w-md px-4">
+          <div className="w-full max-w-2xl">
             <SwapInterface 
               currentRoute={currentRoute}
               setCurrentRoute={setCurrentRoute}

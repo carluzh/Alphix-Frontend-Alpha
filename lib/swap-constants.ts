@@ -17,44 +17,38 @@ export const TOKEN_DEFINITIONS = {
     'aUSDC': {
         addressRaw: '0x663cf82e49419a3dc88eec65c2155b4b2d0fa335',
         decimals: 6,
-        symbol: 'aUSDC',
-        displayDecimals: 2
+        symbol: 'aUSDC'
     },
     'aUSDT': {
         addressRaw: '0xbaabfa3ac2ed3d0154e9e2002f94d8550a79bfa8',
         decimals: 6,
-        symbol: 'aUSDT',
-        displayDecimals: 2
+        symbol: 'aUSDT'
     },
     'aETH': {
         addressRaw: '0x28c00749cb9066d240fe1270b6d7f294b8b34d99',
         decimals: 18,
-        symbol: 'aETH',
-        displayDecimals: 4
+        symbol: 'aETH'
     },
     'aBTC': {
         addressRaw: '0x13c26fb69d48ed5a72ce3302fc795082e2427f4d',
         decimals: 8,
-        symbol: 'aBTC',
-        displayDecimals: 6
+        symbol: 'aBTC'
     },
     'ETH': {
         addressRaw: '0x0000000000000000000000000000000000000000',
         decimals: 18,
-        symbol: 'ETH',
-        displayDecimals: 4
+        symbol: 'ETH'
     }
 } as const;
 
 // Define a type for the token symbols for better type safety
 export type TokenSymbol = keyof typeof TOKEN_DEFINITIONS;
 
-// Explicitly define the type for a single token definition including displayDecimals
+// Explicitly define the type for a single token definition
 export interface TokenDefinition {
     readonly addressRaw: string;
     readonly decimals: number;
     readonly symbol: TokenSymbol;
-    readonly displayDecimals?: number; // Optional, as it's newly added
 }
 
 // --- V4 Pool Configuration ---
@@ -63,23 +57,17 @@ export const V4_POOL_TICK_SPACING = 60;
 export const V4_POOL_HOOKS_RAW = '0xd450f7f8e4C11EE8620a349f73e7aC3905Dfd000';
 export const V4_POOL_HOOKS: Address = getAddress(V4_POOL_HOOKS_RAW);
 
-// --- Timing Constants (in seconds) ---
-// These might be more dynamic or configured elsewhere in a real app,
-// but for now, they can reside here or be determined by API routes.
-export const PERMIT_EXPIRATION_DURATION_SECONDS = 60 * 60 * 24 * 30; // 30 days
-export const PERMIT_SIG_DEADLINE_DURATION_SECONDS = 60 * 30; // 30 minutes
-export const TX_DEADLINE_SECONDS = 60 * 30; // 30 minutes
+export const PERMIT_EXPIRATION_DURATION_SECONDS = 60 * 10;
+export const PERMIT_SIG_DEADLINE_DURATION_SECONDS = 60 * 10;
+export const TX_DEADLINE_SECONDS = 60 * 30;
 
-// --- EIP-712 Permit2 Domain and Types ---
-// The domain will be constructed in the API route if chainId can vary.
-// For now, if CHAIN_ID is constant here, this is usable.
 export const getPermit2Domain = (chainId: number, verifyingContract: Address) => ({
     name: "Permit2",
-    chainId: chainId,
-    verifyingContract: verifyingContract,
+    chainId,
+    verifyingContract,
 } as const);
 
-export const PERMIT2_DOMAIN_NAME = "Permit2"; // Used if constructing domain dynamically
+export const PERMIT2_DOMAIN_NAME = "Permit2";
 
 export const PERMIT_TYPES = {
     PermitDetails: [

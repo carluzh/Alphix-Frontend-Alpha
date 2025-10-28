@@ -99,9 +99,10 @@ async function fetchAllPrices(signal?: AbortSignal): Promise<AllPricesData> {
       
     } catch (error) {
       clearTimeout(timeoutId);
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw error;
+      }
       console.error('[PriceService] Error fetching all prices:', error);
-      
-      // Return fallback prices on error
       throw error;
     }
   })();
@@ -131,7 +132,9 @@ export async function getAllTokenPrices(params?: { signal?: AbortSignal }): Prom
 export async function getTokenPrice(tokenSymbol: string): Promise<number | null> {
   const allPrices = await getAllTokenPrices();
   const baseSymbol = getUnderlyingAsset(tokenSymbol);
-  return baseSymbol ? allPrices[baseSymbol]?.usd || null : null;
+  if (!baseSymbol) return null;
+  const priceData = allPrices[baseSymbol];
+  return typeof priceData === 'object' ? priceData.usd || null : null;
 }
 
 /**

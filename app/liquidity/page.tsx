@@ -24,7 +24,7 @@ import {
   RowData,
   ColumnSizingState
 } from "@tanstack/react-table";
-import { useIsMobile } from "@/hooks/use-is-mobile";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { MobileLiquidityList } from "@/components/MobileLiquidityList";
 import type { ProcessedPosition } from "../../pages/api/liquidity/get-positions";
 import {
@@ -174,42 +174,88 @@ export default function LiquidityPage() {
             const tvlYesterdayUSD = typeof batchPoolData.tvlYesterdayUSD === 'number' ? batchPoolData.tvlYesterdayUSD : undefined;
             const volume24hUSD = typeof batchPoolData.volume24hUSD === 'number' ? batchPoolData.volume24hUSD : undefined;
             const volumePrev24hUSD = typeof batchPoolData.volumePrev24hUSD === 'number' ? batchPoolData.volumePrev24hUSD : undefined;
+
+            // Calculate 24h fees from volume and dynamic fee (matching pool detail page)
             let fees24hUSD: number | undefined = undefined;
+            let dynamicFeeBps: number | null = null;
+            try {
+              dynamicFeeBps = await getPoolFeeBps(apiPoolId);
+              if (typeof dynamicFeeBps === 'number' && dynamicFeeBps >= 0 && typeof volume24hUSD === 'number') {
+                const feeRate = dynamicFeeBps / 10_000;
+                fees24hUSD = volume24hUSD * feeRate;
+              }
+            } catch (e) {
+              console.error(`[LiquidityPage] Failed to get dynamic fee for pool ${pool.id}:`, e);
+            }
+
             let aprStr: string = 'Loading...';
 
-            if (typeof volume24hUSD === 'number') {
-              try {
-                const bps = await getPoolFeeBps(apiPoolId);
-                const feeRate = Math.max(0, bps) / 10_000;
-                fees24hUSD = volume24hUSD * feeRate;
-                
-                // Calculate APY directly: (Daily Fees * 365) / TVL * 100
-                if (tvlUSD && tvlUSD > 0 && fees24hUSD !== undefined && !isNaN(fees24hUSD)) {
-                  const annualFees = fees24hUSD * 365;
-                  const apy = (annualFees / tvlUSD) * 100;
-                  
-                  // Format APY
-                  if (isNaN(apy) || !isFinite(apy)) {
-                    aprStr = '0.00%';
-                  } else if (apy >= 1000) {
-                    aprStr = `~${Math.round(apy)}%`;
-                  } else if (apy >= 100) {
-                    aprStr = `~${apy.toFixed(0)}%`;
-                  } else if (apy >= 10) {
-                    aprStr = `~${apy.toFixed(1)}%`;
-                  } else if (apy > 0) {
-                    aprStr = `~${apy.toFixed(2)}%`;
-                  } else {
-                    aprStr = '0.00%';
-                  }
-                } else {
-                  aprStr = '0.00%';
-                }
-              } catch {
-                aprStr = '0.00%';
-              }
+            // Check cache first (15 minute TTL for historical metrics)
+            const aprCacheKey = `poolApr_${pool.id}_7d`;
+            const cachedApr = getFromCacheWithTtl<string>(aprCacheKey, 15 * 60 * 1000); // 15 minutes
+
+            if (cachedApr && cachedApr !== 'Loading...' && cachedApr !== '0.00%') {
+              // Only use cached value if it's a valid non-zero APY
+              aprStr = cachedApr;
             } else {
-              aprStr = '0.00%';
+              // Fetch 7-day pool metrics for accurate APY calculation
+              try {
+                const metricsResponse = await fetch('/api/liquidity/pool-metrics', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ poolId: pool.id, days: 7 })
+                });
+
+                if (metricsResponse.ok) {
+                  const metricsData = await metricsResponse.json();
+                  const { totalFeesToken0, avgTVLToken0, days } = metricsData.metrics || {};
+
+                  if (avgTVLToken0 && avgTVLToken0 > 0 && days > 0) {
+                    // Calculate APY from 7-day data: (Daily Fees * 365) / TVL * 100
+                    const feesPerDay = totalFeesToken0 / days;
+                    const annualFees = feesPerDay * 365;
+                    const apy = (annualFees / avgTVLToken0) * 100;
+
+                    // Format APY (matching pool detail page)
+                    let calculatedApr = 'Loading...';
+                    if (isNaN(apy) || !isFinite(apy)) {
+                      // Invalid calculation - keep "Loading..." to retry
+                      calculatedApr = 'Loading...';
+                    } else if (apy >= 1000) {
+                      calculatedApr = `${Math.round(apy)}%`;
+                    } else if (apy >= 100) {
+                      calculatedApr = `${apy.toFixed(0)}%`;
+                    } else if (apy >= 10) {
+                      calculatedApr = `${apy.toFixed(1)}%`;
+                    } else if (apy > 0) {
+                      calculatedApr = `${apy.toFixed(2)}%`;
+                    } else {
+                      // APY is 0 or negative - keep "Loading..." to retry later
+                      calculatedApr = 'Loading...';
+                    }
+
+                    // Only cache valid non-zero APY values (never cache "Loading..." or "0.00%")
+                    if (calculatedApr !== 'Loading...' && calculatedApr !== '0.00%') {
+                      setToCache(aprCacheKey, calculatedApr);
+                      aprStr = calculatedApr;
+                    }
+                    // Otherwise keep aprStr as "Loading..." to show skeleton and retry later
+                  } else {
+                    console.warn(`[LiquidityPage] Pool ${pool.id}: Invalid metrics data - avgTVL: ${avgTVLToken0}, days: ${days}`);
+                    // Keep "Loading..." to retry on next render
+                  }
+                } else if (metricsResponse.status === 429) {
+                  console.warn(`[LiquidityPage] Pool ${pool.id}: Rate limited (429) - will retry later`);
+                  // Rate limit hit - keep "Loading..." to retry on next render
+                } else {
+                  const errorText = await metricsResponse.text();
+                  console.error(`[LiquidityPage] Pool ${pool.id}: Metrics API failed with ${metricsResponse.status}: ${errorText}`);
+                  // Other error - keep "Loading..." to retry on next render
+                }
+              } catch (e) {
+                console.error(`[LiquidityPage] Pool ${pool.id}: Failed to fetch metrics:`, e);
+                // Network error - keep "Loading..." to retry on next render
+              }
             }
             return { 
               ...pool, 
@@ -276,18 +322,16 @@ export default function LiquidityPage() {
     if (!isFinite(priceAtTick) || isNaN(priceAtTick)) return 'N/A';
     if (priceAtTick < 1e-11 && priceAtTick > 0) return '0';
     if (priceAtTick > 1e30) return '∞';
-    const displayDecimals = (baseTokenForPriceDisplay === token0Symbol
-      ? (TOKEN_DEFINITIONS[token0Symbol as TokenSymbol]?.displayDecimals ?? 4)
-      : (TOKEN_DEFINITIONS[token1Symbol as TokenSymbol]?.displayDecimals ?? 4));
+    const displayDecimals = 6;
     return priceAtTick.toFixed(displayDecimals);
   }, []);
 
   const formatTokenDisplayAmount = (amount: string) => {
     const num = parseFloat(amount);
     if (isNaN(num)) return amount;
-    if (num === 0) return "0.00";
-    if (num > 0 && num < 0.0001) return "< 0.0001";
-    return num.toFixed(4);
+    if (num === 0) return "0";
+    if (num > 0 && num < 0.000001) return "< 0.000001";
+    return num.toFixed(6);
   };
 
   const formatAgeShort = (seconds: number | undefined) => {
@@ -399,7 +443,7 @@ export default function LiquidityPage() {
         return (
           <div className="flex items-center gap-2">
             <div className="relative w-14 h-7">
-              <div className="absolute top-0 left-0 w-7 h-7 rounded-full overflow-hidden bg-background z-10">
+              <div className="absolute top-0 left-0 w-7 h-7 rounded-full overflow-hidden bg-main z-10">
                 <Image
                   src={pool.tokens[0].icon}
                   alt={pool.tokens[0].symbol}
@@ -410,7 +454,7 @@ export default function LiquidityPage() {
               </div>
               {/* New relative container for second icon and cut-out */}
               <div className="absolute top-0 left-4 w-7 h-7">
-                <div className="absolute inset-0 rounded-full overflow-hidden bg-background z-30">
+                <div className="absolute inset-0 rounded-full overflow-hidden bg-main z-30">
                   <Image
                     src={pool.tokens[1].icon}
                     alt={pool.tokens[1].symbol}
@@ -420,7 +464,7 @@ export default function LiquidityPage() {
                   />
                 </div>
                 {/* Background circle for cut-out effect in table */}
-                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-[#111111] z-20"></div>
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-main z-20"></div>
               </div>
             </div>
             <div className="flex flex-col">
@@ -428,7 +472,7 @@ export default function LiquidityPage() {
               <div className="flex items-center gap-3">
                 {pool.type && (
                   <span
-                    className="px-1.5 py-0.5 text-xs font-normal rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-muted-foreground"
+                    className="px-1.5 py-0.5 text-xs font-normal rounded-md border border-sidebar-border bg-button text-muted-foreground"
                     style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
                   >
                     {pool.type}
@@ -647,7 +691,7 @@ export default function LiquidityPage() {
                 e.stopPropagation();
                 handleAddLiquidity(e, row.original.id);
               }}
-              className="absolute right-0 top-1/2 -translate-y-1/2 flex h-10 cursor-pointer items-center justify-end gap-2 rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto hover:brightness-110 hover:border-white/30"
+              className="absolute right-0 top-1/2 -translate-y-1/2 flex h-10 cursor-pointer items-center justify-end gap-2 rounded-md border border-sidebar-border bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto hover:brightness-110 hover:border-white/30"
               style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
             >
               <PlusIcon className="h-4 w-4 relative z-0" />
@@ -898,7 +942,7 @@ export default function LiquidityPage() {
                         onClick={() => setSelectedCategory(cat)}
                         className={`px-2 py-1 text-xs rounded-md transition-all duration-200 cursor-pointer ${
                           selectedCategory === cat
-                            ? 'border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-foreground brightness-110'
+                            ? 'border border-sidebar-border bg-button text-foreground brightness-110'
                             : 'text-muted-foreground hover:text-foreground'
                         }`}
                         style={selectedCategory === cat ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
@@ -918,7 +962,7 @@ export default function LiquidityPage() {
               />
             ) : (
               <div className="overflow-x-auto isolate">
-                <Table className="w-full bg-muted/30 border border-sidebar-border/60 overflow-hidden" style={{ tableLayout: 'fixed' }}>
+                <Table className="w-full bg-muted/30 border border-sidebar-border/60 rounded-lg overflow-hidden" style={{ tableLayout: 'fixed' }}>
                   <TableHeader>
                     {/* New category header row inside the table for perfect alignment */}
                     <TableRow className="hover:bg-transparent">

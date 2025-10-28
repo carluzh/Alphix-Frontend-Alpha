@@ -11,7 +11,6 @@ const mockTokens: Record<string, Token> = {
     symbol: "USDC",
     name: "USDC",
     decimals: 6,
-    displayDecimals: 2,
     balance: "100",
     value: "$100.00",
     icon: "/tokens/aUSDC.png",
@@ -22,7 +21,6 @@ const mockTokens: Record<string, Token> = {
     symbol: "BTC",
     name: "Bitcoin",
     decimals: 8,
-    displayDecimals: 2,
     balance: "0",
     value: "$0.00",
     icon: "/tokens/aBTC.png",
@@ -48,8 +46,10 @@ export function MockSwapComponent({ className, zoom = 1.5 }: MockSwapComponentPr
 
   // Mock handlers that do nothing on click but allow hover effects
   const handleFromAmountChange = () => {};
+  const onToAmountChange = () => {};
   const handleSwapTokens = () => {};
   const handleUseFullBalance = () => {};
+  const handleUsePercentage = () => {};
   const onFromTokenSelect = () => {};
   const onToTokenSelect = () => {};
   const handleCyclePercentage = () => {};
@@ -124,19 +124,14 @@ export function MockSwapComponent({ className, zoom = 1.5 }: MockSwapComponentPr
         fromAmount={fromAmount}
         toAmount={toAmount}
         handleFromAmountChange={handleFromAmountChange}
+        onToAmountChange={onToAmountChange}
+        activelyEditedSide="from"
         handleSwapTokens={handleSwapTokens}
         handleUseFullBalance={handleUseFullBalance}
+        handleUsePercentage={handleUsePercentage}
         availableTokens={availableTokens}
         onFromTokenSelect={onFromTokenSelect}
         onToTokenSelect={onToTokenSelect}
-        handleCyclePercentage={handleCyclePercentage}
-        handleMouseEnterArc={handleMouseEnterArc}
-        handleMouseLeaveArc={handleMouseLeaveArc}
-        actualNumericPercentage={0}
-        currentSteppedPercentage={0}
-        hoveredArcPercentage={hoveredArcPercentage}
-        isSellInputFocused={isSellInputFocused}
-        setIsSellInputFocused={() => {}}
         formatCurrency={formatCurrency}
         isConnected={true}
         isAttemptingSwitch={false}

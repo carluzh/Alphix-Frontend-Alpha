@@ -21,7 +21,6 @@
       "name": "Alphix USDC",
       "address": "0x24429b8f2C8ebA374Dd75C0a72BCf4dF4C545BeD",
       "decimals": 6,
-      "displayDecimals": 2,
       "icon": "/tokens/aUSDC.png",
       "usdPrice": "1.0"
     },
@@ -30,7 +29,6 @@
       "name": "Alphix USDT",
       "address": "0x9F785fEb65DBd0170bd6Ca1A045EEda44ae9b4dC",
       "decimals": 6,
-      "displayDecimals": 2,
       "icon": "/tokens/aUSDT.png",
       "usdPrice": "1.0"
     },
@@ -39,7 +37,6 @@
       "name": "Alphix Ethereum",
       "address": "0xE7711aa6557A69592520Bbe7D704D64438f160e7",
       "decimals": 18,
-      "displayDecimals": 4,
       "icon": "/tokens/aETH.png"
     },
     "aBTC": {
@@ -47,7 +44,6 @@
       "name": "Alphix Bitcoin",
       "address": "0x9d5F910c91E69ADDDB06919825305eFEa5c9c604",
       "decimals": 8,
-      "displayDecimals": 6,
       "icon": "/tokens/aBTC.png"
     },
     "ETH": {
@@ -55,7 +51,6 @@
       "name": "Ethereum",
       "address": "0x0000000000000000000000000000000000000000",
       "decimals": 18,
-      "displayDecimals": 4,
       "icon": "/tokens/ETH.png"
     },
     "aDAI": {
@@ -63,16 +58,15 @@
       "name": "Alphix DAI",
       "address": "0x6876Ef4dc1aBADd2f3dA7a0ccbF562E63b62964e",
       "decimals": 18,
-      "displayDecimals": 2,
       "icon": "/tokens/aDAI.png",
       "usdPrice": "1.0"
     }
   },
   "pools": [
     {
-      "id": "aeth-ausdt",
-      "name": "aETH/aUSDT",
-      "description": "Alphix Ethereum / Alphix USDT pool",
+      "id": "ausdt-aeth",
+      "name": "aUSDT/aETH",
+      "description": "Alphix USDT / Alphix Ethereum pool",
       "subgraphId": "0x4e1b037b56e13bea1dfe20e8f592b95732cc52b5b10777b9f9bea856c145e7c7",
       "currency0": {
         "symbol": "aUSDT",
@@ -90,9 +84,9 @@
       "type": "Standard"
     },
     {
-      "id": "abtc-ausdc",
-      "name": "aBTC/aUSDC",
-      "description": "Alphix Bitcoin / Alphix USDC pool",
+      "id": "ausdc-abtc",
+      "name": "aUSDC/aBTC",
+      "description": "Alphix USDC / Alphix Bitcoin pool",
       "subgraphId": "0x8392f09ccc3c387d027d189f13a1f1f2e9d73f34011191a3d58157b9b2bf8bdd",
       "currency0": {
         "symbol": "aUSDC",
