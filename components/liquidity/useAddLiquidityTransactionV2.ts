@@ -63,7 +63,7 @@ export function useAddLiquidityTransactionV2({
         }
       : undefined,
     {
-      enabled: Boolean(accountAddress && chainId && calculatedData && BigInt(calculatedData.amount0 || '0') > 0n && BigInt(calculatedData.amount1 || '0') > 0n),
+      enabled: Boolean(accountAddress && chainId && calculatedData && (BigInt(calculatedData.amount0 || '0') > 0n || BigInt(calculatedData.amount1 || '0') > 0n)),
       staleTime: 5000,
     }
   );
@@ -96,6 +96,7 @@ export function useAddLiquidityTransactionV2({
   } = useWaitForTransactionReceipt({ hash: depositTxHash });
 
   const [isWorking, setIsWorking] = useState(false);
+  const [isRefetchingApprovals, setIsRefetchingApprovals] = useState(false);
   const processedDepositHashRef = useRef<string | null>(null);
   const processedFailedHashRef = useRef<string | null>(null);
 
@@ -117,7 +118,7 @@ export function useAddLiquidityTransactionV2({
       });
 
       // Wait for confirmation
-      await publicClient.waitForTransactionReceipt({ hash });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
 
       toast.success(`${tokenSymbol} Approved`, {
         icon: React.createElement(BadgeCheck, { className: 'h-4 w-4 text-green-500' }),
@@ -128,10 +129,24 @@ export function useAddLiquidityTransactionV2({
         },
       });
 
-      // Refetch approvals after successful approval
+      // Wait for additional block confirmations to ensure RPC state propagation
+      // The transaction is confirmed, but different RPC nodes might not be synced yet
+      setIsRefetchingApprovals(true);
+      await new Promise(resolve => setTimeout(resolve, 1500));
+
+      // Invalidate and refetch approvals after successful approval
+      // Invalidate wagmi queries to force fresh reads from the blockchain
+      await queryClient.invalidateQueries({
+        predicate: (query) => {
+          // Invalidate all readContract queries for allowance checks
+          return query.queryKey[0] === 'readContract';
+        }
+      });
+
       await refetchApprovals();
+      setIsRefetchingApprovals(false);
     },
-    [approveAsync, refetchApprovals]
+    [approveAsync, refetchApprovals, queryClient]
   );
 
   // Handle deposit transaction (with optional permit signature)
@@ -270,6 +285,27 @@ export function useAddLiquidityTransactionV2({
     [accountAddress, chainId, token0Symbol, token1Symbol, amount0, amount1, tickLower, tickUpper, calculatedData, approvalData, depositAsync, onLiquidityAdded]
   );
 
+  // Backup: Handle successful approval confirmation via useWaitForTransactionReceipt
+  // This is a safety net in case handleApprove's refetch doesn't trigger properly
+  React.useEffect(() => {
+    if (isApproved && approveTxHash) {
+      console.log('[Approval Backup] Transaction confirmed via useWaitForTransactionReceipt, invalidating queries...');
+      setIsRefetchingApprovals(true);
+
+      // Small delay to ensure RPC propagation
+      setTimeout(async () => {
+        // Invalidate wagmi queries to force fresh reads
+        await queryClient.invalidateQueries({
+          predicate: (query) => query.queryKey[0] === 'readContract'
+        });
+
+        await refetchApprovals();
+        setIsRefetchingApprovals(false);
+        console.log('[Approval Backup] Approval state refetched successfully');
+      }, 1000);
+    }
+  }, [isApproved, approveTxHash, refetchApprovals, queryClient]);
+
   // Handle deposit transaction failure
   React.useEffect(() => {
     if (isDepositError && depositTxHash) {
@@ -346,8 +382,8 @@ export function useAddLiquidityTransactionV2({
   return {
     approvalData,
     isCheckingApprovals,
-    isWorking: isWorking || isApprovePending || isApproving || isDepositPending || isDepositConfirming,
-    isApproving,
+    isWorking: isWorking || isApprovePending || isApproving || isRefetchingApprovals || isDepositPending || isDepositConfirming,
+    isApproving: isApproving || isRefetchingApprovals,
     isDepositConfirming,
     isDepositSuccess: isDepositConfirmed,
     handleApprove,

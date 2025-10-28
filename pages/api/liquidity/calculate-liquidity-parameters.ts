@@ -301,6 +301,13 @@ export default async function handler(
             liquidity = positionForCalc.liquidity.toString();
             amount0Sorted = positionForCalc.mintAmounts.amount0.toString();
             amount1Sorted = positionForCalc.mintAmounts.amount1.toString();
+
+            // SDK returns maxUint256 for amounts not needed in single-sided (OOR) positions - treat as 0
+            const MAX_UINT256 = BigInt('0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff');
+            const amount0BigInt = BigInt(amount0Sorted);
+            const amount1BigInt = BigInt(amount1Sorted);
+            if (amount0BigInt >= MAX_UINT256 / 2n) amount0Sorted = "0";
+            if (amount1BigInt >= MAX_UINT256 / 2n) amount1Sorted = "0";
         }
 
         // Removed BigInt overflow/sanity checks to keep endpoint minimal; SDK outputs are trusted here

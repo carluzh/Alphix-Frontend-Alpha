@@ -411,9 +411,16 @@ export async function preparePermit2BatchForPosition(
 
             if (currentAmount >= requiredAmount && currentExpiration > now) continue;
 
+            const permitAmount = requiredAmount + 1n;
+            const MAX_UINT160 = BigInt("1461501637330902918203684832716283019655932542975");
+
+            if (permitAmount > MAX_UINT160) {
+                throw new Error(`Permit amount ${permitAmount} exceeds uint160 max. Required: ${requiredAmount}`);
+            }
+
             detailEntries.push({
                 token: getAddress(t),
-                amount: (requiredAmount + 1n).toString(),
+                amount: permitAmount.toString(),
                 expiration: (now + PERMIT_EXPIRATION_DURATION_SECONDS).toString(),
                 nonce: nonce.toString(),
             });
@@ -469,9 +476,16 @@ export async function preparePermit2BatchForNewPosition(
 
             if (currentAmount >= requiredAmount && currentExpiration > now) continue;
 
+            const permitAmount = requiredAmount + 1n;
+            const MAX_UINT160 = BigInt("1461501637330902918203684832716283019655932542975");
+
+            if (permitAmount > MAX_UINT160) {
+                throw new Error(`Permit amount ${permitAmount} exceeds uint160 max. Required: ${requiredAmount}`);
+            }
+
             detailEntries.push({
                 token: getAddress(t),
-                amount: (requiredAmount + 1n).toString(),
+                amount: permitAmount.toString(),
                 expiration: (now + PERMIT_EXPIRATION_DURATION_SECONDS).toString(),
                 nonce: nonce.toString(),
             });

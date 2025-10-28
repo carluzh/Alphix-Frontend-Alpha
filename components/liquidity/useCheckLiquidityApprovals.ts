@@ -73,6 +73,7 @@ export function useCheckLiquidityApprovals(
     query: {
       enabled: options?.enabled && !isToken0Native && Boolean(params?.userAddress && token0Config),
       staleTime: options?.staleTime ?? 1000, // 1 second for fast updates after approval
+      gcTime: 0, // Don't cache - always fetch fresh data when refetching
     },
   });
 
@@ -89,6 +90,7 @@ export function useCheckLiquidityApprovals(
     query: {
       enabled: options?.enabled && !isToken1Native && Boolean(params?.userAddress && token1Config),
       staleTime: options?.staleTime ?? 1000, // 1 second for fast updates after approval
+      gcTime: 0, // Don't cache - always fetch fresh data when refetching
     },
   });
 
@@ -118,6 +120,7 @@ export function useCheckLiquidityApprovals(
     query: {
       enabled: options?.enabled && !isToken0Native && !needsToken0ERC20Approval && Boolean(params?.userAddress && token0Config),
       staleTime: options?.staleTime ?? 1000,
+      gcTime: 0, // Don't cache - always fetch fresh data when refetching
     },
   });
 
@@ -137,6 +140,7 @@ export function useCheckLiquidityApprovals(
     query: {
       enabled: options?.enabled && !isToken1Native && !needsToken1ERC20Approval && Boolean(params?.userAddress && token1Config),
       staleTime: options?.staleTime ?? 1000,
+      gcTime: 0, // Don't cache - always fetch fresh data when refetching
     },
   });
 
@@ -174,6 +178,12 @@ export function useCheckLiquidityApprovals(
     console.log('[EFFECT] triggered, willFetch:', willFetch, { needsToken0Permit, needsToken1Permit });
 
     if ((needsToken0Permit || needsToken1Permit) && !needsToken0ERC20Approval && !needsToken1ERC20Approval && params?.userAddress) {
+      // Determine which token has the input amount (for OOR positions, one will be 0)
+      const amount0Num = parseFloat(params.amount0 || '0');
+      const amount1Num = parseFloat(params.amount1 || '0');
+      const inputAmount = amount0Num > 0 ? params.amount0 : params.amount1;
+      const inputTokenSymbol = amount0Num > 0 ? params.token0Symbol : params.token1Symbol;
+
       fetch('/api/liquidity/prepare-mint-tx', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -181,8 +191,8 @@ export function useCheckLiquidityApprovals(
           userAddress: params.userAddress,
           token0Symbol: params.token0Symbol,
           token1Symbol: params.token1Symbol,
-          inputAmount: params.amount0,
-          inputTokenSymbol: params.token0Symbol,
+          inputAmount,
+          inputTokenSymbol,
           userTickLower: params.tickLower || 0,
           userTickUpper: params.tickUpper || 0,
           chainId: params.chainId,
@@ -217,8 +227,15 @@ export function useCheckLiquidityApprovals(
     data,
     isLoading: isLoadingToken0 || isLoadingToken1 || isLoadingToken0Permit || isLoadingToken1Permit,
     refetch: async () => {
-      await Promise.all([refetchToken0(), refetchToken1(), refetchToken0Permit(), refetchToken1Permit()]);
+      // Refetch all approval and permit queries
+      const results = await Promise.all([
+        refetchToken0(),
+        refetchToken1(),
+        refetchToken0Permit(),
+        refetchToken1Permit()
+      ]);
       // Don't clear permitData here - it's needed for the deposit transaction
+      return results;
     },
   };
 }

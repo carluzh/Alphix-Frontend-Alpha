@@ -354,9 +354,11 @@ export default async function handler(
             });
 
             // Reconstruct position with exact permit amounts
-            if (permitAmount0 && permitAmount1) {
-                const amount0Str = String(permitAmount0);
-                const amount1Str = String(permitAmount1);
+            // For OOR (single-sided) positions, only one amount will be present in permit
+            if (permitAmount0 !== null || permitAmount1 !== null) {
+                // Use permit amounts where available, fallback to original calculation for the other token
+                const amount0Str = String(permitAmount0 ?? JSBI.BigInt(position.mintAmounts.amount0.toString()));
+                const amount1Str = String(permitAmount1 ?? JSBI.BigInt(position.mintAmounts.amount1.toString()));
 
                 position = V4Position.fromAmounts({
                     pool: v4PoolForCalc,
@@ -370,8 +372,13 @@ export default async function handler(
         }
 
         const liquidity = position.liquidity;
-        const amount0 = BigInt(position.mintAmounts.amount0.toString());
-        const amount1 = BigInt(position.mintAmounts.amount1.toString());
+        let amount0 = BigInt(position.mintAmounts.amount0.toString());
+        let amount1 = BigInt(position.mintAmounts.amount1.toString());
+
+        // SDK returns maxUint256 for amounts not needed in single-sided (OOR) positions - treat as 0
+        const MAX_UINT256 = BigInt('0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff');
+        if (amount0 >= MAX_UINT256 / 2n) amount0 = 0n;
+        if (amount1 >= MAX_UINT256 / 2n) amount1 = 0n;
 
         const MAX_UINT_128 = (1n << 128n) - 1n;
         if (JSBI.GT(liquidity, JSBI.BigInt(MAX_UINT_128.toString()))) {

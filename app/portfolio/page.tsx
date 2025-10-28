@@ -822,7 +822,10 @@ export default function PortfolioPage() {
       setFaucetLastClaimTs(now);
       setIsFaucetBusy(false);
       // Success toast for faucet claim
-      toast.success('Faucet Claimed', { icon: <BadgeCheck className="h-4 w-4 text-sidebar-primary" /> });
+      toast.success('Faucet Claimed', {
+        icon: <BadgeCheck className="h-4 w-4 text-sidebar-primary" />,
+        className: 'faucet-claimed'
+      });
       // Also trigger wallet balances refetch after a brief delay to allow chain state to settle
       setTimeout(() => {
         try {
@@ -3463,6 +3466,12 @@ export default function PortfolioPage() {
           formatTokenDisplayAmount={formatTokenDisplayAmount}
           getUsdPriceForSymbol={getUsdPriceForSymbol}
           onRefreshPosition={() => refreshSinglePosition(selectedPosition.positionId)}
+          onLiquidityDecreased={(info) => {
+            // Set positionToWithdraw and pendingActionRef so the callback knows which position to remove
+            setPositionToWithdraw(selectedPosition);
+            pendingActionRef.current = { type: 'withdraw' };
+            onLiquidityDecreasedCallback(info);
+          }}
           currentPrice={poolDataByPoolId[selectedPosition.poolId?.toLowerCase()]?.price?.toString() || null}
           currentPoolTick={poolDataByPoolId[selectedPosition.poolId?.toLowerCase()]?.tick || null}
           selectedPoolId={(() => {

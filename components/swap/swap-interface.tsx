@@ -1515,6 +1515,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
 
     // --- Helper Function Placeholder for fetching permit data ---
     // In a real scenario, this would likely call the '/api/swap/prepare-permit' endpoint
+    const parsedAmount = safeParseUnits(fromAmount, fromToken.decimals); // Needed in multiple branches
     const fetchPermitData = async (): Promise<any> => {
         try {
             const response = await fetch('/api/swap/prepare-permit', {
@@ -1526,6 +1527,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                     fromTokenSymbol: fromToken.symbol,
                     toTokenSymbol: toToken.symbol,
                     chainId: currentChainId,
+                    amountIn: parsedAmount.toString(),
                 }),
             });
             const data = await response.json();
@@ -1542,7 +1544,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
 
     try {
         // 2. Determine Action based on CURRENT progress state
-        const parsedAmount = safeParseUnits(fromAmount, fromToken.decimals); // Needed in multiple branches
 
         // ACTION: Need to Approve
         if (stateBeforeAction === "needs_approval") {
@@ -2049,8 +2050,9 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                  permitExpiration: permitExpiration,
                  permitSigDeadline: permitSigDeadline,
                  chainId: currentChainId,
-                 dynamicSwapFee: fetchedDynamicFee, // <<< PASS THE FETCHED FEE
             };
+
+            console.log("[DEBUG] bodyForSwapTx:", bodyForSwapTx);
 
             // --- Call Build TX API ---
             const buildTxApiResponse = await fetch('/api/swap/build-tx', {

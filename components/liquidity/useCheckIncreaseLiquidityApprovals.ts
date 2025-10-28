@@ -74,6 +74,7 @@ export function useCheckIncreaseLiquidityApprovals(
     query: {
       enabled: options?.enabled && !isToken0Native && Boolean(params?.userAddress && token0Config),
       staleTime: options?.staleTime ?? 1000, // 1 second for fast updates after approval
+      gcTime: 0, // Don't cache - always fetch fresh data when refetching
     },
   });
 
@@ -90,6 +91,7 @@ export function useCheckIncreaseLiquidityApprovals(
     query: {
       enabled: options?.enabled && !isToken1Native && Boolean(params?.userAddress && token1Config),
       staleTime: options?.staleTime ?? 1000, // 1 second for fast updates after approval
+      gcTime: 0, // Don't cache - always fetch fresh data when refetching
     },
   });
 
@@ -119,6 +121,7 @@ export function useCheckIncreaseLiquidityApprovals(
     query: {
       enabled: options?.enabled && !isToken0Native && !needsToken0ERC20Approval && Boolean(params?.userAddress && token0Config),
       staleTime: options?.staleTime ?? 1000,
+      gcTime: 0, // Don't cache - always fetch fresh data when refetching
     },
   });
 
@@ -138,6 +141,7 @@ export function useCheckIncreaseLiquidityApprovals(
     query: {
       enabled: options?.enabled && !isToken1Native && !needsToken1ERC20Approval && Boolean(params?.userAddress && token1Config),
       staleTime: options?.staleTime ?? 1000,
+      gcTime: 0, // Don't cache - always fetch fresh data when refetching
     },
   });
 
@@ -195,7 +199,7 @@ export function useCheckIncreaseLiquidityApprovals(
             needsToken1Permit ? MAX_PERMIT_AMOUNT : undefined
           );
 
-          if (batchData) {
+          if (batchData && batchData.message.details && batchData.message.details.length > 0) {
             const newPermitData = {
               permitBatchData: batchData.message,
               signatureDetails: {
@@ -206,6 +210,9 @@ export function useCheckIncreaseLiquidityApprovals(
             };
             console.log('[DIRECT] Setting permitData from preparePermit2BatchForPosition');
             setPermitData(newPermitData);
+          } else {
+            console.log('[DIRECT] No permit details needed, clearing permitData');
+            setPermitData({});
           }
         } catch (err) {
           console.error('[DIRECT] Error preparing permit batch:', err);

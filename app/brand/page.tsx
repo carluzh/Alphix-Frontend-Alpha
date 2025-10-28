@@ -344,7 +344,7 @@ const NavLink = ({ href, children, className, isActive: _isActive, target }: {
   target?: '_blank'
 }) => {
   const pathname = usePathname()
-  const isActive = _isActive ? _isActive(pathname) : pathname.startsWith(href)
+  const isActive = _isActive ? _isActive(pathname ?? '') : (pathname ?? '').startsWith(href)
   const isExternal = href.startsWith('http')
 
   return (
@@ -490,7 +490,7 @@ function Navbar({
                 <NavPopover
                   trigger="Features"
                   sections={featuresSections}
-                  isActive={pathname.startsWith('/swap') || pathname.startsWith('/liquidity') || pathname.startsWith('/portfolio')}
+                  isActive={(pathname ?? '').startsWith('/swap') || (pathname ?? '').startsWith('/liquidity') || (pathname ?? '').startsWith('/portfolio')}
                   featuresLayout={true}
                   footerContent={
                     <Link

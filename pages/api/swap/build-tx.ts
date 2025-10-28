@@ -545,9 +545,26 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
             chainId
         } = req.body;
 
+        console.log("[DEBUG] build-tx received body:", JSON.stringify(req.body, null, 2));
+
         // Validate required fields (basic check)
         const requiredFields = [userAddress, fromTokenSymbol, toTokenSymbol, swapType, amountDecimalsStr, limitAmountDecimalsStr, permitSignature, permitTokenAddress, permitAmount, permitNonce, permitExpiration, permitSigDeadline, chainId];
         if (requiredFields.some(field => field === undefined || field === null)) {
+            console.log("[DEBUG] Missing fields check:", {
+                userAddress: userAddress !== undefined && userAddress !== null,
+                fromTokenSymbol: fromTokenSymbol !== undefined && fromTokenSymbol !== null,
+                toTokenSymbol: toTokenSymbol !== undefined && toTokenSymbol !== null,
+                swapType: swapType !== undefined && swapType !== null,
+                amountDecimalsStr: amountDecimalsStr !== undefined && amountDecimalsStr !== null,
+                limitAmountDecimalsStr: limitAmountDecimalsStr !== undefined && limitAmountDecimalsStr !== null,
+                permitSignature: permitSignature !== undefined && permitSignature !== null,
+                permitTokenAddress: permitTokenAddress !== undefined && permitTokenAddress !== null,
+                permitAmount: permitAmount !== undefined && permitAmount !== null,
+                permitNonce: permitNonce !== undefined && permitNonce !== null,
+                permitExpiration: permitExpiration !== undefined && permitExpiration !== null,
+                permitSigDeadline: permitSigDeadline !== undefined && permitSigDeadline !== null,
+                chainId: chainId !== undefined && chainId !== null,
+            });
             return res.status(400).json({ ok: false, message: 'Missing one or more required fields in request body.' });
         }
         if (fromTokenSymbol === toTokenSymbol) {
@@ -601,8 +618,7 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
                 [
                     [
                         getAddress(permitTokenAddress), // token
-                        // Use MaxUint160 because that's what the user signed
-                        MaxUint160,                     
+                        parsedPermitAmount,             // Use the actual signed amount
                         permitExpiration,               // expiration (number)
                         permitNonce                     // nonce (number)
                     ],

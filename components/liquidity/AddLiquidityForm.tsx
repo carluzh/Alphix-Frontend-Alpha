@@ -1037,42 +1037,62 @@ export function AddLiquidityForm({
       return;
     }
 
-    // Determine next step based on current state and approval data
-    if (currentTransactionStep === 'idle') {
-      // Check what's needed
-      if (approvalData.needsToken0ERC20Approval) {
-        setCurrentTransactionStep('approving_token0');
-        await handleApprove(token0Symbol);
-        setCurrentTransactionStep('idle');
-        await refetchApprovals();
-        return;
-      }
-      if (approvalData.needsToken1ERC20Approval) {
-        setCurrentTransactionStep('approving_token1');
-        await handleApprove(token1Symbol);
-        setCurrentTransactionStep('idle');
-        await refetchApprovals();
-        return;
-      }
+    // Prevent concurrent execution - guard against multiple clicks
+    if (currentTransactionStep !== 'idle') {
+      return;
+    }
 
-      if (approvalData.permitBatchData && !permitSignature) {
-        setCurrentTransactionStep('signing_permit');
-        try {
-          const freshSignature = await signPermit();
-          if (!freshSignature) {
-            setCurrentTransactionStep('idle');
-            return;
-          }
-          setCurrentTransactionStep('idle');
-          return;
-        } catch (error) {
+    // Determine next step based on current state and approval data
+    // Check what's needed
+    if (approvalData.needsToken0ERC20Approval) {
+      setCurrentTransactionStep('approving_token0');
+      try {
+        await handleApprove(token0Symbol);
+        // handleApprove already calls refetchApprovals, but add small delay for RPC propagation
+        await new Promise(resolve => setTimeout(resolve, 500));
+      } catch (error) {
+        console.error('Token0 approval failed:', error);
+      } finally {
+        setCurrentTransactionStep('idle');
+      }
+      return;
+    }
+    if (approvalData.needsToken1ERC20Approval) {
+      setCurrentTransactionStep('approving_token1');
+      try {
+        await handleApprove(token1Symbol);
+        // handleApprove already calls refetchApprovals, but add small delay for RPC propagation
+        await new Promise(resolve => setTimeout(resolve, 500));
+      } catch (error) {
+        console.error('Token1 approval failed:', error);
+      } finally {
+        setCurrentTransactionStep('idle');
+      }
+      return;
+    }
+
+    if (approvalData.permitBatchData && !permitSignature) {
+      setCurrentTransactionStep('signing_permit');
+      try {
+        const freshSignature = await signPermit();
+        if (!freshSignature) {
           setCurrentTransactionStep('idle');
           return;
         }
+      } catch (error) {
+        console.error('Permit signing failed:', error);
+      } finally {
+        setCurrentTransactionStep('idle');
       }
+      return;
+    }
 
-      setCurrentTransactionStep('depositing');
+    setCurrentTransactionStep('depositing');
+    try {
       await handleDeposit(permitSignature);
+    } catch (error) {
+      console.error('Deposit failed:', error);
+    } finally {
       setCurrentTransactionStep('idle');
     }
   };
@@ -1776,10 +1796,24 @@ export function AddLiquidityForm({
 
         if (inputSide === 'amount0') {
           try {
-            const rawFormattedAmount = viemFormatUnits(BigInt(result.amount1), TOKEN_DEFINITIONS[secondaryTokenSymbol]?.decimals || 18);
-            const displayAmount = formatTokenDisplayAmount(rawFormattedAmount, secondaryTokenSymbol);
-            setAmount1(displayAmount);
-            setAmount1FullPrecision(rawFormattedAmount); // Store full precision
+            // Format amount1 using token1Symbol decimals (result.amount1 is always in token1 decimals)
+            const token1Decimals = TOKEN_DEFINITIONS[token1Symbol]?.decimals;
+            if (token1Decimals === undefined) {
+              throw new Error(`Missing decimals for token ${token1Symbol}`);
+            }
+            const amount1BigInt = BigInt(result.amount1);
+            // SDK returns maxUint256 for amounts not needed in single-sided (OOR) positions
+            const MAX_UINT256 = BigInt('0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff');
+            if (amount1BigInt >= MAX_UINT256 / 2n) {
+              // If amount is unreasonably large (>= half of maxUint256), treat as 0 (not needed)
+              setAmount1("0");
+              setAmount1FullPrecision("0");
+            } else {
+              const rawFormattedAmount = viemFormatUnits(amount1BigInt, token1Decimals);
+              const displayAmount = formatTokenDisplayAmount(rawFormattedAmount, token1Symbol);
+              setAmount1(displayAmount);
+              setAmount1FullPrecision(rawFormattedAmount); // Store full precision
+            }
           } catch (e) {
             console.error('Error formatting amount1:', e);
             setAmount1("Error");
@@ -1788,10 +1822,24 @@ export function AddLiquidityForm({
           }
         } else {
           try {
-            const rawFormattedAmount = viemFormatUnits(BigInt(result.amount0), TOKEN_DEFINITIONS[secondaryTokenSymbol]?.decimals || 18);
-            const displayAmount = formatTokenDisplayAmount(rawFormattedAmount, secondaryTokenSymbol);
-            setAmount0(displayAmount);
-            setAmount0FullPrecision(rawFormattedAmount); // Store full precision
+            // Format amount0 using token0Symbol decimals (result.amount0 is always in token0 decimals)
+            const token0Decimals = TOKEN_DEFINITIONS[token0Symbol]?.decimals;
+            if (token0Decimals === undefined) {
+              throw new Error(`Missing decimals for token ${token0Symbol}`);
+            }
+            const amount0BigInt = BigInt(result.amount0);
+            // SDK returns maxUint256 for amounts not needed in single-sided (OOR) positions
+            const MAX_UINT256 = BigInt('0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff');
+            if (amount0BigInt >= MAX_UINT256 / 2n) {
+              // If amount is unreasonably large (>= half of maxUint256), treat as 0 (not needed)
+              setAmount0("0");
+              setAmount0FullPrecision("0");
+            } else {
+              const rawFormattedAmount = viemFormatUnits(amount0BigInt, token0Decimals);
+              const displayAmount = formatTokenDisplayAmount(rawFormattedAmount, token0Symbol);
+              setAmount0(displayAmount);
+              setAmount0FullPrecision(rawFormattedAmount); // Store full precision
+            }
           } catch (e) {
             console.error('Error formatting amount0:', e);
             setAmount0("Error");
@@ -2314,6 +2362,13 @@ export function AddLiquidityForm({
                     if (denomination) {
                       setBaseTokenForPriceDisplay(denomination);
                     }
+                    // Reset amount inputs when range changes
+                    setAmount0("");
+                    setAmount1("");
+                    setAmount0FullPrecision("");
+                    setAmount1FullPrecision("");
+                    setActiveInputSide(null);
+                    setCalculatedData(null);
                     setModalInitialFocusField(null);
                   }}
                   initialTickLower={tickLower}
@@ -2665,11 +2720,14 @@ export function AddLiquidityForm({
                                 : !approvalData
                                 ? '-'
                                 : (() => {
-                                    // Calculate total approvals needed based on whether tokens are native
+                                    // Calculate total approvals needed based on whether tokens are native AND amounts > 0 (single-sided)
                                     const token0IsNative = TOKEN_DEFINITIONS[token0Symbol]?.address === NATIVE_TOKEN_ADDRESS;
                                     const token1IsNative = TOKEN_DEFINITIONS[token1Symbol]?.address === NATIVE_TOKEN_ADDRESS;
-                                    const maxNeeded = (token0IsNative ? 0 : 1) + (token1IsNative ? 0 : 1);
+                                    const amount0Num = parseFloat(amount0 || '0');
+                                    const amount1Num = parseFloat(amount1 || '0');
 
+                                    // Only count non-native tokens with non-zero amounts
+                                    const maxNeeded = (token0IsNative || amount0Num === 0 ? 0 : 1) + (token1IsNative || amount1Num === 0 ? 0 : 1);
                                     const totalNeeded = [approvalData.needsToken0ERC20Approval, approvalData.needsToken1ERC20Approval].filter(Boolean).length;
                                     const completed = maxNeeded - totalNeeded;
                                     return `${completed}/${maxNeeded}`;
@@ -2686,14 +2744,9 @@ export function AddLiquidityForm({
                       <span>
                         { currentTransactionStep === 'signing_permit'
                           ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
-                          : isCheckingApprovals
-                          ? <span className="text-xs font-mono text-muted-foreground">Checking...</span>
-                          : (approvalData?.needsToken0Permit || approvalData?.needsToken1Permit)
-                          ? (permitSignature
-                              ? <span className="text-xs font-mono text-green-500">1/1</span>
-                              : <span className="text-xs font-mono">0/1</span>
-                            )
-                          : <span className="text-xs font-mono text-green-500">✓</span>
+                          : permitSignature
+                          ? <span className="text-xs font-mono text-green-500">1/1</span>
+                          : <span className="text-xs font-mono">0/1</span>
                         }
                       </span>
                     </div>

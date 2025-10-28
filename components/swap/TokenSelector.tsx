@@ -50,8 +50,8 @@ const formatCurrency = (value: string): string => {
   return `$${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
-// Helper function for formatting balance display using displayDecimals from pools.json
-const getFormattedDisplayBalance = (numericBalance: number | undefined, tokenSymbol: string): string => {
+// Helper function for formatting balance display
+const getFormattedDisplayBalance = (numericBalance: number | undefined): string => {
   if (numericBalance === undefined || isNaN(numericBalance)) {
     numericBalance = 0;
   }
@@ -60,9 +60,8 @@ const getFormattedDisplayBalance = (numericBalance: number | undefined, tokenSym
   } else if (numericBalance > 0 && numericBalance < 0.001) {
     return "< 0.001";
   } else {
-    // Use displayDecimals from pools.json config
-    const tokenConfig = getToken(tokenSymbol);
-    const displayDecimals = tokenConfig?.displayDecimals || 4;
+    // Default to 4 decimals for display
+    const displayDecimals = 4;
     return numericBalance.toFixed(displayDecimals);
   }
 };
@@ -227,7 +226,7 @@ export function TokenSelector({
           return {
             address: token.address,
             data: {
-              balance: getFormattedDisplayBalance(numericBalance, token.symbol),
+              balance: getFormattedDisplayBalance(numericBalance),
               usdValue,
               isLoading: false
             }

@@ -172,7 +172,10 @@ export function NavMain({
 
   useEffect(() => {
     if (isConfirmed) {
-      toast.success("Faucet Claimed", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
+      toast.success("Faucet Claimed", {
+        icon: <BadgeCheck className="h-4 w-4 text-sidebar-primary" />,
+        className: 'faucet-claimed'
+      });
       resetWriteContract();
       // On successful claim, update local cache and refetch from contract
       const now = Math.floor(Date.now() / 1000);

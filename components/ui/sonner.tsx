@@ -66,6 +66,12 @@ const Toaster = ({ ...props }: ToasterProps) => {
           box-shadow: inset 1px 0 0 0 rgba(34, 197, 94, 0.15), inset 0 0 0 1px var(--sidebar-border);
         }
 
+        /* Special styling for Faucet Claimed toast */
+        [data-sonner-toast].faucet-claimed[data-styled="true"] {
+          background-image: linear-gradient(135deg, rgba(244, 85, 2, 0.08) 0%, transparent 60%) !important;
+          box-shadow: inset 1px 0 0 0 rgba(244, 85, 2, 0.15), inset 0 0 0 1px var(--sidebar-border) !important;
+        }
+
         [data-sonner-toast][data-type="error"][data-styled="true"] {
           background-image: linear-gradient(135deg, rgba(239, 68, 68, 0.08) 0%, transparent 60%) !important;
           box-shadow: inset 1px 0 0 0 rgba(239, 68, 68, 0.15), inset 0 0 0 1px var(--sidebar-border);
