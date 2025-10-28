@@ -28,8 +28,9 @@ interface AddLiquidityFormPanelProps {
   onSuccess: () => void;
   onAmountsChange?: (amount0: number, amount1: number) => void;
   hideContinueButton?: boolean;
-  externalIsSuccess?: boolean; // Success state from parent modal
-  externalTxHash?: string; // Tx hash from parent modal
+  externalIsSuccess?: boolean;
+  externalTxHash?: string;
+  currentPoolTick?: number | null;
 }
 
 export function AddLiquidityFormPanel({
@@ -39,7 +40,8 @@ export function AddLiquidityFormPanel({
   onAmountsChange,
   hideContinueButton = false,
   externalIsSuccess,
-  externalTxHash
+  externalTxHash,
+  currentPoolTick
 }: AddLiquidityFormPanelProps) {
   const { address: accountAddress, chainId } = useAccount();
   const { signTypedDataAsync } = useSignTypedData();
@@ -113,16 +115,16 @@ export function AddLiquidityFormPanel({
   }, [isIncreaseSuccess, externalIsSuccess]);
 
   useEffect(() => {
-    if (!position.isInRange) {
-      const hasToken0 = parseFloat(position.token0.amount) > 0;
-      const hasToken1 = parseFloat(position.token1.amount) > 0;
-      setCanAddToken0(hasToken0 || (!hasToken0 && !hasToken1));
-      setCanAddToken1(hasToken1 && !hasToken0);
+    if (!position.isInRange && currentPoolTick !== null && currentPoolTick !== undefined) {
+      const deposit0Disabled = currentPoolTick >= position.tickUpper;
+      const deposit1Disabled = currentPoolTick <= position.tickLower;
+      setCanAddToken0(!deposit0Disabled);
+      setCanAddToken1(!deposit1Disabled);
     } else {
       setCanAddToken0(true);
       setCanAddToken1(true);
     }
-  }, [position]);
+  }, [position, currentPoolTick]);
 
   // Notify parent of amount changes for preview
   useEffect(() => {
@@ -143,7 +145,9 @@ export function AddLiquidityFormPanel({
 
     setIsCalculating(true);
     try {
-      if (!position.isInRange) {
+      const isOOR = currentPoolTick !== null && currentPoolTick !== undefined &&
+                    (currentPoolTick < position.tickLower || currentPoolTick > position.tickUpper);
+      if (isOOR) {
         inputSide === 'amount0' ? setIncreaseAmount1("0") : setIncreaseAmount0("0");
         setIsCalculating(false);
         return;

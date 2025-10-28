@@ -1,7 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { X, ChevronDown } from "lucide-react";
+import { X } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { getLatestVersion } from "@/lib/version-log";
 import {
@@ -56,7 +56,26 @@ export function UpdatesNotification({ open = false, onClose }: { open?: boolean;
               </Button>
             </div>
             <div className="overflow-y-auto flex-1 p-3 text-foreground scrollbar-thin scrollbar-thumb-[#2a2a2a] scrollbar-track-transparent">
-              <Accordion type="multiple" className="w-full space-y-0" defaultValue={["features", "improvements"]}>
+              {/* TLDR Section - Always Visible */}
+              <div className="mb-4 pb-3 border-b border-sidebar-border">
+                <h4 className="text-xs font-semibold text-white mb-2.5 font-mono">TLDR</h4>
+                <ul className="flex flex-col gap-2">
+                  <li className="flex items-start text-xs">
+                    <span className="text-sidebar-primary mr-2 mt-0.5">•</span>
+                    <span className="text-white">Position Management Overhaul</span>
+                  </li>
+                  <li className="flex items-start text-xs">
+                    <span className="text-sidebar-primary mr-2 mt-0.5">•</span>
+                    <span className="text-white">Real-Time APY Tracking</span>
+                  </li>
+                  <li className="flex items-start text-xs">
+                    <span className="text-sidebar-primary mr-2 mt-0.5">•</span>
+                    <span className="text-white">Interactive Range Selection</span>
+                  </li>
+                </ul>
+              </div>
+
+              <Accordion type="multiple" className="w-full space-y-0" defaultValue={[]}>
                 {/* New Features */}
                 {latestVersion.newFeatures.length > 0 && (
                   <AccordionItem value="features" className="border-sidebar-border">
@@ -97,51 +116,6 @@ export function UpdatesNotification({ open = false, onClose }: { open?: boolean;
                           return (
                             <li key={index} className="flex items-start">
                               <span className="text-sidebar-primary mr-2">•</span>
-                              <span>
-                                <strong className="text-white">{title}</strong>
-                                {description && <span className="text-muted-foreground"> - {description}</span>}
-                              </span>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    </AccordionContent>
-                  </AccordionItem>
-                )}
-
-                {/* Bug Fixes */}
-                {latestVersion.bugFixes && latestVersion.bugFixes.length > 0 && (
-                  <AccordionItem value="bugfixes" className="border-sidebar-border">
-                    <AccordionTrigger className="text-white hover:no-underline text-xs font-semibold py-2 font-mono">
-                      Bug Fixes ({latestVersion.bugFixes.length})
-                    </AccordionTrigger>
-                    <AccordionContent className="text-muted-foreground text-xs pt-1 pb-3">
-                      <ul className="flex flex-col gap-2">
-                        {latestVersion.bugFixes.map((fix, index) => (
-                          <li key={index} className="flex items-start">
-                            <span className="text-sidebar-primary mr-2">•</span>
-                            <span>{fix}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </AccordionContent>
-                  </AccordionItem>
-                )}
-
-                {/* Breaking Changes */}
-                {latestVersion.breaking && latestVersion.breaking.length > 0 && (
-                  <AccordionItem value="breaking" className="border-sidebar-border">
-                    <AccordionTrigger className="text-white hover:no-underline text-xs font-semibold py-2 font-mono">
-                      Breaking Changes ({latestVersion.breaking.length})
-                    </AccordionTrigger>
-                    <AccordionContent className="text-muted-foreground text-xs pt-1 pb-3">
-                      <ul className="flex flex-col gap-2">
-                        {latestVersion.breaking.map((change, index) => {
-                          const [title, ...descParts] = change.split(' - ');
-                          const description = descParts.join(' - ');
-                          return (
-                            <li key={index} className="flex items-start">
-                              <span className="text-red-400 mr-2">⚠</span>
                               <span>
                                 <strong className="text-white">{title}</strong>
                                 {description && <span className="text-muted-foreground"> - {description}</span>}

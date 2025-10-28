@@ -22,7 +22,6 @@ export const VERSION_LOG: VersionEntry[] = [
     improvements: [
       "Swap Interface Redesign - Better input handling and token selection",
       "Liquidity Math Engine - Accurate tick-to-price conversions and depth calculations",
-      "Performance Optimization - 46% code reduction (20,909 lines removed)",
       "Mobile Responsiveness - Enhanced layouts across all pages",
       "Portfolio Page Overhaul - Cleaner layout with better position cards",
       "Toast Notifications - Improved feedback system with Sonner integration"

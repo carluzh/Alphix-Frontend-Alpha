@@ -147,8 +147,26 @@ export function useAddLiquidityTransactionV2({
       setIsWorking(true);
 
       try {
-        const inputAmount = amount0 && parseFloat(amount0) > 0 ? amount0 : amount1;
-        const inputTokenSymbol = amount0 && parseFloat(amount0) > 0 ? token0Symbol : token1Symbol;
+        const tl = calculatedData?.finalTickLower ?? parseInt(tickLower);
+        const tu = calculatedData?.finalTickUpper ?? parseInt(tickUpper);
+        const currentTick = calculatedData?.currentPoolTick;
+
+        let finalAmount0 = amount0;
+        let finalAmount1 = amount1;
+
+        if (currentTick !== null && currentTick !== undefined && !isNaN(tl) && !isNaN(tu)) {
+          const isOOR = currentTick < tl || currentTick > tu;
+          if (isOOR) {
+            if (currentTick >= tu) {
+              finalAmount0 = '0';
+            } else if (currentTick <= tl) {
+              finalAmount1 = '0';
+            }
+          }
+        }
+
+        const inputAmount = finalAmount0 && parseFloat(finalAmount0) > 0 ? finalAmount0 : finalAmount1;
+        const inputTokenSymbol = finalAmount0 && parseFloat(finalAmount0) > 0 ? token0Symbol : token1Symbol;
 
         const requestBody: any = {
           userAddress: accountAddress,
@@ -156,8 +174,8 @@ export function useAddLiquidityTransactionV2({
           token1Symbol,
           inputAmount,
           inputTokenSymbol,
-          userTickLower: calculatedData?.finalTickLower ?? parseInt(tickLower),
-          userTickUpper: calculatedData?.finalTickUpper ?? parseInt(tickUpper),
+          userTickLower: tl,
+          userTickUpper: tu,
           chainId,
         };
 

@@ -199,7 +199,7 @@ const Toaster = ({ ...props }: ToasterProps) => {
         icons={{
           success: <BadgeCheck className="h-5 w-5 text-green-500" />,
           error: <OctagonX className="h-5 w-5 text-red-500" />,
-          info: <Info className="h-5 w-5 text-blue-500" />,
+          info: <Info className="h-5 w-5 text-white" />,
           warning: <AlertCircle className="h-5 w-5 text-yellow-500" />
         }}
         {...props}

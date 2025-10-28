@@ -1,6 +1,5 @@
 "use client"
 
-import { useState, useRef, useEffect } from "react"
 import type * as React from "react"
 import type { LucideIcon } from "lucide-react"
 import {
@@ -9,8 +8,8 @@ import {
   SidebarMenuItem,
   SidebarGroup,
 } from "@/components/ui/sidebar"
-import { CustomLockIcon } from "./CustomLockIcon"
 import { cn } from "@/lib/utils"
+import { toast } from "sonner"
 
 interface NavGovernanceItem {
   title: string
@@ -26,26 +25,9 @@ export function NavGovernance({
   items: NavGovernanceItem[]
   className?: string
 }) {
-  const [lockedItem, setLockedItem] = useState<string | null>(null)
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null)
-
-  const handleLockedClick = (itemName: string) => {
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current)
-    }
-    setLockedItem(itemName)
-    timeoutRef.current = setTimeout(() => {
-      setLockedItem(null)
-    }, 1000)
+  const handleLockedClick = () => {
+    toast.info("Coming Soon")
   }
-
-  useEffect(() => {
-    return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current)
-      }
-    }
-  }, [])
 
   return (
     <SidebarGroup className={className}>
@@ -58,7 +40,7 @@ export function NavGovernance({
         {items.map((item) => (
           <SidebarMenuItem key={item.title} className="list-none">
             <SidebarMenuButton
-              onClick={() => item.disabled && handleLockedClick(item.title)}
+              onClick={() => item.disabled && handleLockedClick()}
               className={cn(
                 "w-full flex items-center rounded-lg px-2 py-2 transition-colors hover:bg-[#1f1f1f] hover:text-white",
                 "text-muted-foreground"
@@ -67,12 +49,6 @@ export function NavGovernance({
             >
               {item.icon && <item.icon className="h-4 w-4 flex-shrink-0" />}
               <span className="flex-1 truncate ml-2 text-sm font-medium">{item.title}</span>
-              {item.disabled && lockedItem === item.title && (
-                <span className="flex items-center">
-                  <CustomLockIcon className="h-4 w-4 flex-shrink-0 text-muted-foreground mr-0.5" />
-                  <span className="text-[10px] text-muted-foreground">Soon</span>
-                </span>
-              )}
             </SidebarMenuButton>
           </SidebarMenuItem>
         ))}

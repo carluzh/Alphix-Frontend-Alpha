@@ -31,8 +31,12 @@ import { AddLiquidityModal } from "@/components/liquidity/AddLiquidityModal";
 import { WithdrawLiquidityModal } from "@/components/liquidity/WithdrawLiquidityModal";
 import { PositionCardCompact } from "@/components/liquidity/PositionCardCompact";
 import { PositionDetailsModal } from "@/components/liquidity/PositionDetailsModal";
+import { PositionSkeleton } from "@/components/liquidity/PositionSkeleton";
 import { batchGetTokenPrices } from '@/lib/price-service';
 import { cn } from '@/lib/utils';
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Folder, Rows3, Filter as FilterIcon, X as XIcon } from "lucide-react";
+import { Separator } from "@/components/ui/separator";
 
 // Loading phases for skeleton system
 type LoadPhases = { phase: 0 | 1 | 2 | 3 | 4; startedAt: number };
@@ -222,44 +226,10 @@ const BalancesListSkeleton = () => (
 
 const ActivePositionsSkeleton = () => (
   <div className="flex flex-col gap-3 lg:gap-4">
-      {[...Array(3)].map((_, idx) => (
-      <div key={idx} className="rounded-lg bg-muted/30 border border-sidebar-border/60 animate-pulse">
-        <div className="p-3 sm:p-4">
-          <div className="grid" style={{ gridTemplateColumns: 'min-content max-content max-content max-content 1fr min-content', columnGap: '1.25rem' }}>
-            <div className="flex items-center min-w-0 flex-none gap-0">
-              <div className="relative" style={{ width: 40, height: 24 }}>
-                <div className="absolute rounded-full bg-muted/50" style={{ width: 24, height: 24, left: 0, top: 0 }} />
-                <div className="absolute rounded-full bg-muted/40" style={{ width: 24, height: 24, left: 12, top: 0 }} />
-            </div>
-            </div>
-            <div className="flex flex-col min-w-0 items-start truncate pr-2 gap-1">
-              <div className="h-3 w-24 bg-muted/40 rounded" />
-              <div className="h-3 w-20 bg-muted/30 rounded" />
-          </div>
-            <div className="flex items-start pr-2">
-              <div className="flex flex-col gap-1 items-start">
-                <div className="h-3 w-16 bg-muted/40 rounded" />
-                <div className="h-3 w-20 bg-muted/30 rounded" />
-        </div>
-    </div>
-            <div className="flex items-start pr-2">
-              <div className="flex flex-col gap-1 items-start">
-                <div className="h-3 w-10 bg-muted/40 rounded" />
-                <div className="h-3 w-24 bg-muted/30 rounded" />
-                </div>
-                </div>
-            <div />
-            <div className="hidden sm:flex items-center justify-end gap-2 flex-none">
-              <div className="h-7 w-20 bg-muted/30 rounded-md border border-sidebar-border/60" />
-    </div>
-    </div>
-  </div>
-        <div className="py-1.5 px-3 bg-muted/10 border-t border-sidebar-border/30">
-          <div className="h-3 w-full bg-transparent" />
-                </div>
-                  </div>
+      {[...Array(4)].map((_, idx) => (
+        <PositionSkeleton key={idx} />
     ))}
-        </div>
+  </div>
 );
 
 // Context for portfolio token filter, so inner components can toggle it
@@ -1381,6 +1351,9 @@ export default function PortfolioPage() {
   // Sorting state for Active Positions
   const [activeSort, setActiveSort] = useState<{ column: 'amounts' | 'value' | 'apr' | null; direction: 'asc' | 'desc' | null }>({ column: null, direction: null });
   const [hoveredTokenLabel, setHoveredTokenLabel] = useState<string | null>(null);
+  const [positionStatusFilter, setPositionStatusFilter] = useState<'all' | 'in-range' | 'out-of-range'>('all');
+  // const [positionSortBy, setPositionSortBy] = useState<'value' | 'fees' | 'apr'>('value');
+  const [viewMode, setViewMode] = useState<'folder' | 'list'>('folder');
 
 
 
@@ -1625,6 +1598,48 @@ export default function PortfolioPage() {
       (p?.token1?.symbol?.toUpperCase?.() === token)
     ));
   }, [activePositions, activeTokenFilter, portfolioData.tokenBalances, portfolioData.totalValue]);
+
+  const statusAndSortFilteredPositions = useMemo(() => {
+    let positions = filteredPositions;
+
+    if (positionStatusFilter !== 'all') {
+      positions = positions.filter(p => {
+        const isInRange = p?.isInRange === true;
+        return positionStatusFilter === 'in-range' ? isInRange : !isInRange;
+      });
+    }
+
+    // Sort by value (default)
+    const getValueKey = (p: any) => {
+      const sym0 = p?.token0?.symbol as string | undefined;
+      const sym1 = p?.token1?.symbol as string | undefined;
+      const amt0 = Number.parseFloat(p?.token0?.amount || '0');
+      const amt1 = Number.parseFloat(p?.token1?.amount || '0');
+      const px0 = (sym0 && portfolioData.priceMap[sym0]) || 0;
+      const px1 = (sym1 && portfolioData.priceMap[sym1]) || 0;
+      return (isFinite(amt0) ? amt0 : 0) * px0 + (isFinite(amt1) ? amt1 : 0) * px1;
+    };
+
+    // TODO: Sorting by fees/APR - to be implemented
+    // const getFeesKey = (p: any) => {
+    //   const fees = getFeesForPosition(p.positionId);
+    //   if (!fees) return 0;
+    //   const sym0 = p?.token0?.symbol;
+    //   const sym1 = p?.token1?.symbol;
+    //   const px0 = (sym0 && portfolioData.priceMap[sym0]) || 0;
+    //   const px1 = (sym1 && portfolioData.priceMap[sym1]) || 0;
+    //   const amt0 = parseFloat((fees as any).amount0 || '0');
+    //   const amt1 = parseFloat((fees as any).amount1 || '0');
+    //   return amt0 * px0 + amt1 * px1;
+    // };
+    // const getAprKey = (p: any) => {
+    //   const aprStr = aprByPoolId[String(p?.poolId || '').toLowerCase()] || '';
+    //   const num = typeof aprStr === 'string' && aprStr.endsWith('%') ? parseFloat(aprStr.replace('%', '')) : 0;
+    //   return isFinite(num) ? num : 0;
+    // };
+
+    return [...positions].sort((a, b) => getValueKey(b) - getValueKey(a));
+  }, [filteredPositions, positionStatusFilter, portfolioData.priceMap]);
 
   // Unclaimed fees for the positions currently displayed (after filter)
   const displayedUnclaimedUsd = useMemo(() => {
@@ -2045,8 +2060,14 @@ export default function PortfolioPage() {
 
   // Group positions by pool with sorting support
   const groupedByPool = useMemo(() => {
+    const positionsToUse = statusAndSortFilteredPositions;
+
+    if (viewMode === 'list') {
+      return positionsToUse.map(p => ({ poolId: p.poolId, items: [p], totalUSD: 0 }));
+    }
+
     const map = new Map<string, any[]>();
-    for (const p of sortedActivePositions) {
+    for (const p of positionsToUse) {
       const key = String(p?.poolId || '').toLowerCase();
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(p);
@@ -2114,7 +2135,16 @@ export default function PortfolioPage() {
       groups.sort((a, b) => b.totalUSD - a.totalUSD);
     }
     return groups;
-  }, [sortedActivePositions, portfolioData.priceMap, activeSort, activeTokenFilter, currentFilter]);
+  }, [statusAndSortFilteredPositions, viewMode, portfolioData.priceMap, activeSort, activeTokenFilter, currentFilter]);
+
+  const hasFolders = useMemo(() => {
+    const map = new Map<string, number>();
+    statusAndSortFilteredPositions.forEach(p => {
+      const key = String(p?.poolId || '').toLowerCase();
+      map.set(key, (map.get(key) || 0) + 1);
+    });
+    return Array.from(map.values()).some(count => count > 2);
+  }, [statusAndSortFilteredPositions]);
 
   // Filtered position count for metrics display
   const filteredPositionCount = useMemo(() => {
@@ -2864,6 +2894,107 @@ export default function PortfolioPage() {
             <h3 className="text-lg font-medium">Your Positions</h3>
             {/* Right: token filter badge area + Faucet (only show faucet when Balances tab active in integrated mode) */}
             <div className="ml-auto flex items-center gap-2">
+              {selectedSection === 'Active Positions' && activePositions.length > 0 && (
+                <>
+                  {hasFolders && (
+                    <div className="h-8 rounded-md border border-sidebar-border bg-container flex items-center p-0.5 gap-0.5">
+                      <button
+                        onClick={() => {
+                          setViewMode('folder');
+                        }}
+                        className={cn(
+                          "h-full px-2 rounded flex items-center justify-center transition-all",
+                          viewMode === 'folder' ? "bg-button text-foreground" : "bg-transparent text-muted-foreground hover:text-foreground"
+                        )}
+                        style={viewMode === 'folder' ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
+                      >
+                        <Folder className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        onClick={() => {
+                          setViewMode('list');
+                          setExpandedPools({});
+                        }}
+                        className={cn(
+                          "h-full px-2 rounded flex items-center justify-center transition-all",
+                          viewMode === 'list' ? "bg-button text-foreground" : "bg-transparent text-muted-foreground hover:text-foreground"
+                        )}
+                        style={viewMode === 'list' ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
+                      >
+                        <Rows3 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  )}
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <button className="h-8 px-3 rounded-md border border-sidebar-border bg-container hover:bg-surface text-muted-foreground hover:text-foreground flex items-center gap-2 text-xs transition-colors">
+                        <FilterIcon className="h-3.5 w-3.5" />
+                        <span>Filter</span>
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-64 p-0 bg-container border-sidebar-border" align="end">
+                      <div className="p-4 space-y-4">
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-sm font-medium text-foreground">Filters</h4>
+                          <button
+                            onClick={() => {
+                              setPositionStatusFilter('all');
+                            }}
+                            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                          >
+                            <XIcon className="h-3 w-3" />
+                            <span>Clear</span>
+                          </button>
+                        </div>
+                        <Separator className="bg-sidebar-border" />
+                        <div className="space-y-2">
+                          <label className="text-xs font-medium text-muted-foreground">Status</label>
+                          <div className="space-y-1">
+                            {[
+                              { value: 'all', label: 'All Positions' },
+                              { value: 'in-range', label: 'In Range' },
+                              { value: 'out-of-range', label: 'Out of Range' }
+                            ].map(option => (
+                              <button
+                                key={option.value}
+                                onClick={() => setPositionStatusFilter(option.value as any)}
+                                className={cn(
+                                  "w-full text-left px-2 py-1.5 rounded text-xs transition-colors",
+                                  positionStatusFilter === option.value
+                                    ? "bg-surface text-foreground font-medium"
+                                    : "text-muted-foreground hover:text-foreground hover:bg-surface/50"
+                                )}
+                              >
+                                {option.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        {/* TODO: Sort By - to be implemented */}
+                        {/* <Separator className="bg-sidebar-border" />
+                        <div className="space-y-2">
+                          <label className="text-xs font-medium text-muted-foreground">Sort By</label>
+                          <div className="space-y-1">
+                            {[
+                              { value: 'value', label: 'Position Size' },
+                              { value: 'fees', label: 'Fees' },
+                              { value: 'apr', label: 'APR' }
+                            ].map(option => (
+                              <button
+                                key={option.value}
+                                onClick={() => {}}
+                                className="w-full text-left px-2 py-1.5 rounded text-xs transition-colors text-muted-foreground hover:text-foreground hover:bg-surface/50"
+                              >
+                                {option.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div> */}
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+                </>
+              )}
               {activeTokenFilter && (
                 <button
                   type="button"
@@ -2907,16 +3038,17 @@ export default function PortfolioPage() {
                         <div className="text-sm text-white/75">No active positions.</div>
                       </div>
                     ) : (
-                      <div className="flex flex-col gap-3 lg:gap-4">
-                        {groupedByPool.map(({ poolId, items, totalUSD }) => {
+                      <div className="flex flex-col gap-3 lg:gap-4" key={`view-${viewMode}`}>
+                        {groupedByPool.map(({ poolId, items, totalUSD }, groupIndex) => {
                           const poolKey = String(poolId).toLowerCase();
                           const first = items[0];
                           const isSinglePosition = items.length === 1;
                           const isExpanded = !!expandedPools[poolKey];
                           const token0Icon = getToken(first?.token0?.symbol || '')?.icon || '/placeholder.svg';
                           const token1Icon = getToken(first?.token1?.symbol || '')?.icon || '/placeholder.svg';
+                          const uniqueKey = viewMode === 'list' ? `list-${first?.positionId}` : `folder-${poolKey}`;
                           return (
-                            <React.Fragment key={`pool-group-${poolKey}`}>
+                            <React.Fragment key={uniqueKey}>
                               {!isSinglePosition && (
                                 <div
                                   className={`flex items-center justify-between px-4 py-3 rounded-lg border border-sidebar-border/60 bg-muted/30 hover:bg-muted/40 cursor-pointer`}

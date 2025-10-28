@@ -194,7 +194,7 @@ export function PositionDetailsModal({
   const signer = useEthersSigner();
 
   // State for permit signature (matching AddLiquidityForm)
-  const [currentTransactionStep, setCurrentTransactionStep] = useState<'idle' | 'approving_token0' | 'approving_token1' | 'signing_permit' | 'depositing'>('idle');
+  const [currentTransactionStep, setCurrentTransactionStep] = useState<'idle' | 'collecting_fees' | 'approving_token0' | 'approving_token1' | 'signing_permit' | 'depositing'>('idle');
   const [permitSignature, setPermitSignature] = useState<string>();
 
   // Check approvals for increase liquidity (matching AddLiquidityForm pattern)
@@ -243,6 +243,7 @@ export function PositionDetailsModal({
   // useDecreaseLiquidity hook - mirrors useIncreaseLiquidity pattern
   const {
     decreaseLiquidity,
+    claimFees,
     isLoading: isDecreasingLiquidity,
     isSuccess: isDecreaseSuccess,
     hash: decreaseTxHash,
@@ -440,17 +441,16 @@ export function PositionDetailsModal({
     // The useEffect monitoring isIncreaseApproved will handle the next steps
   }, [approveERC20Async]);
 
-  // Sign the batch permit using ethers signer (EXACT copy from AddLiquidityForm)
-  const signPermitV2 = useCallback(async () => {
+  const signPermitV2 = useCallback(async (): Promise<string | undefined> => {
     if (!increaseApprovalData?.permitBatchData || !increaseApprovalData?.signatureDetails) {
-      return;
+      return undefined;
     }
 
     if (!signer) {
       toast.error("Wallet not connected", {
         icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
       });
-      return;
+      return undefined;
     }
 
     try {
@@ -458,22 +458,17 @@ export function PositionDetailsModal({
         icon: React.createElement(Info, { className: 'h-4 w-4' })
       });
 
-      // Use 'values' from permitBatchData for signing (the actual permit data)
       const valuesToSign = increaseApprovalData.permitBatchData.values || increaseApprovalData.permitBatchData;
-
       const signature = await (signer as any)._signTypedData(
         increaseApprovalData.signatureDetails.domain,
         increaseApprovalData.signatureDetails.types,
         valuesToSign
       );
-
       setPermitSignature(signature);
 
-      // Show success toast
       const currentTime = Math.floor(Date.now() / 1000);
       const sigDeadline = valuesToSign?.sigDeadline || valuesToSign?.details?.[0]?.expiration || 0;
       const durationSeconds = Number(sigDeadline) - currentTime;
-
       let durationFormatted = "";
       if (durationSeconds >= 86400) {
         const days = Math.ceil(durationSeconds / 86400);
@@ -490,6 +485,7 @@ export function PositionDetailsModal({
         icon: React.createElement(BadgeCheck, { className: 'h-4 w-4 text-green-500' }),
         description: `Batch permit signed successfully for ${durationFormatted}`
       });
+      return signature;
     } catch (error: any) {
       const isUserRejection =
         error.message?.toLowerCase().includes('user rejected') ||
@@ -506,18 +502,30 @@ export function PositionDetailsModal({
     }
   }, [increaseApprovalData, signer]);
 
-  // Handle final transaction execution (matching AddLiquidityForm pattern)
   const handleIncreaseTransactionV2 = async () => {
     if (!position) return;
+    if (!increaseApprovalData || isCheckingIncreaseApprovals) return;
 
-    // Wait for approval data to load
-    if (!increaseApprovalData || isCheckingIncreaseApprovals) {
-      return;
+    // Check if we need to collect fees first for OOR positions
+    if (currentTransactionStep === 'idle' && !position.isInRange) {
+      const fee0 = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), TOKEN_DEFINITIONS[position.token0.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
+      const fee1 = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), TOKEN_DEFINITIONS[position.token1.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
+
+      if (fee0 > 0 || fee1 > 0) {
+        // Collect fees step - transaction will be sent, then useEffect will handle success
+        setCurrentTransactionStep('collecting_fees');
+        try {
+          await claimFees(position.positionId);
+          // Don't reset here - useEffect will handle when isDecreaseSuccess becomes true
+        } catch (error: any) {
+          console.error('[OOR] Fee collection failed:', error);
+          setCurrentTransactionStep('idle');
+        }
+        return;
+      }
     }
 
-    // Determine next step based on current state and approval data
     if (currentTransactionStep === 'idle') {
-      // Check what's needed
       if (increaseApprovalData.needsToken0ERC20Approval) {
         setCurrentTransactionStep('approving_token0');
         await handleIncreaseApproveV2(position.token0.symbol as TokenSymbol);
@@ -533,43 +541,49 @@ export function PositionDetailsModal({
         return;
       }
 
-      // After ERC20 approvals, check if permit signature is needed
-      // The hook auto-fetches permit data, but if it's still loading, wait for it
-      if (!permitSignature) {
-        // Wait a moment for the useEffect to populate permit data
-        await new Promise(resolve => setTimeout(resolve, 100));
-        await refetchIncreaseApprovals(); // Force a refresh to get latest approval state
-      }
-
-      // Now check if permit signature is needed (using permitBatchData as indicator)
       if (increaseApprovalData.permitBatchData && !permitSignature) {
         setCurrentTransactionStep('signing_permit');
         try {
-          await signPermitV2();
+          const freshSignature = await signPermitV2();
+          if (!freshSignature) {
+            setCurrentTransactionStep('idle');
+            return;
+          }
           setCurrentTransactionStep('idle');
+          return;
         } catch (error) {
           setCurrentTransactionStep('idle');
           return;
         }
-        return;
       }
 
-      // All approvals/permits done, execute deposit
       setCurrentTransactionStep('depositing');
+
+      let finalAmount0 = increaseAmount0 || '0';
+      let finalAmount1 = increaseAmount1 || '0';
+      let feesForIncrease = { amount0: prefetchedRaw0 || '0', amount1: prefetchedRaw1 || '0' };
+
+      if (!position.isInRange && currentPoolTick !== null && currentPoolTick !== undefined) {
+        if (currentPoolTick >= position.tickUpper) {
+          finalAmount0 = '0';
+        } else if (currentPoolTick <= position.tickLower) {
+          finalAmount1 = '0';
+        }
+      }
+
       const data: IncreasePositionData = {
         tokenId: position.positionId,
         token0Symbol: position.token0.symbol as TokenSymbol,
         token1Symbol: position.token1.symbol as TokenSymbol,
-        additionalAmount0: increaseAmount0 || '0',
-        additionalAmount1: increaseAmount1 || '0',
+        additionalAmount0: finalAmount0,
+        additionalAmount1: finalAmount1,
         poolId: position.poolId,
         tickLower: position.tickLower,
         tickUpper: position.tickUpper,
-        feesForIncrease: { amount0: prefetchedRaw0 || '0', amount1: prefetchedRaw1 || '0' },
+        feesForIncrease,
       };
 
       try {
-        // Pass the permit signature if we have one
         const opts = permitSignature && increaseApprovalData.permitBatchData ? {
           batchPermit: {
             owner: accountAddress as `0x${string}`,
@@ -577,7 +591,6 @@ export function PositionDetailsModal({
             signature: permitSignature,
           }
         } : undefined;
-
         increaseLiquidity(data, opts);
       } catch (e) {
         console.error('[increase] transaction error:', e);
@@ -586,10 +599,10 @@ export function PositionDetailsModal({
     }
   };
 
-  // Get button text based on current step (matching AddLiquidityForm pattern)
   const getIncreaseButtonText = () => {
     if (!position) return 'Preparing...';
 
+    if (currentTransactionStep === 'collecting_fees') return 'Collecting Fees...';
     if (currentTransactionStep === 'approving_token0') return `Approving ${position.token0.symbol}...`;
     if (currentTransactionStep === 'approving_token1') return `Approving ${position.token1.symbol}...`;
     if (currentTransactionStep === 'signing_permit') return 'Signing...';
@@ -727,6 +740,22 @@ export function PositionDetailsModal({
       }
     }
   }, [showTransactionOverview, currentView, increaseStep, handlePrepareIncrease]);
+
+  // Handle fee collection success for OOR positions
+  useEffect(() => {
+    if (currentTransactionStep === 'collecting_fees' && isDecreaseSuccess && decreaseTxHash) {
+      // Fee collection succeeded, reset and proceed
+      const proceedAfterFeeCollection = async () => {
+        setCurrentTransactionStep('idle');
+        resetDecrease();
+        // Wait a bit for caches to update
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        await refetchIncreaseApprovals();
+        // User will need to click the button again to proceed with approvals/deposit
+      };
+      proceedAfterFeeCollection();
+    }
+  }, [currentTransactionStep, isDecreaseSuccess, decreaseTxHash, resetDecrease, refetchIncreaseApprovals]);
 
   // Remove Liquidity handler functions
   const handleConfirmWithdraw = useCallback(() => {
@@ -1585,12 +1614,26 @@ export function PositionDetailsModal({
                   {/* Badge - Top Right */}
                   {isAddingLiquidity && !hasZeroFees && (
                     <div className="absolute top-5 right-5 group">
-                      <div className="flex items-center justify-center w-6 h-6 rounded bg-green-500/20 text-green-500">
-                        <CornerRightUp className="h-3.5 w-3.5" strokeWidth={2.5} />
-                      </div>
-                      <div className="absolute bottom-full right-0 mb-2 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100 w-max px-2 py-1 text-xs bg-container border border-sidebar-border rounded shadow-lg z-10 pointer-events-none">
-                        Fees are compounded
-                      </div>
+                      {/* Show red/minus for OOR positions with fees (fees will be collected first) */}
+                      {!position.isInRange ? (
+                        <>
+                          <div className="flex items-center justify-center w-6 h-6 rounded bg-red-500/20 text-red-500">
+                            <Minus className="h-3.5 w-3.5" strokeWidth={2.5} />
+                          </div>
+                          <div className="absolute bottom-full right-0 mb-2 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100 w-max px-2 py-1 text-xs bg-container border border-sidebar-border rounded shadow-lg z-10 pointer-events-none">
+                            Fees collected first
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="flex items-center justify-center w-6 h-6 rounded bg-green-500/20 text-green-500">
+                            <CornerRightUp className="h-3.5 w-3.5" strokeWidth={2.5} />
+                          </div>
+                          <div className="absolute bottom-full right-0 mb-2 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100 w-max px-2 py-1 text-xs bg-container border border-sidebar-border rounded shadow-lg z-10 pointer-events-none">
+                            Fees are compounded
+                          </div>
+                        </>
+                      )}
                     </div>
                   )}
                   {isRemovingLiquidity && !hasZeroFees && (
@@ -2183,6 +2226,7 @@ export function PositionDetailsModal({
                           position={position as any}
                           feesForIncrease={{ amount0: prefetchedRaw0 || '0', amount1: prefetchedRaw1 || '0' }}
                           onSuccess={handleAddLiquiditySuccess}
+                          currentPoolTick={currentPoolTick}
                           onAmountsChange={(amt0, amt1) => {
                             // Sync FormPanel amounts to our modal state
                             setIncreaseAmount0(amt0.toString());
@@ -2311,15 +2355,9 @@ export function PositionDetailsModal({
                                   <div className="text-xl font-medium">
                                     {(() => {
                                       const baseAmount = previewAddAmount0 || previewRemoveAmount0 || 0;
-                                      // For add liquidity, include fees since they're added to position
-                                      // For remove liquidity, show only user input (fees are separate)
-                                      let displayAmount = baseAmount;
-                                      if (currentView === 'add-liquidity') {
-                                        const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), TOKEN_DEFINITIONS[position.token0.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
-                                        displayAmount = baseAmount + fee0Amount;
-                                      }
-                                      const prefix = currentView === 'add-liquidity' ? '+' : '';
-                                      return `${prefix}${formatTokenDisplayAmount(displayAmount.toString())}`;
+                                      const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), TOKEN_DEFINITIONS[position.token0.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
+                                      const displayAmount = baseAmount + fee0Amount;
+                                      return formatTokenDisplayAmount(displayAmount.toString());
                                     })()}
                                   </div>
                                   <span className="text-sm text-muted-foreground">{position.token0.symbol}</span>
@@ -2327,11 +2365,8 @@ export function PositionDetailsModal({
                                 <div className="text-xs text-muted-foreground">
                                   {(() => {
                                     const baseAmount = previewAddAmount0 || previewRemoveAmount0 || 0;
-                                    let displayAmount = baseAmount;
-                                    if (currentView === 'add-liquidity') {
-                                      const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), TOKEN_DEFINITIONS[position.token0.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
-                                      displayAmount = baseAmount + fee0Amount;
-                                    }
+                                    const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), TOKEN_DEFINITIONS[position.token0.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
+                                    const displayAmount = baseAmount + fee0Amount;
                                     return formatUSD(displayAmount * getUsdPriceForSymbol(position.token0.symbol));
                                   })()}
                                 </div>
@@ -2352,15 +2387,9 @@ export function PositionDetailsModal({
                                   <div className="text-xl font-medium">
                                     {(() => {
                                       const baseAmount = previewAddAmount1 || previewRemoveAmount1 || 0;
-                                      // For add liquidity, include fees since they're added to position
-                                      // For remove liquidity, show only user input (fees are separate)
-                                      let displayAmount = baseAmount;
-                                      if (currentView === 'add-liquidity') {
-                                        const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), TOKEN_DEFINITIONS[position.token1.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
-                                        displayAmount = baseAmount + fee1Amount;
-                                      }
-                                      const prefix = currentView === 'add-liquidity' ? '+' : '';
-                                      return `${prefix}${formatTokenDisplayAmount(displayAmount.toString())}`;
+                                      const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), TOKEN_DEFINITIONS[position.token1.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
+                                      const displayAmount = baseAmount + fee1Amount;
+                                      return formatTokenDisplayAmount(displayAmount.toString());
                                     })()}
                                   </div>
                                   <span className="text-sm text-muted-foreground">{position.token1.symbol}</span>
@@ -2368,11 +2397,8 @@ export function PositionDetailsModal({
                                 <div className="text-xs text-muted-foreground">
                                   {(() => {
                                     const baseAmount = previewAddAmount1 || previewRemoveAmount1 || 0;
-                                    let displayAmount = baseAmount;
-                                    if (currentView === 'add-liquidity') {
-                                      const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), TOKEN_DEFINITIONS[position.token1.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
-                                      displayAmount = baseAmount + fee1Amount;
-                                    }
+                                    const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), TOKEN_DEFINITIONS[position.token1.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
+                                    const displayAmount = baseAmount + fee1Amount;
                                     return formatUSD(displayAmount * getUsdPriceForSymbol(position.token1.symbol));
                                   })()}
                                 </div>
@@ -2451,6 +2477,21 @@ export function PositionDetailsModal({
                           </div>
                         ) : showTransactionOverview && currentView === 'add-liquidity' ? (
                           <div className="space-y-1.5">
+                            {/* Collect Fees step - only for OOR positions with fees */}
+                            {!position.isInRange && (parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), TOKEN_DEFINITIONS[position.token0.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18)) > 0 || parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), TOKEN_DEFINITIONS[position.token1.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18)) > 0) && (
+                              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                                <span>Collect Fees</span>
+                                <span>
+                                  {currentTransactionStep === 'collecting_fees' ? (
+                                    <RefreshCwIcon className="h-4 w-4 animate-spin" />
+                                  ) : isDecreaseSuccess && decreaseTxHash ? (
+                                    <span className="text-xs font-mono text-green-500">1/1</span>
+                                  ) : (
+                                    <span className="text-xs font-mono">0/1</span>
+                                  )}
+                                </span>
+                              </div>
+                            )}
                             <div className="flex items-center justify-between text-xs text-muted-foreground">
                               <span>Token Approvals</span>
                               <span>
