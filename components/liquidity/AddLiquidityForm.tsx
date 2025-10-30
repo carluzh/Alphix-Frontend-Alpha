@@ -45,6 +45,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { TransactionFlowPanel } from "./TransactionFlowPanel";
 
 // Toast utility functions matching swap-interface patterns
 const showErrorToast = (title: string, description?: string, action?: { label: string; onClick: () => void }) => {
@@ -1020,133 +1021,7 @@ export function AddLiquidityForm({
     }
   };
 
-  // Handle preparation and submission with manual step progression
-  const handlePrepareAndSubmit = async () => {
-    if (isInsufficientBalance) {
-      showErrorToast("Insufficient Balance");
-      return;
-    }
-
-    if (parseFloat(amount0 || "0") <= 0 && parseFloat(amount1 || "0") <= 0) {
-      showErrorToast("Invalid Amount", "Must be greater than 0");
-      return;
-    }
-
-    // First click: switch to transaction steps view
-    if (!showingTransactionSteps) {
-      setShowingTransactionSteps(true);
-      return;
-    }
-
-    // Wait for approval data to load
-    if (!approvalData || isCheckingApprovals) {
-      return;
-    }
-
-    // Prevent concurrent execution - guard against multiple clicks
-    if (currentTransactionStep !== 'idle') {
-      return;
-    }
-
-    // Determine next step based on current state and approval data
-    // Check what's needed - user must click for each step
-    if (approvalData.needsToken0ERC20Approval) {
-      setCurrentTransactionStep('approving_token0');
-      try {
-        await handleApprove(token0Symbol);
-        // Keep loading state while we wait for blockchain propagation
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        // Refetch to update approval state
-        await refetchApprovals();
-        // Only NOW end the loading state - everything is ready
-      } catch (error: any) {
-        // Only log non-user rejection errors
-        const isUserRejection =
-          error?.message?.toLowerCase().includes('user rejected') ||
-          error?.message?.toLowerCase().includes('user denied') ||
-          error?.code === 4001;
-
-        if (!isUserRejection) {
-          console.error('Token0 approval failed:', error);
-          showErrorToast('Approval Failed', error.message);
-        }
-      } finally {
-        // Always end loading state
-        setCurrentTransactionStep('idle');
-      }
-      return;
-    }
-    if (approvalData.needsToken1ERC20Approval) {
-      setCurrentTransactionStep('approving_token1');
-      try {
-        await handleApprove(token1Symbol);
-        // Keep loading state while we wait for blockchain propagation
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        // Refetch to update approval state
-        await refetchApprovals();
-        // Only NOW end the loading state - everything is ready
-      } catch (error: any) {
-        // Only log non-user rejection errors
-        const isUserRejection =
-          error?.message?.toLowerCase().includes('user rejected') ||
-          error?.message?.toLowerCase().includes('user denied') ||
-          error?.code === 4001;
-
-        if (!isUserRejection) {
-          console.error('Token1 approval failed:', error);
-          showErrorToast('Approval Failed', error.message);
-        }
-      } finally {
-        // Always end loading state
-        setCurrentTransactionStep('idle');
-      }
-      return;
-    }
-
-    if (approvalData.permitBatchData && !permitSignature) {
-      setCurrentTransactionStep('signing_permit');
-      try {
-        const freshSignature = await signPermit();
-        if (!freshSignature) {
-          setCurrentTransactionStep('idle');
-          return;
-        }
-        // Permit signed successfully, keep loading briefly for smooth transition
-        await new Promise(resolve => setTimeout(resolve, 500));
-      } catch (error: any) {
-        // Only log non-user rejection errors
-        const isUserRejection =
-          error?.message?.toLowerCase().includes('user rejected') ||
-          error?.message?.toLowerCase().includes('user denied') ||
-          error?.code === 4001;
-
-        if (!isUserRejection) {
-          console.error('Permit signing failed:', error);
-        }
-      } finally {
-        setCurrentTransactionStep('idle');
-      }
-      return;
-    }
-
-    setCurrentTransactionStep('depositing');
-    try {
-      await handleDeposit(permitSignature);
-      // Keep loading until transaction is fully complete
-    } catch (error: any) {
-      // Only log non-user rejection errors
-      const isUserRejection =
-        error?.message?.toLowerCase().includes('user rejected') ||
-        error?.message?.toLowerCase().includes('user denied') ||
-        error?.code === 4001;
-
-      if (!isUserRejection) {
-        console.error('Deposit failed:', error);
-      }
-    } finally {
-      setCurrentTransactionStep('idle');
-    }
-  };
+  // Old handlePrepareAndSubmit removed - now using TransactionFlowPanel
 
   const signPermit = useCallback(async (): Promise<string | undefined> => {
     if (!approvalData?.permitBatchData || !approvalData?.signatureDetails) {
@@ -1159,10 +1034,7 @@ export function AddLiquidityForm({
     }
 
     try {
-      toast('Sign in Wallet', {
-        icon: React.createElement(InfoIcon, { className: 'h-4 w-4' })
-      });
-
+      // Toast removed - shown by TransactionFlowPanel
       const valuesToSign = approvalData.permitBatchData.values || approvalData.permitBatchData;
       const signature = await (signer as any)._signTypedData(
         approvalData.signatureDetails.domain,
@@ -1204,56 +1076,7 @@ export function AddLiquidityForm({
     }
   }, [approvalData, signer]);
 
-  // Determine button text based on current state and what's needed next
-  const getButtonText = () => {
-    if (isInsufficientBalance) {
-      return 'Insufficient Balance';
-    }
-
-    if (isWorking) {
-      // Keep the same text as the button that was clicked (no "..." or "ing" suffix)
-      if (currentTransactionStep === 'approving_token0') {
-        return `Approve ${token0Symbol}`;
-      }
-      if (currentTransactionStep === 'approving_token1') {
-        return `Approve ${token1Symbol}`;
-      }
-      if (currentTransactionStep === 'signing_permit') {
-        return 'Sign Permit';
-      }
-      if (currentTransactionStep === 'depositing' || isDepositConfirming) {
-        return 'Deposit';
-      }
-      return 'Processing';
-    }
-
-    // Not in transaction steps yet
-    if (!showingTransactionSteps) {
-      return 'Deposit';
-    }
-
-    // Waiting for approval data to load or checking approvals
-    if (!approvalData || isCheckingApprovals) {
-      return 'Preparing...';
-    }
-
-    // In transaction steps - show what will happen next
-    // Check approvals first
-    if (approvalData.needsToken0ERC20Approval) {
-      return `Approve ${token0Symbol}`;
-    }
-    if (approvalData.needsToken1ERC20Approval) {
-      return `Approve ${token1Symbol}`;
-    }
-
-    // Then check permit - this prevents jumping to Deposit
-    if (approvalData.permitBatchData && !permitSignature) {
-      return 'Sign Permit';
-    }
-
-    // Only show Deposit if everything else is done
-    return 'Deposit';
-  };
+  // Old getButtonText removed - now using TransactionFlowPanel
 
   // Effect to auto-apply active percentage preset when currentPrice changes OR when activePreset changes
   useEffect(() => {
@@ -2290,7 +2113,6 @@ export function AddLiquidityForm({
       {activeTab === 'deposit' && (
         <>
           {/* Amount Input Step */}
-            <>
             {/* Header removed; now provided by parent container */}
 
               {/* Range Section - Step 1 - Hide when showing transaction steps */}
@@ -2765,78 +2587,32 @@ export function AddLiquidityForm({
 
               {/* Transaction Steps - Show when user clicked deposit */}
               {showingTransactionSteps && (
-                <div className="p-3 border border-dashed rounded-md bg-muted/10 mb-4">
-                  <p className="text-sm font-medium mb-2 text-foreground/80">Transaction Steps</p>
-                  <div className="space-y-1.5 text-xs text-muted-foreground">
-                    {/* ERC20 Approvals to Permit2 */}
-                    <div className="flex items-center justify-between">
-                      <span>Token Approvals</span>
-                      <span>
-                        { isApproving || isCheckingApprovals
-                          ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
-                          : (
-                            <motion.span
-                              animate={approvalWiggleControls}
-                              className={`text-xs font-mono ${
-                                !approvalData?.needsToken0ERC20Approval && !approvalData?.needsToken1ERC20Approval
-                                  ? 'text-green-500'
-                                  : approvalWiggleCount > 0
-                                  ? 'text-red-500'
-                                  : 'text-muted-foreground'
-                              }`}
-                            >
-                              {isCheckingApprovals
-                                ? 'Checking...'
-                                : !approvalData
-                                ? '-'
-                                : (() => {
-                                    // Calculate total approvals needed based on whether tokens are native AND amounts > 0 (single-sided)
-                                    const token0IsNative = TOKEN_DEFINITIONS[token0Symbol]?.address === NATIVE_TOKEN_ADDRESS;
-                                    const token1IsNative = TOKEN_DEFINITIONS[token1Symbol]?.address === NATIVE_TOKEN_ADDRESS;
-                                    const amount0Num = parseFloat(amount0 || '0');
-                                    const amount1Num = parseFloat(amount1 || '0');
-
-                                    // Only count non-native tokens with non-zero amounts
-                                    const maxNeeded = (token0IsNative || amount0Num === 0 ? 0 : 1) + (token1IsNative || amount1Num === 0 ? 0 : 1);
-                                    const totalNeeded = [approvalData.needsToken0ERC20Approval, approvalData.needsToken1ERC20Approval].filter(Boolean).length;
-                                    const completed = maxNeeded - totalNeeded;
-                                    return `${completed}/${maxNeeded}`;
-                                  })()}
-                            </motion.span>
-                          )
-                        }
-                      </span>
-                    </div>
-
-                    {/* Permit2 Signature */}
-                    <div className="flex items-center justify-between">
-                      <span>Permit Signature</span>
-                      <span>
-                        { currentTransactionStep === 'signing_permit'
-                          ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
-                          : permitSignature
-                          ? <span className="text-xs font-mono text-green-500">1/1</span>
-                          : <span className="text-xs font-mono">0/1</span>
-                        }
-                      </span>
-                    </div>
-
-                    {/* Deposit Transaction */}
-                    <div className="flex items-center justify-between">
-                      <span>Deposit Transaction</span>
-                      <span>
-                        { isDepositConfirming
-                          ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
-                          : (
-                            <span className={`text-xs font-mono ${isDepositSuccess ? 'text-green-500' : ''}`}>
-                              {isDepositSuccess ? '1/1' : '0/1'}
-                            </span>
-                          )
-                        }
-                      </span>
-                    </div>
-                  </div>
-                </div>
+                <TransactionFlowPanel
+                  isActive={showingTransactionSteps}
+                  approvalData={approvalData}
+                  isCheckingApprovals={isCheckingApprovals}
+                  token0Symbol={token0Symbol}
+                  token1Symbol={token1Symbol}
+                  isDepositSuccess={isDepositSuccess}
+                  onApproveToken={handleApprove}
+                  onSignPermit={signPermit}
+                  onExecute={handleDeposit}
+                  onRefetchApprovals={refetchApprovals}
+                  onBack={() => {
+                    setShowingTransactionSteps(false);
+                    resetTransaction();
+                    setCurrentTransactionStep('idle');
+                    setPermitSignature(undefined);
+                  }}
+                  onReset={() => {
+                    resetTransaction();
+                    setCurrentTransactionStep('idle');
+                    setPermitSignature(undefined);
+                  }}
+                  executeButtonLabel="Deposit"
+                  showBackButton={true}
+                  autoProgressOnApproval={false}
+                />
               )}
 
               {/* Continue Button */}
@@ -2848,53 +2624,7 @@ export function AddLiquidityForm({
                   <appkit-button className="absolute inset-0 z-10 block h-full w-full cursor-pointer p-0 opacity-0" />
                   <span className="relative z-0 pointer-events-none">Connect Wallet</span>
                 </div>
-              ) : showingTransactionSteps ? (
-                // Split button layout: Back | Deposit/Approve/etc
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    className="w-1/3 border-sidebar-border bg-button hover:bg-muted/30"
-                    onClick={() => {
-                      setShowingTransactionSteps(false);
-                      resetTransaction();
-                    }}
-                    disabled={isWorking}
-                    style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
-                  >
-                    Back
-                  </Button>
-                  <Button
-                    className={cn(
-                      "flex-1",
-                      (isWorking || isCalculating || isPoolStateLoading || isCheckingApprovals ||
-                      (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0")) ||
-                      isInsufficientBalance) ?
-                        "relative border border-sidebar-border bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 !opacity-100 cursor-default text-white/75"
-                        :
-                        "text-sidebar-primary border border-sidebar-primary bg-button-primary hover-button-primary"
-                    )}
-                    onClick={handlePrepareAndSubmit}
-                    disabled={isWorking ||
-                      isCalculating ||
-                      isPoolStateLoading ||
-                      isCheckingApprovals ||
-                      (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0")) ||
-                      isInsufficientBalance
-                    }
-                    style={(isWorking || isCalculating || isPoolStateLoading || isCheckingApprovals ||
-                      (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0")) ||
-                      isInsufficientBalance) ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
-                  >
-                    <span className={cn(
-                      (isWorking || isCheckingApprovals || isPoolStateLoading)
-                        ? "animate-pulse"
-                        : ""
-                    )}>
-                      {getButtonText()}
-                    </span>
-                  </Button>
-                </div>
-              ) : (
+              ) : !showingTransactionSteps ? (
                 // Single button layout for initial view
                 <Button
                   className={cn(
@@ -2906,7 +2636,17 @@ export function AddLiquidityForm({
                       :
                       "text-sidebar-primary border border-sidebar-primary bg-button-primary hover-button-primary"
                   )}
-                  onClick={handlePrepareAndSubmit}
+                  onClick={() => {
+                    if (isInsufficientBalance) {
+                      showErrorToast("Insufficient Balance");
+                      return;
+                    }
+                    if (parseFloat(amount0 || "0") <= 0 && parseFloat(amount1 || "0") <= 0) {
+                      showErrorToast("Invalid Amount", "Must be greater than 0");
+                      return;
+                    }
+                    setShowingTransactionSteps(true);
+                  }}
                   disabled={isWorking ||
                     isCalculating ||
                     isPoolStateLoading ||
@@ -2919,15 +2659,14 @@ export function AddLiquidityForm({
                     isInsufficientBalance) ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
                 >
                   <span className={cn(
-                    (isWorking || isCheckingApprovals || isPoolStateLoading)
+                    (isCalculating || isPoolStateLoading)
                       ? "animate-pulse"
                       : ""
                   )}>
-                    {getButtonText()}
+                    {isInsufficientBalance ? 'Insufficient Balance' : 'Deposit'}
                   </span>
                 </Button>
-              )}
-            </>
+              ) : null}
         </>
       )}
 

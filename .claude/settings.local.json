@@ -40,7 +40,8 @@
       "Bash(findstr:*)",
       "Bash(for var in \"isPanning\" \"isDraggingRange\" \"dragStartX\" \"dragStartTickLower\" \"dragStartTickUpper\" \"dragSide\" \"editingSide\" \"customXAxisTicks\" \"editingMinPrice\" \"editingMaxPrice\" \"showPresetSelector\")",
       "Bash(for ref in \"panStartXRef\" \"panStartDomainRef\" \"chartContainerRef\" \"prevCalculationDeps\")",
-      "Bash(npm install:*)"
+      "Bash(npm install:*)",
+      "Bash(pnpm dlx:*)"
     ],
     "deny": [],
     "ask": []

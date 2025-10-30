@@ -209,9 +209,7 @@ export function useAddLiquidityTransactionV2({
           throw new Error('Invalid transaction data from API');
         }
 
-        toast('Confirm Deposit', {
-          icon: React.createElement(InfoIcon, { className: 'h-4 w-4' }),
-        });
+        // Toast removed - shown by TransactionFlowPanel
 
         // Use writeContractAsync for multicall
         const depositConfig: any = {

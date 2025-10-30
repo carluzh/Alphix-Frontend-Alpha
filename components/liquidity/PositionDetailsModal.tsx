@@ -16,6 +16,7 @@ import { getOptimalBaseToken } from "@/lib/denomination-utils";
 import { AddLiquidityFormPanel } from "./AddLiquidityFormPanel";
 import { RemoveLiquidityFormPanel } from "./RemoveLiquidityFormPanel";
 import { CollectFeesFormPanel } from "./CollectFeesFormPanel";
+import { TransactionFlowPanel } from "./TransactionFlowPanel";
 import { useAccount, useSignTypedData, useWriteContract, useWaitForTransactionReceipt, useBalance } from "wagmi";
 import { readContract } from '@wagmi/core';
 import { config } from '@/lib/wagmiConfig';
@@ -314,15 +315,17 @@ export function PositionDetailsModal({
       icon: React.createElement(Info, { className: 'h-4 w-4' })
     });
 
-    await approveERC20Async({
+    const hash = await approveERC20Async({
       address: tokenConfig.address as `0x${string}`,
       abi: erc20Abi,
       functionName: 'approve',
       args: ["0x000000000022D473030F116dDEE9F6B43aC78BA3" as `0x${string}`, BigInt("115792089237316195423570985008687907853269984665640564039457584007913129639935")],
     });
 
-    // Wait for confirmation
-    // The useEffect monitoring isIncreaseApproved will handle the next steps
+    toast.success(`${tokenSymbol} Approved`, {
+      icon: React.createElement(BadgeCheck, { className: 'h-4 w-4 text-green-500' }),
+      description: `Approved infinite ${tokenSymbol} for liquidity`,
+    });
   }, [approveERC20Async]);
 
   const signPermitV2 = useCallback(async (): Promise<string | undefined> => {
@@ -338,10 +341,7 @@ export function PositionDetailsModal({
     }
 
     try {
-      toast('Sign in Wallet', {
-        icon: React.createElement(Info, { className: 'h-4 w-4' })
-      });
-
+      // Toast removed - shown by TransactionFlowPanel
       const valuesToSign = increaseApprovalData.permitBatchData.values || increaseApprovalData.permitBatchData;
       const signature = await (signer as any)._signTypedData(
         increaseApprovalData.signatureDetails.domain,
@@ -402,102 +402,42 @@ export function PositionDetailsModal({
     return fee0 > 0 || fee1 > 0;
   }, [position, prefetchedRaw0, prefetchedRaw1]);
 
-  const getNextStep = useCallback(() => {
-    if (!position || !increaseApprovalData) return null;
-    if (increaseApprovalData.needsToken0ERC20Approval) return 'approving_token0';
-    if (increaseApprovalData.needsToken1ERC20Approval) return 'approving_token1';
-    if (increaseApprovalData.permitBatchData && !permitSignature) return 'signing_permit';
-    return 'depositing';
-  }, [position, increaseApprovalData, permitSignature]);
+  // Old getNextStep and handleIncreaseTransactionV2 removed - now using TransactionFlowPanel
 
-  const handleIncreaseTransactionV2 = async () => {
-    if (!position || !increaseApprovalData || isCheckingIncreaseApprovals || currentTransactionStep !== 'idle') return;
+  // Wrapper function for TransactionFlowPanel
+  const handleIncreaseDeposit = useCallback(async (permitSig?: string) => {
+    if (!position || !increaseApprovalData) return;
 
-    const nextStep = getNextStep();
-    if (!nextStep) return;
+    let finalAmount0 = increaseAmount0 || '0';
+    let finalAmount1 = increaseAmount1 || '0';
 
-    if (nextStep === 'approving_token0') {
-      setCurrentTransactionStep('approving_token0');
-      await handleIncreaseApproveV2(position.token0.symbol as TokenSymbol);
-      setCurrentTransactionStep('idle');
-      await refetchIncreaseApprovals();
-      return;
+    if (!position.isInRange && currentPoolTick !== null && currentPoolTick !== undefined) {
+      if (currentPoolTick >= position.tickUpper) finalAmount0 = '0';
+      else if (currentPoolTick <= position.tickLower) finalAmount1 = '0';
     }
 
-    if (nextStep === 'approving_token1') {
-      setCurrentTransactionStep('approving_token1');
-      await handleIncreaseApproveV2(position.token1.symbol as TokenSymbol);
-      setCurrentTransactionStep('idle');
-      await refetchIncreaseApprovals();
-      return;
-    }
+    const data: IncreasePositionData = {
+      tokenId: position.positionId,
+      token0Symbol: position.token0.symbol as TokenSymbol,
+      token1Symbol: position.token1.symbol as TokenSymbol,
+      additionalAmount0: finalAmount0,
+      additionalAmount1: finalAmount1,
+      poolId: position.poolId,
+      tickLower: position.tickLower,
+      tickUpper: position.tickUpper,
+      feesForIncrease: { amount0: prefetchedRaw0 || '0', amount1: prefetchedRaw1 || '0' },
+    };
 
-    if (nextStep === 'signing_permit') {
-      setCurrentTransactionStep('signing_permit');
-      try {
-        const freshSignature = await signPermitV2();
-        if (!freshSignature) {
-          setCurrentTransactionStep('idle');
-          return;
-        }
-        setCurrentTransactionStep('idle');
-        return;
-      } catch {
-        setCurrentTransactionStep('idle');
-        return;
+    const opts = permitSig && increaseApprovalData.permitBatchData ? {
+      batchPermit: {
+        owner: accountAddress as `0x${string}`,
+        permitBatch: increaseApprovalData.permitBatchData.values || increaseApprovalData.permitBatchData,
+        signature: permitSig,
       }
-    }
+    } : undefined;
 
-    if (nextStep === 'depositing') {
-      setCurrentTransactionStep('depositing');
-
-      let finalAmount0 = increaseAmount0 || '0';
-      let finalAmount1 = increaseAmount1 || '0';
-
-      if (!position.isInRange && currentPoolTick !== null && currentPoolTick !== undefined) {
-        if (currentPoolTick >= position.tickUpper) finalAmount0 = '0';
-        else if (currentPoolTick <= position.tickLower) finalAmount1 = '0';
-      }
-
-      const data: IncreasePositionData = {
-        tokenId: position.positionId,
-        token0Symbol: position.token0.symbol as TokenSymbol,
-        token1Symbol: position.token1.symbol as TokenSymbol,
-        additionalAmount0: finalAmount0,
-        additionalAmount1: finalAmount1,
-        poolId: position.poolId,
-        tickLower: position.tickLower,
-        tickUpper: position.tickUpper,
-        feesForIncrease: { amount0: prefetchedRaw0 || '0', amount1: prefetchedRaw1 || '0' },
-      };
-
-      const opts = permitSignature && increaseApprovalData.permitBatchData ? {
-        batchPermit: {
-          owner: accountAddress as `0x${string}`,
-          permitBatch: increaseApprovalData.permitBatchData.values || increaseApprovalData.permitBatchData,
-          signature: permitSignature,
-        }
-      } : undefined;
-
-      increaseLiquidity(data, opts);
-      setCurrentTransactionStep('idle');
-    }
-  };
-
-  const getIncreaseButtonText = () => {
-    if (!position) return 'Preparing...';
-    if (currentTransactionStep === 'approving_token0') return `Approving ${position.token0.symbol}...`;
-    if (currentTransactionStep === 'approving_token1') return `Approving ${position.token1.symbol}...`;
-    if (currentTransactionStep === 'signing_permit') return 'Signing...';
-    if (currentTransactionStep === 'depositing' || isIncreasingLiquidity) return 'Depositing...';
-    if (!increaseApprovalData) return 'Preparing...';
-
-    const nextStep = getNextStep();
-    if (nextStep === 'approving_token0') return `Approve ${position.token0.symbol}`;
-    if (nextStep === 'approving_token1') return `Approve ${position.token1.symbol}`;
-    if (nextStep === 'signing_permit') return 'Sign Permit';
-    return 'Add Liquidity';
-  };
+    increaseLiquidity(data, opts);
+  }, [position, increaseApprovalData, increaseAmount0, increaseAmount1, currentPoolTick, prefetchedRaw0, prefetchedRaw1, accountAddress, increaseLiquidity]);
 
 
   // Remove Liquidity handler functions
@@ -2186,8 +2126,32 @@ export function PositionDetailsModal({
                           );
                         })()}
 
-                        {/* Additional context info OR Transaction Steps (conditional) */}
-                        {currentView === 'remove-liquidity' || !showTransactionOverview ? (
+                        {/* Transaction Steps for Add Liquidity OR Current Price for other views */}
+                        {showTransactionOverview && currentView === 'add-liquidity' ? (
+                          <TransactionFlowPanel
+                            isActive={showTransactionOverview}
+                            approvalData={increaseApprovalData}
+                            isCheckingApprovals={isCheckingIncreaseApprovals}
+                            token0Symbol={position.token0.symbol as TokenSymbol}
+                            token1Symbol={position.token1.symbol as TokenSymbol}
+                            isDepositSuccess={isIncreaseSuccess}
+                            onApproveToken={handleIncreaseApproveV2}
+                            onSignPermit={signPermitV2}
+                            onExecute={handleIncreaseDeposit}
+                            onRefetchApprovals={refetchIncreaseApprovals}
+                            onBack={() => {
+                              setShowTransactionOverview(false);
+                              setTxStarted(false);
+                            }}
+                            onReset={() => {
+                              resetIncrease();
+                              setPermitSignature(undefined);
+                            }}
+                            executeButtonLabel="Add Liquidity"
+                            showBackButton={false}
+                            autoProgressOnApproval={false}
+                          />
+                        ) : currentView === 'remove-liquidity' || !showTransactionOverview ? (
                           <div className="space-y-1.5">
                             <div className="flex items-center justify-between text-xs text-muted-foreground">
                               <span>Current Price:</span>
@@ -2203,135 +2167,60 @@ export function PositionDetailsModal({
                               </span>
                             </div>
                           </div>
-                        ) : showTransactionOverview && currentView === 'add-liquidity' ? (
-                          <div className="space-y-1.5">
-                            <div className="flex items-center justify-between text-xs text-muted-foreground">
-                              <span>Token Approvals</span>
-                              <span>
-                                {(currentTransactionStep === 'approving_token0' || currentTransactionStep === 'approving_token1') ? (
-                                  <RefreshCwIcon className="h-4 w-4 animate-spin" />
-                                ) : (
-                                  <motion.span
-                                    animate={approvalWiggleControls}
-                                    className={cn("text-xs font-mono",
-                                      !increaseApprovalData?.needsToken0ERC20Approval && !increaseApprovalData?.needsToken1ERC20Approval
-                                        ? 'text-green-500'
-                                        : approvalWiggleCount > 0
-                                        ? 'text-red-500'
-                                        : 'text-muted-foreground'
-                                    )}
-                                  >
-                                    {isCheckingIncreaseApprovals ? (
-                                      'Checking...'
-                                    ) : !increaseApprovalData ? (
-                                      '-'
-                                    ) : (() => {
-                                      // Calculate total approvals needed based on whether tokens are native
-                                      const token0IsNative = TOKEN_DEFINITIONS[position.token0.symbol as TokenSymbol]?.address === NATIVE_TOKEN_ADDRESS;
-                                      const token1IsNative = TOKEN_DEFINITIONS[position.token1.symbol as TokenSymbol]?.address === NATIVE_TOKEN_ADDRESS;
-                                      const maxNeeded = (token0IsNative ? 0 : 1) + (token1IsNative ? 0 : 1);
-
-                                      const totalNeeded = [increaseApprovalData.needsToken0ERC20Approval, increaseApprovalData.needsToken1ERC20Approval].filter(Boolean).length;
-                                      const completed = maxNeeded - totalNeeded;
-                                      return `${completed}/${maxNeeded}`;
-                                    })()}
-                                  </motion.span>
-                                )}
-                              </span>
-                            </div>
-                            <div className="flex items-center justify-between text-xs text-muted-foreground">
-                              <span>Permit Signature</span>
-                              <span>
-                                {currentTransactionStep === 'signing_permit' ? (
-                                  <RefreshCwIcon className="h-4 w-4 animate-spin" />
-                                ) : isCheckingIncreaseApprovals ? (
-                                  <span className="text-xs font-mono text-muted-foreground">Checking...</span>
-                                ) : increaseApprovalData?.permitBatchData ? (
-                                  // Permit is needed - show signed status
-                                  permitSignature ? (
-                                    <span className="text-xs font-mono text-green-500">1/1</span>
-                                  ) : (
-                                    <span className="text-xs font-mono">0/1</span>
-                                  )
-                                ) : (
-                                  // No permit needed - show as complete
-                                  <span className="text-xs font-mono text-green-500">1/1</span>
-                                )}
-                              </span>
-                            </div>
-                            <div className="flex items-center justify-between text-xs text-muted-foreground">
-                              <span>Deposit Transaction</span>
-                              <span>
-                                {(increaseStep === 'deposit' && isIncreasingLiquidity) ? (
-                                  <RefreshCwIcon className="h-4 w-4 animate-spin" />
-                                ) : (
-                                  <span className={cn("text-xs font-mono", isIncreaseSuccess ? 'text-green-500' : 'text-muted-foreground')}>
-                                    {isIncreaseSuccess ? '1/1' : '0/1'}
-                                  </span>
-                                )}
-                              </span>
-                            </div>
-                          </div>
                         ) : null}
 
-                        {/* Back/Confirm buttons */}
-                        <div className="grid grid-cols-2 gap-3 pt-2">
-                          <Button
-                            variant="outline"
-                            className="relative border border-sidebar-border bg-button px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75"
-                            onClick={() => {
-                              if (showTransactionOverview) {
-                                setShowTransactionOverview(false);
-                                setTxStarted(false);
-                              } else {
-                                setShowInterimConfirmation(false);
-                              }
-                            }}
-                            disabled={
-                              currentView === 'add-liquidity' ? isIncreasingLiquidity :
-                              currentView === 'remove-liquidity' ? isDecreasingLiquidity :
-                              false
-                            }
-                            style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
-                          >
-                            Back
-                          </Button>
-
-                          <Button
-                            id="modal-interim-confirm-button"
-                            className="text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90"
-                            onClick={() => {
-                              if (currentView === 'remove-liquidity') {
-                                // Remove Liquidity: Execute directly without transaction overview
-                                handleExecuteWithdrawTransaction();
-                              } else if (currentView === 'add-liquidity') {
-                                // Add Liquidity: Use transaction overview flow
+                        {/* Back/Confirm buttons - Only show when NOT using TransactionFlowPanel */}
+                        {!(showTransactionOverview && currentView === 'add-liquidity') && (
+                          <div className="grid grid-cols-2 gap-3 pt-2">
+                            <Button
+                              variant="outline"
+                              className="relative border border-sidebar-border bg-button px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75"
+                              onClick={() => {
                                 if (showTransactionOverview) {
-                                  handleIncreaseTransactionV2();
+                                  setShowTransactionOverview(false);
+                                  setTxStarted(false);
                                 } else {
+                                  setShowInterimConfirmation(false);
+                                }
+                              }}
+                              disabled={
+                                currentView === 'add-liquidity' ? isIncreasingLiquidity :
+                                currentView === 'remove-liquidity' ? isDecreasingLiquidity :
+                                false
+                              }
+                              style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+                            >
+                              Back
+                            </Button>
+
+                            <Button
+                              id="modal-interim-confirm-button"
+                              className="text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90"
+                              onClick={() => {
+                                if (currentView === 'remove-liquidity') {
+                                  // Remove Liquidity: Execute directly without transaction overview
+                                  handleExecuteWithdrawTransaction();
+                                } else if (currentView === 'add-liquidity') {
+                                  // Add Liquidity: Show transaction overview
                                   setShowTransactionOverview(true);
                                 }
+                              }}
+                              disabled={
+                                currentView === 'add-liquidity' ? (isCheckingIncreaseApprovals) :
+                                currentView === 'remove-liquidity' ? (isDecreasingLiquidity || isWithdrawCalculating) :
+                                false
                               }
-                            }}
-                            disabled={
-                              currentView === 'add-liquidity' ? (currentTransactionStep !== 'idle' || isIncreasingLiquidity || isCheckingIncreaseApprovals) :
-                              currentView === 'remove-liquidity' ? (isDecreasingLiquidity || isWithdrawCalculating) :
-                              false
-                            }
-                          >
-                            <span className={
-                              currentView === 'add-liquidity' ? ((currentTransactionStep !== 'idle' || isIncreasingLiquidity) ? "animate-pulse" : "") :
-                              currentView === 'remove-liquidity' ? (isDecreasingLiquidity ? "animate-pulse" : "") :
-                              ""
-                            }>
-                              {currentView === 'add-liquidity' ? (
-                                showTransactionOverview ? getIncreaseButtonText() : "Confirm"
-                              ) : currentView === 'remove-liquidity' ? (
-                                isDecreasingLiquidity ? "Processing..." : (isWithdrawBurn ? "Burn Position" : "Withdraw")
-                              ) : "Confirm"}
-                            </span>
-                          </Button>
-                        </div>
+                            >
+                              <span className={
+                                currentView === 'remove-liquidity' ? (isDecreasingLiquidity ? "animate-pulse" : "") : ""
+                              }>
+                                {currentView === 'add-liquidity' ? "Confirm" :
+                                 currentView === 'remove-liquidity' ? (isDecreasingLiquidity ? "Processing..." : (isWithdrawBurn ? "Burn Position" : "Withdraw")) :
+                                 "Confirm"}
+                              </span>
+                            </Button>
+                          </div>
+                        )}
                       </div>
                     </>
                   )}
