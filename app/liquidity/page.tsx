@@ -33,7 +33,7 @@ import {
 import { toast } from "sonner";
 import { getEnabledPools, getToken, getPoolSubgraphId, getPoolById } from "../../lib/pools-config";
 import { getFromCache, getFromCacheWithTtl, setToCache, getUserPositionsCacheKey, getPoolStatsCacheKey, loadUserPositionIds, derivePositionsFromIds, getPoolFeeBps } from "../../lib/client-cache";
-import { getCachedBatchData, setCachedBatchData, clearBatchDataCache } from "../../lib/cache-version";
+import { getCachedBatchData, setCachedBatchData, clearBatchDataCache } from "@/lib/cache-version";
 import { fetchPoolFullRangeAPY } from "../../lib/apy-calculator";
 import { Pool } from "../../types";
 import { useRouter } from "next/navigation";
@@ -52,41 +52,47 @@ const SDK_MIN_TICK = -887272;
 const SDK_MAX_TICK = 887272;
 const DEFAULT_TICK_SPACING = 60;
 
-const generatePoolsFromConfig = (): Pool[] => {
-  const enabledPools = getEnabledPools();
-  
-  return enabledPools.map(poolConfig => {
-    const token0 = getToken(poolConfig.currency0.symbol);
-    const token1 = getToken(poolConfig.currency1.symbol);
-    
-    if (!token0 || !token1) {
-      console.warn(`Missing token configuration for pool ${poolConfig.id}`);
-      return null;
-    }
-    
-    // Debugging: Log the poolConfig to see if 'type' is present
-    console.log(`[generatePoolsFromConfig] Processing pool: ${poolConfig.id}, Type: ${poolConfig.type}`);
+// Memoized pool generation - compute once and cache
+const generatePoolsFromConfig = (() => {
+  let cachedPools: Pool[] | null = null;
 
-    return {
-      id: poolConfig.id,
-      tokens: [
-        { symbol: token0.symbol, icon: token0.icon },
-        { symbol: token1.symbol, icon: token1.icon }
-      ],
-      pair: `${token0.symbol} / ${token1.symbol}`,
-      volume24h: "Loading...",
-      volume7d: "Loading...",
-      fees24h: "Loading...",
-      fees7d: "Loading...",
-      liquidity: "Loading...",
-      apr: "Loading...",
-      highlighted: poolConfig.featured,
-      volumeChangeDirection: 'loading',
-      tvlChangeDirection: 'loading',
-      type: poolConfig.type, // Include the type from poolConfig
-    } as Pool;
-  }).filter(Boolean) as Pool[];
-};
+  return (): Pool[] => {
+    if (cachedPools) return cachedPools;
+
+    const enabledPools = getEnabledPools();
+
+    cachedPools = enabledPools.map(poolConfig => {
+      const token0 = getToken(poolConfig.currency0.symbol);
+      const token1 = getToken(poolConfig.currency1.symbol);
+
+      if (!token0 || !token1) {
+        console.warn(`Missing token configuration for pool ${poolConfig.id}`);
+        return null;
+      }
+
+      return {
+        id: poolConfig.id,
+        tokens: [
+          { symbol: token0.symbol, icon: token0.icon },
+          { symbol: token1.symbol, icon: token1.icon }
+        ],
+        pair: `${token0.symbol} / ${token1.symbol}`,
+        volume24h: "Loading...",
+        volume7d: "Loading...",
+        fees24h: "Loading...",
+        fees7d: "Loading...",
+        liquidity: "Loading...",
+        apr: "Loading...",
+        highlighted: poolConfig.featured,
+        volumeChangeDirection: 'loading',
+        tvlChangeDirection: 'loading',
+        type: poolConfig.type,
+      } as Pool;
+    }).filter(Boolean) as Pool[];
+
+    return cachedPools;
+  };
+})();
 
 const dynamicPools = generatePoolsFromConfig();
 
@@ -142,145 +148,156 @@ export default function LiquidityPage() {
           }
         } catch {}
 
-        // Always use the versioned server cache like poolId page
-        console.log('[LiquidityPage] Fetching versioned batch...');
-        const versionResponse = await fetch('/api/cache-version', { cache: 'no-store' as any } as any);
-        const versionData = await versionResponse.json();
-        // If we have a server-bumped version stored locally from a previous mutation, prefer it
-        try {
-          const hinted = localStorage.getItem('pools-cache-version');
-          if (hinted && /^\d+$/.test(hinted)) {
-            versionData.cacheUrl = `/api/liquidity/get-pools-batch?v=${hinted}`;
-            console.log('[LiquidityPage] Using hinted version', hinted);
+        // PERFORMANCE: Check localStorage cache FIRST (cross-session persistence)
+        const cachedBatchData = getCachedBatchData();
+        let batchData = cachedBatchData;
+
+        if (cachedBatchData) {
+          console.log('[LiquidityPage] Using cached batch data (cross-session cache HIT)');
+          // Use cached data immediately, skip API call entirely
+        } else {
+          // No cache - fetch from server
+          console.log('[LiquidityPage] No cache found, fetching versioned batch from server...');
+          const versionResponse = await fetch('/api/cache-version', { cache: 'no-store' as any } as any);
+          const versionData = await versionResponse.json();
+          // If we have a server-bumped version stored locally from a previous mutation, prefer it
+          try {
+            const hinted = localStorage.getItem('pools-cache-version');
+            if (hinted && /^\d+$/.test(hinted)) {
+              versionData.cacheUrl = `/api/liquidity/get-pools-batch?v=${hinted}`;
+              console.log('[LiquidityPage] Using hinted version', hinted);
+            }
+          } catch {}
+          const response = await fetch(versionData.cacheUrl, { cache: 'no-store' as any } as any);
+          console.log('[LiquidityPage] Batch URL', versionData.cacheUrl, 'status', response.status);
+          if (!response.ok) throw new Error(`Batch API failed: ${response.status}`);
+          batchData = await response.json();
+          if (!batchData.success) throw new Error(`Batch API error: ${batchData.message}`);
+
+          // Cache the fetched data for future page loads (cross-session)
+          try {
+            setCachedBatchData(batchData);
+            localStorage.removeItem('pools-cache-version');
+          } catch {}
+        }
+
+        // PERFORMANCE: Batch all dynamic fee fetches in parallel
+        const feePromises = dynamicPools.map(async (pool) => {
+          const apiPoolId = getPoolSubgraphId(pool.id) || pool.id;
+          try {
+            return { poolId: pool.id, feeBps: await getPoolFeeBps(apiPoolId) };
+          } catch (e) {
+            console.error(`[LiquidityPage] Failed to get dynamic fee for pool ${pool.id}:`, e);
+            return { poolId: pool.id, feeBps: null };
           }
-        } catch {}
-        const response = await fetch(versionData.cacheUrl, { cache: 'no-store' as any } as any);
-        console.log('[LiquidityPage] Batch URL', versionData.cacheUrl, 'status', response.status);
-        if (!response.ok) throw new Error(`Batch API failed: ${response.status}`);
-        const batchData = await response.json();
-        if (!batchData.success) throw new Error(`Batch API error: ${batchData.message}`);
+        });
 
-        // Optional warm client cache for next visit; clear version hint to avoid forced bypass
-        try {
-          setCachedBatchData(batchData);
-          localStorage.removeItem('pools-cache-version');
-        } catch {}
+        const feeResults = await Promise.all(feePromises);
+        const feeMap = new Map(feeResults.map(r => [r.poolId, r.feeBps]));
 
-        const updatedPools = await Promise.all(dynamicPools.map(async (pool) => {
+        // PERFORMANCE: Batch all APY fetches in parallel
+        const apyPromises = dynamicPools.map(async (pool) => {
+          const aprCacheKey = `poolApr_${pool.id}_7d`;
+          const cachedApr = getFromCacheWithTtl<string>(aprCacheKey, 15 * 60 * 1000); // 15 minutes
+
+          if (cachedApr && cachedApr !== 'Loading...' && cachedApr !== '0.00%') {
+            return { poolId: pool.id, apr: cachedApr };
+          }
+
+          try {
+            const metricsResponse = await fetch('/api/liquidity/pool-metrics', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ poolId: pool.id, days: 7 })
+            });
+
+            if (metricsResponse.ok) {
+              const metricsData = await metricsResponse.json();
+              const { totalFeesToken0, avgTVLToken0, days } = metricsData.metrics || {};
+
+              if (avgTVLToken0 && avgTVLToken0 > 0 && days > 0) {
+                const feesPerDay = totalFeesToken0 / days;
+                const annualFees = feesPerDay * 365;
+                const apy = (annualFees / avgTVLToken0) * 100;
+
+                let calculatedApr = 'Loading...';
+                if (isNaN(apy) || !isFinite(apy)) {
+                  calculatedApr = 'Loading...';
+                } else if (apy >= 1000) {
+                  calculatedApr = `${Math.round(apy)}%`;
+                } else if (apy >= 100) {
+                  calculatedApr = `${apy.toFixed(0)}%`;
+                } else if (apy >= 10) {
+                  calculatedApr = `${apy.toFixed(1)}%`;
+                } else if (apy > 0) {
+                  calculatedApr = `${apy.toFixed(2)}%`;
+                } else {
+                  calculatedApr = 'Loading...';
+                }
+
+                if (calculatedApr !== 'Loading...' && calculatedApr !== '0.00%') {
+                  setToCache(aprCacheKey, calculatedApr);
+                  return { poolId: pool.id, apr: calculatedApr };
+                }
+              }
+            } else if (metricsResponse.status === 429) {
+              console.warn(`[LiquidityPage] Pool ${pool.id}: Rate limited (429) - will retry later`);
+            }
+          } catch (e) {
+            console.error(`[LiquidityPage] Pool ${pool.id}: Failed to fetch metrics:`, e);
+          }
+
+          return { poolId: pool.id, apr: 'Loading...' };
+        });
+
+        const apyResults = await Promise.all(apyPromises);
+        const apyMap = new Map(apyResults.map(r => [r.poolId, r.apr]));
+
+        // PERFORMANCE: Map all results synchronously (no more awaits in loop)
+        const updatedPools = dynamicPools.map((pool) => {
           const apiPoolId = getPoolSubgraphId(pool.id) || pool.id;
           const batchPoolData = batchData.pools.find((p: any) => p.poolId.toLowerCase() === apiPoolId.toLowerCase());
+
           if (batchPoolData) {
             const tvlUSD = typeof batchPoolData.tvlUSD === 'number' ? batchPoolData.tvlUSD : undefined;
             const tvlYesterdayUSD = typeof batchPoolData.tvlYesterdayUSD === 'number' ? batchPoolData.tvlYesterdayUSD : undefined;
             const volume24hUSD = typeof batchPoolData.volume24hUSD === 'number' ? batchPoolData.volume24hUSD : undefined;
             const volumePrev24hUSD = typeof batchPoolData.volumePrev24hUSD === 'number' ? batchPoolData.volumePrev24hUSD : undefined;
 
-            // Calculate 24h fees from volume and dynamic fee (matching pool detail page)
+            // Calculate 24h fees from volume and dynamic fee (from pre-fetched map)
             let fees24hUSD: number | undefined = undefined;
-            let dynamicFeeBps: number | null = null;
-            try {
-              dynamicFeeBps = await getPoolFeeBps(apiPoolId);
-              if (typeof dynamicFeeBps === 'number' && dynamicFeeBps >= 0 && typeof volume24hUSD === 'number') {
-                const feeRate = dynamicFeeBps / 10_000;
-                fees24hUSD = volume24hUSD * feeRate;
-              }
-            } catch (e) {
-              console.error(`[LiquidityPage] Failed to get dynamic fee for pool ${pool.id}:`, e);
+            const dynamicFeeBps = feeMap.get(pool.id);
+            if (typeof dynamicFeeBps === 'number' && dynamicFeeBps >= 0 && typeof volume24hUSD === 'number') {
+              const feeRate = dynamicFeeBps / 10_000;
+              fees24hUSD = volume24hUSD * feeRate;
             }
 
-            let aprStr: string = 'Loading...';
+            const aprStr = apyMap.get(pool.id) || 'Loading...';
 
-            // Check cache first (15 minute TTL for historical metrics)
-            const aprCacheKey = `poolApr_${pool.id}_7d`;
-            const cachedApr = getFromCacheWithTtl<string>(aprCacheKey, 15 * 60 * 1000); // 15 minutes
-
-            if (cachedApr && cachedApr !== 'Loading...' && cachedApr !== '0.00%') {
-              // Only use cached value if it's a valid non-zero APY
-              aprStr = cachedApr;
-            } else {
-              // Fetch 7-day pool metrics for accurate APY calculation
-              try {
-                const metricsResponse = await fetch('/api/liquidity/pool-metrics', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ poolId: pool.id, days: 7 })
-                });
-
-                if (metricsResponse.ok) {
-                  const metricsData = await metricsResponse.json();
-                  const { totalFeesToken0, avgTVLToken0, days } = metricsData.metrics || {};
-
-                  if (avgTVLToken0 && avgTVLToken0 > 0 && days > 0) {
-                    // Calculate APY from 7-day data: (Daily Fees * 365) / TVL * 100
-                    const feesPerDay = totalFeesToken0 / days;
-                    const annualFees = feesPerDay * 365;
-                    const apy = (annualFees / avgTVLToken0) * 100;
-
-                    // Format APY (matching pool detail page)
-                    let calculatedApr = 'Loading...';
-                    if (isNaN(apy) || !isFinite(apy)) {
-                      // Invalid calculation - keep "Loading..." to retry
-                      calculatedApr = 'Loading...';
-                    } else if (apy >= 1000) {
-                      calculatedApr = `${Math.round(apy)}%`;
-                    } else if (apy >= 100) {
-                      calculatedApr = `${apy.toFixed(0)}%`;
-                    } else if (apy >= 10) {
-                      calculatedApr = `${apy.toFixed(1)}%`;
-                    } else if (apy > 0) {
-                      calculatedApr = `${apy.toFixed(2)}%`;
-                    } else {
-                      // APY is 0 or negative - keep "Loading..." to retry later
-                      calculatedApr = 'Loading...';
-                    }
-
-                    // Only cache valid non-zero APY values (never cache "Loading..." or "0.00%")
-                    if (calculatedApr !== 'Loading...' && calculatedApr !== '0.00%') {
-                      setToCache(aprCacheKey, calculatedApr);
-                      aprStr = calculatedApr;
-                    }
-                    // Otherwise keep aprStr as "Loading..." to show skeleton and retry later
-                  } else {
-                    console.warn(`[LiquidityPage] Pool ${pool.id}: Invalid metrics data - avgTVL: ${avgTVLToken0}, days: ${days}`);
-                    // Keep "Loading..." to retry on next render
-                  }
-                } else if (metricsResponse.status === 429) {
-                  console.warn(`[LiquidityPage] Pool ${pool.id}: Rate limited (429) - will retry later`);
-                  // Rate limit hit - keep "Loading..." to retry on next render
-                } else {
-                  const errorText = await metricsResponse.text();
-                  console.error(`[LiquidityPage] Pool ${pool.id}: Metrics API failed with ${metricsResponse.status}: ${errorText}`);
-                  // Other error - keep "Loading..." to retry on next render
-                }
-              } catch (e) {
-                console.error(`[LiquidityPage] Pool ${pool.id}: Failed to fetch metrics:`, e);
-                // Network error - keep "Loading..." to retry on next render
-              }
-            }
-            return { 
-              ...pool, 
-              tvlUSD, 
-              tvlYesterdayUSD, 
-              volume24hUSD, 
-              volumePrev24hUSD, 
-              fees24hUSD, 
+            return {
+              ...pool,
+              tvlUSD,
+              tvlYesterdayUSD,
+              volume24hUSD,
+              volumePrev24hUSD,
+              fees24hUSD,
               apr: aprStr,
-              volumeChangeDirection: (volume24hUSD !== undefined && volumePrev24hUSD !== undefined) ? 
+              volumeChangeDirection: (volume24hUSD !== undefined && volumePrev24hUSD !== undefined) ?
                 (volume24hUSD > volumePrev24hUSD ? 'up' : volume24hUSD < volumePrev24hUSD ? 'down' : 'neutral') : 'loading',
-              tvlChangeDirection: (tvlUSD !== undefined && tvlYesterdayUSD !== undefined) ? 
+              tvlChangeDirection: (tvlUSD !== undefined && tvlYesterdayUSD !== undefined) ?
                 (tvlUSD > tvlYesterdayUSD ? 'up' : tvlUSD < tvlYesterdayUSD ? 'down' : 'neutral') : 'loading',
             };
           }
           return pool;
-        }));
+        });
 
         setPoolsData(updatedPools as Pool[]);
         console.log('[LiquidityPage] Batch fetch successful. Pools:', updatedPools.length);
 
       } catch (error) {
         console.error("[LiquidityPage] Batch fetch failed:", error);
-        toast.error("Could not load pool data", { 
-          description: "Failed to fetch data from the server.", 
+        toast.error("Could not load pool data", {
+          description: "Failed to fetch data from the server.",
           icon: <OctagonX className="h-4 w-4 text-red-500" />,
           action: {
             label: "Open Ticket",
@@ -288,7 +305,7 @@ export default function LiquidityPage() {
           }
         });
       }
-    }, [dynamicPools]);
+    }, []);
 
   useEffect(() => {
     fetchAllPoolStatsBatch();
@@ -296,7 +313,8 @@ export default function LiquidityPage() {
 
   // No periodic listeners: rely on version hints and one-shot refresh
 
-  const determineBaseTokenForPriceDisplay = useCallback((token0: string, token1: string): string => {
+  // PERFORMANCE: Memoize with stable reference (no dependencies)
+  const determineBaseTokenForPriceDisplay = useMemo(() => (token0: string, token1: string): string => {
     if (!token0 || !token1) return token0;
     const quotePriority: Record<string, number> = {
       'aUSDC': 10, 'aUSDT': 9, 'aDAI': 8, 'USDC': 7, 'USDT': 6, 'DAI': 5, 'aETH': 4, 'ETH': 3, 'YUSD': 2, 'mUSDT': 1,
@@ -306,7 +324,7 @@ export default function LiquidityPage() {
     return token1Priority > token0Priority ? token1 : token0;
   }, []);
 
-  const convertTickToPrice = useCallback((tick: number, currentPoolTick: number | null, currentPrice: string | null, baseTokenForPriceDisplay: string, token0Symbol: string, token1Symbol: string): string => {
+  const convertTickToPrice = useMemo(() => (tick: number, currentPoolTick: number | null, currentPrice: string | null, baseTokenForPriceDisplay: string, token0Symbol: string, token1Symbol: string): string => {
     if (tick === SDK_MAX_TICK) return '∞';
     if (tick === SDK_MIN_TICK) return '0.00';
     if (currentPoolTick === null || !currentPrice) return 'N/A';
@@ -432,6 +450,12 @@ export default function LiquidityPage() {
     if (selectedCategory === 'All') return poolsWithPositionCounts;
     return poolsWithPositionCounts.filter(p => (p.type || '') === selectedCategory);
   }, [poolsWithPositionCounts, selectedCategory]);
+
+  // PERFORMANCE: Memoize handleAddLiquidity to prevent column recreation
+  const handleAddLiquidity = useCallback((e: React.MouseEvent, poolId: string) => {
+    e.stopPropagation();
+    router.push(`/liquidity/${poolId}`);
+  }, [router]);
 
   const columns: ColumnDef<Pool>[] = useMemo(() => [
     {
@@ -704,7 +728,7 @@ export default function LiquidityPage() {
         hidePriority: 4,
       },
     },
-  ], [setSorting]);
+  ], [handleAddLiquidity]);
 
   const visibleColumns = useMemo(() => {
     if (isMobile) {
@@ -820,12 +844,8 @@ export default function LiquidityPage() {
     return { totalTVL, totalVol24h, totalFees24h, tvlDeltaPct, volDeltaPct, feesDeltaPct, isLoading };
   }, [poolsData]);
 
-  const handleAddLiquidity = (e: React.MouseEvent, poolId: string) => {
-    e.stopPropagation();
-    router.push(`/liquidity/${poolId}`);
-  };
-
   // handlePoolClick removed - using Link components for navigation
+  // handleAddLiquidity defined earlier via useCallback
 
   const handleSortCycle = (columnId: string) => {
     const col = table.getColumn(columnId as any);

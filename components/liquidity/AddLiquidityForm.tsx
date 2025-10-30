@@ -1009,6 +1009,12 @@ export function AddLiquidityForm({
         setAmount1(formattedBalance);
         setActiveInputSide('amount1');
       }
+
+      // Reset transaction state when balance is used
+      resetTransaction();
+      setShowingTransactionSteps(false);
+      setCurrentTransactionStep('idle');
+      setPermitSignature(undefined);
     } catch (error) {
       // Handle error
     }
@@ -1043,16 +1049,29 @@ export function AddLiquidityForm({
     }
 
     // Determine next step based on current state and approval data
-    // Check what's needed
+    // Check what's needed - user must click for each step
     if (approvalData.needsToken0ERC20Approval) {
       setCurrentTransactionStep('approving_token0');
       try {
         await handleApprove(token0Symbol);
-        // handleApprove already calls refetchApprovals, but add small delay for RPC propagation
-        await new Promise(resolve => setTimeout(resolve, 500));
-      } catch (error) {
-        console.error('Token0 approval failed:', error);
+        // Keep loading state while we wait for blockchain propagation
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        // Refetch to update approval state
+        await refetchApprovals();
+        // Only NOW end the loading state - everything is ready
+      } catch (error: any) {
+        // Only log non-user rejection errors
+        const isUserRejection =
+          error?.message?.toLowerCase().includes('user rejected') ||
+          error?.message?.toLowerCase().includes('user denied') ||
+          error?.code === 4001;
+
+        if (!isUserRejection) {
+          console.error('Token0 approval failed:', error);
+          showErrorToast('Approval Failed', error.message);
+        }
       } finally {
+        // Always end loading state
         setCurrentTransactionStep('idle');
       }
       return;
@@ -1061,11 +1080,24 @@ export function AddLiquidityForm({
       setCurrentTransactionStep('approving_token1');
       try {
         await handleApprove(token1Symbol);
-        // handleApprove already calls refetchApprovals, but add small delay for RPC propagation
-        await new Promise(resolve => setTimeout(resolve, 500));
-      } catch (error) {
-        console.error('Token1 approval failed:', error);
+        // Keep loading state while we wait for blockchain propagation
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        // Refetch to update approval state
+        await refetchApprovals();
+        // Only NOW end the loading state - everything is ready
+      } catch (error: any) {
+        // Only log non-user rejection errors
+        const isUserRejection =
+          error?.message?.toLowerCase().includes('user rejected') ||
+          error?.message?.toLowerCase().includes('user denied') ||
+          error?.code === 4001;
+
+        if (!isUserRejection) {
+          console.error('Token1 approval failed:', error);
+          showErrorToast('Approval Failed', error.message);
+        }
       } finally {
+        // Always end loading state
         setCurrentTransactionStep('idle');
       }
       return;
@@ -1079,8 +1111,18 @@ export function AddLiquidityForm({
           setCurrentTransactionStep('idle');
           return;
         }
-      } catch (error) {
-        console.error('Permit signing failed:', error);
+        // Permit signed successfully, keep loading briefly for smooth transition
+        await new Promise(resolve => setTimeout(resolve, 500));
+      } catch (error: any) {
+        // Only log non-user rejection errors
+        const isUserRejection =
+          error?.message?.toLowerCase().includes('user rejected') ||
+          error?.message?.toLowerCase().includes('user denied') ||
+          error?.code === 4001;
+
+        if (!isUserRejection) {
+          console.error('Permit signing failed:', error);
+        }
       } finally {
         setCurrentTransactionStep('idle');
       }
@@ -1090,8 +1132,17 @@ export function AddLiquidityForm({
     setCurrentTransactionStep('depositing');
     try {
       await handleDeposit(permitSignature);
-    } catch (error) {
-      console.error('Deposit failed:', error);
+      // Keep loading until transaction is fully complete
+    } catch (error: any) {
+      // Only log non-user rejection errors
+      const isUserRejection =
+        error?.message?.toLowerCase().includes('user rejected') ||
+        error?.message?.toLowerCase().includes('user denied') ||
+        error?.code === 4001;
+
+      if (!isUserRejection) {
+        console.error('Deposit failed:', error);
+      }
     } finally {
       setCurrentTransactionStep('idle');
     }
@@ -1160,19 +1211,20 @@ export function AddLiquidityForm({
     }
 
     if (isWorking) {
+      // Keep the same text as the button that was clicked (no "..." or "ing" suffix)
       if (currentTransactionStep === 'approving_token0') {
-        return `Approving ${token0Symbol}...`;
+        return `Approve ${token0Symbol}`;
       }
       if (currentTransactionStep === 'approving_token1') {
-        return `Approving ${token1Symbol}...`;
+        return `Approve ${token1Symbol}`;
       }
       if (currentTransactionStep === 'signing_permit') {
-        return 'Signing...';
+        return 'Sign Permit';
       }
       if (currentTransactionStep === 'depositing' || isDepositConfirming) {
-        return 'Depositing...';
+        return 'Deposit';
       }
-      return 'Processing...';
+      return 'Processing';
     }
 
     // Not in transaction steps yet
@@ -1180,22 +1232,26 @@ export function AddLiquidityForm({
       return 'Deposit';
     }
 
-    // Waiting for approval data to load
-    if (!approvalData) {
+    // Waiting for approval data to load or checking approvals
+    if (!approvalData || isCheckingApprovals) {
       return 'Preparing...';
     }
 
     // In transaction steps - show what will happen next
+    // Check approvals first
     if (approvalData.needsToken0ERC20Approval) {
       return `Approve ${token0Symbol}`;
     }
     if (approvalData.needsToken1ERC20Approval) {
       return `Approve ${token1Symbol}`;
     }
-    // Check if permit is needed (permitBatchData indicates permit is required)
+
+    // Then check permit - this prevents jumping to Deposit
     if (approvalData.permitBatchData && !permitSignature) {
       return 'Sign Permit';
     }
+
+    // Only show Deposit if everything else is done
     return 'Deposit';
   };
 
@@ -2442,6 +2498,9 @@ export function AddLiquidityForm({
                           // Clear full precision when user manually edits
                           setAmount0FullPrecision("");
                           resetTransaction();
+                          setShowingTransactionSteps(false);
+                          setCurrentTransactionStep('idle');
+                          setPermitSignature(undefined);
                           setAmount0(newValue);
                           setActiveInputSide('amount0');
                         }}
@@ -2512,6 +2571,10 @@ export function AddLiquidityForm({
                                     e.stopPropagation();
                                     handleToken0Percentage(percentage);
                                     setActiveInputSide('amount0');
+                                    resetTransaction();
+                                    setShowingTransactionSteps(false);
+                                    setCurrentTransactionStep('idle');
+                                    setPermitSignature(undefined);
                                   }}
                                 >
                                   {percentage === 100 ? 'MAX' : `${percentage}%`}
@@ -2578,6 +2641,9 @@ export function AddLiquidityForm({
                           // Clear full precision when user manually edits
                           setAmount1FullPrecision("");
                           resetTransaction();
+                          setShowingTransactionSteps(false);
+                          setCurrentTransactionStep('idle');
+                          setPermitSignature(undefined);
                           setAmount1(newValue);
                           setActiveInputSide('amount1');
                         }}
@@ -2648,6 +2714,10 @@ export function AddLiquidityForm({
                                     e.stopPropagation();
                                     handleToken1Percentage(percentage);
                                     setActiveInputSide('amount1');
+                                    resetTransaction();
+                                    setShowingTransactionSteps(false);
+                                    setCurrentTransactionStep('idle');
+                                    setPermitSignature(undefined);
                                   }}
                                 >
                                   {percentage === 100 ? 'MAX' : `${percentage}%`}

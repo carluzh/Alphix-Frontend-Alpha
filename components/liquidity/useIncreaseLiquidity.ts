@@ -20,8 +20,14 @@ import { OctagonX, InfoIcon, BadgeCheck } from 'lucide-react';
 
 // Helper function to safely parse amounts without precision loss
 const safeParseUnits = (amount: string, decimals: number): bigint => {
-  const cleaned = (amount || '').toString().replace(/,/g, '').trim();
+  let cleaned = (amount || '').toString().replace(/,/g, '').trim();
   if (!cleaned || cleaned === '.' || cleaned === '< 0.0001') return 0n;
+
+  // Convert scientific notation to decimal
+  if (cleaned.includes('e')) {
+    cleaned = parseFloat(cleaned).toFixed(decimals);
+  }
+
   return parseUnits(cleaned, decimals);
 };
 import JSBI from 'jsbi';
@@ -228,64 +234,46 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
         throw new Error(`Token mapping error: position has ${positionData.token0Symbol}/${positionData.token1Symbol} but pool has ${symC0}/${symC1}`);
       }
 
-      // Ensure the non-active side cannot be the binding constraint in-range by bumping it to the required minimum
-      try {
-        const sqrtA = TickMath.getSqrtRatioAtTick(details.tickLower);
-        const sqrtB = TickMath.getSqrtRatioAtTick(details.tickUpper);
-        const sqrtP = JSBI.BigInt(state.sqrtPriceX96.toString());
+      // Use Uniswap's approach: let V4Position SDK calculate the dependent amount
+      // This avoids overflow issues with manual liquidity calculations
+      let position: V4Position;
 
-        const ZERO = JSBI.BigInt(0);
-        const mul = (a: JSBI, b: JSBI) => JSBI.multiply(a, b);
-        const add = (a: JSBI, b: JSBI) => JSBI.add(a, b);
-        const sub = (a: JSBI, b: JSBI) => JSBI.subtract(a, b);
-        const div = (a: JSBI, b: JSBI) => JSBI.divide(a, b);
-        const ceilDiv = (a: JSBI, b: JSBI) => div(add(a, sub(b, JSBI.BigInt(1))), b);
+      // Determine which amount the user provided (non-zero) and calculate the dependent amount
+      const userProvidedAmount0 = amountC0Raw > 0n;
+      const userProvidedAmount1 = amountC1Raw > 0n;
 
-        const inRange = JSBI.greaterThan(sqrtP, sqrtA) && JSBI.lessThan(sqrtP, sqrtB);
-        if (inRange) {
-          // L_from0 = amt0 * (sqrtP*sqrtB)/(sqrtB - sqrtP)
-          const amt0JSBI = JSBI.BigInt(amountC0Raw.toString());
-          const amt1JSBI = JSBI.BigInt(amountC1Raw.toString());
-          const num0 = mul(amt0JSBI, mul(sqrtP, sqrtB));
-          const den0 = sub(sqrtB, sqrtP);
-          const L0 = den0 === ZERO ? ZERO : div(num0, den0);
-          // L_from1 = amt1 / (sqrtP - sqrtA)
-          const den1 = sub(sqrtP, sqrtA);
-          const L1 = den1 === ZERO ? ZERO : div(amt1JSBI, den1);
-
-          // If token1 is binding (L1 < L0) while user provided token0, bump amt1 to required
-          if (JSBI.greaterThan(L0, L1) && amountC0Raw > 0n) {
-            // required1 = L0 * (sqrtP - sqrtA)
-            const req1 = mul(L0, den1);
-            const req1Big = BigInt(req1.toString()); // Fix: use toString() instead of toNumber() to prevent overflow
-            if (req1Big > amountC1Raw) {
-              amountC1Raw = req1Big;
-            }
-          }
-          // If token0 is binding while user provided token1, bump amt0 to required
-          if (JSBI.greaterThan(L1, L0) && amountC1Raw > 0n) {
-            // required0 = ceil(L1 * (sqrtB - sqrtP) / (sqrtP*sqrtB))
-            const num = mul(L1, sub(sqrtB, sqrtP));
-            const den = mul(sqrtP, sqrtB);
-            const req0 = ceilDiv(num, den);
-            const req0Big = BigInt(req0.toString()); // Fix: use toString() instead of toNumber() to prevent overflow
-            if (req0Big > amountC0Raw) {
-              amountC0Raw = req0Big;
-            }
-          }
-        }
-      } catch {}
-      const amt0 = CurrencyAmount.fromRawAmount(currency0, amountC0Raw.toString());
-      const amt1 = CurrencyAmount.fromRawAmount(currency1, amountC1Raw.toString());
-
-      const position = V4Position.fromAmounts({
-        pool,
-        tickLower: details.tickLower,
-        tickUpper: details.tickUpper,
-        amount0: amt0.quotient,
-        amount1: amt1.quotient,
-        useFullPrecision: true,
-      });
+      if (userProvidedAmount0 && !userProvidedAmount1) {
+        // User provided amount0, calculate amount1
+        const amt0 = CurrencyAmount.fromRawAmount(currency0, amountC0Raw.toString());
+        position = V4Position.fromAmount0({
+          pool,
+          tickLower: details.tickLower,
+          tickUpper: details.tickUpper,
+          amount0: amt0.quotient,
+          useFullPrecision: true,
+        });
+      } else if (userProvidedAmount1 && !userProvidedAmount0) {
+        // User provided amount1, calculate amount0
+        const amt1 = CurrencyAmount.fromRawAmount(currency1, amountC1Raw.toString());
+        position = V4Position.fromAmount1({
+          pool,
+          tickLower: details.tickLower,
+          tickUpper: details.tickUpper,
+          amount1: amt1.quotient,
+        });
+      } else {
+        // User provided both amounts, use fromAmounts
+        const amt0 = CurrencyAmount.fromRawAmount(currency0, amountC0Raw.toString());
+        const amt1 = CurrencyAmount.fromRawAmount(currency1, amountC1Raw.toString());
+        position = V4Position.fromAmounts({
+          pool,
+          tickLower: details.tickLower,
+          tickUpper: details.tickUpper,
+          amount0: amt0.quotient,
+          amount1: amt1.quotient,
+          useFullPrecision: true,
+        });
+      }
 
       // Guard ZERO_LIQUIDITY early for nicer UX
       if (JSBI.equal(position.liquidity, JSBI.BigInt(0))) {

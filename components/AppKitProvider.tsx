@@ -12,7 +12,7 @@ import React, { type ReactNode, useEffect, useState } from 'react'
 import { WagmiProvider } from 'wagmi'
 import { cookieToInitialState } from 'wagmi' 
 
-// --- Removed AppKit Initialization from Module Level --- 
+// --- Removed AppKit Initialization from Module Level ---
 
 const queryClient = new QueryClient({
   defaultOptions: {

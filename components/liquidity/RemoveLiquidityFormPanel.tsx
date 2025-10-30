@@ -59,6 +59,10 @@ export function RemoveLiquidityFormPanel({
 
   const wiggleControls0 = useAnimation();
   const wiggleControls1 = useAnimation();
+  const [balanceWiggleCount0, setBalanceWiggleCount0] = useState(0);
+  const [balanceWiggleCount1, setBalanceWiggleCount1] = useState(0);
+  const [isAmount0OverBalance, setIsAmount0OverBalance] = useState(false);
+  const [isAmount1OverBalance, setIsAmount1OverBalance] = useState(false);
 
   // Calculate which side is productive for out-of-range positions
   const withdrawProductiveSide = React.useMemo(() => {
@@ -231,11 +235,66 @@ export function RemoveLiquidityFormPanel({
     [position, formatCalculatedInput]
   );
 
+  // Wiggle animation effects
+  useEffect(() => {
+    if (balanceWiggleCount0 > 0) {
+      wiggleControls0.start({
+        x: [0, -3, 3, -2, 2, 0],
+        transition: { duration: 0.22, ease: 'easeOut' },
+      }).catch(() => {});
+    }
+  }, [balanceWiggleCount0, wiggleControls0]);
+
+  useEffect(() => {
+    if (balanceWiggleCount1 > 0) {
+      wiggleControls1.start({
+        x: [0, -3, 3, -2, 2, 0],
+        transition: { duration: 0.22, ease: 'easeOut' },
+      }).catch(() => {});
+    }
+  }, [balanceWiggleCount1, wiggleControls1]);
+
+  // Check if withdrawal amounts exceed position balance
+  useEffect(() => {
+    const amount0 = parseFloat(withdrawAmount0 || "0");
+    const positionBalance0 = parseFloat(position?.token0?.amount || "0");
+    setIsAmount0OverBalance(amount0 > positionBalance0 && amount0 > 0);
+  }, [withdrawAmount0, position]);
+
+  useEffect(() => {
+    const amount1 = parseFloat(withdrawAmount1 || "0");
+    const positionBalance1 = parseFloat(position?.token1?.amount || "0");
+    setIsAmount1OverBalance(amount1 > positionBalance1 && amount1 > 0);
+  }, [withdrawAmount1, position]);
+
   const handleWithdrawAmountChangeWithWiggle = (e: React.ChangeEvent<HTMLInputElement>, side: 'amount0' | 'amount1') => {
     const sanitized = sanitizeDecimalInput(e.target.value);
+
     if (side === 'amount0') {
+      const prevVal = parseFloat(withdrawAmount0 || "");
+      const nextVal = parseFloat(sanitized || "");
+      const bal = parseFloat(position?.token0?.amount || "0");
+
+      const wasOver = Number.isFinite(prevVal) && Number.isFinite(bal) ? prevVal > bal : false;
+      const isOver = Number.isFinite(nextVal) && Number.isFinite(bal) ? nextVal > bal : false;
+
+      if (isOver && !wasOver) {
+        setBalanceWiggleCount0((c) => c + 1);
+      }
+
       setWithdrawAmount0(sanitized);
     } else {
+      const prevVal = parseFloat(withdrawAmount1 || "");
+      const nextVal = parseFloat(sanitized || "");
+      const bal = parseFloat(position?.token1?.amount || "0");
+
+      const wasOver = Number.isFinite(prevVal) && Number.isFinite(bal) ? prevVal > bal : false;
+      const isOver = Number.isFinite(nextVal) && Number.isFinite(bal) ? nextVal > bal : false;
+
+      if (isOver && !wasOver) {
+        setBalanceWiggleCount1((c) => c + 1);
+      }
+
       setWithdrawAmount1(sanitized);
     }
 
@@ -778,20 +837,25 @@ export function RemoveLiquidityFormPanel({
         onClick={handleContinue}
         disabled={
           isCalculating ||
-          (!withdrawAmount0 || parseFloat(withdrawAmount0) <= 0) &&
-          (!withdrawAmount1 || parseFloat(withdrawAmount1) <= 0)
+          ((!withdrawAmount0 || parseFloat(withdrawAmount0) <= 0) &&
+           (!withdrawAmount1 || parseFloat(withdrawAmount1) <= 0)) ||
+          isAmount0OverBalance ||
+          isAmount1OverBalance
         }
         className={cn(
+          "w-full",
           (isCalculating ||
             ((!withdrawAmount0 || parseFloat(withdrawAmount0) <= 0) &&
-             (!withdrawAmount1 || parseFloat(withdrawAmount1) <= 0))) ?
-            "w-full relative border border-sidebar-border bg-button px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75" :
-            "w-full text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90",
+             (!withdrawAmount1 || parseFloat(withdrawAmount1) <= 0)) ||
+            isAmount0OverBalance || isAmount1OverBalance) ?
+            "relative border border-sidebar-border bg-button px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75" :
+            "text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90",
           hideContinueButton && "hidden"
         )}
         style={(isCalculating ||
           ((!withdrawAmount0 || parseFloat(withdrawAmount0) <= 0) &&
-           (!withdrawAmount1 || parseFloat(withdrawAmount1) <= 0))) ?
+           (!withdrawAmount1 || parseFloat(withdrawAmount1) <= 0)) ||
+          isAmount0OverBalance || isAmount1OverBalance) ?
           { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } :
           undefined
         }

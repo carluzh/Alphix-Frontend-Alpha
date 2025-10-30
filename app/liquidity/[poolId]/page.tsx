@@ -1900,14 +1900,7 @@ export default function PoolDetailPage() {
       }
     }
     
-    toast.success(closing ? "Position Closed" : "Liquidity Decreased", { 
-      icon: <BadgeCheck className="h-4 w-4 text-green-500" />,
-      description: closing ? `Position successfully closed` : `Liquidity successfully decreased`,
-      action: {
-        label: "View Transaction",
-        onClick: () => window.open(`https://sepolia.basescan.org/tx/${info.txHash}`, '_blank')
-      }
-    });
+    // Success notification is handled by useDecreaseLiquidity hook
     // Don't close or clear position here - let the modal's success view show
     pendingActionRef.current = null;
 

@@ -1204,14 +1204,7 @@ export default function PortfolioPage() {
       }
     }
     
-    toast.success(closing ? "Position Closed" : "Liquidity Decreased", {
-      icon: <BadgeCheck className="h-4 w-4 text-green-500" />,
-      description: closing ? `Position successfully closed` : `Liquidity successfully decreased`,
-      action: {
-        label: "View Transaction",
-        onClick: () => window.open(`https://sepolia.basescan.org/tx/${info.txHash}`, '_blank')
-      }
-    });
+    // Success notification is handled by useDecreaseLiquidity hook
     setShowWithdrawModal(false);
     setPositionToWithdraw(null);
     pendingActionRef.current = null;

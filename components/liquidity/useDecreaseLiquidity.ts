@@ -20,8 +20,14 @@ import { publicClient } from '@/lib/viemClient';
 
 // Helper function to safely parse amounts without precision loss
 const safeParseUnits = (amount: string, decimals: number): bigint => {
-  const cleaned = (amount || '').toString().replace(/,/g, '').trim();
+  let cleaned = (amount || '').toString().replace(/,/g, '').trim();
   if (!cleaned || cleaned === '.' || cleaned === '< 0.0001') return 0n;
+
+  // Convert scientific notation to decimal
+  if (cleaned.includes('e')) {
+    cleaned = parseFloat(cleaned).toFixed(decimals);
+  }
+
   return parseUnits(cleaned, decimals);
 };
 import JSBI from 'jsbi';

@@ -96,7 +96,6 @@ export function useAddLiquidityTransactionV2({
   } = useWaitForTransactionReceipt({ hash: depositTxHash });
 
   const [isWorking, setIsWorking] = useState(false);
-  const [isRefetchingApprovals, setIsRefetchingApprovals] = useState(false);
   const processedDepositHashRef = useRef<string | null>(null);
   const processedFailedHashRef = useRef<string | null>(null);
 
@@ -129,24 +128,10 @@ export function useAddLiquidityTransactionV2({
         },
       });
 
-      // Wait for additional block confirmations to ensure RPC state propagation
-      // The transaction is confirmed, but different RPC nodes might not be synced yet
-      setIsRefetchingApprovals(true);
-      await new Promise(resolve => setTimeout(resolve, 1500));
-
-      // Invalidate and refetch approvals after successful approval
-      // Invalidate wagmi queries to force fresh reads from the blockchain
-      await queryClient.invalidateQueries({
-        predicate: (query) => {
-          // Invalidate all readContract queries for allowance checks
-          return query.queryKey[0] === 'readContract';
-        }
-      });
-
-      await refetchApprovals();
-      setIsRefetchingApprovals(false);
+      // Don't refetch here - the form component handles refetch after a delay
+      // This prevents the loop but ensures state is updated
     },
-    [approveAsync, refetchApprovals, queryClient]
+    [approveAsync]
   );
 
   // Handle deposit transaction (with optional permit signature)
@@ -285,26 +270,8 @@ export function useAddLiquidityTransactionV2({
     [accountAddress, chainId, token0Symbol, token1Symbol, amount0, amount1, tickLower, tickUpper, calculatedData, approvalData, depositAsync, onLiquidityAdded]
   );
 
-  // Backup: Handle successful approval confirmation via useWaitForTransactionReceipt
-  // This is a safety net in case handleApprove's refetch doesn't trigger properly
-  React.useEffect(() => {
-    if (isApproved && approveTxHash) {
-      console.log('[Approval Backup] Transaction confirmed via useWaitForTransactionReceipt, invalidating queries...');
-      setIsRefetchingApprovals(true);
-
-      // Small delay to ensure RPC propagation
-      setTimeout(async () => {
-        // Invalidate wagmi queries to force fresh reads
-        await queryClient.invalidateQueries({
-          predicate: (query) => query.queryKey[0] === 'readContract'
-        });
-
-        await refetchApprovals();
-        setIsRefetchingApprovals(false);
-        console.log('[Approval Backup] Approval state refetched successfully');
-      }, 1000);
-    }
-  }, [isApproved, approveTxHash, refetchApprovals, queryClient]);
+  // Removed backup useEffect to prevent duplicate refetch logic
+  // The optimistic flow in AddLiquidityForm handles the progression now
 
   // Handle deposit transaction failure
   React.useEffect(() => {
@@ -382,8 +349,8 @@ export function useAddLiquidityTransactionV2({
   return {
     approvalData,
     isCheckingApprovals,
-    isWorking: isWorking || isApprovePending || isApproving || isRefetchingApprovals || isDepositPending || isDepositConfirming,
-    isApproving: isApproving || isRefetchingApprovals,
+    isWorking: isWorking || isApprovePending || isApproving || isDepositPending || isDepositConfirming,
+    isApproving: isApproving,
     isDepositConfirming,
     isDepositSuccess: isDepositConfirmed,
     handleApprove,

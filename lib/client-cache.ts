@@ -78,21 +78,66 @@ export function getFromLongCache<T>(key: string): T | null {
   return null;
 }
 
-// Generic TTL-based cache getter without changing global defaults
+// Generic TTL-based cache getter with cross-session localStorage support
 export function getFromCacheWithTtl<T>(key: string, ttlMs: number = TEN_MINUTES_MS): T | null {
+  const now = Date.now();
+
+  // Try in-memory cache first (fastest)
   const entry = appCache[key];
-  if (entry && (Date.now() - entry.timestamp < ttlMs)) {
+  if (entry && (now - entry.timestamp < ttlMs)) {
     return entry.data as T;
   }
   if (entry) {
     delete appCache[key];
   }
+
+  // Try localStorage for cross-session persistence (APY, prices, etc.)
+  if (typeof window !== 'undefined') {
+    try {
+      const storageKey = `alphix:cache:${key}`;
+      const stored = localStorage.getItem(storageKey);
+      if (stored) {
+        const parsed: CacheEntry<T> = JSON.parse(stored);
+        const age = now - parsed.timestamp;
+
+        if (age < ttlMs) {
+          // Restore to in-memory cache
+          appCache[key] = parsed;
+          return parsed.data;
+        } else {
+          // Expired - clean up
+          localStorage.removeItem(storageKey);
+        }
+      }
+    } catch (e) {
+      // Silently ignore localStorage errors
+    }
+  }
+
   return null;
 }
 
 export function setToCache<T>(key: string, data: T): void {
-  // console.log(`[Cache SET] for key: ${key}`);
-  appCache[key] = { data, timestamp: Date.now() };
+  const entry: CacheEntry<T> = { data, timestamp: Date.now() };
+
+  // Set in-memory cache
+  appCache[key] = entry;
+
+  // Persist to localStorage for cross-session (only for specific cache keys)
+  // APY cache keys, price cache keys, etc.
+  if (typeof window !== 'undefined' && (
+    key.startsWith('poolApr_') ||
+    key.startsWith('price_') ||
+    key.startsWith('tokenPrice_') ||
+    key.startsWith('poolFee_')
+  )) {
+    try {
+      const storageKey = `alphix:cache:${key}`;
+      localStorage.setItem(storageKey, JSON.stringify(entry));
+    } catch (e) {
+      // Silently ignore localStorage quota errors
+    }
+  }
 }
 
 export function setToLongCache<T>(key: string, data: T): void {
@@ -124,6 +169,16 @@ export function clearCache(): void {
 export function invalidateCacheEntry(key: string): void {
   // console.log(`[Cache INVALIDATED] for key: ${key}`);
   delete appCache[key];
+
+  // Also remove from localStorage if present
+  if (typeof window !== 'undefined') {
+    try {
+      const storageKey = `alphix:cache:${key}`;
+      localStorage.removeItem(storageKey);
+    } catch (e) {
+      // Silently ignore
+    }
+  }
 }
 
 // Function to generate a cache key for all user positions for a specific owner

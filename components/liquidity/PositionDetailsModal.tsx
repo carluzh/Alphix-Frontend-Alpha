@@ -16,7 +16,7 @@ import { getOptimalBaseToken } from "@/lib/denomination-utils";
 import { AddLiquidityFormPanel } from "./AddLiquidityFormPanel";
 import { RemoveLiquidityFormPanel } from "./RemoveLiquidityFormPanel";
 import { CollectFeesFormPanel } from "./CollectFeesFormPanel";
-import { useAccount, useSignTypedData, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
+import { useAccount, useSignTypedData, useWriteContract, useWaitForTransactionReceipt, useBalance } from "wagmi";
 import { readContract } from '@wagmi/core';
 import { config } from '@/lib/wagmiConfig';
 import { useIncreaseLiquidity, type IncreasePositionData } from "./useIncreaseLiquidity";
@@ -182,6 +182,25 @@ export function PositionDetailsModal({
   const { writeContractAsync: approveERC20Async } = useWriteContract();
   const approvalWiggleControls = useAnimation();
   const signer = useEthersSigner();
+
+  // Get user balances for tokens
+  const { data: token0Balance } = useBalance({
+    address: accountAddress,
+    token: TOKEN_DEFINITIONS[position?.token0?.symbol as TokenSymbol]?.address === "0x0000000000000000000000000000000000000000"
+      ? undefined
+      : TOKEN_DEFINITIONS[position?.token0?.symbol as TokenSymbol]?.address as `0x${string}` | undefined,
+    chainId: walletChainId,
+    query: { enabled: !!accountAddress && !!walletChainId && !!position },
+  });
+
+  const { data: token1Balance } = useBalance({
+    address: accountAddress,
+    token: TOKEN_DEFINITIONS[position?.token1?.symbol as TokenSymbol]?.address === "0x0000000000000000000000000000000000000000"
+      ? undefined
+      : TOKEN_DEFINITIONS[position?.token1?.symbol as TokenSymbol]?.address as `0x${string}` | undefined,
+    chainId: walletChainId,
+    query: { enabled: !!accountAddress && !!walletChainId && !!position },
+  });
 
   const [currentTransactionStep, setCurrentTransactionStep] = useState<'idle' | 'collecting_fees' | 'approving_token0' | 'approving_token1' | 'signing_permit' | 'depositing'>('idle');
   const [permitSignature, setPermitSignature] = useState<string>();
@@ -492,20 +511,7 @@ export function PositionDetailsModal({
       return;
     }
 
-    // Check if amounts exceed position balance
-    const max0 = parseFloat(position.token0.amount || '0');
-    const max1 = parseFloat(position.token1.amount || '0');
-    const in0 = parseFloat(withdrawAmount0 || '0');
-    const in1 = parseFloat(withdrawAmount1 || '0');
-
-    if ((in0 > max0 + 1e-12) || (in1 > max1 + 1e-12)) {
-      toast.error("Insufficient Balance", {
-        icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
-        description: "Withdrawal amount exceeds position balance.",
-        duration: 4000
-      });
-      return;
-    }
+    // Balance check is handled by button disabled state, no need for toast
 
     // For out-of-range positions, ensure at least one amount is greater than 0
     if (!position.isInRange) {
@@ -1960,14 +1966,22 @@ export function PositionDetailsModal({
 
                               setShowInterimConfirmation(true);
                             }}
-                            disabled={parseFloat(increaseAmount0 || "0") <= 0 && parseFloat(increaseAmount1 || "0") <= 0}
+                            disabled={
+                              (parseFloat(increaseAmount0 || "0") <= 0 && parseFloat(increaseAmount1 || "0") <= 0) ||
+                              (parseFloat(increaseAmount0 || "0") > parseFloat(token0Balance?.formatted || "0") && parseFloat(increaseAmount0 || "0") > 0) ||
+                              (parseFloat(increaseAmount1 || "0") > parseFloat(token1Balance?.formatted || "0") && parseFloat(increaseAmount1 || "0") > 0)
+                            }
                             className={cn(
                               "w-full mt-4",
-                              (parseFloat(increaseAmount0 || "0") <= 0 && parseFloat(increaseAmount1 || "0") <= 0) ?
+                              (parseFloat(increaseAmount0 || "0") <= 0 && parseFloat(increaseAmount1 || "0") <= 0) ||
+                              (parseFloat(increaseAmount0 || "0") > parseFloat(token0Balance?.formatted || "0") && parseFloat(increaseAmount0 || "0") > 0) ||
+                              (parseFloat(increaseAmount1 || "0") > parseFloat(token1Balance?.formatted || "0") && parseFloat(increaseAmount1 || "0") > 0) ?
                                 "relative border border-sidebar-border bg-button px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75" :
                                 "text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90"
                             )}
-                            style={(parseFloat(increaseAmount0 || "0") <= 0 && parseFloat(increaseAmount1 || "0") <= 0) ?
+                            style={(parseFloat(increaseAmount0 || "0") <= 0 && parseFloat(increaseAmount1 || "0") <= 0) ||
+                              (parseFloat(increaseAmount0 || "0") > parseFloat(token0Balance?.formatted || "0") && parseFloat(increaseAmount0 || "0") > 0) ||
+                              (parseFloat(increaseAmount1 || "0") > parseFloat(token1Balance?.formatted || "0") && parseFloat(increaseAmount1 || "0") > 0) ?
                               { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } :
                               undefined
                             }
@@ -2000,14 +2014,24 @@ export function PositionDetailsModal({
                         {!isDecreaseSuccess && (
                           <Button
                             onClick={handleConfirmWithdraw}
-                            disabled={isDecreasingLiquidity || (!withdrawAmount0 && !withdrawAmount1) || (parseFloat(withdrawAmount0 || '0') <= 0 && parseFloat(withdrawAmount1 || '0') <= 0)}
+                            disabled={
+                              isDecreasingLiquidity ||
+                              (!withdrawAmount0 && !withdrawAmount1) ||
+                              (parseFloat(withdrawAmount0 || '0') <= 0 && parseFloat(withdrawAmount1 || '0') <= 0) ||
+                              (parseFloat(withdrawAmount0 || "0") > parseFloat(position?.token0?.amount || "0") && parseFloat(withdrawAmount0 || "0") > 0) ||
+                              (parseFloat(withdrawAmount1 || "0") > parseFloat(position?.token1?.amount || "0") && parseFloat(withdrawAmount1 || "0") > 0)
+                            }
                             className={cn(
                               "w-full mt-4",
-                              (parseFloat(withdrawAmount0 || "0") <= 0 && parseFloat(withdrawAmount1 || "0") <= 0) ?
+                              (parseFloat(withdrawAmount0 || "0") <= 0 && parseFloat(withdrawAmount1 || "0") <= 0) ||
+                              (parseFloat(withdrawAmount0 || "0") > parseFloat(position?.token0?.amount || "0") && parseFloat(withdrawAmount0 || "0") > 0) ||
+                              (parseFloat(withdrawAmount1 || "0") > parseFloat(position?.token1?.amount || "0") && parseFloat(withdrawAmount1 || "0") > 0) ?
                                 "relative border border-sidebar-border bg-button px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75" :
                                 "text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90"
                             )}
-                            style={(parseFloat(withdrawAmount0 || "0") <= 0 && parseFloat(withdrawAmount1 || "0") <= 0) ?
+                            style={(parseFloat(withdrawAmount0 || "0") <= 0 && parseFloat(withdrawAmount1 || "0") <= 0) ||
+                              (parseFloat(withdrawAmount0 || "0") > parseFloat(position?.token0?.amount || "0") && parseFloat(withdrawAmount0 || "0") > 0) ||
+                              (parseFloat(withdrawAmount1 || "0") > parseFloat(position?.token1?.amount || "0") && parseFloat(withdrawAmount1 || "0") > 0) ?
                               { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } :
                               undefined
                             }
