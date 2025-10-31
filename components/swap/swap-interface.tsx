@@ -2774,7 +2774,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 currentChainId={currentChainId}
                 TARGET_CHAIN_ID={TARGET_CHAIN_ID}
                 strokeWidth={2}
-                swapContainerRect={combinedRect} // Pass the new combined rect
+                swapContainerRect={combinedRect}
                 slippage={slippage}
                 onSlippageChange={handleSlippageChange}
               />

@@ -300,7 +300,7 @@ export function SwapInputView({
         <Button
           variant="ghost"
           size="icon"
-          className="rounded-lg bg-muted/30 z-10 h-8 w-8"
+          className="rounded-lg bg-muted/30 border-0 hover:bg-muted/50 hover:border hover:border-sidebar-border/60 z-10 h-8 w-8"
           onClick={handleSwapTokens}
           disabled={!isConnected || isAttemptingSwitch}
         >

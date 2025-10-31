@@ -307,11 +307,15 @@ export function TokenSelector({
       {/* Token Selection Modal */}
       {isOpen && (
         <div
-          className="fixed inset-0 z-50"
+          className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm"
           onClick={() => setIsOpen(false)}
         >
           {/* Modal positioned to overlay SwapInputView */}
-          <div
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 10 }}
+            transition={{ duration: 0.2, ease: "easeOut" }}
             className="fixed rounded-lg shadow-2xl border border-primary overflow-hidden bg-popover"
             onClick={(e) => e.stopPropagation()}
             style={{
@@ -339,19 +343,19 @@ export function TokenSelector({
               {/* Search Input */}
               <div className="p-4">
                 <div className="relative">
-                  <SearchIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <SearchIcon className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" />
                   <Input
-                    placeholder="WETH, USDC, 0x..."
+                    placeholder="Search token"
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-9 rounded-lg bg-muted/30 border-0 focus-visible:ring-1 focus-visible:ring-muted-foreground/30 h-10 text-sm"
+                    className="pl-10 rounded-lg bg-muted/30 border-0 focus-visible:ring-1 focus-visible:ring-muted-foreground/30 h-12 text-base"
                     autoFocus
                   />
                 </div>
               </div>
 
               {/* Token List - Simple Layout */}
-              <div className="overflow-y-auto" style={{ maxHeight: `calc(100% - 105px)` }}> {/* Dynamic max height: 100% of parent height - (header 33px + search 72px) */}
+              <div className="overflow-y-auto" style={{ maxHeight: `calc(100% - 125px)` }}> {/* Adjusted for larger search */}
                 {filteredTokens.length === 0 ? (
                   <div className="p-6 text-center text-muted-foreground text-sm">
                     No tokens found matching "{searchTerm}"
@@ -364,23 +368,23 @@ export function TokenSelector({
                       const isLoadingBalance = balanceData?.isLoading || false;
                       const displayBalance = balanceData?.balance || "~";
                       const usdValue = balanceData?.usdValue || 0;
-                      
+
                       return (
                         <button
                           key={token.address}
                           className={cn(
-                            "w-full flex items-center gap-3 px-4 py-3 hover:bg-muted/50 transition-colors text-left",
+                            "w-full flex items-center gap-3 px-5 py-3.5 hover:bg-muted/50 text-left",
                             {
                               "bg-muted/30": isSelected
                             }
                           )}
                           onClick={() => handleTokenSelect(token)}
                         >
-                          <Image 
-                            src={token.icon} 
-                            alt={token.symbol} 
-                            width={28} 
-                            height={28} 
+                          <Image
+                            src={token.icon}
+                            alt={token.symbol}
+                            width={32}
+                            height={32}
                             className="rounded-full"
                           />
                           <div className="flex-1 min-w-0">
@@ -421,7 +425,7 @@ export function TokenSelector({
                   </div>
                 )}
               </div>
-            </div>
+            </motion.div>
           </div>
         )}
     </div>
