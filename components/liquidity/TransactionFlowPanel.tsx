@@ -67,28 +67,30 @@ export function TransactionFlowPanel({
     }
   }, [isActive, state.currentStep, actions]);
 
-  // Mark executing step as complete when deposit is confirmed
   useEffect(() => {
-    if (isDepositSuccess && state.currentStep === 'executing' && !state.completedSteps.has('executing')) {
+    if (isDepositSuccess && !state.completedSteps.has('executing')) {
       actions.completeStep('executing');
     }
-  }, [isDepositSuccess, state.currentStep, state.completedSteps, actions]);
+  }, [isDepositSuccess, state.completedSteps, actions]);
 
-  // Handle proceeding to next step
   const handleProceed = useCallback(async () => {
     if (!canProceed() || !approvalData || isCheckingApprovals) return;
 
     const nextStep = getNextStep(approvalData);
     if (!nextStep) return;
 
-    // Lock the flow to prevent multiple clicks
+    // Validate permit data exists when needed
+    if (nextStep === 'signing_permit' && (!approvalData.permitBatchData || !approvalData.signatureDetails)) {
+      console.warn('[TransactionFlow] Permit data not ready');
+      return;
+    }
+
     actions.lock();
     actions.setStep(nextStep);
 
     try {
       switch (nextStep) {
         case 'approving_token0':
-          // Toast is shown by the hook, no need to duplicate
           await onApproveToken(token0Symbol);
           actions.completeStep('approving_token0');
 
@@ -161,7 +163,6 @@ export function TransactionFlowPanel({
             icon: React.createElement(Info, { className: 'h-4 w-4' })
           });
           await onExecute(state.permitSignature);
-          // Don't mark as complete here - wait for isDepositSuccess in useEffect
           break;
       }
     } catch (error: any) {
@@ -234,10 +235,10 @@ export function TransactionFlowPanel({
         {showBackButton && onBack && (
           <Button
             variant="outline"
-            className="w-1/3 border-sidebar-border bg-button hover:bg-muted/30"
+            className="w-1/3 border-sidebar-border bg-button hover:bg-accent hover:brightness-110 hover:border-white/30 transition-all duration-200"
             onClick={onBack}
             disabled={isWorking}
-            style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+            style={{ backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
           >
             Back
           </Button>
@@ -253,7 +254,9 @@ export function TransactionFlowPanel({
           disabled={isDisabled}
           style={isDisabled ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
         >
-          {getButtonText()}
+          <span className={isWorking ? "animate-pulse" : ""}>
+            {getButtonText()}
+          </span>
         </Button>
       </div>
 

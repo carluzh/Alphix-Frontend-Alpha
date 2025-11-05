@@ -30,7 +30,6 @@ interface SwapInputViewProps {
   onToAmountChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   activelyEditedSide: 'from' | 'to';
   handleSwapTokens: () => void;
-  handleUseFullBalance: (token: Token, isFrom: boolean) => void;
   handleUsePercentage: (percentage: number, isFrom: boolean) => void;
   availableTokens: Token[];
   onFromTokenSelect: (token: Token) => void;
@@ -80,7 +79,6 @@ export function SwapInputView({
   onToAmountChange,
   activelyEditedSide,
   handleSwapTokens,
-  handleUseFullBalance,
   handleUsePercentage,
   availableTokens,
   onFromTokenSelect,
@@ -225,7 +223,7 @@ export function SwapInputView({
           <Button
             variant="ghost"
             className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent"
-            onClick={() => handleUseFullBalance(displayFromToken, true)}
+            onClick={() => handleUsePercentage(100, true)}
             disabled={!isConnected}
           >
             {isConnected ? (isLoadingCurrentFromTokenBalance ? "Loading..." : displayFromToken.balance) : "~"} {displayFromToken.symbol}
@@ -322,7 +320,7 @@ export function SwapInputView({
           <Button
             variant="ghost"
             className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent"
-            onClick={() => handleUseFullBalance(displayToToken, false)}
+            onClick={() => handleUsePercentage(100, false)}
             disabled={!isConnected}
           >
             {isConnected ? (isLoadingCurrentToTokenBalance ? "Loading..." : displayToToken.balance) : "~"} {displayToToken.symbol}

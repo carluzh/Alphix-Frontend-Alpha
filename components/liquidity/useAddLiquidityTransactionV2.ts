@@ -1,12 +1,12 @@
 // Refactored Add Liquidity Transaction Hook (Uniswap-style)
 import { useCallback, useState, useRef } from 'react';
-import { useAccount, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
+import { useAccount, useWriteContract, useWaitForTransactionReceipt, useSignTypedData } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { BadgeCheck, OctagonX, InfoIcon } from 'lucide-react';
 import React from 'react';
 import { TokenSymbol, TOKEN_DEFINITIONS } from '@/lib/pools-config';
-import { PERMIT2_ADDRESS } from '@/lib/swap-constants';
+import { PERMIT2_ADDRESS, getPermit2Domain, PERMIT_TYPES } from '@/lib/swap-constants';
 import { ERC20_ABI } from '@/lib/abis/erc20';
 import { type Hex, maxUint256, formatUnits } from 'viem';
 import { publicClient } from '@/lib/viemClient';
@@ -25,8 +25,10 @@ export interface UseAddLiquidityTransactionV2Props {
   tickUpper: string;
   activeInputSide: 'amount0' | 'amount1' | null;
   calculatedData: any;
-  onLiquidityAdded: (token0Symbol?: string, token1Symbol?: string, txInfo?: { txHash: `0x${string}`; blockNumber?: bigint }) => void;
+  onLiquidityAdded: (token0Symbol?: string, token1Symbol?: string, txInfo?: { txHash: `0x${string}`; blockNumber?: bigint; tvlDelta?: number }) => void;
   onOpenChange: (isOpen: boolean) => void;
+  isZapMode?: boolean;
+  zapInputToken?: 'token0' | 'token1';
 }
 
 export function useAddLiquidityTransactionV2({
@@ -40,17 +42,19 @@ export function useAddLiquidityTransactionV2({
   calculatedData,
   onLiquidityAdded,
   onOpenChange,
+  isZapMode = false,
+  zapInputToken = 'token0',
 }: UseAddLiquidityTransactionV2Props) {
   const queryClient = useQueryClient();
   const { address: accountAddress, chainId } = useAccount();
 
-  // Check approvals using React Query
+  // Check approvals using React Query (disabled for zap mode - handleDeposit handles it)
   const {
     data: approvalData,
     isLoading: isCheckingApprovals,
     refetch: refetchApprovals,
   } = useCheckLiquidityApprovals(
-    accountAddress && chainId && calculatedData
+    accountAddress && chainId && calculatedData && !isZapMode
       ? {
           userAddress: accountAddress,
           token0Symbol,
@@ -63,7 +67,7 @@ export function useAddLiquidityTransactionV2({
         }
       : undefined,
     {
-      enabled: Boolean(accountAddress && chainId && calculatedData && (BigInt(calculatedData.amount0 || '0') > 0n || BigInt(calculatedData.amount1 || '0') > 0n)),
+      enabled: !isZapMode && Boolean(accountAddress && chainId && calculatedData && (BigInt(calculatedData.amount0 || '0') > 0n || BigInt(calculatedData.amount1 || '0') > 0n)),
       staleTime: 5000,
     }
   );
@@ -94,6 +98,9 @@ export function useAddLiquidityTransactionV2({
     isError: isDepositError,
     error: depositReceiptError,
   } = useWaitForTransactionReceipt({ hash: depositTxHash });
+
+  // Wagmi hook for Permit2 signing (zap mode)
+  const { signTypedDataAsync } = useSignTypedData();
 
   const [isWorking, setIsWorking] = useState(false);
   const processedDepositHashRef = useRef<string | null>(null);
@@ -139,9 +146,12 @@ export function useAddLiquidityTransactionV2({
     async (permitSignature?: string) => {
       if (!accountAddress || !chainId) throw new Error('Wallet not connected');
 
-      // Validate that if permits are needed, signature must be provided
-      if ((approvalData?.needsToken0Permit || approvalData?.needsToken1Permit) && !permitSignature) {
-        throw new Error('Permit signature required but not provided');
+      // Validate permit requirements
+      if ((approvalData?.needsToken0Permit || approvalData?.needsToken1Permit)) {
+        if (!permitSignature) throw new Error('Permit signature required but not provided');
+        if (!approvalData?.permitBatchData || !approvalData?.signatureDetails) {
+          throw new Error('Permit batch data missing - please sign permit again');
+        }
       }
 
       setIsWorking(true);
@@ -168,24 +178,32 @@ export function useAddLiquidityTransactionV2({
         const inputAmount = finalAmount0 && parseFloat(finalAmount0) > 0 ? finalAmount0 : finalAmount1;
         const inputTokenSymbol = finalAmount0 && parseFloat(finalAmount0) > 0 ? token0Symbol : token1Symbol;
 
+        // Choose the endpoint based on zap mode
+        const endpoint = isZapMode ? '/api/liquidity/prepare-zap-mint-tx' : '/api/liquidity/prepare-mint-tx';
+
         const requestBody: any = {
           userAddress: accountAddress,
           token0Symbol,
           token1Symbol,
           inputAmount,
-          inputTokenSymbol,
+          inputTokenSymbol: isZapMode ? (zapInputToken === 'token0' ? token0Symbol : token1Symbol) : inputTokenSymbol,
           userTickLower: tl,
           userTickUpper: tu,
           chainId,
         };
 
-        // If we have a permit signature, include it
-        if (permitSignature && approvalData?.permitBatchData) {
+        // Add slippage tolerance for zap mode
+        if (isZapMode) {
+          requestBody.slippageTolerance = 50; // 0.5% default
+        }
+
+        // If we have a permit signature, include it (only for non-zap mode)
+        if (!isZapMode && permitSignature && approvalData?.permitBatchData) {
           requestBody.permitSignature = permitSignature;
           requestBody.permitBatchData = approvalData.permitBatchData;
         }
 
-        const response = await fetch('/api/liquidity/prepare-mint-tx', {
+        const response = await fetch(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(requestBody),
@@ -198,41 +216,164 @@ export function useAddLiquidityTransactionV2({
 
         const result = await response.json();
 
-        // Check if API is requesting permit signature (should not happen if flow is correct)
-        if (result.needsApproval && result.approvalType === 'PERMIT2_BATCH_SIGNATURE') {
-          console.error('[handleDeposit] API returned permit request but permit should have been obtained already');
-          throw new Error('Permit signature required. Please refresh and try again.');
+        // Check if API is requesting permit signature
+        if (result.needsApproval) {
+          if (isZapMode && result.approvalType === 'PERMIT2_SIGNATURE' && result.permitData) {
+            // Zap mode: Need to get Permit2 signature for single token
+            console.log('[handleDeposit] Zap mode requires Permit2 signature, requesting from user...');
+
+            if (!chainId) throw new Error('Chain ID not available');
+
+            // Prepare signature data
+            const domain = getPermit2Domain(chainId, PERMIT2_ADDRESS);
+            const types = PERMIT_TYPES;
+            const values = {
+              details: {
+                token: result.permitData.token,
+                amount: result.permitData.amount,
+                expiration: result.permitData.expiration,
+                nonce: result.permitData.nonce,
+              },
+              spender: result.permitData.spender,
+              sigDeadline: result.permitData.sigDeadline,
+            };
+
+            // Request signature from user using wagmi
+            const signature = await signTypedDataAsync({
+              domain: domain as any,
+              types: types as any,
+              primaryType: 'PermitSingle',
+              message: values as any,
+            });
+
+            // Retry the API call with the signature
+            const retryBody = {
+              ...requestBody,
+              permitSignature: signature,
+              permitNonce: result.permitData.nonce,
+              permitExpiration: result.permitData.expiration,
+              permitSigDeadline: result.permitData.sigDeadline,
+            };
+
+            const retryResponse = await fetch(endpoint, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(retryBody),
+            });
+
+            if (!retryResponse.ok) {
+              const errorData = await retryResponse.json();
+              throw new Error(errorData.message || 'Failed to prepare transaction after signing');
+            }
+
+            const retryResult = await retryResponse.json();
+
+            // Replace result with retry result
+            Object.assign(result, retryResult);
+          } else if (result.approvalType === 'PERMIT2_BATCH_SIGNATURE') {
+            console.error('[handleDeposit] API returned permit request but permit should have been obtained already');
+            throw new Error('Permit signature required. Please refresh and try again.');
+          }
         }
 
-        if (!result.transaction || !result.transaction.to || !result.transaction.data) {
+        // Handle zap mode (two transactions) vs regular mode (one transaction)
+        if (isZapMode && result.swapTransaction && result.mintTransaction) {
+          // ========== ZAP MODE: TWO SEQUENTIAL TRANSACTIONS ==========
+
+          // STEP 1: Execute swap transaction via Universal Router
+          console.log('[handleDeposit] Zap mode: Executing swap transaction...');
+
+          const swapConfig: any = {
+            address: result.swapTransaction.to as `0x${string}`,
+            abi: [
+              {
+                name: 'execute',
+                type: 'function',
+                stateMutability: result.swapTransaction.value && result.swapTransaction.value !== '0' ? 'payable' : 'nonpayable',
+                inputs: [
+                  { name: 'commands', type: 'bytes' },
+                  { name: 'inputs', type: 'bytes[]' },
+                  { name: 'deadline', type: 'uint256' }
+                ],
+                outputs: [],
+              },
+            ],
+            functionName: 'execute',
+            args: [
+              result.swapTransaction.commands as Hex,
+              result.swapTransaction.inputs as Hex[],
+              BigInt(result.swapTransaction.deadline)
+            ],
+          };
+
+          if (result.swapTransaction.value && result.swapTransaction.value !== '0') {
+            swapConfig.value = BigInt(result.swapTransaction.value);
+          }
+
+          // Execute swap
+          const swapHash = await depositAsync(swapConfig);
+          console.log('[handleDeposit] Swap transaction submitted:', swapHash);
+
+          // Wait for swap to confirm
+          const swapReceipt = await publicClient.waitForTransactionReceipt({ hash: swapHash });
+          console.log('[handleDeposit] Swap confirmed, executing mint...');
+
+          // STEP 2: Execute mint transaction via PositionManager
+          const mintConfig: any = {
+            address: result.mintTransaction.to as `0x${string}`,
+            abi: [
+              {
+                name: 'multicall',
+                type: 'function',
+                stateMutability: result.mintTransaction.value && result.mintTransaction.value !== '0' ? 'payable' : 'nonpayable',
+                inputs: [{ name: 'data', type: 'bytes[]' }],
+                outputs: [{ name: 'results', type: 'bytes[]' }],
+              },
+            ],
+            functionName: 'multicall',
+            args: [[result.mintTransaction.data as Hex]],
+          };
+
+          if (result.mintTransaction.value && result.mintTransaction.value !== '0') {
+            mintConfig.value = BigInt(result.mintTransaction.value);
+          }
+
+          // Execute mint (this will be the hash returned and tracked)
+          const hash = await depositAsync(mintConfig);
+          console.log('[handleDeposit] Mint transaction submitted:', hash);
+
+        } else if (result.transaction && result.transaction.to) {
+          // ========== REGULAR MODE: SINGLE TRANSACTION ==========
+
+          if (!result.transaction.data) {
+            console.error('[handleDeposit] Missing transaction data:', result);
+            throw new Error('Invalid transaction data from API');
+          }
+
+          const depositConfig: any = {
+            address: result.transaction.to as `0x${string}`,
+            abi: [
+              {
+                name: 'multicall',
+                type: 'function',
+                stateMutability: result.transaction.value && result.transaction.value !== '0' ? 'payable' : 'nonpayable',
+                inputs: [{ name: 'data', type: 'bytes[]' }],
+                outputs: [{ name: 'results', type: 'bytes[]' }],
+              },
+            ],
+            functionName: 'multicall',
+            args: [[result.transaction.data as Hex]],
+          };
+
+          if (result.transaction.value && result.transaction.value !== '0') {
+            depositConfig.value = BigInt(result.transaction.value);
+          }
+
+          const hash = await depositAsync(depositConfig);
+        } else {
           console.error('[handleDeposit] Invalid API response:', result);
           throw new Error('Invalid transaction data from API');
         }
-
-        // Toast removed - shown by TransactionFlowPanel
-
-        // Use writeContractAsync for multicall
-        const depositConfig: any = {
-          address: result.transaction.to as `0x${string}`,
-          abi: [
-            {
-              name: 'multicall',
-              type: 'function',
-              stateMutability: result.transaction.value ? 'payable' : 'nonpayable',
-              inputs: [{ name: 'data', type: 'bytes[]' }],
-              outputs: [{ name: 'results', type: 'bytes[]' }],
-            },
-          ],
-          functionName: 'multicall',
-          args: [[result.transaction.data as Hex]],
-        };
-
-        // Only add value if it exists
-        if (result.transaction.value) {
-          depositConfig.value = BigInt(result.transaction.value);
-        }
-
-        const hash = await depositAsync(depositConfig);
 
         // Note: onLiquidityAdded will be called after confirmation in the useEffect below
         // This prevents duplicate skeleton creation
@@ -293,49 +434,35 @@ export function useAddLiquidityTransactionV2({
     }
   }, [isDepositError, depositTxHash, depositReceiptError]);
 
-  // Handle successful deposit confirmation
   React.useEffect(() => {
     if (isDepositConfirmed && depositTxHash && accountAddress) {
-      // Guard against duplicate processing
       if (processedDepositHashRef.current === depositTxHash) return;
       processedDepositHashRef.current = depositTxHash;
 
       toast.success('Position Created', {
         icon: React.createElement(BadgeCheck, { className: 'h-4 w-4 text-green-500' }),
         description: `Liquidity added to ${token0Symbol}/${token1Symbol} pool successfully`,
-        action: {
-          label: 'View Transaction',
-          onClick: () => window.open(`https://sepolia.basescan.org/tx/${depositTxHash}`, '_blank'),
-        },
+        action: { label: 'View Transaction', onClick: () => window.open(`https://sepolia.basescan.org/tx/${depositTxHash}`, '_blank') },
       });
 
-      // Refresh balances
-      localStorage.setItem(`walletBalancesRefreshAt_${accountAddress}`, String(Date.now()));
-      window.dispatchEvent(new Event('walletBalancesRefresh'));
-
-      // Invalidate caches
       (async () => {
-        try {
-          let blockNumber: bigint | undefined;
-          const receipt = await publicClient.getTransactionReceipt({ hash: depositTxHash as `0x${string}` });
-          blockNumber = receipt?.blockNumber;
-
-          onLiquidityAdded(token0Symbol, token1Symbol, { txHash: depositTxHash as `0x${string}`, blockNumber });
-
-          prefetchService.notifyPositionsRefresh(accountAddress, 'mint');
-          invalidateActivityCache(accountAddress);
-          invalidateUserPositionsCache(accountAddress);
-          invalidateUserPositionIdsCache(accountAddress);
-          clearBatchDataCache();
-          invalidateAfterTx(queryClient, { owner: accountAddress, reason: 'mint' });
-        } catch (e) {
-          console.error('Cache invalidation error:', e);
+        const receipt = await publicClient.getTransactionReceipt({ hash: depositTxHash as `0x${string}` });
+        let tvlDelta = 0;
+        if (calculatedData?.amount0 && calculatedData?.amount1) {
+          const { getTokenPrice } = await import('@/lib/price-service');
+          const { formatUnits } = await import('viem');
+          const { TOKEN_DEFINITIONS } = await import('@/lib/pools-config');
+          const amt0 = parseFloat(formatUnits(BigInt(calculatedData.amount0), TOKEN_DEFINITIONS[token0Symbol]?.decimals || 18));
+          const amt1 = parseFloat(formatUnits(BigInt(calculatedData.amount1), TOKEN_DEFINITIONS[token1Symbol]?.decimals || 18));
+          const [p0, p1] = await Promise.all([getTokenPrice(token0Symbol), getTokenPrice(token1Symbol)]);
+          tvlDelta = (p0 ? amt0 * p0 : 0) + (p1 ? amt1 * p1 : 0);
         }
-      })();
+        onLiquidityAdded(token0Symbol, token1Symbol, { txHash: depositTxHash as `0x${string}`, blockNumber: receipt?.blockNumber, tvlDelta });
+      })().catch(e => console.error('Post-deposit processing error:', e));
 
       onOpenChange(false);
     }
-  }, [isDepositConfirmed, depositTxHash, accountAddress, token0Symbol, token1Symbol, onLiquidityAdded, onOpenChange, queryClient]);
+  }, [isDepositConfirmed, depositTxHash, accountAddress, token0Symbol, token1Symbol, onLiquidityAdded, onOpenChange, queryClient, calculatedData]);
 
   const resetAll = React.useCallback(() => {
     resetApprove();

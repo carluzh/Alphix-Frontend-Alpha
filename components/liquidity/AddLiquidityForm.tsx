@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { cn, formatTokenDisplayAmount } from "@/lib/utils";
 import Image from "next/image";
 import { useAccount, useBalance } from "wagmi";
@@ -204,6 +205,19 @@ export function AddLiquidityForm({
   // Cache pool metrics and state (fetched once per pool)
   const [cachedPoolMetrics, setCachedPoolMetrics] = useState<{ poolId: string; metrics: any; poolLiquidity: string } | null>(null);
 
+  // Zap mode state
+  const [isZapMode, setIsZapMode] = useState(false);
+  const [zapInputToken, setZapInputToken] = useState<'token0' | 'token1'>('token0');
+  const [zapQuote, setZapQuote] = useState<{
+    swapAmount: string;
+    expectedToken0Amount: string;
+    expectedToken1Amount: string;
+    expectedLiquidity: string;
+    priceImpact: string;
+    leftoverToken0?: string;
+    leftoverToken1?: string;
+  } | null>(null);
+
   // UI flow management
   const [showingTransactionSteps, setShowingTransactionSteps] = useState(false);
   const [showRangeModal, setShowRangeModal] = useState(false);
@@ -278,7 +292,27 @@ export function AddLiquidityForm({
     activeInputSide
   });
 
-  // Use the new transaction hooks (Uniswap-style)
+  // Use the same transaction hook for both regular and zap modes
+  const regularTransaction = useAddLiquidityTransactionV2({
+    token0Symbol,
+    token1Symbol,
+    amount0,
+    amount1,
+    tickLower,
+    tickUpper,
+    activeInputSide,
+    calculatedData,
+    onLiquidityAdded,
+    onOpenChange: setShowingTransactionSteps,
+    isZapMode,
+    zapInputToken,
+  });
+
+  // For zap mode, just use the regular transaction hook
+  // It already handles zap at lines 179-341 of useAddLiquidityTransactionV2.ts
+  const zapTransaction = regularTransaction;
+
+  // Use appropriate hook based on zap mode
   const {
     approvalData,
     isCheckingApprovals,
@@ -290,18 +324,19 @@ export function AddLiquidityForm({
     handleDeposit,
     refetchApprovals,
     reset: resetTransaction,
-  } = useAddLiquidityTransactionV2({
-    token0Symbol,
-    token1Symbol,
-    amount0,
-    amount1,
-    tickLower,
-    tickUpper,
-    activeInputSide,
-    calculatedData,
-    onLiquidityAdded,
-    onOpenChange: () => {},
-  });
+  } = isZapMode ? {
+    // Zap mode - not used directly, ZapTransactionFlowPanel handles its own flow
+    approvalData: null,
+    isCheckingApprovals: false,
+    isWorking: zapTransaction.isWorking,
+    isApproving: zapTransaction.isApproving,
+    isDepositConfirming: zapTransaction.isDepositConfirming,
+    isDepositSuccess: zapTransaction.isDepositSuccess,
+    handleApprove: zapTransaction.handleApprove,
+    handleDeposit: async () => {}, // Not used
+    refetchApprovals: async () => {},
+    reset: zapTransaction.reset,
+  } : regularTransaction;
 
   // Track which step we're on manually (no auto-progression)
   const [currentTransactionStep, setCurrentTransactionStep] = useState<'idle' | 'approving_token0' | 'approving_token1' | 'signing_permit' | 'depositing'>('idle');
@@ -995,19 +1030,15 @@ export function AddLiquidityForm({
     setXDomain([newMinTick, newMaxTick]);
   }, []);
 
-  // Handle use full balance
-  const handleUseFullBalance = (balanceString: string, tokenSymbolForDecimals: TokenSymbol, isToken0: boolean) => {
+  // Handle use full balance - now uses the same percentage hook as the MAX button
+  const handleUseFullBalance = (isToken0: boolean) => {
     try {
-      const numericBalance = parseFloat(balanceString);
-      if (isNaN(numericBalance) || numericBalance <= 0) return;
-
-      const formattedBalance = formatTokenDisplayAmount(numericBalance.toString(), tokenSymbolForDecimals);
-
+      // Use the percentage hook with 100% to get exact balance
       if (isToken0) {
-        setAmount0(formattedBalance);
+        handleToken0Percentage(100);
         setActiveInputSide('amount0');
       } else {
-        setAmount1(formattedBalance);
+        handleToken1Percentage(100);
         setActiveInputSide('amount1');
       }
 
@@ -1610,8 +1641,78 @@ export function AddLiquidityForm({
 
       setIsCalculating(true);
       setCalculatedData(null);
+      setZapQuote(null);
 
       try {
+        // If in zap mode, call the zap endpoint instead
+        if (isZapMode) {
+          const response = await fetch('/api/liquidity/prepare-zap-mint-tx', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              userAddress: accountAddress || '0x0000000000000000000000000000000000000001', // Use dummy address for calculation
+              token0Symbol,
+              token1Symbol,
+              inputAmount: primaryAmount,
+              inputTokenSymbol: primaryTokenSymbol,
+              userTickLower: tl,
+              userTickUpper: tu,
+              chainId,
+              slippageTolerance: 50, // 0.5% default
+            }),
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+
+            if ('zapQuote' in data) {
+              // Set zap quote for display
+              setZapQuote(data.zapQuote);
+
+              // Set calculated data from zap response
+              setCalculatedData({
+                amount0: data.details.token0.amount,
+                amount1: data.details.token1.amount,
+                liquidity: data.details.liquidity,
+                finalTickLower: data.details.finalTickLower,
+                finalTickUpper: data.details.finalTickUpper,
+                currentPoolTick: currentPoolTick || undefined,
+                currentPrice: currentPrice || undefined,
+              });
+
+              // Update the display amounts
+              const token0Decimals = TOKEN_DEFINITIONS[token0Symbol]?.decimals || 18;
+              const token1Decimals = TOKEN_DEFINITIONS[token1Symbol]?.decimals || 18;
+
+              const formattedAmount0 = formatTokenDisplayAmount(
+                viemFormatUnits(BigInt(data.details.token0.amount), token0Decimals),
+                token0Symbol
+              );
+              const formattedAmount1 = formatTokenDisplayAmount(
+                viemFormatUnits(BigInt(data.details.token1.amount), token1Decimals),
+                token1Symbol
+              );
+
+              // In zap mode, keep the input amount unchanged and show expected outputs
+              if (inputSide === 'amount0') {
+                setAmount1(formattedAmount1);
+                setAmount1FullPrecision(viemFormatUnits(BigInt(data.details.token1.amount), token1Decimals));
+              } else {
+                setAmount0(formattedAmount0);
+                setAmount0FullPrecision(viemFormatUnits(BigInt(data.details.token0.amount), token0Decimals));
+              }
+            }
+          } else {
+            const error = await response.json();
+            console.error('Zap calculation error:', error);
+            showErrorToast('Failed to calculate zap', error.message);
+          }
+
+          setIsCalculating(false);
+          return;
+        }
+
+        // Original logic for non-zap mode
         // Check if position is OOR - follow Uniswap's pattern
         const isOOR = currentPoolTick !== null && currentPoolTick !== undefined &&
                       (currentPoolTick < tl || currentPoolTick > tu);
@@ -1856,6 +1957,30 @@ export function AddLiquidityForm({
       return;
     }
 
+    // ZAP MODE: Only check the input token balance
+    if (isZapMode) {
+      const inputTokenSymbol = zapInputToken === 'token0' ? token0Symbol : token1Symbol;
+      const inputTokenDef = zapInputToken === 'token0' ? t0Def : t1Def;
+      const inputBalanceData = zapInputToken === 'token0' ? token0BalanceData : token1BalanceData;
+      const inputAmount = zapInputToken === 'token0' ? amount0 : amount1;
+
+      const isInputPositive = parseFloat(inputAmount || "0") > 0;
+      if (isInputPositive && inputBalanceData?.value) {
+        try {
+          const valueToCheck = safeParseUnits(inputAmount, inputTokenDef.decimals);
+          if (valueToCheck > inputBalanceData.value) {
+            insufficient = true;
+          }
+        } catch {
+          // ignore parsing errors
+        }
+      }
+
+      setIsInsufficientBalance(insufficient);
+      return;
+    }
+
+    // TWO-TOKEN MODE: Check both token balances
     const isAmount0InputPositive = parseFloat(amount0 || "0") > 0;
     const isAmount1InputPositive = parseFloat(amount1 || "0") > 0;
 
@@ -1878,13 +2003,13 @@ export function AddLiquidityForm({
         insufficient = true;
       }
     }
-    
+
     if (!insufficient && valueToCheck1AsWei !== null && valueToCheck1AsWei > 0n && token1BalanceData?.value) {
       if (valueToCheck1AsWei > token1BalanceData.value) {
         insufficient = true;
       }
     }
-    
+
     // Additional check: if calculatedData is present and an amount is required but its input field is zero/empty.
     if (!insufficient && calculatedData) {
         if (!isAmount0InputPositive && BigInt(calculatedData.amount0) > 0n && token0BalanceData?.value) {
@@ -1900,7 +2025,7 @@ export function AddLiquidityForm({
     }
 
     setIsInsufficientBalance(insufficient);
-  }, [amount0, amount1, token0Symbol, token1Symbol, calculatedData, token0BalanceData, token1BalanceData]);
+  }, [amount0, amount1, token0Symbol, token1Symbol, calculatedData, token0BalanceData, token1BalanceData, isZapMode, zapInputToken]);
 
   // Fetch pool metrics and state ONCE per pool (cached)
   useEffect(() => {
@@ -2275,7 +2400,59 @@ export function AddLiquidityForm({
                 />
               )}
 
-              {/* Input for Token 0 */}
+              {/* Zap Mode Toggle */}
+              <div
+                className="flex items-center justify-between p-4 rounded-lg bg-muted/20 mb-4 cursor-pointer transition-colors hover:bg-muted/30"
+                onClick={() => {
+                  if (isWorking || showingTransactionSteps) return;
+                  const newValue = !isZapMode;
+                  setIsZapMode(newValue);
+                  // Reset amounts when toggling mode
+                  setAmount0("");
+                  setAmount1("");
+                  setAmount0FullPrecision("");
+                  setAmount1FullPrecision("");
+                  setZapQuote(null);
+                  setActiveInputSide(null);
+                  setCalculatedData(null);
+                  resetTransaction();
+                }}
+              >
+                <div className="flex items-center gap-2">
+                  <Label htmlFor="zap-mode" className="font-medium cursor-pointer">Single Token Mode</Label>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <CircleHelp className="h-3 w-3 text-muted-foreground" onClick={(e) => e.stopPropagation()} />
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-xs">
+                        <p>Provide liquidity using a single token. We'll automatically swap the optimal amount to maximize your liquidity.</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
+                <Switch
+                  id="zap-mode"
+                  checked={isZapMode}
+                  onCheckedChange={(checked) => {
+                    setIsZapMode(checked);
+                    // Reset amounts when toggling mode
+                    setAmount0("");
+                    setAmount1("");
+                    setAmount0FullPrecision("");
+                    setAmount1FullPrecision("");
+                    setZapQuote(null);
+                    setActiveInputSide(null);
+                    setCalculatedData(null);
+                    resetTransaction();
+                  }}
+                  disabled={isWorking || showingTransactionSteps}
+                  onClick={(e) => e.stopPropagation()}
+                />
+              </div>
+
+              {/* Input for Token 0 - Only show when not in zap mode or when token0 is selected */}
+              {(!isZapMode || zapInputToken === 'token0') && (
               <div className="space-y-2">
                 <motion.div
                   className={cn("rounded-lg bg-muted/30 p-4 group", { "outline outline-1 outline-muted": isAmount0Focused })}
@@ -2286,7 +2463,7 @@ export function AddLiquidityForm({
                     <Button
                       variant="ghost"
                       className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:text-muted-foreground"
-                      onClick={() => handleUseFullBalance(token0BalanceData?.formatted || "0", token0Symbol, true)}
+                      onClick={() => handleUseFullBalance(true)}
                       disabled={!canAddToken0 || isWorking || isCalculating}
                     >
                       {displayToken0Balance} {token0Symbol}
@@ -2410,15 +2587,19 @@ export function AddLiquidityForm({
                   </div>
                 </motion.div>
               </div>
+              )}
 
-              {/* Plus Icon */}
+              {/* Plus Icon - Only show when not in zap mode */}
+              {!isZapMode && (
               <div className="flex justify-center items-center my-2">
                 <div className="flex items-center justify-center h-8 w-8 rounded-full bg-muted/20">
                   <PlusIcon className="h-4 w-4 text-muted-foreground" />
                 </div>
               </div>
+              )}
 
-              {/* Input for Token 1 */}
+              {/* Input for Token 1 - Only show when not in zap mode or when token1 is selected */}
+              {(!isZapMode || zapInputToken === 'token1') && (
               <div className="space-y-2 mb-4">
                 <motion.div
                   className={cn("rounded-lg bg-muted/30 p-4 group", { "outline outline-1 outline-muted": isAmount1Focused })}
@@ -2429,7 +2610,7 @@ export function AddLiquidityForm({
                     <Button
                       variant="ghost"
                       className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:text-muted-foreground"
-                      onClick={() => handleUseFullBalance(token1BalanceData?.formatted || "0", token1Symbol, false)}
+                      onClick={() => handleUseFullBalance(false)}
                       disabled={!canAddToken1 || isWorking || isCalculating}
                     >
                       {displayToken1Balance} {token1Symbol}
@@ -2553,6 +2734,81 @@ export function AddLiquidityForm({
                   </div>
                 </motion.div>
               </div>
+              )}
+
+              {/* Token selector and zap info */}
+              {isZapMode && (
+                <div>
+                  <div className="flex gap-2 mb-4">
+                    <button
+                        type="button"
+                        onClick={() => {
+                          setZapInputToken('token0');
+                          // Move amount to token0 if switching from token1
+                          if (zapInputToken === 'token1' && amount1) {
+                            setAmount0(amount1);
+                            setAmount1("");
+                            setActiveInputSide('amount0');
+                          }
+                        }}
+                        className={`relative h-10 px-3 flex items-center justify-center gap-2 rounded-md border transition-all duration-200 overflow-hidden text-sm font-medium cursor-pointer flex-1 ${
+                          zapInputToken === 'token0'
+                            ? 'text-sidebar-primary border-sidebar-primary bg-button-primary'
+                            : 'border-sidebar-border bg-button hover:bg-accent hover:brightness-110 hover:border-white/30 text-white'
+                        }`}
+                        style={zapInputToken !== 'token0' ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
+                      >
+                        <Image src={getTokenIcon(token0Symbol)} alt={token0Symbol} width={16} height={16} className="rounded-full relative z-10"/>
+                        <span className="relative z-10">{token0Symbol}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setZapInputToken('token1');
+                          // Move amount to token1 if switching from token0
+                          if (zapInputToken === 'token0' && amount0) {
+                            setAmount1(amount0);
+                            setAmount0("");
+                            setActiveInputSide('amount1');
+                          }
+                        }}
+                        className={`relative h-10 px-3 flex items-center justify-center gap-2 rounded-md border transition-all duration-200 overflow-hidden text-sm font-medium cursor-pointer flex-1 ${
+                          zapInputToken === 'token1'
+                            ? 'text-sidebar-primary border-sidebar-primary bg-button-primary'
+                            : 'border-sidebar-border bg-button hover:bg-accent hover:brightness-110 hover:border-white/30 text-white'
+                        }`}
+                        style={zapInputToken !== 'token1' ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
+                      >
+                        <Image src={getTokenIcon(token1Symbol)} alt={token1Symbol} width={16} height={16} className="rounded-full relative z-10"/>
+                        <span className="relative z-10">{token1Symbol}</span>
+                      </button>
+                    </div>
+
+                    {/* Zap info display */}
+                    {zapQuote && (
+                      <div className="p-3 rounded-lg bg-muted/20 mb-4">
+                        <div className="space-y-2 text-sm">
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Swap Amount:</span>
+                            <span>{formatTokenDisplayAmount(zapQuote.swapAmount, zapInputToken === 'token0' ? token0Symbol : token1Symbol)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Price Impact:</span>
+                            <span className={cn(
+                              parseFloat(zapQuote.priceImpact) > 5 ? "text-red-500" :
+                              parseFloat(zapQuote.priceImpact) > 2 ? "text-yellow-500" :
+                              "text-green-500"
+                            )}>{zapQuote.priceImpact}%</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Expected Liquidity:</span>
+                            <span>{zapQuote.expectedLiquidity}</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                </div>
+              )}
 
               {/* Estimated APY Display - Only show in first view, not in transaction steps */}
               {!showingTransactionSteps && (
@@ -2586,7 +2842,7 @@ export function AddLiquidityForm({
               {/* Current Price Display removed per updated UI */}
 
               {/* Transaction Steps - Show when user clicked deposit */}
-              {showingTransactionSteps && (
+              {showingTransactionSteps && !isZapMode && (
                 <TransactionFlowPanel
                   isActive={showingTransactionSteps}
                   approvalData={approvalData}
@@ -2594,7 +2850,37 @@ export function AddLiquidityForm({
                   token0Symbol={token0Symbol}
                   token1Symbol={token1Symbol}
                   isDepositSuccess={isDepositSuccess}
-                  onApproveToken={handleApprove}
+                  onApproveToken={regularTransaction.handleApprove}
+                  onSignPermit={signPermit}
+                  onExecute={handleDeposit}
+                  onRefetchApprovals={refetchApprovals}
+                  onBack={() => {
+                    setShowingTransactionSteps(false);
+                    resetTransaction();
+                    setCurrentTransactionStep('idle');
+                    setPermitSignature(undefined);
+                  }}
+                  onReset={() => {
+                    resetTransaction();
+                    setCurrentTransactionStep('idle');
+                    setPermitSignature(undefined);
+                  }}
+                  executeButtonLabel="Deposit"
+                  showBackButton={true}
+                  autoProgressOnApproval={false}
+                />
+              )}
+
+              {/* Zap Transaction Flow - Uses same panel, hook handles zap logic internally */}
+              {showingTransactionSteps && isZapMode && (
+                <TransactionFlowPanel
+                  isActive={showingTransactionSteps}
+                  approvalData={approvalData}
+                  isCheckingApprovals={isCheckingApprovals}
+                  token0Symbol={token0Symbol}
+                  token1Symbol={token1Symbol}
+                  isDepositSuccess={isDepositSuccess}
+                  onApproveToken={regularTransaction.handleApprove}
                   onSignPermit={signPermit}
                   onExecute={handleDeposit}
                   onRefetchApprovals={refetchApprovals}
@@ -2645,6 +2931,16 @@ export function AddLiquidityForm({
                       showErrorToast("Invalid Amount", "Must be greater than 0");
                       return;
                     }
+
+                    // For zap mode, validate input amount
+                    if (isZapMode) {
+                      const inputAmount = zapInputToken === 'token0' ? amount0 : amount1;
+                      if (!inputAmount || parseFloat(inputAmount) <= 0) {
+                        showErrorToast("Invalid Amount", "Must provide input amount");
+                        return;
+                      }
+                    }
+
                     setShowingTransactionSteps(true);
                   }}
                   disabled={isWorking ||

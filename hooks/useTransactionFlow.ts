@@ -136,7 +136,9 @@ export function useTransactionFlow(props?: UseTransactionFlowProps): UseTransact
 
     // Check permit signature - ALWAYS required for ERC20 tokens after approvals
     // (Permit is short-lived and minimal amount, similar to swap flow)
-    if (!state.permitSignature && !state.completedSteps.has('signing_permit')) {
+    // Note: We check if we have a signature, not if we've completed the step before
+    // This allows re-signing if the signature was cleared (e.g., amount changed)
+    if (!state.permitSignature) {
       return 'signing_permit';
     }
 
@@ -225,12 +227,11 @@ export function generateStepperSteps(
   // (Short-lived permit with exact amount + 1 wei, 10 minute expiry)
   const isWorkingOnPermit =
     flowState.currentStep === 'signing_permit' ||
-    (flowState.isLocked && !flowState.permitSignature && !flowState.completedSteps.has('signing_permit') && totalApproved === totalTokens);
+    (flowState.isLocked && !flowState.permitSignature && totalApproved === totalTokens);
 
-  // Permit is completed ONLY if we have signed it in this session
-  const permitIsCompleted =
-    !!flowState.permitSignature ||
-    flowState.completedSteps.has('signing_permit');
+  // Permit is completed ONLY if we have a valid signature
+  // (Don't rely on completedSteps since signature can be cleared when amounts change)
+  const permitIsCompleted = !!flowState.permitSignature;
 
   steps.push({
     id: 'permit',

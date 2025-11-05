@@ -15,6 +15,8 @@ import { baseSepolia } from "@/lib/wagmiConfig";
 import { useUserPositions, useAllPrices, useUncollectedFeesBatch } from "@/components/data/hooks";
 import { prefetchService } from "@/lib/prefetch-service";
 import { setIndexingBarrier, invalidateUserPositionIdsCache } from "@/lib/client-cache";
+import { invalidateAfterTx } from "@/lib/invalidation";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { FAUCET_CONTRACT_ADDRESS, faucetContractAbi } from "@/pages/api/misc/faucet";
 import poolsConfig from "@/config/pools.json";
@@ -121,19 +123,19 @@ function useLoadPhases(readiness: Readiness) {
   return { phase: phases.phase, showSkeletonFor };
 }
 
-// Skeleton primitives
+// Skeleton primitives - use synchronized animation from globals.css
 const SkeletonBlock = ({ className = "", ...props }: React.HTMLAttributes<HTMLDivElement>) => (
-  <div className={`bg-muted/60 rounded animate-pulse ${className}`} {...props} />
+  <div className={`bg-muted/60 rounded ${className}`} {...props} />
 );
 
 const SkeletonLine = ({ className = "", ...props }: React.HTMLAttributes<HTMLDivElement>) => (
-  <div className={`bg-muted/60 rounded animate-pulse h-4 w-20 ${className}`} {...props} />
+  <div className={`bg-muted/60 rounded h-4 w-20 ${className}`} {...props} />
 );
 
 // Token pair logo skeleton (single circle, matching bar style)
 const TokenPairLogoSkeleton = ({ size = 28, offset = 16, className = "" }: { size?: number; offset?: number; className?: string }) => {
   return (
-    <div className={`rounded-full bg-muted/60 animate-pulse ${className}`} style={{ width: `${size}px`, height: `${size}px` }} />
+    <div className={`rounded-full bg-muted/60 ${className}`} style={{ width: `${size}px`, height: `${size}px` }} />
   );
 };
 
@@ -142,7 +144,7 @@ const PortfolioHeaderSkeleton = ({ viewportWidth = 1440 }: { viewportWidth?: num
   if (viewportWidth <= 1000) {
     // Mobile/Tablet collapsible header skeleton
     return (
-      <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4 animate-pulse">
+      <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4 animate-skeleton-pulse">
         <div className="flex items-center justify-between gap-4">
           <div className="flex-1 min-w-0 space-y-3">
             <SkeletonLine className="h-3 w-24" />
@@ -164,7 +166,7 @@ const PortfolioHeaderSkeleton = ({ viewportWidth = 1440 }: { viewportWidth?: num
 
   return (
     <div className="grid items-start gap-4" style={{ gridTemplateColumns: isThreeCard ? 'minmax(240px, max-content) minmax(240px, max-content) 1fr' : 'minmax(240px, max-content) 1fr' }}>
-      <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4 h-full flex flex-col justify-between animate-pulse space-y-3">
+      <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4 h-full flex flex-col justify-between animate-skeleton-pulse space-y-3">
         <SkeletonLine className="h-3 w-24" />
         <div>
           <SkeletonBlock className="h-10 w-40" />
@@ -173,7 +175,7 @@ const PortfolioHeaderSkeleton = ({ viewportWidth = 1440 }: { viewportWidth?: num
         <div />
       </div>
       {isThreeCard && (
-        <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 py-1.5 px-4 h-full flex flex-col justify-center animate-pulse">
+        <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 py-1.5 px-4 h-full flex flex-col justify-center animate-skeleton-pulse">
           <div className="w-full divide-y divide-sidebar-border/40 space-y-2 py-2">
             <div className="flex justify-between items-center pt-1"><SkeletonLine className="h-3 w-16" /><SkeletonLine className="h-3 w-8" /></div>
             <div className="flex justify-between items-center pt-2"><SkeletonLine className="h-3 w-12" /><SkeletonLine className="h-3 w-10" /></div>
@@ -181,7 +183,7 @@ const PortfolioHeaderSkeleton = ({ viewportWidth = 1440 }: { viewportWidth?: num
           </div>
         </div>
       )}
-      <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4 h-full flex flex-col justify-between animate-pulse space-y-3">
+      <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4 h-full flex flex-col justify-between animate-skeleton-pulse space-y-3">
         <SkeletonLine className="h-3 w-32" />
         <div className="space-y-2">
            <SkeletonBlock className="h-2 w-full rounded-full" />
@@ -209,7 +211,7 @@ const BalancesListSkeleton = () => (
     {[...Array(6)].map((_, idx) => (
       <div key={idx} className="flex items-center justify-between h-[64px] pl-6 pr-6">
         <div className="flex items-center gap-2 min-w-0">
-          <div className="w-6 h-6 rounded-full bg-muted/60 animate-pulse flex-shrink-0" />
+          <div className="w-6 h-6 rounded-full bg-muted/60 flex-shrink-0" />
           <div className="flex flex-col min-w-0 gap-1">
             <SkeletonLine className="h-3 w-16" />
             <SkeletonLine className="h-3 w-24 opacity-80" />
@@ -642,6 +644,7 @@ export default function PortfolioPage() {
   const router = useRouter();
   const [positionsRefresh, setPositionsRefresh] = useState(0);
   const { address: accountAddress, isConnected } = useAccount();
+  const queryClient = useQueryClient();
 
   // Centralized hooks for positions (Category 2: user-action invalidated)
   const { data: userPositionsData, isLoading: isLoadingUserPositions } = useUserPositions(accountAddress || '');
@@ -1008,40 +1011,33 @@ export default function PortfolioPage() {
     }
   }, [accountAddress]);
 
-  const refreshAfterMutation = useCallback(async (info?: { txHash?: `0x${string}`; blockNumber?: bigint }) => {
+  const refreshAfterMutation = useCallback(async (info?: { txHash?: `0x${string}`; blockNumber?: bigint; poolId?: string }) => {
     if (!accountAddress) return;
 
     try {
-      const targetBlock = info?.blockNumber ?? await publicClient.getBlockNumber();
-      const barrier = waitForSubgraphBlock(Number(targetBlock), { timeoutMs: 30000, minWaitMs: 1000, maxIntervalMs: 2000 });
-      if (accountAddress) setIndexingBarrier(accountAddress, barrier);
-      await barrier;
-
-      // Trigger server revalidation
-      try { 
-        const revalidateResp = await fetch('/api/internal/revalidate-pools', { method: 'POST' });
-        await revalidateResp.json();
-      } catch (error) {
-        console.error('[Portfolio refreshAfterMutation] Failed to revalidate server cache:', error);
-      }
-
-      // Canonical positions refresh: invalidate and fetch fresh ids
-      if (accountAddress) {
-        invalidateUserPositionIdsCache(accountAddress);
-        const ids = await loadUserPositionIds(accountAddress);
-        // Let existing code paths that watch refresh keys update UI; we ensure cache is fresh now
-      }
-      
-      // Clear any optimistic loading states
-      setActivePositions(prev => prev.map(p => ({ ...p, isOptimisticallyUpdating: undefined })));
-      
+      await invalidateAfterTx(queryClient, {
+        owner: accountAddress,
+        poolId: info?.poolId, // Can be undefined for portfolio-wide operations
+        reason: 'liquidity-withdrawn',
+        awaitSubgraphSync: true,
+        blockNumber: info?.blockNumber,
+        reloadPositions: true,
+        onPositionsReloaded: () => {
+          // Inline position refresh logic to avoid circular dependency
+          try {
+            if (accountAddress) prefetchService.notifyPositionsRefresh(accountAddress, 'manual_refresh');
+          } catch {}
+          setPositionsRefresh((k) => k + 1);
+        },
+        clearOptimisticStates: () => {
+          setActivePositions(prev => prev.map(p => ({ ...p, isOptimisticallyUpdating: undefined })));
+        }
+      });
     } catch (error) {
       console.error('[Portfolio refreshAfterMutation] failed:', error);
-      
-      // Clear optimistic states on error too
       setActivePositions(prev => prev.map(p => ({ ...p, isOptimisticallyUpdating: undefined })));
     }
-  }, [accountAddress]);
+  }, [accountAddress, queryClient]);
 
   // After-confirmation refresh using the same centralized prefetch hook as pool page
   const bumpPositionsRefresh = useCallback(() => { // Refresh positions after add/withdraw
@@ -1119,50 +1115,21 @@ export default function PortfolioPage() {
     setShowIncreaseModal(false);
     pendingActionRef.current = null;
     
-    // Background refetch to get updated position data
+    // Background refetch to get updated position data and invalidate global TVL cache
     if (targetPositionId) {
       refreshSinglePosition(targetPositionId).catch(console.error);
     } else {
-      // For new positions or when we don't have the position ID, do a more targeted refresh
       bumpPositionsRefresh();
     }
 
-    // Trigger pool stats refresh for the affected pool
+    // Invalidate global pool stats cache for the affected pool
     if (modifiedPositionPoolInfoRef.current) {
-      const { poolId, subgraphId } = modifiedPositionPoolInfoRef.current;
-      try { 
-        fetch('/api/internal/revalidate-pools', { method: 'POST' })
-          .catch(() => {});
-      } catch (error) {
-        console.warn('[onLiquidityIncreasedCallback] Failed to refresh pool stats:', error);
-      }
+      const { poolId } = modifiedPositionPoolInfoRef.current;
+      refreshAfterMutation({ txHash: info.txHash, blockNumber: info.blockNumber, poolId }).catch(console.error);
       modifiedPositionPoolInfoRef.current = null;
     }
-  }, [refreshSinglePosition, refreshAfterMutation, positionToModify]);
+  }, [refreshSinglePosition, refreshAfterMutation, bumpPositionsRefresh, positionToModify]);
 
-  // Legacy callback for compatibility
-  const onLiquidityIncreased = useCallback(async () => {
-    if (lastTxBlockRef.current) {
-      await waitForSubgraphBlock(Number(lastTxBlockRef.current));
-      lastTxBlockRef.current = null;
-    }
-
-    if (modifiedPositionPoolInfoRef.current) {
-      const { poolId, subgraphId } = modifiedPositionPoolInfoRef.current;
-      try { fetch('/api/internal/revalidate-pools', { method: 'POST' }); } catch {}
-      try {
-        fetch('/api/internal/revalidate-chart', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ poolId, subgraphId })
-        });
-      } catch {}
-      modifiedPositionPoolInfoRef.current = null;
-    }
-
-    bumpPositionsRefresh();
-    setShowIncreaseModal(false);
-  }, [bumpPositionsRefresh]);
   const onLiquidityDecreasedCallback = useCallback(async (info?: { txHash?: `0x${string}`; blockNumber?: bigint; isFullBurn?: boolean }) => {
     if (!info?.txHash) return;
     if (handledDecreaseHashRef.current === info.txHash) return;
@@ -1209,38 +1176,33 @@ export default function PortfolioPage() {
     setPositionToWithdraw(null);
     pendingActionRef.current = null;
 
-    // Background refetch to correct any optimistic errors (guard with 15s cooldown)
+    // Background refetch to correct any optimistic errors and invalidate global TVL cache (guard with 15s cooldown)
     const now = Date.now();
     if (now - lastRevalidationRef.current >= 15000) {
       lastRevalidationRef.current = now;
+
+      // Get poolId for global cache invalidation
+      const poolIdForInvalidation = modifiedPositionPoolInfoRef.current?.poolId;
+
       if (targetPositionId) {
         if (closing) {
-          // For full burns, remove optimistically then just bump refresh
           bumpPositionsRefresh();
         } else {
-          // For partial decreases, refresh just this position
           refreshSinglePosition(targetPositionId).catch(console.error);
         }
       } else {
-        // Fallback to full refresh if no position ID
-        refreshAfterMutation(info).catch(console.error);
+        refreshAfterMutation({ ...info, poolId: poolIdForInvalidation }).catch(console.error);
       }
-    }
 
-    // Trigger pool stats refresh for the affected pool
-    if (modifiedPositionPoolInfoRef.current) {
-      const { poolId, subgraphId } = modifiedPositionPoolInfoRef.current;
-      try { 
-        fetch('/api/internal/revalidate-pools', { method: 'POST' })
-          .catch(() => {});
-      } catch (error) {
-        console.warn('[onLiquidityDecreasedCallback] Failed to refresh pool stats:', error);
+      // Invalidate global pool stats cache for the affected pool
+      if (poolIdForInvalidation) {
+        refreshAfterMutation({ txHash: info?.txHash, blockNumber: info?.blockNumber, poolId: poolIdForInvalidation }).catch(console.error);
       }
+
       modifiedPositionPoolInfoRef.current = null;
     }
   }, [refreshAfterMutation, refreshSinglePosition, bumpPositionsRefresh, positionToWithdraw]);
 
-  const onLiquidityDecreased = useCallback(async () => {}, []);
   // Enhanced liquidity hooks with proper callbacks
   const { increaseLiquidity, isLoading: isIncreasingLiquidity, isSuccess: isIncreaseSuccess, hash: increaseTxHash } = useIncreaseLiquidity({ 
     onLiquidityIncreased: onLiquidityIncreasedCallback 
@@ -2402,7 +2364,7 @@ export default function PortfolioPage() {
             </div>
             </div>
             {isIntegrateBalances && selectedSection === 'Balances' ? (
-              <div className={`rounded-lg bg-muted/30 border border-sidebar-border/60 ${showSkeletonFor.table ? 'animate-pulse' : ''}`}>
+              <div className={`rounded-lg bg-muted/30 border border-sidebar-border/60 ${showSkeletonFor.table ? 'animate-skeleton-pulse' : ''}`}>
                 <div className="flex items-center justify-between pl-6 pr-6 py-3 border-b border-sidebar-border/60 text-xs text-muted-foreground">
                   <span className="tracking-wider font-mono font-bold">TOKEN</span>
                   <div className="group inline-flex items-center">
@@ -2449,7 +2411,7 @@ export default function PortfolioPage() {
                     Balances
                   </button>
                 </div>
-                <div className={`rounded-lg bg-muted/30 border border-sidebar-border/60 ${showSkeletonFor.table ? 'animate-pulse' : ''}`}>
+                <div className={`rounded-lg bg-muted/30 border border-sidebar-border/60 ${showSkeletonFor.table ? 'animate-skeleton-pulse' : ''}`}>
                   <div className="flex items-center justify-between pl-6 pr-6 py-3 border-b border-sidebar-border/60 text-xs text-muted-foreground">
                     <span className="tracking-wider font-mono font-bold">TOKEN</span>
                     <div className="group inline-flex items-center">
@@ -2813,7 +2775,7 @@ export default function PortfolioPage() {
                   );
                 })()}
               </div>
-              <div className={`rounded-lg bg-muted/30 border border-sidebar-border/60 ${showSkeletonFor.table ? 'animate-pulse' : ''}`}>
+              <div className={`rounded-lg bg-muted/30 border border-sidebar-border/60 ${showSkeletonFor.table ? 'animate-skeleton-pulse' : ''}`}>
                 {showSkeletonFor.table ? (
                   <BalancesListSkeleton />
                 ) : (!isConnected) ? (
@@ -2930,19 +2892,6 @@ export default function PortfolioPage() {
                     </PopoverTrigger>
                     <PopoverContent className="w-64 p-0 bg-container border-sidebar-border" align="end">
                       <div className="p-4 space-y-4">
-                        <div className="flex items-center justify-between">
-                          <h4 className="text-sm font-medium text-foreground">Filters</h4>
-                          <button
-                            onClick={() => {
-                              setPositionStatusFilter('all');
-                            }}
-                            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                          >
-                            <XIcon className="h-3 w-3" />
-                            <span>Clear</span>
-                          </button>
-                        </div>
-                        <Separator className="bg-sidebar-border" />
                         <div className="space-y-2">
                           <label className="text-xs font-medium text-muted-foreground">Status</label>
                           <div className="space-y-1">
@@ -3464,6 +3413,20 @@ export default function PortfolioPage() {
             setPositionToWithdraw(selectedPosition);
             pendingActionRef.current = { type: 'withdraw' };
             onLiquidityDecreasedCallback(info);
+          }}
+          onAfterLiquidityAdded={(tvlDelta, info) => {
+            // Trigger global cache invalidation for this pool
+            const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === selectedPosition.poolId?.toLowerCase());
+            if (poolConfig?.id) {
+              refreshAfterMutation({ txHash: info.txHash, blockNumber: info.blockNumber, poolId: poolConfig.id }).catch(console.error);
+            }
+          }}
+          onAfterLiquidityRemoved={(tvlDelta, info) => {
+            // Trigger global cache invalidation for this pool
+            const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === selectedPosition.poolId?.toLowerCase());
+            if (poolConfig?.id) {
+              refreshAfterMutation({ txHash: info.txHash, blockNumber: info.blockNumber, poolId: poolConfig.id }).catch(console.error);
+            }
           }}
           currentPrice={poolDataByPoolId[selectedPosition.poolId?.toLowerCase()]?.price?.toString() || null}
           currentPoolTick={poolDataByPoolId[selectedPosition.poolId?.toLowerCase()]?.tick || null}

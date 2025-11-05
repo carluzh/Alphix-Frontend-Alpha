@@ -33,6 +33,7 @@ interface RemoveLiquidityFormPanelProps {
   hideContinueButton?: boolean;
   externalIsSuccess?: boolean;
   externalTxHash?: string;
+  onLiquidityDecreased?: (info?: { txHash?: `0x${string}`; blockNumber?: bigint; isFullBurn?: boolean }) => void;
 }
 
 export function RemoveLiquidityFormPanel({
@@ -42,7 +43,8 @@ export function RemoveLiquidityFormPanel({
   onAmountsChange,
   hideContinueButton = false,
   externalIsSuccess = false,
-  externalTxHash
+  externalTxHash,
+  onLiquidityDecreased: onLiquidityDecreasedProp
 }: RemoveLiquidityFormPanelProps) {
   const { address: accountAddress } = useAccount();
   const { data: allPrices } = useAllPrices();
@@ -98,6 +100,11 @@ export function RemoveLiquidityFormPanel({
       // Only set success view - don't call onSuccess() yet
       // onSuccess() will be called when user clicks "Done" button in success view
       setShowSuccessView(true);
+
+      // Forward to parent callback for optimistic updates
+      if (onLiquidityDecreasedProp) {
+        onLiquidityDecreasedProp(info);
+      }
     }
   });
 

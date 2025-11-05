@@ -1140,37 +1140,29 @@ export function AddLiquidityModal({
     setActiveInputSide(null);
   };
 
-  const handleUseFullBalance = (balanceString: string, tokenSymbolForDecimals: TokenSymbol, isToken0: boolean) => {
+  const handleUseFullBalance = (isToken0: boolean) => {
     try {
-      const numericBalance = parseFloat(balanceString);
-      if (isNaN(numericBalance) || numericBalance <= 0) return;
-
-      const formattedBalance = numericBalance.toFixed(TOKEN_DEFINITIONS[tokenSymbolForDecimals]?.decimals || 18);
-
-      if (isExistingPosition) {
-        // For existing positions
-        if (isToken0) {
-          setIncreaseAmount0(formattedBalance);
+      // Use the percentage hook with 100% to get exact balance (same as MAX button)
+      if (isToken0) {
+        const amount = handleToken0Percentage(100);
+        if (isExistingPosition && amount) {
           setIncreaseActiveInputSide('amount0');
           // Trigger calculation for the corresponding amount
-          if (formattedBalance && parseFloat(formattedBalance) > 0) {
-            calculateIncreaseAmount(formattedBalance, 'amount0');
+          if (amount && parseFloat(amount) > 0) {
+            calculateIncreaseAmount(amount, 'amount0');
           }
-        } else {
-          setIncreaseAmount1(formattedBalance);
-          setIncreaseActiveInputSide('amount1');
-          // Trigger calculation for the corresponding amount
-          if (formattedBalance && parseFloat(formattedBalance) > 0) {
-            calculateIncreaseAmount(formattedBalance, 'amount1');
-          }
+        } else if (!isExistingPosition) {
+          setActiveInputSide('amount0');
         }
       } else {
-        // For new positions
-        if (isToken0) {
-          setAmount0(formattedBalance);
-          setActiveInputSide('amount0');
-        } else {
-          setAmount1(formattedBalance);
+        const amount = handleToken1Percentage(100);
+        if (isExistingPosition && amount) {
+          setIncreaseActiveInputSide('amount1');
+          // Trigger calculation for the corresponding amount
+          if (amount && parseFloat(amount) > 0) {
+            calculateIncreaseAmount(amount, 'amount1');
+          }
+        } else if (!isExistingPosition) {
           setActiveInputSide('amount1');
         }
       }
@@ -1370,7 +1362,7 @@ export function AddLiquidityModal({
                       <button
                         type="button"
                         className="text-xs text-muted-foreground hover:text-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed border-0"
-                        onClick={() => handleUseFullBalance(token0BalanceData?.formatted || "0", positionToModify.token0.symbol as TokenSymbol, true)}
+                        onClick={() => handleUseFullBalance(true)}
                         disabled={isIncreasingLiquidity}
                       >
                         Balance: {displayToken0Balance} {positionToModify.token0.symbol}
@@ -1471,7 +1463,7 @@ export function AddLiquidityModal({
                       <button
                         type="button"
                         className="text-xs text-muted-foreground hover:text-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed border-0"
-                        onClick={() => handleUseFullBalance(token1BalanceData?.formatted || "0", positionToModify.token1.symbol as TokenSymbol, false)}
+                        onClick={() => handleUseFullBalance(false)}
                         disabled={isIncreasingLiquidity}
                       >
                         Balance: {displayToken1Balance} {positionToModify.token1.symbol}
@@ -1572,7 +1564,7 @@ export function AddLiquidityModal({
                         <button
                           type="button"
                           className="text-xs text-muted-foreground hover:text-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed border-0"
-                          onClick={() => handleUseFullBalance(token0BalanceData?.formatted || "0", positionToModify.token0.symbol as TokenSymbol, true)}
+                          onClick={() => handleUseFullBalance(true)}
                           disabled={isIncreasingLiquidity}
                         >
                           Balance: {displayToken0Balance} {positionToModify.token0.symbol}
@@ -1627,7 +1619,7 @@ export function AddLiquidityModal({
                         <button
                           type="button"
                           className="text-xs text-muted-foreground hover:text-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed border-0"
-                          onClick={() => handleUseFullBalance(token1BalanceData?.formatted || "0", positionToModify.token1.symbol as TokenSymbol, false)}
+                          onClick={() => handleUseFullBalance(false)}
                           disabled={isIncreasingLiquidity}
                         >
                           Balance: {displayToken1Balance} {positionToModify.token1.symbol}

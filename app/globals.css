@@ -111,6 +111,20 @@
     animation-play-state: paused;
   }
 
+  /* Synchronized skeleton pulse animation - all skeletons animate in sync */
+  @keyframes skeleton-pulse {
+    0%, 100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.5;
+    }
+  }
+
+  .animate-skeleton-pulse {
+    animation: skeleton-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
   /* === LAYOUT UTILITIES === */
   .content-container {
     @apply w-full max-w-5xl 2xl:max-w-screen-xl mx-auto px-4 sm:px-6 md:px-8;

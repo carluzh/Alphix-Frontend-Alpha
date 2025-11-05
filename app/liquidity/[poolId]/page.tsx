@@ -46,6 +46,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { getPositionManagerAddress } from '@/lib/pools-config';
 import { position_manager_abi } from '@/lib/abis/PositionManager_abi';
 import { getFromCache, setToCache, getFromCacheWithTtl, getUserPositionsCacheKey, getPoolStatsCacheKey, getPoolDynamicFeeCacheKey, getPoolChartDataCacheKey, loadUserPositionIds, derivePositionsFromIds, invalidateCacheEntry, waitForSubgraphBlock, setIndexingBarrier, invalidateUserPositionIdsCache, refreshFeesAfterTransaction } from "../../../lib/client-cache";
+import { invalidateAfterTx } from "@/lib/invalidation";
 
 import type { Pool } from "../../../types";
 import { AddLiquidityForm } from "../../../components/liquidity/AddLiquidityForm";
@@ -462,9 +463,9 @@ export default function PoolDetailPage() {
   const queryClient = useQueryClient();
   const [userPositions, setUserPositions] = useState<ProcessedPosition[]>([]);
   const [pendingNewPositions, setPendingNewPositions] = useState<Array<{
-    id: string, 
-    token0Symbol: string, 
-    token1Symbol: string, 
+    id: string,
+    token0Symbol: string,
+    token1Symbol: string,
     createdAt: number,
     baselineIds?: string[]
   }>>([]);
@@ -472,6 +473,10 @@ export default function PoolDetailPage() {
   const [activeChart, setActiveChart] = useState<keyof Pick<typeof chartConfig, 'volume' | 'tvl' | 'volumeTvlRatio' | 'emaRatio' | 'dynamicFee'>>("volumeTvlRatio");
   const [isDynamicFeeModalOpen, setIsDynamicFeeModalOpen] = useState(false);
   const [hoveredFee, setHoveredFee] = useState<number | null>(null);
+
+  // Pool activity height management - capture initial height on mount only
+  const poolActivityRef = useRef<HTMLDivElement>(null);
+  const [poolActivityHeight, setPoolActivityHeight] = useState<number | null>(null);
 
 
   const { address: accountAddress, isConnected, chainId } = useAccount();
@@ -761,6 +766,22 @@ export default function PoolDetailPage() {
       return () => window.removeEventListener('resize', handleResize);
     }
   }, []);
+
+  // Capture pool activity initial height on mount only
+  useEffect(() => {
+    if (poolActivityRef.current && poolActivityHeight === null) {
+      // Wait for layout to settle
+      const timer = setTimeout(() => {
+        if (poolActivityRef.current) {
+          const height = poolActivityRef.current.offsetHeight;
+          if (height > 0) {
+            setPoolActivityHeight(height);
+          }
+        }
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [poolActivityHeight]);
 
   const processChartDataForScreenSize = useCallback((data: ChartDataPoint[]) => {
     if (!data?.length) return [];
@@ -1494,38 +1515,55 @@ export default function PoolDetailPage() {
     setCurrentPoolData(combinedPoolData);
   }, [poolId, isConnected, accountAddress, router]);
 
-  // Simple refresh function that adds skeleton and starts aggressive position polling
-  const refreshAfterLiquidityAddedWithSkeleton = useCallback(async (token0Symbol?: string, token1Symbol?: string) => {
-    // Prevent duplicate calls within 2 seconds
+  const refreshAfterLiquidityAddedWithSkeleton = useCallback(async (token0Symbol?: string, token1Symbol?: string, txInfo?: { txHash?: `0x${string}`; blockNumber?: bigint; tvlDelta?: number }) => {
     const now = Date.now();
     const timeSinceLastCall = now - (refreshAfterLiquidityAddedWithSkeleton as any).lastCallTime;
-    if ((refreshAfterLiquidityAddedWithSkeleton as any).lastCallTime && timeSinceLastCall < 2000) {
-      return;
-    }
+    if ((refreshAfterLiquidityAddedWithSkeleton as any).lastCallTime && timeSinceLastCall < 2000) return;
     (refreshAfterLiquidityAddedWithSkeleton as any).lastCallTime = now;
 
-    // 1. Immediately add skeleton if we have token info
     if (token0Symbol && token1Symbol) {
       const skeletonId = `skeleton-${Date.now()}`;
       const createdAt = Date.now();
-      // Capture current baseline at the time of skeleton creation, not at callback creation
       const currentBaselineIds = userPositions.map(p => p.positionId);
+      setPendingNewPositions(prev => [...prev, { id: skeletonId, token0Symbol, token1Symbol, createdAt, baselineIds: currentBaselineIds }]);
 
-      setPendingNewPositions(prev => {
-        const newSkeletons = [...prev, {
-          id: skeletonId,
-          token0Symbol,
-          token1Symbol,
-          createdAt,
-          baselineIds: currentBaselineIds
-        }];
-        return newSkeletons;
-      });
+      if (txInfo?.tvlDelta && currentPoolData?.liquidity) {
+        const currentTvl = parseFloat(String(currentPoolData.liquidity).replace(/[$,]/g, ''));
+        if (Number.isFinite(currentTvl)) {
+          const optimisticTvl = Math.max(0, currentTvl + txInfo.tvlDelta);
+          setCurrentPoolData(prev => prev ? { ...prev, liquidity: formatUSD(optimisticTvl) } : prev);
+        }
+      }
     }
 
-    // 2. Start aggressive position polling with retries and guaranteed invalidation
-    aggressivePositionRefresh();
-  }, [userPositions]);
+    if (txInfo?.txHash && txInfo?.blockNumber && accountAddress && poolId) {
+      try {
+        await invalidateAfterTx(queryClient, {
+          owner: accountAddress, poolId, reason: 'liquidity-added', awaitSubgraphSync: true, blockNumber: txInfo.blockNumber, reloadPositions: true,
+          refreshPoolData: silentRefreshTVL,
+          onPositionsReloaded: (allDerived) => {
+            const subId = (getPoolConfiguration(poolId)?.subgraphId || '').toLowerCase();
+            const filtered = allDerived.filter((pos: any) => String(pos.poolId || '').toLowerCase() === subId);
+            setUserPositions(prev => {
+              const existingIds = new Set(prev.map(p => p.positionId));
+              const newPositions = filtered.filter(p => !existingIds.has(p.positionId));
+              const updated = prev.map(p => {
+                const fresh = filtered.find(f => f.positionId === p.positionId);
+                return fresh ? { ...fresh, isOptimisticallyUpdating: undefined } : p;
+              });
+              return [...updated, ...newPositions];
+            });
+            setPendingNewPositions([]);
+          },
+          clearOptimisticStates: () => {
+            setUserPositions(prev => prev.map(p => ({ ...p, isOptimisticallyUpdating: undefined })));
+            setOptimisticallyClearedFees(new Set());
+            setPendingNewPositions([]);
+          }
+        });
+      } catch (error) { console.error('[refreshAfterLiquidityAdded] Failed:', error); setPendingNewPositions([]); aggressivePositionRefresh(); }
+    } else { aggressivePositionRefresh(); }
+  }, [userPositions, accountAddress, poolId, queryClient, fetchPageData, currentPoolData]);
 
   // Aggressive position refresh with guaranteed cache invalidation and retries
   const aggressivePositionRefresh = useCallback(async () => {
@@ -1610,78 +1648,83 @@ export default function PoolDetailPage() {
   const setPostMutationWindow = () => { lastMutationAtRef.current = Date.now(); };
   const isInPostMutationWindow = () => Date.now() - lastMutationAtRef.current < 60_000; // 60s window
 
+  const silentRefreshTVL = useCallback(async () => {
+    if (!poolId) return;
+    const poolInfo = getPoolConfiguration(poolId);
+    if (!poolInfo?.subgraphId) return;
+    try {
+      const versionResponse = await fetch('/api/cache-version', { cache: 'no-store' as any } as any);
+      const versionData = await versionResponse.json();
+      const resp = await fetch(versionData.cacheUrl);
+      if (resp.ok) {
+        const data = await resp.json();
+        const poolIdLc = String(poolInfo.subgraphId).toLowerCase();
+        const match = Array.isArray(data?.pools) ? data.pools.find((p: any) => String(p.poolId || '').toLowerCase() === poolIdLc) : null;
+        if (match) {
+          const tvlUSD = Number(match.tvlUSD) || 0;
+          if (Number.isFinite(tvlUSD)) {
+            setCurrentPoolData(prev => prev ? { ...prev, liquidity: formatUSD(tvlUSD) } : prev);
+            const todayKey = new Date().toISOString().split('T')[0];
+            setApiChartData(prev => {
+              if (!prev || prev.length === 0) return prev;
+              const todayIndex = prev.findIndex(d => d.date === todayKey);
+              if (todayIndex !== -1 && Math.abs(prev[todayIndex].tvlUSD - tvlUSD) > 0.01) {
+                const updated = [...prev];
+                updated[todayIndex] = { ...updated[todayIndex], tvlUSD };
+                return updated;
+              }
+              return prev;
+            });
+          }
+        }
+      }
+    } catch (error) { console.error('[silentRefreshTVL] Failed:', error); }
+  }, [poolId]);
 
   // Simple fetch wrapper - no more complex backoff logic
   const fetchWithBackoffIfNeeded = async (force?: boolean, skipPositions?: boolean) => {
     await fetchPageData(true, skipPositions);
   };
 
-  const refreshAfterMutation = useCallback(async (info?: { txHash?: `0x${string}`; blockNumber?: bigint }) => {
-    // This function orchestrates the entire post-transaction refresh sequence.
-    if (!poolId || !isConnected || !accountAddress) {
-      return;
-    }
+  const refreshAfterMutation = useCallback(async (info?: { txHash?: `0x${string}`; blockNumber?: bigint; tvlDelta?: number }) => {
+    if (!poolId || !isConnected || !accountAddress) return;
 
-    try {
-      const targetBlock = info?.blockNumber ?? await publicClient.getBlockNumber();
-
-      const barrier = waitForSubgraphBlock(Number(targetBlock), { timeoutMs: 45000, minWaitMs: 3000, maxIntervalMs: 3000 });
-      if (accountAddress) setIndexingBarrier(accountAddress, barrier);
-      await barrier;
-
-      // Additional delay to ensure subgraph has fully processed the transaction
-      await new Promise(resolve => setTimeout(resolve, 2000));
-
-      // Trigger server revalidation
-      try {
-        const revalidateResp = await fetch('/api/internal/revalidate-pools', { method: 'POST' });
-        const revalidateData = await revalidateResp.json();
-        
-        // Store cache version for subsequent fetches
-        if (revalidateData.cacheVersion) {
-          SafeStorage.set('pools-cache-version', revalidateData.cacheVersion.toString());
-        }
-        
-        // Set hint for list page to refetch
-        SafeStorage.set('cache:pools-batch:invalidated', 'true');
-      } catch (error) {
-        console.error('[refreshAfterMutation] Failed to revalidate server cache:', error);
-      }
-
-      // Refresh pool data (TVL, fees) - critical for withdrawals
-      await fetchWithBackoffIfNeeded(true, false); // Force refresh, include positions
-
-      // Canonical positions refresh: invalidate and fetch fresh ids
-      if (accountAddress) {
-        invalidateUserPositionIdsCache(accountAddress);
-        const ids = await loadUserPositionIds(accountAddress);
-        const allDerived = await derivePositionsFromIds(accountAddress, ids);
+    await invalidateAfterTx(queryClient, {
+      owner: accountAddress,
+      poolId,
+      reason: 'liquidity-withdrawn',
+      awaitSubgraphSync: true,
+      blockNumber: info?.blockNumber,
+      reloadPositions: true,
+      refreshPoolData: silentRefreshTVL, // Changed to silent refresh
+      onPositionsReloaded: (allDerived) => {
         const subId = (getPoolConfiguration(poolId)?.subgraphId || '').toLowerCase();
         const filtered = allDerived.filter((pos: any) => String(pos.poolId || '').toLowerCase() === subId);
-        setUserPositions(filtered);
+        // Merge positions: update existing, add new, remove burned
+        setUserPositions(prev => {
+          const freshIds = new Set(filtered.map(p => p.positionId));
+          const existingIds = new Set(prev.map(p => p.positionId));
+
+          // Update existing positions that still exist (removes burned positions)
+          const updated = prev
+            .filter(p => freshIds.has(p.positionId)) // Remove burned positions
+            .map(p => {
+              const fresh = filtered.find(f => f.positionId === p.positionId);
+              return fresh ? { ...fresh, isOptimisticallyUpdating: undefined } : p;
+            });
+
+          // Add new positions
+          const newPositions = filtered.filter(p => !existingIds.has(p.positionId));
+
+          return [...updated, ...newPositions];
+        });
+      },
+      clearOptimisticStates: () => {
+        setUserPositions(prev => prev.map(p => ({ ...p, isOptimisticallyUpdating: undefined })));
+        setOptimisticallyClearedFees(new Set());
       }
-
-      // Clear any optimistic loading states
-      setUserPositions(prev => prev.map(p => ({ ...p, isOptimisticallyUpdating: undefined })));
-
-      // Clear optimistically cleared fees since fresh data has been loaded
-      setOptimisticallyClearedFees(new Set());
-
-      // Notify other components/pages of position changes
-      if (accountAddress) {
-        prefetchService.notifyPositionsRefresh(accountAddress, 'liquidity-withdrawn');
-      }
-      
-    } catch (error) {
-      console.error('[refreshAfterMutation] failed:', error);
-      
-      // Clear optimistic states on error too
-      setUserPositions(prev => prev.map(p => ({ ...p, isOptimisticallyUpdating: undefined })));
-      setOptimisticallyClearedFees(new Set());
-    } finally {
-      // No chart loading state needed - chart data handled reactively
-    }
-  }, [poolId, isConnected, accountAddress, fetchWithBackoffIfNeeded]);
+    });
+  }, [poolId, isConnected, accountAddress, silentRefreshTVL, queryClient]);
 
   // Refresh only a single position without affecting other positions
   const refreshSinglePosition = useCallback(async (positionId: string) => {
@@ -1718,73 +1761,36 @@ export default function PoolDetailPage() {
     }
   }, [accountAddress]);
 
-  // Refresh for position increases - similar to withdrawal with longer delays and fee clearing
+  // Refresh for position increases
   const refreshAfterIncrease = useCallback(async (info?: { txHash?: `0x${string}`; blockNumber?: bigint }) => {
     if (!poolId || !isConnected || !accountAddress) return;
 
-    try {
-      const targetBlock = info?.blockNumber ?? await publicClient.getBlockNumber();
-
-      const barrier = waitForSubgraphBlock(Number(targetBlock), { timeoutMs: 45000, minWaitMs: 3000, maxIntervalMs: 3000 });
-      if (accountAddress) setIndexingBarrier(accountAddress, barrier);
-      await barrier;
-
-      // Additional delay to ensure subgraph has fully processed the transaction
-      await new Promise(resolve => setTimeout(resolve, 2000));
-
-      // Trigger server revalidation
-      try {
-        const revalidateResp = await fetch('/api/internal/revalidate-pools', { method: 'POST' });
-        const revalidateData = await revalidateResp.json();
-        
-        if (revalidateData.cacheVersion) {
-          SafeStorage.set('pools-cache-version', revalidateData.cacheVersion.toString());
+    await invalidateAfterTx(queryClient, {
+      owner: accountAddress,
+      poolId,
+      reason: 'liquidity-added',
+      awaitSubgraphSync: true,
+      blockNumber: info?.blockNumber,
+      reloadPositions: true,
+      refreshPoolData: async () => {
+        await fetchWithBackoffIfNeeded(true, false);
+      },
+      onPositionsReloaded: (allDerived) => {
+        const subId = poolId.toLowerCase();
+        const filtered = allDerived.filter((pos: any) => {
+          const posPoolId = String(pos.poolId || '').toLowerCase();
+          return posPoolId === subId;
+        });
+        if (filtered.length > 0) {
+          setUserPositions(filtered);
         }
-        SafeStorage.set('cache:pools-batch:invalidated', 'true');
-      } catch (error) {
-        console.error('[refreshAfterIncrease] Failed to revalidate server cache:', error);
+      },
+      clearOptimisticStates: () => {
+        setUserPositions(prev => prev.map(p => ({ ...p, isOptimisticallyUpdating: undefined })));
+        setOptimisticallyClearedFees(new Set());
       }
-
-      await fetchWithBackoffIfNeeded(true, false); // Force refresh, include positions
-
-      // Refresh user positions to get updated data including fees
-      if (accountAddress) {
-        invalidateUserPositionIdsCache(accountAddress);
-        const refreshedIds = await loadUserPositionIds(accountAddress);
-        if (refreshedIds && refreshedIds.length > 0) {
-          const allDerived = await derivePositionsFromIds(accountAddress, refreshedIds);
-          const subId = poolId.toLowerCase();
-          const filtered = allDerived.filter((pos: any) => {
-            const posPoolId = String(pos.poolId || '').toLowerCase();
-            return posPoolId === subId;
-          });
-          if (filtered.length > 0) {
-            setUserPositions(filtered);
-          }
-        }
-      }
-
-      // Clear any optimistic loading states
-      setUserPositions(prev => prev.map(p => ({ ...p, isOptimisticallyUpdating: undefined })));
-
-      // Clear optimistically cleared fees since fresh data has been loaded
-      setOptimisticallyClearedFees(new Set());
-
-      // Notify other components/pages of position changes
-      if (accountAddress) {
-        prefetchService.notifyPositionsRefresh(accountAddress, 'liquidity-added');
-      }
-      
-    } catch (error) {
-      console.error('[refreshAfterIncrease] failed:', error);
-      
-      // Clear optimistic states on error too
-      setUserPositions(prev => prev.map(p => ({ ...p, isOptimisticallyUpdating: undefined })));
-      setOptimisticallyClearedFees(new Set());
-    } finally {
-      // No chart loading state needed - chart data handled reactively
-    }
-  }, [poolId, isConnected, accountAddress, fetchWithBackoffIfNeeded]);
+    });
+  }, [poolId, isConnected, accountAddress, fetchWithBackoffIfNeeded, queryClient]);
 
   const handledIncreaseHashRef = useRef<string | null>(null);
   const onLiquidityIncreasedCallback = useCallback((info?: { txHash?: `0x${string}`; blockNumber?: bigint, increaseAmounts?: { amount0: string; amount1: string } }) => {
@@ -1866,47 +1872,47 @@ export default function PoolDetailPage() {
     }
     handledDecreaseHashRef.current = info.txHash;
 
-    if (pendingActionRef.current?.type !== 'decrease' && pendingActionRef.current?.type !== 'withdraw') {
+    // Support both old modal (positionToBurn) and new modal (selectedPositionForDetails)
+    const targetPosition = positionToBurn || selectedPositionForDetails;
+
+    // Skip if this isn't a withdraw/decrease action and we don't have a position to update
+    const isPendingAction = pendingActionRef.current?.type === 'decrease' || pendingActionRef.current?.type === 'withdraw';
+    if (!isPendingAction && !targetPosition) {
       return;
     }
 
-    const closing = info?.isFullBurn ?? isFullBurn; // Use info from transaction or fallback to old modal state
-    
+    const closing = info?.isFullBurn ?? isFullBurn;
+
     // IMMEDIATE OPTIMISTIC UPDATES (happen with toast)
-    if (positionToBurn) {
+    if (targetPosition) {
       if (closing) {
         // For full burns: immediately remove position from UI
-        const positionValue = calculatePositionUsd(positionToBurn);
-        setUserPositions(prev => prev.filter(p => p.positionId !== positionToBurn.positionId));
+        const positionValue = calculatePositionUsd(targetPosition);
+        setUserPositions(prev => prev.filter(p => p.positionId !== targetPosition.positionId));
       } else {
         // For partial withdrawals: show loading state and clear fees optimistically
-        setUserPositions(prev => prev.map(p => 
-          p.positionId === positionToBurn.positionId 
-            ? { 
-                ...p, 
+        setUserPositions(prev => prev.map(p =>
+          p.positionId === targetPosition.positionId
+            ? {
+                ...p,
                 isOptimisticallyUpdating: true,
-                // Optimistically clear fees after withdrawal
                 fees: {
                   amount0: '0',
                   amount1: '0',
                   totalValueUSD: 0
                 }
-              } 
+              }
             : p
         ));
-        
-        // Also add to optimistically cleared fees set
-        setOptimisticallyClearedFees(prev => new Set(prev).add(positionToBurn.positionId));
+
+        setOptimisticallyClearedFees(prev => new Set(prev).add(targetPosition.positionId));
       }
     }
-    
-    // Success notification is handled by useDecreaseLiquidity hook
-    // Don't close or clear position here - let the modal's success view show
+
     pendingActionRef.current = null;
 
-    // IMMEDIATE refetch for withdrawals - fees are critical and must be fresh
     refreshAfterMutation(info);
-  }, [isFullBurn, refreshAfterMutation, positionToBurn, calculatePositionUsd, currentPoolData]);
+  }, [isFullBurn, refreshAfterMutation, positionToBurn, selectedPositionForDetails, calculatePositionUsd, currentPoolData]);
 
   // Initialize the liquidity modification hooks (moved here after callback definitions)
   const { increaseLiquidity, isLoading: isIncreasingLiquidity, isSuccess: isIncreaseSuccess, hash: increaseTxHash, reset: resetIncreaseLiquidity } = useIncreaseLiquidity({
@@ -2695,7 +2701,11 @@ export default function PoolDetailPage() {
           
               {/* Pool Overview Section */}
               <div className="flex-1 min-h-0">
-                <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 transition-colors flex flex-col h-full min-h-[300px] sm:min-h-[350px]">
+                <div
+                  ref={poolActivityRef}
+                  className="rounded-lg bg-muted/30 border border-sidebar-border/60 transition-colors flex flex-col min-h-[300px] sm:min-h-[350px]"
+                  style={poolActivityHeight ? { height: `${poolActivityHeight}px` } : { height: '100%' }}
+                >
                   <div className="flex items-center justify-between px-4 py-2 border-b border-sidebar-border/60">
                     <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">POOL ACTIVITY</h2>
                     {/* Dropdown for smaller screens < 1500px */}
@@ -3368,8 +3378,8 @@ export default function PoolDetailPage() {
                     <AddLiquidityFormMemo
                       selectedPoolId={poolId}
                       poolApr={currentPoolData?.apr}
-                      onLiquidityAdded={(token0Symbol?: string, token1Symbol?: string) => {
-                        refreshAfterLiquidityAddedWithSkeleton(token0Symbol, token1Symbol);
+                      onLiquidityAdded={(token0Symbol?: string, token1Symbol?: string, txInfo?) => {
+                        refreshAfterLiquidityAddedWithSkeleton(token0Symbol, token1Symbol, txInfo);
                       }}
                       sdkMinTick={SDK_MIN_TICK}
                       sdkMaxTick={SDK_MAX_TICK}
@@ -3531,13 +3541,13 @@ export default function PoolDetailPage() {
         isIncreasingLiquidity={showIncreaseModal ? isIncreasingLiquidity : undefined}
         isIncreaseSuccess={showIncreaseModal ? isIncreaseSuccess : undefined}
         increaseTxHash={showIncreaseModal ? increaseTxHash : undefined}
-        onLiquidityAdded={(token0Symbol?: string, token1Symbol?: string) => {
+        onLiquidityAdded={(token0Symbol?: string, token1Symbol?: string, txInfo?) => {
           if (showIncreaseModal) {
             // For increase operations, do nothing here - let the transaction callback handle everything
             // This prevents premature toasts and modal closure
           } else {
             setAddLiquidityOpen(false);
-            refreshAfterLiquidityAddedWithSkeleton(token0Symbol, token1Symbol);
+            refreshAfterLiquidityAddedWithSkeleton(token0Symbol, token1Symbol, txInfo);
           }
         }}
       />
@@ -3555,9 +3565,9 @@ export default function PoolDetailPage() {
             <AddLiquidityFormMemo
               selectedPoolId={poolId}
               poolApr={currentPoolData?.apr}
-              onLiquidityAdded={(token0Symbol?: string, token1Symbol?: string) => {
+              onLiquidityAdded={(token0Symbol?: string, token1Symbol?: string, txInfo?) => {
                 setAddLiquidityFormOpen(false);
-                refreshAfterLiquidityAddedWithSkeleton(token0Symbol, token1Symbol);
+                refreshAfterLiquidityAddedWithSkeleton(token0Symbol, token1Symbol, txInfo);
               }}
               sdkMinTick={SDK_MIN_TICK}
               sdkMaxTick={SDK_MAX_TICK}
@@ -3874,6 +3884,30 @@ export default function PoolDetailPage() {
           onRefreshPosition={async () => {
             // Use backoff refresh for proper retry logic with cache invalidation
             await backoffRefreshSinglePosition(selectedPositionForDetails.positionId);
+          }}
+          onLiquidityDecreased={onLiquidityDecreasedCallback}
+          onAfterLiquidityAdded={(tvlDelta, info) => {
+            // Immediate optimistic TVL update
+            if (currentPoolData?.liquidity) {
+              const currentTvl = parseFloat(String(currentPoolData.liquidity).replace(/[$,]/g, ''));
+              if (Number.isFinite(currentTvl)) {
+                const optimisticTvl = Math.max(0, currentTvl + tvlDelta);
+                setCurrentPoolData(prev => prev ? { ...prev, liquidity: formatUSD(optimisticTvl) } : prev);
+              }
+            }
+            // Silent background refresh for actual data
+            silentRefreshTVL();
+          }}
+          onAfterLiquidityRemoved={(tvlDelta, info) => {
+            // Immediate optimistic TVL update (tvlDelta is already negative)
+            if (currentPoolData?.liquidity) {
+              const currentTvl = parseFloat(String(currentPoolData.liquidity).replace(/[$,]/g, ''));
+              if (Number.isFinite(currentTvl)) {
+                const optimisticTvl = Math.max(0, currentTvl + tvlDelta);
+                setCurrentPoolData(prev => prev ? { ...prev, liquidity: formatUSD(optimisticTvl) } : prev);
+              }
+            }
+            // Don't call silentRefreshTVL here - let refreshAfterMutation handle it post-sync
           }}
           currentPrice={currentPrice}
           currentPoolTick={currentPoolTick}

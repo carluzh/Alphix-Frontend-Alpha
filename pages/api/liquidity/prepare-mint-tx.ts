@@ -532,11 +532,23 @@ export default async function handler(
         };
 
         if (permitBatchValues) {
+            // Ensure permitBatchValues has correct structure for SDK
+            const permitBatchForSDK: PermitBatch = {
+                details: permitBatchValues.details.map((detail: any) => ({
+                    token: getAddress(detail.token),
+                    amount: BigInt(detail.amount),
+                    expiration: BigInt(detail.expiration),
+                    nonce: BigInt(detail.nonce),
+                })),
+                spender: getAddress(permitBatchValues.spender),
+                sigDeadline: BigInt(permitBatchValues.sigDeadline),
+            };
+
             mintOptions = {
                 ...mintOptions,
                 batchPermit: {
                     owner: getAddress(userAddress),
-                    permitBatch: permitBatchValues,
+                    permitBatch: permitBatchForSDK,
                     signature: batchPermitSignature as string,
                 }
             };

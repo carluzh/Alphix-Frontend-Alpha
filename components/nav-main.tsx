@@ -11,8 +11,6 @@ import { getAddress, parseUnits, type Address, type Hex } from "viem"
 import { publicClient } from "../lib/viemClient";
 import { FAUCET_CONTRACT_ADDRESS, FAUCET_FUNCTION_SIGNATURE, faucetContractAbi } from "../pages/api/misc/faucet"; // Import constants
 import Link from "next/link";
-// Removed unused SuccessToastIcon import to satisfy linter
-import { BadgeCheck } from "lucide-react";
 import { parseAbi } from "viem"
 import { cn } from "@/lib/utils"; // Added import for cn
 
@@ -172,10 +170,7 @@ export function NavMain({
 
   useEffect(() => {
     if (isConfirmed) {
-      toast.success("Faucet Claimed", {
-        icon: <BadgeCheck className="h-4 w-4 text-sidebar-primary" />,
-        className: 'faucet-claimed'
-      });
+      toast.success("Faucet Claimed");
       resetWriteContract();
       // On successful claim, update local cache and refetch from contract
       const now = Math.floor(Date.now() / 1000);

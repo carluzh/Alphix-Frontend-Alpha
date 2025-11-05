@@ -48,7 +48,6 @@ export function MockSwapComponent({ className, zoom = 1.5 }: MockSwapComponentPr
   const handleFromAmountChange = () => {};
   const onToAmountChange = () => {};
   const handleSwapTokens = () => {};
-  const handleUseFullBalance = () => {};
   const handleUsePercentage = () => {};
   const onFromTokenSelect = () => {};
   const onToTokenSelect = () => {};
@@ -127,7 +126,6 @@ export function MockSwapComponent({ className, zoom = 1.5 }: MockSwapComponentPr
         onToAmountChange={onToAmountChange}
         activelyEditedSide="from"
         handleSwapTokens={handleSwapTokens}
-        handleUseFullBalance={handleUseFullBalance}
         handleUsePercentage={handleUsePercentage}
         availableTokens={availableTokens}
         onFromTokenSelect={onFromTokenSelect}

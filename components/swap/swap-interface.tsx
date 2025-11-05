@@ -25,6 +25,7 @@ import {
 } from "lucide-react"
 import Image from "next/image"
 import { useAccount, useBalance, useSignTypedData, useWriteContract, useWaitForTransactionReceipt } from "wagmi"
+import { useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
 import React from "react"
 import { switchChain } from '@wagmi/core'
@@ -353,6 +354,9 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   const isMobile = useIsMobile();
   const [isMounted, setIsMounted] = useState(false);
   useEffect(() => { setIsMounted(true); }, []);
+
+  // Query client for cache invalidation
+  const queryClient = useQueryClient();
   // Removed route-row hover logic; arrows only show on preview hover
   
   const [swapState, setSwapState] = useState<SwapState>("input");
@@ -722,14 +726,22 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     address: accountAddress,
     token: fromToken.address === "0x0000000000000000000000000000000000000000" ? undefined : fromToken.address,
     chainId: TARGET_CHAIN_ID,
-    query: { enabled: !!accountAddress && !!fromToken.address }
+    query: {
+      enabled: !!accountAddress && !!fromToken.address,
+      staleTime: 5000, // Consider data stale after 5 seconds
+      refetchOnWindowFocus: true, // Refetch when user returns to tab
+    }
   });
 
   const { data: toTokenBalanceData, isLoading: isLoadingToTokenBalance, error: toTokenBalanceError, refetch: refetchToTokenBalance } = useBalance({
     address: accountAddress,
     token: toToken.address === "0x0000000000000000000000000000000000000000" ? undefined : toToken.address,
     chainId: TARGET_CHAIN_ID,
-    query: { enabled: !!accountAddress && !!toToken.address }
+    query: {
+      enabled: !!accountAddress && !!toToken.address,
+      staleTime: 5000, // Consider data stale after 5 seconds
+      refetchOnWindowFocus: true, // Refetch when user returns to tab
+    }
   });
 
   // Use shared percentage input hook for both tokens
@@ -745,28 +757,28 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   // Listen for faucet claim to refresh balances
   useEffect(() => {
     if (!accountAddress) return;
-    
+
     const onRefresh = async () => {
-      // Force refetch of current token balances with fresh data
-      await Promise.all([
-        refetchFromTokenBalance?.({ cancelRefetch: false }),
-        refetchToTokenBalance?.({ cancelRefetch: false })
-      ]);
+      await Promise.all([refetchFromTokenBalance?.(), refetchToTokenBalance?.()]);
+      setTimeout(async () => {
+        queryClient.invalidateQueries({ queryKey: ['balance'] });
+        await Promise.all([refetchFromTokenBalance?.(), refetchToTokenBalance?.()]);
+      }, 2000);
     };
-    
+
     const onStorage = (e: StorageEvent) => {
       if (!e.key || !accountAddress) return;
       if (e.key === `walletBalancesRefreshAt_${accountAddress}`) onRefresh();
     };
-    
+
     window.addEventListener('walletBalancesRefresh', onRefresh as EventListener);
     window.addEventListener('storage', onStorage);
-    
+
     return () => {
       window.removeEventListener('walletBalancesRefresh', onRefresh as EventListener);
       window.removeEventListener('storage', onStorage);
     };
-  }, [accountAddress, fromToken.address, toToken.address, refetchFromTokenBalance, refetchToTokenBalance]);
+  }, [accountAddress, refetchFromTokenBalance, refetchToTokenBalance, queryClient]);
 
   // Update fromToken balance
   useEffect(() => {
@@ -803,7 +815,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       // If no changes, return the existing token object to prevent re-renders
       return prevToken;
     });
-  }, [fromTokenBalanceData, fromTokenBalanceError, isLoadingFromTokenBalance, currentChainId, isConnected, fromToken.symbol]);
+  }, [fromTokenBalanceData, fromTokenBalanceError, isLoadingFromTokenBalance, currentChainId, isConnected, fromToken.symbol, fromToken.usdPrice]);
 
   // Update toToken balance
   useEffect(() => {
@@ -838,7 +850,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       
       return prevToken;
     });
-  }, [toTokenBalanceData, toTokenBalanceError, isLoadingToTokenBalance, currentChainId, isConnected, toToken.symbol]);
+  }, [toTokenBalanceData, toTokenBalanceError, isLoadingToTokenBalance, currentChainId, isConnected, toToken.symbol, toToken.usdPrice]);
 
   // Helper function to format currency
   const formatCurrency = useCallback((valueString: string): string => {
@@ -1441,8 +1453,8 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     }
   };
 
-  // Wrapper function to maintain compatibility with existing code
-  // Delegates to the shared hook handlers
+  // Wrapper function to handle percentage selection for both tokens
+  // For 100%, uses exact formatted balance from blockchain (via the hook)
   const handleUsePercentage = (percentage: number, isFrom: boolean = true) => {
     if (isFrom) {
       handleFromPercentage(percentage);
@@ -1450,30 +1462,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     } else {
       handleToPercentage(percentage);
       lastEditedSideRef.current = 'to';
-    }
-  };
-  
-  const handleUseFullBalance = (token: Token, isFrom: boolean) => {
-    try {
-      // Use the appropriate dynamic balance data based on which token is being used
-      const balanceData = isFrom ? fromTokenBalanceData : toTokenBalanceData;
-
-      // Use the exact formatted value from the blockchain if available
-      if (balanceData && balanceData.formatted) {
-        if (isFrom) {
-          // Set EXACTLY what the blockchain reports - no parsing/formatting that might round
-          setFromAmount(balanceData.formatted);
-          lastEditedSideRef.current = 'from';
-        } else {
-          // Set EXACTLY what the blockchain reports for the "to" token
-          setToAmount(balanceData.formatted);
-          lastEditedSideRef.current = 'to';
-        }
-      } else {
-        console.warn(`No valid balance data for ${token.symbol}`);
-      }
-    } catch (error) {
-      console.error(`Error using exact balance for ${token.symbol}:`, error);
     }
   };
 
@@ -2208,33 +2196,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   // isLoading for balances - now using dynamic loading states
   const isLoadingCurrentFromTokenBalance = isLoadingFromTokenBalance;
   const isLoadingCurrentToTokenBalance = isLoadingToTokenBalance;
-  
-  // Action button text logic - RESTORED
-  let actionButtonText = "Connect Wallet";
-  let actionButtonDisabled = false;
-
-  if (!isMounted) {
-    actionButtonText = "Loading...";
-    actionButtonDisabled = true;
-  } else if (isConnected) {
-    if (currentChainId !== TARGET_CHAIN_ID) {
-      actionButtonText = isAttemptingSwitch ? "Switching..." : `Switch to Base Sepolia`; 
-      actionButtonDisabled = isAttemptingSwitch;
-    } else if (isLoadingCurrentFromTokenBalance || isLoadingCurrentToTokenBalance) {
-      actionButtonText = "Loading Balances...";
-      actionButtonDisabled = true;
-    } else {
-      actionButtonText = "Swap";
-      // Ensure fromAmount is treated as a number for comparison, default to 0 if undefined/empty
-      actionButtonDisabled = parseFloat(fromAmount || "0") <= 0;
-    }
-  } else {
-    // Wallet not connected, button should show "Connect Wallet"
-    // The actual connection is handled by <appkit-button>
-    actionButtonText = "Connect Wallet"; 
-    actionButtonDisabled = false; // <appkit-button> handles its own state
-  }
-  // END RESTORED BLOCK
 
   const userIsOnTargetChain = isConnected && currentChainId === TARGET_CHAIN_ID;
 
@@ -2343,8 +2304,8 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     const currentActualIsOverLimit = actualNumericPercentage > 100;
 
     if (currentActualIsOverLimit) {
-      // Use handleUseFullBalance directly which now uses exact blockchain data
-      handleUseFullBalance(fromToken, true);
+      // Use 100% which now uses exact blockchain data
+      handleUsePercentage(100, true);
       setSelectedPercentageIndex(cyclePercentages.indexOf(100)); // Sets selected step to 100%
     } else {
       let nextIndex = selectedPercentageIndex + 1;
@@ -2514,12 +2475,12 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   // Helper functions for action button text and disabled state
   const getActionButtonText = (): string => {
     if (!isMounted) {
-      return "Loading...";
+      return "Connect Wallet";
     } else if (isConnected) {
       if (currentChainId !== TARGET_CHAIN_ID) {
-        return isAttemptingSwitch ? "Switching..." : "Switch to Base Sepolia";
+        return "Switch to Base Sepolia";
       } else if (isLoadingCurrentFromTokenBalance || isLoadingCurrentToTokenBalance) {
-        return "Loading Balances...";
+        return "Swap";
       } else {
         // Check for insufficient balance
         const fromAmountNum = parseFloat(fromAmount || "0");
@@ -2747,7 +2708,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 onToAmountChange={handleToAmountChange}
                 activelyEditedSide={lastEditedSideRef.current}
                 handleSwapTokens={handleSwapTokens}
-                handleUseFullBalance={handleUseFullBalance}
                 handleUsePercentage={handleUsePercentage}
                 availableTokens={tokenList}
                 onFromTokenSelect={handleFromTokenSelect}

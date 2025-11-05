@@ -165,15 +165,13 @@ export function TokenSelector({
     }
   }, [isOpen]);
 
-  // Fetch token balances when modal opens - using wagmi core to avoid hook rules violations
   useEffect(() => {
     if (!isOpen || !isConnected || currentChainId !== CHAIN_ID || !accountAddress) {
-      // Reset balances when not ready
       const resetBalances: Record<string, TokenBalanceData> = {};
       filteredTokens.forEach(token => {
         resetBalances[token.address] = {
-          balance: "~",
-          usdValue: 0,
+          balance: token.balance || "~",
+          usdValue: token.value ? parseFloat(token.value.replace(/[~$,]/g, '') || "0") : 0,
           isLoading: false
         };
       });
@@ -181,32 +179,28 @@ export function TokenSelector({
       return;
     }
 
-    // Set loading state
-    const loadingBalances: Record<string, TokenBalanceData> = {};
+    const initialBalances: Record<string, TokenBalanceData> = {};
     filteredTokens.forEach(token => {
-      loadingBalances[token.address] = {
-        balance: "Loading...",
-        usdValue: 0,
+      initialBalances[token.address] = {
+        balance: token.balance || "Loading...",
+        usdValue: token.value ? parseFloat(token.value.replace(/[~$,]/g, '') || "0") : 0,
         isLoading: true
       };
     });
-    setTokenBalances(loadingBalances);
+    setTokenBalances(initialBalances);
 
-    // Fetch balances for all tokens in parallel
     const fetchBalances = async () => {
       const balancePromises = filteredTokens.map(async (token) => {
         try {
           let balance = '0';
-          
+
           if (token.address === "0x0000000000000000000000000000000000000000") {
-            // Native ETH balance
             const ethBalance = await getBalance(config, {
               address: accountAddress,
               chainId: CHAIN_ID,
             });
-            balance = formatUnits(ethBalance.value, 18); // ETH has 18 decimals
+            balance = formatUnits(ethBalance.value, 18);
           } else {
-            // ERC20 token
             const result = await readContract(config, {
               address: token.address,
               abi: erc20Abi,
@@ -214,7 +208,7 @@ export function TokenSelector({
               args: [accountAddress],
               chainId: CHAIN_ID,
             });
-            
+
             balance = formatUnits(result, token.decimals);
           }
 
@@ -245,7 +239,7 @@ export function TokenSelector({
 
       const results = await Promise.all(balancePromises);
       const newBalances: Record<string, TokenBalanceData> = {};
-      
+
       results.forEach(result => {
         newBalances[result.address] = result.data;
       });

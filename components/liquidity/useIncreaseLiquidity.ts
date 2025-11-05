@@ -11,11 +11,8 @@ import { baseSepolia } from '@/lib/wagmiConfig';
 import { getAddress, type Hex, BaseError, parseUnits, formatUnits, encodeAbiParameters, keccak256 } from 'viem';
 import { getPositionDetails, getPoolState, preparePermit2BatchForPosition } from '@/lib/liquidity-utils';
 import { publicClient } from '@/lib/viemClient';
-import { prefetchService } from '@/lib/prefetch-service';
 import { refreshFeesAfterTransaction } from '@/lib/client-cache';
 import { invalidateAfterTx } from '@/lib/invalidation';
-import { invalidateActivityCache, invalidateUserPositionsCache, invalidateUserPositionIdsCache } from '@/lib/client-cache';
-import { clearBatchDataCache } from '@/lib/cache-version';
 import { OctagonX, InfoIcon, BadgeCheck } from 'lucide-react';
 
 // Helper function to safely parse amounts without precision loss
@@ -89,6 +86,7 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
   // Ensure we only invoke onLiquidityIncreased once per tx hash
   const handledIncreaseHashRef = React.useRef<string | null>(null);
   const currentPositionIdRef = React.useRef<string | null>(null);
+  const currentPositionDataRef = React.useRef<IncreasePositionData | null>(null);
 
   // Helper function to get the NFT token ID from position parameters
   const getTokenIdFromPosition = useCallback(async (positionData: IncreasePositionData): Promise<bigint> => {
@@ -127,8 +125,9 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
       return;
     }
     
-    // Store position ID for fee refresh after transaction
+    // Store position data for optimistic updates
     currentPositionIdRef.current = positionData.tokenId.toString();
+    currentPositionDataRef.current = positionData;
 
     // IMPORTANT: In Uniswap V4, fee revenue is automatically credited to a position when increasing liquidity
     // We should NOT manually add fees to the amounts - the V4 SDK handles this automatically
@@ -481,29 +480,38 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
           }
         } catch {}
       })();
-      try { if (accountAddress) prefetchService.notifyPositionsRefresh(accountAddress, 'liquidity-added'); } catch {}
-      try { if (accountAddress) invalidateActivityCache(accountAddress); } catch {}
-      // CRITICAL: Invalidate global batch cache after liquidity increase
-      try {
-        clearBatchDataCache();
-        fetch('/api/internal/revalidate-pools', { method: 'POST' }).catch(() => {});
-      } catch {}
-      
-      // CRITICAL: Invalidate React Query caches including fee data
-      try {
-        if (accountAddress) {
-          (async () => {
-            try {
-              await invalidateAfterTx(queryClient, {
-                owner: accountAddress,
-                reason: 'liquidity-added'
-              });
-            } catch {}
-          })();
-        }
-      } catch {}
-      try { if (accountAddress) { invalidateUserPositionsCache(accountAddress); invalidateUserPositionIdsCache(accountAddress); } } catch {}
-      // Removed hook-level revalidate to avoid duplicates; page handles revalidation after subgraph sync
+
+      if (accountAddress && currentPositionDataRef.current && hash) {
+        (async () => {
+          const posData = currentPositionDataRef.current!;
+          const amt0 = parseFloat(increaseAmountsRef.current?.amount0 || '0');
+          const amt1 = parseFloat(increaseAmountsRef.current?.amount1 || '0');
+          let tvlDelta = 0;
+          if (amt0 || amt1) {
+            const { getTokenPrice } = await import('@/lib/price-service');
+            const [p0, p1] = await Promise.all([getTokenPrice(posData.token0Symbol), getTokenPrice(posData.token1Symbol)]);
+            tvlDelta = (p0 ? amt0 * p0 : 0) + (p1 ? amt1 * p1 : 0);
+          }
+          const receipt = await publicClient.getTransactionReceipt({ hash: hash as `0x${string}` }).catch(() => null);
+          const { getPoolSubgraphId } = await import('@/lib/pools-config');
+          await invalidateAfterTx(queryClient, {
+            owner: accountAddress,
+            poolId: getPoolSubgraphId(`${posData.token0Symbol}/${posData.token1Symbol}`) || undefined,
+            positionIds: currentPositionIdRef.current ? [currentPositionIdRef.current] : undefined,
+            blockNumber: receipt?.blockNumber,
+            reason: 'liquidity-added',
+            awaitSubgraphSync: true,
+            optimisticUpdates: tvlDelta > 0 ? {
+              tvlDelta,
+              positionUpdates: currentPositionIdRef.current ? [{
+                positionId: currentPositionIdRef.current,
+                liquidity0Delta: amt0,
+                liquidity1Delta: amt1
+              }] : undefined
+            } : undefined
+          });
+        })().catch(() => {});
+      }
       setIsIncreasing(false);
     } else if (increaseConfirmError) {
       const message = increaseConfirmError instanceof BaseError ? increaseConfirmError.shortMessage : increaseConfirmError.message;

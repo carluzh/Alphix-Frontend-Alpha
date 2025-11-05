@@ -208,7 +208,7 @@ export function CollectFeesFormPanel({
             disabled={isClaimingFees}
             className={isClaimingFees ?
               "w-full relative border border-sidebar-border bg-button px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75" :
-              "w-full text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90"
+              "w-full text-sidebar-primary border border-sidebar-primary bg-button-primary hover-button-primary"
             }
             style={isClaimingFees ?
               { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } :
@@ -216,7 +216,7 @@ export function CollectFeesFormPanel({
             }
           >
             <span className={isClaimingFees ? "animate-pulse" : ""}>
-              {isClaimingFees ? "Collecting..." : "Collect"}
+              Collect
             </span>
           </Button>
         </>

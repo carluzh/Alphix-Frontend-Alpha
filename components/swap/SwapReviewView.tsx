@@ -8,7 +8,6 @@ import {
   CheckIcon,
   ActivityIcon,
   MinusIcon,
-  RefreshCwIcon,
   CoinsIcon,
   FileTextIcon,
   WalletIcon
@@ -287,19 +286,11 @@ export function SwapReviewView({
             : undefined
           }
         >
-          {isSwapping ? (
-            <span className="animate-pulse">
-              {swapProgressState === "approving" || swapProgressState === "waiting_approval" ? "Approving..." :
-                swapProgressState === "signing_permit" ? "Signing..." :
-                swapProgressState === "executing_swap" || swapProgressState === "waiting_confirmation" ? "Swapping..." :
-                "Processing..."}
-            </span>
-          ) : (
-            swapProgressState === "needs_approval" ? "Approve" :
-            swapProgressState === "needs_signature" ? "Sign" :
-            swapProgressState === "ready_to_swap" ? "Confirm Swap" :
-            "Confirm Swap" // Default/Fallback
-          )}
+          <span className={isSwapping ? "animate-pulse" : ""}>
+            {swapProgressState === "needs_approval" || swapProgressState === "approving" || swapProgressState === "waiting_approval" ? "Approve" :
+              swapProgressState === "needs_signature" || swapProgressState === "signing_permit" ? "Sign" :
+              "Confirm Swap"}
+          </span>
         </Button>
       </div>
     </motion.div>
