@@ -106,6 +106,16 @@ export function TransactionFlowPanel({
     try {
       switch (nextStep) {
         case 'approving_zap_tokens':
+          // Safety check: if we've already completed this step, skip to execution
+          if (state.completedSteps.has('approving_zap_tokens')) {
+            console.warn('[TransactionFlow] Approvals already completed, skipping to execution');
+            actions.unlock();
+            actions.setStep('idle');
+            // Trigger next step
+            setTimeout(() => handleProceed(), 100);
+            return;
+          }
+
           // Zap mode: Approve BOTH tokens together (prevents spam)
           const inputTokenSymbol = zapInputToken === 'token0' ? token0Symbol : token1Symbol;
           const outputTokenSymbol = zapInputToken === 'token0' ? token1Symbol : token0Symbol;
@@ -142,9 +152,12 @@ export function TransactionFlowPanel({
           actions.completeStep('approving_zap_tokens');
 
           // Now refetch approval data to clear the needsApproval flags
+          // Wait longer to ensure blockchain state has updated
           if (onRefetchApprovals) {
-            await new Promise(resolve => setTimeout(resolve, 1500));
+            await new Promise(resolve => setTimeout(resolve, 3000)); // Increased delay
             await onRefetchApprovals();
+            // Wait a bit more for the refetch to propagate
+            await new Promise(resolve => setTimeout(resolve, 1000));
           }
 
           // DO NOT auto-progress after batch approval - user should click Execute

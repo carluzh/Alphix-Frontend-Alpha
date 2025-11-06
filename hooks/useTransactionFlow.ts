@@ -147,15 +147,24 @@ export function useTransactionFlow(props?: UseTransactionFlowProps): UseTransact
     if (isZapMode) {
       // Zap flow: 1. Approve both tokens → 2. Execute (consolidated swap + LP deposit)
 
+      // If we've already completed approvals, skip to execution
+      if (state.completedSteps.has('approving_zap_tokens')) {
+        if (!state.completedSteps.has('executing')) {
+          return 'executing';
+        }
+        return null; // All done
+      }
+
+      // Check if approvals are still needed
       const needsInputApproval = approvalData.needsInputTokenERC20Approval;
       const needsOutputApproval = approvalData.needsOutputTokenERC20Approval;
 
-      // If both tokens need approval and we haven't completed the batch approval, do it
-      if ((needsInputApproval || needsOutputApproval) && !state.completedSteps.has('approving_zap_tokens')) {
+      // If either token needs approval and we haven't completed the batch approval, do it
+      if (needsInputApproval || needsOutputApproval) {
         return 'approving_zap_tokens';
       }
 
-      // Execute consolidated zap flow (swap + LP deposit with inline permit signing)
+      // No approvals needed, go straight to execution
       if (!state.completedSteps.has('executing')) {
         return 'executing';
       }
@@ -230,56 +239,102 @@ export function generateStepperSteps(
   // ZAP MODE: 2 steps (Token Approvals → Execute Zap)
   if (isZapMode) {
     // Step 1: Token Approvals (both input and output)
-    const needsInputApproval = approvalData?.needsInputTokenERC20Approval;
-    const needsOutputApproval = approvalData?.needsOutputTokenERC20Approval;
-
-    // Count total approvals needed and completed
-    const totalApprovalsNeeded = (needsInputApproval ? 1 : 0) + (needsOutputApproval ? 1 : 0);
-
-    // Check if batch approval is complete
-    const batchApprovalComplete = flowState.completedSteps.has('approving_zap_tokens');
-
-    // Check individual approval progress
-    const inputApproved = flowState.completedSteps.has('approving_input');
-    const outputApproved = flowState.completedSteps.has('approving_output');
-
-    // Determine approval progress
-    let approvalsCompleted = 0;
-    let showCount = false;
-
-    if (batchApprovalComplete) {
-      // Batch complete means both are done
-      approvalsCompleted = 2;
-      showCount = false; // Hide count when complete
-    } else if (!needsInputApproval && !needsOutputApproval) {
-      // Neither needs approval (both already approved or native)
-      approvalsCompleted = 2;
-      showCount = false;
+    // Handle case when approvalData is not loaded yet
+    if (!approvalData) {
+      steps.push({
+        id: 'approvals',
+        label: 'Token Approvals',
+        status: 'loading' as const,
+        // Don't show count when data is loading
+      });
     } else {
-      // Count individual approval progress
-      if (inputApproved || !needsInputApproval) approvalsCompleted++;
-      if (outputApproved || !needsOutputApproval) approvalsCompleted++;
-      showCount = true;
+      // Safely extract approval flags - if undefined, we can't determine state yet
+      const needsInputApproval = Boolean(approvalData.needsInputTokenERC20Approval);
+      const needsOutputApproval = Boolean(approvalData.needsOutputTokenERC20Approval);
+
+      // Debug logging
+      console.log('[generateStepperSteps] Zap approval data:', {
+        needsInputApproval,
+        needsOutputApproval,
+        approvalData,
+        inputTokenAllowance: approvalData.inputTokenAllowance,
+        outputTokenAllowance: approvalData.outputTokenAllowance,
+      });
+
+      // Count total approvals needed (0, 1, or 2)
+      const totalApprovalsNeeded = (needsInputApproval ? 1 : 0) + (needsOutputApproval ? 1 : 0);
+
+      // Check if batch approval is complete
+      const batchApprovalComplete = flowState.completedSteps.has('approving_zap_tokens');
+
+      // Check individual approval progress
+      const inputApproved = flowState.completedSteps.has('approving_input');
+      const outputApproved = flowState.completedSteps.has('approving_output');
+
+      // Determine approval progress
+      let approvalsCompleted = 0;
+
+      if (batchApprovalComplete) {
+        // Batch complete means all needed approvals are done
+        approvalsCompleted = totalApprovalsNeeded;
+      } else if (!needsInputApproval && !needsOutputApproval) {
+        // Neither needs approval (both already approved or native)
+        approvalsCompleted = totalApprovalsNeeded; // Will be 0
+      } else {
+        // Count individual approval progress
+        // Only count as completed if: (step completed in this session) OR (doesn't need approval)
+        // This ensures we don't count tokens that need approval but haven't been approved yet
+        if (needsInputApproval) {
+          // Needs approval - only count if step was completed
+          if (inputApproved) approvalsCompleted++;
+        } else {
+          // Doesn't need approval - count as complete
+          approvalsCompleted++;
+        }
+        
+        if (needsOutputApproval) {
+          // Needs approval - only count if step was completed
+          if (outputApproved) approvalsCompleted++;
+        } else {
+          // Doesn't need approval - count as complete
+          approvalsCompleted++;
+        }
+      }
+      
+      // Debug logging
+      console.log('[generateStepperSteps] Approval progress calculation:', {
+        needsInputApproval,
+        needsOutputApproval,
+        inputApproved,
+        outputApproved,
+        batchApprovalComplete,
+        totalApprovalsNeeded,
+        approvalsCompleted,
+      });
+
+      const allApprovalsComplete = batchApprovalComplete || (!needsInputApproval && !needsOutputApproval);
+      const isWorkingOnApprovals = flowState.currentStep === 'approving_zap_tokens' ||
+        (flowState.isLocked && totalApprovalsNeeded > 0 && !batchApprovalComplete);
+
+      // Only show count if we have approvals needed (hide 0/0)
+      steps.push({
+        id: 'approvals',
+        label: 'Token Approvals',
+        status: allApprovalsComplete ? 'completed' as const :
+                isWorkingOnApprovals ? 'loading' as const :
+                'pending' as const,
+        // Only show count if total > 0, otherwise hide it
+        ...(totalApprovalsNeeded > 0 ? { count: { completed: approvalsCompleted, total: totalApprovalsNeeded } } : {}),
+      });
     }
-
-    const allApprovalsComplete = batchApprovalComplete || (!needsInputApproval && !needsOutputApproval);
-    const isWorkingOnApprovals = flowState.currentStep === 'approving_zap_tokens' ||
-      (flowState.isLocked && totalApprovalsNeeded > 0 && !batchApprovalComplete);
-
-    // For zap mode, always show 2 total tokens regardless of native ETH
-    steps.push({
-      id: 'approvals',
-      label: 'Token Approvals',
-      status: allApprovalsComplete ? 'completed' as const :
-              isWorkingOnApprovals ? 'loading' as const :
-              'pending' as const,
-      // Always show count for zap mode unless both are already approved
-      count: (needsInputApproval || needsOutputApproval || !allApprovalsComplete) ?
-             { completed: approvalsCompleted, total: 2 } : undefined,
-    });
 
     // Step 2: Execute Zap (consolidated swap + LP deposit with inline permits)
     const zapCompleted = flowState.completedSteps.has('executing');
+    // Calculate allApprovalsComplete if approvalData exists, otherwise default to true (skip approvals)
+    const allApprovalsComplete = approvalData 
+      ? (flowState.completedSteps.has('approving_zap_tokens') || 
+         (!approvalData.needsInputTokenERC20Approval && !approvalData.needsOutputTokenERC20Approval))
+      : false; // If no approvalData, don't allow execution yet
     const isWorkingOnZap = flowState.currentStep === 'executing' ||
       (flowState.isLocked && !zapCompleted && allApprovalsComplete);
 

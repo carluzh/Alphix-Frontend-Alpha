@@ -1,19 +1,14 @@
 // Refactored Add Liquidity Transaction Hook (Uniswap-style)
 import { useCallback, useState, useRef } from 'react';
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, useSignTypedData } from 'wagmi';
-import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { BadgeCheck, OctagonX, InfoIcon } from 'lucide-react';
 import React from 'react';
-import { TokenSymbol, TOKEN_DEFINITIONS, NATIVE_TOKEN_ADDRESS } from '@/lib/pools-config';
+import { TokenSymbol, TOKEN_DEFINITIONS, NATIVE_TOKEN_ADDRESS, getToken } from '@/lib/pools-config';
 import { PERMIT2_ADDRESS, getPermit2Domain, PERMIT_TYPES } from '@/lib/swap-constants';
 import { ERC20_ABI } from '@/lib/abis/erc20';
-import { type Hex, maxUint256, formatUnits, formatUnits as viemFormatUnits } from 'viem';
+import { type Hex, maxUint256, formatUnits, formatUnits as viemFormatUnits, parseUnits as viemParseUnits } from 'viem';
 import { publicClient } from '@/lib/viemClient';
-import { prefetchService } from '@/lib/prefetch-service';
-import { invalidateAfterTx } from '@/lib/invalidation';
-import { invalidateActivityCache, invalidateUserPositionsCache, invalidateUserPositionIdsCache } from '@/lib/client-cache';
-import { clearBatchDataCache } from '@/lib/cache-version';
 import { useCheckLiquidityApprovals } from './useCheckLiquidityApprovals';
 import { useCheckZapApprovals } from './useCheckZapApprovals';
 
@@ -46,7 +41,6 @@ export function useAddLiquidityTransactionV2({
   isZapMode = false,
   zapInputToken = 'token0',
 }: UseAddLiquidityTransactionV2Props) {
-  const queryClient = useQueryClient();
   const { address: accountAddress, chainId } = useAccount();
 
   // Check approvals for regular mode using React Query
@@ -60,8 +54,8 @@ export function useAddLiquidityTransactionV2({
           userAddress: accountAddress,
           token0Symbol,
           token1Symbol,
-          amount0: formatUnits(BigInt(calculatedData.amount0 || '0'), TOKEN_DEFINITIONS[token0Symbol]?.decimals || 18),
-          amount1: formatUnits(BigInt(calculatedData.amount1 || '0'), TOKEN_DEFINITIONS[token1Symbol]?.decimals || 18),
+          amount0: formatUnits(BigInt(calculatedData.amount0 || '0'), getToken(token0Symbol)?.decimals || 18),
+          amount1: formatUnits(BigInt(calculatedData.amount1 || '0'), getToken(token1Symbol)?.decimals || 18),
           chainId,
           tickLower: calculatedData.finalTickLower ?? parseInt(tickLower),
           tickUpper: calculatedData.finalTickUpper ?? parseInt(tickUpper),
@@ -155,7 +149,7 @@ export function useAddLiquidityTransactionV2({
   // Handle ERC20 approval for a specific token
   const handleApprove = useCallback(
     async (tokenSymbol: TokenSymbol) => {
-      const tokenConfig = TOKEN_DEFINITIONS[tokenSymbol];
+      const tokenConfig = getToken(tokenSymbol);
       if (!tokenConfig) throw new Error(`Token ${tokenSymbol} not found`);
 
       toast('Confirm in Wallet', {
@@ -265,13 +259,22 @@ export function useAddLiquidityTransactionV2({
         }
 
         const result = await response.json();
+        
+        // Log the full response for debugging
+        console.log('[handleZapSwapAndDeposit] API response:', {
+          hasSwapTransaction: !!result.swapTransaction,
+          swapTransaction: result.swapTransaction,
+          needsApproval: result.needsApproval,
+          error: result.error,
+          message: result.message,
+        });
+        
         if (!result.swapTransaction) {
-          throw new Error('No swap transaction returned from API');
+          // Provide more detailed error message
+          const errorMsg = result.message || result.error || 'No swap transaction returned from API';
+          console.error('[handleZapSwapAndDeposit] Missing swapTransaction:', result);
+          throw new Error(errorMsg);
         }
-
-        // Store the expected amounts from the Zap calculation for later use
-        const expectedToken0Amount = result.zapQuote?.expectedToken0Amount || '0';
-        const expectedToken1Amount = result.zapQuote?.expectedToken1Amount || '0';
 
         toast('Confirm Swap in Wallet', {
           icon: React.createElement(InfoIcon, { className: 'h-4 w-4' }),
@@ -294,17 +297,50 @@ export function useAddLiquidityTransactionV2({
             inputs: [
               { name: 'commands', type: 'bytes' },
               { name: 'inputs', type: 'bytes[]' },
+              { name: 'deadline', type: 'uint256' },
             ],
             outputs: [],
           }],
           functionName: 'execute',
-          args: [commands, inputs],
+          args: [commands, inputs, BigInt(swapTx.deadline || '0')],
         };
 
         if (swapTx.value && swapTx.value !== '0') {
           swapConfig.value = BigInt(swapTx.value);
         }
 
+        // ========== STEP 3: GET BALANCES BEFORE SWAP ==========
+        // Use getToken() to get decimals from pools.json (same as swap-interface.tsx)
+        const token0Config = getToken(token0Symbol);
+        const token1Config = getToken(token1Symbol);
+
+        if (!token0Config || !token1Config) {
+          throw new Error(`Token config not found for ${token0Symbol} or ${token1Symbol}`);
+        }
+
+        // Get balances before swap to calculate actual received amounts
+        const getTokenBalance = async (tokenAddress: string, isNative: boolean): Promise<bigint> => {
+          if (isNative) {
+            return await publicClient.getBalance({ address: accountAddress });
+          } else {
+            return await publicClient.readContract({
+              address: tokenAddress as `0x${string}`,
+              abi: ERC20_ABI,
+              functionName: 'balanceOf',
+              args: [accountAddress],
+            }) as bigint;
+          }
+        };
+
+        const isToken0Native = token0Config.address === NATIVE_TOKEN_ADDRESS;
+        const isToken1Native = token1Config.address === NATIVE_TOKEN_ADDRESS;
+
+        const [balance0Before, balance1Before] = await Promise.all([
+          getTokenBalance(token0Config.address, isToken0Native),
+          getTokenBalance(token1Config.address, isToken1Native),
+        ]);
+
+        // ========== STEP 4: EXECUTE SWAP TRANSACTION ==========
         const swapHash = await swapAsync(swapConfig);
         const swapReceipt = await publicClient.waitForTransactionReceipt({ hash: swapHash });
 
@@ -317,31 +353,57 @@ export function useAddLiquidityTransactionV2({
           description: 'Tokens swapped successfully',
         });
 
-        // ========== STEP 3: USE EXPECTED AMOUNTS FROM ZAP CALCULATION ==========
-        // The Zap calculation already determined the exact amounts needed for optimal LP
-        // We should use those amounts, not the full wallet balances
-        const token0Def = TOKEN_DEFINITIONS[token0Symbol];
-        const token1Def = TOKEN_DEFINITIONS[token1Symbol];
+        // ========== STEP 5: GET BALANCES AFTER SWAP AND CALCULATE ACTUAL AMOUNTS ==========
+        const [balance0After, balance1After] = await Promise.all([
+          getTokenBalance(token0Config.address, isToken0Native),
+          getTokenBalance(token1Config.address, isToken1Native),
+        ]);
 
-        if (!token0Def || !token1Def) {
-          throw new Error('Token definitions not found');
-        }
+        // Calculate actual amounts received from swap
+        // Note: Input token balance decreases (we sent tokens), output token balance increases (we received tokens)
+        const actualToken0Change = balance0After - balance0Before;
+        const actualToken1Change = balance1After - balance1Before;
 
-        // Use the expected amounts from the Zap calculation
-        // These amounts were calculated to minimize leftover tokens
-        const token0AmountStr = viemFormatUnits(BigInt(expectedToken0Amount), token0Def.decimals);
-        const token1AmountStr = viemFormatUnits(BigInt(expectedToken1Amount), token1Def.decimals);
+        // Get swap amount from API response (in wei/smallest units)
+        const swapAmount = BigInt(result.details?.swapAmount || '0');
+        // Use decimals from pools.json via getToken() (same as swap-interface.tsx)
+        const inputTokenDecimals = zapInputToken === 'token0' ? token0Config.decimals : token1Config.decimals;
+        const parsedInputAmount = viemParseUnits(inputAmount, inputTokenDecimals);
+        
+        // Determine which token is input and which is output
+        const inputIsToken0 = zapInputToken === 'token0';
+        
+        // Calculate actual amounts:
+        // - Remaining input = total input - swap amount (what we kept, didn't swap)
+        //   Note: We calculate this instead of using balance change because:
+        //   - For ERC20: balance change is negative (we sent tokens)
+        //   - For native ETH: balance change includes gas fees, so it's not accurate
+        // - Received output = balance change of output token (what we actually got from swap)
+        const remainingInputAmount = parsedInputAmount - swapAmount;
+        const receivedOutputAmount = inputIsToken0 ? actualToken1Change : actualToken0Change;
+        
+        // Map to token0/token1 amounts
+        const actualToken0Amount = inputIsToken0 ? remainingInputAmount : receivedOutputAmount;
+        const actualToken1Amount = inputIsToken0 ? receivedOutputAmount : remainingInputAmount;
 
-        console.log('Using calculated LP amounts from Zap:', {
+        // Format amounts for API using decimals from pools.json
+        const token0AmountStr = viemFormatUnits(actualToken0Amount, token0Config.decimals);
+        const token1AmountStr = viemFormatUnits(actualToken1Amount, token1Config.decimals);
+
+        console.log('Using ACTUAL amounts from swap:', {
+          swapAmount: swapAmount.toString(),
+          remainingInputAmount: remainingInputAmount.toString(),
+          actualToken0Change: actualToken0Change.toString(),
+          actualToken1Change: actualToken1Change.toString(),
+          actualToken0Amount: actualToken0Amount.toString(),
+          actualToken1Amount: actualToken1Amount.toString(),
           token0: token0AmountStr,
           token1: token1AmountStr,
           token0Symbol,
           token1Symbol,
-          rawToken0: expectedToken0Amount,
-          rawToken1: expectedToken1Amount
         });
 
-        // ========== STEP 4: SIGN BATCH PERMIT FOR LP DEPOSIT ==========
+        // ========== STEP 6: SIGN BATCH PERMIT FOR LP DEPOSIT ==========
 
         const mintResponse = await fetch('/api/liquidity/prepare-mint-after-swap-tx', {
           method: 'POST',
@@ -694,9 +756,11 @@ export function useAddLiquidityTransactionV2({
         if (calculatedData?.amount0 && calculatedData?.amount1) {
           const { getTokenPrice } = await import('@/lib/price-service');
           const { formatUnits } = await import('viem');
-          const { TOKEN_DEFINITIONS } = await import('@/lib/pools-config');
-          const amt0 = parseFloat(formatUnits(BigInt(calculatedData.amount0), TOKEN_DEFINITIONS[token0Symbol]?.decimals || 18));
-          const amt1 = parseFloat(formatUnits(BigInt(calculatedData.amount1), TOKEN_DEFINITIONS[token1Symbol]?.decimals || 18));
+          const { getToken } = await import('@/lib/pools-config');
+          const token0Config = getToken(token0Symbol);
+          const token1Config = getToken(token1Symbol);
+          const amt0 = parseFloat(formatUnits(BigInt(calculatedData.amount0), token0Config?.decimals || 18));
+          const amt1 = parseFloat(formatUnits(BigInt(calculatedData.amount1), token1Config?.decimals || 18));
           const [p0, p1] = await Promise.all([getTokenPrice(token0Symbol), getTokenPrice(token1Symbol)]);
           tvlDelta = (p0 ? amt0 * p0 : 0) + (p1 ? amt1 * p1 : 0);
         }
@@ -705,7 +769,7 @@ export function useAddLiquidityTransactionV2({
 
       onOpenChange(false);
     }
-  }, [isDepositConfirmed, depositTxHash, accountAddress, token0Symbol, token1Symbol, onLiquidityAdded, onOpenChange, queryClient, calculatedData]);
+  }, [isDepositConfirmed, depositTxHash, accountAddress, token0Symbol, token1Symbol, onLiquidityAdded, onOpenChange, calculatedData]);
 
   const resetAll = React.useCallback(() => {
     resetApprove();

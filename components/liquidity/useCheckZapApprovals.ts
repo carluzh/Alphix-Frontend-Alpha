@@ -101,12 +101,27 @@ export function useCheckZapApprovals(
 
   const needsInputTokenERC20Approval = !isInputTokenNative &&
     inputAmountWei > 0n &&
+    Boolean(params?.userAddress) &&
     (inputTokenAllowance === undefined || (inputTokenAllowance as bigint) < inputAmountWei);
 
-  // Output token needs approval if it's not native and doesn't have max approval
+  // Output token needs approval if it's not native and doesn't have sufficient approval
+  // We use a reasonable threshold (1M tokens) since we don't know exact deposit amount until after swap
+  // This matches the pattern used in regular liquidity flow
+  const outputTokenQueryEnabled = !isOutputTokenNative && Boolean(params?.userAddress && outputTokenConfig);
+  const outputTokenThresholdWei = useMemo(() => {
+    if (!outputTokenConfig) return 0n;
+    try {
+      return parseUnits("1000000", outputTokenConfig.decimals);
+    } catch {
+      return 0n;
+    }
+  }, [outputTokenConfig]);
+  
   const needsOutputTokenERC20Approval = !isOutputTokenNative &&
     params?.userAddress !== undefined &&
-    (outputTokenAllowance === undefined || (outputTokenAllowance as bigint) === 0n);
+    outputTokenConfig !== undefined &&
+    outputTokenQueryEnabled &&
+    (outputTokenAllowance === undefined || (outputTokenAllowance as bigint) < outputTokenThresholdWei);
 
   const [permitData, setPermitData] = useState<{
     swapPermitData?: any;
@@ -192,6 +207,25 @@ export function useCheckZapApprovals(
     outputTokenSymbol: params?.inputTokenSymbol === 'token0' ? params.token1Symbol : params?.token0Symbol,
     ...permitData,
   }), [needsInputTokenERC20Approval, needsOutputTokenERC20Approval, inputTokenConfig, outputTokenConfig, params, permitData]);
+
+  // Debug logging
+  useEffect(() => {
+    if (data) {
+      console.log('[useCheckZapApprovals] Approval check:', {
+        needsInputTokenERC20Approval: data.needsInputTokenERC20Approval,
+        needsOutputTokenERC20Approval: data.needsOutputTokenERC20Approval,
+        inputTokenSymbol: data.inputTokenSymbol,
+        outputTokenSymbol: data.outputTokenSymbol,
+        isInputTokenNative,
+        isOutputTokenNative,
+        inputTokenAllowance: inputTokenAllowance?.toString(),
+        outputTokenAllowance: outputTokenAllowance?.toString(),
+        outputTokenQueryEnabled,
+        isLoadingInputToken,
+        isLoadingOutputToken,
+      });
+    }
+  }, [data, isInputTokenNative, isOutputTokenNative, inputTokenAllowance, outputTokenAllowance, outputTokenQueryEnabled, isLoadingInputToken, isLoadingOutputToken]);
 
   return {
     data,
