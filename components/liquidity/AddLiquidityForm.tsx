@@ -292,8 +292,8 @@ export function AddLiquidityForm({
     activeInputSide
   });
 
-  // Use the same transaction hook for both regular and zap modes
-  const regularTransaction = useAddLiquidityTransactionV2({
+  // Single transaction hook for both regular and zap modes
+  const transaction = useAddLiquidityTransactionV2({
     token0Symbol,
     token1Symbol,
     amount0,
@@ -308,11 +308,11 @@ export function AddLiquidityForm({
     zapInputToken,
   });
 
-  // For zap mode, just use the regular transaction hook
-  // It already handles zap at lines 179-341 of useAddLiquidityTransactionV2.ts
-  const zapTransaction = regularTransaction;
+  // Export for easy access in both modes
+  const regularTransaction = transaction;
+  const zapTransaction = transaction;
 
-  // Use appropriate hook based on zap mode
+  // Extract common properties
   const {
     approvalData,
     isCheckingApprovals,
@@ -324,19 +324,7 @@ export function AddLiquidityForm({
     handleDeposit,
     refetchApprovals,
     reset: resetTransaction,
-  } = isZapMode ? {
-    // Zap mode - not used directly, ZapTransactionFlowPanel handles its own flow
-    approvalData: null,
-    isCheckingApprovals: false,
-    isWorking: zapTransaction.isWorking,
-    isApproving: zapTransaction.isApproving,
-    isDepositConfirming: zapTransaction.isDepositConfirming,
-    isDepositSuccess: zapTransaction.isDepositSuccess,
-    handleApprove: zapTransaction.handleApprove,
-    handleDeposit: async () => {}, // Not used
-    refetchApprovals: async () => {},
-    reset: zapTransaction.reset,
-  } : regularTransaction;
+  } = transaction;
 
   // Track which step we're on manually (no auto-progression)
   const [currentTransactionStep, setCurrentTransactionStep] = useState<'idle' | 'approving_token0' | 'approving_token1' | 'signing_permit' | 'depositing'>('idle');
@@ -1055,7 +1043,14 @@ export function AddLiquidityForm({
   // Old handlePrepareAndSubmit removed - now using TransactionFlowPanel
 
   const signPermit = useCallback(async (): Promise<string | undefined> => {
-    if (!approvalData?.permitBatchData || !approvalData?.signatureDetails) {
+    // Only used in regular mode (not zap mode)
+    if (!approvalData) {
+      return undefined;
+    }
+
+    // Type guard for regular mode approval data
+    const hasPermitData = 'permitBatchData' in approvalData && 'signatureDetails' in approvalData;
+    if (!hasPermitData || !approvalData.permitBatchData || !approvalData.signatureDetails) {
       return undefined;
     }
 
@@ -2420,12 +2415,12 @@ export function AddLiquidityForm({
               >
                 <div className="flex items-center gap-2">
                   <Label htmlFor="zap-mode" className="font-medium cursor-pointer">Single Token Mode</Label>
-                  <TooltipProvider>
+                  <TooltipProvider delayDuration={0}>
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <CircleHelp className="h-3 w-3 text-muted-foreground" onClick={(e) => e.stopPropagation()} />
                       </TooltipTrigger>
-                      <TooltipContent className="max-w-xs">
+                      <TooltipContent side="top" className="max-w-[240px] text-xs">
                         <p>Provide liquidity using a single token. We'll automatically swap the optimal amount to maximize your liquidity.</p>
                       </TooltipContent>
                     </Tooltip>
@@ -2871,33 +2866,36 @@ export function AddLiquidityForm({
                 />
               )}
 
-              {/* Zap Transaction Flow - Uses same panel, hook handles zap logic internally */}
+              {/* Zap Transaction Flow - Simplified 2-step flow */}
               {showingTransactionSteps && isZapMode && (
                 <TransactionFlowPanel
                   isActive={showingTransactionSteps}
-                  approvalData={approvalData}
-                  isCheckingApprovals={isCheckingApprovals}
+                  approvalData={zapTransaction.approvalData}
+                  isCheckingApprovals={zapTransaction.isCheckingApprovals}
                   token0Symbol={token0Symbol}
                   token1Symbol={token1Symbol}
-                  isDepositSuccess={isDepositSuccess}
-                  onApproveToken={regularTransaction.handleApprove}
+                  isDepositSuccess={zapTransaction.isDepositSuccess}
+                  isZapMode={true}
+                  zapInputToken={zapInputToken}
+                  onApproveToken={zapTransaction.handleApprove}
                   onSignPermit={signPermit}
-                  onExecute={handleDeposit}
-                  onRefetchApprovals={refetchApprovals}
+                  onExecuteZap={zapTransaction.handleZapSwapAndDeposit}
+                  onExecute={async () => {}} // Not used in zap mode
+                  onRefetchApprovals={zapTransaction.refetchApprovals}
                   onBack={() => {
                     setShowingTransactionSteps(false);
-                    resetTransaction();
+                    zapTransaction.reset();
                     setCurrentTransactionStep('idle');
                     setPermitSignature(undefined);
                   }}
                   onReset={() => {
-                    resetTransaction();
+                    zapTransaction.reset();
                     setCurrentTransactionStep('idle');
                     setPermitSignature(undefined);
                   }}
-                  executeButtonLabel="Deposit"
+                  executeButtonLabel="Execute Zap"
                   showBackButton={true}
-                  autoProgressOnApproval={false}
+                  autoProgressOnApproval={true}
                 />
               )}
 

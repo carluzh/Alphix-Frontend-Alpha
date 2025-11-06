@@ -35,6 +35,8 @@ import { getAddress, parseUnits, formatUnits, maxUint256, type Address, type Hex
 import { publicClient } from "../../lib/viemClient";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useSwapPercentageInput } from "@/hooks/usePercentageInput";
+import { useUserSlippageTolerance } from "@/hooks/useSlippage";
+import { getAutoSlippage } from "@/lib/slippage-api";
 
 import {
   getAllTokens,
@@ -460,7 +462,16 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     minimumReceived: "0",
   });
 
-  const [slippage, setSlippage] = useState(0.5); // New state for slippage percentage
+  // Use the new slippage hook with persistence and auto-slippage
+  const {
+    currentSlippage,
+    isAuto: isAutoSlippage,
+    autoSlippage: autoSlippageValue,
+    setSlippage,
+    setAutoMode,
+    setCustomMode,
+    updateAutoSlippage,
+  } = useUserSlippageTolerance();
 
   // Mock data generation removed - using real API data instead
 
@@ -1246,21 +1257,40 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     
     // Calculate minimum received based on quote (new method)
     const quotedAmount = parseFloat(toAmount || "0");
-    const minReceivedAmount = quotedAmount > 0 ? quotedAmount * (1 - slippage / 100) : 0;
+    const minReceivedAmount = quotedAmount > 0 ? quotedAmount * (1 - currentSlippage / 100) : 0;
     const formattedMinimumReceived = formatTokenAmountDisplay(minReceivedAmount.toString(), toToken);
-    
+
+    // Update auto-slippage when quote is received (if in auto mode)
+    if (isAutoSlippage && fromAmount && toAmount && fromToken && toToken) {
+      // Fetch auto-slippage asynchronously (API with fallback)
+      getAutoSlippage({
+        sellToken: fromToken.address,
+        buyToken: toToken.address,
+        chainId: currentChainId || TARGET_CHAIN_ID,
+        fromAmount,
+        toAmount,
+        fromTokenSymbol: fromToken.symbol,
+        toTokenSymbol: toToken.symbol,
+        routeHops: routeInfo?.hops || 1,
+      }).then((calculatedSlippage) => {
+        updateAutoSlippage(calculatedSlippage);
+      }).catch((error) => {
+        console.error('[SwapInterface] Failed to fetch auto-slippage:', error);
+      });
+    }
+
     setCalculatedValues(prev => ({
       ...prev,
       fromTokenAmount: formatTokenAmountDisplay(fromAmount, fromToken),
       fromTokenValue: formatCurrency(newFromTokenValue.toString()),
       toTokenAmount: formatTokenAmountDisplay(toAmount, toToken),
       toTokenValue: formatCurrency(newToTokenValue.toString()),
-      fees: updatedFeesArray, 
-      slippage: `${slippage}%`, // Pass slippage as string for display
+      fees: updatedFeesArray,
+      slippage: `${currentSlippage}%`, // Pass slippage as string for display
       minimumReceived: formattedMinimumReceived,
     }));
 
-  }, [fromAmount, toAmount, fromToken?.symbol, fromToken?.usdPrice, toToken?.symbol, toToken?.usdPrice, formatCurrency, isConnected, currentChainId, dynamicFeeLoading, dynamicFeeError, dynamicFeeBps, routeFees, routeFeesLoading, formatTokenAmountDisplay, slippage]);
+  }, [fromAmount, toAmount, fromToken?.symbol, fromToken?.usdPrice, toToken?.symbol, toToken?.usdPrice, formatCurrency, isConnected, currentChainId, dynamicFeeLoading, dynamicFeeError, dynamicFeeBps, routeFees, routeFeesLoading, formatTokenAmountDisplay, currentSlippage, isAutoSlippage, routeInfo?.hops, updateAutoSlippage]);
 
   const handleFromAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
@@ -1421,16 +1451,30 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       setSwapProgressState("checking_allowance"); // Indicate checking permit
 
       const permitData = await fetchPermitData();
-      setCurrentPermitDetailsForSign(permitData); // Store fetched permit data
-      setObtainedSignature(null); // Clear any previous signature
+
+      // Only clear signature if permit data has changed (different nonce means new permit needed)
+      // This preserves signatures when user clicks "Change" and comes back
+      setCurrentPermitDetailsForSign((prevPermitData) => {
+        const previousNonce = prevPermitData?.permitData?.message?.details?.nonce;
+        const newNonce = permitData?.permitData?.message?.details?.nonce;
+
+        // If nonce changed or no previous permit, clear the signature
+        if (previousNonce !== newNonce || !prevPermitData) {
+          setObtainedSignature(null);
+        }
+
+        return permitData;
+      });
 
       const needsSignature = permitData.needsPermit === true;
 
       // 5. Handle Permit2 Result
-      if (needsSignature) {
+      // Check if we already have a valid signature (preserved from previous review attempt)
+      if (needsSignature && !obtainedSignature) {
         setSwapProgressState("needs_signature");
         // Notification effect will show toast
       } else {
+        // Either no signature needed OR we already have one cached
         setCompletedSteps(["approval_complete", "signature_complete"]); // Mark step 2 complete
         setSwapProgressState("ready_to_swap");
       }
@@ -1567,10 +1611,22 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
             setCompletedSteps(prev => [...prev, "approval_complete"]);
 
             const freshPermitData = await fetchPermitData();
-            setCurrentPermitDetailsForSign(freshPermitData);
-            setObtainedSignature(null);
 
-            if (freshPermitData.needsPermit) {
+            // Only clear signature if permit data has changed (different nonce means new permit needed)
+            setCurrentPermitDetailsForSign((prevPermitData) => {
+              const previousNonce = prevPermitData?.permitData?.message?.details?.nonce;
+              const newNonce = freshPermitData?.permitData?.message?.details?.nonce;
+
+              // If nonce changed or no previous permit, clear the signature
+              if (previousNonce !== newNonce || !prevPermitData) {
+                setObtainedSignature(null);
+              }
+
+              return freshPermitData;
+            });
+
+            // Check if we already have a valid signature (preserved from previous review attempt)
+            if (freshPermitData.needsPermit && !obtainedSignature) {
                 setSwapProgressState("needs_signature");
             } else {
                 setSwapProgressState("ready_to_swap");
@@ -1765,11 +1821,11 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                     const quotedInBigInt = safeParseUnits(fromAmount || "0", fromDecimals);
                     
                     // Calculate min/max using BigInt arithmetic
-                    // minOut = quotedOut * (100 - slippage) / 100
-                    const minOutBigInt = (quotedOutBigInt * BigInt(Math.floor((100 - slippage) * 100))) / BigInt(10000);
-                    // maxIn = quotedIn * (100 + slippage) / 100
-                    const maxInBigInt = (quotedInBigInt * BigInt(Math.floor((100 + slippage) * 100))) / BigInt(10000);
-                    
+                    // minOut = quotedOut * (100 - currentSlippage) / 100
+                    const minOutBigInt = (quotedOutBigInt * BigInt(Math.floor((100 - currentSlippage) * 100))) / BigInt(10000);
+                    // maxIn = quotedIn * (100 + currentSlippage) / 100
+                    const maxInBigInt = (quotedInBigInt * BigInt(Math.floor((100 + currentSlippage) * 100))) / BigInt(10000);
+
                     // Format back to decimal strings
                     minimumReceivedStr = formatUnits(minOutBigInt, toDecimals);
                     maximumInputStr = formatUnits(maxInBigInt, fromDecimals);
@@ -1777,8 +1833,8 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                     // Fallback to floating point calculation if BigInt fails
                     const quotedOutNum = parseFloat(toAmount || "0");
                     const quotedInNum = parseFloat(fromAmount || "0");
-                    const minOutNum = quotedOutNum > 0 ? quotedOutNum * (1 - slippage / 100) : 0;
-                    const maxInNum = quotedInNum > 0 ? quotedInNum * (1 + slippage / 100) : 0;
+                    const minOutNum = quotedOutNum > 0 ? quotedOutNum * (1 - currentSlippage / 100) : 0;
+                    const maxInNum = quotedInNum > 0 ? quotedInNum * (1 + currentSlippage / 100) : 0;
                     minimumReceivedStr = minOutNum.toFixed(toDecimals);
                     maximumInputStr = maxInNum.toFixed(fromDecimals);
                 }
@@ -1990,11 +2046,11 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 const quotedInBigInt = safeParseUnits(fromAmount || "0", fromDecimals2);
                 
                 // Calculate min/max using BigInt arithmetic
-                // minOut = quotedOut * (100 - slippage) / 100
-                const minOutBigInt = (quotedOutBigInt * BigInt(Math.floor((100 - slippage) * 100))) / BigInt(10000);
-                // maxIn = quotedIn * (100 + slippage) / 100
-                const maxInBigInt = (quotedInBigInt * BigInt(Math.floor((100 + slippage) * 100))) / BigInt(10000);
-                
+                // minOut = quotedOut * (100 - currentSlippage) / 100
+                const minOutBigInt = (quotedOutBigInt * BigInt(Math.floor((100 - currentSlippage) * 100))) / BigInt(10000);
+                // maxIn = quotedIn * (100 + currentSlippage) / 100
+                const maxInBigInt = (quotedInBigInt * BigInt(Math.floor((100 + currentSlippage) * 100))) / BigInt(10000);
+
                 // Format back to decimal strings
                 minimumReceivedStr = formatUnits(minOutBigInt, toDecimals2);
                 maximumInputStr = formatUnits(maxInBigInt, fromDecimals2);
@@ -2002,8 +2058,8 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 // Fallback to floating point calculation if BigInt fails
                 const quotedOutNum2 = parseFloat(toAmount || "0");
                 const quotedInNum2 = parseFloat(fromAmount || "0");
-                const minOutNum2 = quotedOutNum2 > 0 ? quotedOutNum2 * (1 - slippage / 100) : 0;
-                const maxInNum2 = quotedInNum2 > 0 ? quotedInNum2 * (1 + slippage / 100) : 0;
+                const minOutNum2 = quotedOutNum2 > 0 ? quotedOutNum2 * (1 - currentSlippage / 100) : 0;
+                const maxInNum2 = quotedInNum2 > 0 ? quotedInNum2 * (1 + currentSlippage / 100) : 0;
                 minimumReceivedStr = minOutNum2.toFixed(toDecimals2);
                 maximumInputStr = maxInNum2.toFixed(fromDecimals2);
             }
@@ -2331,8 +2387,17 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     setHoveredArcPercentage(null);
   };
 
+  // Slippage handlers
   const handleSlippageChange = (newSlippage: number) => {
     setSlippage(newSlippage);
+  };
+
+  const handleAutoSlippageToggle = () => {
+    setAutoMode();
+  };
+
+  const handleCustomSlippageToggle = () => {
+    setCustomMode();
   };
 
   const strokeWidth = 2; // Define strokeWidth for the SVG rect elements
@@ -2735,8 +2800,12 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 TARGET_CHAIN_ID={TARGET_CHAIN_ID}
                 strokeWidth={2}
                 swapContainerRect={combinedRect}
-                slippage={slippage}
+                slippage={currentSlippage}
+                isAutoSlippage={isAutoSlippage}
+                autoSlippageValue={autoSlippageValue}
                 onSlippageChange={handleSlippageChange}
+                onAutoSlippageToggle={handleAutoSlippageToggle}
+                onCustomSlippageToggle={handleCustomSlippageToggle}
               />
             )}
 

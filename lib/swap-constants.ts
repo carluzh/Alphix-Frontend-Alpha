@@ -57,9 +57,17 @@ export const V4_POOL_TICK_SPACING = 60;
 export const V4_POOL_HOOKS_RAW = '0xd450f7f8e4C11EE8620a349f73e7aC3905Dfd000';
 export const V4_POOL_HOOKS: Address = getAddress(V4_POOL_HOOKS_RAW);
 
-export const PERMIT_EXPIRATION_DURATION_SECONDS = 60 * 10;
-export const PERMIT_SIG_DEADLINE_DURATION_SECONDS = 60 * 10;
-export const TX_DEADLINE_SECONDS = 60 * 30;
+// Permit2 expiration durations - matching Uniswap's approach
+export const PERMIT_EXPIRATION_DURATION_SECONDS = 60 * 60 * 24 * 30; // 30 days for on-chain permit
+export const PERMIT_SIG_DEADLINE_DURATION_SECONDS = 60 * 30; // 30 minutes for signature deadline
+export const TX_DEADLINE_SECONDS = 60 * 30; // 30 minutes for transaction deadline
+
+// Block time constants for time buffer calculations
+export const AVERAGE_L1_BLOCK_TIME_MS = 12000; // 12 seconds for Ethereum L1
+export const AVERAGE_L2_BLOCK_TIME_MS = 2000; // 2 seconds for Base (L2)
+
+// Max allowance for Permit2 (uint160 max)
+export const MaxAllowanceTransferAmount = 2n ** 160n - 1n;
 
 export const getPermit2Domain = (chainId: number, verifyingContract: Address) => ({
     name: "Permit2",

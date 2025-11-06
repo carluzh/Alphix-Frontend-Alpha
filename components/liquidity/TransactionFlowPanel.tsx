@@ -17,10 +17,13 @@ export interface TransactionFlowPanelProps {
   token0Symbol: TokenSymbol;
   token1Symbol: TokenSymbol;
   isDepositSuccess?: boolean; // For detecting when deposit is confirmed
+  isZapMode?: boolean;
+  zapInputToken?: 'token0' | 'token1';
 
   // Action handlers
   onApproveToken: (tokenSymbol: TokenSymbol) => Promise<void>;
   onSignPermit: () => Promise<string | undefined>;
+  onExecuteZap?: () => Promise<void>; // New consolidated zap handler
   onExecute: (permitSignature?: string) => Promise<void>;
   onRefetchApprovals?: () => Promise<any>;
   onBack?: () => void;
@@ -42,8 +45,11 @@ export function TransactionFlowPanel({
   token0Symbol,
   token1Symbol,
   isDepositSuccess,
+  isZapMode = false,
+  zapInputToken = 'token0',
   onApproveToken,
   onSignPermit,
+  onExecuteZap,
   onExecute,
   onRefetchApprovals,
   onBack,
@@ -76,20 +82,79 @@ export function TransactionFlowPanel({
   const handleProceed = useCallback(async () => {
     if (!canProceed() || !approvalData || isCheckingApprovals) return;
 
-    const nextStep = getNextStep(approvalData);
+    const nextStep = getNextStep(approvalData, isZapMode);
     if (!nextStep) return;
 
     // Validate permit data exists when needed
-    if (nextStep === 'signing_permit' && (!approvalData.permitBatchData || !approvalData.signatureDetails)) {
+    if (!isZapMode && nextStep === 'signing_permit' && (!approvalData.permitBatchData || !approvalData.signatureDetails)) {
       console.warn('[TransactionFlow] Permit data not ready');
       return;
     }
+
+    if (isZapMode && nextStep === 'signing_swap_permit' && !approvalData.swapPermitData) {
+      console.warn('[TransactionFlow] Swap permit data not ready');
+      console.log('[TransactionFlow] Current approvalData:', approvalData);
+      return;
+    }
+
+    // Note: For signing_batch_permit in zap mode, we DON'T pre-validate batchPermitData
+    // because it's fetched dynamically inside handleSignBatchPermit after the swap completes
 
     actions.lock();
     actions.setStep(nextStep);
 
     try {
       switch (nextStep) {
+        case 'approving_zap_tokens':
+          // Zap mode: Approve BOTH tokens together (prevents spam)
+          const inputTokenSymbol = zapInputToken === 'token0' ? token0Symbol : token1Symbol;
+          const outputTokenSymbol = zapInputToken === 'token0' ? token1Symbol : token0Symbol;
+
+          // Check what needs approval
+          const needsInputApproval = approvalData.needsInputTokenERC20Approval;
+          const needsOutputApproval = approvalData.needsOutputTokenERC20Approval;
+
+          // Approve input token if needed
+          if (needsInputApproval) {
+            await onApproveToken(inputTokenSymbol);
+            // Mark input as approved for UI progress (1/2)
+            actions.completeStep('approving_input');
+            // Small delay to ensure blockchain state updates
+            await new Promise(resolve => setTimeout(resolve, 2000));
+          } else {
+            // Already approved, mark as complete for UI
+            actions.completeStep('approving_input');
+          }
+
+          // Approve output token if needed
+          if (needsOutputApproval) {
+            await onApproveToken(outputTokenSymbol);
+            // Mark output as approved for UI progress (2/2)
+            actions.completeStep('approving_output');
+            // Small delay to ensure blockchain state updates
+            await new Promise(resolve => setTimeout(resolve, 2000));
+          } else {
+            // Already approved, mark as complete for UI
+            actions.completeStep('approving_output');
+          }
+
+          // Mark the batch approval as complete
+          actions.completeStep('approving_zap_tokens');
+
+          // Now refetch approval data to clear the needsApproval flags
+          if (onRefetchApprovals) {
+            await new Promise(resolve => setTimeout(resolve, 1500));
+            await onRefetchApprovals();
+          }
+
+          // DO NOT auto-progress after batch approval - user should click Execute
+          // Just unlock the UI
+          actions.unlock();
+          actions.setStep('idle');
+          break;
+
+        // Individual approval cases removed - now handled by approving_zap_tokens
+
         case 'approving_token0':
           await onApproveToken(token0Symbol);
           actions.completeStep('approving_token0');
@@ -102,19 +167,14 @@ export function TransactionFlowPanel({
 
           // Auto-progress if enabled
           if (autoProgressOnApproval) {
-            // Small delay for smooth transition
             await new Promise(resolve => setTimeout(resolve, 500));
-            const nextAfterToken0 = getNextStep(approvalData);
-            if (nextAfterToken0) {
-              actions.unlock();
-              handleProceed(); // Recursively proceed to next step
-              return;
-            }
+            actions.unlock();
+            handleProceed();
+            return;
           }
           break;
 
         case 'approving_token1':
-          // Toast is shown by the hook, no need to duplicate
           await onApproveToken(token1Symbol);
           actions.completeStep('approving_token1');
 
@@ -126,18 +186,15 @@ export function TransactionFlowPanel({
 
           // Auto-progress if enabled
           if (autoProgressOnApproval) {
-            // Small delay for smooth transition
             await new Promise(resolve => setTimeout(resolve, 500));
-            const nextAfterToken1 = getNextStep(approvalData);
-            if (nextAfterToken1) {
-              actions.unlock();
-              handleProceed(); // Recursively proceed to next step
-              return;
-            }
+            actions.unlock();
+            handleProceed();
+            return;
           }
           break;
 
         case 'signing_permit':
+          // Regular mode: Sign permit
           toast('Sign in Wallet', {
             icon: React.createElement(Info, { className: 'h-4 w-4' })
           });
@@ -159,10 +216,20 @@ export function TransactionFlowPanel({
           break;
 
         case 'executing':
-          toast('Confirm Transaction', {
-            icon: React.createElement(Info, { className: 'h-4 w-4' })
-          });
-          await onExecute(state.permitSignature);
+          if (isZapMode) {
+            // Zap mode: Execute consolidated swap + deposit flow
+            if (!onExecuteZap) throw new Error('Zap execution handler not provided');
+            await onExecuteZap();
+            // Note: The handler itself manages all toasts and steps internally
+            actions.completeStep('executing');
+          } else {
+            // Regular mode: Execute deposit with permit signature
+            toast('Confirm Transaction', {
+              icon: React.createElement(Info, { className: 'h-4 w-4' })
+            });
+            await onExecute(state.permitSignature);
+            // Note: Completion is handled by isDepositSuccess effect
+          }
           break;
       }
     } catch (error: any) {
@@ -188,19 +255,22 @@ export function TransactionFlowPanel({
     canProceed,
     approvalData,
     isCheckingApprovals,
+    isZapMode,
+    zapInputToken,
     getNextStep,
     actions,
     token0Symbol,
     token1Symbol,
     onApproveToken,
     onSignPermit,
+    onExecuteZap,
     onExecute,
     state.permitSignature,
     autoProgressOnApproval,
   ]);
 
   // Generate stepper steps from current state
-  const stepperSteps = generateStepperSteps(state, approvalData, token0Symbol, token1Symbol);
+  const stepperSteps = generateStepperSteps(state, approvalData, token0Symbol, token1Symbol, isZapMode);
 
   // Determine button text based on next action (static, no loading states)
   const getButtonText = (): string => {
@@ -208,10 +278,16 @@ export function TransactionFlowPanel({
     if (!approvalData) return executeButtonLabel;
 
     // Show next action only, no loading states
-    const nextStep = getNextStep(approvalData);
+    const nextStep = getNextStep(approvalData, isZapMode);
+    const inputTokenSymbol = zapInputToken === 'token0' ? token0Symbol : token1Symbol;
+
     switch (nextStep) {
+      case 'approving_zap_tokens': return 'Approve Tokens';
       case 'approving_token0': return `Approve ${token0Symbol}`;
       case 'approving_token1': return `Approve ${token1Symbol}`;
+      case 'signing_swap_permit': return 'Sign Swap Permit';
+      case 'swapping': return 'Execute Swap';
+      case 'signing_batch_permit': return 'Sign LP Permit';
       case 'signing_permit': return 'Sign Permit';
       case 'executing': return executeButtonLabel;
       default: return executeButtonLabel; // Default to execute label when all steps complete

@@ -191,80 +191,10 @@ export default async function handler(
         const token1IsNative = token1Config.address === ETHERS_ADDRESS_ZERO;
         const hasNativeETH = token0IsNative || token1IsNative;
 
-        // ========== STEP 1: Check ERC20 approvals to Permit2 ==========
-        // Check BOTH tokens and return the first one that needs approval
-        let token0NeedsApproval = false;
-        let token1NeedsApproval = false;
+        // ZAP MODE: Skip all approval checks - the frontend handles approvals independently
+        // We proceed directly to permit signature checking
 
-        if (!token0IsNative) {
-            const token0Allowance = await publicClient.readContract({
-                address: getAddress(token0Config.address),
-                abi: [{
-                    name: 'allowance',
-                    type: 'function',
-                    stateMutability: 'view',
-                    inputs: [
-                        { name: 'owner', type: 'address' },
-                        { name: 'spender', type: 'address' }
-                    ],
-                    outputs: [{ name: '', type: 'uint256' }]
-                }],
-                functionName: 'allowance',
-                args: [getAddress(userAddress), PERMIT2_ADDRESS]
-            }) as bigint;
-
-            token0NeedsApproval = token0Allowance < parsedToken0Amount;
-        }
-
-        if (!token1IsNative) {
-            const token1Allowance = await publicClient.readContract({
-                address: getAddress(token1Config.address),
-                abi: [{
-                    name: 'allowance',
-                    type: 'function',
-                    stateMutability: 'view',
-                    inputs: [
-                        { name: 'owner', type: 'address' },
-                        { name: 'spender', type: 'address' }
-                    ],
-                    outputs: [{ name: '', type: 'uint256' }]
-                }],
-                functionName: 'allowance',
-                args: [getAddress(userAddress), PERMIT2_ADDRESS]
-            }) as bigint;
-
-            token1NeedsApproval = token1Allowance < parsedToken1Amount;
-        }
-
-        // Return the first token that needs approval (if any)
-        // This ensures we handle them one at a time in the flow
-        if (token0NeedsApproval) {
-            return res.status(200).json({
-                needsApproval: true,
-                approvalType: 'ERC20_TO_PERMIT2',
-                approvalTokenAddress: getAddress(token0Config.address),
-                approvalTokenSymbol: token0Symbol,
-                approveToAddress: PERMIT2_ADDRESS,
-                approvalAmount: maxUint256.toString(),
-                // Include info about other token for UI display
-                token1AlsoNeedsApproval: token1NeedsApproval,
-            });
-        }
-
-        if (token1NeedsApproval) {
-            return res.status(200).json({
-                needsApproval: true,
-                approvalType: 'ERC20_TO_PERMIT2',
-                approvalTokenAddress: getAddress(token1Config.address),
-                approvalTokenSymbol: token1Symbol,
-                approveToAddress: PERMIT2_ADDRESS,
-                approvalAmount: maxUint256.toString(),
-                // Token0 already checked and doesn't need approval
-                token1AlsoNeedsApproval: false,
-            });
-        }
-
-        // ========== STEP 2: Check Permit2 allowances and request PermitBatch signature if needed ==========
+        // ========== Check Permit2 allowances and request PermitBatch signature if needed ==========
         if (!permitSignature) {
             const now = Math.floor(Date.now() / 1000);
             const permitExpiration = now + PERMIT_EXPIRATION_DURATION_SECONDS;

@@ -5,9 +5,6 @@ import { motion } from 'framer-motion';
 import Image from 'next/image';
 import {
   ChevronRightIcon,
-  CheckIcon,
-  ActivityIcon,
-  MinusIcon,
   CoinsIcon,
   FileTextIcon,
   WalletIcon
@@ -16,6 +13,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Token, SwapProgressState } from './swap-interface'; // Removed FeeDetail and SwapTxInfo as they are not directly used in this simplified props interface yet
 import { formatTokenAmount } from "@/lib/utils";
+import { Spinner } from "@/components/ui/spinner";
 
 // Forward declare props that might come from the main interface or be defined here
 interface SwapReviewViewProps {
@@ -35,12 +33,17 @@ interface SwapReviewViewProps {
   // getStepIcon and renderStepIndicator might be moved here or passed as props
 }
 
-// Helper function to render the step indicator (can be moved from SwapInterface or passed as prop)
+// Helper function to render the step indicator with modern style matching AddLiquidityForm
 const renderStepIndicator = (step: string, currentStep: SwapProgressState, completed: SwapProgressState[]) => {
   const isActive =
     (step === "approval" && ["needs_approval", "approving", "waiting_approval"].includes(currentStep)) ||
     (step === "signature" && ["needs_signature", "signing_permit"].includes(currentStep)) ||
     (step === "transaction" && ["ready_to_swap", "building_tx", "executing_swap", "waiting_confirmation"].includes(currentStep));
+
+  const isLoading =
+    (step === "approval" && currentStep === "approving") ||
+    (step === "signature" && currentStep === "signing_permit") ||
+    (step === "transaction" && (currentStep === "building_tx" || currentStep === "executing_swap"));
 
   const isCompleted =
     (step === "approval" && completed.includes("approval_complete")) ||
@@ -49,18 +52,18 @@ const renderStepIndicator = (step: string, currentStep: SwapProgressState, compl
 
   return (
     <div className="flex items-center justify-between">
-      <span className={isActive ? "font-medium" : isCompleted ? "text-foreground" : "text-muted-foreground"}>
+      <span className="text-muted-foreground">
         {step === "approval" && "Token Approval"}
         {step === "signature" && "Sign Token Allowance"}
         {step === "transaction" && "Send Swap Transaction"}
       </span>
       <span>
-        {isCompleted ? (
-          <CheckIcon className="h-4 w-4 text-foreground" />
-        ) : isActive ? (
-          <ActivityIcon className="h-4 w-4 animate-pulse" />
+        {isLoading ? (
+          <Spinner className="h-4 w-4" />
         ) : (
-          <MinusIcon className="h-4 w-4 text-muted-foreground" />
+          <span className={`text-xs font-mono ${isCompleted ? 'text-green-500' : 'text-muted-foreground'}`}>
+            {isCompleted ? '1/1' : '0/1'}
+          </span>
         )}
       </span>
     </div>
@@ -200,10 +203,13 @@ export function SwapReviewView({
           <Image src={displayToToken.icon} alt={displayToToken.symbol} width={32} height={32} className="rounded-full"/>
         </div>
       </div>
-      <div className="rounded-lg border border-dashed border-primary p-4 mb-6 space-y-3 text-sm">
-        {renderStepIndicator("approval", swapProgressState, completedSteps)}
-        {renderStepIndicator("signature", swapProgressState, completedSteps)}
-        {renderStepIndicator("transaction", swapProgressState, completedSteps)}
+      <div className="p-3 border border-dashed rounded-md bg-muted/10 mb-6">
+        <p className="text-sm font-medium mb-3 text-foreground/80">Transaction Steps</p>
+        <div className="space-y-1.5 text-xs">
+          {renderStepIndicator("approval", swapProgressState, completedSteps)}
+          {renderStepIndicator("signature", swapProgressState, completedSteps)}
+          {renderStepIndicator("transaction", swapProgressState, completedSteps)}
+        </div>
       </div>
       <div className="my-8 flex flex-col items-center justify-center">
         {/* Simple 3-Step Display */}

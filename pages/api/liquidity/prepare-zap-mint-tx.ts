@@ -200,7 +200,7 @@ async function calculateOptimalSwapAmount(
     tickUpper: number,
     poolConfig: any,
     v4Pool: V4Pool
-): Promise<{ optimalSwapAmount: bigint; resultingPosition: V4Position }> {
+): Promise<{ optimalSwapAmount: bigint; resultingPosition: V4Position; priceImpact?: number; error?: string }> {
 
     // For out-of-range positions, handle differently
     const currentTick = v4Pool.tickCurrent;
@@ -226,7 +226,6 @@ async function calculateOptimalSwapAmount(
                     tickLower,
                     tickUpper,
                     amount0: JSBI.BigInt(swapQuote.amountOut.toString()),
-                    useFullPrecision: true
                 });
             } else {
                 position = V4Position.fromAmount1({
@@ -234,7 +233,6 @@ async function calculateOptimalSwapAmount(
                     tickLower,
                     tickUpper,
                     amount1: JSBI.BigInt(swapQuote.amountOut.toString()),
-                    useFullPrecision: true
                 });
             }
 
@@ -248,7 +246,6 @@ async function calculateOptimalSwapAmount(
                     tickLower,
                     tickUpper,
                     amount0: JSBI.BigInt(inputAmount.toString()),
-                    useFullPrecision: true
                 });
             } else {
                 position = V4Position.fromAmount1({
@@ -256,7 +253,6 @@ async function calculateOptimalSwapAmount(
                     tickLower,
                     tickUpper,
                     amount1: JSBI.BigInt(inputAmount.toString()),
-                    useFullPrecision: true
                 });
             }
 
@@ -264,98 +260,248 @@ async function calculateOptimalSwapAmount(
         }
     }
 
-    // For in-range positions, use binary search to find optimal swap amount
+    // For in-range positions, use binary search optimization
+    const inputIsToken0 = inputToken.sortsBefore(otherToken);
+
+    // Calculate theoretical optimal using Uniswap V3 math
+    const sqrtPriceX96 = v4Pool.sqrtRatioX96;
+    const Q96 = JSBI.BigInt(2 ** 96);
+
+    const sqrtPriceLowerX96 = JSBI.BigInt(Math.floor(Math.sqrt(1.0001 ** tickLower) * Number(Q96)));
+    const sqrtPriceUpperX96 = JSBI.BigInt(Math.floor(Math.sqrt(1.0001 ** tickUpper) * Number(Q96)));
+
+    const sqrtPriceCurrent = JSBI.toNumber(sqrtPriceX96) / Number(Q96);
+    const sqrtPriceLower = JSBI.toNumber(sqrtPriceLowerX96) / Number(Q96);
+    const sqrtPriceUpper = JSBI.toNumber(sqrtPriceUpperX96) / Number(Q96);
+
+    const L = 1;
+    const amount0ForL = L * (sqrtPriceUpper - sqrtPriceCurrent) / (sqrtPriceCurrent * sqrtPriceUpper);
+    const amount1ForL = L * (sqrtPriceCurrent - sqrtPriceLower);
+
+    const currentPrice = sqrtPriceCurrent * sqrtPriceCurrent;
+    const value0Needed = amount0ForL * currentPrice;
+    const value1Needed = amount1ForL;
+    const totalValueNeeded = value0Needed + value1Needed;
+
+    let fractionToKeep: number;
+    if (inputIsToken0) {
+        fractionToKeep = value0Needed / totalValueNeeded;
+    } else {
+        fractionToKeep = value1Needed / totalValueNeeded;
+    }
+
+    const fractionToSwap = 1 - fractionToKeep;
+    const theoreticalSwapAmount = BigInt(Math.floor(Number(inputAmount) * fractionToSwap));
+
+    console.log(`Theoretical optimal: swap ${(fractionToSwap * 100).toFixed(2)}% of input`);
+
+    // Binary search for optimal swap amount
     let low = 0n;
     let high = inputAmount;
-    let bestSwapAmount = 0n;
     let bestPosition: V4Position | null = null;
-    let maxLiquidity = JSBI.BigInt(0);
+    let bestSwapAmount = 0n;
+    let minLeftover = inputAmount;
+    let bestPriceImpact = 0;
+    let iteration = 0;
+    const maxIterations = 15;
 
-    // Binary search with ~10 iterations for precision
-    const iterations = 10;
-    for (let i = 0; i < iterations; i++) {
-        const mid = (low + high) / 2n;
-
-        // Skip if mid is 0 on first iteration (we'll check 0 separately)
-        if (mid === 0n && i > 0) break;
-
+    // Helper function to evaluate a swap amount
+    async function evaluateSwap(testSwapAmount: bigint): Promise<{
+        isValid: boolean;
+        position: V4Position | null;
+        leftover: bigint;
+        leftover0: bigint;
+        leftover1: bigint;
+        priceImpact: number;
+    }> {
         try {
-            // Get quote for swapping 'mid' amount
-            const swapQuote = mid > 0n
-                ? await getSwapQuote(inputToken, otherToken, mid, poolConfig)
+            const swapQuote = testSwapAmount > 0n
+                ? await getSwapQuote(inputToken, otherToken, testSwapAmount, poolConfig)
                 : { amountOut: 0n, gasEstimate: 0n };
 
-            // Calculate remaining amounts after swap
-            const remainingInput = inputAmount - mid;
-            const receivedOther = swapQuote.amountOut;
+            // Calculate price impact
+            let priceImpactPercent = 0;
+            if (testSwapAmount > 0n && swapQuote.amountOut > 0n) {
+                let expectedOutputWithoutSlippage: bigint;
+                const inputJSBI = JSBI.BigInt(testSwapAmount.toString());
 
-            // Determine which amount is token0 and which is token1
-            const inputIsToken0 = inputToken.sortsBefore(otherToken);
+                if (inputIsToken0) {
+                    const sqrtPriceSquared = JSBI.multiply(sqrtPriceX96, sqrtPriceX96);
+                    const Q96Squared = JSBI.multiply(Q96, Q96);
+                    const numerator = JSBI.multiply(inputJSBI, sqrtPriceSquared);
+                    const rawOutput = JSBI.divide(numerator, Q96Squared);
+
+                    const decimalDiff = otherToken.decimals - inputToken.decimals;
+                    if (decimalDiff > 0) {
+                        const multiplier = JSBI.BigInt(10 ** decimalDiff);
+                        expectedOutputWithoutSlippage = BigInt(JSBI.multiply(rawOutput, multiplier).toString());
+                    } else if (decimalDiff < 0) {
+                        const divisor = JSBI.BigInt(10 ** Math.abs(decimalDiff));
+                        expectedOutputWithoutSlippage = BigInt(JSBI.divide(rawOutput, divisor).toString());
+                    } else {
+                        expectedOutputWithoutSlippage = BigInt(rawOutput.toString());
+                    }
+                } else {
+                    const sqrtPriceSquared = JSBI.multiply(sqrtPriceX96, sqrtPriceX96);
+                    const Q96Squared = JSBI.multiply(Q96, Q96);
+                    const numerator = JSBI.multiply(inputJSBI, Q96Squared);
+                    const rawOutput = JSBI.divide(numerator, sqrtPriceSquared);
+
+                    const decimalDiff = otherToken.decimals - inputToken.decimals;
+                    if (decimalDiff > 0) {
+                        const multiplier = JSBI.BigInt(10 ** decimalDiff);
+                        expectedOutputWithoutSlippage = BigInt(JSBI.multiply(rawOutput, multiplier).toString());
+                    } else if (decimalDiff < 0) {
+                        const divisor = JSBI.BigInt(10 ** Math.abs(decimalDiff));
+                        expectedOutputWithoutSlippage = BigInt(JSBI.divide(rawOutput, divisor).toString());
+                    } else {
+                        expectedOutputWithoutSlippage = BigInt(rawOutput.toString());
+                    }
+                }
+
+                if (expectedOutputWithoutSlippage > 0n) {
+                    const difference = expectedOutputWithoutSlippage > swapQuote.amountOut
+                        ? expectedOutputWithoutSlippage - swapQuote.amountOut
+                        : swapQuote.amountOut - expectedOutputWithoutSlippage;
+                    const impactBps = (difference * 10000n) / expectedOutputWithoutSlippage;
+                    priceImpactPercent = Number(impactBps) / 100;
+                }
+            }
+
+            const remainingInput = inputAmount - testSwapAmount;
+            const receivedOther = swapQuote.amountOut;
             const amount0 = inputIsToken0 ? remainingInput : receivedOther;
             const amount1 = inputIsToken0 ? receivedOther : remainingInput;
 
-            // Create position with these amounts
             const position = V4Position.fromAmounts({
                 pool: v4Pool,
                 tickLower,
                 tickUpper,
                 amount0: JSBI.BigInt(amount0.toString()),
                 amount1: JSBI.BigInt(amount1.toString()),
-                useFullPrecision: true
             });
 
-            // Check if this gives us more liquidity
-            if (JSBI.greaterThan(position.liquidity, maxLiquidity)) {
-                maxLiquidity = position.liquidity;
-                bestSwapAmount = mid;
-                bestPosition = position;
-            }
-
-            // Adjust search range based on the ratio of amounts needed
-            // This is a simplified heuristic - could be improved with more sophisticated math
             const mintAmount0 = BigInt(position.mintAmounts.amount0.toString());
             const mintAmount1 = BigInt(position.mintAmounts.amount1.toString());
 
-            // Check if we need more of the other token (swap more) or less (swap less)
-            if (mintAmount0 > 0n && mintAmount1 > 0n) {
-                // Both amounts are being used, check the ratio
-                // This is a rough heuristic and could be refined
-                if (inputIsToken0 && mintAmount0 > mintAmount1 * 2n) {
-                    // We have too much token0 left, swap more
-                    low = mid + 1n;
-                } else if (!inputIsToken0 && mintAmount1 > mintAmount0 * 2n) {
-                    // We have too much token1 left, swap more
-                    low = mid + 1n;
-                } else {
-                    // Ratio seems balanced, continue binary search normally
-                    if (i < iterations / 2) {
-                        high = mid - 1n;
-                    } else {
-                        low = mid + 1n;
-                    }
-                }
+            const leftover0 = amount0 > mintAmount0 ? amount0 - mintAmount0 : 0n;
+            const leftover1 = amount1 > mintAmount1 ? amount1 - mintAmount1 : 0n;
+
+            let totalLeftover: bigint;
+            if (inputIsToken0) {
+                const leftover1InInput = testSwapAmount > 0n && swapQuote.amountOut > 0n
+                    ? (leftover1 * testSwapAmount) / swapQuote.amountOut
+                    : leftover1;
+                totalLeftover = leftover0 + leftover1InInput;
             } else {
-                // One amount is zero, adjust accordingly
-                if ((inputIsToken0 && mintAmount0 === 0n) || (!inputIsToken0 && mintAmount1 === 0n)) {
-                    // We swapped too much, reduce swap amount
-                    high = mid - 1n;
-                } else {
-                    // We need to swap more
-                    low = mid + 1n;
-                }
+                const leftover0InInput = testSwapAmount > 0n && swapQuote.amountOut > 0n
+                    ? (leftover0 * testSwapAmount) / swapQuote.amountOut
+                    : leftover0;
+                totalLeftover = leftover1 + leftover0InInput;
             }
+
+            return { isValid: true, position, leftover: totalLeftover, leftover0, leftover1, priceImpact: priceImpactPercent };
         } catch (error) {
-            console.error(`Error at swap amount ${mid.toString()}:`, error);
-            // On error, try a different amount
-            high = mid - 1n;
+            console.error(`Error evaluating swap ${testSwapAmount}:`, error);
+            return { isValid: false, position: null, leftover: inputAmount, leftover0: 0n, leftover1: 0n, priceImpact: 0 };
+        }
+    }
+
+    // Start by testing theoretical optimal
+    iteration++;
+    const testAmount = iteration === 1 ? theoreticalSwapAmount : (low + high) / 2n;
+    console.log(`[Iter ${iteration}] Testing: ${testAmount} (${((Number(testAmount) / Number(inputAmount)) * 100).toFixed(2)}%)`);
+
+    let result = await evaluateSwap(testAmount);
+
+    if (result.isValid) {
+        const leftoverPercent = (Number(result.leftover) / Number(inputAmount)) * 100;
+        console.log(`  ✓ Valid - Leftover: ${leftoverPercent.toFixed(4)}%, Price Impact: ${result.priceImpact.toFixed(4)}%`);
+        bestPosition = result.position;
+        bestSwapAmount = testAmount;
+        minLeftover = result.leftover;
+        bestPriceImpact = result.priceImpact;
+
+        if (leftoverPercent < 0.1) {
+            console.log(`  🎯 Excellent result!`);
+            return { optimalSwapAmount: bestSwapAmount, resultingPosition: bestPosition!, priceImpact: bestPriceImpact };
+        }
+    }
+
+    // Binary search
+    while (iteration < maxIterations) {
+        iteration++;
+        const testAmount = (low + high) / 2n;
+
+        console.log(`[Iter ${iteration}] Testing: ${testAmount} (${((Number(testAmount) / Number(inputAmount)) * 100).toFixed(2)}%)`);
+
+        result = await evaluateSwap(testAmount);
+
+        if (!result.isValid) {
+            console.log(`  ❌ Invalid`);
+            high = testAmount;
+            continue;
+        }
+
+        const leftoverPercent = (Number(result.leftover) / Number(inputAmount)) * 100;
+        console.log(`  ✓ Valid - Leftover: ${leftoverPercent.toFixed(4)}%, Price Impact: ${result.priceImpact.toFixed(4)}%`);
+
+        if (result.leftover < minLeftover) {
+            bestPosition = result.position;
+            bestSwapAmount = testAmount;
+            minLeftover = result.leftover;
+            bestPriceImpact = result.priceImpact;
+        }
+
+        if (leftoverPercent < 0.1) {
+            console.log(`  🎯 Excellent result!`);
+            break;
+        }
+
+        // Adjust bounds based on which token has more leftover
+        if (result.leftover0 > result.leftover1) {
+            // More token0 leftover
+            if (inputIsToken0) {
+                // We have too much token0, need to swap more
+                low = testAmount;
+            } else {
+                // We swapped too much token1, need to swap less
+                high = testAmount;
+            }
+        } else {
+            // More token1 leftover
+            if (inputIsToken0) {
+                // We swapped too much token0, need to swap less
+                high = testAmount;
+            } else {
+                // We have too much token1, need to swap more
+                low = testAmount;
+            }
+        }
+
+        if (high - low < inputAmount / 10000n) {
+            console.log(`  ✓ Converged`);
+            break;
         }
     }
 
     if (!bestPosition) {
-        throw new Error("Could not find optimal swap amount");
+        return {
+            optimalSwapAmount: 0n,
+            resultingPosition: V4Position.fromAmounts({
+                pool: v4Pool,
+                tickLower,
+                tickUpper,
+                amount0: JSBI.BigInt(0),
+                amount1: JSBI.BigInt(0),
+                useFullPrecision: true
+            }),
+            priceImpact: bestPriceImpact,
+            error: "Optimization failed after " + iteration + " iterations"
+        };
     }
 
-    return { optimalSwapAmount: bestSwapAmount, resultingPosition: bestPosition };
+    return { optimalSwapAmount: bestSwapAmount, resultingPosition: bestPosition, priceImpact: bestPriceImpact };
 }
 
 export default async function handler(
@@ -449,13 +595,15 @@ export default async function handler(
                 // Return permit data for frontend to request signature
                 const permitExpiration = now + PERMIT_EXPIRATION_DURATION_SECONDS;
                 const permitSigDeadline = now + PERMIT_SIG_DEADLINE_DURATION_SECONDS;
+                // Use MaxAllowanceTransferAmount (max uint160) to match regular swap behavior
+                const MaxAllowanceTransferAmount = BigInt('0xffffffffffffffffffffffffffffffffffffffff');
 
                 return res.status(200).json({
                     needsApproval: true,
                     approvalType: 'PERMIT2_SIGNATURE',
                     permitData: {
                         token: getAddress(inputTokenConfig.address),
-                        amount: parsedInputAmount.toString(),
+                        amount: MaxAllowanceTransferAmount.toString(),
                         nonce: Number(nonce),
                         expiration: permitExpiration,
                         sigDeadline: permitSigDeadline.toString(),
@@ -548,7 +696,7 @@ export default async function handler(
 
         // Calculate optimal swap amount
         console.log("Calculating optimal swap amount for zap...");
-        const { optimalSwapAmount, resultingPosition } = await calculateOptimalSwapAmount(
+        const { optimalSwapAmount, resultingPosition, priceImpact, error } = await calculateOptimalSwapAmount(
             sdkInputToken,
             sdkOtherToken,
             parsedInputAmount,
@@ -557,6 +705,14 @@ export default async function handler(
             poolConfig,
             v4Pool
         );
+
+        // Check if there was an error (e.g., price impact too high)
+        if (error) {
+            return res.status(400).json({
+                message: error,
+                error: `Price impact too high: ${priceImpact ? priceImpact.toFixed(3) : 'N/A'}%`
+            });
+        }
 
         // Extract amounts from the resulting position
         const amount0 = BigInt(resultingPosition.mintAmounts.amount0.toString());
@@ -576,13 +732,8 @@ export default async function handler(
             });
         }
 
-        // Calculate price impact (simplified - could be enhanced)
-        let priceImpact = "0";
-        if (optimalSwapAmount > 0n) {
-            // Rough estimate: (swapAmount / poolLiquidity) * 100
-            const swapImpact = (optimalSwapAmount * 10000n) / (currentLiquidity > 0n ? currentLiquidity : 1n);
-            priceImpact = formatUnits(swapImpact, 2); // Convert to percentage
-        }
+        // Use the calculated price impact from the optimization function
+        const priceImpactStr = priceImpact ? priceImpact.toFixed(3) : "0";
 
         // Calculate minimum amounts with slippage
         const slippageMultiplier = BigInt(10000 - slippageTolerance);
@@ -595,7 +746,7 @@ export default async function handler(
             expectedToken0Amount: finalAmount0.toString(),
             expectedToken1Amount: finalAmount1.toString(),
             expectedLiquidity: liquidity.toString(),
-            priceImpact,
+            priceImpact: priceImpactStr,
             minimumReceived: {
                 token0: minAmount0.toString(),
                 token1: minAmount1.toString()
@@ -615,11 +766,13 @@ export default async function handler(
 
         // Add PERMIT2_PERMIT command for swap if we have a signature (and not native ETH)
         if (!isNativeInput && permitSignature && permitNonce !== undefined && permitExpiration && permitSigDeadline) {
+            // Use MaxAllowanceTransferAmount (max uint160) for permit amount to match regular swap behavior
+            const MaxAllowanceTransferAmount = BigInt('0xffffffffffffffffffffffffffffffffffffffff');
             swapRoutePlanner.addCommand(CommandType.PERMIT2_PERMIT, [
                 [
                     [
                         getAddress(inputTokenConfig.address), // token
-                        BigInt(optimalSwapAmount.toString()), // only permit the amount we're swapping
+                        MaxAllowanceTransferAmount,           // Use max allowance instead of exact amount
                         permitExpiration,                      // expiration (number)
                         permitNonce                            // nonce (number)
                     ],

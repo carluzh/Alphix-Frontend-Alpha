@@ -20,6 +20,7 @@ import { Token, FeeDetail } from './swap-interface';
 import { TokenSelector, TokenSelectorToken } from './TokenSelector';
 import { getToken } from '@/lib/pools-config';
 import { findBestRoute } from '@/lib/routing-engine';
+import { SlippageControl } from './SlippageControl';
 
 interface SwapInputViewProps {
   displayFromToken: Token;
@@ -65,7 +66,11 @@ interface SwapInputViewProps {
   onSelectPoolForChart?: (poolIndex: number) => void;
   swapContainerRect: { top: number; left: number; width: number; height: number; };
   slippage: number;
+  isAutoSlippage: boolean;
+  autoSlippageValue: number;
   onSlippageChange: (newSlippage: number) => void;
+  onAutoSlippageToggle: () => void;
+  onCustomSlippageToggle: () => void;
   showRoute?: boolean;
   onRouteHoverChange?: (hover: boolean) => void;
 }
@@ -106,15 +111,15 @@ export function SwapInputView({
   onSelectPoolForChart,
   swapContainerRect,
   slippage,
+  isAutoSlippage,
+  autoSlippageValue,
   onSlippageChange,
+  onAutoSlippageToggle,
+  onCustomSlippageToggle,
   showRoute = true,
   onRouteHoverChange,
 }: SwapInputViewProps) {
   const [hoveredRouteIndex, setHoveredRouteIndex] = React.useState<number | null>(null);
-  const [isSlippageEditing, setIsSlippageEditing] = React.useState(false);
-  const [customSlippage, setCustomSlippage] = React.useState("");
-  const [isCustomSlippage, setIsCustomSlippage] = React.useState(false);
-  const slippageRef = React.useRef<HTMLDivElement>(null);
   const [clickedTokenIndex, setClickedTokenIndex] = React.useState<number | null>(0);
   const ignoreNextOutsideClickRef = React.useRef(false);
   const hoverPreviewActiveRef = React.useRef(false);
@@ -130,47 +135,12 @@ export function SwapInputView({
     return `${percent.toFixed(decimals)}%`;
   }, []);
 
-  const presetSlippages = [0.05, 0.10, 0.50, 1.00];
-
   React.useEffect(() => {
     if (onSelectPoolForChart) {
       onSelectPoolForChart(0);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const handleSlippageSelect = (value: number) => {
-    onSlippageChange(value);
-    setIsCustomSlippage(false);
-  };
-
-  const handleCustomSlippageInput = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
-    if (value === "" || /^\d*\.?\d*$/.test(value)) {
-      const numValue = parseFloat(value);
-      if (value === "" || (numValue >= 0 && numValue <= 99)) {
-        setCustomSlippage(value);
-      }
-    }
-  };
-
-  const handleCustomSlippageSubmit = () => {
-    if (customSlippage && !isNaN(parseFloat(customSlippage))) {
-      const rounded = Math.round(parseFloat(customSlippage) * 100) / 100;
-      onSlippageChange(rounded);
-      setCustomSlippage("");
-    }
-  };
-
-  const handleCustomSlippageKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      handleCustomSlippageSubmit();
-    } else if (e.key === 'Escape') {
-      setIsSlippageEditing(false);
-      setIsCustomSlippage(false);
-      setCustomSlippage("");
-    }
-  };
 
   React.useEffect(() => {
     if (balanceWiggleCount > 0) {
@@ -195,10 +165,6 @@ export function SwapInputView({
     } catch {}
     handleFromAmountChange(e);
   };
-
-  React.useEffect(() => {
-    return;
-  }, [isSlippageEditing]);
 
   return (
     <motion.div
@@ -677,86 +643,21 @@ export function SwapInputView({
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between text-xs text-muted-foreground">
-                  <div className="flex items-center gap-1.5" ref={slippageRef}>
-                    <span>Max Slippage:</span>
-                    {quoteError ? (
-                      <span className="text-foreground/80 font-medium">-</span>
-                    ) : (
-                      <button
-                        type="button"
-                        className="flex items-center gap-0.5 text-foreground/80 font-medium"
-                        onClick={() => {
-                          ignoreNextOutsideClickRef.current = true;
-                          setIsSlippageEditing((v) => !v);
-                          setCustomSlippage(slippage.toString());
-                        }}
-                      >
-                        <span>{slippage}%</span>
-                        <ChevronDownIcon className="h-3 w-3 text-muted-foreground/60 hover:text-muted-foreground" />
-                      </button>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span>Min Received:</span>
-                    <span className="text-foreground/80 font-medium">
-                      {calculatedValues.minimumReceived} {displayToToken.symbol}
-                    </span>
-                  </div>
+                <SlippageControl
+                  currentSlippage={slippage}
+                  isAuto={isAutoSlippage}
+                  autoSlippage={autoSlippageValue}
+                  onSlippageChange={onSlippageChange}
+                  onAutoToggle={onAutoSlippageToggle}
+                  onCustomToggle={onCustomSlippageToggle}
+                />
+
+                <div className="flex items-center justify-between text-xs text-muted-foreground mt-1.5">
+                  <span>Min Received:</span>
+                  <span className="text-foreground/80 font-medium">
+                    {calculatedValues.minimumReceived} {displayToToken.symbol}
+                  </span>
                 </div>
-                <AnimatePresence initial={false}>
-                  {!quoteError && isSlippageEditing && (
-                    <motion.div
-                      key="slippage-row"
-                      className="flex flex-wrap items-center gap-1.5 pt-1"
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: 'auto', opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      transition={{ duration: 0.18, ease: 'easeOut' }}
-                    >
-                      {presetSlippages.map((val) => (
-                        <button
-                          key={val}
-                          type="button"
-                          className={cn(
-                            "px-1.5 py-0.5 text-xs font-normal rounded-md border border-primary bg-button text-muted-foreground transition-colors",
-                            "hover:brightness-110 hover:border-white/30",
-                            slippage === val && "border-white/30"
-                          )}
-                          onClick={() => handleSlippageSelect(val)}
-                        >
-                          {val.toFixed(2)}%
-                        </button>
-                      ))}
-                      {!isCustomSlippage ? (
-                        <button
-                          type="button"
-                          className="px-1.5 py-0.5 text-xs font-normal rounded-md border border-primary bg-button text-muted-foreground transition-colors hover:brightness-110 hover:border-white/30"
-                          onClick={() => {
-                            setIsCustomSlippage(true);
-                            setCustomSlippage(slippage.toString());
-                          }}
-                        >
-                          Custom
-                        </button>
-                      ) : (
-                        <div className="flex items-center gap-1">
-                          <input
-                            type="text"
-                            value={customSlippage}
-                            onChange={handleCustomSlippageInput}
-                            onKeyDown={handleCustomSlippageKeyDown}
-                            onBlur={handleCustomSlippageSubmit}
-                            placeholder="0.00"
-                            className="w-14 px-1 py-0.5 text-xs text-center bg-background border-0 outline-none focus:outline-none focus:ring-0 focus-visible:ring-0 rounded"
-                            autoFocus
-                          />
-                          <span className="text-xs">%</span>
-                        </div>
-                      )}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
               </div>
             )}
           </>

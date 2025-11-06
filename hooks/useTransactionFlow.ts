@@ -5,12 +5,20 @@ export type FlowStep =
   | 'idle'
   | 'approving_token0'
   | 'approving_token1'
-  | 'signing_permit'
+  | 'approving_zap_tokens'   // Zap: approve both tokens together
+  | 'approving_input'        // Zap: track input token approval for UI
+  | 'approving_output'       // Zap: track output token approval for UI
+  | 'signing_swap_permit'    // Zap: sign permit for swap (unused currently)
+  | 'swapping'               // Zap: execute swap (unused currently)
+  | 'signing_permit'         // Regular: sign batch permit for LP
+  | 'signing_batch_permit'   // Zap: sign batch permit for LP (unused currently)
   | 'executing';
 
 export interface TransactionFlowState {
   currentStep: FlowStep;
-  permitSignature?: string;
+  permitSignature?: string;        // Regular mode: batch permit signature
+  swapPermitSignature?: string;    // Zap mode: swap permit signature
+  batchPermitSignature?: string;   // Zap mode: batch permit signature after swap
   isLocked: boolean; // Prevents state changes during transitions
   completedSteps: Set<FlowStep>;
   error?: string;
@@ -21,6 +29,8 @@ export interface TransactionFlowActions {
   setStep: (step: FlowStep) => void;
   completeStep: (step: FlowStep) => void;
   setPermitSignature: (signature: string) => void;
+  setSwapPermitSignature: (signature: string) => void;
+  setBatchPermitSignature: (signature: string) => void;
   setError: (error: string | undefined) => void;
   lock: () => void;
   unlock: () => void;
@@ -36,7 +46,7 @@ export interface UseTransactionFlowProps {
 export interface UseTransactionFlowReturn {
   state: TransactionFlowState;
   actions: TransactionFlowActions;
-  getNextStep: (approvalData: any) => FlowStep | null;
+  getNextStep: (approvalData: any, isZapMode?: boolean) => FlowStep | null;
   canProceed: () => boolean;
   isFlowActive: () => boolean;
 }
@@ -93,6 +103,14 @@ export function useTransactionFlow(props?: UseTransactionFlowProps): UseTransact
       setState(prev => ({ ...prev, permitSignature: signature }));
     },
 
+    setSwapPermitSignature: (signature: string) => {
+      setState(prev => ({ ...prev, swapPermitSignature: signature }));
+    },
+
+    setBatchPermitSignature: (signature: string) => {
+      setState(prev => ({ ...prev, batchPermitSignature: signature }));
+    },
+
     setError: (error: string | undefined) => {
       setState(prev => ({ ...prev, error, isLocked: false }));
     },
@@ -112,6 +130,8 @@ export function useTransactionFlow(props?: UseTransactionFlowProps): UseTransact
         completedSteps: new Set(),
         error: undefined,
         permitSignature: undefined,
+        swapPermitSignature: undefined,
+        batchPermitSignature: undefined,
       });
       flowActiveRef.current = false;
     },
@@ -121,35 +141,54 @@ export function useTransactionFlow(props?: UseTransactionFlowProps): UseTransact
     },
   }), [state.completedSteps, onStepComplete]);
 
-  const getNextStep = useCallback((approvalData: any): FlowStep | null => {
+  const getNextStep = useCallback((approvalData: any, isZapMode?: boolean): FlowStep | null => {
     if (!approvalData) return null;
 
-    // Check token0 approval
-    if (approvalData.needsToken0ERC20Approval && !state.completedSteps.has('approving_token0')) {
-      return 'approving_token0';
-    }
+    if (isZapMode) {
+      // Zap flow: 1. Approve both tokens → 2. Execute (consolidated swap + LP deposit)
 
-    // Check token1 approval
-    if (approvalData.needsToken1ERC20Approval && !state.completedSteps.has('approving_token1')) {
-      return 'approving_token1';
-    }
+      const needsInputApproval = approvalData.needsInputTokenERC20Approval;
+      const needsOutputApproval = approvalData.needsOutputTokenERC20Approval;
 
-    // Check permit signature - ALWAYS required for ERC20 tokens after approvals
-    // (Permit is short-lived and minimal amount, similar to swap flow)
-    // Note: We check if we have a signature, not if we've completed the step before
-    // This allows re-signing if the signature was cleared (e.g., amount changed)
-    if (!state.permitSignature) {
-      return 'signing_permit';
-    }
+      // If both tokens need approval and we haven't completed the batch approval, do it
+      if ((needsInputApproval || needsOutputApproval) && !state.completedSteps.has('approving_zap_tokens')) {
+        return 'approving_zap_tokens';
+      }
 
-    // Ready to execute
-    if (!state.completedSteps.has('executing')) {
-      return 'executing';
+      // Execute consolidated zap flow (swap + LP deposit with inline permit signing)
+      if (!state.completedSteps.has('executing')) {
+        return 'executing';
+      }
+    } else {
+      // Regular flow: 1. Approve tokens → 2. Sign batch permit → 3. Execute
+
+      // Check token0 approval
+      if (approvalData.needsToken0ERC20Approval && !state.completedSteps.has('approving_token0')) {
+        return 'approving_token0';
+      }
+
+      // Check token1 approval
+      if (approvalData.needsToken1ERC20Approval && !state.completedSteps.has('approving_token1')) {
+        return 'approving_token1';
+      }
+
+      // Check permit signature - ALWAYS required for ERC20 tokens after approvals
+      // (Permit is short-lived and minimal amount, similar to swap flow)
+      // Note: We check if we have a signature, not if we've completed the step before
+      // This allows re-signing if the signature was cleared (e.g., amount changed)
+      if (!state.permitSignature) {
+        return 'signing_permit';
+      }
+
+      // Ready to execute
+      if (!state.completedSteps.has('executing')) {
+        return 'executing';
+      }
     }
 
     // All steps completed
     return null;
-  }, [state.completedSteps, state.permitSignature]);
+  }, [state.completedSteps, state.permitSignature, state.swapPermitSignature, state.batchPermitSignature]);
 
   const canProceed = useCallback(() => {
     return !state.isLocked && state.currentStep === 'idle' && !state.error;
@@ -184,8 +223,78 @@ export function generateStepperSteps(
   approvalData: any,
   token0Symbol?: TokenSymbol,
   token1Symbol?: TokenSymbol,
+  isZapMode?: boolean,
 ) {
   const steps: any[] = [];
+
+  // ZAP MODE: 2 steps (Token Approvals → Execute Zap)
+  if (isZapMode) {
+    // Step 1: Token Approvals (both input and output)
+    const needsInputApproval = approvalData?.needsInputTokenERC20Approval;
+    const needsOutputApproval = approvalData?.needsOutputTokenERC20Approval;
+
+    // Count total approvals needed and completed
+    const totalApprovalsNeeded = (needsInputApproval ? 1 : 0) + (needsOutputApproval ? 1 : 0);
+
+    // Check if batch approval is complete
+    const batchApprovalComplete = flowState.completedSteps.has('approving_zap_tokens');
+
+    // Check individual approval progress
+    const inputApproved = flowState.completedSteps.has('approving_input');
+    const outputApproved = flowState.completedSteps.has('approving_output');
+
+    // Determine approval progress
+    let approvalsCompleted = 0;
+    let showCount = false;
+
+    if (batchApprovalComplete) {
+      // Batch complete means both are done
+      approvalsCompleted = 2;
+      showCount = false; // Hide count when complete
+    } else if (!needsInputApproval && !needsOutputApproval) {
+      // Neither needs approval (both already approved or native)
+      approvalsCompleted = 2;
+      showCount = false;
+    } else {
+      // Count individual approval progress
+      if (inputApproved || !needsInputApproval) approvalsCompleted++;
+      if (outputApproved || !needsOutputApproval) approvalsCompleted++;
+      showCount = true;
+    }
+
+    const allApprovalsComplete = batchApprovalComplete || (!needsInputApproval && !needsOutputApproval);
+    const isWorkingOnApprovals = flowState.currentStep === 'approving_zap_tokens' ||
+      (flowState.isLocked && totalApprovalsNeeded > 0 && !batchApprovalComplete);
+
+    // For zap mode, always show 2 total tokens regardless of native ETH
+    steps.push({
+      id: 'approvals',
+      label: 'Token Approvals',
+      status: allApprovalsComplete ? 'completed' as const :
+              isWorkingOnApprovals ? 'loading' as const :
+              'pending' as const,
+      // Always show count for zap mode unless both are already approved
+      count: (needsInputApproval || needsOutputApproval || !allApprovalsComplete) ?
+             { completed: approvalsCompleted, total: 2 } : undefined,
+    });
+
+    // Step 2: Execute Zap (consolidated swap + LP deposit with inline permits)
+    const zapCompleted = flowState.completedSteps.has('executing');
+    const isWorkingOnZap = flowState.currentStep === 'executing' ||
+      (flowState.isLocked && !zapCompleted && allApprovalsComplete);
+
+    steps.push({
+      id: 'execute',
+      label: 'Execute Zap',
+      status: zapCompleted ? 'completed' as const :
+              isWorkingOnZap ? 'loading' as const :
+              'pending' as const,
+    });
+
+    return steps;
+  }
+
+  // REGULAR MODE: 3 steps (Token Approvals → Permit → Deposit)
 
   // Token Approvals step - ALWAYS show actual state
   const needsToken0 = approvalData?.needsToken0ERC20Approval;
