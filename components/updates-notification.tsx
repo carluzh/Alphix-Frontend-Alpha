@@ -57,23 +57,26 @@ export function UpdatesNotification({ open = false, onClose }: { open?: boolean;
             </div>
             <div className="overflow-y-auto flex-1 p-3 text-foreground scrollbar-thin scrollbar-thumb-[#2a2a2a] scrollbar-track-transparent">
               {/* TLDR Section - Always Visible */}
-              <div className="mb-4 pb-3 border-b border-sidebar-border">
-                <h4 className="text-xs font-semibold text-white mb-2.5 font-mono">TLDR</h4>
-                <ul className="flex flex-col gap-2">
-                  <li className="flex items-start text-xs">
-                    <span className="text-sidebar-primary mr-2 mt-0.5">•</span>
-                    <span className="text-white">Position Management Overhaul</span>
-                  </li>
-                  <li className="flex items-start text-xs">
-                    <span className="text-sidebar-primary mr-2 mt-0.5">•</span>
-                    <span className="text-white">Real-Time APY Tracking</span>
-                  </li>
-                  <li className="flex items-start text-xs">
-                    <span className="text-sidebar-primary mr-2 mt-0.5">•</span>
-                    <span className="text-white">Interactive Range Selection</span>
-                  </li>
-                </ul>
-              </div>
+              {latestVersion.tldr && latestVersion.tldr.length > 0 && (
+                <div className="mb-4 pb-3 border-b border-sidebar-border">
+                  <h4 className="text-xs font-semibold text-white mb-2.5 font-mono">TLDR</h4>
+                  <ul className="flex flex-col gap-2">
+                    {latestVersion.tldr.map((item, index) => {
+                      const [title, ...descParts] = item.split(' - ');
+                      const description = descParts.join(' - ');
+                      return (
+                        <li key={index} className="flex items-start text-xs">
+                          <span className="text-sidebar-primary mr-2 mt-0.5">•</span>
+                          <span className="text-white">
+                            <strong>{title}</strong>
+                            {description && <span className="text-muted-foreground"> - {description}</span>}
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
 
               <Accordion type="multiple" className="w-full space-y-0" defaultValue={[]}>
                 {/* New Features */}

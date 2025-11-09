@@ -1067,8 +1067,8 @@ export function AddLiquidityModal({
     }
   };
 
-  const displayToken0Balance = !balanceToken0Symbol ? "~" : (isLoadingToken0Balance ? "Loading..." : (token0BalanceData ? getFormattedDisplayBalance(parseFloat(token0BalanceData.formatted), balanceToken0Symbol) : "~"));
-  const displayToken1Balance = !balanceToken1Symbol ? "~" : (isLoadingToken1Balance ? "Loading..." : (token1BalanceData ? getFormattedDisplayBalance(parseFloat(token1BalanceData.formatted), balanceToken1Symbol) : "~"));
+  const displayToken0Balance = !balanceToken0Symbol ? "~" : (isLoadingToken0Balance ? <span className="inline-block h-3 w-16 bg-muted/60 rounded animate-pulse" /> : (token0BalanceData ? getFormattedDisplayBalance(parseFloat(token0BalanceData.formatted), balanceToken0Symbol) : "~"));
+  const displayToken1Balance = !balanceToken1Symbol ? "~" : (isLoadingToken1Balance ? <span className="inline-block h-3 w-16 bg-muted/60 rounded animate-pulse" /> : (token1BalanceData ? getFormattedDisplayBalance(parseFloat(token1BalanceData.formatted), balanceToken1Symbol) : "~"));
 
   // Calculate which side is productive for out-of-range positions
   let increaseProductiveSide: null | 'amount0' | 'amount1' = null;

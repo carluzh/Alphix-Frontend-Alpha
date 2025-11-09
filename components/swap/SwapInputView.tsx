@@ -198,7 +198,7 @@ export function SwapInputView({
             onClick={() => handleUsePercentage(100, true)}
             disabled={!isConnected}
           >
-            {isConnected ? (isLoadingCurrentFromTokenBalance ? "Loading..." : displayFromToken.balance) : "~"} {displayFromToken.symbol}
+            {isConnected ? (isLoadingCurrentFromTokenBalance ? <span className="inline-block h-3 w-16 bg-muted/60 rounded animate-pulse" /> : displayFromToken.balance) : "~"} {displayFromToken.symbol}
           </Button>
         </div>
         <div className="flex items-center gap-2">
@@ -295,7 +295,7 @@ export function SwapInputView({
             onClick={() => handleUsePercentage(100, false)}
             disabled={!isConnected}
           >
-            {isConnected ? (isLoadingCurrentToTokenBalance ? "Loading..." : displayToToken.balance) : "~"} {displayToToken.symbol}
+            {isConnected ? (isLoadingCurrentToTokenBalance ? <span className="inline-block h-3 w-16 bg-muted/60 rounded animate-pulse" /> : displayToToken.balance) : "~"} {displayToToken.symbol}
           </Button>
         </div>
         <div className="flex items-center gap-2">

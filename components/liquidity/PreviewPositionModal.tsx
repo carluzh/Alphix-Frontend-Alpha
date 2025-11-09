@@ -82,6 +82,18 @@ export function PreviewPositionModal({
   const containerRef = useRef<HTMLDivElement>(null);
   const { chainId } = useAccount();
   
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, onClose]);
+  
   // State for APY calculation
   const [calculatedAPY, setCalculatedAPY] = useState<number | null>(null);
   const [cachedPoolMetrics, setCachedPoolMetrics] = useState<{ poolId: string; metrics: any; poolLiquidity: string } | null>(null);

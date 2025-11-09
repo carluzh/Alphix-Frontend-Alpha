@@ -127,6 +127,18 @@ export function TokenSelector({
   const { address: accountAddress, isConnected, chain } = useAccount();
   const currentChainId = chain?.id;
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setIsOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen]);
+
   // Filter out the excluded token and apply search filter - memoized to prevent infinite loops
   const filteredTokens = useMemo(() => {
     return availableTokens

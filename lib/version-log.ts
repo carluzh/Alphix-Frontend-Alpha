@@ -1,6 +1,7 @@
 export interface VersionEntry {
   version: string;
   title: string;
+  tldr?: string[];
   newFeatures: string[];
   improvements: string[];
   bugFixes?: string[];
@@ -9,6 +10,25 @@ export interface VersionEntry {
 }
 
 export const VERSION_LOG: VersionEntry[] = [
+  {
+    version: "1.4",
+    title: "Beta Update - v1.4 What's New",
+    tldr: [
+      "Zap Liquidity - Add liquidity with a single token, automatically swapping to optimal ratio",
+      "Advanced Slippage Controls - Auto and custom slippage protection with price impact warnings"
+    ],
+    newFeatures: [
+      "Zap Liquidity System - Single-token liquidity addition with automatic swap optimization using multiple algorithms, including fast iterative optimizer and tick simulator",
+      "Preview Position Modal - Review position details, fees, and impact before confirming transactions",
+      "Real-time Price Service - USD price tracking using pool internal prices via aUSDC quotes"
+    ],
+    improvements: [
+      "Cache Invalidation System - Added optimistic updates for instant UI feedback on position changes and pool stats",
+      "Zap Transaction Flow - Streamlined approval and execution flow with better error handling for zap transactions",
+      "Position Calculations - Improved APY calculations and price impact estimates in preview modal"
+    ],
+    releaseDate: "2025-11-09"
+  },
   {
     version: "1.3",
     title: "Beta Update - v1.3 What's New",
