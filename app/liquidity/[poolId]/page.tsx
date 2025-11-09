@@ -1551,7 +1551,8 @@ export default function PoolDetailPage() {
                 const fresh = filtered.find(f => f.positionId === p.positionId);
                 return fresh ? { ...fresh, isOptimisticallyUpdating: undefined } : p;
               });
-              return [...updated, ...newPositions];
+              // Put new positions at the beginning so they appear at the top
+              return [...newPositions, ...updated];
             });
             setPendingNewPositions([]);
           },
@@ -1716,7 +1717,8 @@ export default function PoolDetailPage() {
           // Add new positions
           const newPositions = filtered.filter(p => !existingIds.has(p.positionId));
 
-          return [...updated, ...newPositions];
+          // Put new positions at the beginning so they appear at the top
+          return [...newPositions, ...updated];
         });
       },
       clearOptimisticStates: () => {

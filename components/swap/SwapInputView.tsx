@@ -9,6 +9,7 @@ import {
   ChevronsRight,
   InfoIcon,
   ChevronDown as ChevronDownIcon,
+  AlertTriangle,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -73,6 +74,10 @@ interface SwapInputViewProps {
   onCustomSlippageToggle: () => void;
   showRoute?: boolean;
   onRouteHoverChange?: (hover: boolean) => void;
+  priceImpactWarning?: {
+    severity: 'medium' | 'high';
+    message: string;
+  } | null;
 }
 
 export function SwapInputView({
@@ -118,6 +123,7 @@ export function SwapInputView({
   onCustomSlippageToggle,
   showRoute = true,
   onRouteHoverChange,
+  priceImpactWarning,
 }: SwapInputViewProps) {
   const [hoveredRouteIndex, setHoveredRouteIndex] = React.useState<number | null>(null);
   const [clickedTokenIndex, setClickedTokenIndex] = React.useState<number | null>(0);
@@ -390,29 +396,6 @@ export function SwapInputView({
                         formatPercentFromBps(routeFees[selectedPoolIndexForChart].fee)
                       )}
                     </span>
-                    <TooltipProvider delayDuration={0}>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <InfoIcon className="h-3 w-3 text-muted-foreground/60 hover:text-muted-foreground cursor-pointer" />
-                        </TooltipTrigger>
-                        <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs max-w-xs">
-                          <p>
-                            {(() => {
-                              const fromSym = routeInfo?.path?.[selectedPoolIndexForChart] ?? displayFromToken.symbol;
-                              const toIdx = Math.min((routeInfo?.path?.length || 1) - 1, selectedPoolIndexForChart + 1);
-                              const toSym = routeInfo?.path?.[toIdx] ?? displayToToken.symbol;
-                              return (
-                                <span className="inline-flex items-center gap-1.5">
-                                  <span>{fromSym}</span>
-                                  <ChevronsRight className="h-3 w-3 text-muted-foreground/70" />
-                                  <span>{toSym}</span>
-                                </span>
-                              );
-                            })()}
-                          </p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
                   </div>
                 )}
 
@@ -663,6 +646,19 @@ export function SwapInputView({
           </>
         )}
       </div>
+
+      {/* Price Impact Warning - banner style with smaller text */}
+      {priceImpactWarning && (
+        <div className={cn(
+          "mt-3 flex items-center gap-2 rounded-md px-3 py-2 text-xs",
+          priceImpactWarning.severity === 'high' 
+            ? "bg-red-500/10 text-red-500 border border-red-500/20"
+            : "bg-orange-500/10 text-orange-500 border border-orange-500/20"
+        )}>
+          <AlertTriangle className="h-3 w-3 shrink-0" />
+          <span className="font-medium">{priceImpactWarning.message}</span>
+        </div>
+      )}
 
       <div className="mt-4 h-10">
         {!isMounted ? null : isConnected ? (

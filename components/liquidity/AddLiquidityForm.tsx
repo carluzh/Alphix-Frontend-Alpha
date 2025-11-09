@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { PlusIcon, RefreshCwIcon, MinusIcon, ActivityIcon, CheckIcon, InfoIcon, ArrowLeftIcon, OctagonX, BadgeCheck, Maximize, CircleHelp } from "lucide-react";
+import { PlusIcon, RefreshCwIcon, MinusIcon, ActivityIcon, CheckIcon, InfoIcon, ArrowLeftIcon, OctagonX, BadgeCheck, Maximize, CircleHelp, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import { useEthersSigner } from "@/hooks/useEthersSigner";
 import { usePercentageInput } from "@/hooks/usePercentageInput";
 import { V4_POOL_FEE, V4_POOL_TICK_SPACING, V4_POOL_HOOKS } from "@/lib/swap-constants";
+import { DEFAULT_LP_SLIPPAGE, MAX_AUTO_SLIPPAGE_TOLERANCE } from "@/lib/slippage-constants";
 import { TOKEN_DEFINITIONS, TokenSymbol, NATIVE_TOKEN_ADDRESS } from "@/lib/pools-config";
 import { getPoolById, getToken } from "@/lib/pools-config";
 import { formatUnits as viemFormatUnits, parseUnits as viemParseUnits, getAddress, type Hex } from "viem";
@@ -47,6 +48,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { TransactionFlowPanel } from "./TransactionFlowPanel";
+import { SlippageControl } from "@/components/swap/SlippageControl";
+import { useUserSlippageTolerance } from "@/hooks/useSlippage";
 
 // Toast utility functions matching swap-interface patterns
 const showErrorToast = (title: string, description?: string, action?: { label: string; onClick: () => void }) => {
@@ -74,9 +77,9 @@ import { Token } from '@uniswap/sdk-core';
 import { Pool as V4PoolSDK, Position as V4PositionSDK } from "@uniswap/v4-sdk";
 import JSBI from "jsbi";
 import poolsConfig from "../../config/pools.json";
-import { useAllPrices } from "@/components/data/hooks";
 import { formatUSD } from "@/lib/format";
-import { getOptimalBaseToken, getDecimalsForDenomination } from "@/lib/denomination-utils";
+import { useTokenUSDPrice } from "@/hooks/useTokenUSDPrice";
+import { getOptimalBaseToken, getDecimalsForDenomination, convertTickToPrice as convertTickToPriceUtil } from "@/lib/denomination-utils";
 import { calculateUserPositionAPY, formatUserAPY, type PoolMetrics } from "@/lib/user-position-apy";
 
 // Utility functions
@@ -218,6 +221,37 @@ export function AddLiquidityForm({
     leftoverToken1?: string;
   } | null>(null);
 
+  // Price impact state (for zap mode warnings)
+  const [priceImpact, setPriceImpact] = useState<number | null>(null);
+
+  // Price impact warning thresholds (matching Uniswap)
+  const PRICE_IMPACT_MEDIUM = 3; // 3%
+  const PRICE_IMPACT_HIGH = 5; // 5%
+
+  const priceImpactWarning = useMemo(() => {
+    // Only show warning in zap mode
+    if (!isZapMode) {
+      return null;
+    }
+    
+    // Get price impact from state or zapQuote as fallback
+    const currentPriceImpact = priceImpact !== null 
+      ? priceImpact 
+      : (zapQuote?.priceImpact ? parseFloat(zapQuote.priceImpact) : null);
+    
+    if (currentPriceImpact === null || isNaN(currentPriceImpact)) {
+      return null;
+    }
+    
+    if (currentPriceImpact >= PRICE_IMPACT_HIGH) {
+      return { severity: 'high' as const, message: `Very high price impact: ${currentPriceImpact.toFixed(2)}%` };
+    }
+    if (currentPriceImpact >= PRICE_IMPACT_MEDIUM) {
+      return { severity: 'medium' as const, message: `High price impact: ${currentPriceImpact.toFixed(2)}%` };
+    }
+    return null;
+  }, [priceImpact, zapQuote?.priceImpact, isZapMode]);
+
   // UI flow management
   const [showingTransactionSteps, setShowingTransactionSteps] = useState(false);
   const [showRangeModal, setShowRangeModal] = useState(false);
@@ -256,20 +290,40 @@ export function AddLiquidityForm({
   const [maxPriceInputString, setMaxPriceInputString] = useState<string>("");
 
   const { address: accountAddress, chainId, isConnected } = useAccount();
-  const { data: allPrices } = useAllPrices();
   const signer = useEthersSigner();
 
-  // Map any token symbol (e.g., aUSDC, aETH) to a USD price
+  // Get USD prices using mid-price quotes (replaces CoinGecko/useAllPrices)
+  const token0USDPrice = useTokenUSDPrice(token0Symbol);
+  const token1USDPrice = useTokenUSDPrice(token1Symbol);
+
+  // Slippage tolerance hook (for zap mode)
+  const {
+    currentSlippage,
+    isAuto: isAutoSlippage,
+    autoSlippage: autoSlippageValue,
+    setSlippage,
+    setAutoMode,
+    setCustomMode,
+    updateAutoSlippage,
+  } = useUserSlippageTolerance();
+
+  // Convert slippage percentage to basis points for API calls
+  const zapSlippageToleranceBps = useMemo(() => {
+    return Math.round(currentSlippage * 100); // Convert percentage to basis points (e.g., 0.5% -> 50 bps)
+  }, [currentSlippage]);
+
+  // Map any token symbol to USD price using the new hook
   const getUSDPriceForSymbol = useCallback((symbol?: string): number => {
     if (!symbol) return 0;
-    const s = symbol.toUpperCase();
-    if (s.includes('BTC')) return allPrices?.BTC?.usd ?? 0;
-    if (s.includes('ETH')) return allPrices?.ETH?.usd ?? 0;
-    if (s.includes('USDC')) return allPrices?.USDC?.usd ?? 1;
-    if (s.includes('USDT')) return allPrices?.USDT?.usd ?? 1;
-    if (s.includes('DAI')) return allPrices?.DAI?.usd ?? 1;
+    // Use the appropriate hook based on symbol
+    if (symbol === token0Symbol) {
+      return token0USDPrice.price ?? 0;
+    }
+    if (symbol === token1Symbol) {
+      return token1USDPrice.price ?? 0;
+    }
     return 0;
-  }, [allPrices]);
+  }, [token0Symbol, token1Symbol, token0USDPrice.price, token1USDPrice.price]);
 
   // Parse displayed token amount strings (handles "< 0.0001" and commas)
   const parseDisplayAmount = useCallback((value?: string): number => {
@@ -289,7 +343,8 @@ export function AddLiquidityForm({
     amount1,
     tickLower,
     tickUpper,
-    activeInputSide
+    activeInputSide,
+    zapSlippageToleranceBps: zapSlippageToleranceBps
   });
 
   // Use the same transaction hook for both regular and zap modes
@@ -306,6 +361,7 @@ export function AddLiquidityForm({
     onOpenChange: setShowingTransactionSteps,
     isZapMode,
     zapInputToken,
+    zapSlippageToleranceBps: isZapMode ? zapSlippageToleranceBps : undefined,
   });
 
   // For zap mode, just use the regular transaction hook
@@ -484,6 +540,7 @@ export function AddLiquidityForm({
         setAmount1("");
         setAmount0FullPrecision("");
         setAmount1FullPrecision("");
+          setPriceImpact(null); // Reset price impact when tokens change
           setTickLower(sdkMinTick.toString());
           setTickUpper(sdkMaxTick.toString());
           setCurrentPoolTick(null);
@@ -1055,7 +1112,8 @@ export function AddLiquidityForm({
   // Old handlePrepareAndSubmit removed - now using TransactionFlowPanel
 
   const signPermit = useCallback(async (): Promise<string | undefined> => {
-    if (!approvalData?.permitBatchData || !approvalData?.signatureDetails) {
+    // Only valid for regular (non-zap) mode - zap mode uses different permit flow
+    if (isZapMode || !approvalData || !('permitBatchData' in approvalData) || !approvalData.permitBatchData || !approvalData.signatureDetails) {
       return undefined;
     }
 
@@ -1105,7 +1163,7 @@ export function AddLiquidityForm({
       }
       throw error;
     }
-  }, [approvalData, signer]);
+  }, [approvalData, signer, isZapMode]);
 
   // Old getButtonText removed - now using TransactionFlowPanel
 
@@ -1597,7 +1655,7 @@ export function AddLiquidityForm({
 
   // Calculate amount based on input and check approvals
   const debouncedCalculateAmountAndCheckApprovals = useCallback(
-    debounce(async (currentAmount0: string, currentAmount1: string, currentTickLower: string, currentTickUpper: string, inputSide: 'amount0' | 'amount1') => {
+    debounce(async (currentAmount0: string, currentAmount1: string, currentTickLower: string, currentTickUpper: string, inputSide: 'amount0' | 'amount1', isShowingTransactionSteps: boolean) => {
       if (!chainId) return;
 
       const tl = parseInt(currentTickLower);
@@ -1605,6 +1663,10 @@ export function AddLiquidityForm({
 
       if (isNaN(tl) || isNaN(tu) || tl >= tu) {
         setCalculatedData(null);
+        // Only reset price impact if not showing transaction steps (it was set on Deposit click)
+        if (!isShowingTransactionSteps) {
+          setPriceImpact(null);
+        }
         if (inputSide === 'amount0') {
           setAmount1("");
           setAmount1FullPrecision("");
@@ -1622,6 +1684,10 @@ export function AddLiquidityForm({
       
       if (primaryAmount === "Error" || isNaN(parseFloat(primaryAmount))) {
         setCalculatedData(null);
+        // Only reset price impact if not showing transaction steps
+        if (!isShowingTransactionSteps) {
+          setPriceImpact(null);
+        }
         if (inputSide === 'amount0' && currentAmount1 !== "Error") setAmount1("");
         else if (inputSide === 'amount1' && currentAmount0 !== "Error") setAmount0("");
         return;
@@ -1629,6 +1695,10 @@ export function AddLiquidityForm({
       
       if (!primaryAmount || parseFloat(primaryAmount) <= 0) {
         setCalculatedData(null);
+        // Only reset price impact if not showing transaction steps
+        if (!isShowingTransactionSteps) {
+          setPriceImpact(null);
+        }
         if (inputSide === 'amount0') {
           setAmount1("");
           setAmount1FullPrecision("");
@@ -1641,78 +1711,17 @@ export function AddLiquidityForm({
 
       setIsCalculating(true);
       setCalculatedData(null);
-      setZapQuote(null);
+      // Reset zap quote and price impact during input phase - will be calculated on Deposit click
+      // BUT: Don't reset if we're already showing transaction steps (price impact was set on Deposit click)
+      if (!isShowingTransactionSteps) {
+        setZapQuote(null);
+        setPriceImpact(null);
+      }
 
       try {
-        // If in zap mode, call the zap endpoint instead
-        if (isZapMode) {
-          const response = await fetch('/api/liquidity/prepare-zap-mint-tx', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              userAddress: accountAddress || '0x0000000000000000000000000000000000000001', // Use dummy address for calculation
-              token0Symbol,
-              token1Symbol,
-              inputAmount: primaryAmount,
-              inputTokenSymbol: primaryTokenSymbol,
-              userTickLower: tl,
-              userTickUpper: tu,
-              chainId,
-              slippageTolerance: 50, // 0.5% default
-            }),
-          });
-
-          if (response.ok) {
-            const data = await response.json();
-
-            if ('zapQuote' in data) {
-              // Set zap quote for display
-              setZapQuote(data.zapQuote);
-
-              // Set calculated data from zap response
-              setCalculatedData({
-                amount0: data.details.token0.amount,
-                amount1: data.details.token1.amount,
-                liquidity: data.details.liquidity,
-                finalTickLower: data.details.finalTickLower,
-                finalTickUpper: data.details.finalTickUpper,
-                currentPoolTick: currentPoolTick || undefined,
-                currentPrice: currentPrice || undefined,
-              });
-
-              // Update the display amounts
-              const token0Decimals = TOKEN_DEFINITIONS[token0Symbol]?.decimals || 18;
-              const token1Decimals = TOKEN_DEFINITIONS[token1Symbol]?.decimals || 18;
-
-              const formattedAmount0 = formatTokenDisplayAmount(
-                viemFormatUnits(BigInt(data.details.token0.amount), token0Decimals),
-                token0Symbol
-              );
-              const formattedAmount1 = formatTokenDisplayAmount(
-                viemFormatUnits(BigInt(data.details.token1.amount), token1Decimals),
-                token1Symbol
-              );
-
-              // In zap mode, keep the input amount unchanged and show expected outputs
-              if (inputSide === 'amount0') {
-                setAmount1(formattedAmount1);
-                setAmount1FullPrecision(viemFormatUnits(BigInt(data.details.token1.amount), token1Decimals));
-              } else {
-                setAmount0(formattedAmount0);
-                setAmount0FullPrecision(viemFormatUnits(BigInt(data.details.token0.amount), token0Decimals));
-              }
-            }
-          } else {
-            const error = await response.json();
-            console.error('Zap calculation error:', error);
-            showErrorToast('Failed to calculate zap', error.message);
-          }
-
-          setIsCalculating(false);
-          return;
-        }
-
-        // Original logic for non-zap mode
+        // For zap mode in input phase, use simple pool price estimation (same as non-zap)
+        // Heavy work (swap quote, price impact) happens when Deposit is clicked
+        // Original logic for both zap and non-zap mode (simple estimation)
         // Check if position is OOR - follow Uniswap's pattern
         const isOOR = currentPoolTick !== null && currentPoolTick !== undefined &&
                       (currentPoolTick < tl || currentPoolTick > tu);
@@ -1795,7 +1804,6 @@ export function AddLiquidityForm({
               setAmount1FullPrecision(rawFormattedAmount); // Store full precision
             }
           } catch (e) {
-            console.error('Error formatting amount1:', e);
             setAmount1("Error");
             showErrorToast("Calculation Error", "Amount parse failed");
             setCalculatedData(null);
@@ -1821,7 +1829,6 @@ export function AddLiquidityForm({
               setAmount0FullPrecision(rawFormattedAmount); // Store full precision
             }
           } catch (e) {
-            console.error('Error formatting amount0:', e);
             setAmount0("Error");
             showErrorToast("Calculation Error", "Amount parse failed");
             setCalculatedData(null);
@@ -1830,6 +1837,10 @@ export function AddLiquidityForm({
       } catch (error: any) {
         showErrorToast("Calculation Error", "Estimation failed");
         setCalculatedData(null);
+        // Only reset price impact if not showing transaction steps (it was set on Deposit click)
+        if (!isShowingTransactionSteps) {
+          setPriceImpact(null);
+        }
         setCurrentPrice(null);
         setCurrentPoolTick(null);
         setCurrentPriceLine(null);  
@@ -1839,12 +1850,12 @@ export function AddLiquidityForm({
         setIsCalculating(false);
       }
     }, 700),
-    [accountAddress, chainId, token0Symbol, token1Symbol]
+    [accountAddress, chainId, token0Symbol, token1Symbol, zapSlippageToleranceBps, updateAutoSlippage]
   );
 
   // Trigger calculation when needed
   useEffect(() => {
-    const currentDeps = { amount0, amount1, tickLower, tickUpper, activeInputSide };
+    const currentDeps = { amount0, amount1, tickLower, tickUpper, activeInputSide, zapSlippageToleranceBps: zapSlippageToleranceBps };
     let shouldCallDebouncedCalc = false;
 
     if (activeInputSide === 'amount0') {
@@ -1852,7 +1863,8 @@ export function AddLiquidityForm({
         currentDeps.amount0 !== prevCalculationDeps.current.amount0 ||
         currentDeps.tickLower !== prevCalculationDeps.current.tickLower ||
         currentDeps.tickUpper !== prevCalculationDeps.current.tickUpper ||
-        currentDeps.activeInputSide !== prevCalculationDeps.current.activeInputSide
+        currentDeps.activeInputSide !== prevCalculationDeps.current.activeInputSide ||
+        (isZapMode && currentDeps.zapSlippageToleranceBps !== prevCalculationDeps.current.zapSlippageToleranceBps)
       ) {
         shouldCallDebouncedCalc = true;
       }
@@ -1861,7 +1873,8 @@ export function AddLiquidityForm({
         currentDeps.amount1 !== prevCalculationDeps.current.amount1 ||
         currentDeps.tickLower !== prevCalculationDeps.current.tickLower ||
         currentDeps.tickUpper !== prevCalculationDeps.current.tickUpper ||
-        currentDeps.activeInputSide !== prevCalculationDeps.current.activeInputSide
+        currentDeps.activeInputSide !== prevCalculationDeps.current.activeInputSide ||
+        (isZapMode && currentDeps.zapSlippageToleranceBps !== prevCalculationDeps.current.zapSlippageToleranceBps)
       ) {
         shouldCallDebouncedCalc = true;
       }
@@ -1871,7 +1884,8 @@ export function AddLiquidityForm({
         currentDeps.amount0 !== prevCalculationDeps.current.amount0 ||
         currentDeps.amount1 !== prevCalculationDeps.current.amount1 ||
         currentDeps.tickLower !== prevCalculationDeps.current.tickLower ||
-        currentDeps.tickUpper !== prevCalculationDeps.current.tickUpper
+        currentDeps.tickUpper !== prevCalculationDeps.current.tickUpper ||
+        (isZapMode && currentDeps.zapSlippageToleranceBps !== prevCalculationDeps.current.zapSlippageToleranceBps)
       ) {
         // Only calculate if there's something to calculate with
         if (parseFloat(currentDeps.amount0) > 0 || parseFloat(currentDeps.amount1) > 0) {
@@ -1889,7 +1903,7 @@ export function AddLiquidityForm({
             const ticksAreValid = !isNaN(tlNum) && !isNaN(tuNum) && tlNum < tuNum;
 
             if (parseFloat(primaryAmount || "0") > 0 && ticksAreValid) {
-                debouncedCalculateAmountAndCheckApprovals(amount0, amount1, tickLower, tickUpper, inputSideForCalc);
+                debouncedCalculateAmountAndCheckApprovals(amount0, amount1, tickLower, tickUpper, inputSideForCalc, showingTransactionSteps);
             }
             // If primary amount is zero/invalid but was the active side, or ticks invalid, clear the other amount & calculated data.
             else if ((parseFloat(primaryAmount || "0") <= 0 && activeInputSide === inputSideForCalc) || !ticksAreValid) {
@@ -1927,6 +1941,9 @@ export function AddLiquidityForm({
     tickLower,
     tickUpper,
     activeInputSide,
+    isZapMode,
+    zapSlippageToleranceBps,
+    showingTransactionSteps,
     debouncedCalculateAmountAndCheckApprovals,
     resetTransaction,
   ]);
@@ -2157,6 +2174,11 @@ export function AddLiquidityForm({
     const timer = setTimeout(() => calculateApy(), 1000);
     return () => clearTimeout(timer);
   }, [selectedPoolId, tickLower, tickUpper, currentPoolSqrtPriceX96, currentPoolTick, token0Symbol, token1Symbol, amount0, amount1, calculatedData, cachedPoolMetrics, poolToken0, poolToken1]);
+
+  // Wrapper for convertTickToPrice that uses component's sdkMinTick and sdkMaxTick
+  const convertTickToPrice = useCallback((tick: number, currentPoolTick: number | null, currentPrice: string | null, baseTokenForPriceDisplay: string, token0Symbol: string, token1Symbol: string): string => {
+    return convertTickToPriceUtil(tick, currentPoolTick, currentPrice, baseTokenForPriceDisplay, token0Symbol, token1Symbol, sdkMinTick, sdkMaxTick);
+  }, [sdkMinTick, sdkMaxTick]);
 
   const getPriceRangeDisplay = useCallback(() => {
     if (currentPoolTick === null || !currentPrice || !tickLower || !tickUpper) return null;
@@ -2413,6 +2435,7 @@ export function AddLiquidityForm({
                   setAmount0FullPrecision("");
                   setAmount1FullPrecision("");
                   setZapQuote(null);
+                  setPriceImpact(null); // Reset price impact when toggling zap mode
                   setActiveInputSide(null);
                   setCalculatedData(null);
                   resetTransaction();
@@ -2425,8 +2448,9 @@ export function AddLiquidityForm({
                       <TooltipTrigger asChild>
                         <CircleHelp className="h-3 w-3 text-muted-foreground" onClick={(e) => e.stopPropagation()} />
                       </TooltipTrigger>
-                      <TooltipContent side="top" className="max-w-[240px] text-xs">
-                        <p>Provide liquidity using a single token. We'll automatically swap the optimal amount to maximize your liquidity.</p>
+                      <TooltipContent side="top" className="max-w-[280px] text-xs">
+                        <p className="mb-2">Provide liquidity using a single token. We'll automatically swap the optimal amount to maximize your liquidity.</p>
+                        <p className="text-[10px] text-muted-foreground/90">Note: Large deposits relative to pool liquidity may experience higher price impact during the swap.</p>
                       </TooltipContent>
                     </Tooltip>
                   </TooltipProvider>
@@ -2736,6 +2760,7 @@ export function AddLiquidityForm({
               </div>
               )}
 
+
               {/* Token selector and zap info */}
               {isZapMode && (
                 <div>
@@ -2744,6 +2769,7 @@ export function AddLiquidityForm({
                         type="button"
                         onClick={() => {
                           setZapInputToken('token0');
+                          setPriceImpact(null); // Reset price impact when switching input token
                           // Move amount to token0 if switching from token1
                           if (zapInputToken === 'token1' && amount1) {
                             setAmount0(amount1);
@@ -2765,6 +2791,7 @@ export function AddLiquidityForm({
                         type="button"
                         onClick={() => {
                           setZapInputToken('token1');
+                          setPriceImpact(null); // Reset price impact when switching input token
                           // Move amount to token1 if switching from token0
                           if (zapInputToken === 'token0' && amount0) {
                             setAmount1(amount0);
@@ -2784,29 +2811,6 @@ export function AddLiquidityForm({
                       </button>
                     </div>
 
-                    {/* Zap info display */}
-                    {zapQuote && (
-                      <div className="p-3 rounded-lg bg-muted/20 mb-4">
-                        <div className="space-y-2 text-sm">
-                          <div className="flex justify-between">
-                            <span className="text-muted-foreground">Swap Amount:</span>
-                            <span>{formatTokenDisplayAmount(zapQuote.swapAmount, zapInputToken === 'token0' ? token0Symbol : token1Symbol)}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-muted-foreground">Price Impact:</span>
-                            <span className={cn(
-                              parseFloat(zapQuote.priceImpact) > 5 ? "text-red-500" :
-                              parseFloat(zapQuote.priceImpact) > 2 ? "text-yellow-500" :
-                              "text-green-500"
-                            )}>{zapQuote.priceImpact}%</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-muted-foreground">Expected Liquidity:</span>
-                            <span>{zapQuote.expectedLiquidity}</span>
-                          </div>
-                        </div>
-                      </div>
-                    )}
                 </div>
               )}
 
@@ -2839,6 +2843,7 @@ export function AddLiquidityForm({
                 </div>
               )}
 
+
               {/* Current Price Display removed per updated UI */}
 
               {/* Transaction Steps - Show when user clicked deposit */}
@@ -2868,6 +2873,19 @@ export function AddLiquidityForm({
                   executeButtonLabel="Deposit"
                   showBackButton={true}
                   autoProgressOnApproval={false}
+                  calculatedData={calculatedData}
+                  tickLower={tickLower}
+                  tickUpper={tickUpper}
+                  amount0={amount0}
+                  amount1={amount1}
+                  currentPrice={currentPrice}
+                  currentPoolTick={currentPoolTick}
+                  currentPoolSqrtPriceX96={currentPoolSqrtPriceX96}
+                  selectedPoolId={selectedPoolId}
+                  poolAPY={parseFloat(estimatedApy) / 100 || null}
+                  estimatedApy={estimatedApy}
+                  getUsdPriceForSymbol={getUSDPriceForSymbol}
+                  convertTickToPrice={convertTickToPrice}
                 />
               )}
 
@@ -2901,6 +2919,32 @@ export function AddLiquidityForm({
                   executeButtonLabel="Execute Zap"
                   showBackButton={true}
                   autoProgressOnApproval={false}
+                  slippageControl={
+                    <SlippageControl
+                      currentSlippage={currentSlippage}
+                      isAuto={isAutoSlippage}
+                      autoSlippage={autoSlippageValue}
+                      onSlippageChange={setSlippage}
+                      onAutoToggle={setAutoMode}
+                      onCustomToggle={setCustomMode}
+                    />
+                  }
+                  priceImpactWarning={priceImpactWarning}
+                  calculatedData={calculatedData}
+                  tickLower={tickLower}
+                  tickUpper={tickUpper}
+                  amount0={amount0}
+                  amount1={amount1}
+                  currentPrice={currentPrice}
+                  currentPoolTick={currentPoolTick}
+                  currentPoolSqrtPriceX96={currentPoolSqrtPriceX96}
+                  selectedPoolId={selectedPoolId}
+                  poolAPY={parseFloat(estimatedApy) / 100 || null}
+                  estimatedApy={estimatedApy}
+                  getUsdPriceForSymbol={getUSDPriceForSymbol}
+                  convertTickToPrice={convertTickToPrice}
+                  zapQuote={zapQuote}
+                  currentSlippage={currentSlippage}
                 />
               )}
 
@@ -2909,7 +2953,7 @@ export function AddLiquidityForm({
                 <div className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md border border-sidebar-border bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30"
                   style={{ backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
                 >
-                  {/* @ts-ignore */}
+                  {/* @ts-expect-error custom element provided by wallet kit */}
                   <appkit-button className="absolute inset-0 z-10 block h-full w-full cursor-pointer p-0 opacity-0" />
                   <span className="relative z-0 pointer-events-none">Connect Wallet</span>
                 </div>
@@ -2925,7 +2969,7 @@ export function AddLiquidityForm({
                       :
                       "text-sidebar-primary border border-sidebar-primary bg-button-primary hover-button-primary"
                   )}
-                  onClick={() => {
+                  onClick={async () => {
                     if (isInsufficientBalance) {
                       showErrorToast("Insufficient Balance");
                       return;
@@ -2935,15 +2979,104 @@ export function AddLiquidityForm({
                       return;
                     }
 
-                    // For zap mode, validate input amount
+                    // For zap mode, validate input amount and calculate zap quote with price impact
                     if (isZapMode) {
                       const inputAmount = zapInputToken === 'token0' ? amount0 : amount1;
                       if (!inputAmount || parseFloat(inputAmount) <= 0) {
                         showErrorToast("Invalid Amount", "Must provide input amount");
                         return;
                       }
+
+                      // Calculate zap quote and price impact before showing transaction steps
+                      setIsCalculating(true);
+                      try {
+                        const tl = parseInt(tickLower);
+                        const tu = parseInt(tickUpper);
+                        const primaryTokenSymbol = zapInputToken === 'token0' ? token0Symbol : token1Symbol;
+                        const primaryAmount = cleanAmountForAPI(inputAmount);
+
+                        const response = await fetch('/api/liquidity/prepare-zap-mint-tx', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            userAddress: accountAddress || '0x0000000000000000000000000000000000000001',
+                            token0Symbol,
+                            token1Symbol,
+                            inputAmount: primaryAmount,
+                            inputTokenSymbol: primaryTokenSymbol,
+                            userTickLower: tl,
+                            userTickUpper: tu,
+                            chainId,
+                            slippageTolerance: zapSlippageToleranceBps,
+                          }),
+                        });
+
+                        if (response.ok) {
+                          const data = await response.json();
+
+                          if ('zapQuote' in data) {
+                            // Capture price impact from API response (works for both approval and transaction responses)
+                            const priceImpactNum = parseFloat(data.zapQuote.priceImpact || "0");
+                            if (!isNaN(priceImpactNum) && priceImpactNum > 0) {
+                              setPriceImpact(priceImpactNum);
+                            } else {
+                              setPriceImpact(null);
+                            }
+
+                            // Set zap quote for display
+                            setZapQuote(data.zapQuote);
+
+                            // Derive an auto slippage suggestion from price impact with a small buffer
+                            // Cap at 5.0% max (not 5.5%) to respect user's max slippage limit
+                            const priceImpactPercent = Number.parseFloat(data.zapQuote.priceImpact ?? '');
+                            const bufferedTarget = Number.isFinite(priceImpactPercent)
+                              ? priceImpactPercent + 0.3
+                              : DEFAULT_LP_SLIPPAGE;
+                            const MAX_SLIPPAGE_FOR_ZAP = 5.0; // Hard cap at 5.0% for zap mode
+                            const suggestedAutoSlippage = Math.min(
+                              MAX_SLIPPAGE_FOR_ZAP, // Use 5.0% cap instead of MAX_AUTO_SLIPPAGE_TOLERANCE (5.5%)
+                              Math.max(DEFAULT_LP_SLIPPAGE, bufferedTarget)
+                            );
+                            updateAutoSlippage(Number(suggestedAutoSlippage.toFixed(2)));
+
+                            // Update calculated data with actual zap amounts (only if details exist - not present in approval response)
+                            if ('details' in data && data.details) {
+                              setCalculatedData({
+                                amount0: data.details.token0.amount,
+                                amount1: data.details.token1.amount,
+                                liquidity: data.details.liquidity,
+                                finalTickLower: data.details.finalTickLower,
+                                finalTickUpper: data.details.finalTickUpper,
+                                currentPoolTick: currentPoolTick || undefined,
+                                currentPrice: currentPrice || undefined,
+                              });
+                            }
+                          } else {
+                            setPriceImpact(null);
+                            setZapQuote(null);
+                          }
+                        } else {
+                          const error = await response.json();
+                          setPriceImpact(null);
+                          setZapQuote(null);
+                          // Show error but don't prevent showing transaction steps
+                          if (error.message?.includes('Price impact') || error.message?.includes('slippage')) {
+                            showErrorToast('Slippage Protection', error.message);
+                          } else {
+                            showErrorToast('Failed to calculate zap quote', error.message);
+                          }
+                        }
+                      } catch (error: any) {
+                        console.error('[AddLiquidityForm] Error calculating zap quote on Deposit:', error);
+                        setPriceImpact(null);
+                        setZapQuote(null);
+                        showErrorToast('Failed to calculate zap quote', error.message);
+                      } finally {
+                        setIsCalculating(false);
+                      }
                     }
 
+                    // Show transaction steps after zap quote is calculated (or immediately for non-zap)
                     setShowingTransactionSteps(true);
                   }}
                   disabled={isWorking ||
@@ -2982,6 +3115,7 @@ export function AddLiquidityForm({
           <span className="text-muted-foreground">Swap functionality coming soon</span>
         </div>
       )}
+
     </div>
   );
 } 

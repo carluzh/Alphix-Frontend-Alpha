@@ -208,24 +208,6 @@ export function useCheckZapApprovals(
     ...permitData,
   }), [needsInputTokenERC20Approval, needsOutputTokenERC20Approval, inputTokenConfig, outputTokenConfig, params, permitData]);
 
-  // Debug logging
-  useEffect(() => {
-    if (data) {
-      console.log('[useCheckZapApprovals] Approval check:', {
-        needsInputTokenERC20Approval: data.needsInputTokenERC20Approval,
-        needsOutputTokenERC20Approval: data.needsOutputTokenERC20Approval,
-        inputTokenSymbol: data.inputTokenSymbol,
-        outputTokenSymbol: data.outputTokenSymbol,
-        isInputTokenNative,
-        isOutputTokenNative,
-        inputTokenAllowance: inputTokenAllowance?.toString(),
-        outputTokenAllowance: outputTokenAllowance?.toString(),
-        outputTokenQueryEnabled,
-        isLoadingInputToken,
-        isLoadingOutputToken,
-      });
-    }
-  }, [data, isInputTokenNative, isOutputTokenNative, inputTokenAllowance, outputTokenAllowance, outputTokenQueryEnabled, isLoadingInputToken, isLoadingOutputToken]);
 
   return {
     data,

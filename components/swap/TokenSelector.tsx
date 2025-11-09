@@ -66,7 +66,7 @@ const getFormattedDisplayBalance = (numericBalance: number | undefined): string 
   }
 };
 
-// Get token price mapping for CoinGecko prices using pools.json data
+// Get token price mapping for quote API prices using pools.json data
 const getTokenPriceMapping = (tokenSymbol: string): 'BTC' | 'USDC' | 'ETH' | 'DAI' => {
   // Get token config from pools.json
   const tokenConfig = getToken(tokenSymbol);

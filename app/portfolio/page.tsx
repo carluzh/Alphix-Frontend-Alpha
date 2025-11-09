@@ -349,7 +349,7 @@ function usePortfolioData(refreshKey: number = 0, userPositionsData?: any[], pri
         }
         
 
-        // 3. Resolve prices for all tokens (use price-service batch to map wrapped symbols -> underlying CoinGecko ids)
+        // 3. Resolve prices for all tokens (use price-service batch with quote API)
         const tokenSymbols = Array.from(tokenBalanceMap.keys());
         const priceMap = new Map<string, number>();
         try {
@@ -394,7 +394,7 @@ function usePortfolioData(refreshKey: number = 0, userPositionsData?: any[], pri
 
         const totalValue = tokenBalances.reduce((sum, token) => sum + token.usdValue, 0);
 
-        // Compute portfolio 24h PnL % using per-token 24h change from CoinGecko
+        // Compute portfolio 24h PnL % using per-token 24h change (note: 24h change not available from quote API)
         let deltaNowUSD = 0;
         if (totalValue > 0) {
           tokenBalances.forEach((tb) => {
@@ -1394,42 +1394,29 @@ export default function PortfolioPage() {
           } catch {}
         }
 
-        // Build price map via CoinGecko (same mapping as positions)
-        const coinGeckoIds: Record<string, string> = {
-          aETH: 'ethereum',
-          ETH: 'ethereum',
-          aBTC: 'bitcoin',
-          aUSDC: 'usd-coin',
-          aUSDT: 'tether',
-        };
+        // Build price map via quote API (replaces CoinGecko)
         const symbols = Object.keys(balances);
         const priceMap = new Map<string, number>();
-        const uniqueCoinIds = [...new Set(symbols.map(s => coinGeckoIds[s]).filter(Boolean))];
         let priceData: any = {};
-        if (uniqueCoinIds.length > 0) {
-          try {
-            const prices = await batchGetTokenPrices(symbols);
-            priceData = prices; // The batch result is the price map
-            symbols.forEach((symbol) => {
-              if (prices[symbol]) priceMap.set(symbol, prices[symbol]);
-            });
+        try {
+          const prices = await batchGetTokenPrices(symbols);
+          priceData = prices; // The batch result is the price map
+          symbols.forEach((symbol) => {
+            if (prices[symbol]) priceMap.set(symbol, prices[symbol]);
+          });
 
-            // TODO: The batchGetTokenPrices does not return 24h change data.
-            // This logic will need to be updated if 24h change is required for wallet balances.
-            // For now, it will gracefully handle the absence of this data.
-          } catch (error) {
-            console.warn('Failed to fetch prices from CoinGecko:', error);
-          }
+          // Note: batchGetTokenPrices uses quote API and does not return 24h change data.
+          // 24h change is not available from on-chain quotes.
+        } catch (error) {
+          console.warn('Failed to fetch prices from quote API:', error);
         }
         const priceChangeMap: Record<string, number> = {};
+        // Note: 24h change data is not available from quote API
         symbols.forEach((symbol) => {
-          const coinId = coinGeckoIds[symbol];
-          const coinData = coinId && priceData[coinId];
-          const px = coinData?.usd;
+          const px = priceData[symbol];
           if (px) priceMap.set(symbol, px);
           else if (symbol.includes('USDC') || symbol.includes('USDT')) priceMap.set(symbol, 1.0);
-          const ch = coinData?.usd_24h_change;
-          if (typeof ch === 'number' && isFinite(ch)) priceChangeMap[symbol] = ch;
+          // priceChangeMap remains empty as 24h change is not available
         });
 
         // Construct balances array (filter out zeros), assign colors

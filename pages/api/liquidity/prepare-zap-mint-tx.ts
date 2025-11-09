@@ -1,9 +1,9 @@
-import { Token, Percent, Ether, CurrencyAmount, TradeType } from '@uniswap/sdk-core';
+import { Token, Percent, Ether, CurrencyAmount, TradeType, Fraction } from '@uniswap/sdk-core';
 import { Pool as V4Pool, Position as V4Position, V4PositionManager, Route as V4Route, Trade as V4Trade, V4PositionPlanner, V4Planner, Actions, PoolKey } from "@uniswap/v4-sdk";
 import type { MintOptions } from "@uniswap/v4-sdk";
 import { RoutePlanner, CommandType } from '@uniswap/universal-router-sdk';
 import { BigNumber } from 'ethers';
-import { nearestUsableTick } from '@uniswap/v3-sdk';
+import { nearestUsableTick, TickMath, SqrtPriceMath, tickToPrice } from '@uniswap/v3-sdk';
 import JSBI from 'jsbi';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
@@ -39,6 +39,45 @@ const ETHERS_ADDRESS_ZERO = "0x0000000000000000000000000000000000000000";
 const SDK_MIN_TICK = -887272;
 const SDK_MAX_TICK = 887272;
 
+const Q96n = 1n << 96n;
+const Q192n = Q96n * Q96n;
+
+const pow10 = (exp: number): bigint => {
+    if (exp <= 0) return 1n;
+    let result = 1n;
+    for (let i = 0; i < exp; i++) {
+        result *= 10n;
+    }
+    return result;
+};
+
+const absBigInt = (value: bigint): bigint => (value < 0n ? -value : value);
+
+const mulDiv = (a: bigint, b: bigint, denominator: bigint): bigint => {
+    if (denominator === 0n) return 0n;
+    return (a * b) / denominator;
+};
+
+const mulDivSigned = (a: bigint, b: bigint, denominator: bigint): bigint => {
+    if (denominator === 0n) return 0n;
+    const negative = (a < 0n) !== (b < 0n);
+    const denomNegative = denominator < 0n;
+    const signNegative = negative !== denomNegative;
+    const result = (absBigInt(a) * absBigInt(b)) / absBigInt(denominator);
+    return signNegative ? -result : result;
+};
+
+const clampBigint = (value: bigint, min: bigint, max: bigint): bigint => {
+    if (value < min) return min;
+    if (value > max) return max;
+    return value;
+};
+
+const bps = (value: bigint, base: bigint): bigint => {
+    if (base === 0n) return 0n;
+    return mulDiv(value, 10_000n, base);
+};
+
 interface PrepareZapMintTxRequest extends NextApiRequest {
     body: {
         userAddress: string;
@@ -49,7 +88,7 @@ interface PrepareZapMintTxRequest extends NextApiRequest {
         userTickLower: number;
         userTickUpper: number;
         chainId: number;
-        slippageTolerance?: number; // in basis points (50 = 0.5%)
+        slippageTolerance?: number; // in basis points (50 = 0.5%), max 500 (5%)
 
         // Permit2 signature (if provided)
         permitSignature?: string;
@@ -82,6 +121,7 @@ interface Permit2NeededResponse {
         sigDeadline: string;
         spender: string;
     };
+    zapQuote: ZapQuoteResponse; // Include zapQuote so price impact warning can be shown even when approvals are needed
 }
 
 interface TransactionPreparedResponse {
@@ -191,7 +231,7 @@ async function getSwapQuote(
     }
 }
 
-// Calculate optimal swap amount using binary search
+// Calculate optimal swap amount using enhanced search with precise leftovers
 async function calculateOptimalSwapAmount(
     inputToken: Token,
     otherToken: Token,
@@ -202,290 +242,434 @@ async function calculateOptimalSwapAmount(
     v4Pool: V4Pool
 ): Promise<{ optimalSwapAmount: bigint; resultingPosition: V4Position; priceImpact?: number; error?: string }> {
 
-    // For out-of-range positions, handle differently
+    if (inputAmount <= 0n) {
+        const zeroPosition = V4Position.fromAmounts({
+            pool: v4Pool,
+            tickLower,
+            tickUpper,
+            amount0: JSBI.BigInt(0),
+            amount1: JSBI.BigInt(0),
+            useFullPrecision: true,
+        });
+
+        return { optimalSwapAmount: 0n, resultingPosition: zeroPosition, priceImpact: 0 };
+    }
+
+    const inputIsToken0 = inputToken.sortsBefore(otherToken);
     const currentTick = v4Pool.tickCurrent;
     const isOutOfRange = currentTick < tickLower || currentTick > tickUpper;
 
     if (isOutOfRange) {
-        // Determine which token is needed based on position relative to current tick
         const needsToken0Only = currentTick >= tickUpper;
         const needsToken1Only = currentTick <= tickLower;
 
-        const inputIsToken0 = inputToken.sortsBefore(otherToken);
-
-        // If we have the wrong token for an OOR position, we need to swap all of it
         if ((needsToken0Only && !inputIsToken0) || (needsToken1Only && inputIsToken0)) {
-            // Swap all input to the needed token
             const swapQuote = await getSwapQuote(inputToken, otherToken, inputAmount, poolConfig);
 
-            // Create position with the swapped amount
-            let position: V4Position;
-            if (needsToken0Only) {
-                position = V4Position.fromAmount0({
+            const position = needsToken0Only
+                ? V4Position.fromAmount0({
                     pool: v4Pool,
                     tickLower,
                     tickUpper,
                     amount0: JSBI.BigInt(swapQuote.amountOut.toString()),
-                });
-            } else {
-                position = V4Position.fromAmount1({
+                    useFullPrecision: true,
+                })
+                : V4Position.fromAmount1({
                     pool: v4Pool,
                     tickLower,
                     tickUpper,
                     amount1: JSBI.BigInt(swapQuote.amountOut.toString()),
                 });
-            }
 
-            return { optimalSwapAmount: inputAmount, resultingPosition: position };
-        } else {
-            // We have the correct token for OOR, no swap needed
-            let position: V4Position;
-            if (inputIsToken0) {
-                position = V4Position.fromAmount0({
-                    pool: v4Pool,
-                    tickLower,
-                    tickUpper,
-                    amount0: JSBI.BigInt(inputAmount.toString()),
-                });
-            } else {
-                position = V4Position.fromAmount1({
-                    pool: v4Pool,
-                    tickLower,
-                    tickUpper,
-                    amount1: JSBI.BigInt(inputAmount.toString()),
-                });
-            }
-
-            return { optimalSwapAmount: 0n, resultingPosition: position };
+            return { optimalSwapAmount: inputAmount, resultingPosition: position, priceImpact: 0 };
         }
+
+        const position = inputIsToken0
+            ? V4Position.fromAmount0({
+                pool: v4Pool,
+                tickLower,
+                tickUpper,
+                amount0: JSBI.BigInt(inputAmount.toString()),
+                useFullPrecision: true,
+            })
+            : V4Position.fromAmount1({
+                pool: v4Pool,
+                tickLower,
+                tickUpper,
+                amount1: JSBI.BigInt(inputAmount.toString()),
+            });
+
+        return { optimalSwapAmount: 0n, resultingPosition: position, priceImpact: 0 };
     }
 
-    // For in-range positions, use binary search optimization
-    const inputIsToken0 = inputToken.sortsBefore(otherToken);
-
-    // Calculate theoretical optimal using Uniswap V3 math
-    const sqrtPriceX96 = v4Pool.sqrtRatioX96;
-    const Q96 = JSBI.BigInt(2 ** 96);
-
-    const sqrtPriceLowerX96 = JSBI.BigInt(Math.floor(Math.sqrt(1.0001 ** tickLower) * Number(Q96)));
-    const sqrtPriceUpperX96 = JSBI.BigInt(Math.floor(Math.sqrt(1.0001 ** tickUpper) * Number(Q96)));
-
-    const sqrtPriceCurrent = JSBI.toNumber(sqrtPriceX96) / Number(Q96);
-    const sqrtPriceLower = JSBI.toNumber(sqrtPriceLowerX96) / Number(Q96);
-    const sqrtPriceUpper = JSBI.toNumber(sqrtPriceUpperX96) / Number(Q96);
-
-    const L = 1;
-    const amount0ForL = L * (sqrtPriceUpper - sqrtPriceCurrent) / (sqrtPriceCurrent * sqrtPriceUpper);
-    const amount1ForL = L * (sqrtPriceCurrent - sqrtPriceLower);
-
-    const currentPrice = sqrtPriceCurrent * sqrtPriceCurrent;
-    const value0Needed = amount0ForL * currentPrice;
-    const value1Needed = amount1ForL;
-    const totalValueNeeded = value0Needed + value1Needed;
-
-    let fractionToKeep: number;
-    if (inputIsToken0) {
-        fractionToKeep = value0Needed / totalValueNeeded;
-    } else {
-        fractionToKeep = value1Needed / totalValueNeeded;
-    }
-
-    const fractionToSwap = 1 - fractionToKeep;
-    const theoreticalSwapAmount = BigInt(Math.floor(Number(inputAmount) * fractionToSwap));
-
-    console.log(`Theoretical optimal: swap ${(fractionToSwap * 100).toFixed(2)}% of input`);
-
-    // Binary search for optimal swap amount
-    let low = 0n;
-    let high = inputAmount;
-    let bestPosition: V4Position | null = null;
-    let bestSwapAmount = 0n;
-    let minLeftover = inputAmount;
-    let bestPriceImpact = 0;
-    let iteration = 0;
-    const maxIterations = 15;
-
-    // Helper function to evaluate a swap amount
-    async function evaluateSwap(testSwapAmount: bigint): Promise<{
-        isValid: boolean;
-        position: V4Position | null;
-        leftover: bigint;
+    type SwapEvaluation = {
+        swapAmount: bigint;
+        position: V4Position;
         leftover0: bigint;
         leftover1: bigint;
-        priceImpact: number;
-    }> {
+        leftoverInputBase: bigint;
+        leftoverOther: bigint;
+        convertedOther: bigint;
+        leftoverInputTotal: bigint;
+        leftoverBps: bigint;
+        imbalance: bigint;
+        priceImpactBps: bigint;
+        isPrecise: boolean;
+    };
+
+    const sqrtCurrentJsbi = v4Pool.sqrtRatioX96;
+    const sqrtLowerJsbi = TickMath.getSqrtRatioAtTick(tickLower);
+    const sqrtUpperJsbi = TickMath.getSqrtRatioAtTick(tickUpper);
+    const q96Jsbi = JSBI.exponentiate(JSBI.BigInt(2), JSBI.BigInt(96));
+
+    const oneFraction = new Fraction(JSBI.BigInt(1), JSBI.BigInt(1));
+    const zeroFraction = new Fraction(JSBI.BigInt(0), JSBI.BigInt(1));
+
+    const sqrtCurrentFraction = new Fraction(sqrtCurrentJsbi, q96Jsbi);
+    const sqrtLowerFraction = new Fraction(sqrtLowerJsbi, q96Jsbi);
+    const sqrtUpperFraction = new Fraction(sqrtUpperJsbi, q96Jsbi);
+
+    const amount0ForL = oneFraction
+        .multiply(sqrtUpperFraction.subtract(sqrtCurrentFraction))
+        .divide(sqrtCurrentFraction.multiply(sqrtUpperFraction));
+    const amount1ForL = oneFraction.multiply(sqrtCurrentFraction.subtract(sqrtLowerFraction));
+    const priceFraction = sqrtCurrentFraction.multiply(sqrtCurrentFraction);
+
+    const value0Needed = amount0ForL.multiply(priceFraction);
+    const value1Needed = amount1ForL;
+    const totalValue = value0Needed.add(value1Needed);
+
+    let swapFraction = new Fraction(JSBI.BigInt(1), JSBI.BigInt(2));
+    if (!JSBI.equal(totalValue.numerator, JSBI.BigInt(0))) {
+        const keepFraction = inputIsToken0 ? value0Needed.divide(totalValue) : value1Needed.divide(totalValue);
+        swapFraction = oneFraction.subtract(keepFraction);
+    }
+
+    if (swapFraction.lessThan(zeroFraction)) {
+        swapFraction = zeroFraction;
+    } else if (swapFraction.greaterThan(oneFraction)) {
+        swapFraction = oneFraction;
+    }
+
+    const inputAmountFraction = new Fraction(JSBI.BigInt(inputAmount.toString()), JSBI.BigInt(1));
+    let theoreticalSwapAmount = BigInt(swapFraction.multiply(inputAmountFraction).quotient.toString());
+
+    const poolFeeRaw = Number(poolConfig?.fee ?? 0);
+    const poolFeeBps = Number.isFinite(poolFeeRaw) && poolFeeRaw > 0 ? BigInt(Math.floor(poolFeeRaw)) : 0n;
+    if (poolFeeBps > 0n && poolFeeBps < 10_000n) {
+        theoreticalSwapAmount = mulDiv(theoreticalSwapAmount, 10_000n, 10_000n - poolFeeBps);
+    }
+
+    theoreticalSwapAmount = clampBigint(theoreticalSwapAmount, 0n, inputAmount);
+
+    const thresholdBps = 10n;
+    const tolerance = clampBigint(inputAmount / 1_000_000n, 1n, inputAmount);
+    const maxIterations = 24;
+
+    const approxCache = new Map<string, SwapEvaluation>();
+    let bestResult: SwapEvaluation | null = null;
+
+    const selectBetter = (current: SwapEvaluation | null, next: SwapEvaluation): SwapEvaluation => {
+        if (!current) return next;
+        if (next.leftoverInputTotal < current.leftoverInputTotal) return next;
+        if (next.leftoverInputTotal > current.leftoverInputTotal) return current;
+        if (next.isPrecise && !current.isPrecise) return next;
+        if (!next.isPrecise && current.isPrecise) return current;
+        if (next.leftoverBps < current.leftoverBps) return next;
+        if (next.leftoverBps > current.leftoverBps) return current;
+        return absBigInt(next.imbalance) <= absBigInt(current.imbalance) ? next : current;
+    };
+
+    const recordCandidate = (candidate: SwapEvaluation | null) => {
+        if (!candidate) return;
+        bestResult = selectBetter(bestResult, candidate);
+    };
+
+    const evaluateSwapAmountInternal = async (testSwapAmount: bigint, precise: boolean): Promise<SwapEvaluation | null> => {
         try {
-            const swapQuote = testSwapAmount > 0n
-                ? await getSwapQuote(inputToken, otherToken, testSwapAmount, poolConfig)
+            const clampedSwap = clampBigint(testSwapAmount, 0n, inputAmount);
+            const swapQuote = clampedSwap > 0n
+                ? await getSwapQuote(inputToken, otherToken, clampedSwap, poolConfig)
                 : { amountOut: 0n, gasEstimate: 0n };
 
-            // Calculate price impact
-            let priceImpactPercent = 0;
-            if (testSwapAmount > 0n && swapQuote.amountOut > 0n) {
-                let expectedOutputWithoutSlippage: bigint;
-                const inputJSBI = JSBI.BigInt(testSwapAmount.toString());
-
-                if (inputIsToken0) {
-                    const sqrtPriceSquared = JSBI.multiply(sqrtPriceX96, sqrtPriceX96);
-                    const Q96Squared = JSBI.multiply(Q96, Q96);
-                    const numerator = JSBI.multiply(inputJSBI, sqrtPriceSquared);
-                    const rawOutput = JSBI.divide(numerator, Q96Squared);
-
-                    const decimalDiff = otherToken.decimals - inputToken.decimals;
-                    if (decimalDiff > 0) {
-                        const multiplier = JSBI.BigInt(10 ** decimalDiff);
-                        expectedOutputWithoutSlippage = BigInt(JSBI.multiply(rawOutput, multiplier).toString());
-                    } else if (decimalDiff < 0) {
-                        const divisor = JSBI.BigInt(10 ** Math.abs(decimalDiff));
-                        expectedOutputWithoutSlippage = BigInt(JSBI.divide(rawOutput, divisor).toString());
-                    } else {
-                        expectedOutputWithoutSlippage = BigInt(rawOutput.toString());
-                    }
-                } else {
-                    const sqrtPriceSquared = JSBI.multiply(sqrtPriceX96, sqrtPriceX96);
-                    const Q96Squared = JSBI.multiply(Q96, Q96);
-                    const numerator = JSBI.multiply(inputJSBI, Q96Squared);
-                    const rawOutput = JSBI.divide(numerator, sqrtPriceSquared);
-
-                    const decimalDiff = otherToken.decimals - inputToken.decimals;
-                    if (decimalDiff > 0) {
-                        const multiplier = JSBI.BigInt(10 ** decimalDiff);
-                        expectedOutputWithoutSlippage = BigInt(JSBI.multiply(rawOutput, multiplier).toString());
-                    } else if (decimalDiff < 0) {
-                        const divisor = JSBI.BigInt(10 ** Math.abs(decimalDiff));
-                        expectedOutputWithoutSlippage = BigInt(JSBI.divide(rawOutput, divisor).toString());
-                    } else {
-                        expectedOutputWithoutSlippage = BigInt(rawOutput.toString());
-                    }
-                }
-
-                if (expectedOutputWithoutSlippage > 0n) {
-                    const difference = expectedOutputWithoutSlippage > swapQuote.amountOut
-                        ? expectedOutputWithoutSlippage - swapQuote.amountOut
-                        : swapQuote.amountOut - expectedOutputWithoutSlippage;
-                    const impactBps = (difference * 10000n) / expectedOutputWithoutSlippage;
-                    priceImpactPercent = Number(impactBps) / 100;
-                }
-            }
-
-            const remainingInput = inputAmount - testSwapAmount;
+            const remainingInput = inputAmount - clampedSwap;
             const receivedOther = swapQuote.amountOut;
+
             const amount0 = inputIsToken0 ? remainingInput : receivedOther;
             const amount1 = inputIsToken0 ? receivedOther : remainingInput;
 
+            let poolForPosition = v4Pool;
+            try {
+                if (clampedSwap > 0n && swapQuote.amountOut > 0n && JSBI.greaterThan(v4Pool.liquidity, JSBI.BigInt(0))) {
+                    const amountOutJsbi = JSBI.BigInt(swapQuote.amountOut.toString());
+                    const nextSqrt = SqrtPriceMath.getNextSqrtPriceFromOutput(
+                        v4Pool.sqrtRatioX96,
+                        v4Pool.liquidity,
+                        amountOutJsbi,
+                        inputIsToken0
+                    );
+                    const nextTick = TickMath.getTickAtSqrtRatio(nextSqrt);
+                    
+                    // CRITICAL: Check if simulated pool state would be out of range
+                    // If so, the position will only use one token, causing large leftovers
+                    const simulatedIsOutOfRange = nextTick < tickLower || nextTick > tickUpper;
+                    if (simulatedIsOutOfRange) {
+                        // Pool price moved outside range after swap - this will cause large leftover
+                        // Return null to reject this swap amount (or handle specially)
+                        // The optimizer will find a better solution or the position will be out-of-range
+                        if (precise) {
+                            console.warn(`[Optimizer] Simulated swap would move pool out of range: tick ${nextTick} not in [${tickLower}, ${tickUpper}]`);
+                        }
+                        // Continue with simulation but this will result in high leftover
+                    }
+                    
+                    poolForPosition = new V4Pool(
+                        v4Pool.currency0,
+                        v4Pool.currency1,
+                        v4Pool.fee,
+                        v4Pool.tickSpacing,
+                        v4Pool.hooks,
+                        nextSqrt,
+                        v4Pool.liquidity,
+                        nextTick
+                    );
+                }
+            } catch (simulationError) {
+                if (precise) {
+                    console.error('Pool simulation fallback (prepare zap):', simulationError);
+                }
+                poolForPosition = v4Pool;
+            }
+
             const position = V4Position.fromAmounts({
-                pool: v4Pool,
+                pool: poolForPosition,
                 tickLower,
                 tickUpper,
                 amount0: JSBI.BigInt(amount0.toString()),
                 amount1: JSBI.BigInt(amount1.toString()),
+                useFullPrecision: true,
             });
-
-            const mintAmount0 = BigInt(position.mintAmounts.amount0.toString());
-            const mintAmount1 = BigInt(position.mintAmounts.amount1.toString());
-
-            const leftover0 = amount0 > mintAmount0 ? amount0 - mintAmount0 : 0n;
-            const leftover1 = amount1 > mintAmount1 ? amount1 - mintAmount1 : 0n;
-
-            let totalLeftover: bigint;
-            if (inputIsToken0) {
-                const leftover1InInput = testSwapAmount > 0n && swapQuote.amountOut > 0n
-                    ? (leftover1 * testSwapAmount) / swapQuote.amountOut
-                    : leftover1;
-                totalLeftover = leftover0 + leftover1InInput;
-            } else {
-                const leftover0InInput = testSwapAmount > 0n && swapQuote.amountOut > 0n
-                    ? (leftover0 * testSwapAmount) / swapQuote.amountOut
-                    : leftover0;
-                totalLeftover = leftover1 + leftover0InInput;
+            
+            // Additional validation: Check if position is actually out of range
+            const finalTick = poolForPosition.tickCurrent;
+            const finalIsOutOfRange = finalTick < tickLower || finalTick > tickUpper;
+            if (finalIsOutOfRange && precise) {
+                console.warn(`[Optimizer] Position would be out of range: tick ${finalTick} not in [${tickLower}, ${tickUpper}]. This will cause large leftover.`);
             }
 
-            return { isValid: true, position, leftover: totalLeftover, leftover0, leftover1, priceImpact: priceImpactPercent };
+            const usedAmount0 = BigInt(position.amount0.quotient.toString());
+            const usedAmount1 = BigInt(position.amount1.quotient.toString());
+
+            const leftover0 = amount0 > usedAmount0 ? amount0 - usedAmount0 : 0n;
+            const leftover1 = amount1 > usedAmount1 ? amount1 - usedAmount1 : 0n;
+
+            const leftoverInputBase = inputIsToken0 ? leftover0 : leftover1;
+            const leftoverOther = inputIsToken0 ? leftover1 : leftover0;
+
+            let convertedOther = 0n;
+            if (leftoverOther > 0n) {
+                if (precise) {
+                    try {
+                        const conversionQuote = await getSwapQuote(otherToken, inputToken, leftoverOther, poolConfig);
+                        convertedOther = conversionQuote.amountOut;
+                    } catch {
+                        if (clampedSwap > 0n && swapQuote.amountOut > 0n) {
+                            convertedOther = mulDiv(leftoverOther, clampedSwap, swapQuote.amountOut);
+                        }
+                    }
+                } else if (clampedSwap > 0n && swapQuote.amountOut > 0n) {
+                    convertedOther = mulDiv(leftoverOther, clampedSwap, swapQuote.amountOut);
+                }
+            }
+
+            const leftoverInputTotal = leftoverInputBase + convertedOther;
+            const leftoverBpsValue = bps(leftoverInputTotal, inputAmount);
+            const imbalance = leftoverInputBase - convertedOther;
+
+            let priceImpactBps = 0n;
+            if (clampedSwap > 0n && swapQuote.amountOut > 0n) {
+                try {
+                    const inputAmountCurrency = CurrencyAmount.fromRawAmount(
+                        inputToken,
+                        JSBI.BigInt(clampedSwap.toString())
+                    );
+                    const outputAmountCurrency = CurrencyAmount.fromRawAmount(
+                        otherToken,
+                        JSBI.BigInt(swapQuote.amountOut.toString())
+                    );
+
+                    const midPrice = tickToPrice(inputToken, otherToken, v4Pool.tickCurrent);
+                    const expectedOutputCurrency = midPrice.quote(inputAmountCurrency);
+
+                    const expectedRaw = expectedOutputCurrency.quotient;
+                    const actualRaw = outputAmountCurrency.quotient;
+
+                    if (!JSBI.equal(expectedRaw, JSBI.BigInt(0))) {
+                        const differenceRaw = JSBI.greaterThan(expectedRaw, actualRaw)
+                            ? JSBI.subtract(expectedRaw, actualRaw)
+                            : JSBI.subtract(actualRaw, expectedRaw);
+
+                        const priceImpactFraction = new Fraction(differenceRaw, expectedRaw);
+                        const impactBpsFraction = priceImpactFraction.multiply(new Fraction(JSBI.BigInt(10_000), JSBI.BigInt(1)));
+                        priceImpactBps = BigInt(impactBpsFraction.quotient.toString());
+                    }
+                } catch (priceImpactError) {
+                    console.error("Failed to compute price impact precisely:", priceImpactError);
+                    priceImpactBps = 0n;
+                }
+            }
+
+            return {
+                swapAmount: clampedSwap,
+                position,
+                leftover0,
+                leftover1,
+                leftoverInputBase,
+                leftoverOther,
+                convertedOther,
+                leftoverInputTotal,
+                leftoverBps: leftoverBpsValue,
+                imbalance,
+                priceImpactBps,
+                isPrecise: precise,
+            };
         } catch (error) {
-            console.error(`Error evaluating swap ${testSwapAmount}:`, error);
-            return { isValid: false, position: null, leftover: inputAmount, leftover0: 0n, leftover1: 0n, priceImpact: 0 };
+            console.error(`Error evaluating swap amount ${testSwapAmount.toString()}:`, error);
+            return null;
         }
+    };
+
+    const evaluate = async (amount: bigint, precise = false): Promise<SwapEvaluation | null> => {
+        const clamped = clampBigint(amount, 0n, inputAmount);
+        const key = clamped.toString();
+
+        const cached = approxCache.get(key);
+        if (cached) {
+            if (!precise || cached.isPrecise) {
+                recordCandidate(cached);
+                return cached;
+            }
+        }
+
+        const evaluation = await evaluateSwapAmountInternal(clamped, precise);
+        if (!evaluation) return null;
+
+        if (!approxCache.has(key) || precise) {
+            approxCache.set(key, evaluation);
+        }
+
+        recordCandidate(evaluation);
+        return evaluation;
+    };
+
+    await evaluate(0n, true);
+    if (inputAmount > 0n) {
+        await evaluate(inputAmount, true);
     }
 
-    // Start by testing theoretical optimal
-    iteration++;
-    const testAmount = iteration === 1 ? theoreticalSwapAmount : (low + high) / 2n;
-    console.log(`[Iter ${iteration}] Testing: ${testAmount} (${((Number(testAmount) / Number(inputAmount)) * 100).toFixed(2)}%)`);
+    let low = 0n;
+    let high = inputAmount;
+    let iterations = 0;
+    let nextGuess: bigint | null = theoreticalSwapAmount;
+    let prevResult: SwapEvaluation | null = null;
 
-    let result = await evaluateSwap(testAmount);
+    while (iterations < maxIterations && low <= high) {
+        iterations++;
 
-    if (result.isValid) {
-        const leftoverPercent = (Number(result.leftover) / Number(inputAmount)) * 100;
-        console.log(`  ✓ Valid - Leftover: ${leftoverPercent.toFixed(4)}%, Price Impact: ${result.priceImpact.toFixed(4)}%`);
-        bestPosition = result.position;
-        bestSwapAmount = testAmount;
-        minLeftover = result.leftover;
-        bestPriceImpact = result.priceImpact;
+        const guess = nextGuess !== null ? clampBigint(nextGuess, 0n, inputAmount) : clampBigint((low + high) / 2n, 0n, inputAmount);
+        nextGuess = null;
 
-        if (leftoverPercent < 0.1) {
-            console.log(`  🎯 Excellent result!`);
-            return { optimalSwapAmount: bestSwapAmount, resultingPosition: bestPosition!, priceImpact: bestPriceImpact };
-        }
-    }
-
-    // Binary search
-    while (iteration < maxIterations) {
-        iteration++;
-        const testAmount = (low + high) / 2n;
-
-        console.log(`[Iter ${iteration}] Testing: ${testAmount} (${((Number(testAmount) / Number(inputAmount)) * 100).toFixed(2)}%)`);
-
-        result = await evaluateSwap(testAmount);
-
-        if (!result.isValid) {
-            console.log(`  ❌ Invalid`);
-            high = testAmount;
+        const result = await evaluate(guess, true);
+        if (!result) {
+            high = guess > 0n ? guess - 1n : 0n;
+            if (high < 0n) high = 0n;
+            if (high <= low || high - low <= tolerance) break;
             continue;
         }
 
-        const leftoverPercent = (Number(result.leftover) / Number(inputAmount)) * 100;
-        console.log(`  ✓ Valid - Leftover: ${leftoverPercent.toFixed(4)}%, Price Impact: ${result.priceImpact.toFixed(4)}%`);
-
-        if (result.leftover < minLeftover) {
-            bestPosition = result.position;
-            bestSwapAmount = testAmount;
-            minLeftover = result.leftover;
-            bestPriceImpact = result.priceImpact;
-        }
-
-        if (leftoverPercent < 0.1) {
-            console.log(`  🎯 Excellent result!`);
-            break;
-        }
-
-        // Adjust bounds based on which token has more leftover
-        if (result.leftover0 > result.leftover1) {
-            // More token0 leftover
-            if (inputIsToken0) {
-                // We have too much token0, need to swap more
-                low = testAmount;
-            } else {
-                // We swapped too much token1, need to swap less
-                high = testAmount;
+        if (result.leftoverBps <= thresholdBps) {
+            const preciseResult = await evaluate(result.swapAmount, true);
+            if (preciseResult && preciseResult.leftoverBps <= thresholdBps) {
+                bestResult = selectBetter(bestResult, preciseResult);
+                break;
             }
+        }
+
+        const sign = result.imbalance === 0n ? 0 : (result.imbalance > 0n ? 1 : -1);
+        let secantCandidate: bigint | null = null;
+
+        if (prevResult && sign !== 0) {
+            const prevSign = prevResult.imbalance === 0n ? 0 : (prevResult.imbalance > 0n ? 1 : -1);
+            if (prevSign !== 0 && prevSign !== sign) {
+                const swapDiff = result.swapAmount - prevResult.swapAmount;
+                const imbalanceDiff = result.imbalance - prevResult.imbalance;
+                if (imbalanceDiff !== 0n) {
+                    secantCandidate = result.swapAmount - mulDivSigned(result.imbalance, swapDiff, imbalanceDiff);
+                }
+            }
+        }
+
+        if (sign > 0) {
+            low = result.swapAmount >= inputAmount ? inputAmount : result.swapAmount + 1n;
+        } else if (sign < 0) {
+            high = result.swapAmount > 0n ? result.swapAmount - 1n : 0n;
         } else {
-            // More token1 leftover
-            if (inputIsToken0) {
-                // We swapped too much token0, need to swap less
-                high = testAmount;
-            } else {
-                // We have too much token1, need to swap more
-                low = testAmount;
+            low = result.swapAmount;
+            high = result.swapAmount;
+        }
+
+        if (secantCandidate !== null) {
+            const candidate = clampBigint(secantCandidate, 0n, inputAmount);
+            if (candidate > low && candidate < high && !approxCache.has(candidate.toString())) {
+                nextGuess = candidate;
             }
         }
 
-        if (high - low < inputAmount / 10000n) {
-            console.log(`  ✓ Converged`);
+        prevResult = result;
+
+        if (high <= low || high - low <= tolerance) {
             break;
         }
     }
 
-    if (!bestPosition) {
+    if (bestResult) {
+        const window = clampBigint(inputAmount / 2000n, 1n, inputAmount);
+        const polishCandidates = [
+            clampBigint(bestResult.swapAmount - window, 0n, inputAmount),
+            clampBigint(bestResult.swapAmount + window, 0n, inputAmount),
+        ];
+
+        for (const candidate of polishCandidates) {
+            const precise = await evaluate(candidate, true);
+            if (precise) {
+                bestResult = selectBetter(bestResult, precise);
+            }
+        }
+    }
+
+    if (bestResult && !bestResult.isPrecise) {
+        const preciseBest = await evaluate(bestResult.swapAmount, true);
+        if (preciseBest) {
+            bestResult = selectBetter(bestResult, preciseBest);
+        }
+    }
+
+    if (bestResult && bestResult.leftoverBps > thresholdBps) {
+        const fineStep = clampBigint(inputAmount / 10_000n, 1n, inputAmount);
+        const fineCandidates = [
+            clampBigint(bestResult.swapAmount - fineStep, 0n, inputAmount),
+            clampBigint(bestResult.swapAmount + fineStep, 0n, inputAmount),
+        ];
+
+        for (const candidate of fineCandidates) {
+            const precise = await evaluate(candidate, true);
+            if (precise) {
+                bestResult = selectBetter(bestResult, precise);
+            }
+        }
+    }
+
+    if (!bestResult) {
         return {
             optimalSwapAmount: 0n,
             resultingPosition: V4Position.fromAmounts({
@@ -494,14 +678,20 @@ async function calculateOptimalSwapAmount(
                 tickUpper,
                 amount0: JSBI.BigInt(0),
                 amount1: JSBI.BigInt(0),
-                useFullPrecision: true
+                useFullPrecision: true,
             }),
-            priceImpact: bestPriceImpact,
-            error: "Optimization failed after " + iteration + " iterations"
+            priceImpact: 0,
+            error: "Optimization failed",
         };
     }
 
-    return { optimalSwapAmount: bestSwapAmount, resultingPosition: bestPosition, priceImpact: bestPriceImpact };
+    const finalPriceImpact = Number(bestResult.priceImpactBps) / 100;
+
+    return {
+        optimalSwapAmount: bestResult.swapAmount,
+        resultingPosition: bestResult.position,
+        priceImpact: Number.isFinite(finalPriceImpact) ? finalPriceImpact : 0,
+    };
 }
 
 export default async function handler(
@@ -525,7 +715,7 @@ export default async function handler(
             userTickLower,
             userTickUpper,
             chainId,
-            slippageTolerance = 50, // 0.5% default
+            slippageTolerance = 50, // 0.5% default (50 basis points)
         } = req.body;
 
         // Validate inputs
@@ -574,45 +764,7 @@ export default async function handler(
         // Check if input token is native ETH (no Permit2 needed)
         const isNativeInput = inputTokenConfig.address === ETHERS_ADDRESS_ZERO;
 
-        // Check Permit2 allowance if not native ETH
-        if (!isNativeInput && !permitSignature) {
-            // Check current Permit2 allowance
-            const [amount, expiration, nonce] = await publicClient.readContract({
-                address: PERMIT2_ADDRESS,
-                abi: Permit2Abi_allowance,
-                functionName: 'allowance',
-                args: [
-                    getAddress(userAddress),
-                    getAddress(inputTokenConfig.address),
-                    getUniversalRouterAddress()
-                ]
-            }) as readonly [bigint, number, number];
-
-            const now = Math.floor(Date.now() / 1000);
-            const needsPermit = amount < parsedInputAmount || expiration <= now;
-
-            if (needsPermit) {
-                // Return permit data for frontend to request signature
-                const permitExpiration = now + PERMIT_EXPIRATION_DURATION_SECONDS;
-                const permitSigDeadline = now + PERMIT_SIG_DEADLINE_DURATION_SECONDS;
-                // Use MaxAllowanceTransferAmount (max uint160) to match regular swap behavior
-                const MaxAllowanceTransferAmount = BigInt('0xffffffffffffffffffffffffffffffffffffffff');
-
-                return res.status(200).json({
-                    needsApproval: true,
-                    approvalType: 'PERMIT2_SIGNATURE',
-                    permitData: {
-                        token: getAddress(inputTokenConfig.address),
-                        amount: MaxAllowanceTransferAmount.toString(),
-                        nonce: Number(nonce),
-                        expiration: permitExpiration,
-                        sigDeadline: permitSigDeadline.toString(),
-                        spender: getUniversalRouterAddress(),
-                    }
-                });
-            }
-        }
-
+        // IMPORTANT: Calculate zap quote FIRST so price impact warning can be shown even when approvals are needed
         // Get pool configuration
         const poolConfig = getPoolByTokens(token0Symbol, token1Symbol);
         if (!poolConfig) {
@@ -705,6 +857,19 @@ export default async function handler(
             poolConfig,
             v4Pool
         );
+        
+        console.log('[prepare-zap-mint-tx] Swap calculation result:', {
+            optimalSwapAmount: optimalSwapAmount.toString(),
+            parsedInputAmount: parsedInputAmount.toString(),
+            priceImpact: priceImpact,
+            error: error || null,
+            resultingPositionAmount0: resultingPosition.mintAmounts.amount0.toString(),
+            resultingPositionAmount1: resultingPosition.mintAmounts.amount1.toString(),
+            resultingPositionLiquidity: resultingPosition.liquidity.toString(),
+            currentTickAtOptimization: currentTick,
+            tickRange: `[${tickLower}, ${tickUpper}]`,
+            isCurrentlyOutOfRange: currentTick < tickLower || currentTick > tickUpper,
+        });
 
         // Check if there was an error (e.g., price impact too high)
         if (error) {
@@ -712,6 +877,13 @@ export default async function handler(
                 message: error,
                 error: `Price impact too high: ${priceImpact ? priceImpact.toFixed(3) : 'N/A'}%`
             });
+        }
+        
+        // CRITICAL: Check if current pool state is out of range
+        // If so, warn that large leftovers are likely due to price movement
+        const isCurrentlyOutOfRange = currentTick < tickLower || currentTick > tickUpper;
+        if (isCurrentlyOutOfRange) {
+            console.warn(`[prepare-zap-mint-tx] WARNING: Pool price (tick ${currentTick}) is OUT OF RANGE [${tickLower}, ${tickUpper}]. Position will only use one token, causing large leftover.`);
         }
 
         // Extract amounts from the resulting position
@@ -732,8 +904,21 @@ export default async function handler(
             });
         }
 
-        // Use the calculated price impact from the optimization function
+        // Use the calculated price impact from the optimization function (informational only)
+        // Note: Price impact and slippage tolerance are different concepts:
+        // - Price impact: how much quoted price deviates from mid price (market impact)
+        // - Slippage tolerance: protection against execution price deviating from quoted price
+        // We don't validate price impact against slippage tolerance - slippage is applied to the quote to get minimum amounts
         const priceImpactStr = priceImpact ? priceImpact.toFixed(3) : "0";
+
+        // Enforce maximum slippage tolerance (500 basis points = 5%)
+        const MAX_SLIPPAGE_TOLERANCE_BPS = 500;
+        if (slippageTolerance > MAX_SLIPPAGE_TOLERANCE_BPS) {
+            return res.status(400).json({
+                message: `Slippage tolerance (${slippageTolerance / 100}%) exceeds maximum allowed (${MAX_SLIPPAGE_TOLERANCE_BPS / 100}%).`,
+                error: `Slippage tolerance too high: ${slippageTolerance} bps`
+            });
+        }
 
         // Calculate minimum amounts with slippage
         const slippageMultiplier = BigInt(10000 - slippageTolerance);
@@ -752,6 +937,47 @@ export default async function handler(
                 token1: minAmount1.toString()
             }
         };
+
+        // NOW check Permit2 allowance AFTER calculating zap quote (so price impact can be shown even when approvals are needed)
+        if (!isNativeInput && !permitSignature) {
+            // Check current Permit2 allowance
+            const [amount, expiration, nonce] = await publicClient.readContract({
+                address: PERMIT2_ADDRESS,
+                abi: Permit2Abi_allowance,
+                functionName: 'allowance',
+                args: [
+                    getAddress(userAddress),
+                    getAddress(inputTokenConfig.address),
+                    getUniversalRouterAddress()
+                ]
+            }) as readonly [bigint, number, number];
+
+            const now = Math.floor(Date.now() / 1000);
+            const needsPermit = amount < parsedInputAmount || expiration <= now;
+
+            if (needsPermit) {
+                // Return permit data for frontend to request signature
+                // Include zapQuote so price impact warning can be shown
+                const permitExpiration = now + PERMIT_EXPIRATION_DURATION_SECONDS;
+                const permitSigDeadline = now + PERMIT_SIG_DEADLINE_DURATION_SECONDS;
+                // Use MaxAllowanceTransferAmount (max uint160) to match regular swap behavior
+                const MaxAllowanceTransferAmount = BigInt('0xffffffffffffffffffffffffffffffffffffffff');
+
+                return res.status(200).json({
+                    needsApproval: true,
+                    approvalType: 'PERMIT2_SIGNATURE',
+                    permitData: {
+                        token: getAddress(inputTokenConfig.address),
+                        amount: MaxAllowanceTransferAmount.toString(),
+                        nonce: Number(nonce),
+                        expiration: permitExpiration,
+                        sigDeadline: permitSigDeadline.toString(),
+                        spender: getUniversalRouterAddress(),
+                    },
+                    zapQuote: zapQuote // Include zapQuote so price impact warning can be shown
+                });
+            }
+        }
 
         // Get deadline for transaction
         const latestBlock = await publicClient.getBlock({ blockTag: 'latest' });
@@ -792,46 +1018,92 @@ export default async function handler(
         // Determine swap direction
         const zeroForOne = getAddress(sdkInputToken.address!) === v4PoolKey.currency0;
 
-        // Calculate minimum output with slippage
-        const minSwapOutput = isInputToken0 ? finalAmount1 : finalAmount0;
-        const minSwapOutputWithSlippage = (BigInt(minSwapOutput.toString()) * BigInt(10000 - slippageTolerance)) / BigInt(10000);
+        // Get actual swap quote output from V4Quoter (this is what we need to protect with slippage)
+        let swapQuoteOutput: bigint = 0n;
+        if (optimalSwapAmount > 0n) {
+            const swapQuote = await getSwapQuote(sdkInputToken, sdkOtherToken, optimalSwapAmount, poolConfig);
+            swapQuoteOutput = swapQuote.amountOut;
+        }
 
-        // Add SWAP_EXACT_IN_SINGLE action
-        swapPlanner.addAction(Actions.SWAP_EXACT_IN_SINGLE, [
-            {
-                poolKey: v4PoolKey,
-                zeroForOne,
-                amountIn: BigNumber.from(optimalSwapAmount.toString()),
-                amountOutMinimum: BigNumber.from(minSwapOutputWithSlippage.toString()),
-                sqrtPriceLimitX96: BigNumber.from('0'), // No price limit
-                hookData: '0x'
-            }
-        ]);
+        // Apply slippage tolerance to the actual swap quote output
+        const minSwapOutputWithSlippage = swapQuoteOutput > 0n
+            ? (swapQuoteOutput * BigInt(10000 - slippageTolerance)) / BigInt(10000)
+            : 0n;
 
-        // Add SETTLE_ALL for input currency
-        swapPlanner.addAction(Actions.SETTLE_ALL, [
-            zeroForOne ? v4PoolKey.currency0 : v4PoolKey.currency1,
-            BigNumber.from(optimalSwapAmount.toString()),
-        ]);
+        // Verification: Calculate actual slippage applied and warn if suspicious
+        const actualSlippageBps = swapQuoteOutput > 0n
+            ? Number((swapQuoteOutput - minSwapOutputWithSlippage) * 10000n / swapQuoteOutput)
+            : 0;
+        const expectedSlippageBps = slippageTolerance;
+        const slippageDiff = Math.abs(actualSlippageBps - expectedSlippageBps);
 
-        // Add TAKE_ALL for output currency
-        const outputCurrency = zeroForOne ? v4PoolKey.currency1 : v4PoolKey.currency0;
-        const isNativeOutput = outputCurrency === ETHERS_ADDRESS_ZERO;
-        const takeAllMin = isNativeOutput ? BigInt(1) : minSwapOutputWithSlippage;
+        if (slippageDiff > 0.1) {
+            console.warn(`[prepare-zap-mint-tx] Slippage mismatch: expected ${expectedSlippageBps} bps, got ${actualSlippageBps.toFixed(2)} bps`);
+        }
 
-        swapPlanner.addAction(Actions.TAKE_ALL, [
-            outputCurrency,
-            BigNumber.from(takeAllMin.toString())
-        ]);
+        console.log('[prepare-zap-mint-tx] Building swap transaction:', {
+            optimalSwapAmount: optimalSwapAmount.toString(),
+            isInputToken0,
+            zeroForOne,
+            swapQuoteOutput: swapQuoteOutput.toString(),
+            slippageToleranceBps: slippageTolerance,
+            minSwapOutputWithSlippage: minSwapOutputWithSlippage.toString(),
+            actualSlippageAppliedBps: actualSlippageBps.toFixed(2),
+            expectedSlippageBps: expectedSlippageBps,
+            slippageMatch: slippageDiff < 0.1 ? '✓' : '✗',
+            finalAmount0: finalAmount0.toString(),
+            finalAmount1: finalAmount1.toString(),
+        });
 
-        // Finalize swap planner and add to Universal Router
-        const swapEncodedActions = swapPlanner.finalize() as Hex;
-        swapRoutePlanner.addCommand(CommandType.V4_SWAP, [swapEncodedActions]);
+        // Skip swap if optimalSwapAmount is 0 (no swap needed)
+        if (optimalSwapAmount > 0n) {
+            // Add SWAP_EXACT_IN_SINGLE action
+            swapPlanner.addAction(Actions.SWAP_EXACT_IN_SINGLE, [
+                {
+                    poolKey: v4PoolKey,
+                    zeroForOne,
+                    amountIn: BigNumber.from(optimalSwapAmount.toString()),
+                    amountOutMinimum: BigNumber.from(minSwapOutputWithSlippage.toString()),
+                    sqrtPriceLimitX96: BigNumber.from('0'), // No price limit
+                    hookData: '0x'
+                }
+            ]);
+
+            // Add SETTLE_ALL for input currency
+            swapPlanner.addAction(Actions.SETTLE_ALL, [
+                zeroForOne ? v4PoolKey.currency0 : v4PoolKey.currency1,
+                BigNumber.from(optimalSwapAmount.toString()),
+            ]);
+
+            // Add TAKE_ALL for output currency
+            const outputCurrency = zeroForOne ? v4PoolKey.currency1 : v4PoolKey.currency0;
+            const isNativeOutput = outputCurrency === ETHERS_ADDRESS_ZERO;
+            const takeAllMin = isNativeOutput ? BigInt(1) : minSwapOutputWithSlippage;
+
+            swapPlanner.addAction(Actions.TAKE_ALL, [
+                outputCurrency,
+                BigNumber.from(takeAllMin.toString())
+            ]);
+
+            // Finalize swap planner and add to Universal Router
+            const swapEncodedActions = swapPlanner.finalize() as Hex;
+            swapRoutePlanner.addCommand(CommandType.V4_SWAP, [swapEncodedActions]);
+        } else {
+            console.log('[prepare-zap-mint-tx] Skipping swap - optimalSwapAmount is 0');
+        }
 
         // Finalize swap transaction
         const currentTimestamp = BigInt(Math.floor(Date.now() / 1000));
         const swapTxDeadline = currentTimestamp + BigInt(TX_DEADLINE_SECONDS);
         const swapTxValue = isNativeInput ? optimalSwapAmount.toString() : '0';
+
+        console.log('[prepare-zap-mint-tx] Finalizing swap transaction:', {
+            optimalSwapAmount: optimalSwapAmount.toString(),
+            swapTxValue,
+            hasSwapCommand: swapRoutePlanner.commands.length > 0,
+            commandsCount: swapRoutePlanner.commands.length,
+            inputsCount: swapRoutePlanner.inputs.length,
+        });
 
         // ========== TRANSACTION 2: MINT POSITION via PositionManager ==========
         // Calculate remaining input amount after swap

@@ -163,6 +163,24 @@ export default async function handler(
             permitBatchData,
         } = req.body;
 
+        console.log('[prepare-mint-after-swap-tx] Request received:', {
+            userAddress,
+            token0Symbol,
+            token1Symbol,
+            token0Amount,
+            token1Amount,
+            userTickLower,
+            userTickUpper,
+            chainId,
+            hasPermitSignature: !!permitSignature,
+            hasPermitBatchData: !!permitBatchData,
+            permitBatchDataStructure: permitBatchData ? {
+                hasMessage: !!(permitBatchData as any).message,
+                hasValues: !!permitBatchData.values,
+                keys: Object.keys(permitBatchData),
+            } : null,
+        });
+
         // Validate required fields
         if (!userAddress || !token0Symbol || !token1Symbol || !token0Amount || !token1Amount || !chainId) {
             return res.status(400).json({ error: 'Missing required fields' });
@@ -381,6 +399,16 @@ export default async function handler(
             useFullPrecision: true
         });
 
+        console.log('[prepare-mint-after-swap-tx] Position created:', {
+            liquidity: position.liquidity.toString(),
+            amount0: parsedToken0Amount.toString(),
+            amount1: parsedToken1Amount.toString(),
+            tickLower,
+            tickUpper,
+            currentTick,
+            isOOR: currentTick < tickLower || currentTick > tickUpper,
+        });
+
         // ========== STEP 4: Build mint transaction ==========
         const now = Math.floor(Date.now() / 1000);
         const deadline = BigInt(now + 600); // 10 minutes
@@ -395,16 +423,65 @@ export default async function handler(
 
         // Add permit batch if signature is provided
         if (permitSignature && permitBatchData) {
+            // Handle both message (new format) and values (backwards compat) formats
+            const permitValues = (permitBatchData as any).message || permitBatchData.values;
+            
+            if (!permitValues || !permitValues.details || !Array.isArray(permitValues.details)) {
+                console.error('[prepare-mint-after-swap-tx] Invalid permitBatchData structure:', {
+                    hasMessage: !!(permitBatchData as any).message,
+                    hasValues: !!permitBatchData.values,
+                    permitBatchDataKeys: Object.keys(permitBatchData),
+                    permitValuesKeys: permitValues ? Object.keys(permitValues) : null,
+                });
+                throw new Error('Invalid permit batch data structure: missing details array');
+            }
+
+            if (!permitValues.spender || !permitValues.sigDeadline) {
+                console.error('[prepare-mint-after-swap-tx] Missing required permit fields:', {
+                    hasSpender: !!permitValues.spender,
+                    hasSigDeadline: !!permitValues.sigDeadline,
+                });
+                throw new Error('Invalid permit batch data: missing spender or sigDeadline');
+            }
+
+            console.log('[prepare-mint-after-swap-tx] Processing permit batch:', {
+                detailsCount: permitValues.details.length,
+                spender: permitValues.spender,
+                sigDeadline: permitValues.sigDeadline,
+                usingFormat: (permitBatchData as any).message ? 'message' : 'values',
+            });
+
             const permitBatchForSDK: any = {
-                details: permitBatchData.values!.details.map((detail: any) => ({
-                    token: getAddress(detail.token),
-                    amount: BigInt(detail.amount),
-                    expiration: BigInt(detail.expiration),
-                    nonce: BigInt(detail.nonce),
-                })),
-                spender: getAddress(permitBatchData.values!.spender),
-                sigDeadline: BigInt(permitBatchData.values!.sigDeadline),
+                details: permitValues.details.map((detail: any) => {
+                    if (!detail.token || detail.amount === undefined || detail.expiration === undefined || detail.nonce === undefined) {
+                        console.error('[prepare-mint-after-swap-tx] Invalid permit detail:', detail);
+                        throw new Error('Invalid permit detail structure');
+                    }
+                    const parsedDetail = {
+                        token: getAddress(detail.token),
+                        amount: BigInt(detail.amount),
+                        expiration: BigInt(detail.expiration),
+                        nonce: BigInt(detail.nonce),
+                    };
+                    console.log('[prepare-mint-after-swap-tx] Parsed permit detail:', {
+                        token: parsedDetail.token,
+                        amount: parsedDetail.amount.toString(),
+                        expiration: parsedDetail.expiration.toString(),
+                        nonce: parsedDetail.nonce.toString(),
+                    });
+                    return parsedDetail;
+                }),
+                spender: getAddress(permitValues.spender),
+                sigDeadline: BigInt(permitValues.sigDeadline),
             };
+
+            console.log('[prepare-mint-after-swap-tx] Final permitBatchForSDK:', {
+                detailsCount: permitBatchForSDK.details.length,
+                spender: permitBatchForSDK.spender,
+                sigDeadline: permitBatchForSDK.sigDeadline.toString(),
+                signatureLength: permitSignature.length,
+                signaturePrefix: permitSignature.slice(0, 10),
+            });
 
             mintOptions = {
                 ...mintOptions,
@@ -414,9 +491,40 @@ export default async function handler(
                     signature: permitSignature,
                 }
             };
+
+            console.log('[prepare-mint-after-swap-tx] Mint options before SDK call:', {
+                hasBatchPermit: !!mintOptions.batchPermit,
+                batchPermitOwner: mintOptions.batchPermit?.owner,
+                batchPermitDetailsCount: mintOptions.batchPermit?.permitBatch?.details?.length,
+                hasSignature: !!mintOptions.batchPermit?.signature,
+                positionLiquidity: position.liquidity.toString(),
+                tickLower,
+                tickUpper,
+                token0Amount: parsedToken0Amount.toString(),
+                token1Amount: parsedToken1Amount.toString(),
+                permitAmounts: permitBatchForSDK.details.map((d: any) => ({
+                    token: d.token,
+                    amount: d.amount.toString(),
+                })),
+            });
         }
 
-        const mintMethodParameters = V4PositionManager.addCallParameters(position, mintOptions);
+        console.log('[prepare-mint-after-swap-tx] Calling V4PositionManager.addCallParameters...');
+        let mintMethodParameters;
+        try {
+            mintMethodParameters = V4PositionManager.addCallParameters(position, mintOptions);
+            console.log('[prepare-mint-after-swap-tx] SDK call succeeded');
+        } catch (sdkError: any) {
+            console.error('[prepare-mint-after-swap-tx] SDK call failed:', {
+                error: sdkError.message,
+                stack: sdkError.stack,
+                mintOptions: JSON.stringify(mintOptions, (key, value) => {
+                    if (typeof value === 'bigint') return value.toString();
+                    return value;
+                }, 2),
+            });
+            throw sdkError;
+        }
 
         // Calculate transaction value (if native ETH is involved)
         const txValue = hasNativeETH
@@ -448,7 +556,12 @@ export default async function handler(
         });
 
     } catch (error: any) {
-        console.error('[prepare-mint-after-swap-tx] Error:', error);
+        console.error('[prepare-mint-after-swap-tx] Error:', {
+            message: error.message,
+            stack: error.stack,
+            name: error.name,
+            ...(error.cause && { cause: error.cause }),
+        });
         return res.status(500).json({
             error: error.message || 'Failed to prepare mint transaction'
         });

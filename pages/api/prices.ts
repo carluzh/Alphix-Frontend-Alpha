@@ -1,5 +1,11 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 
+/**
+ * @deprecated This endpoint is no longer used. 
+ * Price fetching now uses the quote API via lib/price-service.ts (getAllTokenPrices/batchGetTokenPrices).
+ * This file is kept for backward compatibility but should be removed in a future cleanup.
+ */
+
 const COINGECKO_PRICE_ENDPOINT = 'https://api.coingecko.com/api/v3/simple/price';
 
 // Simple in-memory cache + dedupe for the proxy to avoid hammering CoinGecko

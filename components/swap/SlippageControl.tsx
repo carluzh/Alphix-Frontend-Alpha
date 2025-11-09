@@ -4,7 +4,7 @@ import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { InfoIcon } from 'lucide-react';
+import { CircleHelp } from 'lucide-react';
 import { useSlippageValidation } from '@/hooks/useSlippage';
 import { MAX_CUSTOM_SLIPPAGE_TOLERANCE } from '@/lib/slippage-constants';
 
@@ -124,22 +124,22 @@ export function SlippageControl({
   return (
     <div>
       <div className="flex items-center justify-between text-xs text-muted-foreground">
-        <div className="flex items-center gap-1.5">
-          <span>Max Slippage:</span>
-          <TooltipProvider delayDuration={0}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <InfoIcon className="h-3 w-3 text-muted-foreground/60 hover:text-muted-foreground cursor-help" />
-              </TooltipTrigger>
-              <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs max-w-xs">
-                <p>
-                  The maximum difference between your expected price and the execution price.
-                  Auto mode dynamically adjusts based on market conditions.
-                </p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-        </div>
+        <TooltipProvider delayDuration={0}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="flex items-center gap-1.5">
+                <span>Max Slippage</span>
+                <CircleHelp className="h-3 w-3" />
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs max-w-xs">
+              <p>
+                The maximum difference between your expected price and the execution price.
+                Auto mode dynamically adjusts based on market conditions.
+              </p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
 
         <div className="flex items-center gap-1.5">
           {!isExpanded ? (

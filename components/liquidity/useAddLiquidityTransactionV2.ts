@@ -1,6 +1,7 @@
 // Refactored Add Liquidity Transaction Hook (Uniswap-style)
 import { useCallback, useState, useRef } from 'react';
-import { useAccount, useWriteContract, useWaitForTransactionReceipt, useSignTypedData } from 'wagmi';
+import { useAccount, useWriteContract, useWaitForTransactionReceipt, useSignTypedData, useBalance } from 'wagmi';
+import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { BadgeCheck, OctagonX, InfoIcon } from 'lucide-react';
 import React from 'react';
@@ -25,6 +26,7 @@ export interface UseAddLiquidityTransactionV2Props {
   onOpenChange: (isOpen: boolean) => void;
   isZapMode?: boolean;
   zapInputToken?: 'token0' | 'token1';
+  zapSlippageToleranceBps?: number; // Slippage tolerance in basis points for zap mode
 }
 
 export function useAddLiquidityTransactionV2({
@@ -40,8 +42,30 @@ export function useAddLiquidityTransactionV2({
   onOpenChange,
   isZapMode = false,
   zapInputToken = 'token0',
+  zapSlippageToleranceBps = 50, // Default 0.5% (50 basis points)
 }: UseAddLiquidityTransactionV2Props) {
   const { address: accountAddress, chainId } = useAccount();
+  const queryClient = useQueryClient();
+
+  // Use balance hooks for refetching after swap (same pattern as swap-interface.tsx)
+  const token0Config = getToken(token0Symbol);
+  const token1Config = getToken(token1Symbol);
+  const isToken0Native = token0Config?.address === NATIVE_TOKEN_ADDRESS;
+  const isToken1Native = token1Config?.address === NATIVE_TOKEN_ADDRESS;
+
+  const { refetch: refetchToken0Balance } = useBalance({
+    address: accountAddress,
+    token: isToken0Native ? undefined : (token0Config?.address as `0x${string}` | undefined),
+    chainId,
+    query: { enabled: false }, // Disabled by default, we'll refetch manually
+  });
+
+  const { refetch: refetchToken1Balance } = useBalance({
+    address: accountAddress,
+    token: isToken1Native ? undefined : (token1Config?.address as `0x${string}` | undefined),
+    chainId,
+    query: { enabled: false }, // Disabled by default, we'll refetch manually
+  });
 
   // Check approvals for regular mode using React Query
   const {
@@ -236,7 +260,7 @@ export function useAddLiquidityTransactionV2({
           userTickLower: tl,
           userTickUpper: tu,
           chainId,
-          slippageTolerance: 50,
+          slippageTolerance: zapSlippageToleranceBps,
         };
 
         // Include permit signature if it was required
@@ -260,19 +284,8 @@ export function useAddLiquidityTransactionV2({
 
         const result = await response.json();
         
-        // Log the full response for debugging
-        console.log('[handleZapSwapAndDeposit] API response:', {
-          hasSwapTransaction: !!result.swapTransaction,
-          swapTransaction: result.swapTransaction,
-          needsApproval: result.needsApproval,
-          error: result.error,
-          message: result.message,
-        });
-        
         if (!result.swapTransaction) {
-          // Provide more detailed error message
           const errorMsg = result.message || result.error || 'No swap transaction returned from API';
-          console.error('[handleZapSwapAndDeposit] Missing swapTransaction:', result);
           throw new Error(errorMsg);
         }
 
@@ -319,15 +332,20 @@ export function useAddLiquidityTransactionV2({
         }
 
         // Get balances before swap to calculate actual received amounts
-        const getTokenBalance = async (tokenAddress: string, isNative: boolean): Promise<bigint> => {
+        const getTokenBalance = async (tokenAddress: string, isNative: boolean, blockNumber?: bigint): Promise<bigint> => {
+          const blockTag = blockNumber ? blockNumber : 'latest';
           if (isNative) {
-            return await publicClient.getBalance({ address: accountAddress });
+            return await publicClient.getBalance({ 
+              address: accountAddress, 
+              blockTag 
+            });
           } else {
             return await publicClient.readContract({
               address: tokenAddress as `0x${string}`,
               abi: ERC20_ABI,
               functionName: 'balanceOf',
               args: [accountAddress],
+              blockTag,
             }) as bigint;
           }
         };
@@ -354,31 +372,71 @@ export function useAddLiquidityTransactionV2({
         });
 
         // ========== STEP 5: GET BALANCES AFTER SWAP AND CALCULATE ACTUAL AMOUNTS ==========
+        const blockNumber = swapReceipt.blockNumber;
+        // Read balances from 'latest' - transaction is already confirmed so this will have the updated balances
         const [balance0After, balance1After] = await Promise.all([
           getTokenBalance(token0Config.address, isToken0Native),
           getTokenBalance(token1Config.address, isToken1Native),
         ]);
 
+        const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+        const formatTopicAddress = (address: string) => `0x000000000000000000000000${address.toLowerCase().slice(2)}`;
+        const userTopic = formatTopicAddress(accountAddress);
+        const token0AddressLower = token0Config.address?.toLowerCase();
+        const token1AddressLower = token1Config.address?.toLowerCase();
+
+        const calculateChangeFromLogs = (tokenAddress?: string | undefined) => {
+          if (!tokenAddress) return null;
+          const lowerAddress = tokenAddress.toLowerCase();
+          let netChange = 0n;
+
+          for (const log of swapReceipt.logs) {
+            if (log.topics?.[0] !== TRANSFER_TOPIC) continue;
+            if (log.address?.toLowerCase() !== lowerAddress) continue;
+            if (!log.topics[1] || !log.topics[2]) continue;
+
+            const fromTopic = log.topics[1].toLowerCase();
+            const toTopic = log.topics[2].toLowerCase();
+
+            try {
+              const value = BigInt(log.data);
+              if (toTopic === userTopic) {
+                netChange += value;
+              }
+              if (fromTopic === userTopic) {
+                netChange -= value;
+              }
+            } catch (err) {
+              console.warn('[Zap Swap] Failed to parse log data for token change:', err, log);
+            }
+          }
+
+          return netChange;
+        };
+
+        let actualToken0Change = balance0After - balance0Before;
+        let actualToken1Change = balance1After - balance1Before;
+
+        if (!isToken0Native) {
+          const changeFromLogs = calculateChangeFromLogs(token0Config.address);
+          if (changeFromLogs !== null) {
+            actualToken0Change = changeFromLogs;
+          }
+        }
+        if (!isToken1Native) {
+          const changeFromLogs = calculateChangeFromLogs(token1Config.address);
+          if (changeFromLogs !== null) {
+            actualToken1Change = changeFromLogs;
+          }
+        }
+
         // Calculate actual amounts received from swap
         // Note: Input token balance decreases (we sent tokens), output token balance increases (we received tokens)
-        const actualToken0Change = balance0After - balance0Before;
-        const actualToken1Change = balance1After - balance1Before;
-
-        // Get swap amount from API response (in wei/smallest units)
         const swapAmount = BigInt(result.details?.swapAmount || '0');
-        // Use decimals from pools.json via getToken() (same as swap-interface.tsx)
         const inputTokenDecimals = zapInputToken === 'token0' ? token0Config.decimals : token1Config.decimals;
         const parsedInputAmount = viemParseUnits(inputAmount, inputTokenDecimals);
-        
-        // Determine which token is input and which is output
         const inputIsToken0 = zapInputToken === 'token0';
-        
-        // Calculate actual amounts:
-        // - Remaining input = total input - swap amount (what we kept, didn't swap)
-        //   Note: We calculate this instead of using balance change because:
-        //   - For ERC20: balance change is negative (we sent tokens)
-        //   - For native ETH: balance change includes gas fees, so it's not accurate
-        // - Received output = balance change of output token (what we actually got from swap)
+
         const remainingInputAmount = parsedInputAmount - swapAmount;
         const receivedOutputAmount = inputIsToken0 ? actualToken1Change : actualToken0Change;
         
@@ -389,19 +447,6 @@ export function useAddLiquidityTransactionV2({
         // Format amounts for API using decimals from pools.json
         const token0AmountStr = viemFormatUnits(actualToken0Amount, token0Config.decimals);
         const token1AmountStr = viemFormatUnits(actualToken1Amount, token1Config.decimals);
-
-        console.log('Using ACTUAL amounts from swap:', {
-          swapAmount: swapAmount.toString(),
-          remainingInputAmount: remainingInputAmount.toString(),
-          actualToken0Change: actualToken0Change.toString(),
-          actualToken1Change: actualToken1Change.toString(),
-          actualToken0Amount: actualToken0Amount.toString(),
-          actualToken1Amount: actualToken1Amount.toString(),
-          token0: token0AmountStr,
-          token1: token1AmountStr,
-          token0Symbol,
-          token1Symbol,
-        });
 
         // ========== STEP 6: SIGN BATCH PERMIT FOR LP DEPOSIT ==========
 
@@ -417,7 +462,7 @@ export function useAddLiquidityTransactionV2({
             userTickLower: tl,
             userTickUpper: tu,
             chainId,
-            slippageTolerance: 50,
+            slippageTolerance: zapSlippageToleranceBps,
           }),
         });
 
@@ -432,6 +477,7 @@ export function useAddLiquidityTransactionV2({
         let batchPermitSignature: string | undefined = undefined;
         if (mintResult.needsApproval && mintResult.approvalType === 'PERMIT2_BATCH_SIGNATURE') {
           if (!mintResult.permitBatchData) {
+            console.error('[Zap BatchPermit] Missing permitBatchData in API response:', mintResult);
             throw new Error('Batch permit data missing from API response');
           }
 
@@ -439,21 +485,39 @@ export function useAddLiquidityTransactionV2({
             icon: React.createElement(InfoIcon, { className: 'h-4 w-4' }),
           });
 
-          // Check if we have signatureDetails (like regular flow) or embedded in permitBatchData
-          const domain = mintResult.signatureDetails?.domain || mintResult.permitBatchData.domain;
-          const types = mintResult.signatureDetails?.types || mintResult.permitBatchData.types;
-          const valuesToSign = mintResult.permitBatchData.values || mintResult.permitBatchData.message || mintResult.permitBatchData;
+          // Extract domain and types from permitBatchData (API doesn't return signatureDetails)
+          const domain = mintResult.permitBatchData.domain;
+          const types = mintResult.permitBatchData.types;
+          // Prefer message format (new) over values format (backwards compat)
+          const valuesToSign = mintResult.permitBatchData.message || mintResult.permitBatchData.values;
 
           if (!domain || !types) {
+            console.error('[Zap BatchPermit] Missing domain or types:', { domain: !!domain, types: !!types, permitBatchData: mintResult.permitBatchData });
             throw new Error('Missing domain or types for batch permit signature');
           }
 
-          batchPermitSignature = await signTypedDataAsync({
-            domain: domain as any,
-            types: types as any,
-            primaryType: 'PermitBatch',
-            message: valuesToSign as any,
-          });
+          if (!valuesToSign) {
+            console.error('[Zap BatchPermit] Missing valuesToSign:', { permitBatchData: mintResult.permitBatchData });
+            throw new Error('Missing permit batch message/values for signature');
+          }
+
+          try {
+            batchPermitSignature = await signTypedDataAsync({
+              domain: domain as any,
+              types: types as any,
+              primaryType: 'PermitBatch',
+              message: valuesToSign as any,
+            });
+          } catch (signError: any) {
+            console.error('[Zap BatchPermit] Signature failed:', {
+              error: signError.message,
+              code: signError.code,
+              domain,
+              types,
+              valuesToSign,
+            });
+            throw signError;
+          }
 
           // Fetch final transaction with signature
           const finalMintResponse = await fetch('/api/liquidity/prepare-mint-after-swap-tx', {
@@ -468,15 +532,19 @@ export function useAddLiquidityTransactionV2({
               userTickLower: tl,
               userTickUpper: tu,
               chainId,
-              slippageTolerance: 50,
+              slippageTolerance: zapSlippageToleranceBps,
               permitSignature: batchPermitSignature,
               permitBatchData: mintResult.permitBatchData, // Include permit batch data
-              signatureDetails: mintResult.signatureDetails, // Include signature details if present
             }),
           });
 
           if (!finalMintResponse.ok) {
             const errorData = await finalMintResponse.json();
+            console.error('[Zap BatchPermit] Final API call failed:', {
+              status: finalMintResponse.status,
+              error: errorData,
+              hasSignature: !!batchPermitSignature,
+            });
             throw new Error(errorData.message || 'Failed to prepare final LP deposit');
           }
 
@@ -601,7 +669,7 @@ export function useAddLiquidityTransactionV2({
 
         // Add slippage tolerance for zap mode
         if (isZapMode) {
-          requestBody.slippageTolerance = 50; // 0.5% default
+          requestBody.slippageTolerance = zapSlippageToleranceBps;
           // Include batch permit signature if we have one
           if (permitSignature) {
             requestBody.permitSignature = permitSignature;
@@ -627,18 +695,11 @@ export function useAddLiquidityTransactionV2({
 
         const result = await response.json();
 
-        console.log('[handleDeposit] API response:', result);
-
         // In the new flow, batch permits are signed before calling handleDeposit
         // So we should not encounter needsApproval here
         if (result.needsApproval) {
-          console.error('[handleDeposit] API returned permit request but permit should have been obtained already');
           throw new Error('Permit signature required. Please sign the batch permit first.');
         }
-
-        // In zap mode, the swap was already executed by handleExecuteSwap
-        // This function only executes the mint/deposit transaction
-        console.log('[handleDeposit] Executing deposit transaction...', { isZapMode, result });
 
         if (result.transaction && result.transaction.to) {
           // ========== EXECUTE MINT/DEPOSIT TRANSACTION ==========
@@ -646,7 +707,6 @@ export function useAddLiquidityTransactionV2({
           // In regular mode: Directly minting LP position with both tokens
 
           if (!result.transaction.data) {
-            console.error('[handleDeposit] Missing transaction data:', result);
             throw new Error('Invalid transaction data from API');
           }
 
@@ -673,17 +733,15 @@ export function useAddLiquidityTransactionV2({
             icon: React.createElement(InfoIcon, { className: 'h-4 w-4' }),
           });
 
-          const hash = await depositAsync(depositConfig);
-          console.log('[handleDeposit] Deposit transaction submitted:', hash);
+          await depositAsync(depositConfig);
         } else {
-          console.error('[handleDeposit] Invalid API response:', result);
           throw new Error('Invalid transaction data from API');
         }
 
         // Note: onLiquidityAdded will be called after confirmation in the useEffect below
         // This prevents duplicate skeleton creation
       } catch (error: any) {
-        console.error('Deposit error:', error);
+        console.error('[handleDeposit] Deposit error:', error);
 
         const isUserRejection =
           error.message?.toLowerCase().includes('user rejected') ||
@@ -724,8 +782,6 @@ export function useAddLiquidityTransactionV2({
       if (processedFailedHashRef.current === depositTxHash) return;
       processedFailedHashRef.current = depositTxHash;
 
-      console.error('Transaction reverted:', depositTxHash, depositReceiptError);
-
       toast.error('Transaction Failed', {
         icon: React.createElement(OctagonX, { className: 'h-4 w-4 text-red-500' }),
         description: `Transaction was submitted but reverted on-chain.`,
@@ -765,7 +821,7 @@ export function useAddLiquidityTransactionV2({
           tvlDelta = (p0 ? amt0 * p0 : 0) + (p1 ? amt1 * p1 : 0);
         }
         onLiquidityAdded(token0Symbol, token1Symbol, { txHash: depositTxHash as `0x${string}`, blockNumber: receipt?.blockNumber, tvlDelta });
-      })().catch(e => console.error('Post-deposit processing error:', e));
+      })().catch(e => console.error('[useAddLiquidityTransactionV2] Post-deposit processing error:', e));
 
       onOpenChange(false);
     }

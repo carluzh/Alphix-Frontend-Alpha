@@ -1,13 +1,14 @@
 "use client";
 
-import React, { useCallback, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { TransactionStepper } from '@/components/ui/transaction-stepper';
 import { cn } from '@/lib/utils';
 import { TokenSymbol } from '@/lib/pools-config';
 import { useTransactionFlow, generateStepperSteps } from '@/hooks/useTransactionFlow';
 import { toast } from 'sonner';
-import { Info, OctagonX, BadgeCheck } from 'lucide-react';
+import { Info, OctagonX, BadgeCheck, AlertTriangle, Maximize } from 'lucide-react';
+import { PreviewPositionModal } from './PreviewPositionModal';
 
 export interface TransactionFlowPanelProps {
   // Flow configuration
@@ -36,6 +37,36 @@ export interface TransactionFlowPanelProps {
 
   // Flow control
   autoProgressOnApproval?: boolean; // Auto-move to next step after approval
+  
+  // Optional slippage control to render between steps and buttons
+  slippageControl?: React.ReactNode;
+  
+  // Optional price impact warning to show underneath slippage control
+  priceImpactWarning?: {
+    severity: 'medium' | 'high';
+    message: string;
+  } | null;
+  
+  // Preview position modal props
+  calculatedData?: any;
+  tickLower?: string;
+  tickUpper?: string;
+  amount0?: string;
+  amount1?: string;
+  currentPrice?: string | null;
+  currentPoolTick?: number | null;
+  currentPoolSqrtPriceX96?: string | null;
+  selectedPoolId?: string;
+  poolAPY?: number | null;
+  estimatedApy?: string;
+  getUsdPriceForSymbol?: (symbol?: string) => number;
+  convertTickToPrice?: (tick: number, currentPoolTick: number | null, currentPrice: string | null, baseTokenForPriceDisplay: string, token0Symbol: string, token1Symbol: string) => string;
+  zapQuote?: {
+    expectedToken0Amount?: string;
+    expectedToken1Amount?: string;
+    priceImpact?: string;
+  } | null;
+  currentSlippage?: number;
 }
 
 export function TransactionFlowPanel({
@@ -58,7 +89,25 @@ export function TransactionFlowPanel({
   showBackButton = true,
   className,
   autoProgressOnApproval = true,
+  slippageControl,
+  priceImpactWarning,
+  calculatedData,
+  tickLower,
+  tickUpper,
+  amount0,
+  amount1,
+  currentPrice,
+  currentPoolTick,
+  currentPoolSqrtPriceX96,
+  selectedPoolId,
+  poolAPY,
+  estimatedApy,
+  getUsdPriceForSymbol,
+  convertTickToPrice,
+  zapQuote,
+  currentSlippage,
 }: TransactionFlowPanelProps) {
+  const [showPreviewModal, setShowPreviewModal] = useState(false);
   const { state, actions, getNextStep, canProceed } = useTransactionFlow({
     onFlowComplete: () => {
       // Flow completed successfully
@@ -87,13 +136,10 @@ export function TransactionFlowPanel({
 
     // Validate permit data exists when needed
     if (!isZapMode && nextStep === 'signing_permit' && (!approvalData.permitBatchData || !approvalData.signatureDetails)) {
-      console.warn('[TransactionFlow] Permit data not ready');
       return;
     }
 
     if (isZapMode && nextStep === 'signing_swap_permit' && !approvalData.swapPermitData) {
-      console.warn('[TransactionFlow] Swap permit data not ready');
-      console.log('[TransactionFlow] Current approvalData:', approvalData);
       return;
     }
 
@@ -108,7 +154,6 @@ export function TransactionFlowPanel({
         case 'approving_zap_tokens':
           // Safety check: if we've already completed this step, skip to execution
           if (state.completedSteps.has('approving_zap_tokens')) {
-            console.warn('[TransactionFlow] Approvals already completed, skipping to execution');
             actions.unlock();
             actions.setStep('idle');
             // Trigger next step
@@ -315,9 +360,40 @@ export function TransactionFlowPanel({
     <div className={cn("space-y-4", className)}>
       {/* Transaction Steps Display */}
       <div className="p-3 border border-dashed rounded-md bg-muted/10">
-        <p className="text-sm font-medium mb-3 text-foreground/80">Transaction Steps</p>
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-sm font-medium text-foreground/80">Transaction Steps</p>
+          {calculatedData && (parseFloat(amount0 || "0") > 0 || parseFloat(amount1 || "0") > 0) && getUsdPriceForSymbol && convertTickToPrice && (
+            <button
+              onClick={() => setShowPreviewModal(true)}
+              className="text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1.5"
+            >
+              <Maximize className="h-3 w-3" />
+              <span>Preview position</span>
+            </button>
+          )}
+        </div>
         <TransactionStepper steps={stepperSteps} />
       </div>
+
+      {/* Slippage Control (if provided) */}
+      {slippageControl && (
+        <div className="mb-2">
+          {slippageControl}
+        </div>
+      )}
+
+      {/* Price Impact Warning - shown underneath slippage control for zap mode */}
+      {priceImpactWarning && (
+        <div className={cn(
+          "mb-2 flex items-center gap-2 rounded-md px-3 py-2 text-xs",
+          priceImpactWarning.severity === 'high' 
+            ? "bg-red-500/10 text-red-500 border border-red-500/20"
+            : "bg-orange-500/10 text-orange-500 border border-orange-500/20"
+        )}>
+          <AlertTriangle className="h-3 w-3 shrink-0" />
+          <span className="font-medium">{priceImpactWarning.message}</span>
+        </div>
+      )}
 
       {/* Action Buttons */}
       <div className={cn("flex", showBackButton ? "gap-2" : "")}>
@@ -352,6 +428,36 @@ export function TransactionFlowPanel({
       {/* Error Display */}
       {state.error && (
         <p className="text-xs text-red-500 text-center">{state.error}</p>
+      )}
+
+      {/* Preview Position Modal */}
+      {calculatedData && getUsdPriceForSymbol && convertTickToPrice && (
+        <PreviewPositionModal
+          isOpen={showPreviewModal}
+          onClose={() => setShowPreviewModal(false)}
+          onConfirm={() => {
+            setShowPreviewModal(false);
+          }}
+          calculatedData={calculatedData}
+          token0Symbol={token0Symbol}
+          token1Symbol={token1Symbol}
+          tickLower={tickLower || ""}
+          tickUpper={tickUpper || ""}
+          amount0={amount0 || ""}
+          amount1={amount1 || ""}
+          currentPrice={currentPrice}
+          currentPoolTick={currentPoolTick}
+          currentPoolSqrtPriceX96={currentPoolSqrtPriceX96}
+          selectedPoolId={selectedPoolId}
+          getUsdPriceForSymbol={getUsdPriceForSymbol}
+          convertTickToPrice={convertTickToPrice}
+          isZapMode={isZapMode}
+          zapInputToken={zapInputToken}
+          zapInputAmount={zapInputToken === 'token0' ? amount0 : amount1}
+          zapOutputAmount={zapQuote ? (zapInputToken === 'token0' ? zapQuote.expectedToken1Amount : zapQuote.expectedToken0Amount) : undefined}
+          zapQuote={zapQuote}
+          currentSlippage={currentSlippage}
+        />
       )}
     </div>
   );

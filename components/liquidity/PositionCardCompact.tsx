@@ -88,6 +88,7 @@ interface PositionCardCompactProps {
     onDenominationData?: (data: { denominationBase: string; minPrice: string; maxPrice: string; displayedCurrentPrice: string | null; feesUSD: number; formattedAPY: string; isAPYFallback: boolean; isLoadingAPY: boolean }) => void;
     showMenuButton?: boolean;
     onVisitPool?: () => void;
+    disableHover?: boolean;
 }
 
 const SDK_MIN_TICK = -887272;
@@ -104,6 +105,7 @@ export function PositionCardCompact({
     onDenominationData,
     showMenuButton = false,
     onVisitPool,
+    disableHover = false,
 }: PositionCardCompactProps) {
     const [isHovered, setIsHovered] = useState(false);
     const { currentPrice, currentPoolTick, poolAPY, isLoadingPrices, isLoadingPoolStates } = poolContext;
@@ -171,7 +173,7 @@ export function PositionCardCompact({
     }, [position.tickLower, position.tickUpper, currentPrice, currentPoolTick, denominationBase, position.token0.symbol, position.token1.symbol, convertTickToPrice, shouldInvert]);
 
     const { formattedAPY, isFallback: isAPYFallback, isLoading: isLoadingAPY } = React.useMemo(() => {
-        if (isLoadingPrices || valueUSD <= 0 || poolAPY === undefined) {
+        if (isLoadingPrices || valueUSD <= 0 || poolAPY === undefined || poolAPY === null) {
             return { formattedAPY: '—', isFallback: false, isLoading: true };
         }
         if (!position.isInRange && !isFullRange) {
@@ -205,13 +207,14 @@ export function PositionCardCompact({
     return (
         <div
             className={cn(
-                "relative flex flex-col rounded-lg border border-sidebar-border bg-muted/30 cursor-pointer group transition-colors",
+                "relative flex flex-col rounded-lg border border-sidebar-border bg-muted/30 transition-colors",
                 showMenuButton ? "overflow-visible" : "overflow-hidden",
-                isHovered && "border-white/20"
+                !disableHover && "cursor-pointer group",
+                !disableHover && isHovered && "border-white/20"
             )}
-            onClick={onClick}
-            onMouseEnter={() => setIsHovered(true)}
-            onMouseLeave={() => setIsHovered(false)}
+            onClick={disableHover ? undefined : onClick}
+            onMouseEnter={() => !disableHover && setIsHovered(true)}
+            onMouseLeave={() => !disableHover && setIsHovered(false)}
         >
             {/* Loading overlay */}
             {position.isOptimisticallyUpdating && (

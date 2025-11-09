@@ -1,17 +1,15 @@
 import { getFromCache, setToCache, getOngoingRequest, setOngoingRequest } from './client-cache';
 import { formatUnits } from 'viem';
+import { TokenSymbol } from './pools-config';
 
 // Global cache key for all prices
 const ALL_PRICES_CACHE_KEY = 'all_token_prices';
 const CACHE_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 
-// CoinGecko API endpoints
-const COINGECKO_PRICE_ENDPOINT = 'https://api.coingecko.com/api/v3/simple/price';
 const API_TIMEOUT_MS = 8000;
-
-// All coins we need in one batch - only 5 real coins
-const ALL_COINGECKO_IDS = ['bitcoin', 'usd-coin', 'ethereum', 'tether', 'dai'];
 const ONGOING_REQUEST_KEY = 'fetch_all_prices';
+const QUOTE_AMOUNT_USDC = 100; // Quote 100 aUSDC against token (like Uniswap uses 1000)
+const TARGET_CHAIN_ID = 84532; // Base Sepolia
 
 
 // Map token symbols to their underlying asset prices based on pools.json naming
@@ -44,7 +42,59 @@ export interface AllPricesData {
 }
 
 /**
+ * Get USD price for a token by quoting against aUSDC
+ * Server-side version of useTokenUSDPrice hook
+ */
+async function getTokenUSDPriceViaQuote(tokenSymbol: TokenSymbol): Promise<number | null> {
+  // aUSDC is always $1
+  if (tokenSymbol === 'aUSDC') {
+    return 1;
+  }
+
+  try {
+    const isBrowser = typeof window !== 'undefined';
+    // For server-side, use absolute URL if available, otherwise use relative (works in Next.js API routes)
+    const baseUrl = isBrowser 
+      ? '' 
+      : (process.env.NEXT_PUBLIC_BASE_URL || process.env.VERCEL_URL 
+          ? `https://${process.env.VERCEL_URL}` 
+          : 'http://localhost:3000');
+    
+    const url = `${baseUrl}/api/swap/get-quote`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fromTokenSymbol: 'aUSDC',
+        toTokenSymbol: tokenSymbol,
+        amountDecimalsStr: QUOTE_AMOUNT_USDC.toString(),
+        swapType: 'ExactIn',
+        chainId: TARGET_CHAIN_ID,
+        debug: false,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch price quote: ${response.status}`);
+    }
+
+    const data = await response.json();
+    if (data.success && data.toAmount) {
+      const tokenAmount = parseFloat(data.toAmount);
+      if (tokenAmount > 0) {
+        return QUOTE_AMOUNT_USDC / tokenAmount;
+      }
+    }
+    return null;
+  } catch (error) {
+    console.error(`[PriceService] Error fetching price for ${tokenSymbol}:`, error);
+    return null;
+  }
+}
+
+/**
  * Fetch ALL prices in one API call and cache globally
+ * Uses quote API instead of CoinGecko
  */
 async function fetchAllPrices(signal?: AbortSignal): Promise<AllPricesData> {
   // Check if there's an ongoing request
@@ -55,38 +105,28 @@ async function fetchAllPrices(signal?: AbortSignal): Promise<AllPricesData> {
   }
 
   const promise = (async (): Promise<AllPricesData> => {
-    console.log('[PriceService] Fetching all prices from CoinGecko...');
+    console.log('[PriceService] Fetching all prices via quote API...');
     
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
     
     try {
-      // Use proxied endpoint when running in browser (avoid CORS and rate limits)
-      const isBrowser = typeof window !== 'undefined';
-      const url = isBrowser
-        ? `/api/prices?ids=${ALL_COINGECKO_IDS.join(',')}&vs=usd&include_24hr_change=true`
-        : `${COINGECKO_PRICE_ENDPOINT}?ids=${ALL_COINGECKO_IDS.join(',')}&vs_currencies=usd&include_24hr_change=true`;
-
-      const response = await fetch(url, { 
-        cache: 'no-store',
-        signal: signal || controller.signal
-      });
+      // Fetch prices for all tokens in parallel
+      const [btcPrice, ethPrice, usdtPrice, daiPrice] = await Promise.all([
+        getTokenUSDPriceViaQuote('aBTC'),
+        getTokenUSDPriceViaQuote('aETH'),
+        getTokenUSDPriceViaQuote('aUSDT'),
+        getTokenUSDPriceViaQuote('aDAI'),
+      ]);
       
       clearTimeout(timeoutId);
       
-      if (!response.ok) {
-        throw new Error(`CoinGecko API error: ${response.status}`);
-      }
-      
-      const data = await response.json();
-      console.log('[PriceService] CoinGecko response:', data);
-      
       const prices: AllPricesData = {
-        BTC: { usd: data.bitcoin?.usd || 0, usd_24h_change: data.bitcoin?.usd_24h_change },
-        USDC: { usd: data['usd-coin']?.usd || 1, usd_24h_change: data['usd-coin']?.usd_24h_change },
-        ETH: { usd: data.ethereum?.usd || 0, usd_24h_change: data.ethereum?.usd_24h_change },
-        USDT: { usd: data.tether?.usd || 1, usd_24h_change: data.tether?.usd_24h_change },
-        DAI: { usd: data.dai?.usd || 1, usd_24h_change: data.dai?.usd_24h_change },
+        BTC: { usd: btcPrice || 0 },
+        USDC: { usd: 1 }, // aUSDC is always $1
+        ETH: { usd: ethPrice || 0 },
+        USDT: { usd: usdtPrice || 1 },
+        DAI: { usd: daiPrice || 1 },
         lastUpdated: Date.now()
       };
       
@@ -145,25 +185,48 @@ export function getFallbackPrice(tokenSymbol: string): number {
 }
 
 /**
- * Batch fetch multiple token prices - simplified to use global cache
+ * Batch fetch multiple token prices - uses quote API
  */
 export async function batchGetTokenPrices(tokenSymbols: string[]): Promise<Record<string, number>> {
   console.log(`[PriceService] Batch request for: ${tokenSymbols.join(', ')}`);
   
-  // Get all prices in one call
-  const allPrices = await getAllTokenPrices();
+  // Fetch prices for all tokens in parallel using quote API
+  const pricePromises = tokenSymbols.map(async (symbol) => {
+    const baseSymbol = getUnderlyingAsset(symbol);
+    if (!baseSymbol) {
+      return { symbol, price: 0 };
+    }
+    
+    // Map base symbol to token symbol for quote
+    let quoteSymbol: TokenSymbol;
+    switch (baseSymbol) {
+      case 'BTC':
+        quoteSymbol = 'aBTC';
+        break;
+      case 'ETH':
+        quoteSymbol = 'aETH';
+        break;
+      case 'USDT':
+        quoteSymbol = 'aUSDT';
+        break;
+      case 'DAI':
+        quoteSymbol = 'aDAI';
+        break;
+      case 'USDC':
+        return { symbol, price: 1 }; // USDC is always $1
+      default:
+        return { symbol, price: 0 };
+    }
+    
+    const price = await getTokenUSDPriceViaQuote(quoteSymbol);
+    return { symbol, price: price || 0 };
+  });
   
-  // Map the requested symbols to their prices
+  const results = await Promise.all(pricePromises);
   const result: Record<string, number> = {};
   
-  for (const symbol of tokenSymbols) {
-    const price = await getTokenPrice(symbol);
-    if (price !== null) {
-      result[symbol] = price;
-    } else {
-      // Use fallback for unknown symbols
-      result[symbol] = 0;
-    }
+  for (const { symbol, price } of results) {
+    result[symbol] = price;
   }
   
   console.log('[PriceService] Batch result:', result);

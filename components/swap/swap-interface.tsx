@@ -37,6 +37,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { useSwapPercentageInput } from "@/hooks/usePercentageInput";
 import { useUserSlippageTolerance } from "@/hooks/useSlippage";
 import { getAutoSlippage } from "@/lib/slippage-api";
+import { useTokenUSDPrice } from "@/hooks/useTokenUSDPrice";
 
 import {
   getAllTokens,
@@ -1040,6 +1041,21 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
           setToAmount(String(data.toAmount ?? ""));
         }
         setRouteInfo(data.route || null);
+        // Set price impact from quote response
+        if (data.priceImpact !== undefined) {
+          const impactValue = parseFloat(data.priceImpact);
+          setPriceImpact(impactValue);
+          console.log('[swap-interface] Price Impact Received:', {
+            priceImpact: `${impactValue.toFixed(2)}%`,
+            fromToken: fromToken?.symbol,
+            toToken: toToken?.symbol,
+            fromAmount,
+            toAmount: data.toAmount,
+          });
+        } else {
+          setPriceImpact(null);
+          console.log('[swap-interface] No price impact in quote response');
+        }
         setQuoteError(null);
       } else {
         console.error('❌ V4 Quoter Error:', data.error);
@@ -1076,6 +1092,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
         }
         
         setQuoteError(errorMsg);
+        setPriceImpact(null); // Reset price impact on error
         // Do not infer on error; clear the side we tried to compute
         // Leave the user's actively edited field untouched on error
       }
@@ -1122,6 +1139,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
         }
       });
       setQuoteError(errorMsg);
+      setPriceImpact(null); // Reset price impact on exception
       // Leave the user's actively edited field untouched on exception
     } finally {
       setQuoteLoading(false);
@@ -1167,6 +1185,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
 
     // If we have a quote error, skip fee/slippage calcs and show placeholders
     if (quoteError) {
+      setPriceImpact(null); // Reset price impact on error
       setCalculatedValues(prev => ({
         ...prev,
         fromTokenAmount: formatTokenAmountDisplay(fromAmount, fromToken),
@@ -1259,6 +1278,11 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     const quotedAmount = parseFloat(toAmount || "0");
     const minReceivedAmount = quotedAmount > 0 ? quotedAmount * (1 - currentSlippage / 100) : 0;
     const formattedMinimumReceived = formatTokenAmountDisplay(minReceivedAmount.toString(), toToken);
+
+    // Reset price impact when there's no valid quote (same logic as minimumReceived)
+    if (!fromAmount || !toAmount || quotedAmount === 0) {
+      setPriceImpact(null);
+    }
 
     // Update auto-slippage when quote is received (if in auto mode)
     if (isAutoSlippage && fromAmount && toAmount && fromToken && toToken) {
@@ -2097,6 +2121,18 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
             };
 
             console.log("[DEBUG] bodyForSwapTx:", bodyForSwapTx);
+            console.log("[DEBUG] Slippage Protection Details:", {
+                swapType: isExactOut2 ? 'ExactOut' : 'ExactIn',
+                fromAmount,
+                toAmount,
+                currentSlippage: `${currentSlippage}%`,
+                minimumReceivedStr,
+                maximumInputStr,
+                limitAmountDecimalsStr: isExactOut2 ? maximumInputStr : minimumReceivedStr,
+                note: isExactOut2 
+                    ? 'ExactOut: Transaction will fail if actual input > maximumInputStr'
+                    : 'ExactIn: Transaction will fail if actual output < minimumReceivedStr',
+            });
 
             // --- Call Build TX API ---
             const buildTxApiResponse = await fetch('/api/swap/build-tx', {
@@ -2576,87 +2612,46 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     }
   };
 
-  // Add state for token prices
-  const [tokenPrices, setTokenPrices] = useState<{
-    BTC: number;
-    USDC: number;
-    ETH: number;
-    timestamp?: number;
-  }>({
-    BTC: 77000, // Default fallback price
-    USDC: 1,    // Default fallback price
-    ETH: 3500,  // Default fallback price
-  });
+  // Get USD prices using mid-price quotes (replaces CoinGecko)
+  const fromTokenUSDPrice = useTokenUSDPrice(fromToken?.symbol);
+  const toTokenUSDPrice = useTokenUSDPrice(toToken?.symbol);
   
-  
-  // Effect to fetch token prices periodically
+  // Update token prices when USD prices change
   useEffect(() => {
-    if (!isMounted) return;
-    
-    // Function to fetch prices using the simplified API
-    const fetchPrices = async () => {
-      try {
-        const response = await fetch('/api/prices/get-token-prices');
-        if (!response.ok) {
-          throw new Error(`Error fetching prices: ${response.status}`);
-        }
-        
-        const data = await response.json();
-        
-        setTokenPrices(data);
-      } catch (error) {
-        console.error('Error fetching token prices:', error);
-        // Keep using existing prices as fallback
-      }
-    };
-    
-    // Fetch prices immediately
-    fetchPrices();
-    
-    // Set up periodic refresh (every 5 minutes to match cache duration)
-    const priceRefreshInterval = setInterval(fetchPrices, 5 * 60 * 1000);
-    
-    return () => {
-      clearInterval(priceRefreshInterval);
-    };
-  }, [isMounted]);
+    if (fromTokenUSDPrice.price !== null) {
+      setFromToken(prev => {
+        if (prev.usdPrice === fromTokenUSDPrice.price) return prev;
+        return { ...prev, usdPrice: fromTokenUSDPrice.price || prev.usdPrice };
+      });
+    }
+  }, [fromTokenUSDPrice.price]);
   
-  // Update token prices when tokenPrices changes
   useEffect(() => {
-    if (!tokenPrices) return;
-    
-    // Update fromToken price, only if it changes
-    setFromToken(prev => {
-      const priceType = getTokenPriceMapping(prev.symbol);
-      const priceData = tokenPrices[priceType] as any;
-      const newPrice = (typeof priceData === 'object' && priceData?.usd) ? priceData.usd : (typeof priceData === 'number' ? priceData : prev.usdPrice);
-      if (prev.usdPrice === newPrice) return prev;
-      return { ...prev, usdPrice: newPrice };
-    });
-    
-    // Update toToken price, only if it changes
-    setToToken(prev => {
-      const priceType = getTokenPriceMapping(prev.symbol);
-      const priceData = tokenPrices[priceType] as any;
-      const newPrice = (typeof priceData === 'object' && priceData?.usd) ? priceData.usd : (typeof priceData === 'number' ? priceData : prev.usdPrice);
-      if (prev.usdPrice === newPrice) return prev;
-      return { ...prev, usdPrice: newPrice };
-    });
-    
-    // Update all available tokens in the list with fresh prices
-    setTokenList(prevList => 
-      prevList.map(token => {
-        const priceType = getTokenPriceMapping(token.symbol);
-        const priceData = tokenPrices[priceType] as any;
-        const newPrice = (typeof priceData === 'object' && priceData?.usd) ? priceData.usd : (typeof priceData === 'number' ? priceData : token.usdPrice);
-        return {
-          ...token,
-          usdPrice: newPrice
-        };
-      })
-    );
-    
-  }, [tokenPrices]);
+    if (toTokenUSDPrice.price !== null) {
+      setToToken(prev => {
+        if (prev.usdPrice === toTokenUSDPrice.price) return prev;
+        return { ...prev, usdPrice: toTokenUSDPrice.price || prev.usdPrice };
+      });
+    }
+  }, [toTokenUSDPrice.price]);
+  
+  // Price impact from quote response
+  const [priceImpact, setPriceImpact] = useState<number | null>(null);
+  
+  // Price impact warning thresholds (matching Uniswap)
+  const PRICE_IMPACT_MEDIUM = 3; // 3%
+  const PRICE_IMPACT_HIGH = 5; // 5%
+  
+  const priceImpactWarning = useMemo(() => {
+    if (priceImpact === null) return null;
+    if (priceImpact >= PRICE_IMPACT_HIGH) {
+      return { severity: 'high' as const, message: `Very high price impact: ${priceImpact.toFixed(2)}%` };
+    }
+    if (priceImpact >= PRICE_IMPACT_MEDIUM) {
+      return { severity: 'medium' as const, message: `High price impact: ${priceImpact.toFixed(2)}%` };
+    }
+    return null;
+  }, [priceImpact]);
 
   const containerRef = useRef<HTMLDivElement>(null); // Ref for the entire swap container (card + chart)
   const [combinedRect, setCombinedRect] = useState({
@@ -2806,6 +2801,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 onSlippageChange={handleSlippageChange}
                 onAutoSlippageToggle={handleAutoSlippageToggle}
                 onCustomSlippageToggle={handleCustomSlippageToggle}
+                priceImpactWarning={priceImpactWarning}
               />
             )}
 

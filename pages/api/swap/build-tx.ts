@@ -636,10 +636,31 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
         if (swapType === 'ExactIn') {
             actualSwapAmount = safeParseUnits(amountDecimalsStr, INPUT_TOKEN.decimals);
             actualLimitAmount = safeParseUnits(limitAmountDecimalsStr, OUTPUT_TOKEN.decimals);
+            
+            // Verification: Log slippage protection details for ExactIn swaps
+            console.log('[build-tx] ExactIn Swap Slippage Verification:', {
+                inputAmount: amountDecimalsStr,
+                frontendMinOutput: limitAmountDecimalsStr,
+                actualLimitAmountSmallestUnits: actualLimitAmount.toString(),
+                inputToken: INPUT_TOKEN.symbol,
+                outputToken: OUTPUT_TOKEN.symbol,
+                slippageProtectionActive: actualLimitAmount > 0n ? '✓' : '✗',
+                note: 'Transaction will fail if actual output < actualLimitAmountSmallestUnits',
+            });
         } else {
             // ExactOut: amount is in OUTPUT token units; limit is max INPUT
             actualSwapAmount = safeParseUnits(amountDecimalsStr, OUTPUT_TOKEN.decimals);
             actualLimitAmount = safeParseUnits(limitAmountDecimalsStr, INPUT_TOKEN.decimals);
+            
+            // Verification: Log slippage protection details for ExactOut swaps
+            console.log('[build-tx] ExactOut Swap Slippage Verification:', {
+                outputAmount: amountDecimalsStr,
+                frontendMaxInput: limitAmountDecimalsStr,
+                actualLimitAmountSmallestUnits: actualLimitAmount.toString(),
+                inputToken: INPUT_TOKEN.symbol,
+                outputToken: OUTPUT_TOKEN.symbol,
+                slippageProtectionActive: actualLimitAmount > 0n ? '✓' : '✗',
+            });
         }
 
         // Determine the value to send with the transaction (ETH input only)

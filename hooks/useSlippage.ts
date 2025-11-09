@@ -88,8 +88,10 @@ export function useUserSlippageTolerance() {
 
   // Update auto-slippage value (called when quote is received)
   const updateAutoSlippage = useCallback((value: number) => {
-    // Cap at max auto tolerance
-    const capped = Math.min(value, MAX_AUTO_SLIPPAGE_TOLERANCE);
+    // Cap at max auto tolerance (5.5% for swaps, but we'll cap at 5.0% to be safe)
+    // For zap mode specifically, we want max 5.0% to respect user's max slippage limit
+    const MAX_SLIPPAGE_SAFE = 5.0; // Hard cap at 5.0% for all auto slippage
+    const capped = Math.min(value, MAX_SLIPPAGE_SAFE);
     setAutoSlippage(capped);
   }, []);
 

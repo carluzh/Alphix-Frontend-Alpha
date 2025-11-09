@@ -316,33 +316,55 @@ export function generateStepperSteps(
       const isWorkingOnApprovals = flowState.currentStep === 'approving_zap_tokens' ||
         (flowState.isLocked && totalApprovalsNeeded > 0 && !batchApprovalComplete);
 
-      // Only show count if we have approvals needed (hide 0/0)
+      // Only show count if totalApprovalsNeeded > 0
+      // If totalApprovalsNeeded is 0, it means no approvals were needed (both tokens already approved or native)
+      // In that case, don't show 0/0 - just show completed status without count
+      const shouldShowCount = totalApprovalsNeeded > 0;
+      
       steps.push({
         id: 'approvals',
         label: 'Token Approvals',
         status: allApprovalsComplete ? 'completed' as const :
                 isWorkingOnApprovals ? 'loading' as const :
                 'pending' as const,
-        // Only show count if total > 0, otherwise hide it
-        ...(totalApprovalsNeeded > 0 ? { count: { completed: approvalsCompleted, total: totalApprovalsNeeded } } : {}),
+        // Only show count if we actually needed approvals (total > 0)
+        ...(shouldShowCount ? { count: { completed: approvalsCompleted, total: totalApprovalsNeeded } } : {}),
       });
     }
 
-    // Step 2: Execute Zap (consolidated swap + LP deposit with inline permits)
+    // Step 2: Swap Token (visual step for swap portion of zap)
     const zapCompleted = flowState.completedSteps.has('executing');
     // Calculate allApprovalsComplete if approvalData exists, otherwise default to true (skip approvals)
-    const allApprovalsComplete = approvalData 
-      ? (flowState.completedSteps.has('approving_zap_tokens') || 
+    const allApprovalsComplete = approvalData
+      ? (flowState.completedSteps.has('approving_zap_tokens') ||
          (!approvalData.needsInputTokenERC20Approval && !approvalData.needsOutputTokenERC20Approval))
       : false; // If no approvalData, don't allow execution yet
-    const isWorkingOnZap = flowState.currentStep === 'executing' ||
-      (flowState.isLocked && !zapCompleted && allApprovalsComplete);
+
+    // We're "working on swap" during the first half of execution
+    const isExecuting = flowState.currentStep === 'executing';
+    const isWorkingOnSwap = isExecuting && !zapCompleted && allApprovalsComplete;
+
+    // Consider swap "done" once we're in the second half of execution or fully complete
+    // Since this is all one transaction, we'll show swap as complete once execution starts
+    const swapVisuallyComplete = zapCompleted || (isExecuting && flowState.isLocked);
 
     steps.push({
-      id: 'execute',
-      label: 'Execute Zap',
+      id: 'swap',
+      label: 'Swap Token',
       status: zapCompleted ? 'completed' as const :
-              isWorkingOnZap ? 'loading' as const :
+              isWorkingOnSwap ? 'loading' as const :
+              swapVisuallyComplete ? 'completed' as const :
+              'pending' as const,
+    });
+
+    // Step 3: Create Position (visual step for LP deposit portion of zap)
+    const isWorkingOnPosition = isExecuting && flowState.isLocked;
+
+    steps.push({
+      id: 'position',
+      label: 'Create Position',
+      status: zapCompleted ? 'completed' as const :
+              isWorkingOnPosition ? 'loading' as const :
               'pending' as const,
     });
 

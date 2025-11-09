@@ -44,7 +44,7 @@ async function fetchTickPositions(poolSubgraphId: string, first: number = 1000) 
     }
   `;
 
-  const response = await fetch(SUBGRAPH_URL, {
+  const response = await fetch(SUBGRAPH_URL!, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
