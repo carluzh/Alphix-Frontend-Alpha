@@ -21,7 +21,6 @@ import {
   BookTextIcon,
 } from "lucide-react"
 import { ReactSVG } from "react-svg"
-import { useTheme } from "next-themes"
 import { NavMain } from "./nav-main"
 import { NavGovernance } from "./nav-governance"
 import { AccountStatus } from "./AccountStatus"
@@ -113,7 +112,6 @@ const BETA_BADGE_STORAGE_KEY = "alphix:betaBadge:lastSeenVersion";
 
 export function AppSidebar({ variant = "floating", onBetaClick, ...props }: AppSidebarProps) {
   const isMobile = useIsMobile()
-  const { resolvedTheme } = useTheme()
   const router = useRouter(); // Initialize useRouter
   const [showVersionInitial, setShowVersionInitial] = useState(false);
   const [badgeHovered, setBadgeHovered] = useState(false);

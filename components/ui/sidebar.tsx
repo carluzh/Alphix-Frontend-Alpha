@@ -4,6 +4,7 @@ import * as React from "react"
 import { Slot } from "@radix-ui/react-slot"
 import { VariantProps, cva } from "class-variance-authority"
 import { PanelLeft } from "lucide-react"
+import { GrainGradient } from "@paper-design/shaders-react"
 
 import { useIsMobile } from "@/hooks/use-mobile"
 import { cn } from "@/lib/utils"
@@ -141,12 +142,23 @@ const SidebarProvider = React.forwardRef<
               } as React.CSSProperties
             }
             className={cn(
-              "group/sidebar-wrapper flex min-h-svh w-full bg-background has-[[data-variant=inset]]:bg-sidebar",
+              "group/sidebar-wrapper flex min-h-svh w-full bg-background has-[[data-variant=inset]]:relative",
               className
             )}
             ref={ref}
             {...props}
           >
+            <div className="pointer-events-none absolute inset-0 z-0 h-full w-full">
+              <GrainGradient
+                style={{ height: "100%", width: "100%" }}
+                colors={["hsl(16, 95%, 50%)", "hsl(20, 100%, 40%)", "hsl(25, 100%, 55%)"]}
+                colorBack="#060606"
+                softness={0.76}
+                intensity={0.45}
+                noise={0}
+                shape="corners"
+              />
+            </div>
             {children}
           </div>
         </TooltipProvider>
@@ -245,10 +257,10 @@ const Sidebar = React.forwardRef<
             className
           )}
           {...props}
-        >
+          >
           <div
             data-sidebar="sidebar"
-            className="flex h-full w-full flex-col bg-sidebar group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:border group-data-[variant=floating]:border-sidebar-border group-data-[variant=floating]:shadow"
+            className="flex h-full w-full flex-col bg-sidebar group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:border group-data-[variant=floating]:border-sidebar-border group-data-[variant=floating]:shadow group-data-[variant=inset]:rounded-lg group-data-[variant=inset]:border group-data-[variant=inset]:border-sidebar-border"
           >
             {children}
           </div>
@@ -323,9 +335,10 @@ const SidebarInset = React.forwardRef<
       ref={ref}
       className={cn(
         "relative flex min-h-svh flex-1 flex-col bg-background",
-        "peer-data-[variant=inset]:min-h-[calc(100svh-theme(spacing.4))] md:peer-data-[variant=inset]:m-2 md:peer-data-[state=collapsed]:peer-data-[variant=inset]:ml-2 md:peer-data-[variant=inset]:ml-0 md:peer-data-[variant=inset]:rounded-xl dark:md:peer-data-[variant=inset]:shadow",
+        "peer-data-[variant=inset]:min-h-[calc(100svh-theme(spacing.4))] md:peer-data-[variant=inset]:m-2 md:peer-data-[state=collapsed]:peer-data-[variant=inset]:ml-2 md:peer-data-[variant=inset]:ml-0 md:peer-data-[variant=inset]:rounded-lg md:peer-data-[variant=inset]:border md:peer-data-[variant=inset]:border-sidebar-border dark:md:peer-data-[variant=inset]:shadow",
         className
       )}
+      style={{ backgroundColor: 'var(--main-bg)' }}
       {...props}
     />
   )
