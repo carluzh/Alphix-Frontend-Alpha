@@ -64,6 +64,10 @@ export function AddLiquidityFormPanel({
 
   const wiggleControls0 = useAnimation();
   const wiggleControls1 = useAnimation();
+  const [balanceWiggleCount0, setBalanceWiggleCount0] = useState(0);
+  const [balanceWiggleCount1, setBalanceWiggleCount1] = useState(0);
+  const [isAmount0OverBalance, setIsAmount0OverBalance] = useState(false);
+  const [isAmount1OverBalance, setIsAmount1OverBalance] = useState(false);
   const calcVersionRef = useRef(0);
 
   // Balance data
@@ -188,11 +192,66 @@ export function AddLiquidityFormPanel({
     }
   }, [position, chainId, increaseAmount0, increaseAmount1]);
 
+  // Wiggle animation effects
+  useEffect(() => {
+    if (balanceWiggleCount0 > 0) {
+      wiggleControls0.start({
+        x: [0, -3, 3, -2, 2, 0],
+        transition: { duration: 0.22, ease: 'easeOut' },
+      }).catch(() => {});
+    }
+  }, [balanceWiggleCount0, wiggleControls0]);
+
+  useEffect(() => {
+    if (balanceWiggleCount1 > 0) {
+      wiggleControls1.start({
+        x: [0, -3, 3, -2, 2, 0],
+        transition: { duration: 0.22, ease: 'easeOut' },
+      }).catch(() => {});
+    }
+  }, [balanceWiggleCount1, wiggleControls1]);
+
+  // Check if amounts exceed balance
+  useEffect(() => {
+    const amount0 = parseFloat(increaseAmount0 || "0");
+    const balance0 = parseFloat(token0BalanceData?.formatted || "0");
+    setIsAmount0OverBalance(amount0 > balance0 && amount0 > 0);
+  }, [increaseAmount0, token0BalanceData]);
+
+  useEffect(() => {
+    const amount1 = parseFloat(increaseAmount1 || "0");
+    const balance1 = parseFloat(token1BalanceData?.formatted || "0");
+    setIsAmount1OverBalance(amount1 > balance1 && amount1 > 0);
+  }, [increaseAmount1, token1BalanceData]);
+
   const handleIncreaseAmountChangeWithWiggle = (e: React.ChangeEvent<HTMLInputElement>, side: 'amount0' | 'amount1') => {
     const sanitized = sanitizeDecimalInput(e.target.value);
+
     if (side === 'amount0') {
+      const prevVal = parseFloat(increaseAmount0 || "");
+      const nextVal = parseFloat(sanitized || "");
+      const bal = parseFloat(token0BalanceData?.formatted || "0");
+
+      const wasOver = Number.isFinite(prevVal) && Number.isFinite(bal) ? prevVal > bal : false;
+      const isOver = Number.isFinite(nextVal) && Number.isFinite(bal) ? nextVal > bal : false;
+
+      if (isOver && !wasOver) {
+        setBalanceWiggleCount0((c) => c + 1);
+      }
+
       setIncreaseAmount0(sanitized);
     } else {
+      const prevVal = parseFloat(increaseAmount1 || "");
+      const nextVal = parseFloat(sanitized || "");
+      const bal = parseFloat(token1BalanceData?.formatted || "0");
+
+      const wasOver = Number.isFinite(prevVal) && Number.isFinite(bal) ? prevVal > bal : false;
+      const isOver = Number.isFinite(nextVal) && Number.isFinite(bal) ? nextVal > bal : false;
+
+      if (isOver && !wasOver) {
+        setBalanceWiggleCount1((c) => c + 1);
+      }
+
       setIncreaseAmount1(sanitized);
     }
   };
@@ -751,14 +810,15 @@ export function AddLiquidityFormPanel({
       <Button
         id={hideContinueButton ? "formpanel-hidden-continue" : undefined}
         onClick={handleContinue}
-        disabled={parseFloat(increaseAmount0 || "0") <= 0 && parseFloat(increaseAmount1 || "0") <= 0}
+        disabled={(parseFloat(increaseAmount0 || "0") <= 0 && parseFloat(increaseAmount1 || "0") <= 0) || isAmount0OverBalance || isAmount1OverBalance}
         className={cn(
-          (parseFloat(increaseAmount0 || "0") <= 0 && parseFloat(increaseAmount1 || "0") <= 0) ?
-            "w-full relative border border-sidebar-border bg-button px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75" :
-            "w-full text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90",
+          "w-full",
+          (parseFloat(increaseAmount0 || "0") <= 0 && parseFloat(increaseAmount1 || "0") <= 0) || isAmount0OverBalance || isAmount1OverBalance ?
+            "relative border border-sidebar-border bg-button px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75" :
+            "text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90",
           hideContinueButton && "hidden"
         )}
-        style={(parseFloat(increaseAmount0 || "0") <= 0 && parseFloat(increaseAmount1 || "0") <= 0) ?
+        style={(parseFloat(increaseAmount0 || "0") <= 0 && parseFloat(increaseAmount1 || "0") <= 0) || isAmount0OverBalance || isAmount1OverBalance ?
           { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } :
           undefined
         }

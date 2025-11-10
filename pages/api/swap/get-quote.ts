@@ -25,7 +25,8 @@ const safeParseUnits = (amount: string, decimals: number): bigint => {
   // viem's parseUnits handles decimal strings correctly without floating point errors
   return parseUnits(amount, decimals);
 };
-import { Token } from '@uniswap/sdk-core';
+import { Token, CurrencyAmount } from '@uniswap/sdk-core';
+import { tickToPrice } from '@uniswap/v3-sdk';
 import { 
   TokenSymbol, 
   getPoolConfigForTokens,
@@ -124,13 +125,50 @@ function createPoolKeyAndDirection(fromToken: Token, toToken: Token, poolConfig:
   return { poolKey, zeroForOne };
 }
 
+// Helper to get mid price from pool state (for price impact calculation)
+// Uses current pool tick from state view, matching Uniswap's approach
+async function getMidPrice(
+  fromToken: Token,
+  toToken: Token,
+  poolConfig: any
+): Promise<number | null> {
+  try {
+    const { poolKey } = createPoolKeyAndDirection(fromToken, toToken, poolConfig);
+    
+    // Get pool ID
+    const poolId = poolConfig.pool.subgraphId;
+    
+    // Get current tick from state view
+    const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL || process.env.RPC_URL || 'https://sepolia.base.org';
+    const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
+    const stateView = new ethers.Contract(getStateViewAddress(), STATE_VIEW_ABI as any, provider);
+    
+    const slot0 = await stateView.callStatic.getSlot0(poolId);
+    const tickCurrent = slot0.tick;
+    
+    // Use tickToPrice to get mid price (same as Uniswap)
+    const midPrice = tickToPrice(fromToken, toToken, tickCurrent);
+    
+    // Get price: quote 1 unit of fromToken to get expected toToken amount
+    const oneFromToken = CurrencyAmount.fromRawAmount(fromToken, ethers.utils.parseUnits('1', fromToken.decimals).toString());
+    const expectedOutput = midPrice.quote(oneFromToken);
+    
+    // Convert expected output to decimal number (toToken per 1 fromToken)
+    const outputDecimal = parseFloat(ethers.utils.formatUnits(expectedOutput.quotient.toString(), toToken.decimals));
+    return outputDecimal;
+  } catch (error) {
+    console.error('[getMidPrice] Error getting mid price:', error);
+    return null;
+  }
+}
+
 // Helper function to call V4Quoter for single-hop exact input
 async function getV4QuoteExactInputSingle(
   fromToken: Token,
   toToken: Token,
   amountInSmallestUnits: bigint,
   poolConfig: any
-): Promise<{ amountOut: bigint; gasEstimate: bigint }> {
+): Promise<{ amountOut: bigint; gasEstimate: bigint; midPrice?: number }> {
   const { poolKey, zeroForOne } = createPoolKeyAndDirection(fromToken, toToken, poolConfig);
 
   // Structure the parameters as QuoteExactSingleParams struct
@@ -154,7 +192,11 @@ async function getV4QuoteExactInputSingle(
     await stateView.callStatic.getSlot0(poolId);
 
     const [amountOut, gasEstimate] = await quoter.callStatic.quoteExactInputSingle(quoteParams);
-    return { amountOut, gasEstimate };
+    
+    // Get mid price for price impact calculation
+    const midPrice = await getMidPrice(fromToken, toToken, poolConfig);
+    
+    return { amountOut, gasEstimate, midPrice: midPrice || undefined };
   } catch (error: any) {
     throw error;
   }
@@ -166,7 +208,7 @@ async function getV4QuoteExactOutputSingle(
   toToken: Token,
   amountOutSmallestUnits: bigint,
   poolConfig: any
-): Promise<{ amountIn: bigint; gasEstimate: bigint }> {
+): Promise<{ amountIn: bigint; gasEstimate: bigint; midPrice?: number }> {
   const { poolKey, zeroForOne } = createPoolKeyAndDirection(fromToken, toToken, poolConfig);
 
   const quoteParams = [
@@ -189,7 +231,11 @@ async function getV4QuoteExactOutputSingle(
     await stateView.callStatic.getSlot0(poolId);
 
     const [amountIn, gasEstimate] = await quoter.callStatic.quoteExactOutputSingle(quoteParams);
-    return { amountIn, gasEstimate };
+    
+    // Get mid price for price impact calculation
+    const midPrice = await getMidPrice(fromToken, toToken, poolConfig);
+    
+    return { amountIn, gasEstimate, midPrice: midPrice || undefined };
   } catch (error: any) {
     throw error;
   }
@@ -406,6 +452,7 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
     let amountOut: bigint = 0n;
     let amountIn: bigint = 0n;
     let gasEstimate: bigint;
+    let midPrice: number | null = null;
     
     if (swapType === 'ExactIn') {
       if (route.isDirectRoute) {
@@ -416,10 +463,20 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
         const result = await getV4QuoteExactInputSingle(fromToken, toToken, amountInSmallestUnits, poolConfig);
         amountOut = result.amountOut;
         gasEstimate = result.gasEstimate;
+        midPrice = result.midPrice || null;
       } else {
         const result = await getV4QuoteExactInputMultiHop(fromToken, route, amountInSmallestUnits, req.body.chainId);
         amountOut = result.amountOut;
         gasEstimate = result.gasEstimate;
+        // For multi-hop, get mid price from first pool
+        const firstPoolConfig = getPoolConfigForTokens(route.path[0] as TokenSymbol, route.path[1] as TokenSymbol);
+        if (firstPoolConfig) {
+          const firstFromToken = createTokenSDK(route.path[0] as TokenSymbol, req.body.chainId);
+          const firstToToken = createTokenSDK(route.path[1] as TokenSymbol, req.body.chainId);
+          if (firstFromToken && firstToToken) {
+            midPrice = await getMidPrice(firstFromToken, firstToToken, firstPoolConfig);
+          }
+        }
       }
     } else { // ExactOut
       if (route.isDirectRoute) {
@@ -430,16 +487,55 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
         const result = await getV4QuoteExactOutputSingle(fromToken, toToken, amountOutSmallestUnits, poolConfig);
         amountIn = result.amountIn;
         gasEstimate = result.gasEstimate;
+        midPrice = result.midPrice || null;
       } else {
         const result = await getV4QuoteExactOutputMultiHop(toToken, route, amountOutSmallestUnits, req.body.chainId);
         amountIn = result.amountIn;
         gasEstimate = result.gasEstimate;
+        // For multi-hop, get mid price from first pool
+        const firstPoolConfig = getPoolConfigForTokens(route.path[0] as TokenSymbol, route.path[1] as TokenSymbol);
+        if (firstPoolConfig) {
+          const firstFromToken = createTokenSDK(route.path[0] as TokenSymbol, req.body.chainId);
+          const firstToToken = createTokenSDK(route.path[1] as TokenSymbol, req.body.chainId);
+          if (firstFromToken && firstToToken) {
+            midPrice = await getMidPrice(firstFromToken, firstToToken, firstPoolConfig);
+          }
+        }
       }
     }
     
     // Format using ethers like the guide
     const toAmountDecimals = swapType === 'ExactIn' ? ethers.utils.formatUnits(amountOut, toToken.decimals) : amountDecimalsStr;
     const fromAmountDecimals = swapType === 'ExactOut' ? ethers.utils.formatUnits(amountIn, fromToken.decimals) : amountDecimalsStr;
+
+    // Calculate price impact: (midPrice - executionPrice) / midPrice
+    // Execution price = toAmount / fromAmount
+    let priceImpact: number | null = null;
+    if (midPrice !== null && parseFloat(fromAmountDecimals) > 0 && parseFloat(toAmountDecimals) > 0) {
+      const executionPrice = parseFloat(toAmountDecimals) / parseFloat(fromAmountDecimals);
+      if (midPrice > 0) {
+        priceImpact = ((midPrice - executionPrice) / midPrice) * 100; // Convert to percentage
+        // Ensure positive (price impact is always how much worse you're getting)
+        if (priceImpact < 0) priceImpact = Math.abs(priceImpact);
+        
+        console.log('[get-quote] Price Impact Calculation:', {
+          fromToken: fromTokenSymbol,
+          toToken: toTokenSymbol,
+          fromAmount: fromAmountDecimals,
+          toAmount: toAmountDecimals,
+          midPrice,
+          executionPrice,
+          priceImpact: `${priceImpact.toFixed(2)}%`,
+        });
+      }
+    } else {
+      console.log('[get-quote] Price Impact Skipped:', {
+        midPrice,
+        fromAmountDecimals,
+        toAmountDecimals,
+        reason: midPrice === null ? 'midPrice is null' : 'amounts are zero',
+      });
+    }
 
     return res.status(200).json({
       success: true,
@@ -449,6 +545,8 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
       toAmount: toAmountDecimals.toString(),
       toToken: toTokenSymbol,
       gasEstimate: gasEstimate.toString(),
+      midPrice: midPrice !== null ? midPrice.toString() : undefined,
+      priceImpact: priceImpact !== null ? priceImpact.toString() : undefined,
       route: {
         path: route.path,
         hops: route.hops,

@@ -48,7 +48,6 @@ export function MockSwapComponent({ className, zoom = 1.5 }: MockSwapComponentPr
   const handleFromAmountChange = () => {};
   const onToAmountChange = () => {};
   const handleSwapTokens = () => {};
-  const handleUseFullBalance = () => {};
   const handleUsePercentage = () => {};
   const onFromTokenSelect = () => {};
   const onToTokenSelect = () => {};
@@ -63,6 +62,8 @@ export function MockSwapComponent({ className, zoom = 1.5 }: MockSwapComponentPr
     window.location.href = '/swap';
   };
   const onSlippageChange = () => {};
+  const onAutoSlippageToggle = () => {};
+  const onCustomSlippageToggle = () => {};
 
   const formatCurrency = (value: string) => {
     const num = parseFloat(value || "0");
@@ -127,7 +128,6 @@ export function MockSwapComponent({ className, zoom = 1.5 }: MockSwapComponentPr
         onToAmountChange={onToAmountChange}
         activelyEditedSide="from"
         handleSwapTokens={handleSwapTokens}
-        handleUseFullBalance={handleUseFullBalance}
         handleUsePercentage={handleUsePercentage}
         availableTokens={availableTokens}
         onFromTokenSelect={onFromTokenSelect}
@@ -155,7 +155,11 @@ export function MockSwapComponent({ className, zoom = 1.5 }: MockSwapComponentPr
         onSelectPoolForChart={() => {}}
         swapContainerRect={swapContainerRect}
         slippage={slippage}
+        isAutoSlippage={true}
+        autoSlippageValue={0.5}
         onSlippageChange={onSlippageChange}
+        onAutoSlippageToggle={onAutoSlippageToggle}
+        onCustomSlippageToggle={onCustomSlippageToggle}
       />
     </div>
   );

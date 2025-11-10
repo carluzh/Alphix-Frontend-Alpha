@@ -534,23 +534,26 @@ export function WithdrawLiquidityModal({
   }, [position, calculateWithdrawAmount]);
 
   // Check if user has insufficient balance for withdrawal
-  const checkInsufficientBalanceWithdraw = useCallback(() => {
+  const isAmount0OverBalance = useCallback(() => {
     if (!position) return false;
-
     const max0 = parseFloat(position.token0.amount || '0');
-    const max1 = parseFloat(position.token1.amount || '0');
     const in0 = parseFloat(withdrawAmount0 || '0');
-    const in1 = parseFloat(withdrawAmount1 || '0');
+    return in0 > max0 && in0 > 0;
+  }, [position, withdrawAmount0]);
 
-    return (in0 > max0 + 1e-12) || (in1 > max1 + 1e-12);
-  }, [position, withdrawAmount0, withdrawAmount1]);
+  const isAmount1OverBalance = useCallback(() => {
+    if (!position) return false;
+    const max1 = parseFloat(position.token1.amount || '0');
+    const in1 = parseFloat(withdrawAmount1 || '0');
+    return in1 > max1 && in1 > 0;
+  }, [position, withdrawAmount1]);
+
+  const checkInsufficientBalanceWithdraw = useCallback(() => {
+    return isAmount0OverBalance() || isAmount1OverBalance();
+  }, [isAmount0OverBalance, isAmount1OverBalance]);
 
   // Get button text based on state
   const getWithdrawButtonText = useCallback(() => {
-    if (checkInsufficientBalanceWithdraw()) {
-      return 'Insufficient Balance';
-    }
-
     // Show Withdraw All only if both sides are >= 99% of position amounts (in-range)
     if (position?.isInRange) {
       const max0 = parseFloat(position.token0.amount || '0');
@@ -569,7 +572,7 @@ export function WithdrawLiquidityModal({
     const near0 = max0 > 0 ? in0 >= max0 * 0.99 : false;
     const near1 = max1 > 0 ? in1 >= max1 * 0.99 : false;
     return (near0 || near1) ? 'Withdraw All' : 'Withdraw';
-  }, [position, withdrawAmount0, withdrawAmount1, checkInsufficientBalanceWithdraw]);
+  }, [position, withdrawAmount0, withdrawAmount1]);
 
   // Handle confirm withdraw - show "You Will Receive" first
   const handleConfirmWithdraw = useCallback(() => {
@@ -582,15 +585,7 @@ export function WithdrawLiquidityModal({
       return;
     }
 
-    // Prevent over-withdraw relative to position balances
-    if (checkInsufficientBalanceWithdraw()) {
-      toast.error("Insufficient Balance", {
-        icon: <OctagonX className="h-4 w-4 text-red-500" />,
-        description: "Withdrawal amount exceeds position balance.",
-        duration: 4000
-      });
-      return;
-    }
+    // Balance check is handled by button disabled state, no need for toast
     
     // For out-of-range positions, ensure at least one amount is greater than 0
     if (!position.isInRange) {

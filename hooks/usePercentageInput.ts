@@ -68,10 +68,9 @@ export function usePercentageInput(
 
       let calculatedAmount: string;
 
-      // For 100%, use 99.99% to leave a small buffer for gas/rounding
+      // For 100%, use the exact formatted balance from the blockchain
       if (percentage === 100) {
-        const percentageAmount = (balanceValue * 9999n) / 10000n; // 99.99%
-        calculatedAmount = formatUnits(percentageAmount, token.decimals);
+        calculatedAmount = balanceData.formatted;
       } else {
         // For other percentages, use bigint arithmetic to avoid floating point errors
         // Calculate: (balance * percentage) / 100

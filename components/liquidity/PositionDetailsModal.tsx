@@ -16,7 +16,8 @@ import { getOptimalBaseToken } from "@/lib/denomination-utils";
 import { AddLiquidityFormPanel } from "./AddLiquidityFormPanel";
 import { RemoveLiquidityFormPanel } from "./RemoveLiquidityFormPanel";
 import { CollectFeesFormPanel } from "./CollectFeesFormPanel";
-import { useAccount, useSignTypedData, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
+import { TransactionFlowPanel } from "./TransactionFlowPanel";
+import { useAccount, useSignTypedData, useWriteContract, useWaitForTransactionReceipt, useBalance } from "wagmi";
 import { readContract } from '@wagmi/core';
 import { config } from '@/lib/wagmiConfig';
 import { useIncreaseLiquidity, type IncreasePositionData } from "./useIncreaseLiquidity";
@@ -102,6 +103,8 @@ interface PositionDetailsModalProps {
   showViewPoolButton?: boolean;
   onViewPool?: () => void;
   onLiquidityDecreased?: (info?: { txHash?: `0x${string}`; blockNumber?: bigint; isFullBurn?: boolean }) => void;
+  onAfterLiquidityAdded?: (tvlDelta: number, info: { txHash: `0x${string}`; blockNumber: bigint }) => void;
+  onAfterLiquidityRemoved?: (tvlDelta: number, info: { txHash: `0x${string}`; blockNumber: bigint }) => void;
 }
 
 // Helper to extract average color from token icon (fallback to hardcoded colors)
@@ -152,6 +155,8 @@ export function PositionDetailsModal({
   showViewPoolButton,
   onViewPool,
   onLiquidityDecreased: onLiquidityDecreasedProp,
+  onAfterLiquidityAdded,
+  onAfterLiquidityRemoved,
 }: PositionDetailsModalProps) {
   const [mounted, setMounted] = useState(false);
   const [chartKey, setChartKey] = useState(0);
@@ -183,6 +188,25 @@ export function PositionDetailsModal({
   const approvalWiggleControls = useAnimation();
   const signer = useEthersSigner();
 
+  // Get user balances for tokens
+  const { data: token0Balance } = useBalance({
+    address: accountAddress,
+    token: TOKEN_DEFINITIONS[position?.token0?.symbol as TokenSymbol]?.address === "0x0000000000000000000000000000000000000000"
+      ? undefined
+      : TOKEN_DEFINITIONS[position?.token0?.symbol as TokenSymbol]?.address as `0x${string}` | undefined,
+    chainId: walletChainId,
+    query: { enabled: !!accountAddress && !!walletChainId && !!position },
+  });
+
+  const { data: token1Balance } = useBalance({
+    address: accountAddress,
+    token: TOKEN_DEFINITIONS[position?.token1?.symbol as TokenSymbol]?.address === "0x0000000000000000000000000000000000000000"
+      ? undefined
+      : TOKEN_DEFINITIONS[position?.token1?.symbol as TokenSymbol]?.address as `0x${string}` | undefined,
+    chainId: walletChainId,
+    query: { enabled: !!accountAddress && !!walletChainId && !!position },
+  });
+
   const [currentTransactionStep, setCurrentTransactionStep] = useState<'idle' | 'collecting_fees' | 'approving_token0' | 'approving_token1' | 'signing_permit' | 'depositing'>('idle');
   const [permitSignature, setPermitSignature] = useState<string>();
 
@@ -211,6 +235,7 @@ export function PositionDetailsModal({
     }
   );
 
+  const lastIncreaseTxInfoRef = React.useRef<{ txHash: `0x${string}`; blockNumber: bigint } | null>(null);
   const {
     increaseLiquidity,
     isLoading: isIncreasingLiquidity,
@@ -218,7 +243,12 @@ export function PositionDetailsModal({
     hash: increaseTxHash,
     reset: resetIncrease
   } = useIncreaseLiquidity({
-    onLiquidityIncreased: () => setShowInterimConfirmation(false),
+    onLiquidityIncreased: (info) => {
+      setShowInterimConfirmation(false);
+      if (info?.txHash && info?.blockNumber) {
+        lastIncreaseTxInfoRef.current = { txHash: info.txHash, blockNumber: info.blockNumber };
+      }
+    },
   });
 
   const [withdrawAmount0, setWithdrawAmount0] = useState<string>("");
@@ -230,6 +260,7 @@ export function PositionDetailsModal({
   const [currentSessionTxHash, setCurrentSessionTxHash] = useState<string | null>(null);
 
   // useDecreaseLiquidity hook - mirrors useIncreaseLiquidity pattern
+  const lastDecreaseTxInfoRef = React.useRef<{ txHash: `0x${string}`; blockNumber: bigint; isFullBurn?: boolean } | null>(null);
   const {
     decreaseLiquidity,
     claimFees,
@@ -240,6 +271,9 @@ export function PositionDetailsModal({
   } = useDecreaseLiquidity({
     onLiquidityDecreased: (info) => {
       setShowInterimConfirmation(false);
+      if (info?.txHash && info?.blockNumber) {
+        lastDecreaseTxInfoRef.current = { txHash: info.txHash, blockNumber: info.blockNumber, isFullBurn: info.isFullBurn };
+      }
       // Forward the callback to parent (portfolio page) with isFullBurn info
       if (onLiquidityDecreasedProp) {
         onLiquidityDecreasedProp(info);
@@ -295,15 +329,17 @@ export function PositionDetailsModal({
       icon: React.createElement(Info, { className: 'h-4 w-4' })
     });
 
-    await approveERC20Async({
+    const hash = await approveERC20Async({
       address: tokenConfig.address as `0x${string}`,
       abi: erc20Abi,
       functionName: 'approve',
       args: ["0x000000000022D473030F116dDEE9F6B43aC78BA3" as `0x${string}`, BigInt("115792089237316195423570985008687907853269984665640564039457584007913129639935")],
     });
 
-    // Wait for confirmation
-    // The useEffect monitoring isIncreaseApproved will handle the next steps
+    toast.success(`${tokenSymbol} Approved`, {
+      icon: React.createElement(BadgeCheck, { className: 'h-4 w-4 text-green-500' }),
+      description: `Approved infinite ${tokenSymbol} for liquidity`,
+    });
   }, [approveERC20Async]);
 
   const signPermitV2 = useCallback(async (): Promise<string | undefined> => {
@@ -319,10 +355,7 @@ export function PositionDetailsModal({
     }
 
     try {
-      toast('Sign in Wallet', {
-        icon: React.createElement(Info, { className: 'h-4 w-4' })
-      });
-
+      // Toast removed - shown by TransactionFlowPanel
       const valuesToSign = increaseApprovalData.permitBatchData.values || increaseApprovalData.permitBatchData;
       const signature = await (signer as any)._signTypedData(
         increaseApprovalData.signatureDetails.domain,
@@ -383,102 +416,50 @@ export function PositionDetailsModal({
     return fee0 > 0 || fee1 > 0;
   }, [position, prefetchedRaw0, prefetchedRaw1]);
 
-  const getNextStep = useCallback(() => {
-    if (!position || !increaseApprovalData) return null;
-    if (increaseApprovalData.needsToken0ERC20Approval) return 'approving_token0';
-    if (increaseApprovalData.needsToken1ERC20Approval) return 'approving_token1';
-    if (increaseApprovalData.permitBatchData && !permitSignature) return 'signing_permit';
-    return 'depositing';
-  }, [position, increaseApprovalData, permitSignature]);
+  // Old getNextStep and handleIncreaseTransactionV2 removed - now using TransactionFlowPanel
 
-  const handleIncreaseTransactionV2 = async () => {
-    if (!position || !increaseApprovalData || isCheckingIncreaseApprovals || currentTransactionStep !== 'idle') return;
+  // Wrapper function for TransactionFlowPanel
+  const handleIncreaseDeposit = useCallback(async (permitSig?: string) => {
+    if (!position || !increaseApprovalData) return;
 
-    const nextStep = getNextStep();
-    if (!nextStep) return;
-
-    if (nextStep === 'approving_token0') {
-      setCurrentTransactionStep('approving_token0');
-      await handleIncreaseApproveV2(position.token0.symbol as TokenSymbol);
-      setCurrentTransactionStep('idle');
-      await refetchIncreaseApprovals();
-      return;
-    }
-
-    if (nextStep === 'approving_token1') {
-      setCurrentTransactionStep('approving_token1');
-      await handleIncreaseApproveV2(position.token1.symbol as TokenSymbol);
-      setCurrentTransactionStep('idle');
-      await refetchIncreaseApprovals();
-      return;
-    }
-
-    if (nextStep === 'signing_permit') {
-      setCurrentTransactionStep('signing_permit');
-      try {
-        const freshSignature = await signPermitV2();
-        if (!freshSignature) {
-          setCurrentTransactionStep('idle');
-          return;
-        }
-        setCurrentTransactionStep('idle');
-        return;
-      } catch {
-        setCurrentTransactionStep('idle');
-        return;
+    // Validate permit requirements
+    if ((increaseApprovalData?.needsToken0Permit || increaseApprovalData?.needsToken1Permit)) {
+      if (!permitSig) throw new Error('Permit signature required but not provided');
+      if (!increaseApprovalData?.permitBatchData || !increaseApprovalData?.signatureDetails) {
+        throw new Error('Permit batch data missing - please sign permit again');
       }
     }
 
-    if (nextStep === 'depositing') {
-      setCurrentTransactionStep('depositing');
+    let finalAmount0 = increaseAmount0 || '0';
+    let finalAmount1 = increaseAmount1 || '0';
 
-      let finalAmount0 = increaseAmount0 || '0';
-      let finalAmount1 = increaseAmount1 || '0';
-
-      if (!position.isInRange && currentPoolTick !== null && currentPoolTick !== undefined) {
-        if (currentPoolTick >= position.tickUpper) finalAmount0 = '0';
-        else if (currentPoolTick <= position.tickLower) finalAmount1 = '0';
-      }
-
-      const data: IncreasePositionData = {
-        tokenId: position.positionId,
-        token0Symbol: position.token0.symbol as TokenSymbol,
-        token1Symbol: position.token1.symbol as TokenSymbol,
-        additionalAmount0: finalAmount0,
-        additionalAmount1: finalAmount1,
-        poolId: position.poolId,
-        tickLower: position.tickLower,
-        tickUpper: position.tickUpper,
-        feesForIncrease: { amount0: prefetchedRaw0 || '0', amount1: prefetchedRaw1 || '0' },
-      };
-
-      const opts = permitSignature && increaseApprovalData.permitBatchData ? {
-        batchPermit: {
-          owner: accountAddress as `0x${string}`,
-          permitBatch: increaseApprovalData.permitBatchData.values || increaseApprovalData.permitBatchData,
-          signature: permitSignature,
-        }
-      } : undefined;
-
-      increaseLiquidity(data, opts);
-      setCurrentTransactionStep('idle');
+    if (!position.isInRange && currentPoolTick !== null && currentPoolTick !== undefined) {
+      if (currentPoolTick >= position.tickUpper) finalAmount0 = '0';
+      else if (currentPoolTick <= position.tickLower) finalAmount1 = '0';
     }
-  };
 
-  const getIncreaseButtonText = () => {
-    if (!position) return 'Preparing...';
-    if (currentTransactionStep === 'approving_token0') return `Approving ${position.token0.symbol}...`;
-    if (currentTransactionStep === 'approving_token1') return `Approving ${position.token1.symbol}...`;
-    if (currentTransactionStep === 'signing_permit') return 'Signing...';
-    if (currentTransactionStep === 'depositing' || isIncreasingLiquidity) return 'Depositing...';
-    if (!increaseApprovalData) return 'Preparing...';
+    const data: IncreasePositionData = {
+      tokenId: position.positionId,
+      token0Symbol: position.token0.symbol as TokenSymbol,
+      token1Symbol: position.token1.symbol as TokenSymbol,
+      additionalAmount0: finalAmount0,
+      additionalAmount1: finalAmount1,
+      poolId: position.poolId,
+      tickLower: position.tickLower,
+      tickUpper: position.tickUpper,
+      feesForIncrease: { amount0: prefetchedRaw0 || '0', amount1: prefetchedRaw1 || '0' },
+    };
 
-    const nextStep = getNextStep();
-    if (nextStep === 'approving_token0') return `Approve ${position.token0.symbol}`;
-    if (nextStep === 'approving_token1') return `Approve ${position.token1.symbol}`;
-    if (nextStep === 'signing_permit') return 'Sign Permit';
-    return 'Add Liquidity';
-  };
+    const opts = permitSig && increaseApprovalData.permitBatchData ? {
+      batchPermit: {
+        owner: accountAddress as `0x${string}`,
+        permitBatch: increaseApprovalData.permitBatchData.values || increaseApprovalData.permitBatchData,
+        signature: permitSig,
+      }
+    } : undefined;
+
+    increaseLiquidity(data, opts);
+  }, [position, increaseApprovalData, increaseAmount0, increaseAmount1, currentPoolTick, prefetchedRaw0, prefetchedRaw1, accountAddress, increaseLiquidity]);
 
 
   // Remove Liquidity handler functions
@@ -492,20 +473,7 @@ export function PositionDetailsModal({
       return;
     }
 
-    // Check if amounts exceed position balance
-    const max0 = parseFloat(position.token0.amount || '0');
-    const max1 = parseFloat(position.token1.amount || '0');
-    const in0 = parseFloat(withdrawAmount0 || '0');
-    const in1 = parseFloat(withdrawAmount1 || '0');
-
-    if ((in0 > max0 + 1e-12) || (in1 > max1 + 1e-12)) {
-      toast.error("Insufficient Balance", {
-        icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
-        description: "Withdrawal amount exceeds position balance.",
-        duration: 4000
-      });
-      return;
-    }
+    // Balance check is handled by button disabled state, no need for toast
 
     // For out-of-range positions, ensure at least one amount is greater than 0
     if (!position.isInRange) {
@@ -614,6 +582,18 @@ export function PositionDetailsModal({
   }, []);
 
   useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, onClose]);
+
+  useEffect(() => {
     setChartKey(prev => prev + 1);
     if (isOpen) {
       setCurrentView('default');
@@ -682,6 +662,19 @@ export function PositionDetailsModal({
 
   // Handlers for form panel callbacks
   const handleAddLiquiditySuccess = useCallback(async () => {
+    // Calculate TVL delta and notify parent for optimistic updates
+    if (onAfterLiquidityAdded && lastIncreaseTxInfoRef.current) {
+      const amt0 = parseFloat(increaseAmount0 || '0');
+      const amt1 = parseFloat(increaseAmount1 || '0');
+      const price0 = getUsdPriceForSymbol(position.token0.symbol);
+      const price1 = getUsdPriceForSymbol(position.token1.symbol);
+      const tvlDelta = (amt0 * price0) + (amt1 * price1);
+
+      if (tvlDelta > 0) {
+        onAfterLiquidityAdded(tvlDelta, lastIncreaseTxInfoRef.current);
+      }
+    }
+
     // Invalidate all caches (React Query + client-side) for this position
     if (accountAddress && selectedPoolId) {
       await invalidateAfterTx(queryClient, {
@@ -705,9 +698,22 @@ export function PositionDetailsModal({
 
     // Trigger position refresh with backoff
     onRefreshPosition();
-  }, [onRefreshPosition, queryClient, accountAddress, selectedPoolId, position.positionId, resetIncrease]);
+  }, [onRefreshPosition, queryClient, accountAddress, selectedPoolId, position.positionId, resetIncrease, onAfterLiquidityAdded, increaseAmount0, increaseAmount1, position.token0.symbol, position.token1.symbol, getUsdPriceForSymbol]);
 
   const handleRemoveLiquiditySuccess = useCallback(async () => {
+    // Calculate TVL delta (negative) and notify parent for optimistic updates
+    if (onAfterLiquidityRemoved && lastDecreaseTxInfoRef.current) {
+      const amt0 = parseFloat(withdrawAmount0 || '0');
+      const amt1 = parseFloat(withdrawAmount1 || '0');
+      const price0 = getUsdPriceForSymbol(position.token0.symbol);
+      const price1 = getUsdPriceForSymbol(position.token1.symbol);
+      const tvlDelta = -Math.abs((amt0 * price0) + (amt1 * price1)); // Negative for removal
+
+      if (tvlDelta < 0) {
+        onAfterLiquidityRemoved(tvlDelta, lastDecreaseTxInfoRef.current);
+      }
+    }
+
     // Invalidate all caches (React Query + client-side) for this position
     if (accountAddress && selectedPoolId) {
       await invalidateAfterTx(queryClient, {
@@ -718,8 +724,10 @@ export function PositionDetailsModal({
       });
     }
 
-    // Reset transaction state to clear success flags
     resetDecrease();
+
+    // Check if position was fully closed (100% withdrawal)
+    const wasFullyClosed = isWithdrawBurn;
 
     setCurrentView('default');
     setWithdrawAmount0("");
@@ -727,9 +735,15 @@ export function PositionDetailsModal({
     setPreviewRemoveAmount0(0);
     setPreviewRemoveAmount1(0);
 
-    // Trigger position refresh with backoff
     onRefreshPosition();
-  }, [onRefreshPosition, queryClient, accountAddress, selectedPoolId, position.positionId, resetDecrease]);
+
+    if (wasFullyClosed) {
+      // Small delay to allow users to see the success state
+      setTimeout(() => {
+        onClose();
+      }, 1500);
+    }
+  }, [onRefreshPosition, queryClient, accountAddress, selectedPoolId, position.positionId, resetDecrease, isWithdrawBurn, onClose, onAfterLiquidityRemoved, withdrawAmount0, withdrawAmount1, position.token0.symbol, position.token1.symbol, getUsdPriceForSymbol]);
 
   const handleCollectFeesSuccess = useCallback(async () => {
     // Invalidate all caches (React Query + client-side) for this position
@@ -1951,28 +1965,38 @@ export function PositionDetailsModal({
 
                               // Check for uncollected fees on OOR positions
                               if (hasUncollectedFees()) {
-                                toast.error('Collect Fees First', {
+                                toast.error('Collect Fees', {
                                   icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
-                                  description: 'Please collect your uncollected fees before adding liquidity.'
+                                  description: 'Please collect your fees before adding liquidity.'
                                 });
                                 return;
                               }
 
                               setShowInterimConfirmation(true);
                             }}
-                            disabled={parseFloat(increaseAmount0 || "0") <= 0 && parseFloat(increaseAmount1 || "0") <= 0}
+                            disabled={
+                              (parseFloat(increaseAmount0 || "0") <= 0 && parseFloat(increaseAmount1 || "0") <= 0) ||
+                              (parseFloat(increaseAmount0 || "0") > parseFloat(token0Balance?.formatted || "0") && parseFloat(increaseAmount0 || "0") > 0) ||
+                              (parseFloat(increaseAmount1 || "0") > parseFloat(token1Balance?.formatted || "0") && parseFloat(increaseAmount1 || "0") > 0)
+                            }
                             className={cn(
                               "w-full mt-4",
-                              (parseFloat(increaseAmount0 || "0") <= 0 && parseFloat(increaseAmount1 || "0") <= 0) ?
+                              (parseFloat(increaseAmount0 || "0") <= 0 && parseFloat(increaseAmount1 || "0") <= 0) ||
+                              (parseFloat(increaseAmount0 || "0") > parseFloat(token0Balance?.formatted || "0") && parseFloat(increaseAmount0 || "0") > 0) ||
+                              (parseFloat(increaseAmount1 || "0") > parseFloat(token1Balance?.formatted || "0") && parseFloat(increaseAmount1 || "0") > 0) ?
                                 "relative border border-sidebar-border bg-button px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75" :
-                                "text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90"
+                                "text-sidebar-primary border border-sidebar-primary bg-button-primary hover-button-primary"
                             )}
-                            style={(parseFloat(increaseAmount0 || "0") <= 0 && parseFloat(increaseAmount1 || "0") <= 0) ?
+                            style={(parseFloat(increaseAmount0 || "0") <= 0 && parseFloat(increaseAmount1 || "0") <= 0) ||
+                              (parseFloat(increaseAmount0 || "0") > parseFloat(token0Balance?.formatted || "0") && parseFloat(increaseAmount0 || "0") > 0) ||
+                              (parseFloat(increaseAmount1 || "0") > parseFloat(token1Balance?.formatted || "0") && parseFloat(increaseAmount1 || "0") > 0) ?
                               { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } :
                               undefined
                             }
                           >
-                          Continue
+                            <span className={isIncreasingLiquidity ? "animate-pulse" : ""}>
+                              Continue
+                            </span>
                           </Button>
                         )}
                       </>
@@ -1984,6 +2008,7 @@ export function PositionDetailsModal({
                           position={position as any}
                           feesForWithdraw={{ amount0: prefetchedRaw0 || '0', amount1: prefetchedRaw1 || '0' }}
                           onSuccess={handleRemoveLiquiditySuccess}
+                          onLiquidityDecreased={onLiquidityDecreasedProp}
                           onAmountsChange={(amt0, amt1) => {
                             // Sync FormPanel amounts to our modal state for preview
                             setWithdrawAmount0(amt0.toString());
@@ -2000,14 +2025,24 @@ export function PositionDetailsModal({
                         {!isDecreaseSuccess && (
                           <Button
                             onClick={handleConfirmWithdraw}
-                            disabled={isDecreasingLiquidity || (!withdrawAmount0 && !withdrawAmount1) || (parseFloat(withdrawAmount0 || '0') <= 0 && parseFloat(withdrawAmount1 || '0') <= 0)}
+                            disabled={
+                              isDecreasingLiquidity ||
+                              (!withdrawAmount0 && !withdrawAmount1) ||
+                              (parseFloat(withdrawAmount0 || '0') <= 0 && parseFloat(withdrawAmount1 || '0') <= 0) ||
+                              (parseFloat(withdrawAmount0 || "0") > parseFloat(position?.token0?.amount || "0") && parseFloat(withdrawAmount0 || "0") > 0) ||
+                              (parseFloat(withdrawAmount1 || "0") > parseFloat(position?.token1?.amount || "0") && parseFloat(withdrawAmount1 || "0") > 0)
+                            }
                             className={cn(
                               "w-full mt-4",
-                              (parseFloat(withdrawAmount0 || "0") <= 0 && parseFloat(withdrawAmount1 || "0") <= 0) ?
+                              (parseFloat(withdrawAmount0 || "0") <= 0 && parseFloat(withdrawAmount1 || "0") <= 0) ||
+                              (parseFloat(withdrawAmount0 || "0") > parseFloat(position?.token0?.amount || "0") && parseFloat(withdrawAmount0 || "0") > 0) ||
+                              (parseFloat(withdrawAmount1 || "0") > parseFloat(position?.token1?.amount || "0") && parseFloat(withdrawAmount1 || "0") > 0) ?
                                 "relative border border-sidebar-border bg-button px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75" :
-                                "text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90"
+                                "text-sidebar-primary border border-sidebar-primary bg-button-primary hover-button-primary"
                             )}
-                            style={(parseFloat(withdrawAmount0 || "0") <= 0 && parseFloat(withdrawAmount1 || "0") <= 0) ?
+                            style={(parseFloat(withdrawAmount0 || "0") <= 0 && parseFloat(withdrawAmount1 || "0") <= 0) ||
+                              (parseFloat(withdrawAmount0 || "0") > parseFloat(position?.token0?.amount || "0") && parseFloat(withdrawAmount0 || "0") > 0) ||
+                              (parseFloat(withdrawAmount1 || "0") > parseFloat(position?.token1?.amount || "0") && parseFloat(withdrawAmount1 || "0") > 0) ?
                               { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } :
                               undefined
                             }
@@ -2162,8 +2197,32 @@ export function PositionDetailsModal({
                           );
                         })()}
 
-                        {/* Additional context info OR Transaction Steps (conditional) */}
-                        {currentView === 'remove-liquidity' || !showTransactionOverview ? (
+                        {/* Transaction Steps for Add Liquidity OR Current Price for other views */}
+                        {showTransactionOverview && currentView === 'add-liquidity' ? (
+                          <TransactionFlowPanel
+                            isActive={showTransactionOverview}
+                            approvalData={increaseApprovalData}
+                            isCheckingApprovals={isCheckingIncreaseApprovals}
+                            token0Symbol={position.token0.symbol as TokenSymbol}
+                            token1Symbol={position.token1.symbol as TokenSymbol}
+                            isDepositSuccess={isIncreaseSuccess}
+                            onApproveToken={handleIncreaseApproveV2}
+                            onSignPermit={signPermitV2}
+                            onExecute={handleIncreaseDeposit}
+                            onRefetchApprovals={refetchIncreaseApprovals}
+                            onBack={() => {
+                              setShowTransactionOverview(false);
+                              setTxStarted(false);
+                            }}
+                            onReset={() => {
+                              resetIncrease();
+                              setPermitSignature(undefined);
+                            }}
+                            executeButtonLabel="Add Liquidity"
+                            showBackButton={false}
+                            autoProgressOnApproval={false}
+                          />
+                        ) : currentView === 'remove-liquidity' || !showTransactionOverview ? (
                           <div className="space-y-1.5">
                             <div className="flex items-center justify-between text-xs text-muted-foreground">
                               <span>Current Price:</span>
@@ -2179,135 +2238,65 @@ export function PositionDetailsModal({
                               </span>
                             </div>
                           </div>
-                        ) : showTransactionOverview && currentView === 'add-liquidity' ? (
-                          <div className="space-y-1.5">
-                            <div className="flex items-center justify-between text-xs text-muted-foreground">
-                              <span>Token Approvals</span>
-                              <span>
-                                {(currentTransactionStep === 'approving_token0' || currentTransactionStep === 'approving_token1') ? (
-                                  <RefreshCwIcon className="h-4 w-4 animate-spin" />
-                                ) : (
-                                  <motion.span
-                                    animate={approvalWiggleControls}
-                                    className={cn("text-xs font-mono",
-                                      !increaseApprovalData?.needsToken0ERC20Approval && !increaseApprovalData?.needsToken1ERC20Approval
-                                        ? 'text-green-500'
-                                        : approvalWiggleCount > 0
-                                        ? 'text-red-500'
-                                        : 'text-muted-foreground'
-                                    )}
-                                  >
-                                    {isCheckingIncreaseApprovals ? (
-                                      'Checking...'
-                                    ) : !increaseApprovalData ? (
-                                      '-'
-                                    ) : (() => {
-                                      // Calculate total approvals needed based on whether tokens are native
-                                      const token0IsNative = TOKEN_DEFINITIONS[position.token0.symbol as TokenSymbol]?.address === NATIVE_TOKEN_ADDRESS;
-                                      const token1IsNative = TOKEN_DEFINITIONS[position.token1.symbol as TokenSymbol]?.address === NATIVE_TOKEN_ADDRESS;
-                                      const maxNeeded = (token0IsNative ? 0 : 1) + (token1IsNative ? 0 : 1);
-
-                                      const totalNeeded = [increaseApprovalData.needsToken0ERC20Approval, increaseApprovalData.needsToken1ERC20Approval].filter(Boolean).length;
-                                      const completed = maxNeeded - totalNeeded;
-                                      return `${completed}/${maxNeeded}`;
-                                    })()}
-                                  </motion.span>
-                                )}
-                              </span>
-                            </div>
-                            <div className="flex items-center justify-between text-xs text-muted-foreground">
-                              <span>Permit Signature</span>
-                              <span>
-                                {currentTransactionStep === 'signing_permit' ? (
-                                  <RefreshCwIcon className="h-4 w-4 animate-spin" />
-                                ) : isCheckingIncreaseApprovals ? (
-                                  <span className="text-xs font-mono text-muted-foreground">Checking...</span>
-                                ) : increaseApprovalData?.permitBatchData ? (
-                                  // Permit is needed - show signed status
-                                  permitSignature ? (
-                                    <span className="text-xs font-mono text-green-500">1/1</span>
-                                  ) : (
-                                    <span className="text-xs font-mono">0/1</span>
-                                  )
-                                ) : (
-                                  // No permit needed - show as complete
-                                  <span className="text-xs font-mono text-green-500">1/1</span>
-                                )}
-                              </span>
-                            </div>
-                            <div className="flex items-center justify-between text-xs text-muted-foreground">
-                              <span>Deposit Transaction</span>
-                              <span>
-                                {(increaseStep === 'deposit' && isIncreasingLiquidity) ? (
-                                  <RefreshCwIcon className="h-4 w-4 animate-spin" />
-                                ) : (
-                                  <span className={cn("text-xs font-mono", isIncreaseSuccess ? 'text-green-500' : 'text-muted-foreground')}>
-                                    {isIncreaseSuccess ? '1/1' : '0/1'}
-                                  </span>
-                                )}
-                              </span>
-                            </div>
-                          </div>
                         ) : null}
 
-                        {/* Back/Confirm buttons */}
-                        <div className="grid grid-cols-2 gap-3 pt-2">
-                          <Button
-                            variant="outline"
-                            className="relative border border-sidebar-border bg-button px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75"
-                            onClick={() => {
-                              if (showTransactionOverview) {
-                                setShowTransactionOverview(false);
-                                setTxStarted(false);
-                              } else {
-                                setShowInterimConfirmation(false);
-                              }
-                            }}
-                            disabled={
-                              currentView === 'add-liquidity' ? isIncreasingLiquidity :
-                              currentView === 'remove-liquidity' ? isDecreasingLiquidity :
-                              false
-                            }
-                            style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
-                          >
-                            Back
-                          </Button>
-
-                          <Button
-                            id="modal-interim-confirm-button"
-                            className="text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90"
-                            onClick={() => {
-                              if (currentView === 'remove-liquidity') {
-                                // Remove Liquidity: Execute directly without transaction overview
-                                handleExecuteWithdrawTransaction();
-                              } else if (currentView === 'add-liquidity') {
-                                // Add Liquidity: Use transaction overview flow
+                        {/* Back/Confirm buttons - Only show when NOT using TransactionFlowPanel */}
+                        {!(showTransactionOverview && currentView === 'add-liquidity') && (
+                          <div className="grid grid-cols-2 gap-3 pt-2">
+                            <Button
+                              variant="outline"
+                              className="relative border border-sidebar-border bg-button px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75"
+                              onClick={() => {
                                 if (showTransactionOverview) {
-                                  handleIncreaseTransactionV2();
+                                  setShowTransactionOverview(false);
+                                  setTxStarted(false);
                                 } else {
+                                  setShowInterimConfirmation(false);
+                                }
+                              }}
+                              disabled={
+                                currentView === 'add-liquidity' ? isIncreasingLiquidity :
+                                currentView === 'remove-liquidity' ? isDecreasingLiquidity :
+                                false
+                              }
+                              style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+                            >
+                              Back
+                            </Button>
+
+                            <Button
+                              id="modal-interim-confirm-button"
+                              className={
+                                currentView === 'remove-liquidity' && isDecreasingLiquidity
+                                  ? "relative border border-sidebar-border bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 !opacity-100 cursor-default text-white/75"
+                                  : "text-sidebar-primary border border-sidebar-primary bg-button-primary hover-button-primary"
+                              }
+                              style={currentView === 'remove-liquidity' && isDecreasingLiquidity ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
+                              onClick={() => {
+                                if (currentView === 'remove-liquidity') {
+                                  // Remove Liquidity: Execute directly without transaction overview
+                                  handleExecuteWithdrawTransaction();
+                                } else if (currentView === 'add-liquidity') {
+                                  // Add Liquidity: Show transaction overview
                                   setShowTransactionOverview(true);
                                 }
+                              }}
+                              disabled={
+                                currentView === 'add-liquidity' ? (isCheckingIncreaseApprovals) :
+                                currentView === 'remove-liquidity' ? (isDecreasingLiquidity || isWithdrawCalculating) :
+                                false
                               }
-                            }}
-                            disabled={
-                              currentView === 'add-liquidity' ? (currentTransactionStep !== 'idle' || isIncreasingLiquidity || isCheckingIncreaseApprovals) :
-                              currentView === 'remove-liquidity' ? (isDecreasingLiquidity || isWithdrawCalculating) :
-                              false
-                            }
-                          >
-                            <span className={
-                              currentView === 'add-liquidity' ? ((currentTransactionStep !== 'idle' || isIncreasingLiquidity) ? "animate-pulse" : "") :
-                              currentView === 'remove-liquidity' ? (isDecreasingLiquidity ? "animate-pulse" : "") :
-                              ""
-                            }>
-                              {currentView === 'add-liquidity' ? (
-                                showTransactionOverview ? getIncreaseButtonText() : "Confirm"
-                              ) : currentView === 'remove-liquidity' ? (
-                                isDecreasingLiquidity ? "Processing..." : (isWithdrawBurn ? "Burn Position" : "Withdraw")
-                              ) : "Confirm"}
-                            </span>
-                          </Button>
-                        </div>
+                            >
+                              <span className={
+                                currentView === 'remove-liquidity' ? (isDecreasingLiquidity ? "animate-pulse" : "") : ""
+                              }>
+                                {currentView === 'add-liquidity' ? "Confirm" :
+                                 currentView === 'remove-liquidity' ? (isWithdrawBurn ? "Close Position" : "Withdraw") :
+                                 "Confirm"}
+                              </span>
+                            </Button>
+                          </div>
+                        )}
                       </div>
                     </>
                   )}

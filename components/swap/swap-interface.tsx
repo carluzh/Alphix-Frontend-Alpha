@@ -25,6 +25,7 @@ import {
 } from "lucide-react"
 import Image from "next/image"
 import { useAccount, useBalance, useSignTypedData, useWriteContract, useWaitForTransactionReceipt } from "wagmi"
+import { useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
 import React from "react"
 import { switchChain } from '@wagmi/core'
@@ -34,6 +35,9 @@ import { getAddress, parseUnits, formatUnits, maxUint256, type Address, type Hex
 import { publicClient } from "../../lib/viemClient";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useSwapPercentageInput } from "@/hooks/usePercentageInput";
+import { useUserSlippageTolerance } from "@/hooks/useSlippage";
+import { getAutoSlippage } from "@/lib/slippage-api";
+import { useTokenUSDPrice } from "@/hooks/useTokenUSDPrice";
 
 import {
   getAllTokens,
@@ -353,6 +357,9 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   const isMobile = useIsMobile();
   const [isMounted, setIsMounted] = useState(false);
   useEffect(() => { setIsMounted(true); }, []);
+
+  // Query client for cache invalidation
+  const queryClient = useQueryClient();
   // Removed route-row hover logic; arrows only show on preview hover
   
   const [swapState, setSwapState] = useState<SwapState>("input");
@@ -456,7 +463,16 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     minimumReceived: "0",
   });
 
-  const [slippage, setSlippage] = useState(0.5); // New state for slippage percentage
+  // Use the new slippage hook with persistence and auto-slippage
+  const {
+    currentSlippage,
+    isAuto: isAutoSlippage,
+    autoSlippage: autoSlippageValue,
+    setSlippage,
+    setAutoMode,
+    setCustomMode,
+    updateAutoSlippage,
+  } = useUserSlippageTolerance();
 
   // Mock data generation removed - using real API data instead
 
@@ -722,14 +738,22 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     address: accountAddress,
     token: fromToken.address === "0x0000000000000000000000000000000000000000" ? undefined : fromToken.address,
     chainId: TARGET_CHAIN_ID,
-    query: { enabled: !!accountAddress && !!fromToken.address }
+    query: {
+      enabled: !!accountAddress && !!fromToken.address,
+      staleTime: 5000, // Consider data stale after 5 seconds
+      refetchOnWindowFocus: true, // Refetch when user returns to tab
+    }
   });
 
   const { data: toTokenBalanceData, isLoading: isLoadingToTokenBalance, error: toTokenBalanceError, refetch: refetchToTokenBalance } = useBalance({
     address: accountAddress,
     token: toToken.address === "0x0000000000000000000000000000000000000000" ? undefined : toToken.address,
     chainId: TARGET_CHAIN_ID,
-    query: { enabled: !!accountAddress && !!toToken.address }
+    query: {
+      enabled: !!accountAddress && !!toToken.address,
+      staleTime: 5000, // Consider data stale after 5 seconds
+      refetchOnWindowFocus: true, // Refetch when user returns to tab
+    }
   });
 
   // Use shared percentage input hook for both tokens
@@ -745,28 +769,28 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   // Listen for faucet claim to refresh balances
   useEffect(() => {
     if (!accountAddress) return;
-    
+
     const onRefresh = async () => {
-      // Force refetch of current token balances with fresh data
-      await Promise.all([
-        refetchFromTokenBalance?.({ cancelRefetch: false }),
-        refetchToTokenBalance?.({ cancelRefetch: false })
-      ]);
+      await Promise.all([refetchFromTokenBalance?.(), refetchToTokenBalance?.()]);
+      setTimeout(async () => {
+        queryClient.invalidateQueries({ queryKey: ['balance'] });
+        await Promise.all([refetchFromTokenBalance?.(), refetchToTokenBalance?.()]);
+      }, 2000);
     };
-    
+
     const onStorage = (e: StorageEvent) => {
       if (!e.key || !accountAddress) return;
       if (e.key === `walletBalancesRefreshAt_${accountAddress}`) onRefresh();
     };
-    
+
     window.addEventListener('walletBalancesRefresh', onRefresh as EventListener);
     window.addEventListener('storage', onStorage);
-    
+
     return () => {
       window.removeEventListener('walletBalancesRefresh', onRefresh as EventListener);
       window.removeEventListener('storage', onStorage);
     };
-  }, [accountAddress, fromToken.address, toToken.address, refetchFromTokenBalance, refetchToTokenBalance]);
+  }, [accountAddress, refetchFromTokenBalance, refetchToTokenBalance, queryClient]);
 
   // Update fromToken balance
   useEffect(() => {
@@ -803,7 +827,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       // If no changes, return the existing token object to prevent re-renders
       return prevToken;
     });
-  }, [fromTokenBalanceData, fromTokenBalanceError, isLoadingFromTokenBalance, currentChainId, isConnected, fromToken.symbol]);
+  }, [fromTokenBalanceData, fromTokenBalanceError, isLoadingFromTokenBalance, currentChainId, isConnected, fromToken.symbol, fromToken.usdPrice]);
 
   // Update toToken balance
   useEffect(() => {
@@ -838,7 +862,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       
       return prevToken;
     });
-  }, [toTokenBalanceData, toTokenBalanceError, isLoadingToTokenBalance, currentChainId, isConnected, toToken.symbol]);
+  }, [toTokenBalanceData, toTokenBalanceError, isLoadingToTokenBalance, currentChainId, isConnected, toToken.symbol, toToken.usdPrice]);
 
   // Helper function to format currency
   const formatCurrency = useCallback((valueString: string): string => {
@@ -1017,6 +1041,21 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
           setToAmount(String(data.toAmount ?? ""));
         }
         setRouteInfo(data.route || null);
+        // Set price impact from quote response
+        if (data.priceImpact !== undefined) {
+          const impactValue = parseFloat(data.priceImpact);
+          setPriceImpact(impactValue);
+          console.log('[swap-interface] Price Impact Received:', {
+            priceImpact: `${impactValue.toFixed(2)}%`,
+            fromToken: fromToken?.symbol,
+            toToken: toToken?.symbol,
+            fromAmount,
+            toAmount: data.toAmount,
+          });
+        } else {
+          setPriceImpact(null);
+          console.log('[swap-interface] No price impact in quote response');
+        }
         setQuoteError(null);
       } else {
         console.error('❌ V4 Quoter Error:', data.error);
@@ -1053,6 +1092,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
         }
         
         setQuoteError(errorMsg);
+        setPriceImpact(null); // Reset price impact on error
         // Do not infer on error; clear the side we tried to compute
         // Leave the user's actively edited field untouched on error
       }
@@ -1099,6 +1139,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
         }
       });
       setQuoteError(errorMsg);
+      setPriceImpact(null); // Reset price impact on exception
       // Leave the user's actively edited field untouched on exception
     } finally {
       setQuoteLoading(false);
@@ -1144,6 +1185,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
 
     // If we have a quote error, skip fee/slippage calcs and show placeholders
     if (quoteError) {
+      setPriceImpact(null); // Reset price impact on error
       setCalculatedValues(prev => ({
         ...prev,
         fromTokenAmount: formatTokenAmountDisplay(fromAmount, fromToken),
@@ -1234,21 +1276,45 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     
     // Calculate minimum received based on quote (new method)
     const quotedAmount = parseFloat(toAmount || "0");
-    const minReceivedAmount = quotedAmount > 0 ? quotedAmount * (1 - slippage / 100) : 0;
+    const minReceivedAmount = quotedAmount > 0 ? quotedAmount * (1 - currentSlippage / 100) : 0;
     const formattedMinimumReceived = formatTokenAmountDisplay(minReceivedAmount.toString(), toToken);
-    
+
+    // Reset price impact when there's no valid quote (same logic as minimumReceived)
+    if (!fromAmount || !toAmount || quotedAmount === 0) {
+      setPriceImpact(null);
+    }
+
+    // Update auto-slippage when quote is received (if in auto mode)
+    if (isAutoSlippage && fromAmount && toAmount && fromToken && toToken) {
+      // Fetch auto-slippage asynchronously (API with fallback)
+      getAutoSlippage({
+        sellToken: fromToken.address,
+        buyToken: toToken.address,
+        chainId: currentChainId || TARGET_CHAIN_ID,
+        fromAmount,
+        toAmount,
+        fromTokenSymbol: fromToken.symbol,
+        toTokenSymbol: toToken.symbol,
+        routeHops: routeInfo?.hops || 1,
+      }).then((calculatedSlippage) => {
+        updateAutoSlippage(calculatedSlippage);
+      }).catch((error) => {
+        console.error('[SwapInterface] Failed to fetch auto-slippage:', error);
+      });
+    }
+
     setCalculatedValues(prev => ({
       ...prev,
       fromTokenAmount: formatTokenAmountDisplay(fromAmount, fromToken),
       fromTokenValue: formatCurrency(newFromTokenValue.toString()),
       toTokenAmount: formatTokenAmountDisplay(toAmount, toToken),
       toTokenValue: formatCurrency(newToTokenValue.toString()),
-      fees: updatedFeesArray, 
-      slippage: `${slippage}%`, // Pass slippage as string for display
+      fees: updatedFeesArray,
+      slippage: `${currentSlippage}%`, // Pass slippage as string for display
       minimumReceived: formattedMinimumReceived,
     }));
 
-  }, [fromAmount, toAmount, fromToken?.symbol, fromToken?.usdPrice, toToken?.symbol, toToken?.usdPrice, formatCurrency, isConnected, currentChainId, dynamicFeeLoading, dynamicFeeError, dynamicFeeBps, routeFees, routeFeesLoading, formatTokenAmountDisplay, slippage]);
+  }, [fromAmount, toAmount, fromToken?.symbol, fromToken?.usdPrice, toToken?.symbol, toToken?.usdPrice, formatCurrency, isConnected, currentChainId, dynamicFeeLoading, dynamicFeeError, dynamicFeeBps, routeFees, routeFeesLoading, formatTokenAmountDisplay, currentSlippage, isAutoSlippage, routeInfo?.hops, updateAutoSlippage]);
 
   const handleFromAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
@@ -1409,16 +1475,30 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       setSwapProgressState("checking_allowance"); // Indicate checking permit
 
       const permitData = await fetchPermitData();
-      setCurrentPermitDetailsForSign(permitData); // Store fetched permit data
-      setObtainedSignature(null); // Clear any previous signature
+
+      // Only clear signature if permit data has changed (different nonce means new permit needed)
+      // This preserves signatures when user clicks "Change" and comes back
+      setCurrentPermitDetailsForSign((prevPermitData) => {
+        const previousNonce = prevPermitData?.permitData?.message?.details?.nonce;
+        const newNonce = permitData?.permitData?.message?.details?.nonce;
+
+        // If nonce changed or no previous permit, clear the signature
+        if (previousNonce !== newNonce || !prevPermitData) {
+          setObtainedSignature(null);
+        }
+
+        return permitData;
+      });
 
       const needsSignature = permitData.needsPermit === true;
 
       // 5. Handle Permit2 Result
-      if (needsSignature) {
+      // Check if we already have a valid signature (preserved from previous review attempt)
+      if (needsSignature && !obtainedSignature) {
         setSwapProgressState("needs_signature");
         // Notification effect will show toast
       } else {
+        // Either no signature needed OR we already have one cached
         setCompletedSteps(["approval_complete", "signature_complete"]); // Mark step 2 complete
         setSwapProgressState("ready_to_swap");
       }
@@ -1441,8 +1521,8 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     }
   };
 
-  // Wrapper function to maintain compatibility with existing code
-  // Delegates to the shared hook handlers
+  // Wrapper function to handle percentage selection for both tokens
+  // For 100%, uses exact formatted balance from blockchain (via the hook)
   const handleUsePercentage = (percentage: number, isFrom: boolean = true) => {
     if (isFrom) {
       handleFromPercentage(percentage);
@@ -1450,30 +1530,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     } else {
       handleToPercentage(percentage);
       lastEditedSideRef.current = 'to';
-    }
-  };
-  
-  const handleUseFullBalance = (token: Token, isFrom: boolean) => {
-    try {
-      // Use the appropriate dynamic balance data based on which token is being used
-      const balanceData = isFrom ? fromTokenBalanceData : toTokenBalanceData;
-
-      // Use the exact formatted value from the blockchain if available
-      if (balanceData && balanceData.formatted) {
-        if (isFrom) {
-          // Set EXACTLY what the blockchain reports - no parsing/formatting that might round
-          setFromAmount(balanceData.formatted);
-          lastEditedSideRef.current = 'from';
-        } else {
-          // Set EXACTLY what the blockchain reports for the "to" token
-          setToAmount(balanceData.formatted);
-          lastEditedSideRef.current = 'to';
-        }
-      } else {
-        console.warn(`No valid balance data for ${token.symbol}`);
-      }
-    } catch (error) {
-      console.error(`Error using exact balance for ${token.symbol}:`, error);
     }
   };
 
@@ -1579,10 +1635,22 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
             setCompletedSteps(prev => [...prev, "approval_complete"]);
 
             const freshPermitData = await fetchPermitData();
-            setCurrentPermitDetailsForSign(freshPermitData);
-            setObtainedSignature(null);
 
-            if (freshPermitData.needsPermit) {
+            // Only clear signature if permit data has changed (different nonce means new permit needed)
+            setCurrentPermitDetailsForSign((prevPermitData) => {
+              const previousNonce = prevPermitData?.permitData?.message?.details?.nonce;
+              const newNonce = freshPermitData?.permitData?.message?.details?.nonce;
+
+              // If nonce changed or no previous permit, clear the signature
+              if (previousNonce !== newNonce || !prevPermitData) {
+                setObtainedSignature(null);
+              }
+
+              return freshPermitData;
+            });
+
+            // Check if we already have a valid signature (preserved from previous review attempt)
+            if (freshPermitData.needsPermit && !obtainedSignature) {
                 setSwapProgressState("needs_signature");
             } else {
                 setSwapProgressState("ready_to_swap");
@@ -1777,11 +1845,11 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                     const quotedInBigInt = safeParseUnits(fromAmount || "0", fromDecimals);
                     
                     // Calculate min/max using BigInt arithmetic
-                    // minOut = quotedOut * (100 - slippage) / 100
-                    const minOutBigInt = (quotedOutBigInt * BigInt(Math.floor((100 - slippage) * 100))) / BigInt(10000);
-                    // maxIn = quotedIn * (100 + slippage) / 100
-                    const maxInBigInt = (quotedInBigInt * BigInt(Math.floor((100 + slippage) * 100))) / BigInt(10000);
-                    
+                    // minOut = quotedOut * (100 - currentSlippage) / 100
+                    const minOutBigInt = (quotedOutBigInt * BigInt(Math.floor((100 - currentSlippage) * 100))) / BigInt(10000);
+                    // maxIn = quotedIn * (100 + currentSlippage) / 100
+                    const maxInBigInt = (quotedInBigInt * BigInt(Math.floor((100 + currentSlippage) * 100))) / BigInt(10000);
+
                     // Format back to decimal strings
                     minimumReceivedStr = formatUnits(minOutBigInt, toDecimals);
                     maximumInputStr = formatUnits(maxInBigInt, fromDecimals);
@@ -1789,8 +1857,8 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                     // Fallback to floating point calculation if BigInt fails
                     const quotedOutNum = parseFloat(toAmount || "0");
                     const quotedInNum = parseFloat(fromAmount || "0");
-                    const minOutNum = quotedOutNum > 0 ? quotedOutNum * (1 - slippage / 100) : 0;
-                    const maxInNum = quotedInNum > 0 ? quotedInNum * (1 + slippage / 100) : 0;
+                    const minOutNum = quotedOutNum > 0 ? quotedOutNum * (1 - currentSlippage / 100) : 0;
+                    const maxInNum = quotedInNum > 0 ? quotedInNum * (1 + currentSlippage / 100) : 0;
                     minimumReceivedStr = minOutNum.toFixed(toDecimals);
                     maximumInputStr = maxInNum.toFixed(fromDecimals);
                 }
@@ -2002,11 +2070,11 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 const quotedInBigInt = safeParseUnits(fromAmount || "0", fromDecimals2);
                 
                 // Calculate min/max using BigInt arithmetic
-                // minOut = quotedOut * (100 - slippage) / 100
-                const minOutBigInt = (quotedOutBigInt * BigInt(Math.floor((100 - slippage) * 100))) / BigInt(10000);
-                // maxIn = quotedIn * (100 + slippage) / 100
-                const maxInBigInt = (quotedInBigInt * BigInt(Math.floor((100 + slippage) * 100))) / BigInt(10000);
-                
+                // minOut = quotedOut * (100 - currentSlippage) / 100
+                const minOutBigInt = (quotedOutBigInt * BigInt(Math.floor((100 - currentSlippage) * 100))) / BigInt(10000);
+                // maxIn = quotedIn * (100 + currentSlippage) / 100
+                const maxInBigInt = (quotedInBigInt * BigInt(Math.floor((100 + currentSlippage) * 100))) / BigInt(10000);
+
                 // Format back to decimal strings
                 minimumReceivedStr = formatUnits(minOutBigInt, toDecimals2);
                 maximumInputStr = formatUnits(maxInBigInt, fromDecimals2);
@@ -2014,8 +2082,8 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 // Fallback to floating point calculation if BigInt fails
                 const quotedOutNum2 = parseFloat(toAmount || "0");
                 const quotedInNum2 = parseFloat(fromAmount || "0");
-                const minOutNum2 = quotedOutNum2 > 0 ? quotedOutNum2 * (1 - slippage / 100) : 0;
-                const maxInNum2 = quotedInNum2 > 0 ? quotedInNum2 * (1 + slippage / 100) : 0;
+                const minOutNum2 = quotedOutNum2 > 0 ? quotedOutNum2 * (1 - currentSlippage / 100) : 0;
+                const maxInNum2 = quotedInNum2 > 0 ? quotedInNum2 * (1 + currentSlippage / 100) : 0;
                 minimumReceivedStr = minOutNum2.toFixed(toDecimals2);
                 maximumInputStr = maxInNum2.toFixed(fromDecimals2);
             }
@@ -2053,6 +2121,18 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
             };
 
             console.log("[DEBUG] bodyForSwapTx:", bodyForSwapTx);
+            console.log("[DEBUG] Slippage Protection Details:", {
+                swapType: isExactOut2 ? 'ExactOut' : 'ExactIn',
+                fromAmount,
+                toAmount,
+                currentSlippage: `${currentSlippage}%`,
+                minimumReceivedStr,
+                maximumInputStr,
+                limitAmountDecimalsStr: isExactOut2 ? maximumInputStr : minimumReceivedStr,
+                note: isExactOut2 
+                    ? 'ExactOut: Transaction will fail if actual input > maximumInputStr'
+                    : 'ExactIn: Transaction will fail if actual output < minimumReceivedStr',
+            });
 
             // --- Call Build TX API ---
             const buildTxApiResponse = await fetch('/api/swap/build-tx', {
@@ -2208,33 +2288,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   // isLoading for balances - now using dynamic loading states
   const isLoadingCurrentFromTokenBalance = isLoadingFromTokenBalance;
   const isLoadingCurrentToTokenBalance = isLoadingToTokenBalance;
-  
-  // Action button text logic - RESTORED
-  let actionButtonText = "Connect Wallet";
-  let actionButtonDisabled = false;
-
-  if (!isMounted) {
-    actionButtonText = "Loading...";
-    actionButtonDisabled = true;
-  } else if (isConnected) {
-    if (currentChainId !== TARGET_CHAIN_ID) {
-      actionButtonText = isAttemptingSwitch ? "Switching..." : `Switch to Base Sepolia`; 
-      actionButtonDisabled = isAttemptingSwitch;
-    } else if (isLoadingCurrentFromTokenBalance || isLoadingCurrentToTokenBalance) {
-      actionButtonText = "Loading Balances...";
-      actionButtonDisabled = true;
-    } else {
-      actionButtonText = "Swap";
-      // Ensure fromAmount is treated as a number for comparison, default to 0 if undefined/empty
-      actionButtonDisabled = parseFloat(fromAmount || "0") <= 0;
-    }
-  } else {
-    // Wallet not connected, button should show "Connect Wallet"
-    // The actual connection is handled by <appkit-button>
-    actionButtonText = "Connect Wallet"; 
-    actionButtonDisabled = false; // <appkit-button> handles its own state
-  }
-  // END RESTORED BLOCK
 
   const userIsOnTargetChain = isConnected && currentChainId === TARGET_CHAIN_ID;
 
@@ -2343,8 +2396,8 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     const currentActualIsOverLimit = actualNumericPercentage > 100;
 
     if (currentActualIsOverLimit) {
-      // Use handleUseFullBalance directly which now uses exact blockchain data
-      handleUseFullBalance(fromToken, true);
+      // Use 100% which now uses exact blockchain data
+      handleUsePercentage(100, true);
       setSelectedPercentageIndex(cyclePercentages.indexOf(100)); // Sets selected step to 100%
     } else {
       let nextIndex = selectedPercentageIndex + 1;
@@ -2370,8 +2423,17 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     setHoveredArcPercentage(null);
   };
 
+  // Slippage handlers
   const handleSlippageChange = (newSlippage: number) => {
     setSlippage(newSlippage);
+  };
+
+  const handleAutoSlippageToggle = () => {
+    setAutoMode();
+  };
+
+  const handleCustomSlippageToggle = () => {
+    setCustomMode();
   };
 
   const strokeWidth = 2; // Define strokeWidth for the SVG rect elements
@@ -2514,12 +2576,12 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   // Helper functions for action button text and disabled state
   const getActionButtonText = (): string => {
     if (!isMounted) {
-      return "Loading...";
+      return "Connect Wallet";
     } else if (isConnected) {
       if (currentChainId !== TARGET_CHAIN_ID) {
-        return isAttemptingSwitch ? "Switching..." : "Switch to Base Sepolia";
+        return "Switch to Base Sepolia";
       } else if (isLoadingCurrentFromTokenBalance || isLoadingCurrentToTokenBalance) {
-        return "Loading Balances...";
+        return "Swap";
       } else {
         // Check for insufficient balance
         const fromAmountNum = parseFloat(fromAmount || "0");
@@ -2550,87 +2612,46 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     }
   };
 
-  // Add state for token prices
-  const [tokenPrices, setTokenPrices] = useState<{
-    BTC: number;
-    USDC: number;
-    ETH: number;
-    timestamp?: number;
-  }>({
-    BTC: 77000, // Default fallback price
-    USDC: 1,    // Default fallback price
-    ETH: 3500,  // Default fallback price
-  });
+  // Get USD prices using mid-price quotes (replaces CoinGecko)
+  const fromTokenUSDPrice = useTokenUSDPrice(fromToken?.symbol);
+  const toTokenUSDPrice = useTokenUSDPrice(toToken?.symbol);
   
-  
-  // Effect to fetch token prices periodically
+  // Update token prices when USD prices change
   useEffect(() => {
-    if (!isMounted) return;
-    
-    // Function to fetch prices using the simplified API
-    const fetchPrices = async () => {
-      try {
-        const response = await fetch('/api/prices/get-token-prices');
-        if (!response.ok) {
-          throw new Error(`Error fetching prices: ${response.status}`);
-        }
-        
-        const data = await response.json();
-        
-        setTokenPrices(data);
-      } catch (error) {
-        console.error('Error fetching token prices:', error);
-        // Keep using existing prices as fallback
-      }
-    };
-    
-    // Fetch prices immediately
-    fetchPrices();
-    
-    // Set up periodic refresh (every 5 minutes to match cache duration)
-    const priceRefreshInterval = setInterval(fetchPrices, 5 * 60 * 1000);
-    
-    return () => {
-      clearInterval(priceRefreshInterval);
-    };
-  }, [isMounted]);
+    if (fromTokenUSDPrice.price !== null) {
+      setFromToken(prev => {
+        if (prev.usdPrice === fromTokenUSDPrice.price) return prev;
+        return { ...prev, usdPrice: fromTokenUSDPrice.price || prev.usdPrice };
+      });
+    }
+  }, [fromTokenUSDPrice.price]);
   
-  // Update token prices when tokenPrices changes
   useEffect(() => {
-    if (!tokenPrices) return;
-    
-    // Update fromToken price, only if it changes
-    setFromToken(prev => {
-      const priceType = getTokenPriceMapping(prev.symbol);
-      const priceData = tokenPrices[priceType] as any;
-      const newPrice = (typeof priceData === 'object' && priceData?.usd) ? priceData.usd : (typeof priceData === 'number' ? priceData : prev.usdPrice);
-      if (prev.usdPrice === newPrice) return prev;
-      return { ...prev, usdPrice: newPrice };
-    });
-    
-    // Update toToken price, only if it changes
-    setToToken(prev => {
-      const priceType = getTokenPriceMapping(prev.symbol);
-      const priceData = tokenPrices[priceType] as any;
-      const newPrice = (typeof priceData === 'object' && priceData?.usd) ? priceData.usd : (typeof priceData === 'number' ? priceData : prev.usdPrice);
-      if (prev.usdPrice === newPrice) return prev;
-      return { ...prev, usdPrice: newPrice };
-    });
-    
-    // Update all available tokens in the list with fresh prices
-    setTokenList(prevList => 
-      prevList.map(token => {
-        const priceType = getTokenPriceMapping(token.symbol);
-        const priceData = tokenPrices[priceType] as any;
-        const newPrice = (typeof priceData === 'object' && priceData?.usd) ? priceData.usd : (typeof priceData === 'number' ? priceData : token.usdPrice);
-        return {
-          ...token,
-          usdPrice: newPrice
-        };
-      })
-    );
-    
-  }, [tokenPrices]);
+    if (toTokenUSDPrice.price !== null) {
+      setToToken(prev => {
+        if (prev.usdPrice === toTokenUSDPrice.price) return prev;
+        return { ...prev, usdPrice: toTokenUSDPrice.price || prev.usdPrice };
+      });
+    }
+  }, [toTokenUSDPrice.price]);
+  
+  // Price impact from quote response
+  const [priceImpact, setPriceImpact] = useState<number | null>(null);
+  
+  // Price impact warning thresholds (matching Uniswap)
+  const PRICE_IMPACT_MEDIUM = 3; // 3%
+  const PRICE_IMPACT_HIGH = 5; // 5%
+  
+  const priceImpactWarning = useMemo(() => {
+    if (priceImpact === null) return null;
+    if (priceImpact >= PRICE_IMPACT_HIGH) {
+      return { severity: 'high' as const, message: `Very high price impact: ${priceImpact.toFixed(2)}%` };
+    }
+    if (priceImpact >= PRICE_IMPACT_MEDIUM) {
+      return { severity: 'medium' as const, message: `High price impact: ${priceImpact.toFixed(2)}%` };
+    }
+    return null;
+  }, [priceImpact]);
 
   const containerRef = useRef<HTMLDivElement>(null); // Ref for the entire swap container (card + chart)
   const [combinedRect, setCombinedRect] = useState({
@@ -2747,7 +2768,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 onToAmountChange={handleToAmountChange}
                 activelyEditedSide={lastEditedSideRef.current}
                 handleSwapTokens={handleSwapTokens}
-                handleUseFullBalance={handleUseFullBalance}
                 handleUsePercentage={handleUsePercentage}
                 availableTokens={tokenList}
                 onFromTokenSelect={handleFromTokenSelect}
@@ -2774,9 +2794,14 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 currentChainId={currentChainId}
                 TARGET_CHAIN_ID={TARGET_CHAIN_ID}
                 strokeWidth={2}
-                swapContainerRect={combinedRect} // Pass the new combined rect
-                slippage={slippage}
+                swapContainerRect={combinedRect}
+                slippage={currentSlippage}
+                isAutoSlippage={isAutoSlippage}
+                autoSlippageValue={autoSlippageValue}
                 onSlippageChange={handleSlippageChange}
+                onAutoSlippageToggle={handleAutoSlippageToggle}
+                onCustomSlippageToggle={handleCustomSlippageToggle}
+                priceImpactWarning={priceImpactWarning}
               />
             )}
 

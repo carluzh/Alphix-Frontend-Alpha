@@ -6,7 +6,6 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { ArrowUpRight } from "lucide-react";
-import { createPortal } from "react-dom";
 
 interface FeeHistoryPoint {
   timeLabel: string;
@@ -55,18 +54,10 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
 
   // Hover state for tooltip
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
-  const [portalEl, setPortalEl] = useState<HTMLElement | null>(null);
   const [isHovering, setIsHovering] = useState(false);
 
   // Combined loading state - show skeleton when either parent isLoading or internal isChartDataLoading
   const isActuallyLoading = isLoading || isChartDataLoading;
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const el = document.getElementById('swap-fee-hover-container');
-      setPortalEl(el as HTMLElement | null);
-    }
-  }, []);
 
   // Detect if parent data matches expected shape
   const isParentDataUsable = useMemo(() => {
@@ -441,6 +432,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
     const effectiveMaxValue: any = 'auto';
 
     return (
+      <>
       <div
         className="w-full rounded-lg border border-primary transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow bg-container-secondary"
         onClick={handleClick}
@@ -625,19 +617,20 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
               </ResponsiveContainer>
             )}
           </div>
-          {/* External portal for hover footer */}
-          {portalEl && footerDisplay && createPortal(
-            <div className="rounded-md border border-primary bg-container-secondary px-2.5 py-1.5 shadow-sm inline-flex">
-              <div className="flex items-center gap-4 text-[10px] md:text-xs font-mono">
-                <span className="text-muted-foreground">{footerDisplay.daysAgoLabel}</span>
-                <span className="text-sidebar-primary font-medium">{footerDisplay.pct}</span>
-              </div>
-            </div>,
-            portalEl
-          )}
         </div>
-        
       </div>
+      {/* Hover footer tooltip - separate container below chart card, right-aligned */}
+      {footerDisplay && (
+        <div className="mt-2 flex justify-end pointer-events-none">
+          <div className="rounded-md border border-primary bg-container-secondary px-2.5 py-1.5 shadow-sm inline-flex">
+            <div className="flex items-center gap-4 text-[10px] md:text-xs font-mono">
+              <span className="text-muted-foreground">{footerDisplay.daysAgoLabel}</span>
+              <span className="text-sidebar-primary font-medium">{footerDisplay.pct}</span>
+            </div>
+          </div>
+        </div>
+      )}
+      </>
     );
   }
 }

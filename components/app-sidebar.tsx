@@ -109,6 +109,8 @@ interface AppSidebarProps extends React.ComponentProps<typeof Sidebar> {
   onBetaClick?: () => void;
 }
 
+const BETA_BADGE_STORAGE_KEY = "alphix:betaBadge:lastSeenVersion";
+
 export function AppSidebar({ variant = "floating", onBetaClick, ...props }: AppSidebarProps) {
   const isMobile = useIsMobile()
   const { resolvedTheme } = useTheme()
@@ -138,6 +140,44 @@ export function AppSidebar({ variant = "floating", onBetaClick, ...props }: AppS
   
   // Get latest version info
   const latestVersion = getLatestVersion();
+  const [isRecentRelease, setIsRecentRelease] = useState(false);
+  const [hasViewedRelease, setHasViewedRelease] = useState(false);
+
+  useEffect(() => {
+    if (!latestVersion?.releaseDate) {
+      setIsRecentRelease(false);
+      return;
+    }
+    const releaseTimestamp = new Date(`${latestVersion.releaseDate}T00:00:00Z`).getTime();
+    if (Number.isNaN(releaseTimestamp)) {
+      setIsRecentRelease(false);
+      return;
+    }
+    const now = Date.now();
+    const twentyFourHoursMs = 24 * 60 * 60 * 1000;
+    setIsRecentRelease(now >= releaseTimestamp && now - releaseTimestamp <= twentyFourHoursMs);
+  }, [latestVersion.releaseDate]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      setHasViewedRelease(false);
+      return;
+    }
+    const storedVersion = window.localStorage.getItem(BETA_BADGE_STORAGE_KEY);
+    setHasViewedRelease(storedVersion === latestVersion.version);
+  }, [latestVersion.version]);
+
+  const handleBetaBadgeClick = (e: React.MouseEvent<HTMLDivElement, MouseEvent>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(BETA_BADGE_STORAGE_KEY, latestVersion.version);
+    }
+    setHasViewedRelease(true);
+    onBetaClick?.();
+  };
+
+  const shouldGlow = isRecentRelease && !hasViewedRelease;
 
   return (
     <Sidebar variant={variant} collapsible="offcanvas" {...props}>
@@ -146,7 +186,7 @@ export function AppSidebar({ variant = "floating", onBetaClick, ...props }: AppS
           <SidebarMenuItem className="list-none">
             <SidebarMenuButton
               onClick={(e) => e.stopPropagation()} // Prevent navigation on button click
-              className="data-[slot=sidebar-menu-button]:!p-2 !pt-2.5 !px-0 hover:bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 data-[state=open]:bg-transparent active:bg-transparent"
+              className="data-[slot=sidebar-menu-button]:!p-2 !pt-2.5 !px-0 hover:bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 data-[state=open]:bg-transparent active:bg-transparent overflow-visible"
             >
               <div className="flex items-center w-full justify-between">
                 <a 
@@ -168,31 +208,32 @@ export function AppSidebar({ variant = "floating", onBetaClick, ...props }: AppS
                 </a>
                 <div>
                   {/* Show 'Beta' by default; on hover swap to version text without resizing */}
-                  <Badge
-                    variant="outline"
-                    className="bg-button-primary text-sidebar-primary border-sidebar-primary rounded-md font-normal hover-button-primary transition-colors cursor-pointer inline-block"
-                    style={{ fontFamily: 'Consolas, monospace' }}
-                    title="Click to show update info"
-                    onMouseEnter={() => setBadgeHovered(true)}
-                    onMouseLeave={() => setBadgeHovered(false)}
-                    onFocus={() => setBadgeHovered(true)}
-                    onBlur={() => setBadgeHovered(false)}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      console.log('Beta badge clicked!'); // Debug log
-                      console.log('onBetaClick function:', onBetaClick); // Debug log
-                      onBetaClick?.();
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={handleBetaBadgeClick}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        handleBetaBadgeClick(event as any);
+                      }
                     }}
                   >
-                    {showVersionInitial ? (
-                      <span className="inline-flex items-center justify-center" style={{ minWidth: 28 }}>{latestVersion.version}</span>
-                    ) : (
+                    <Badge
+                      variant="outline"
+                      className="bg-button-primary text-sidebar-primary border-sidebar-primary rounded-md font-normal hover-button-primary transition-colors cursor-pointer inline-block"
+                      style={{ fontFamily: 'Consolas, monospace' }}
+                      title="Click to show update info"
+                      onMouseEnter={() => setBadgeHovered(true)}
+                      onMouseLeave={() => setBadgeHovered(false)}
+                      onFocus={() => setBadgeHovered(true)}
+                      onBlur={() => setBadgeHovered(false)}
+                    >
                       <span className="inline-flex items-center justify-center" style={{ minWidth: 28 }}>
-                        {badgeHovered ? latestVersion.version : 'Beta'}
+                        {shouldGlow ? latestVersion.version : badgeHovered ? latestVersion.version : 'Beta'}
                       </span>
-                    )}
-                  </Badge>
+                    </Badge>
+                  </div>
                 </div>
               </div>
             </SidebarMenuButton>

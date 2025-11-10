@@ -12,7 +12,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { useAccount } from "wagmi";
 import { useEffect } from "react";
-import { invalidateActivityCache, invalidateCacheEntry, getPoolStatsCacheKey } from "@/lib/client-cache";
+import { invalidateAfterTx } from "@/lib/invalidation";
+import { useQueryClient } from '@tanstack/react-query';
 import { getAllPools, getPoolSubgraphId } from "@/lib/pools-config";
 import { baseSepolia } from "@/lib/wagmiConfig";
 import { Token, SwapTxInfo } from './swap-interface'; // Assuming types are exported
@@ -42,12 +43,12 @@ export function SwapSuccessView({
   formatTokenAmountDisplay
 }: SwapSuccessViewProps) {
   const { address: accountAddress } = useAccount();
+  const queryClient = useQueryClient();
+
   useEffect(() => {
-    try { if (accountAddress) invalidateActivityCache(accountAddress); } catch {}
-    // Trigger pool stats revalidate (best-effort)
+    if (!accountAddress) return;
+
     (async () => {
-      // Pool batch revalidation moved earlier in the flow (right after tx submission)
-      // Also revalidate shared chart caches for the swapped pool (volume/TVL)
       try {
         const pools = getAllPools?.() || [];
         const symA = (swapTxInfo?.fromSymbol || displayFromToken.symbol || '').toUpperCase();
@@ -57,41 +58,38 @@ export function SwapSuccessView({
           const b = String(p?.currency1?.symbol || '').toUpperCase();
           return (a === symA && b === symB) || (a === symB && b === symA);
         });
+
         if (match) {
           const routeId = String(match.id || `${match.currency0?.symbol}-${match.currency1?.symbol}`).toLowerCase();
           const subgraphId = (getPoolSubgraphId(routeId) || match.subgraphId || match.id || '').toLowerCase();
+
           if (routeId && subgraphId) {
-            // Hint the pool page to force-refresh charts on next visit
             try { localStorage.setItem(`recentSwap:${routeId}`, String(Date.now())); } catch {}
-            // Invalidate client-side cached pool stats (affects 24h Volume in header)
-            try { invalidateCacheEntry(getPoolStatsCacheKey(subgraphId)); } catch {}
-            fetch('/api/internal/revalidate-chart', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ poolId: routeId, subgraphId })
-            } as any).catch(() => {});
-            // Warm batch stats (volume) server cache too
-            fetch('/api/internal/revalidate-pools', { method: 'POST' } as any).catch(() => {});
+
+            await invalidateAfterTx(queryClient, {
+              owner: accountAddress,
+              poolId: subgraphId,
+              reason: 'swap'
+            });
           }
         }
 
-        // Multi-hop support: if backend provides touchedPools, invalidate each pool's chart + stats
         const touched = (swapTxInfo as any)?.touchedPools as Array<{ poolId: string; subgraphId?: string } | undefined> | undefined;
         if (Array.isArray(touched) && touched.length) {
-          touched.forEach((tp) => {
-            if (!tp) return;
+          for (const tp of touched) {
+            if (!tp) continue;
             const pid = String(tp.poolId || '').toLowerCase();
             const sg = String(tp.subgraphId || getPoolSubgraphId(pid) || pid).toLowerCase();
-            if (!pid || !sg) return;
+            if (!pid || !sg) continue;
+
             try { localStorage.setItem(`recentSwap:${pid}`, String(Date.now())); } catch {}
-            try { invalidateCacheEntry(getPoolStatsCacheKey(sg)); } catch {}
-            fetch('/api/internal/revalidate-chart', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ poolId: pid, subgraphId: sg })
-            } as any).catch(() => {});
-            fetch('/api/internal/revalidate-pools', { method: 'POST' } as any).catch(() => {});
-          });
+
+            await invalidateAfterTx(queryClient, {
+              owner: accountAddress,
+              poolId: sg,
+              reason: 'swap'
+            });
+          }
         }
 
         // Deterministic Volume backoff: wait until 24h Volume changes, then warm server cache

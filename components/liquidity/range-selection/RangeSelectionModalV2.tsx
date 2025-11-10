@@ -82,6 +82,18 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
     return () => setMounted(false);
   }, []);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, onClose]);
+
   const swallowNextClick = () => {
     const handler = (e: Event) => {
       e.preventDefault();

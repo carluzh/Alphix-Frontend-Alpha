@@ -1,11 +1,12 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { PlusIcon, RefreshCwIcon, MinusIcon, ActivityIcon, CheckIcon, InfoIcon, ArrowLeftIcon, OctagonX, BadgeCheck, Maximize, CircleHelp } from "lucide-react";
+import { PlusIcon, RefreshCwIcon, MinusIcon, ActivityIcon, CheckIcon, InfoIcon, ArrowLeftIcon, OctagonX, BadgeCheck, Maximize, CircleHelp, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { cn, formatTokenDisplayAmount } from "@/lib/utils";
 import Image from "next/image";
 import { useAccount, useBalance } from "wagmi";
@@ -13,6 +14,7 @@ import { toast } from "sonner";
 import { useEthersSigner } from "@/hooks/useEthersSigner";
 import { usePercentageInput } from "@/hooks/usePercentageInput";
 import { V4_POOL_FEE, V4_POOL_TICK_SPACING, V4_POOL_HOOKS } from "@/lib/swap-constants";
+import { DEFAULT_LP_SLIPPAGE, MAX_AUTO_SLIPPAGE_TOLERANCE } from "@/lib/slippage-constants";
 import { TOKEN_DEFINITIONS, TokenSymbol, NATIVE_TOKEN_ADDRESS } from "@/lib/pools-config";
 import { getPoolById, getToken } from "@/lib/pools-config";
 import { formatUnits as viemFormatUnits, parseUnits as viemParseUnits, getAddress, type Hex } from "viem";
@@ -45,6 +47,9 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { TransactionFlowPanel } from "./TransactionFlowPanel";
+import { SlippageControl } from "@/components/swap/SlippageControl";
+import { useUserSlippageTolerance } from "@/hooks/useSlippage";
 
 // Toast utility functions matching swap-interface patterns
 const showErrorToast = (title: string, description?: string, action?: { label: string; onClick: () => void }) => {
@@ -72,9 +77,9 @@ import { Token } from '@uniswap/sdk-core';
 import { Pool as V4PoolSDK, Position as V4PositionSDK } from "@uniswap/v4-sdk";
 import JSBI from "jsbi";
 import poolsConfig from "../../config/pools.json";
-import { useAllPrices } from "@/components/data/hooks";
 import { formatUSD } from "@/lib/format";
-import { getOptimalBaseToken, getDecimalsForDenomination } from "@/lib/denomination-utils";
+import { useTokenUSDPrice } from "@/hooks/useTokenUSDPrice";
+import { getOptimalBaseToken, getDecimalsForDenomination, convertTickToPrice as convertTickToPriceUtil } from "@/lib/denomination-utils";
 import { calculateUserPositionAPY, formatUserAPY, type PoolMetrics } from "@/lib/user-position-apy";
 
 // Utility functions
@@ -203,6 +208,50 @@ export function AddLiquidityForm({
   // Cache pool metrics and state (fetched once per pool)
   const [cachedPoolMetrics, setCachedPoolMetrics] = useState<{ poolId: string; metrics: any; poolLiquidity: string } | null>(null);
 
+  // Zap mode state
+  const [isZapMode, setIsZapMode] = useState(false);
+  const [zapInputToken, setZapInputToken] = useState<'token0' | 'token1'>('token0');
+  const [zapQuote, setZapQuote] = useState<{
+    swapAmount: string;
+    expectedToken0Amount: string;
+    expectedToken1Amount: string;
+    expectedLiquidity: string;
+    priceImpact: string;
+    leftoverToken0?: string;
+    leftoverToken1?: string;
+  } | null>(null);
+
+  // Price impact state (for zap mode warnings)
+  const [priceImpact, setPriceImpact] = useState<number | null>(null);
+
+  // Price impact warning thresholds (matching Uniswap)
+  const PRICE_IMPACT_MEDIUM = 3; // 3%
+  const PRICE_IMPACT_HIGH = 5; // 5%
+
+  const priceImpactWarning = useMemo(() => {
+    // Only show warning in zap mode
+    if (!isZapMode) {
+      return null;
+    }
+    
+    // Get price impact from state or zapQuote as fallback
+    const currentPriceImpact = priceImpact !== null 
+      ? priceImpact 
+      : (zapQuote?.priceImpact ? parseFloat(zapQuote.priceImpact) : null);
+    
+    if (currentPriceImpact === null || isNaN(currentPriceImpact)) {
+      return null;
+    }
+    
+    if (currentPriceImpact >= PRICE_IMPACT_HIGH) {
+      return { severity: 'high' as const, message: `Very high price impact: ${currentPriceImpact.toFixed(2)}%` };
+    }
+    if (currentPriceImpact >= PRICE_IMPACT_MEDIUM) {
+      return { severity: 'medium' as const, message: `High price impact: ${currentPriceImpact.toFixed(2)}%` };
+    }
+    return null;
+  }, [priceImpact, zapQuote?.priceImpact, isZapMode]);
+
   // UI flow management
   const [showingTransactionSteps, setShowingTransactionSteps] = useState(false);
   const [showRangeModal, setShowRangeModal] = useState(false);
@@ -241,20 +290,40 @@ export function AddLiquidityForm({
   const [maxPriceInputString, setMaxPriceInputString] = useState<string>("");
 
   const { address: accountAddress, chainId, isConnected } = useAccount();
-  const { data: allPrices } = useAllPrices();
   const signer = useEthersSigner();
 
-  // Map any token symbol (e.g., aUSDC, aETH) to a USD price
+  // Get USD prices using mid-price quotes (replaces CoinGecko/useAllPrices)
+  const token0USDPrice = useTokenUSDPrice(token0Symbol);
+  const token1USDPrice = useTokenUSDPrice(token1Symbol);
+
+  // Slippage tolerance hook (for zap mode)
+  const {
+    currentSlippage,
+    isAuto: isAutoSlippage,
+    autoSlippage: autoSlippageValue,
+    setSlippage,
+    setAutoMode,
+    setCustomMode,
+    updateAutoSlippage,
+  } = useUserSlippageTolerance();
+
+  // Convert slippage percentage to basis points for API calls
+  const zapSlippageToleranceBps = useMemo(() => {
+    return Math.round(currentSlippage * 100); // Convert percentage to basis points (e.g., 0.5% -> 50 bps)
+  }, [currentSlippage]);
+
+  // Map any token symbol to USD price using the new hook
   const getUSDPriceForSymbol = useCallback((symbol?: string): number => {
     if (!symbol) return 0;
-    const s = symbol.toUpperCase();
-    if (s.includes('BTC')) return allPrices?.BTC?.usd ?? 0;
-    if (s.includes('ETH')) return allPrices?.ETH?.usd ?? 0;
-    if (s.includes('USDC')) return allPrices?.USDC?.usd ?? 1;
-    if (s.includes('USDT')) return allPrices?.USDT?.usd ?? 1;
-    if (s.includes('DAI')) return allPrices?.DAI?.usd ?? 1;
+    // Use the appropriate hook based on symbol
+    if (symbol === token0Symbol) {
+      return token0USDPrice.price ?? 0;
+    }
+    if (symbol === token1Symbol) {
+      return token1USDPrice.price ?? 0;
+    }
     return 0;
-  }, [allPrices]);
+  }, [token0Symbol, token1Symbol, token0USDPrice.price, token1USDPrice.price]);
 
   // Parse displayed token amount strings (handles "< 0.0001" and commas)
   const parseDisplayAmount = useCallback((value?: string): number => {
@@ -274,10 +343,32 @@ export function AddLiquidityForm({
     amount1,
     tickLower,
     tickUpper,
-    activeInputSide
+    activeInputSide,
+    zapSlippageToleranceBps: zapSlippageToleranceBps
   });
 
-  // Use the new transaction hooks (Uniswap-style)
+  // Use the same transaction hook for both regular and zap modes
+  const regularTransaction = useAddLiquidityTransactionV2({
+    token0Symbol,
+    token1Symbol,
+    amount0,
+    amount1,
+    tickLower,
+    tickUpper,
+    activeInputSide,
+    calculatedData,
+    onLiquidityAdded,
+    onOpenChange: setShowingTransactionSteps,
+    isZapMode,
+    zapInputToken,
+    zapSlippageToleranceBps: isZapMode ? zapSlippageToleranceBps : undefined,
+  });
+
+  // For zap mode, just use the regular transaction hook
+  // It already handles zap at lines 179-341 of useAddLiquidityTransactionV2.ts
+  const zapTransaction = regularTransaction;
+
+  // Use appropriate hook based on zap mode
   const {
     approvalData,
     isCheckingApprovals,
@@ -289,18 +380,19 @@ export function AddLiquidityForm({
     handleDeposit,
     refetchApprovals,
     reset: resetTransaction,
-  } = useAddLiquidityTransactionV2({
-    token0Symbol,
-    token1Symbol,
-    amount0,
-    amount1,
-    tickLower,
-    tickUpper,
-    activeInputSide,
-    calculatedData,
-    onLiquidityAdded,
-    onOpenChange: () => {},
-  });
+  } = isZapMode ? {
+    // Zap mode - use zap approval data from the transaction hook
+    approvalData: zapTransaction.approvalData,
+    isCheckingApprovals: zapTransaction.isCheckingApprovals,
+    isWorking: zapTransaction.isWorking,
+    isApproving: zapTransaction.isApproving,
+    isDepositConfirming: zapTransaction.isDepositConfirming,
+    isDepositSuccess: zapTransaction.isDepositSuccess,
+    handleApprove: zapTransaction.handleApprove,
+    handleDeposit: async () => {}, // Not used - zap uses handleZapSwapAndDeposit
+    refetchApprovals: zapTransaction.refetchApprovals,
+    reset: zapTransaction.reset,
+  } : regularTransaction;
 
   // Track which step we're on manually (no auto-progression)
   const [currentTransactionStep, setCurrentTransactionStep] = useState<'idle' | 'approving_token0' | 'approving_token1' | 'signing_permit' | 'depositing'>('idle');
@@ -448,6 +540,7 @@ export function AddLiquidityForm({
         setAmount1("");
         setAmount0FullPrecision("");
         setAmount1FullPrecision("");
+          setPriceImpact(null); // Reset price impact when tokens change
           setTickLower(sdkMinTick.toString());
           setTickUpper(sdkMaxTick.toString());
           setCurrentPoolTick(null);
@@ -994,111 +1087,33 @@ export function AddLiquidityForm({
     setXDomain([newMinTick, newMaxTick]);
   }, []);
 
-  // Handle use full balance
-  const handleUseFullBalance = (balanceString: string, tokenSymbolForDecimals: TokenSymbol, isToken0: boolean) => {
+  // Handle use full balance - now uses the same percentage hook as the MAX button
+  const handleUseFullBalance = (isToken0: boolean) => {
     try {
-      const numericBalance = parseFloat(balanceString);
-      if (isNaN(numericBalance) || numericBalance <= 0) return;
-
-      const formattedBalance = formatTokenDisplayAmount(numericBalance.toString(), tokenSymbolForDecimals);
-
+      // Use the percentage hook with 100% to get exact balance
       if (isToken0) {
-        setAmount0(formattedBalance);
+        handleToken0Percentage(100);
         setActiveInputSide('amount0');
       } else {
-        setAmount1(formattedBalance);
+        handleToken1Percentage(100);
         setActiveInputSide('amount1');
       }
+
+      // Reset transaction state when balance is used
+      resetTransaction();
+      setShowingTransactionSteps(false);
+      setCurrentTransactionStep('idle');
+      setPermitSignature(undefined);
     } catch (error) {
       // Handle error
     }
   };
 
-  // Handle preparation and submission with manual step progression
-  const handlePrepareAndSubmit = async () => {
-    if (isInsufficientBalance) {
-      showErrorToast("Insufficient Balance");
-      return;
-    }
-
-    if (parseFloat(amount0 || "0") <= 0 && parseFloat(amount1 || "0") <= 0) {
-      showErrorToast("Invalid Amount", "Must be greater than 0");
-      return;
-    }
-
-    // First click: switch to transaction steps view
-    if (!showingTransactionSteps) {
-      setShowingTransactionSteps(true);
-      return;
-    }
-
-    // Wait for approval data to load
-    if (!approvalData || isCheckingApprovals) {
-      return;
-    }
-
-    // Prevent concurrent execution - guard against multiple clicks
-    if (currentTransactionStep !== 'idle') {
-      return;
-    }
-
-    // Determine next step based on current state and approval data
-    // Check what's needed
-    if (approvalData.needsToken0ERC20Approval) {
-      setCurrentTransactionStep('approving_token0');
-      try {
-        await handleApprove(token0Symbol);
-        // handleApprove already calls refetchApprovals, but add small delay for RPC propagation
-        await new Promise(resolve => setTimeout(resolve, 500));
-      } catch (error) {
-        console.error('Token0 approval failed:', error);
-      } finally {
-        setCurrentTransactionStep('idle');
-      }
-      return;
-    }
-    if (approvalData.needsToken1ERC20Approval) {
-      setCurrentTransactionStep('approving_token1');
-      try {
-        await handleApprove(token1Symbol);
-        // handleApprove already calls refetchApprovals, but add small delay for RPC propagation
-        await new Promise(resolve => setTimeout(resolve, 500));
-      } catch (error) {
-        console.error('Token1 approval failed:', error);
-      } finally {
-        setCurrentTransactionStep('idle');
-      }
-      return;
-    }
-
-    if (approvalData.permitBatchData && !permitSignature) {
-      setCurrentTransactionStep('signing_permit');
-      try {
-        const freshSignature = await signPermit();
-        if (!freshSignature) {
-          setCurrentTransactionStep('idle');
-          return;
-        }
-      } catch (error) {
-        console.error('Permit signing failed:', error);
-      } finally {
-        setCurrentTransactionStep('idle');
-      }
-      return;
-    }
-
-    setCurrentTransactionStep('depositing');
-    try {
-      await handleDeposit(permitSignature);
-    } catch (error) {
-      console.error('Deposit failed:', error);
-    } finally {
-      setCurrentTransactionStep('idle');
-    }
-  };
+  // Old handlePrepareAndSubmit removed - now using TransactionFlowPanel
 
   const signPermit = useCallback(async (): Promise<string | undefined> => {
-    if (!approvalData?.permitBatchData || !approvalData?.signatureDetails) {
+    // Only valid for regular (non-zap) mode - zap mode uses different permit flow
+    if (isZapMode || !approvalData || !('permitBatchData' in approvalData) || !approvalData.permitBatchData || !approvalData.signatureDetails) {
       return undefined;
     }
 
@@ -1108,10 +1123,7 @@ export function AddLiquidityForm({
     }
 
     try {
-      toast('Sign in Wallet', {
-        icon: React.createElement(InfoIcon, { className: 'h-4 w-4' })
-      });
-
+      // Toast removed - shown by TransactionFlowPanel
       const valuesToSign = approvalData.permitBatchData.values || approvalData.permitBatchData;
       const signature = await (signer as any)._signTypedData(
         approvalData.signatureDetails.domain,
@@ -1151,53 +1163,9 @@ export function AddLiquidityForm({
       }
       throw error;
     }
-  }, [approvalData, signer]);
+  }, [approvalData, signer, isZapMode]);
 
-  // Determine button text based on current state and what's needed next
-  const getButtonText = () => {
-    if (isInsufficientBalance) {
-      return 'Insufficient Balance';
-    }
-
-    if (isWorking) {
-      if (currentTransactionStep === 'approving_token0') {
-        return `Approving ${token0Symbol}...`;
-      }
-      if (currentTransactionStep === 'approving_token1') {
-        return `Approving ${token1Symbol}...`;
-      }
-      if (currentTransactionStep === 'signing_permit') {
-        return 'Signing...';
-      }
-      if (currentTransactionStep === 'depositing' || isDepositConfirming) {
-        return 'Depositing...';
-      }
-      return 'Processing...';
-    }
-
-    // Not in transaction steps yet
-    if (!showingTransactionSteps) {
-      return 'Deposit';
-    }
-
-    // Waiting for approval data to load
-    if (!approvalData) {
-      return 'Preparing...';
-    }
-
-    // In transaction steps - show what will happen next
-    if (approvalData.needsToken0ERC20Approval) {
-      return `Approve ${token0Symbol}`;
-    }
-    if (approvalData.needsToken1ERC20Approval) {
-      return `Approve ${token1Symbol}`;
-    }
-    // Check if permit is needed (permitBatchData indicates permit is required)
-    if (approvalData.permitBatchData && !permitSignature) {
-      return 'Sign Permit';
-    }
-    return 'Deposit';
-  };
+  // Old getButtonText removed - now using TransactionFlowPanel
 
   // Effect to auto-apply active percentage preset when currentPrice changes OR when activePreset changes
   useEffect(() => {
@@ -1687,7 +1655,7 @@ export function AddLiquidityForm({
 
   // Calculate amount based on input and check approvals
   const debouncedCalculateAmountAndCheckApprovals = useCallback(
-    debounce(async (currentAmount0: string, currentAmount1: string, currentTickLower: string, currentTickUpper: string, inputSide: 'amount0' | 'amount1') => {
+    debounce(async (currentAmount0: string, currentAmount1: string, currentTickLower: string, currentTickUpper: string, inputSide: 'amount0' | 'amount1', isShowingTransactionSteps: boolean) => {
       if (!chainId) return;
 
       const tl = parseInt(currentTickLower);
@@ -1695,6 +1663,10 @@ export function AddLiquidityForm({
 
       if (isNaN(tl) || isNaN(tu) || tl >= tu) {
         setCalculatedData(null);
+        // Only reset price impact if not showing transaction steps (it was set on Deposit click)
+        if (!isShowingTransactionSteps) {
+          setPriceImpact(null);
+        }
         if (inputSide === 'amount0') {
           setAmount1("");
           setAmount1FullPrecision("");
@@ -1712,6 +1684,10 @@ export function AddLiquidityForm({
       
       if (primaryAmount === "Error" || isNaN(parseFloat(primaryAmount))) {
         setCalculatedData(null);
+        // Only reset price impact if not showing transaction steps
+        if (!isShowingTransactionSteps) {
+          setPriceImpact(null);
+        }
         if (inputSide === 'amount0' && currentAmount1 !== "Error") setAmount1("");
         else if (inputSide === 'amount1' && currentAmount0 !== "Error") setAmount0("");
         return;
@@ -1719,6 +1695,10 @@ export function AddLiquidityForm({
       
       if (!primaryAmount || parseFloat(primaryAmount) <= 0) {
         setCalculatedData(null);
+        // Only reset price impact if not showing transaction steps
+        if (!isShowingTransactionSteps) {
+          setPriceImpact(null);
+        }
         if (inputSide === 'amount0') {
           setAmount1("");
           setAmount1FullPrecision("");
@@ -1731,8 +1711,17 @@ export function AddLiquidityForm({
 
       setIsCalculating(true);
       setCalculatedData(null);
+      // Reset zap quote and price impact during input phase - will be calculated on Deposit click
+      // BUT: Don't reset if we're already showing transaction steps (price impact was set on Deposit click)
+      if (!isShowingTransactionSteps) {
+        setZapQuote(null);
+        setPriceImpact(null);
+      }
 
       try {
+        // For zap mode in input phase, use simple pool price estimation (same as non-zap)
+        // Heavy work (swap quote, price impact) happens when Deposit is clicked
+        // Original logic for both zap and non-zap mode (simple estimation)
         // Check if position is OOR - follow Uniswap's pattern
         const isOOR = currentPoolTick !== null && currentPoolTick !== undefined &&
                       (currentPoolTick < tl || currentPoolTick > tu);
@@ -1815,7 +1804,6 @@ export function AddLiquidityForm({
               setAmount1FullPrecision(rawFormattedAmount); // Store full precision
             }
           } catch (e) {
-            console.error('Error formatting amount1:', e);
             setAmount1("Error");
             showErrorToast("Calculation Error", "Amount parse failed");
             setCalculatedData(null);
@@ -1841,7 +1829,6 @@ export function AddLiquidityForm({
               setAmount0FullPrecision(rawFormattedAmount); // Store full precision
             }
           } catch (e) {
-            console.error('Error formatting amount0:', e);
             setAmount0("Error");
             showErrorToast("Calculation Error", "Amount parse failed");
             setCalculatedData(null);
@@ -1850,6 +1837,10 @@ export function AddLiquidityForm({
       } catch (error: any) {
         showErrorToast("Calculation Error", "Estimation failed");
         setCalculatedData(null);
+        // Only reset price impact if not showing transaction steps (it was set on Deposit click)
+        if (!isShowingTransactionSteps) {
+          setPriceImpact(null);
+        }
         setCurrentPrice(null);
         setCurrentPoolTick(null);
         setCurrentPriceLine(null);  
@@ -1859,12 +1850,12 @@ export function AddLiquidityForm({
         setIsCalculating(false);
       }
     }, 700),
-    [accountAddress, chainId, token0Symbol, token1Symbol]
+    [accountAddress, chainId, token0Symbol, token1Symbol, zapSlippageToleranceBps, updateAutoSlippage]
   );
 
   // Trigger calculation when needed
   useEffect(() => {
-    const currentDeps = { amount0, amount1, tickLower, tickUpper, activeInputSide };
+    const currentDeps = { amount0, amount1, tickLower, tickUpper, activeInputSide, zapSlippageToleranceBps: zapSlippageToleranceBps };
     let shouldCallDebouncedCalc = false;
 
     if (activeInputSide === 'amount0') {
@@ -1872,7 +1863,8 @@ export function AddLiquidityForm({
         currentDeps.amount0 !== prevCalculationDeps.current.amount0 ||
         currentDeps.tickLower !== prevCalculationDeps.current.tickLower ||
         currentDeps.tickUpper !== prevCalculationDeps.current.tickUpper ||
-        currentDeps.activeInputSide !== prevCalculationDeps.current.activeInputSide
+        currentDeps.activeInputSide !== prevCalculationDeps.current.activeInputSide ||
+        (isZapMode && currentDeps.zapSlippageToleranceBps !== prevCalculationDeps.current.zapSlippageToleranceBps)
       ) {
         shouldCallDebouncedCalc = true;
       }
@@ -1881,7 +1873,8 @@ export function AddLiquidityForm({
         currentDeps.amount1 !== prevCalculationDeps.current.amount1 ||
         currentDeps.tickLower !== prevCalculationDeps.current.tickLower ||
         currentDeps.tickUpper !== prevCalculationDeps.current.tickUpper ||
-        currentDeps.activeInputSide !== prevCalculationDeps.current.activeInputSide
+        currentDeps.activeInputSide !== prevCalculationDeps.current.activeInputSide ||
+        (isZapMode && currentDeps.zapSlippageToleranceBps !== prevCalculationDeps.current.zapSlippageToleranceBps)
       ) {
         shouldCallDebouncedCalc = true;
       }
@@ -1891,7 +1884,8 @@ export function AddLiquidityForm({
         currentDeps.amount0 !== prevCalculationDeps.current.amount0 ||
         currentDeps.amount1 !== prevCalculationDeps.current.amount1 ||
         currentDeps.tickLower !== prevCalculationDeps.current.tickLower ||
-        currentDeps.tickUpper !== prevCalculationDeps.current.tickUpper
+        currentDeps.tickUpper !== prevCalculationDeps.current.tickUpper ||
+        (isZapMode && currentDeps.zapSlippageToleranceBps !== prevCalculationDeps.current.zapSlippageToleranceBps)
       ) {
         // Only calculate if there's something to calculate with
         if (parseFloat(currentDeps.amount0) > 0 || parseFloat(currentDeps.amount1) > 0) {
@@ -1909,7 +1903,7 @@ export function AddLiquidityForm({
             const ticksAreValid = !isNaN(tlNum) && !isNaN(tuNum) && tlNum < tuNum;
 
             if (parseFloat(primaryAmount || "0") > 0 && ticksAreValid) {
-                debouncedCalculateAmountAndCheckApprovals(amount0, amount1, tickLower, tickUpper, inputSideForCalc);
+                debouncedCalculateAmountAndCheckApprovals(amount0, amount1, tickLower, tickUpper, inputSideForCalc, showingTransactionSteps);
             }
             // If primary amount is zero/invalid but was the active side, or ticks invalid, clear the other amount & calculated data.
             else if ((parseFloat(primaryAmount || "0") <= 0 && activeInputSide === inputSideForCalc) || !ticksAreValid) {
@@ -1947,6 +1941,9 @@ export function AddLiquidityForm({
     tickLower,
     tickUpper,
     activeInputSide,
+    isZapMode,
+    zapSlippageToleranceBps,
+    showingTransactionSteps,
     debouncedCalculateAmountAndCheckApprovals,
     resetTransaction,
   ]);
@@ -1977,6 +1974,30 @@ export function AddLiquidityForm({
       return;
     }
 
+    // ZAP MODE: Only check the input token balance
+    if (isZapMode) {
+      const inputTokenSymbol = zapInputToken === 'token0' ? token0Symbol : token1Symbol;
+      const inputTokenDef = zapInputToken === 'token0' ? t0Def : t1Def;
+      const inputBalanceData = zapInputToken === 'token0' ? token0BalanceData : token1BalanceData;
+      const inputAmount = zapInputToken === 'token0' ? amount0 : amount1;
+
+      const isInputPositive = parseFloat(inputAmount || "0") > 0;
+      if (isInputPositive && inputBalanceData?.value) {
+        try {
+          const valueToCheck = safeParseUnits(inputAmount, inputTokenDef.decimals);
+          if (valueToCheck > inputBalanceData.value) {
+            insufficient = true;
+          }
+        } catch {
+          // ignore parsing errors
+        }
+      }
+
+      setIsInsufficientBalance(insufficient);
+      return;
+    }
+
+    // TWO-TOKEN MODE: Check both token balances
     const isAmount0InputPositive = parseFloat(amount0 || "0") > 0;
     const isAmount1InputPositive = parseFloat(amount1 || "0") > 0;
 
@@ -1999,13 +2020,13 @@ export function AddLiquidityForm({
         insufficient = true;
       }
     }
-    
+
     if (!insufficient && valueToCheck1AsWei !== null && valueToCheck1AsWei > 0n && token1BalanceData?.value) {
       if (valueToCheck1AsWei > token1BalanceData.value) {
         insufficient = true;
       }
     }
-    
+
     // Additional check: if calculatedData is present and an amount is required but its input field is zero/empty.
     if (!insufficient && calculatedData) {
         if (!isAmount0InputPositive && BigInt(calculatedData.amount0) > 0n && token0BalanceData?.value) {
@@ -2021,7 +2042,7 @@ export function AddLiquidityForm({
     }
 
     setIsInsufficientBalance(insufficient);
-  }, [amount0, amount1, token0Symbol, token1Symbol, calculatedData, token0BalanceData, token1BalanceData]);
+  }, [amount0, amount1, token0Symbol, token1Symbol, calculatedData, token0BalanceData, token1BalanceData, isZapMode, zapInputToken]);
 
   // Fetch pool metrics and state ONCE per pool (cached)
   useEffect(() => {
@@ -2154,6 +2175,11 @@ export function AddLiquidityForm({
     return () => clearTimeout(timer);
   }, [selectedPoolId, tickLower, tickUpper, currentPoolSqrtPriceX96, currentPoolTick, token0Symbol, token1Symbol, amount0, amount1, calculatedData, cachedPoolMetrics, poolToken0, poolToken1]);
 
+  // Wrapper for convertTickToPrice that uses component's sdkMinTick and sdkMaxTick
+  const convertTickToPrice = useCallback((tick: number, currentPoolTick: number | null, currentPrice: string | null, baseTokenForPriceDisplay: string, token0Symbol: string, token1Symbol: string): string => {
+    return convertTickToPriceUtil(tick, currentPoolTick, currentPrice, baseTokenForPriceDisplay, token0Symbol, token1Symbol, sdkMinTick, sdkMaxTick);
+  }, [sdkMinTick, sdkMaxTick]);
+
   const getPriceRangeDisplay = useCallback(() => {
     if (currentPoolTick === null || !currentPrice || !tickLower || !tickUpper) return null;
     const currentPriceNum = parseFloat(currentPrice);
@@ -2234,7 +2260,6 @@ export function AddLiquidityForm({
       {activeTab === 'deposit' && (
         <>
           {/* Amount Input Step */}
-            <>
             {/* Header removed; now provided by parent container */}
 
               {/* Range Section - Step 1 - Hide when showing transaction steps */}
@@ -2397,7 +2422,61 @@ export function AddLiquidityForm({
                 />
               )}
 
-              {/* Input for Token 0 */}
+              {/* Zap Mode Toggle */}
+              <div
+                className="flex items-center justify-between p-4 rounded-lg bg-muted/20 mb-4 cursor-pointer transition-colors hover:bg-muted/30"
+                onClick={() => {
+                  if (isWorking || showingTransactionSteps) return;
+                  const newValue = !isZapMode;
+                  setIsZapMode(newValue);
+                  // Reset amounts when toggling mode
+                  setAmount0("");
+                  setAmount1("");
+                  setAmount0FullPrecision("");
+                  setAmount1FullPrecision("");
+                  setZapQuote(null);
+                  setPriceImpact(null); // Reset price impact when toggling zap mode
+                  setActiveInputSide(null);
+                  setCalculatedData(null);
+                  resetTransaction();
+                }}
+              >
+                <div className="flex items-center gap-2">
+                  <Label htmlFor="zap-mode" className="font-medium cursor-pointer">Single Token Mode</Label>
+                  <TooltipProvider delayDuration={0}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <CircleHelp className="h-3 w-3 text-muted-foreground" onClick={(e) => e.stopPropagation()} />
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="max-w-[280px] text-xs">
+                        <p className="mb-2">Provide liquidity using a single token. We'll automatically swap the optimal amount to maximize your liquidity.</p>
+                        <p className="text-[10px] text-muted-foreground/90">Note: Large deposits relative to pool liquidity may experience higher price impact during the swap.</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
+                <Switch
+                  id="zap-mode"
+                  checked={isZapMode}
+                  onCheckedChange={(checked) => {
+                    setIsZapMode(checked);
+                    // Reset amounts when toggling mode
+                    setAmount0("");
+                    setAmount1("");
+                    setAmount0FullPrecision("");
+                    setAmount1FullPrecision("");
+                    setZapQuote(null);
+                    setActiveInputSide(null);
+                    setCalculatedData(null);
+                    resetTransaction();
+                  }}
+                  disabled={isWorking || showingTransactionSteps}
+                  onClick={(e) => e.stopPropagation()}
+                />
+              </div>
+
+              {/* Input for Token 0 - Only show when not in zap mode or when token0 is selected */}
+              {(!isZapMode || zapInputToken === 'token0') && (
               <div className="space-y-2">
                 <motion.div
                   className={cn("rounded-lg bg-muted/30 p-4 group", { "outline outline-1 outline-muted": isAmount0Focused })}
@@ -2408,7 +2487,7 @@ export function AddLiquidityForm({
                     <Button
                       variant="ghost"
                       className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:text-muted-foreground"
-                      onClick={() => handleUseFullBalance(token0BalanceData?.formatted || "0", token0Symbol, true)}
+                      onClick={() => handleUseFullBalance(true)}
                       disabled={!canAddToken0 || isWorking || isCalculating}
                     >
                       {displayToken0Balance} {token0Symbol}
@@ -2442,6 +2521,9 @@ export function AddLiquidityForm({
                           // Clear full precision when user manually edits
                           setAmount0FullPrecision("");
                           resetTransaction();
+                          setShowingTransactionSteps(false);
+                          setCurrentTransactionStep('idle');
+                          setPermitSignature(undefined);
                           setAmount0(newValue);
                           setActiveInputSide('amount0');
                         }}
@@ -2512,6 +2594,10 @@ export function AddLiquidityForm({
                                     e.stopPropagation();
                                     handleToken0Percentage(percentage);
                                     setActiveInputSide('amount0');
+                                    resetTransaction();
+                                    setShowingTransactionSteps(false);
+                                    setCurrentTransactionStep('idle');
+                                    setPermitSignature(undefined);
                                   }}
                                 >
                                   {percentage === 100 ? 'MAX' : `${percentage}%`}
@@ -2525,15 +2611,19 @@ export function AddLiquidityForm({
                   </div>
                 </motion.div>
               </div>
+              )}
 
-              {/* Plus Icon */}
+              {/* Plus Icon - Only show when not in zap mode */}
+              {!isZapMode && (
               <div className="flex justify-center items-center my-2">
                 <div className="flex items-center justify-center h-8 w-8 rounded-full bg-muted/20">
                   <PlusIcon className="h-4 w-4 text-muted-foreground" />
                 </div>
               </div>
+              )}
 
-              {/* Input for Token 1 */}
+              {/* Input for Token 1 - Only show when not in zap mode or when token1 is selected */}
+              {(!isZapMode || zapInputToken === 'token1') && (
               <div className="space-y-2 mb-4">
                 <motion.div
                   className={cn("rounded-lg bg-muted/30 p-4 group", { "outline outline-1 outline-muted": isAmount1Focused })}
@@ -2544,7 +2634,7 @@ export function AddLiquidityForm({
                     <Button
                       variant="ghost"
                       className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:text-muted-foreground"
-                      onClick={() => handleUseFullBalance(token1BalanceData?.formatted || "0", token1Symbol, false)}
+                      onClick={() => handleUseFullBalance(false)}
                       disabled={!canAddToken1 || isWorking || isCalculating}
                     >
                       {displayToken1Balance} {token1Symbol}
@@ -2578,6 +2668,9 @@ export function AddLiquidityForm({
                           // Clear full precision when user manually edits
                           setAmount1FullPrecision("");
                           resetTransaction();
+                          setShowingTransactionSteps(false);
+                          setCurrentTransactionStep('idle');
+                          setPermitSignature(undefined);
                           setAmount1(newValue);
                           setActiveInputSide('amount1');
                         }}
@@ -2648,6 +2741,10 @@ export function AddLiquidityForm({
                                     e.stopPropagation();
                                     handleToken1Percentage(percentage);
                                     setActiveInputSide('amount1');
+                                    resetTransaction();
+                                    setShowingTransactionSteps(false);
+                                    setCurrentTransactionStep('idle');
+                                    setPermitSignature(undefined);
                                   }}
                                 >
                                   {percentage === 100 ? 'MAX' : `${percentage}%`}
@@ -2661,6 +2758,61 @@ export function AddLiquidityForm({
                   </div>
                 </motion.div>
               </div>
+              )}
+
+
+              {/* Token selector and zap info */}
+              {isZapMode && (
+                <div>
+                  <div className="flex gap-2 mb-4">
+                    <button
+                        type="button"
+                        onClick={() => {
+                          setZapInputToken('token0');
+                          setPriceImpact(null); // Reset price impact when switching input token
+                          // Move amount to token0 if switching from token1
+                          if (zapInputToken === 'token1' && amount1) {
+                            setAmount0(amount1);
+                            setAmount1("");
+                            setActiveInputSide('amount0');
+                          }
+                        }}
+                        className={`relative h-10 px-3 flex items-center justify-center gap-2 rounded-md border transition-all duration-200 overflow-hidden text-sm font-medium cursor-pointer flex-1 ${
+                          zapInputToken === 'token0'
+                            ? 'text-sidebar-primary border-sidebar-primary bg-button-primary'
+                            : 'border-sidebar-border bg-button hover:bg-accent hover:brightness-110 hover:border-white/30 text-white'
+                        }`}
+                        style={zapInputToken !== 'token0' ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
+                      >
+                        <Image src={getTokenIcon(token0Symbol)} alt={token0Symbol} width={16} height={16} className="rounded-full relative z-10"/>
+                        <span className="relative z-10">{token0Symbol}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setZapInputToken('token1');
+                          setPriceImpact(null); // Reset price impact when switching input token
+                          // Move amount to token1 if switching from token0
+                          if (zapInputToken === 'token0' && amount0) {
+                            setAmount1(amount0);
+                            setAmount0("");
+                            setActiveInputSide('amount1');
+                          }
+                        }}
+                        className={`relative h-10 px-3 flex items-center justify-center gap-2 rounded-md border transition-all duration-200 overflow-hidden text-sm font-medium cursor-pointer flex-1 ${
+                          zapInputToken === 'token1'
+                            ? 'text-sidebar-primary border-sidebar-primary bg-button-primary'
+                            : 'border-sidebar-border bg-button hover:bg-accent hover:brightness-110 hover:border-white/30 text-white'
+                        }`}
+                        style={zapInputToken !== 'token1' ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
+                      >
+                        <Image src={getTokenIcon(token1Symbol)} alt={token1Symbol} width={16} height={16} className="rounded-full relative z-10"/>
+                        <span className="relative z-10">{token1Symbol}</span>
+                      </button>
+                    </div>
+
+                </div>
+              )}
 
               {/* Estimated APY Display - Only show in first view, not in transaction steps */}
               {!showingTransactionSteps && (
@@ -2691,82 +2843,109 @@ export function AddLiquidityForm({
                 </div>
               )}
 
+
               {/* Current Price Display removed per updated UI */}
 
               {/* Transaction Steps - Show when user clicked deposit */}
-              {showingTransactionSteps && (
-                <div className="p-3 border border-dashed rounded-md bg-muted/10 mb-4">
-                  <p className="text-sm font-medium mb-2 text-foreground/80">Transaction Steps</p>
-                  <div className="space-y-1.5 text-xs text-muted-foreground">
-                    {/* ERC20 Approvals to Permit2 */}
-                    <div className="flex items-center justify-between">
-                      <span>Token Approvals</span>
-                      <span>
-                        { isApproving || isCheckingApprovals
-                          ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
-                          : (
-                            <motion.span
-                              animate={approvalWiggleControls}
-                              className={`text-xs font-mono ${
-                                !approvalData?.needsToken0ERC20Approval && !approvalData?.needsToken1ERC20Approval
-                                  ? 'text-green-500'
-                                  : approvalWiggleCount > 0
-                                  ? 'text-red-500'
-                                  : 'text-muted-foreground'
-                              }`}
-                            >
-                              {isCheckingApprovals
-                                ? 'Checking...'
-                                : !approvalData
-                                ? '-'
-                                : (() => {
-                                    // Calculate total approvals needed based on whether tokens are native AND amounts > 0 (single-sided)
-                                    const token0IsNative = TOKEN_DEFINITIONS[token0Symbol]?.address === NATIVE_TOKEN_ADDRESS;
-                                    const token1IsNative = TOKEN_DEFINITIONS[token1Symbol]?.address === NATIVE_TOKEN_ADDRESS;
-                                    const amount0Num = parseFloat(amount0 || '0');
-                                    const amount1Num = parseFloat(amount1 || '0');
+              {showingTransactionSteps && !isZapMode && (
+                <TransactionFlowPanel
+                  isActive={showingTransactionSteps}
+                  approvalData={approvalData}
+                  isCheckingApprovals={isCheckingApprovals}
+                  token0Symbol={token0Symbol}
+                  token1Symbol={token1Symbol}
+                  isDepositSuccess={isDepositSuccess}
+                  onApproveToken={regularTransaction.handleApprove}
+                  onSignPermit={signPermit}
+                  onExecute={handleDeposit}
+                  onRefetchApprovals={refetchApprovals}
+                  onBack={() => {
+                    setShowingTransactionSteps(false);
+                    resetTransaction();
+                    setCurrentTransactionStep('idle');
+                    setPermitSignature(undefined);
+                  }}
+                  onReset={() => {
+                    resetTransaction();
+                    setCurrentTransactionStep('idle');
+                    setPermitSignature(undefined);
+                  }}
+                  executeButtonLabel="Deposit"
+                  showBackButton={true}
+                  autoProgressOnApproval={false}
+                  calculatedData={calculatedData}
+                  tickLower={tickLower}
+                  tickUpper={tickUpper}
+                  amount0={amount0}
+                  amount1={amount1}
+                  currentPrice={currentPrice}
+                  currentPoolTick={currentPoolTick}
+                  currentPoolSqrtPriceX96={currentPoolSqrtPriceX96}
+                  selectedPoolId={selectedPoolId}
+                  poolAPY={parseFloat(estimatedApy) / 100 || null}
+                  estimatedApy={estimatedApy}
+                  getUsdPriceForSymbol={getUSDPriceForSymbol}
+                  convertTickToPrice={convertTickToPrice}
+                />
+              )}
 
-                                    // Only count non-native tokens with non-zero amounts
-                                    const maxNeeded = (token0IsNative || amount0Num === 0 ? 0 : 1) + (token1IsNative || amount1Num === 0 ? 0 : 1);
-                                    const totalNeeded = [approvalData.needsToken0ERC20Approval, approvalData.needsToken1ERC20Approval].filter(Boolean).length;
-                                    const completed = maxNeeded - totalNeeded;
-                                    return `${completed}/${maxNeeded}`;
-                                  })()}
-                            </motion.span>
-                          )
-                        }
-                      </span>
-                    </div>
-
-                    {/* Permit2 Signature */}
-                    <div className="flex items-center justify-between">
-                      <span>Permit Signature</span>
-                      <span>
-                        { currentTransactionStep === 'signing_permit'
-                          ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
-                          : permitSignature
-                          ? <span className="text-xs font-mono text-green-500">1/1</span>
-                          : <span className="text-xs font-mono">0/1</span>
-                        }
-                      </span>
-                    </div>
-
-                    {/* Deposit Transaction */}
-                    <div className="flex items-center justify-between">
-                      <span>Deposit Transaction</span>
-                      <span>
-                        { isDepositConfirming
-                          ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
-                          : (
-                            <span className={`text-xs font-mono ${isDepositSuccess ? 'text-green-500' : ''}`}>
-                              {isDepositSuccess ? '1/1' : '0/1'}
-                            </span>
-                          )
-                        }
-                      </span>
-                    </div>
-                  </div>
-                </div>
+              {/* Zap Transaction Flow - Uses same panel, hook handles zap logic internally */}
+              {showingTransactionSteps && isZapMode && (
+                <TransactionFlowPanel
+                  isActive={showingTransactionSteps}
+                  approvalData={approvalData}
+                  isCheckingApprovals={isCheckingApprovals}
+                  token0Symbol={token0Symbol}
+                  token1Symbol={token1Symbol}
+                  isDepositSuccess={isDepositSuccess}
+                  isZapMode={true}
+                  zapInputToken={zapInputToken}
+                  onApproveToken={handleApprove}
+                  onSignPermit={signPermit}
+                  onExecuteZap={zapTransaction.handleZapSwapAndDeposit}
+                  onExecute={handleDeposit}
+                  onRefetchApprovals={refetchApprovals}
+                  onBack={() => {
+                    setShowingTransactionSteps(false);
+                    resetTransaction();
+                    setCurrentTransactionStep('idle');
+                    setPermitSignature(undefined);
+                  }}
+                  onReset={() => {
+                    resetTransaction();
+                    setCurrentTransactionStep('idle');
+                    setPermitSignature(undefined);
+                  }}
+                  executeButtonLabel="Execute Zap"
+                  showBackButton={true}
+                  autoProgressOnApproval={false}
+                  slippageControl={
+                    <SlippageControl
+                      currentSlippage={currentSlippage}
+                      isAuto={isAutoSlippage}
+                      autoSlippage={autoSlippageValue}
+                      onSlippageChange={setSlippage}
+                      onAutoToggle={setAutoMode}
+                      onCustomToggle={setCustomMode}
+                    />
+                  }
+                  priceImpactWarning={priceImpactWarning}
+                  calculatedData={calculatedData}
+                  tickLower={tickLower}
+                  tickUpper={tickUpper}
+                  amount0={amount0}
+                  amount1={amount1}
+                  currentPrice={currentPrice}
+                  currentPoolTick={currentPoolTick}
+                  currentPoolSqrtPriceX96={currentPoolSqrtPriceX96}
+                  selectedPoolId={selectedPoolId}
+                  poolAPY={parseFloat(estimatedApy) / 100 || null}
+                  estimatedApy={estimatedApy}
+                  getUsdPriceForSymbol={getUSDPriceForSymbol}
+                  convertTickToPrice={convertTickToPrice}
+                  zapQuote={zapQuote}
+                  currentSlippage={currentSlippage}
+                />
               )}
 
               {/* Continue Button */}
@@ -2774,57 +2953,11 @@ export function AddLiquidityForm({
                 <div className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md border border-sidebar-border bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30"
                   style={{ backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
                 >
-                  {/* @ts-ignore */}
+                  {/* @ts-expect-error custom element provided by wallet kit */}
                   <appkit-button className="absolute inset-0 z-10 block h-full w-full cursor-pointer p-0 opacity-0" />
                   <span className="relative z-0 pointer-events-none">Connect Wallet</span>
                 </div>
-              ) : showingTransactionSteps ? (
-                // Split button layout: Back | Deposit/Approve/etc
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    className="w-1/3 border-sidebar-border bg-button hover:bg-muted/30"
-                    onClick={() => {
-                      setShowingTransactionSteps(false);
-                      resetTransaction();
-                    }}
-                    disabled={isWorking}
-                    style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
-                  >
-                    Back
-                  </Button>
-                  <Button
-                    className={cn(
-                      "flex-1",
-                      (isWorking || isCalculating || isPoolStateLoading || isCheckingApprovals ||
-                      (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0")) ||
-                      isInsufficientBalance) ?
-                        "relative border border-sidebar-border bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 !opacity-100 cursor-default text-white/75"
-                        :
-                        "text-sidebar-primary border border-sidebar-primary bg-button-primary hover-button-primary"
-                    )}
-                    onClick={handlePrepareAndSubmit}
-                    disabled={isWorking ||
-                      isCalculating ||
-                      isPoolStateLoading ||
-                      isCheckingApprovals ||
-                      (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0")) ||
-                      isInsufficientBalance
-                    }
-                    style={(isWorking || isCalculating || isPoolStateLoading || isCheckingApprovals ||
-                      (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0")) ||
-                      isInsufficientBalance) ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
-                  >
-                    <span className={cn(
-                      (isWorking || isCheckingApprovals || isPoolStateLoading)
-                        ? "animate-pulse"
-                        : ""
-                    )}>
-                      {getButtonText()}
-                    </span>
-                  </Button>
-                </div>
-              ) : (
+              ) : !showingTransactionSteps ? (
                 // Single button layout for initial view
                 <Button
                   className={cn(
@@ -2836,7 +2969,116 @@ export function AddLiquidityForm({
                       :
                       "text-sidebar-primary border border-sidebar-primary bg-button-primary hover-button-primary"
                   )}
-                  onClick={handlePrepareAndSubmit}
+                  onClick={async () => {
+                    if (isInsufficientBalance) {
+                      showErrorToast("Insufficient Balance");
+                      return;
+                    }
+                    if (parseFloat(amount0 || "0") <= 0 && parseFloat(amount1 || "0") <= 0) {
+                      showErrorToast("Invalid Amount", "Must be greater than 0");
+                      return;
+                    }
+
+                    // For zap mode, validate input amount and calculate zap quote with price impact
+                    if (isZapMode) {
+                      const inputAmount = zapInputToken === 'token0' ? amount0 : amount1;
+                      if (!inputAmount || parseFloat(inputAmount) <= 0) {
+                        showErrorToast("Invalid Amount", "Must provide input amount");
+                        return;
+                      }
+
+                      // Calculate zap quote and price impact before showing transaction steps
+                      setIsCalculating(true);
+                      try {
+                        const tl = parseInt(tickLower);
+                        const tu = parseInt(tickUpper);
+                        const primaryTokenSymbol = zapInputToken === 'token0' ? token0Symbol : token1Symbol;
+                        const primaryAmount = cleanAmountForAPI(inputAmount);
+
+                        const response = await fetch('/api/liquidity/prepare-zap-mint-tx', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            userAddress: accountAddress || '0x0000000000000000000000000000000000000001',
+                            token0Symbol,
+                            token1Symbol,
+                            inputAmount: primaryAmount,
+                            inputTokenSymbol: primaryTokenSymbol,
+                            userTickLower: tl,
+                            userTickUpper: tu,
+                            chainId,
+                            slippageTolerance: zapSlippageToleranceBps,
+                          }),
+                        });
+
+                        if (response.ok) {
+                          const data = await response.json();
+
+                          if ('zapQuote' in data) {
+                            // Capture price impact from API response (works for both approval and transaction responses)
+                            const priceImpactNum = parseFloat(data.zapQuote.priceImpact || "0");
+                            if (!isNaN(priceImpactNum) && priceImpactNum > 0) {
+                              setPriceImpact(priceImpactNum);
+                            } else {
+                              setPriceImpact(null);
+                            }
+
+                            // Set zap quote for display
+                            setZapQuote(data.zapQuote);
+
+                            // Derive an auto slippage suggestion from price impact with a small buffer
+                            // Cap at 5.0% max (not 5.5%) to respect user's max slippage limit
+                            const priceImpactPercent = Number.parseFloat(data.zapQuote.priceImpact ?? '');
+                            const bufferedTarget = Number.isFinite(priceImpactPercent)
+                              ? priceImpactPercent + 0.3
+                              : DEFAULT_LP_SLIPPAGE;
+                            const MAX_SLIPPAGE_FOR_ZAP = 5.0; // Hard cap at 5.0% for zap mode
+                            const suggestedAutoSlippage = Math.min(
+                              MAX_SLIPPAGE_FOR_ZAP, // Use 5.0% cap instead of MAX_AUTO_SLIPPAGE_TOLERANCE (5.5%)
+                              Math.max(DEFAULT_LP_SLIPPAGE, bufferedTarget)
+                            );
+                            updateAutoSlippage(Number(suggestedAutoSlippage.toFixed(2)));
+
+                            // Update calculated data with actual zap amounts (only if details exist - not present in approval response)
+                            if ('details' in data && data.details) {
+                              setCalculatedData({
+                                amount0: data.details.token0.amount,
+                                amount1: data.details.token1.amount,
+                                liquidity: data.details.liquidity,
+                                finalTickLower: data.details.finalTickLower,
+                                finalTickUpper: data.details.finalTickUpper,
+                                currentPoolTick: currentPoolTick || undefined,
+                                currentPrice: currentPrice || undefined,
+                              });
+                            }
+                          } else {
+                            setPriceImpact(null);
+                            setZapQuote(null);
+                          }
+                        } else {
+                          const error = await response.json();
+                          setPriceImpact(null);
+                          setZapQuote(null);
+                          // Show error but don't prevent showing transaction steps
+                          if (error.message?.includes('Price impact') || error.message?.includes('slippage')) {
+                            showErrorToast('Slippage Protection', error.message);
+                          } else {
+                            showErrorToast('Failed to calculate zap quote', error.message);
+                          }
+                        }
+                      } catch (error: any) {
+                        console.error('[AddLiquidityForm] Error calculating zap quote on Deposit:', error);
+                        setPriceImpact(null);
+                        setZapQuote(null);
+                        showErrorToast('Failed to calculate zap quote', error.message);
+                      } finally {
+                        setIsCalculating(false);
+                      }
+                    }
+
+                    // Show transaction steps after zap quote is calculated (or immediately for non-zap)
+                    setShowingTransactionSteps(true);
+                  }}
                   disabled={isWorking ||
                     isCalculating ||
                     isPoolStateLoading ||
@@ -2849,15 +3091,14 @@ export function AddLiquidityForm({
                     isInsufficientBalance) ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
                 >
                   <span className={cn(
-                    (isWorking || isCheckingApprovals || isPoolStateLoading)
+                    (isCalculating || isPoolStateLoading)
                       ? "animate-pulse"
                       : ""
                   )}>
-                    {getButtonText()}
+                    {isInsufficientBalance ? 'Insufficient Balance' : 'Deposit'}
                   </span>
                 </Button>
-              )}
-            </>
+              ) : null}
         </>
       )}
 
@@ -2874,6 +3115,7 @@ export function AddLiquidityForm({
           <span className="text-muted-foreground">Swap functionality coming soon</span>
         </div>
       )}
+
     </div>
   );
 } 

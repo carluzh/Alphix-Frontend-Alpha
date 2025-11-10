@@ -5,11 +5,14 @@ import {
     PERMIT2_ADDRESS,
     PERMIT_EXPIRATION_DURATION_SECONDS,
     PERMIT_SIG_DEADLINE_DURATION_SECONDS,
+    AVERAGE_L2_BLOCK_TIME_MS,
+    MaxAllowanceTransferAmount,
     getPermit2Domain,
 } from '../../../lib/swap-constants';
 import { TokenSymbol } from '../../../lib/pools-config';
 import { iallowance_transfer_abi } from '../../../lib/abis/IAllowanceTransfer_abi';
 import { getUniversalRouterAddress } from '../../../lib/pools-config';
+import { Erc20AbiDefinition } from '../../../lib/swap-constants';
 
 // Ensure this matches the structure viem expects for signTypedData
 type PermitSingleMessage = {
@@ -70,6 +73,17 @@ export default async function handler(req: PreparePermitRequest, res: NextApiRes
             return res.status(400).json({ ok: false, message: `Chain ID ${chainId} not supported` });
         }
 
+        // Check ERC20 approval to Permit2 first
+        const tokenAllowance = await publicClient.readContract({
+            address: fromTokenAddress as Address,
+            abi: Erc20AbiDefinition,
+            functionName: 'allowance',
+            args: [userAddress as Address, PERMIT2_ADDRESS],
+        }) as bigint;
+
+        const requiredAmount = BigInt(amountIn);
+        const isApproved = tokenAllowance >= requiredAmount;
+
         const [currentAmount, currentExpiration, nonce] = await publicClient.readContract({
             address: PERMIT2_ADDRESS,
             abi: iallowance_transfer_abi,
@@ -77,14 +91,18 @@ export default async function handler(req: PreparePermitRequest, res: NextApiRes
             args: [userAddress as Address, fromTokenAddress as Address, UNIVERSAL_ROUTER_ADDRESS],
         }) as [bigint, number, number];
 
-        const now = Math.floor(Date.now() / 1000);
-        const requiredAmount = BigInt(amountIn);
+        // Add block time buffer to ensure signature is valid when transaction is submitted
+        // Using L2 block time since we're on Base
+        const now = Math.floor((Date.now() + AVERAGE_L2_BLOCK_TIME_MS) / 1000);
 
-        if (currentAmount > requiredAmount && currentExpiration > now) {
+        // Use >= for both checks (Uniswap standard)
+        // Permit can be reused if amount is sufficient AND not expired
+        if (currentAmount >= requiredAmount && currentExpiration >= now) {
             return res.status(200).json({
                 ok: true,
                 message: 'Valid permit exists',
                 needsPermit: false,
+                isApproved,
                 existingPermit: {
                     amount: currentAmount.toString(),
                     expiration: currentExpiration,
@@ -95,7 +113,8 @@ export default async function handler(req: PreparePermitRequest, res: NextApiRes
 
         const expiration = now + PERMIT_EXPIRATION_DURATION_SECONDS;
         const sigDeadline = BigInt(now + PERMIT_SIG_DEADLINE_DURATION_SECONDS);
-        const permitAmount = requiredAmount + 1n;
+        // Use max allowance instead of exact amount (allows permit reuse across multiple swaps)
+        const permitAmount = MaxAllowanceTransferAmount;
 
         const permit: PermitSingleMessage = {
             details: {
@@ -127,6 +146,7 @@ export default async function handler(req: PreparePermitRequest, res: NextApiRes
             ok: true,
             message: 'Permit signature required',
             needsPermit: true,
+            isApproved,
             permitData: {
                 domain,
                 types,

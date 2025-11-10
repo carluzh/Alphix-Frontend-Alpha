@@ -3,7 +3,10 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 /**
  * Token Pair Price Chart API
  *
- * Fetches 7-day price data from CoinGecko for token pairs.
+ * Fetches 7-day historical price data from CoinGecko for token pairs.
+ * NOTE: This endpoint still uses CoinGecko for historical price data (7 days).
+ * Current USD prices use the quote API (see useTokenUSDPrice hook).
+ * Historical on-chain price data would require querying historical pool states.
  * Returns prices in blockchain format (token1/token0).
  * Includes 15-minute server-side caching.
  */

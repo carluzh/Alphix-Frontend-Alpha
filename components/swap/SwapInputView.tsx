@@ -9,6 +9,7 @@ import {
   ChevronsRight,
   InfoIcon,
   ChevronDown as ChevronDownIcon,
+  AlertTriangle,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -20,6 +21,7 @@ import { Token, FeeDetail } from './swap-interface';
 import { TokenSelector, TokenSelectorToken } from './TokenSelector';
 import { getToken } from '@/lib/pools-config';
 import { findBestRoute } from '@/lib/routing-engine';
+import { SlippageControl } from './SlippageControl';
 
 interface SwapInputViewProps {
   displayFromToken: Token;
@@ -30,7 +32,6 @@ interface SwapInputViewProps {
   onToAmountChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   activelyEditedSide: 'from' | 'to';
   handleSwapTokens: () => void;
-  handleUseFullBalance: (token: Token, isFrom: boolean) => void;
   handleUsePercentage: (percentage: number, isFrom: boolean) => void;
   availableTokens: Token[];
   onFromTokenSelect: (token: Token) => void;
@@ -66,9 +67,17 @@ interface SwapInputViewProps {
   onSelectPoolForChart?: (poolIndex: number) => void;
   swapContainerRect: { top: number; left: number; width: number; height: number; };
   slippage: number;
+  isAutoSlippage: boolean;
+  autoSlippageValue: number;
   onSlippageChange: (newSlippage: number) => void;
+  onAutoSlippageToggle: () => void;
+  onCustomSlippageToggle: () => void;
   showRoute?: boolean;
   onRouteHoverChange?: (hover: boolean) => void;
+  priceImpactWarning?: {
+    severity: 'medium' | 'high';
+    message: string;
+  } | null;
 }
 
 export function SwapInputView({
@@ -80,7 +89,6 @@ export function SwapInputView({
   onToAmountChange,
   activelyEditedSide,
   handleSwapTokens,
-  handleUseFullBalance,
   handleUsePercentage,
   availableTokens,
   onFromTokenSelect,
@@ -108,15 +116,16 @@ export function SwapInputView({
   onSelectPoolForChart,
   swapContainerRect,
   slippage,
+  isAutoSlippage,
+  autoSlippageValue,
   onSlippageChange,
+  onAutoSlippageToggle,
+  onCustomSlippageToggle,
   showRoute = true,
   onRouteHoverChange,
+  priceImpactWarning,
 }: SwapInputViewProps) {
   const [hoveredRouteIndex, setHoveredRouteIndex] = React.useState<number | null>(null);
-  const [isSlippageEditing, setIsSlippageEditing] = React.useState(false);
-  const [customSlippage, setCustomSlippage] = React.useState("");
-  const [isCustomSlippage, setIsCustomSlippage] = React.useState(false);
-  const slippageRef = React.useRef<HTMLDivElement>(null);
   const [clickedTokenIndex, setClickedTokenIndex] = React.useState<number | null>(0);
   const ignoreNextOutsideClickRef = React.useRef(false);
   const hoverPreviewActiveRef = React.useRef(false);
@@ -132,47 +141,12 @@ export function SwapInputView({
     return `${percent.toFixed(decimals)}%`;
   }, []);
 
-  const presetSlippages = [0.05, 0.10, 0.50, 1.00];
-
   React.useEffect(() => {
     if (onSelectPoolForChart) {
       onSelectPoolForChart(0);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const handleSlippageSelect = (value: number) => {
-    onSlippageChange(value);
-    setIsCustomSlippage(false);
-  };
-
-  const handleCustomSlippageInput = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
-    if (value === "" || /^\d*\.?\d*$/.test(value)) {
-      const numValue = parseFloat(value);
-      if (value === "" || (numValue >= 0 && numValue <= 99)) {
-        setCustomSlippage(value);
-      }
-    }
-  };
-
-  const handleCustomSlippageSubmit = () => {
-    if (customSlippage && !isNaN(parseFloat(customSlippage))) {
-      const rounded = Math.round(parseFloat(customSlippage) * 100) / 100;
-      onSlippageChange(rounded);
-      setCustomSlippage("");
-    }
-  };
-
-  const handleCustomSlippageKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      handleCustomSlippageSubmit();
-    } else if (e.key === 'Escape') {
-      setIsSlippageEditing(false);
-      setIsCustomSlippage(false);
-      setCustomSlippage("");
-    }
-  };
 
   React.useEffect(() => {
     if (balanceWiggleCount > 0) {
@@ -198,10 +172,6 @@ export function SwapInputView({
     handleFromAmountChange(e);
   };
 
-  React.useEffect(() => {
-    return;
-  }, [isSlippageEditing]);
-
   return (
     <motion.div
       key="input"
@@ -225,10 +195,10 @@ export function SwapInputView({
           <Button
             variant="ghost"
             className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent"
-            onClick={() => handleUseFullBalance(displayFromToken, true)}
+            onClick={() => handleUsePercentage(100, true)}
             disabled={!isConnected}
           >
-            {isConnected ? (isLoadingCurrentFromTokenBalance ? "Loading..." : displayFromToken.balance) : "~"} {displayFromToken.symbol}
+            {isConnected ? (isLoadingCurrentFromTokenBalance ? <span className="inline-block h-3 w-16 bg-muted/60 rounded animate-pulse" /> : displayFromToken.balance) : "~"} {displayFromToken.symbol}
           </Button>
         </div>
         <div className="flex items-center gap-2">
@@ -300,7 +270,7 @@ export function SwapInputView({
         <Button
           variant="ghost"
           size="icon"
-          className="rounded-lg bg-muted/30 z-10 h-8 w-8"
+          className="rounded-lg bg-muted/30 border-0 hover:bg-muted/50 hover:border hover:border-sidebar-border/60 z-10 h-8 w-8"
           onClick={handleSwapTokens}
           disabled={!isConnected || isAttemptingSwitch}
         >
@@ -322,10 +292,10 @@ export function SwapInputView({
           <Button
             variant="ghost"
             className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent"
-            onClick={() => handleUseFullBalance(displayToToken, false)}
+            onClick={() => handleUsePercentage(100, false)}
             disabled={!isConnected}
           >
-            {isConnected ? (isLoadingCurrentToTokenBalance ? "Loading..." : displayToToken.balance) : "~"} {displayToToken.symbol}
+            {isConnected ? (isLoadingCurrentToTokenBalance ? <span className="inline-block h-3 w-16 bg-muted/60 rounded animate-pulse" /> : displayToToken.balance) : "~"} {displayToToken.symbol}
           </Button>
         </div>
         <div className="flex items-center gap-2">
@@ -426,29 +396,6 @@ export function SwapInputView({
                         formatPercentFromBps(routeFees[selectedPoolIndexForChart].fee)
                       )}
                     </span>
-                    <TooltipProvider delayDuration={0}>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <InfoIcon className="h-3 w-3 text-muted-foreground/60 hover:text-muted-foreground cursor-pointer" />
-                        </TooltipTrigger>
-                        <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs max-w-xs">
-                          <p>
-                            {(() => {
-                              const fromSym = routeInfo?.path?.[selectedPoolIndexForChart] ?? displayFromToken.symbol;
-                              const toIdx = Math.min((routeInfo?.path?.length || 1) - 1, selectedPoolIndexForChart + 1);
-                              const toSym = routeInfo?.path?.[toIdx] ?? displayToToken.symbol;
-                              return (
-                                <span className="inline-flex items-center gap-1.5">
-                                  <span>{fromSym}</span>
-                                  <ChevronsRight className="h-3 w-3 text-muted-foreground/70" />
-                                  <span>{toSym}</span>
-                                </span>
-                              );
-                            })()}
-                          </p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
                   </div>
                 )}
 
@@ -679,91 +626,39 @@ export function SwapInputView({
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between text-xs text-muted-foreground">
-                  <div className="flex items-center gap-1.5" ref={slippageRef}>
-                    <span>Max Slippage:</span>
-                    {quoteError ? (
-                      <span className="text-foreground/80 font-medium">-</span>
-                    ) : (
-                      <button
-                        type="button"
-                        className="flex items-center gap-0.5 text-foreground/80 font-medium"
-                        onClick={() => {
-                          ignoreNextOutsideClickRef.current = true;
-                          setIsSlippageEditing((v) => !v);
-                          setCustomSlippage(slippage.toString());
-                        }}
-                      >
-                        <span>{slippage}%</span>
-                        <ChevronDownIcon className="h-3 w-3 text-muted-foreground/60 hover:text-muted-foreground" />
-                      </button>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span>Min Received:</span>
-                    <span className="text-foreground/80 font-medium">
-                      {calculatedValues.minimumReceived} {displayToToken.symbol}
-                    </span>
-                  </div>
+                <SlippageControl
+                  currentSlippage={slippage}
+                  isAuto={isAutoSlippage}
+                  autoSlippage={autoSlippageValue}
+                  onSlippageChange={onSlippageChange}
+                  onAutoToggle={onAutoSlippageToggle}
+                  onCustomToggle={onCustomSlippageToggle}
+                />
+
+                <div className="flex items-center justify-between text-xs text-muted-foreground mt-1.5">
+                  <span>Min Received:</span>
+                  <span className="text-foreground/80 font-medium">
+                    {calculatedValues.minimumReceived} {displayToToken.symbol}
+                  </span>
                 </div>
-                <AnimatePresence initial={false}>
-                  {!quoteError && isSlippageEditing && (
-                    <motion.div
-                      key="slippage-row"
-                      className="flex flex-wrap items-center gap-1.5 pt-1"
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: 'auto', opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      transition={{ duration: 0.18, ease: 'easeOut' }}
-                    >
-                      {presetSlippages.map((val) => (
-                        <button
-                          key={val}
-                          type="button"
-                          className={cn(
-                            "px-1.5 py-0.5 text-xs font-normal rounded-md border border-primary bg-button text-muted-foreground transition-colors",
-                            "hover:brightness-110 hover:border-white/30",
-                            slippage === val && "border-white/30"
-                          )}
-                          onClick={() => handleSlippageSelect(val)}
-                        >
-                          {val.toFixed(2)}%
-                        </button>
-                      ))}
-                      {!isCustomSlippage ? (
-                        <button
-                          type="button"
-                          className="px-1.5 py-0.5 text-xs font-normal rounded-md border border-primary bg-button text-muted-foreground transition-colors hover:brightness-110 hover:border-white/30"
-                          onClick={() => {
-                            setIsCustomSlippage(true);
-                            setCustomSlippage(slippage.toString());
-                          }}
-                        >
-                          Custom
-                        </button>
-                      ) : (
-                        <div className="flex items-center gap-1">
-                          <input
-                            type="text"
-                            value={customSlippage}
-                            onChange={handleCustomSlippageInput}
-                            onKeyDown={handleCustomSlippageKeyDown}
-                            onBlur={handleCustomSlippageSubmit}
-                            placeholder="0.00"
-                            className="w-14 px-1 py-0.5 text-xs text-center bg-background border-0 outline-none focus:outline-none focus:ring-0 focus-visible:ring-0 rounded"
-                            autoFocus
-                          />
-                          <span className="text-xs">%</span>
-                        </div>
-                      )}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
               </div>
             )}
           </>
         )}
       </div>
+
+      {/* Price Impact Warning - banner style with smaller text */}
+      {priceImpactWarning && (
+        <div className={cn(
+          "mt-3 flex items-center gap-2 rounded-md px-3 py-2 text-xs",
+          priceImpactWarning.severity === 'high' 
+            ? "bg-red-500/10 text-red-500 border border-red-500/20"
+            : "bg-orange-500/10 text-orange-500 border border-orange-500/20"
+        )}>
+          <AlertTriangle className="h-3 w-3 shrink-0" />
+          <span className="font-medium">{priceImpactWarning.message}</span>
+        </div>
+      )}
 
       <div className="mt-4 h-10">
         {!isMounted ? null : isConnected ? (
