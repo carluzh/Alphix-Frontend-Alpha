@@ -16,7 +16,9 @@ import { ERC20_ABI } from '@/lib/abis/erc20';
 import { type Hex, maxUint256, formatUnits } from 'viem';
 import { publicClient } from '@/lib/viemClient';
 import { invalidateAfterTx } from '@/lib/invalidation';
-import { invalidateActivityCache, invalidateUserPositionsCache, invalidateUserPositionIdsCache } from '@/lib/client-cache';
+import { invalidateUserPositionIdsCache } from '@/lib/client-cache';
+import { safeOptimisticTx } from '@/lib/safe-optimistic-tx';
+import { getPoolById } from '@/lib/pools-config';
 
 export interface UseZapLiquidityTransactionProps {
   token0Symbol: TokenSymbol;
@@ -26,6 +28,7 @@ export interface UseZapLiquidityTransactionProps {
   tickLower: string;
   tickUpper: string;
   calculatedData: any; // From calculate-amounts endpoint
+  poolId?: string; // Pool ID for proper invalidation
   onLiquidityAdded: (token0Symbol?: string, token1Symbol?: string, txInfo?: { txHash: `0x${string}`; blockNumber?: bigint }) => void;
 }
 
@@ -37,6 +40,7 @@ export function useZapLiquidityTransaction({
   tickLower,
   tickUpper,
   calculatedData,
+  poolId,
   onLiquidityAdded,
 }: UseZapLiquidityTransactionProps) {
   const queryClient = useQueryClient();
@@ -437,27 +441,88 @@ export function useZapLiquidityTransaction({
     }
   }, [mintApprovalData, checkMintApprovals, depositAsync]);
 
-  // Success handler
+  // Success handler with safe optimistic updates
   useEffect(() => {
     if (isDepositSuccess && depositTxHash) {
       const handleSuccess = async () => {
-        toast.success('Liquidity Added Successfully!', {
-          icon: React.createElement(BadgeCheck, { className: 'h-4 w-4 text-green-500' }),
-        });
+        try {
+          // Get pool configuration for subgraph ID
+          const poolConfig = poolId ? getPoolById(poolId) : null;
+          const subgraphId = poolConfig?.subgraphId;
 
-        // Invalidate caches
-        invalidateAfterTx(queryClient, { owner: accountAddress! });
-        invalidateActivityCache(accountAddress!);
-        invalidateUserPositionsCache(accountAddress!);
-        invalidateUserPositionIdsCache(accountAddress!);
+          // Calculate TVL delta from liquidity amounts
+          let tvlDelta = 0;
+          if (zapCalculation?.expectedToken0Amount && zapCalculation?.expectedToken1Amount) {
+            const { getTokenPrice } = await import('@/lib/price-service');
+            const { formatUnits } = await import('viem');
+            const { getToken } = await import('@/lib/pools-config');
 
-        // Callback
-        onLiquidityAdded(token0Symbol, token1Symbol, { txHash: depositTxHash });
+            const token0Config = getToken(token0Symbol);
+            const token1Config = getToken(token1Symbol);
+            const amt0 = parseFloat(formatUnits(BigInt(zapCalculation.expectedToken0Amount), token0Config?.decimals || 18));
+            const amt1 = parseFloat(formatUnits(BigInt(zapCalculation.expectedToken1Amount), token1Config?.decimals || 18));
+
+            const [p0, p1] = await Promise.all([
+              getTokenPrice(token0Symbol),
+              getTokenPrice(token1Symbol)
+            ]);
+
+            tvlDelta = (p0 ? amt0 * p0 : 0) + (p1 ? amt1 * p1 : 0);
+          }
+
+          // Calculate volume delta from swap amount (zap includes a swap)
+          let volumeDelta = 0;
+          if (zapCalculation?.optimalSwapAmount) {
+            const { getTokenPrice } = await import('@/lib/price-service');
+            const { formatUnits } = await import('viem');
+            const { getToken } = await import('@/lib/pools-config');
+
+            const inputTokenConfig = getToken(inputTokenSymbol);
+            const swapAmountFormatted = parseFloat(formatUnits(BigInt(zapCalculation.optimalSwapAmount), inputTokenConfig?.decimals || 18));
+            const inputPrice = await getTokenPrice(inputTokenSymbol);
+
+            volumeDelta = inputPrice ? swapAmountFormatted * inputPrice : 0;
+          }
+
+          // Get transaction receipt for block number
+          const receipt = await publicClient.getTransactionReceipt({ hash: depositTxHash });
+
+          toast.success('Liquidity Added Successfully!', {
+            icon: React.createElement(BadgeCheck, { className: 'h-4 w-4 text-green-500' }),
+          });
+
+          // Use safe optimistic transaction wrapper for proper invalidation
+          // Note: We're using this post-success to ensure cache invalidation with proper deltas
+          await invalidateAfterTx(queryClient, {
+            owner: accountAddress!,
+            poolId: subgraphId,
+            reason: 'zap-liquidity-added',
+            awaitSubgraphSync: true,
+            blockNumber: receipt.blockNumber,
+            reloadPositions: true,
+            optimisticUpdates: {
+              tvlDelta,
+              volumeDelta, // Zap includes swap, so update volume
+            },
+          });
+
+          invalidateUserPositionIdsCache(accountAddress!);
+
+          // Callback
+          onLiquidityAdded(token0Symbol, token1Symbol, {
+            txHash: depositTxHash,
+            blockNumber: receipt.blockNumber
+          });
+        } catch (error) {
+          console.error('[useZapLiquidityTransaction] Post-success invalidation error:', error);
+          // Still call callback even if invalidation fails
+          onLiquidityAdded(token0Symbol, token1Symbol, { txHash: depositTxHash });
+        }
       };
 
       handleSuccess();
     }
-  }, [isDepositSuccess, depositTxHash, queryClient, accountAddress, token0Symbol, token1Symbol, onLiquidityAdded]);
+  }, [isDepositSuccess, depositTxHash, queryClient, accountAddress, token0Symbol, token1Symbol, poolId, inputTokenSymbol, zapCalculation, onLiquidityAdded]);
 
   // Reset function
   const reset = useCallback(() => {

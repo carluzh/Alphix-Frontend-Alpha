@@ -54,6 +54,7 @@ import {
   PERMIT_TYPES,
   getPermit2Domain,
 } from "@/lib/swap-constants"
+import { invalidateAfterTx } from "@/lib/invalidation"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
@@ -106,6 +107,49 @@ const getTokenPriceMapping = (tokenSymbol: string): 'BTC' | 'USDC' | 'ETH' | 'DA
     default:
       return 'USDC'; // Default fallback
   }
+};
+
+/**
+ * Helper function to invalidate cache after swap
+ * Consolidates duplicate invalidation logic from native and permit2 swap paths
+ */
+const invalidateSwapCache = async (
+  queryClient: any,
+  accountAddress: string,
+  touchedPools: Array<{ poolId: string }>,
+  swapVolumeUSD: number,
+  blockNumber: bigint
+) => {
+  console.log('[Swap] invalidateSwapCache called with:', {
+    accountAddress,
+    touchedPools,
+    swapVolumeUSD,
+    blockNumber: blockNumber.toString(),
+    queryClientExists: !!queryClient
+  });
+
+  if (!touchedPools?.length) {
+    console.warn('[Swap] No touched pools to invalidate cache for');
+    return;
+  }
+
+  const volumePerPool = swapVolumeUSD / touchedPools.length;
+  console.log(`[Swap] Invalidating cache for ${touchedPools.length} pools, volumePerPool: ${volumePerPool}`);
+
+  for (const pool of touchedPools) {
+    console.log(`[Swap] Calling invalidateAfterTx for pool: ${pool.poolId}`);
+    invalidateAfterTx(queryClient, {
+      owner: accountAddress,
+      poolId: pool.poolId,
+      reason: 'swap_complete',
+      awaitSubgraphSync: false, // Don't block UX
+      blockNumber,
+      optimisticUpdates: { volumeDelta: volumePerPool }
+    }).catch(err => {
+      console.error(`[Swap] Cache invalidation failed for pool ${pool.poolId}:`, err);
+    });
+  }
+  console.log('[Swap] All invalidateAfterTx calls dispatched');
 };
 
 // Helper function to create Token instances from pools config
@@ -1934,7 +1978,24 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 console.log("ETH Swap - Transaction confirmed! Hash:", txHash, "Receipt:", receipt);
                 setSwapProgressState("complete");
                 setIsSwapping(false);
-                
+
+                // Calculate swap volume in USD and invalidate cache for all touched pools
+                const swapVolumeUSD = parseFloat(fromAmount) * (fromTokenUSDPrice.price || 0);
+                console.log('[Swap] About to call invalidateSwapCache (native path)', {
+                  fromAmount,
+                  fromTokenUSDPrice: fromTokenUSDPrice.price,
+                  swapVolumeUSD,
+                  touchedPools: buildTxApiData.touchedPools
+                });
+                await invalidateSwapCache(
+                  queryClient,
+                  accountAddress!,
+                  buildTxApiData.touchedPools,
+                  swapVolumeUSD,
+                  receipt.blockNumber
+                );
+                console.log('[Swap] invalidateSwapCache completed (native path)');
+
                 // Trigger balance refresh & show success view after confirmed
                 setSwapState("success");
                 if (accountAddress) localStorage.setItem(`walletBalancesRefreshAt_${accountAddress}`, String(Date.now()));
@@ -2187,7 +2248,24 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
             console.log("ETH Swap - Transaction confirmed! Hash:", txHash, "Receipt:", receipt);
             setSwapProgressState("complete");
             setIsSwapping(false);
-            
+
+            // Calculate swap volume in USD and invalidate cache for all touched pools
+            const swapVolumeUSD = parseFloat(fromAmount) * (fromTokenUSDPrice.price || 0);
+            console.log('[Swap] About to call invalidateSwapCache (permit2 path)', {
+              fromAmount,
+              fromTokenUSDPrice: fromTokenUSDPrice.price,
+              swapVolumeUSD,
+              touchedPools: buildTxApiData.touchedPools
+            });
+            await invalidateSwapCache(
+              queryClient,
+              accountAddress!,
+              buildTxApiData.touchedPools,
+              swapVolumeUSD,
+              receipt.blockNumber
+            );
+            console.log('[Swap] invalidateSwapCache completed (permit2 path)');
+
             // Trigger balance refresh & show success view after confirmed
             setSwapState("success");
             if (accountAddress) localStorage.setItem(`walletBalancesRefreshAt_${accountAddress}`, String(Date.now()));

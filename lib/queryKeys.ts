@@ -15,6 +15,7 @@ export const qk = {
   userPositions: (ownerAddress: string) => ['user', 'positions', String(ownerAddress || '').toLowerCase()] as const,
   uncollectedFees: (positionId: string | number) => ['user', 'uncollectedFees', String(positionId)] as const,
   uncollectedFeesBatch: (idsKey: string) => ['user', 'uncollectedFeesBatch', String(idsKey)] as const,
+  /** @deprecated Activity feed removed from UI - kept for backward compatibility */
   activity: (ownerAddress: string, first: number) => ['user', 'activity', String(ownerAddress || '').toLowerCase(), Number(first)] as const,
 
   // Category 3

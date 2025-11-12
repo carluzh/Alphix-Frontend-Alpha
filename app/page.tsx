@@ -19,15 +19,21 @@ export default function Home() {
   const [showNavbar, setShowNavbar] = useState(true);
 
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
-  const [isHovering, setIsHovering] = useState(false);
   const [animationFinished, setAnimationFinished] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isPoolsImageHovered, setIsPoolsImageHovered] = useState(false);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setAnimationFinished(true), 1300);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   const imageStyle = {
     transform: `perspective(1000px) rotateY(-12deg) rotateX(4deg) ${isPoolsImageHovered ? 'translateY(-8px)' : ''}`,
     transition: 'transform 0.3s ease-in-out',
   };
+
+  const hoverOffset = 20 + Math.min(10, Math.abs(mousePosition.x) + Math.abs(mousePosition.y));
 
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     if (!animationFinished) return;
@@ -48,18 +54,8 @@ export default function Home() {
     setMousePosition({ x: mouseX * 0.02, y: mouseY * -0.01 });
   }, [animationFinished]);
 
-  const handleMouseEnter = () => {
-    if (!animationFinished) return;
-    setIsHovering(true);
-  };
-
   const handleMouseLeave = () => {
-    setIsHovering(false);
     setMousePosition({ x: 0, y: 0 });
-  };
-
-  const handleAnimationEnd = () => {
-    setAnimationFinished(true);
   };
 
   const handleCopyEmail = async () => {
@@ -95,29 +91,22 @@ export default function Home() {
       const scrollY = window.scrollY;
       const windowHeight = window.innerHeight;
       const scrollPercent = scrollY / windowHeight;
-      
-      // Hide navbar when scrolled 25% down the first page
+
       setShowNavbar(scrollPercent < 0.25);
     };
 
-    const observer = new ResizeObserver(calculateMargin);
-    if (document.body) {
-      observer.observe(document.body);
-    }
-    
     calculateMargin();
     window.addEventListener('resize', calculateMargin);
     window.addEventListener('scroll', handleScroll);
 
     return () => {
-      observer.disconnect();
       window.removeEventListener('resize', calculateMargin);
       window.removeEventListener('scroll', handleScroll);
     };
   }, []);
 
   return (
-    <div className="bg-black" style={{background: '#0a0908'}}>
+    <div className="flex flex-col min-h-screen w-full bg-black" style={{background: '#0a0908'}}>
       <style>{`
         @keyframes swapSlideIn {
           0% {
@@ -152,7 +141,7 @@ export default function Home() {
       <section className="relative h-[95vh] max-h-[1120px] w-full overflow-hidden">
         {/* WebGL Canvas */}
         <WebGLCanvas rightMargin={rightMargin} />
-        
+
         {/* Text Overlay - moved up to show second section peek */}
         <div className="absolute inset-0 z-20 text-white">
           <div ref={textContainerRef} className="w-full max-w-5xl 2xl:max-w-screen-xl mx-auto h-full relative px-4 sm:px-6 md:px-8">
@@ -271,14 +260,12 @@ export default function Home() {
                 opacity: animationFinished ? 1 : 0,
                 animation: animationFinished ? 'none' : 'swapSlideInLarge 1.2s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards',
                 transform: animationFinished 
-                  ? `translateY(calc(-50% - ${isHovering ? 30 : 20}px)) perspective(1000px) rotateY(${-5 + mousePosition.x}deg) rotateX(${mousePosition.y}deg)`
+                  ? `translateY(calc(-50% - ${hoverOffset}px)) perspective(1000px) rotateY(${-5 + mousePosition.x}deg) rotateX(${mousePosition.y}deg)`
                   : undefined,
                 transition: animationFinished ? 'transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)' : 'none'
               }}
               onMouseMove={handleMouseMove}
-              onMouseEnter={handleMouseEnter}
               onMouseLeave={handleMouseLeave}
-              onAnimationEnd={handleAnimationEnd}
             >
               <div 
                 className="cursor-pointer"
@@ -298,14 +285,12 @@ export default function Home() {
                 opacity: animationFinished ? 1 : 0,
                 animation: animationFinished ? 'none' : 'swapSlideIn 1.2s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards',
                 transform: animationFinished 
-                  ? `translateY(calc(-50% - ${isHovering ? 30 : 20}px)) perspective(1000px) rotateY(${-5 + mousePosition.x}deg) rotateX(${mousePosition.y}deg)`
+                  ? `translateY(calc(-50% - ${hoverOffset}px)) perspective(1000px) rotateY(${-5 + mousePosition.x}deg) rotateX(${mousePosition.y}deg)`
                   : undefined,
                 transition: animationFinished ? 'transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)' : 'none'
               }}
               onMouseMove={handleMouseMove}
-              onMouseEnter={handleMouseEnter}
               onMouseLeave={handleMouseLeave}
-              onAnimationEnd={handleAnimationEnd}
             >
               <div 
                 className="cursor-pointer"
@@ -770,7 +755,7 @@ function WebGLCanvas({ rightMargin }: { rightMargin: number }) {
       attribute vec2 a_position;
       attribute vec2 a_texCoord;
       varying vec2 v_texCoord;
-      
+
       void main() {
         gl_Position = vec4(a_position, 0.0, 1.0);
         v_texCoord = a_texCoord;
@@ -795,7 +780,7 @@ function WebGLCanvas({ rightMargin }: { rightMargin: number }) {
       #define PI 3.14159265359
 
       // --- Noise Functions ---
-      
+
       // As seen in https://blog.frost.kiwi/GLSL-noise-and-radial-gradient/
       // From Jorge Jimenez's presentation http://www.iryoku.com/next-generation-post-processing-in-call-of-duty-advanced-warfare
       float interleavedGradientNoise(in vec2 uv) {
@@ -879,43 +864,43 @@ function WebGLCanvas({ rightMargin }: { rightMargin: number }) {
         return 42.0 * dot( m*m, vec4( dot(p0,x0), dot(p1,x1),
                                       dot(p2,x2), dot(p3,x3) ) );
       }
-      
-      
+
+
       // --- Base Animation & Color ---
 
       float getBeamIntensity(vec2 uv, vec2 sourcePos, float scanAngle, float beamWidth, float sourceRadius) {
         vec2 fromSource = uv - sourcePos;
         float dist = length(fromSource);
-        
+
         float angle = atan(fromSource.y, fromSource.x);
         float angleDeg = degrees(angle);
         angleDeg = angleDeg < 0.0 ? angleDeg + 360.0 : angleDeg;
-        
+
         float angleDiff = abs(angleDeg - scanAngle);
         angleDiff = min(angleDiff, 360.0 - angleDiff);
-        
+
         float adjustedBeamWidth = beamWidth * (1.0 + sourceRadius / max(dist, 0.001));
         float beamShape = smoothstep(adjustedBeamWidth, 0.0, angleDiff);
-        
+
         float distanceFalloff = 1.0 - smoothstep(1.5, 0.05, dist);
-        
+
         return beamShape * distanceFalloff;
       }
 
       float getBottomGlow(vec2 uv) {
         float xOffset = sin(u_time * 0.5) * 0.2;
         uv.x += xOffset;
-        
+
         float distFromBottom = (uv.y + 1.0) * 0.5;
-        
+
         float flameTime = u_time * 0.7;
         float noise = (snoise(vec3(uv.x * 1.2, distFromBottom * 2.0, flameTime)) + 1.0) * 0.5;
-        
+
         float modHeight = 0.2 + noise * 0.08;
         float glowIntensity = smoothstep(modHeight, 0.0, distFromBottom);
-        
+
         float intensityVar = 0.25 + 0.08 * sin(u_time + uv.x * 2.5);
-        
+
         return glowIntensity * intensityVar;
       }
 
@@ -923,10 +908,10 @@ function WebGLCanvas({ rightMargin }: { rightMargin: number }) {
           vec3 color_yellow = vec3(0.965, 0.53, 0.06);
           vec3 color_orange = vec3(0.890, 0.188, 0.055);
           vec3 color_dark_cherry = vec3(0.549, 0.0, 0.118);
-          
+
           vec3 temp_color = mix(color_dark_cherry, color_orange, smoothstep(0.0, 0.6, intensity));
           vec3 finalBeamColor = mix(temp_color, color_yellow, smoothstep(0.5, 1.1, intensity));
-         
+
           return vec4(finalBeamColor * intensity * 1.2, intensity);
       }
 
@@ -945,39 +930,40 @@ function WebGLCanvas({ rightMargin }: { rightMargin: number }) {
         }
 
         final_uv.x *= u_resolution.x / u_resolution.y;
-        
+
         // --- Base animation intensity ---
         float aspectRatio = u_resolution.x / u_resolution.y;
-        
+
+        // Position beam source on the right side
         float margin_offset = (u_right_margin / u_resolution.x) * 2.0 * aspectRatio;
-        float manual_offset = 0.15; // Small nudge to the right
-        vec2 baseSource = vec2(aspectRatio - margin_offset + manual_offset, 0.2);
-        
-        float sourceRadius = 0.1;
+        float manual_offset = 0.0; // Align with content area
+        vec2 baseSource = vec2(aspectRatio - margin_offset + manual_offset, 0.25);
+
+        float sourceRadius = 0.15;
         float scanSpeed = 0.6;
-        float scanLeftBound = 220.0;
-        float scanRightBound = 250.0;
+        float scanLeftBound = 200.0;
+        float scanRightBound = 270.0;
         float scanRange = (scanRightBound - scanLeftBound) * 0.5;
         float scanCenterAngle = (scanLeftBound + scanRightBound) * 0.5;
         float scanAngle = scanCenterAngle + sin(u_time * scanSpeed) * scanRange;
-        float beamWidth = 28.0;
+        float beamWidth = 35.0;
         float intensity = getBeamIntensity(final_uv, baseSource, scanAngle, beamWidth, sourceRadius);
-        intensity *= 0.98 + 0.07 * sin(u_time * 1.0);
-        
+        intensity *= 1.1 + 0.1 * sin(u_time * 1.0);
+
         vec4 finalColor = computeFinalColor(intensity);
-        
+
         // --- Additive Effects ---
         float grain = snoise(vec3(gl_FragCoord.xy, u_time * 75.0)) * 0.0;
         finalColor.rgb += grain;
 
         float bottomGlow = getBottomGlow(final_uv);
         vec3 glowColor1 = vec3(0.8, 0.2, 0.05);
-        vec3 glowColor2 = vec3(0.6, 0.15, 0.0); 
+        vec3 glowColor2 = vec3(0.6, 0.15, 0.0);
         float colorMix = 0.5 + 0.5 * sin(u_time * 0.3);
         vec3 variedGlowColor = mix(glowColor1, glowColor2, colorMix);
-        finalColor.rgb = mix(finalColor.rgb, variedGlowColor, bottomGlow * 0.5);
-        finalColor.a = max(finalColor.a, bottomGlow * 0.9);
-        
+        finalColor.rgb = mix(finalColor.rgb, variedGlowColor, bottomGlow * 0.6);
+        finalColor.a = max(finalColor.a, bottomGlow * 1.0);
+
         gl_FragColor = finalColor;
       }
     `;
@@ -986,16 +972,16 @@ function WebGLCanvas({ rightMargin }: { rightMargin: number }) {
     function createShader(gl: WebGLRenderingContext, type: number, source: string) {
       const shader = gl.createShader(type);
       if (!shader) return null;
-      
+
       gl.shaderSource(shader, source);
       gl.compileShader(shader);
-      
+
       if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
         console.error('Error compiling shader:', gl.getShaderInfoLog(shader));
         gl.deleteShader(shader);
         return null;
       }
-      
+
       return shader;
     }
 
@@ -1003,26 +989,26 @@ function WebGLCanvas({ rightMargin }: { rightMargin: number }) {
     function createProgram(gl: WebGLRenderingContext, vertexShader: WebGLShader, fragmentShader: WebGLShader) {
       const program = gl.createProgram();
       if (!program) return null;
-      
+
       gl.attachShader(program, vertexShader);
       gl.attachShader(program, fragmentShader);
       gl.linkProgram(program);
-      
+
       if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
         console.error('Error linking program:', gl.getProgramInfoLog(program));
         gl.deleteProgram(program);
         return null;
       }
-      
+
       return program;
     }
 
     // Initialize shaders
     const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
     const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource);
-    
+
     if (!vertexShader || !fragmentShader) return;
-    
+
     const program = createProgram(gl, vertexShader, fragmentShader);
     if (!program) return;
 
@@ -1045,11 +1031,11 @@ function WebGLCanvas({ rightMargin }: { rightMargin: number }) {
     gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
     const texCoords = [0, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 1];
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(texCoords), gl.STATIC_DRAW);
-    
+
     function resizeCanvas() {
         if (!canvas || !gl || !canvas.parentElement) return false;
         const { width, height } = canvas.parentElement.getBoundingClientRect();
-        
+
         if (canvas.width !== width || canvas.height !== height) {
             canvas.width = width;
             canvas.height = height;
@@ -1064,13 +1050,13 @@ function WebGLCanvas({ rightMargin }: { rightMargin: number }) {
     if (canvas?.parentElement) {
       observer.observe(canvas.parentElement, { box: 'content-box' });
     }
-    
+
     resizeCanvas();
-    
+
     function render(time: number) {
       time *= 0.001;
       if (!gl || !canvas) return;
-      
+
       gl.clearColor(0.039, 0.035, 0.031, 1);
       gl.clear(gl.COLOR_BUFFER_BIT);
 
@@ -1129,8 +1115,8 @@ function WebGLCanvas({ rightMargin }: { rightMargin: number }) {
   return (
       <canvas
         ref={canvasRef}
-      className="absolute inset-0 z-10"
+        className="absolute inset-0 z-10 w-full h-full"
+        style={{ display: 'block' }}
       />
   );
 }
-

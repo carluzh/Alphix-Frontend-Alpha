@@ -18,6 +18,7 @@ import { DEFAULT_LP_SLIPPAGE, MAX_AUTO_SLIPPAGE_TOLERANCE } from "@/lib/slippage
 import { TOKEN_DEFINITIONS, TokenSymbol, NATIVE_TOKEN_ADDRESS } from "@/lib/pools-config";
 import { getPoolById, getToken } from "@/lib/pools-config";
 import { formatUnits as viemFormatUnits, parseUnits as viemParseUnits, getAddress, type Hex } from "viem";
+import { deleteCachedData } from "@/lib/redis";
 
 // Helper function to safely parse amounts and prevent scientific notation errors
 const safeParseUnits = (amount: string, decimals: number): bigint => {
@@ -1958,6 +1959,12 @@ export function AddLiquidityForm({
       setShowingTransactionSteps(false);
       setCurrentTransactionStep('idle');
       setPermitSignature(undefined);
+
+      // Invalidate Redis cache for pool data after successful liquidity addition
+      deleteCachedData('pools-batch:v1').catch(err =>
+        console.error('[Cache] Failed to invalidate after liquidity add:', err)
+      );
+
       resetTransaction();
       refetchApprovals();
     }

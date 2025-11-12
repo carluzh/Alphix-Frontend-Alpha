@@ -12,11 +12,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { useAccount } from "wagmi";
 import { useEffect } from "react";
-import { invalidateAfterTx } from "@/lib/invalidation";
-import { useQueryClient } from '@tanstack/react-query';
-import { getAllPools, getPoolSubgraphId } from "@/lib/pools-config";
-import { baseSepolia } from "@/lib/wagmiConfig";
 import { Token, SwapTxInfo } from './swap-interface'; // Assuming types are exported
+import { deleteCachedData } from "@/lib/redis";
 
 interface SwapSuccessViewProps {
   displayFromToken: Token;
@@ -43,113 +40,14 @@ export function SwapSuccessView({
   formatTokenAmountDisplay
 }: SwapSuccessViewProps) {
   const { address: accountAddress } = useAccount();
-  const queryClient = useQueryClient();
 
   useEffect(() => {
     if (!accountAddress) return;
 
-    (async () => {
-      try {
-        const pools = getAllPools?.() || [];
-        const symA = (swapTxInfo?.fromSymbol || displayFromToken.symbol || '').toUpperCase();
-        const symB = (swapTxInfo?.toSymbol || displayToToken.symbol || '').toUpperCase();
-        const match = pools.find((p: any) => {
-          const a = String(p?.currency0?.symbol || '').toUpperCase();
-          const b = String(p?.currency1?.symbol || '').toUpperCase();
-          return (a === symA && b === symB) || (a === symB && b === symA);
-        });
-
-        if (match) {
-          const routeId = String(match.id || `${match.currency0?.symbol}-${match.currency1?.symbol}`).toLowerCase();
-          const subgraphId = (getPoolSubgraphId(routeId) || match.subgraphId || match.id || '').toLowerCase();
-
-          if (routeId && subgraphId) {
-            try { localStorage.setItem(`recentSwap:${routeId}`, String(Date.now())); } catch {}
-
-            await invalidateAfterTx(queryClient, {
-              owner: accountAddress,
-              poolId: subgraphId,
-              reason: 'swap'
-            });
-          }
-        }
-
-        const touched = (swapTxInfo as any)?.touchedPools as Array<{ poolId: string; subgraphId?: string } | undefined> | undefined;
-        if (Array.isArray(touched) && touched.length) {
-          for (const tp of touched) {
-            if (!tp) continue;
-            const pid = String(tp.poolId || '').toLowerCase();
-            const sg = String(tp.subgraphId || getPoolSubgraphId(pid) || pid).toLowerCase();
-            if (!pid || !sg) continue;
-
-            try { localStorage.setItem(`recentSwap:${pid}`, String(Date.now())); } catch {}
-
-            await invalidateAfterTx(queryClient, {
-              owner: accountAddress,
-              poolId: sg,
-              reason: 'swap'
-            });
-          }
-        }
-
-        // Deterministic Volume backoff: wait until 24h Volume changes, then warm server cache
-        try {
-          const delays = [0, 2000, 5000, 10000];
-          // Build target set of pools (single-hop fallback + any multi-hop provided)
-          const targets: Array<{ poolId: string; subId: string }> = [];
-          const singleRouteId = (match && (String(match.id || `${match.currency0?.symbol}-${match.currency1?.symbol}`).toLowerCase())) || '';
-          const singleSub = (singleRouteId && (getPoolSubgraphId(singleRouteId) || match?.subgraphId || match?.id || '')).toLowerCase();
-          if (singleRouteId && singleSub) targets.push({ poolId: singleRouteId, subId: singleSub });
-          if (Array.isArray(touched)) {
-            for (const tp of touched) {
-              if (!tp?.poolId) continue;
-              const pid = String(tp.poolId).toLowerCase();
-              const sg = String(tp.subgraphId || getPoolSubgraphId(pid) || pid).toLowerCase();
-              if (pid && sg && !targets.some(t => t.subId === sg)) targets.push({ poolId: pid, subId: sg });
-            }
-          }
-          if (targets.length) {
-            const getBatch = async () => {
-              // DISABLED: Causing duplicate API calls
-              // const r = await fetch(`/api/liquidity/get-pools-batch?bust=${Date.now()}&noStore=1`);
-              // if (!r.ok) return null;
-              // return r.json();
-              return null; // Disabled to prevent duplicate calls
-            };
-            const readVolumes = (json: any) => {
-              const byId = new Map<string, number>();
-              const pools = Array.isArray(json?.pools) ? json.pools : [];
-              for (const t of targets) {
-                const m = pools.find((p: any) => String(p?.poolId || '').toLowerCase() === t.subId);
-                byId.set(t.subId, Number(m?.volume24hUSD || 0));
-              }
-              return byId;
-            };
-            const baseJson = await getBatch();
-            if (baseJson) {
-              const baseMap = readVolumes(baseJson);
-              for (let i = 0; i < delays.length; i++) {
-                if (i > 0) await new Promise(r => setTimeout(r, delays[i]));
-                // nudge server to recompute; it debounces internally
-                try { fetch('/api/internal/revalidate-pools', { method: 'POST' } as any); } catch {}
-                const nextJson = await getBatch();
-                if (!nextJson) continue;
-                const nextMap = readVolumes(nextJson);
-                let changed = false;
-                for (const [k, v] of nextMap.entries()) {
-                  if (v !== (baseMap.get(k) ?? 0)) { changed = true; break; }
-                }
-                if (changed) {
-                  // Warm the cache now that data changed
-                  try { await fetch('/api/internal/revalidate-pools', { method: 'POST' } as any); } catch {}
-                  break;
-                }
-              }
-            }
-          }
-        } catch {}
-      } catch {}
-    })();
+    // Invalidate Redis cache for pool data after successful swap
+    deleteCachedData('pools-batch:v1').catch(err =>
+      console.error('[Cache] Failed to invalidate after swap:', err)
+    );
   }, [accountAddress, swapTxInfo?.hash]);
   return (
     <motion.div key="success" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>

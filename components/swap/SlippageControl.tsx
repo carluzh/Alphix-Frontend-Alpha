@@ -4,7 +4,6 @@ import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { CircleHelp } from 'lucide-react';
 import { useSlippageValidation } from '@/hooks/useSlippage';
 import { MAX_CUSTOM_SLIPPAGE_TOLERANCE } from '@/lib/slippage-constants';
 
@@ -17,6 +16,8 @@ interface SlippageControlProps {
   onCustomToggle: () => void;
 }
 
+const PRESETS = [0.05, 0.1, 0.5, 1];
+
 export function SlippageControl({
   currentSlippage,
   isAuto,
@@ -25,27 +26,59 @@ export function SlippageControl({
   onAutoToggle,
   onCustomToggle,
 }: SlippageControlProps) {
-  const [isExpanded, setIsExpanded] = React.useState(false);
+  const [isPickerOpen, setIsPickerOpen] = React.useState(false);
+  const [isCustomEditing, setIsCustomEditing] = React.useState(false);
   const [inputValue, setInputValue] = React.useState('');
   const inputRef = React.useRef<HTMLInputElement>(null);
+  const containerRef = React.useRef<HTMLDivElement>(null);
 
   const { isCritical, showWarning, warningMessage } = useSlippageValidation(currentSlippage);
 
-  // Update input value when currentSlippage changes externally
-  React.useEffect(() => {
-    if (!isExpanded) {
-      setInputValue(currentSlippage.toFixed(2));
-    }
-  }, [currentSlippage, isExpanded]);
+  // Check if current slippage matches a preset
+  const matchesPreset = (value: number) => {
+    return PRESETS.some(preset => Math.abs(value - preset) < 0.001);
+  };
 
-  const handleClick = () => {
-    setIsExpanded(true);
-    setInputValue(currentSlippage.toFixed(2));
-    // Focus input after expansion animation
+  const displayValue = isAuto ? autoSlippage : currentSlippage;
+
+  // Close picker when clicking outside
+  React.useEffect(() => {
+    if (!isPickerOpen) return;
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setIsPickerOpen(false);
+        setIsCustomEditing(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isPickerOpen]);
+
+  const handleValueClick = () => {
+    setIsPickerOpen(true);
+  };
+
+  const handlePresetClick = (preset: number) => {
+    onSlippageChange(preset);
+    if (isAuto) {
+      onCustomToggle();
+    }
+    setIsPickerOpen(false);
+    setIsCustomEditing(false);
+  };
+
+  const handleCustomClick = () => {
+    setIsCustomEditing(true);
+    setInputValue('');
+    if (isAuto) {
+      onCustomToggle();
+    }
+    // Focus input after a brief delay
     setTimeout(() => {
       inputRef.current?.focus();
-      inputRef.current?.select();
-    }, 100);
+    }, 50);
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -81,113 +114,121 @@ export function SlippageControl({
     if (!isNaN(parsed)) {
       const capped = Math.min(parsed, MAX_CUSTOM_SLIPPAGE_TOLERANCE);
       onSlippageChange(capped);
-      // Switch to custom mode
-      if (isAuto) {
-        onCustomToggle();
-      }
     }
   };
 
-  const handleBlur = () => {
-    // Format the value properly on blur
-    const parsed = parseFloat(inputValue);
-    if (!isNaN(parsed)) {
-      setInputValue(parsed.toFixed(2));
-    } else {
-      // Reset to current value if invalid
-      setInputValue(currentSlippage.toFixed(2));
-    }
-    setIsExpanded(false);
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
-      inputRef.current?.blur();
+      const parsed = parseFloat(inputValue);
+      if (!isNaN(parsed) && parsed > 0) {
+        const capped = Math.min(parsed, MAX_CUSTOM_SLIPPAGE_TOLERANCE);
+        onSlippageChange(capped);
+        setInputValue(capped.toFixed(2));
+      }
+      setIsPickerOpen(false);
+      setIsCustomEditing(false);
     } else if (e.key === 'Escape') {
-      setInputValue(currentSlippage.toFixed(2));
-      setIsExpanded(false);
+      setIsPickerOpen(false);
+      setIsCustomEditing(false);
+      setInputValue('');
     }
   };
 
-  const handleAutoClick = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-
-    // Update to Auto mode
-    onAutoToggle();
-
-    // Update input value to show auto slippage and collapse
-    setInputValue(autoSlippage.toFixed(2));
-    setIsExpanded(false);
+  const handleInputBlur = () => {
+    const parsed = parseFloat(inputValue);
+    if (!isNaN(parsed) && parsed > 0) {
+      const capped = Math.min(parsed, MAX_CUSTOM_SLIPPAGE_TOLERANCE);
+      setInputValue(capped.toFixed(2));
+      onSlippageChange(capped);
+    } else {
+      setInputValue('');
+    }
+    setIsPickerOpen(false);
+    setIsCustomEditing(false);
   };
 
   return (
-    <div>
-      <div className="flex items-center justify-between text-xs text-muted-foreground">
+    <div ref={containerRef} className="h-5">
+      <div className="flex items-center justify-between text-xs text-muted-foreground h-5">
         <TooltipProvider delayDuration={0}>
           <Tooltip>
             <TooltipTrigger asChild>
-              <div className="flex items-center gap-1.5">
-                <span>Max Slippage</span>
-                <CircleHelp className="h-3 w-3" />
-              </div>
+              <span>Max Slippage</span>
             </TooltipTrigger>
-            <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs max-w-xs">
+            <TooltipContent side="right" sideOffset={8} className="px-2 py-1 text-xs max-w-xs">
               <p>
                 The maximum difference between your expected price and the execution price.
-                Auto mode dynamically adjusts based on market conditions.
+                {isAuto && (
+                  <> Auto-slippage is calculated based on market conditions, route complexity, and token pair volatility.</>
+                )}
               </p>
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>
 
-        <div className="flex items-center gap-1.5">
-          {!isExpanded ? (
-            // Collapsed view - show EITHER "Auto" OR custom percentage
+        <div className="flex items-center gap-1 h-5">
+          {!isPickerOpen ? (
             <button
               type="button"
-              onClick={handleClick}
-              className={cn(
-                "text-foreground/80 font-medium hover:text-foreground transition-colors",
-                isCritical && "text-red-500"
-              )}
+              onClick={handleValueClick}
+              className="text-xs text-muted-foreground transition-colors hover:underline cursor-pointer"
             >
-              {isAuto ? (
-                <span className="px-1.5 py-0.5 text-[10px] rounded bg-muted/40 text-muted-foreground">
-                  Auto
-                </span>
-              ) : (
-                <span className="underline">{currentSlippage.toFixed(2)}%</span>
-              )}
+              {displayValue.toFixed(2)}%
             </button>
           ) : (
-            // Expanded view - inline input with Auto button
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                onMouseDown={handleAutoClick}
-                className="px-1.5 py-0.5 text-[10px] font-normal rounded-md border border-sidebar-border bg-muted/20 text-muted-foreground hover:bg-muted/40 transition-colors"
-              >
-                Auto
-              </button>
+            <div className="flex items-center gap-1 h-5">
+              {/* Preset pills */}
+              {PRESETS.map((preset) => {
+                const isActive = !isAuto && Math.abs(currentSlippage - preset) < 0.001;
+                return (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => handlePresetClick(preset)}
+                    className={cn(
+                      "px-2.5 py-1 text-xs font-medium rounded-md transition-colors h-5 flex items-center",
+                      isActive
+                        ? "bg-muted text-foreground"
+                        : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                    )}
+                  >
+                    {preset}%
+                  </button>
+                );
+              })}
 
-              <div className="flex items-center gap-0.5">
-                <input
-                  ref={inputRef}
-                  type="text"
-                  value={inputValue}
-                  onChange={handleInputChange}
-                  onBlur={handleBlur}
-                  onKeyDown={handleKeyDown}
+              {/* Custom input or button */}
+              {isCustomEditing ? (
+                <div className="flex items-center gap-0.5 h-5">
+                  <input
+                    ref={inputRef}
+                    type="text"
+                    value={inputValue}
+                    onChange={handleInputChange}
+                    onBlur={handleInputBlur}
+                    onKeyDown={handleInputKeyDown}
+                    className={cn(
+                      "w-14 px-2 py-1 text-xs text-center bg-background rounded-md outline-none border border-sidebar-border h-5",
+                      "focus:ring-1 focus:ring-sidebar-border transition-all",
+                      isCritical && "text-red-500 border-red-500/50"
+                    )}
+                  />
+                  <span className="text-xs text-foreground/80">%</span>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleCustomClick}
                   className={cn(
-                    "w-12 px-1 py-0.5 text-xs text-center bg-background rounded outline-none",
-                    "focus:ring-1 focus:ring-sidebar-border transition-all",
-                    isCritical && "text-red-500"
+                    "px-2.5 py-1 text-xs font-medium rounded-md transition-colors h-5 flex items-center",
+                    !isAuto && !matchesPreset(currentSlippage)
+                      ? "bg-muted text-foreground"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
                   )}
-                  placeholder="0.50"
-                />
-                <span className="text-xs">%</span>
-              </div>
+                >
+                  Custom
+                </button>
+              )}
             </div>
           )}
         </div>

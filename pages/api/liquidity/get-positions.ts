@@ -76,6 +76,10 @@ export interface ProcessedPosition { // Export for frontend type usage
     blockTimestamp: number;
     lastTimestamp: number; // Last modification timestamp (for APY calculation)
     isInRange: boolean;
+    // Optimistic UI state flags (added by invalidation.ts)
+    isPending?: boolean; // Position is being minted (show skeleton)
+    isRemoving?: boolean; // Position is being burned (fade out)
+    isOptimisticallyUpdating?: boolean; // Position has optimistic updates (show loading indicator)
 }
 
 // duplicate types/query removed
@@ -157,42 +161,108 @@ async function fetchAndProcessUserPositionsForApi(ownerAddress: string): Promise
     // Process all positions
     try {
         if (allRawPositions.length > 0) {
-                const processed: ProcessedPosition[] = [];
-                const stateCache = new Map<string, { sqrtPriceX96: string; tick: number; poolLiquidity: string }>();
-                for (const r of allRawPositions) {
+                // Step 1: Batch fetch all position details in parallel
+                const positionDetailPromises = allRawPositions.map(async (r) => {
                     try {
                         const tokenId = parseTokenIdFromHexId(r.id);
-                        if (tokenId === null) continue;
-                        // On-chain position details (poolKey, ticks, liquidity)
+                        if (tokenId === null) return null;
                         const details = await getPositionDetails(tokenId);
-                        // Use subgraph-provided pool id (bytes32) directly
-                        let poolIdHex = (r.pool?.id || '') as Hex;
-                        if (!poolIdHex || !poolIdHex.startsWith('0x')) {
-                          // Legacy path: compute poolId from poolKey
-                          const encodedPoolKey = encodeAbiParameters([
+                        return { r, tokenId, details };
+                    } catch (e: any) {
+                        console.error('get-positions: failed to fetch details for id', r?.id, 'error:', e?.message || e);
+                        return null;
+                    }
+                });
+
+                const positionsWithDetails = (await Promise.all(positionDetailPromises)).filter(Boolean) as Array<{
+                    r: SubgraphPosition;
+                    tokenId: bigint;
+                    details: Awaited<ReturnType<typeof getPositionDetails>>;
+                }>;
+
+                // Step 2: Determine unique pool IDs and batch fetch pool states
+                const poolIdMap = new Map<string, Hex>();
+                for (const { r, details } of positionsWithDetails) {
+                    let poolIdHex = (r.pool?.id || '') as Hex;
+                    if (!poolIdHex || !poolIdHex.startsWith('0x')) {
+                        // Legacy path: compute poolId from poolKey
+                        const encodedPoolKey = encodeAbiParameters([
                             { type: 'tuple', components: [
-                              { name: 'currency0', type: 'address' },
-                              { name: 'currency1', type: 'address' },
-                              { name: 'fee', type: 'uint24' },
-                              { name: 'tickSpacing', type: 'int24' },
-                              { name: 'hooks', type: 'address' },
+                                { name: 'currency0', type: 'address' },
+                                { name: 'currency1', type: 'address' },
+                                { name: 'fee', type: 'uint24' },
+                                { name: 'tickSpacing', type: 'int24' },
+                                { name: 'hooks', type: 'address' },
                             ]}
-                          ], [{
+                        ], [{
                             currency0: details.poolKey.currency0 as `0x${string}`,
                             currency1: details.poolKey.currency1 as `0x${string}`,
                             fee: Number(details.poolKey.fee),
                             tickSpacing: Number(details.poolKey.tickSpacing),
                             hooks: details.poolKey.hooks as `0x${string}`,
-                          }]);
-                          poolIdHex = keccak256(encodedPoolKey) as Hex;
+                        }]);
+                        poolIdHex = keccak256(encodedPoolKey) as Hex;
+                    }
+                    poolIdMap.set(poolIdHex, poolIdHex);
+                }
+
+                // Batch fetch all unique pool states in parallel
+                const uniquePoolIds = Array.from(poolIdMap.values());
+                const poolStatePromises = uniquePoolIds.map(async (poolId) => {
+                    try {
+                        const state = await getPoolState(poolId);
+                        return { poolId, state };
+                    } catch (e: any) {
+                        console.error('get-positions: failed to fetch pool state for', poolId, 'error:', e?.message || e);
+                        return null;
+                    }
+                });
+
+                const poolStates = (await Promise.all(poolStatePromises)).filter(Boolean) as Array<{
+                    poolId: Hex;
+                    state: { sqrtPriceX96: bigint; tick: number; liquidity: bigint };
+                }>;
+
+                const stateCache = new Map<string, { sqrtPriceX96: string; tick: number; poolLiquidity: string }>();
+                for (const { poolId, state } of poolStates) {
+                    stateCache.set(poolId, {
+                        sqrtPriceX96: state.sqrtPriceX96.toString(),
+                        tick: Number(state.tick),
+                        poolLiquidity: state.liquidity.toString(),
+                    });
+                }
+
+                // Step 3: Process positions with fetched data
+                const processed: ProcessedPosition[] = [];
+                for (const { r, details } of positionsWithDetails) {
+                    try {
+                        // Determine poolId (same logic as before)
+                        let poolIdHex = (r.pool?.id || '') as Hex;
+                        if (!poolIdHex || !poolIdHex.startsWith('0x')) {
+                            const encodedPoolKey = encodeAbiParameters([
+                                { type: 'tuple', components: [
+                                    { name: 'currency0', type: 'address' },
+                                    { name: 'currency1', type: 'address' },
+                                    { name: 'fee', type: 'uint24' },
+                                    { name: 'tickSpacing', type: 'int24' },
+                                    { name: 'hooks', type: 'address' },
+                                ]}
+                            ], [{
+                                currency0: details.poolKey.currency0 as `0x${string}`,
+                                currency1: details.poolKey.currency1 as `0x${string}`,
+                                fee: Number(details.poolKey.fee),
+                                tickSpacing: Number(details.poolKey.tickSpacing),
+                                hooks: details.poolKey.hooks as `0x${string}`,
+                            }]);
+                            poolIdHex = keccak256(encodedPoolKey) as Hex;
                         }
                         const poolIdStr = poolIdHex;
-                        let state = stateCache.get(poolIdStr);
+                        const state = stateCache.get(poolIdStr);
                         if (!state) {
-                            const ps = await getPoolState(poolIdHex);
-                            state = { sqrtPriceX96: ps.sqrtPriceX96.toString(), tick: Number(ps.tick), poolLiquidity: ps.liquidity.toString() };
-                            stateCache.set(poolIdStr, state);
+                            console.warn('get-positions: no pool state found for', poolIdStr, '- skipping position');
+                            continue;
                         }
+
                         // Token metadata
                         const t0Addr = details.poolKey.currency0 as Address;
                         const t1Addr = details.poolKey.currency1 as Address;
@@ -204,6 +274,7 @@ async function fetchAndProcessUserPositionsForApi(ownerAddress: string): Promise
                         const dec1 = cfg1?.decimals ?? 18;
                         const t0 = new Token(DEFAULT_CHAIN_ID, t0Addr, dec0, sym0);
                         const t1 = new Token(DEFAULT_CHAIN_ID, t1Addr, dec1, sym1);
+
                         // Build pool and position from on-chain data
                         const v4Pool = new V4Pool(
                             t0,
@@ -225,6 +296,7 @@ async function fetchAndProcessUserPositionsForApi(ownerAddress: string): Promise
                         const raw1 = v4Position.amount1.quotient.toString();
                         const createdTs = Number(r.creationTimestamp || (r as any).createdAtTimestamp || 0);
                         const lastTs = Number(r.lastTimestamp || 0);
+
                         processed.push({
                             positionId: r.id || '',
                             owner: r.owner,
@@ -236,14 +308,13 @@ async function fetchAndProcessUserPositionsForApi(ownerAddress: string): Promise
                             liquidityRaw: ((r as any).liquidity ?? details.liquidity.toString()).toString(),
                             ageSeconds: Math.max(0, Math.floor(Date.now()/1000) - createdTs),
                             blockTimestamp: createdTs || 0,
-                            lastTimestamp: lastTs || createdTs || 0, // Use lastTimestamp from subgraph, fallback to creation
+                            lastTimestamp: lastTs || createdTs || 0,
                             isInRange: state.tick >= details.tickLower && state.tick < details.tickUpper,
                         });
                     } catch (e: any) {
-                        try { console.error('get-positions: failed for id', r?.id, 'error:', e?.message || e); } catch {}
+                        console.error('get-positions: failed to process position id', r?.id, 'error:', e?.message || e);
                     }
                 }
-                // (debug logging removed)
                 return processed;
             }
     } catch {}

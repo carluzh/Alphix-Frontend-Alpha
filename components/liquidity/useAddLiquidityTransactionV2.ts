@@ -22,7 +22,7 @@ export interface UseAddLiquidityTransactionV2Props {
   tickUpper: string;
   activeInputSide: 'amount0' | 'amount1' | null;
   calculatedData: any;
-  onLiquidityAdded: (token0Symbol?: string, token1Symbol?: string, txInfo?: { txHash: `0x${string}`; blockNumber?: bigint; tvlDelta?: number }) => void;
+  onLiquidityAdded: (token0Symbol?: string, token1Symbol?: string, txInfo?: { txHash: `0x${string}`; blockNumber?: bigint; tvlDelta?: number; volumeDelta?: number }) => void;
   onOpenChange: (isOpen: boolean) => void;
   isZapMode?: boolean;
   zapInputToken?: 'token0' | 'token1';
@@ -809,6 +809,8 @@ export function useAddLiquidityTransactionV2({
       (async () => {
         const receipt = await publicClient.getTransactionReceipt({ hash: depositTxHash as `0x${string}` });
         let tvlDelta = 0;
+        let volumeDelta = 0;
+
         if (calculatedData?.amount0 && calculatedData?.amount1) {
           const { getTokenPrice } = await import('@/lib/price-service');
           const { formatUnits } = await import('viem');
@@ -820,12 +822,32 @@ export function useAddLiquidityTransactionV2({
           const [p0, p1] = await Promise.all([getTokenPrice(token0Symbol), getTokenPrice(token1Symbol)]);
           tvlDelta = (p0 ? amt0 * p0 : 0) + (p1 ? amt1 * p1 : 0);
         }
-        onLiquidityAdded(token0Symbol, token1Symbol, { txHash: depositTxHash as `0x${string}`, blockNumber: receipt?.blockNumber, tvlDelta });
+
+        // Calculate volume delta for zap transactions (swap contributes to volume)
+        if (isZapMode && calculatedData?.optimalSwapAmount && calculatedData?.swapDirection?.from) {
+          const { getTokenPrice } = await import('@/lib/price-service');
+          const { formatUnits } = await import('viem');
+          const { getToken } = await import('@/lib/pools-config');
+
+          const swapFromSymbol = calculatedData.swapDirection.from as TokenSymbol;
+          const swapTokenConfig = getToken(swapFromSymbol);
+          const swapAmountFormatted = parseFloat(formatUnits(BigInt(calculatedData.optimalSwapAmount), swapTokenConfig?.decimals || 18));
+          const swapPrice = await getTokenPrice(swapFromSymbol);
+
+          volumeDelta = swapPrice ? swapAmountFormatted * swapPrice : 0;
+        }
+
+        onLiquidityAdded(token0Symbol, token1Symbol, {
+          txHash: depositTxHash as `0x${string}`,
+          blockNumber: receipt?.blockNumber,
+          tvlDelta,
+          volumeDelta: isZapMode ? volumeDelta : undefined, // Only pass volumeDelta for zap transactions
+        } as any);
       })().catch(e => console.error('[useAddLiquidityTransactionV2] Post-deposit processing error:', e));
 
       onOpenChange(false);
     }
-  }, [isDepositConfirmed, depositTxHash, accountAddress, token0Symbol, token1Symbol, onLiquidityAdded, onOpenChange, calculatedData]);
+  }, [isDepositConfirmed, depositTxHash, accountAddress, token0Symbol, token1Symbol, onLiquidityAdded, onOpenChange, calculatedData, isZapMode]);
 
   const resetAll = React.useCallback(() => {
     resetApprove();

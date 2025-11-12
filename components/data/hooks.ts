@@ -34,9 +34,9 @@ export function useUserPositions(ownerAddress: string) {
     queryKey: qk.userPositions(ownerAddress || ''),
     queryFn: async () => {
       const cache = await import('@/lib/client-cache')
-      // Use barrier-gated position loading to prevent cache poisoning
+      const onChain = await import('@/lib/on-chain-data')
       const ids = await cache.loadUserPositionIds(ownerAddress)
-      return cache.derivePositionsFromIds(ownerAddress, ids)
+      return onChain.derivePositionsFromIds(ownerAddress, ids)
     },
     staleTime: Infinity,
     gcTime: 60 * 60 * 1000,
@@ -49,8 +49,19 @@ export function useUncollectedFeesBatch(positionIds: string[], ttlMs: number = 6
   return useQuery({
     queryKey: qk.uncollectedFeesBatch(key),
     queryFn: async () => {
-      const cache = await import('@/lib/client-cache')
-      return cache.loadUncollectedFeesBatch(positionIds || [], ttlMs)
+      const resp = await fetch('/api/fees/get-batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ positionIds }),
+        cache: 'no-store'
+      })
+      if (!resp.ok) throw new Error('Failed to load fees')
+      const data = await resp.json()
+      // Return array with isStale as property for backward compatibility
+      const items = data.items || []
+      // @ts-ignore - Add isStale as property on array
+      items.isStale = data.isStale || false
+      return items
     },
     staleTime: ttlMs,
     gcTime: Math.max(ttlMs * 10, 10 * 60 * 1000),
@@ -58,6 +69,10 @@ export function useUncollectedFeesBatch(positionIds: string[], ttlMs: number = 6
   })
 }
 
+/**
+ * @deprecated Activity feed removed from UI - kept for backward compatibility only
+ * This hook is no longer used in the application
+ */
 export function useActivity(ownerAddress: string, first: number = 20) {
   return useQuery({
     queryKey: qk.activity(ownerAddress || '', first),
@@ -72,7 +87,7 @@ export function useActivity(ownerAddress: string, first: number = 20) {
     },
     staleTime: 10 * 60 * 1000,
     gcTime: 60 * 60 * 1000,
-    enabled: typeof ownerAddress === 'string' && ownerAddress.length > 0,
+    enabled: false, // Disabled since activity feed is removed
   })
 }
 

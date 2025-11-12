@@ -7,7 +7,6 @@ import {
   ArrowDownIcon,
   ChevronRightIcon,
   ChevronsRight,
-  InfoIcon,
   ChevronDown as ChevronDownIcon,
   AlertTriangle,
 } from "lucide-react";
@@ -22,6 +21,7 @@ import { TokenSelector, TokenSelectorToken } from './TokenSelector';
 import { getToken } from '@/lib/pools-config';
 import { findBestRoute } from '@/lib/routing-engine';
 import { SlippageControl } from './SlippageControl';
+import { useTokenUSDPrice } from '@/hooks/useTokenUSDPrice';
 
 interface SwapInputViewProps {
   displayFromToken: Token;
@@ -135,6 +135,10 @@ export function SwapInputView({
   const [isBuyInputFocused, setIsBuyInputFocused] = React.useState(false);
   const wiggleControls = useAnimation();
 
+  // Get current USD prices for accurate calculations (avoids stale prices after token swaps)
+  const fromTokenPrice = useTokenUSDPrice(displayFromToken.symbol);
+  const toTokenPrice = useTokenUSDPrice(displayToToken.symbol);
+
   const formatPercentFromBps = React.useCallback((bps: number) => {
     const percent = bps / 100;
     const decimals = percent < 0.1 ? 3 : 2;
@@ -171,6 +175,16 @@ export function SwapInputView({
     } catch {}
     handleFromAmountChange(e);
   };
+
+  const swapDisabledDueToBalance =
+    parseFloat(fromAmount || "0") > 0 &&
+    (
+      isNaN(parseFloat(displayFromToken.balance || "0")) ||
+      parseFloat(displayFromToken.balance || "0") < parseFloat(fromAmount || "0")
+    );
+
+  const isSwapBaseDisabled = actionButtonDisabled || quoteLoading;
+  const isSwapDisabled = isSwapBaseDisabled || swapDisabledDueToBalance;
 
   return (
     <motion.div
@@ -229,7 +243,7 @@ export function SwapInputView({
                 "opacity-50": quoteLoading && activelyEditedSide === 'to',
                 "group-hover:opacity-0": isConnected && parseFloat(displayFromToken.balance || "0") > 0
               })}>
-                {formatCurrency((parseFloat(fromAmount || "0") * (displayFromToken.usdPrice || 0)).toString())}
+                {formatCurrency((parseFloat(fromAmount || "0") * (fromTokenPrice.price || displayFromToken.usdPrice || 0)).toString())}
               </div>
               {/* Percentage buttons - show on hover */}
               {isConnected && parseFloat(displayFromToken.balance || "0") > 0 && (
@@ -266,17 +280,90 @@ export function SwapInputView({
       </div>
 
       {/* Arrow button */}
-      <div className="flex justify-center">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="rounded-lg bg-muted/30 border-0 hover:bg-muted/50 hover:border hover:border-sidebar-border/60 z-10 h-8 w-8"
-          onClick={handleSwapTokens}
-          disabled={!isConnected || isAttemptingSwitch}
+      <div className="flex justify-center relative" style={{ minHeight: '32px' }}>
+        <style dangerouslySetInnerHTML={{__html: `
+          @keyframes arrowGlare {
+            from { background-position: 0% 0%; }
+            to { background-position: 300% 0%; }
+          }
+
+          .arrow-loading-wrapper {
+            position: absolute;
+            left: calc(50% - 16px);
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: inherit;
+            border-radius: 8px;
+            overflow: visible;
+          }
+
+          .arrow-loading-wrapper::before {
+            content: '';
+            position: absolute;
+            inset: -1px;
+            border-radius: 9px;
+            background: linear-gradient(
+              45deg,
+              #f94706,
+              #ff7919 30%,
+              rgba(0, 0, 0, 0.4) 50%,
+              #f94706 70%,
+              #ff7919 100%
+            );
+            background-size: 300% 100%;
+            opacity: 0;
+            transition: opacity 0.5s ease-out;
+            pointer-events: none;
+            z-index: 0;
+            animation: arrowGlare 1.5s linear infinite;
+          }
+
+          .arrow-loading-wrapper.loading::before {
+            opacity: 1;
+          }
+
+          .arrow-loading-inner {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            border-radius: 8px;
+            background: var(--surface-bg);
+            border: 1px solid transparent;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: border-color 0.2s ease;
+            z-index: 1;
+          }
+
+          .arrow-loading-wrapper:not(.loading):hover {
+            cursor: pointer;
+          }
+
+          .arrow-loading-wrapper:not(.loading):hover .arrow-loading-inner {
+            border-color: rgba(50, 50, 50, 0.6);
+          }
+
+          .arrow-loading-wrapper.loading .arrow-loading-inner {
+            border-color: transparent;
+          }
+        `}} />
+        <div
+          className={cn(
+            "arrow-loading-wrapper",
+            quoteLoading && "loading",
+            (!isConnected || isAttemptingSwitch) && "cursor-not-allowed"
+          )}
+          onClick={!isConnected || isAttemptingSwitch || quoteLoading ? undefined : handleSwapTokens}
         >
-          <ArrowDownIcon className="h-4 w-4" />
+          <div className="arrow-loading-inner">
+            <ArrowDownIcon className="h-4 w-4" />
+          </div>
           <span className="sr-only">Swap tokens</span>
-        </Button>
+        </div>
       </div>
 
       {/* Buy Section */}
@@ -329,7 +416,7 @@ export function SwapInputView({
                 {(() => {
                   const amount = parseFloat(toAmount || "");
                   if (!toAmount || isNaN(amount)) return "$0.00";
-                  return formatCurrency((amount * (displayToToken.usdPrice || 0)).toString());
+                  return formatCurrency((amount * (toTokenPrice.price || displayToToken.usdPrice || 0)).toString());
                 })()}
               </div>
               {/* Percentage buttons - show on hover */}
@@ -381,23 +468,28 @@ export function SwapInputView({
               }}
             >
               <div className="flex items-center gap-2">
-                <span>Route:</span>
+                <span>Route</span>
               </div>
 
               <div className="flex items-center gap-3">
-                {clickedTokenIndex !== null && routeFees?.[selectedPoolIndexForChart] && (
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-muted-foreground text-xs">
-                      {quoteError ? (
-                        "-"
-                      ) : routeFeesLoading ? (
-                        <div className="h-3 w-8 bg-muted/60 rounded animate-pulse"></div>
-                      ) : (
-                        formatPercentFromBps(routeFees[selectedPoolIndexForChart].fee)
-                      )}
-                    </span>
-                  </div>
-                )}
+                {(() => {
+                  const isMultiHop = (routeInfo?.path?.length || 2) > 2;
+                  if (!isMultiHop) return null;
+                  
+                  return clickedTokenIndex !== null && routeFees?.[selectedPoolIndexForChart] ? (
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-muted-foreground text-xs">
+                        {quoteError ? (
+                          "-"
+                        ) : routeFeesLoading ? (
+                          <div className="h-3 w-8 bg-muted/60 rounded animate-pulse"></div>
+                        ) : (
+                          formatPercentFromBps(routeFees[selectedPoolIndexForChart].fee)
+                        )}
+                      </span>
+                    </div>
+                  ) : null;
+                })()}
 
                 {/* Animated token picker */}
                 <div className="relative flex items-center h-7">
@@ -584,13 +676,28 @@ export function SwapInputView({
             {parseFloat(fromAmount || "0") > 0 && (
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
-                  <span>Fee:</span>
-                  <div className="flex items-center gap-1.5">
+                  {(() => {
+                    const isMultiHop = (routeInfo?.path?.length || 2) > 2;
+                    if (isMultiHop) {
+                      return (
+                        <TooltipProvider delayDuration={0}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span>Fee</span>
+                            </TooltipTrigger>
+                            <TooltipContent side="right" sideOffset={8} className="px-2 py-1 text-xs max-w-xs">
+                              <p>Total fee for this multi-hop swap.</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      );
+                    }
+                    return <span>Fee</span>;
+                  })()}
+                  <div className="flex items-center gap-1.5 min-w-0">
                     {(() => {
                       if (quoteError) {
-                        return (
-                          <span className="text-foreground/80 font-medium">-</span>
-                        );
+                        return <span className="text-muted-foreground">-</span>;
                       }
                       if (routeFeesLoading) {
                         return <div className="h-3 w-16 bg-muted/60 rounded animate-pulse"></div>;
@@ -599,28 +706,16 @@ export function SwapInputView({
                         return <span className="text-muted-foreground">N/A</span>;
                       }
                       const totalFeeBps = routeFees.reduce((total, routeFee) => total + routeFee.fee, 0);
-                      const inputAmountUSD = parseFloat(fromAmount || "0") * (displayFromToken.usdPrice || 0);
+                      const inputAmountUSD = parseFloat(fromAmount || "0") * (fromTokenPrice.price || displayFromToken.usdPrice || 0);
                       const feeInUSD = inputAmountUSD * (totalFeeBps / 10000);
-                      const isMultiHop = (routeInfo?.path?.length || 2) > 2;
                       const percentDisplay = formatPercentFromBps(totalFeeBps);
                       const amountDisplay = feeInUSD > 0 && feeInUSD < 0.01 ? "< $0.01" : formatCurrency(feeInUSD.toString());
+
                       return (
-                        <>
-                          {isMultiHop && <span className="text-muted-foreground">{percentDisplay}</span>}
-                          {isMultiHop && (
-                            <TooltipProvider delayDuration={0}>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <InfoIcon className="h-3 w-3 mr-1 text-muted-foreground/60 hover:text-muted-foreground cursor-pointer" />
-                                </TooltipTrigger>
-                                <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs max-w-xs">
-                                  Total Fee for Swap
-                                </TooltipContent>
-                              </Tooltip>
-                            </TooltipProvider>
-                          )}
-                          <span className="text-foreground/80 font-medium">{amountDisplay}</span>
-                        </>
+                        <div className="relative inline-flex items-center justify-end h-5 group cursor-default">
+                          <span className="text-muted-foreground transition-opacity duration-150 group-hover:opacity-0 leading-none cursor-default text-right whitespace-nowrap">{percentDisplay}</span>
+                          <span className="absolute right-0 text-muted-foreground opacity-0 transition-opacity duration-150 group-hover:opacity-100 whitespace-nowrap leading-none cursor-default text-right">{amountDisplay}</span>
+                        </div>
                       );
                     })()}
                   </div>
@@ -635,9 +730,9 @@ export function SwapInputView({
                   onCustomToggle={onCustomSlippageToggle}
                 />
 
-                <div className="flex items-center justify-between text-xs text-muted-foreground mt-1.5">
-                  <span>Min Received:</span>
-                  <span className="text-foreground/80 font-medium">
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span>Minimum Received</span>
+                  <span className="text-muted-foreground">
                     {calculatedValues.minimumReceived} {displayToToken.symbol}
                   </span>
                 </div>
@@ -665,22 +760,15 @@ export function SwapInputView({
           <Button
             className={cn(
               "w-full",
-              actionButtonDisabled ?
-                "relative border border-primary bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 !opacity-100 cursor-default text-white/75"
-                :
-                "text-sidebar-primary border border-sidebar-primary bg-button-primary hover-button-primary transition-colors duration-200"
+              isSwapBaseDisabled
+                ? "relative border border-primary bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 !opacity-100 text-white/75"
+                : "text-sidebar-primary border border-sidebar-primary bg-button-primary hover-button-primary",
+              isSwapBaseDisabled ? (quoteLoading ? "cursor-wait" : "cursor-default") : null
             )}
             onClick={handleSwap}
-            disabled={actionButtonDisabled ||
-                        (
-                          parseFloat(fromAmount || "0") > 0 &&
-                          (
-                            isNaN(parseFloat(displayFromToken.balance || "0")) ||
-                            parseFloat(displayFromToken.balance || "0") < parseFloat(fromAmount || "0")
-                          )
-                        )
-                      }
-            style={actionButtonDisabled ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
+            disabled={isSwapDisabled}
+            aria-busy={quoteLoading}
+            style={isSwapBaseDisabled ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
           >
             {actionButtonText}
           </Button>

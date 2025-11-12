@@ -1,20 +1,91 @@
 /**
- * Hook to get USD price of tokens by quoting against aUSDC
- * Follows Uniswap's approach: quote a fixed amount of stablecoin against the token
+ * Hook to get USD price of tokens
+ * Unified client hook - calls centralized /api/prices endpoint
+ * Continuous polling for real-time AMM price updates
  */
 
 import { useState, useEffect, useCallback } from 'react';
 import { TokenSymbol } from '@/lib/pools-config';
 
-const QUOTE_AMOUNT_USDC = 100; // Quote 100 aUSDC against token (like Uniswap uses 1000)
-const CACHE_DURATION_MS = 30 * 1000; // Cache for 30 seconds
+const POLL_INTERVAL_MS = 15 * 1000; // Poll every 15 seconds for real-time prices
+const CACHE_DURATION_MS = 10 * 1000; // Client cache for 10 seconds (very short)
+
+interface AllPricesResponse {
+  success: boolean;
+  data?: {
+    BTC: { usd: number };
+    USDC: { usd: number };
+    ETH: { usd: number };
+    USDT: { usd: number };
+    DAI: { usd: number };
+    aBTC: { usd: number };
+    aUSDC: { usd: number };
+    aETH: { usd: number };
+    aUSDT: { usd: number };
+    aDAI: { usd: number };
+    lastUpdated: number;
+  };
+  isStale?: boolean;
+}
 
 interface PriceCache {
-  price: number;
+  prices: AllPricesResponse['data'];
   timestamp: number;
 }
 
-const priceCache = new Map<TokenSymbol, PriceCache>();
+// Single cache for all prices (fetched together)
+let allPricesCache: PriceCache | null = null;
+let ongoingFetch: Promise<AllPricesResponse> | null = null;
+
+/**
+ * Fetch all prices from centralized API (deduplicates requests)
+ */
+async function fetchAllPrices(): Promise<AllPricesResponse> {
+  // If there's an ongoing fetch, wait for it
+  if (ongoingFetch) {
+    return ongoingFetch;
+  }
+
+  ongoingFetch = (async () => {
+    try {
+      const response = await fetch('/api/prices', {
+        method: 'GET',
+        cache: 'no-store',
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch prices');
+      }
+
+      const data: AllPricesResponse = await response.json();
+
+      // Update cache
+      if (data.success && data.data) {
+        allPricesCache = {
+          prices: data.data,
+          timestamp: Date.now(),
+        };
+      }
+
+      return data;
+    } finally {
+      ongoingFetch = null;
+    }
+  })();
+
+  return ongoingFetch;
+}
+
+/**
+ * Map token symbol to price key in response
+ */
+function getPriceKey(symbol: TokenSymbol): keyof AllPricesResponse['data'] {
+  // Handle both base and "a" prefixed symbols
+  if (symbol.startsWith('a')) {
+    return symbol as keyof AllPricesResponse['data'];
+  }
+  return `a${symbol}` as keyof AllPricesResponse['data'];
+}
 
 export function useTokenUSDPrice(tokenSymbol: TokenSymbol | null | undefined): {
   price: number | null;
@@ -25,40 +96,24 @@ export function useTokenUSDPrice(tokenSymbol: TokenSymbol | null | undefined): {
 
   const fetchPrice = useCallback(async (symbol: TokenSymbol) => {
     // Check cache first
-    const cached = priceCache.get(symbol);
-    if (cached && Date.now() - cached.timestamp < CACHE_DURATION_MS) {
-      setPrice(cached.price);
-      return;
+    if (allPricesCache && Date.now() - allPricesCache.timestamp < CACHE_DURATION_MS) {
+      const priceKey = getPriceKey(symbol);
+      const priceData = allPricesCache.prices?.[priceKey];
+      if (priceData && 'usd' in priceData) {
+        setPrice(priceData.usd);
+        return;
+      }
     }
 
     setIsLoading(true);
     try {
-      // Quote 100 aUSDC -> token (ExactOut to get how much token we'd get for 100 USDC)
-      const response = await fetch('/api/swap/get-quote', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          fromTokenSymbol: 'aUSDC',
-          toTokenSymbol: symbol,
-          amountDecimalsStr: QUOTE_AMOUNT_USDC.toString(),
-          swapType: 'ExactIn',
-          chainId: 84532, // Base Sepolia
-          debug: false,
-        }),
-      });
+      const response = await fetchAllPrices();
 
-      if (!response.ok) {
-        throw new Error('Failed to fetch price quote');
-      }
-
-      const data = await response.json();
-      if (data.success && data.toAmount) {
-        // Price = 100 USDC / amount of token received
-        const tokenAmount = parseFloat(data.toAmount);
-        if (tokenAmount > 0) {
-          const calculatedPrice = QUOTE_AMOUNT_USDC / tokenAmount;
-          setPrice(calculatedPrice);
-          priceCache.set(symbol, { price: calculatedPrice, timestamp: Date.now() });
+      if (response.success && response.data) {
+        const priceKey = getPriceKey(symbol);
+        const priceData = response.data[priceKey];
+        if (priceData && 'usd' in priceData) {
+          setPrice(priceData.usd);
         } else {
           setPrice(null);
         }
@@ -87,8 +142,18 @@ export function useTokenUSDPrice(tokenSymbol: TokenSymbol | null | undefined): {
       return;
     }
 
+    // Fetch immediately on mount
     fetchPrice(tokenSymbol);
-  }, [tokenSymbol, fetchPrice]);
+
+    // Set up polling for real-time price updates (AMM prices change with every trade)
+    const intervalId = setInterval(() => {
+      fetchPrice(tokenSymbol);
+    }, POLL_INTERVAL_MS);
+
+    // Cleanup interval on unmount
+    return () => clearInterval(intervalId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tokenSymbol]); // Only depend on tokenSymbol, fetchPrice is stable
 
   return { price, isLoading };
 }

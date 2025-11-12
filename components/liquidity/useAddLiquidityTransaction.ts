@@ -24,8 +24,7 @@ const showErrorToast = (title: string, description?: string) => {
 import { TOKEN_DEFINITIONS } from "@/lib/pools-config";
 import { prefetchService } from "@/lib/prefetch-service";
 import { invalidateAfterTx } from '@/lib/invalidation';
-import { invalidateActivityCache, invalidateUserPositionsCache, invalidateUserPositionIdsCache, refreshFeesAfterTransaction } from "@/lib/client-cache";
-import { clearBatchDataCache } from "@/lib/cache-version";
+import { invalidateUserPositionIdsCache } from "@/lib/client-cache";
 import { ERC20_ABI } from "@/lib/abis/erc20";
 import { type Hex, formatUnits, parseUnits, encodeFunctionData, parseAbi } from "viem";
 import { TokenSymbol } from "@/lib/pools-config";
@@ -1012,20 +1011,13 @@ export function useAddLiquidityTransaction({
         resetTransactionState();
       })();
       
-      // Simple cache invalidation (matching other hooks pattern)
-      try { if (accountAddress) prefetchService.notifyPositionsRefresh(accountAddress, 'mint'); } catch {}
-      try { if (accountAddress) invalidateActivityCache(accountAddress); } catch {}
+      // Invalidate caches after successful mint
       try {
         if (accountAddress) {
-          invalidateUserPositionsCache(accountAddress);
+          // Invalidate localStorage position IDs
           invalidateUserPositionIdsCache(accountAddress);
-        }
-      } catch {}
-      try { clearBatchDataCache(); } catch {}
-      
-      // Basic React Query invalidation
-      try {
-        if (accountAddress) {
+
+          // Invalidate Redis + React Query caches (handles pools, positions, activity)
           invalidateAfterTx(queryClient, {
             owner: accountAddress,
             reason: 'mint'

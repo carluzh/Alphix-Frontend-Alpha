@@ -1,16 +1,11 @@
-import { getFromCache, setToCache, getOngoingRequest, setOngoingRequest } from './client-cache';
+/**
+ * Price Service - Unified pricing module
+ * All price fetching goes through centralized /api/prices endpoint
+ * Uses Redis caching with stale-while-revalidate for optimal performance
+ */
+
 import { formatUnits } from 'viem';
 import { TokenSymbol } from './pools-config';
-
-// Global cache key for all prices
-const ALL_PRICES_CACHE_KEY = 'all_token_prices';
-const CACHE_DURATION_MS = 5 * 60 * 1000; // 5 minutes
-
-const API_TIMEOUT_MS = 8000;
-const ONGOING_REQUEST_KEY = 'fetch_all_prices';
-const QUOTE_AMOUNT_USDC = 100; // Quote 100 aUSDC against token (like Uniswap uses 1000)
-const TARGET_CHAIN_ID = 84532; // Base Sepolia
-
 
 // Map token symbols to their underlying asset prices based on pools.json naming
 function getUnderlyingAsset(tokenSymbol: string): keyof AllPricesData | null {
@@ -20,14 +15,14 @@ function getUnderlyingAsset(tokenSymbol: string): keyof AllPricesData | null {
   if (tokenSymbol === 'ETH') return 'ETH';
   if (tokenSymbol === 'USDT') return 'USDT';
   if (tokenSymbol === 'DAI') return 'DAI';
-  
+
   // Infer from token names in pools.json
   if (tokenSymbol.includes('BTC')) return 'BTC';
   if (tokenSymbol.includes('USDC')) return 'USDC';
   if (tokenSymbol.includes('ETH')) return 'ETH';
   if (tokenSymbol.includes('USDT')) return 'USDT';
   if (tokenSymbol.includes('DAI')) return 'DAI';
-  
+
   return null;
 }
 
@@ -42,139 +37,64 @@ export interface AllPricesData {
 }
 
 /**
- * Get USD price for a token by quoting against aUSDC
- * Server-side version of useTokenUSDPrice hook
+ * Get all token prices from centralized /api/prices endpoint
+ * This is the single source of truth for all pricing data
  */
-async function getTokenUSDPriceViaQuote(tokenSymbol: TokenSymbol): Promise<number | null> {
-  // aUSDC is always $1
-  if (tokenSymbol === 'aUSDC') {
-    return 1;
-  }
-
+export async function getAllTokenPrices(params?: { signal?: AbortSignal }): Promise<AllPricesData> {
   try {
     const isBrowser = typeof window !== 'undefined';
-    // For server-side, use absolute URL if available, otherwise use relative (works in Next.js API routes)
-    const baseUrl = isBrowser 
-      ? '' 
-      : (process.env.NEXT_PUBLIC_BASE_URL || process.env.VERCEL_URL 
-          ? `https://${process.env.VERCEL_URL}` 
+    const baseUrl = isBrowser
+      ? ''
+      : (process.env.NEXT_PUBLIC_BASE_URL || process.env.VERCEL_URL
+          ? `https://${process.env.VERCEL_URL}`
           : 'http://localhost:3000');
-    
-    const url = `${baseUrl}/api/swap/get-quote`;
+
+    const url = `${baseUrl}/api/prices`;
     const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        fromTokenSymbol: 'aUSDC',
-        toTokenSymbol: tokenSymbol,
-        amountDecimalsStr: QUOTE_AMOUNT_USDC.toString(),
-        swapType: 'ExactIn',
-        chainId: TARGET_CHAIN_ID,
-        debug: false,
-      }),
+      method: 'GET',
+      signal: params?.signal,
+      cache: 'no-store', // Let Redis handle caching
     });
 
     if (!response.ok) {
-      throw new Error(`Failed to fetch price quote: ${response.status}`);
+      throw new Error(`Failed to fetch prices: ${response.status}`);
     }
 
-    const data = await response.json();
-    if (data.success && data.toAmount) {
-      const tokenAmount = parseFloat(data.toAmount);
-      if (tokenAmount > 0) {
-        return QUOTE_AMOUNT_USDC / tokenAmount;
-      }
+    const result = await response.json();
+
+    if (!result.success || !result.data) {
+      throw new Error('Invalid response from prices API');
     }
-    return null;
+
+    // Convert from API format to service format
+    return {
+      BTC: result.data.BTC,
+      USDC: result.data.USDC,
+      ETH: result.data.ETH,
+      USDT: result.data.USDT,
+      DAI: result.data.DAI,
+      lastUpdated: result.data.lastUpdated,
+    };
   } catch (error) {
-    console.error(`[PriceService] Error fetching price for ${tokenSymbol}:`, error);
-    return null;
+    console.error('[PriceService] Error fetching all prices:', error);
+    throw error;
   }
-}
-
-/**
- * Fetch ALL prices in one API call and cache globally
- * Uses quote API instead of CoinGecko
- */
-async function fetchAllPrices(signal?: AbortSignal): Promise<AllPricesData> {
-  // Check if there's an ongoing request
-  const ongoingRequest = getOngoingRequest<AllPricesData>(ONGOING_REQUEST_KEY);
-  if (ongoingRequest) {
-    console.log('[PriceService] Using ongoing request for all prices');
-    return ongoingRequest;
-  }
-
-  const promise = (async (): Promise<AllPricesData> => {
-    console.log('[PriceService] Fetching all prices via quote API...');
-    
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
-    
-    try {
-      // Fetch prices for all tokens in parallel
-      const [btcPrice, ethPrice, usdtPrice, daiPrice] = await Promise.all([
-        getTokenUSDPriceViaQuote('aBTC'),
-        getTokenUSDPriceViaQuote('aETH'),
-        getTokenUSDPriceViaQuote('aUSDT'),
-        getTokenUSDPriceViaQuote('aDAI'),
-      ]);
-      
-      clearTimeout(timeoutId);
-      
-      const prices: AllPricesData = {
-        BTC: { usd: btcPrice || 0 },
-        USDC: { usd: 1 }, // aUSDC is always $1
-        ETH: { usd: ethPrice || 0 },
-        USDT: { usd: usdtPrice || 1 },
-        DAI: { usd: daiPrice || 1 },
-        lastUpdated: Date.now()
-      };
-      
-      console.log('[PriceService] Parsed prices:', prices);
-      
-      // Cache the result
-      setToCache(ALL_PRICES_CACHE_KEY, prices);
-      
-      return prices;
-      
-    } catch (error) {
-      clearTimeout(timeoutId);
-      if (error instanceof Error && error.name === 'AbortError') {
-        throw error;
-      }
-      console.error('[PriceService] Error fetching all prices:', error);
-      throw error;
-    }
-  })();
-
-  return setOngoingRequest(ONGOING_REQUEST_KEY, promise);
-}
-
-/**
- * Get all token prices - main entry point
- */
-export async function getAllTokenPrices(params?: { signal?: AbortSignal }): Promise<AllPricesData> {
-  // Check cache first
-  const cachedData = getFromCache<AllPricesData>(ALL_PRICES_CACHE_KEY);
-  
-  if (cachedData && Date.now() - cachedData.lastUpdated < CACHE_DURATION_MS) {
-    console.log('[PriceService] Using cached prices');
-    return cachedData;
-  }
-  
-  // Fetch fresh prices
-  return await fetchAllPrices(params?.signal);
 }
 
 /**
  * Get single token price (legacy compatibility)
  */
 export async function getTokenPrice(tokenSymbol: string): Promise<number | null> {
-  const allPrices = await getAllTokenPrices();
-  const baseSymbol = getUnderlyingAsset(tokenSymbol);
-  if (!baseSymbol) return null;
-  const priceData = allPrices[baseSymbol];
-  return typeof priceData === 'object' ? priceData.usd || null : null;
+  try {
+    const allPrices = await getAllTokenPrices();
+    const baseSymbol = getUnderlyingAsset(tokenSymbol);
+    if (!baseSymbol) return null;
+    const priceData = allPrices[baseSymbol];
+    return typeof priceData === 'object' ? priceData.usd || null : null;
+  } catch (error) {
+    console.error(`[PriceService] Error getting price for ${tokenSymbol}:`, error);
+    return null;
+  }
 }
 
 /**
@@ -185,52 +105,33 @@ export function getFallbackPrice(tokenSymbol: string): number {
 }
 
 /**
- * Batch fetch multiple token prices - uses quote API
+ * Batch fetch multiple token prices
+ * Leverages the fact that /api/prices always returns all prices
  */
 export async function batchGetTokenPrices(tokenSymbols: string[]): Promise<Record<string, number>> {
   console.log(`[PriceService] Batch request for: ${tokenSymbols.join(', ')}`);
-  
-  // Fetch prices for all tokens in parallel using quote API
-  const pricePromises = tokenSymbols.map(async (symbol) => {
-    const baseSymbol = getUnderlyingAsset(symbol);
-    if (!baseSymbol) {
-      return { symbol, price: 0 };
+
+  try {
+    const allPrices = await getAllTokenPrices();
+    const result: Record<string, number> = {};
+
+    for (const symbol of tokenSymbols) {
+      const baseSymbol = getUnderlyingAsset(symbol);
+      if (baseSymbol) {
+        const priceData = allPrices[baseSymbol];
+        result[symbol] = typeof priceData === 'object' ? priceData.usd || 0 : 0;
+      } else {
+        result[symbol] = 0;
+      }
     }
-    
-    // Map base symbol to token symbol for quote
-    let quoteSymbol: TokenSymbol;
-    switch (baseSymbol) {
-      case 'BTC':
-        quoteSymbol = 'aBTC';
-        break;
-      case 'ETH':
-        quoteSymbol = 'aETH';
-        break;
-      case 'USDT':
-        quoteSymbol = 'aUSDT';
-        break;
-      case 'DAI':
-        quoteSymbol = 'aDAI';
-        break;
-      case 'USDC':
-        return { symbol, price: 1 }; // USDC is always $1
-      default:
-        return { symbol, price: 0 };
-    }
-    
-    const price = await getTokenUSDPriceViaQuote(quoteSymbol);
-    return { symbol, price: price || 0 };
-  });
-  
-  const results = await Promise.all(pricePromises);
-  const result: Record<string, number> = {};
-  
-  for (const { symbol, price } of results) {
-    result[symbol] = price;
+
+    console.log('[PriceService] Batch result:', result);
+    return result;
+  } catch (error) {
+    console.error('[PriceService] Error in batch fetch:', error);
+    // Return zeros for all requested symbols on error
+    return Object.fromEntries(tokenSymbols.map(symbol => [symbol, 0]));
   }
-  
-  console.log('[PriceService] Batch result:', result);
-  return result;
 }
 
 /**
@@ -243,7 +144,7 @@ export function tokenAmountToUSD(
 ): number {
   const amount = typeof tokenAmount === 'string' ? parseFloat(tokenAmount) : tokenAmount;
   if (isNaN(amount)) return 0;
-  
+
   // Token amount is already in human-readable format (e.g., "50.05" for 50.05 BTCRL)
   // No need to divide by 10^decimals since subgraph returns human-readable amounts
   return amount * tokenPriceUSD;
@@ -278,7 +179,7 @@ export function calculateTotalUSD(
 ): number {
   const token0USD = typeof token0Amount === 'string' ? parseFloat(token0Amount) * token0Price : token0Amount * token0Price;
   const token1USD = typeof token1Amount === 'string' ? parseFloat(token1Amount) * token1Price : token1Amount * token1Price;
-  
+
   return (isNaN(token0USD) ? 0 : token0USD) + (isNaN(token1USD) ? 0 : token1USD);
 }
 
@@ -294,10 +195,10 @@ export function calculateSwapVolumeUSD(
 ): number {
   const token0USD = typeof token0Amount === 'string' ? parseFloat(token0Amount) * token0Price : token0Amount * token0Price;
   const token1USD = typeof token1Amount === 'string' ? parseFloat(token1Amount) * token1Price : token1Amount * token1Price;
-  
+
   const safeToken0USD = isNaN(token0USD) ? 0 : token0USD;
   const safeToken1USD = isNaN(token1USD) ? 0 : token1USD;
-  
+
   // Return the max of both sides to avoid double counting while handling price discrepancies
   return Math.max(safeToken0USD, safeToken1USD);
-} 
+}

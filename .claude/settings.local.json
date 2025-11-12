@@ -44,7 +44,14 @@
       "Bash(pnpm dlx:*)",
       "Bash(git checkout:*)",
       "Bash(npm run dev:*)",
-      "Bash(cmd.exe /c \"taskkill /PID 25040 /F\")"
+      "Bash(cmd.exe /c \"taskkill /PID 25040 /F\")",
+      "Bash(time curl:*)",
+      "Bash(taskkill:*)",
+      "Bash(powershell -Command \"Stop-Process -Id 1968 -Force\")",
+      "Bash(powershell:*)",
+      "Bash(nul)",
+      "Bash(ping:*)",
+      "Bash(test:*)"
     ],
     "deny": [],
     "ask": []

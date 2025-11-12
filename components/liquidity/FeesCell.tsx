@@ -4,7 +4,6 @@ import React from "react";
 import { useAccount } from "wagmi";
 import { formatUnits } from "viem";
 import { TOKEN_DEFINITIONS } from "@/lib/pools-config";
-import { loadUncollectedFees } from "@/lib/client-cache";
 
 interface FeesCellProps {
   positionId: string;
@@ -50,7 +49,18 @@ export function FeesCell({
         }
         setLoading(true);
         setLastError(null);
-        const data = await loadUncollectedFees(positionId, 60 * 1000);
+        const resp = await fetch('/api/fees/get-batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ positionIds: [positionId] }),
+          cache: 'no-store'
+        });
+        if (!resp.ok) {
+          if (!cancelled) setLastError("request failed");
+          return;
+        }
+        const result = await resp.json();
+        const data = result.items?.[0];
         if (!cancelled && data) {
           setRaw0(data.amount0 ?? null);
           setRaw1(data.amount1 ?? null);

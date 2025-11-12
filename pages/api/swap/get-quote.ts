@@ -133,7 +133,7 @@ async function getMidPrice(
   poolConfig: any
 ): Promise<number | null> {
   try {
-    const { poolKey } = createPoolKeyAndDirection(fromToken, toToken, poolConfig);
+    const { poolKey, zeroForOne } = createPoolKeyAndDirection(fromToken, toToken, poolConfig);
     
     // Get pool ID
     const poolId = poolConfig.pool.subgraphId;
@@ -147,10 +147,20 @@ async function getMidPrice(
     const tickCurrent = slot0.tick;
     
     // Use tickToPrice to get mid price (same as Uniswap)
-    const midPrice = tickToPrice(fromToken, toToken, tickCurrent);
+    const priceForPoolOrientation = tickToPrice(
+      zeroForOne ? fromToken : toToken,
+      zeroForOne ? toToken : fromToken,
+      tickCurrent
+    );
+
+    // Align price direction with the requested swap (fromToken -> toToken)
+    const midPrice = zeroForOne ? priceForPoolOrientation : priceForPoolOrientation.invert();
     
     // Get price: quote 1 unit of fromToken to get expected toToken amount
-    const oneFromToken = CurrencyAmount.fromRawAmount(fromToken, ethers.utils.parseUnits('1', fromToken.decimals).toString());
+    const oneFromToken = CurrencyAmount.fromRawAmount(
+      fromToken,
+      ethers.utils.parseUnits('1', fromToken.decimals).toString()
+    );
     const expectedOutput = midPrice.quote(oneFromToken);
     
     // Convert expected output to decimal number (toToken per 1 fromToken)
@@ -160,6 +170,24 @@ async function getMidPrice(
     console.error('[getMidPrice] Error getting mid price:', error);
     return null;
   }
+}
+
+async function computeRouteMidPrice(route: SwapRoute, chainId: number): Promise<number | null> {
+  if (!route.path || route.path.length < 2) return null;
+  let cumulativePrice = 1;
+  for (let i = 0; i < route.path.length - 1; i++) {
+    const fromSymbol = route.path[i] as TokenSymbol;
+    const toSymbol = route.path[i + 1] as TokenSymbol;
+    const hopPoolConfig = getPoolConfigForTokens(fromSymbol, toSymbol);
+    if (!hopPoolConfig) return null;
+    const hopFromToken = createTokenSDK(fromSymbol, chainId);
+    const hopToToken = createTokenSDK(toSymbol, chainId);
+    if (!hopFromToken || !hopToToken) return null;
+    const hopMidPrice = await getMidPrice(hopFromToken, hopToToken, hopPoolConfig);
+    if (hopMidPrice === null) return null;
+    cumulativePrice *= hopMidPrice;
+  }
+  return cumulativePrice;
 }
 
 // Helper function to call V4Quoter for single-hop exact input
@@ -468,15 +496,7 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
         const result = await getV4QuoteExactInputMultiHop(fromToken, route, amountInSmallestUnits, req.body.chainId);
         amountOut = result.amountOut;
         gasEstimate = result.gasEstimate;
-        // For multi-hop, get mid price from first pool
-        const firstPoolConfig = getPoolConfigForTokens(route.path[0] as TokenSymbol, route.path[1] as TokenSymbol);
-        if (firstPoolConfig) {
-          const firstFromToken = createTokenSDK(route.path[0] as TokenSymbol, req.body.chainId);
-          const firstToToken = createTokenSDK(route.path[1] as TokenSymbol, req.body.chainId);
-          if (firstFromToken && firstToToken) {
-            midPrice = await getMidPrice(firstFromToken, firstToToken, firstPoolConfig);
-          }
-        }
+        midPrice = await computeRouteMidPrice(route, req.body.chainId);
       }
     } else { // ExactOut
       if (route.isDirectRoute) {
@@ -492,15 +512,7 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
         const result = await getV4QuoteExactOutputMultiHop(toToken, route, amountOutSmallestUnits, req.body.chainId);
         amountIn = result.amountIn;
         gasEstimate = result.gasEstimate;
-        // For multi-hop, get mid price from first pool
-        const firstPoolConfig = getPoolConfigForTokens(route.path[0] as TokenSymbol, route.path[1] as TokenSymbol);
-        if (firstPoolConfig) {
-          const firstFromToken = createTokenSDK(route.path[0] as TokenSymbol, req.body.chainId);
-          const firstToToken = createTokenSDK(route.path[1] as TokenSymbol, req.body.chainId);
-          if (firstFromToken && firstToToken) {
-            midPrice = await getMidPrice(firstFromToken, firstToToken, firstPoolConfig);
-          }
-        }
+        midPrice = await computeRouteMidPrice(route, req.body.chainId);
       }
     }
     

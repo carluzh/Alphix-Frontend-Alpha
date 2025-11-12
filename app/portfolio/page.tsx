@@ -647,7 +647,8 @@ export default function PortfolioPage() {
   const queryClient = useQueryClient();
 
   // Centralized hooks for positions (Category 2: user-action invalidated)
-  const { data: userPositionsData, isLoading: isLoadingUserPositions } = useUserPositions(accountAddress || '');
+  const { data: userPositionsData, isLoading: isLoadingUserPositions, isFetching: isPositionsFetching } = useUserPositions(accountAddress || '');
+  const isPositionsStale = isPositionsFetching && !isLoadingUserPositions; // Pulsing during refetch
 
   // Centralized hook for prices (Category 1: infrequent)
   const { data: pricesData, isLoading: isLoadingPrices } = useAllPrices();
@@ -1011,7 +1012,7 @@ export default function PortfolioPage() {
     }
   }, [accountAddress]);
 
-  const refreshAfterMutation = useCallback(async (info?: { txHash?: `0x${string}`; blockNumber?: bigint; poolId?: string }) => {
+  const refreshAfterMutation = useCallback(async (info?: { txHash?: `0x${string}`; blockNumber?: bigint; poolId?: string; tvlDelta?: number; volumeDelta?: number }) => {
     if (!accountAddress) return;
 
     try {
@@ -1022,6 +1023,11 @@ export default function PortfolioPage() {
         awaitSubgraphSync: true,
         blockNumber: info?.blockNumber,
         reloadPositions: true,
+        // Pass optimistic updates for pool cache invalidation
+        optimisticUpdates: (info?.tvlDelta !== undefined || info?.volumeDelta !== undefined) ? {
+          tvlDelta: info.tvlDelta,
+          volumeDelta: info.volumeDelta,
+        } : undefined,
         onPositionsReloaded: () => {
           // Inline position refresh logic to avoid circular dependency
           try {
@@ -2836,7 +2842,7 @@ export default function PortfolioPage() {
           <div className="flex-1 min-w-0">
           {/* Your Positions title */}
           <div className="flex items-center gap-2 mb-4 justify-between">
-            <h3 className="text-lg font-medium">Your Positions</h3>
+            <h3 className={`text-lg font-medium ${isPositionsStale ? 'cache-stale' : ''}`}>Your Positions</h3>
             {/* Right: token filter badge area + Faucet (only show faucet when Balances tab active in integrated mode) */}
             <div className="ml-auto flex items-center gap-2">
               {selectedSection === 'Active Positions' && activePositions.length > 0 && (
@@ -3088,6 +3094,7 @@ export default function PortfolioPage() {
                                           isLoadingPoolStates: isLoadingPoolStates,
                                         }}
                                         fees={feesPref}
+                                        className={isPositionsStale ? 'cache-stale' : undefined}
                                         onDenominationData={(data) => {
                                           setDenominationDataByPositionId(prev => ({
                                             ...prev,
@@ -3402,17 +3409,27 @@ export default function PortfolioPage() {
             onLiquidityDecreasedCallback(info);
           }}
           onAfterLiquidityAdded={(tvlDelta, info) => {
-            // Trigger global cache invalidation for this pool
+            // Trigger global cache invalidation for this pool with optimistic updates
             const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === selectedPosition.poolId?.toLowerCase());
             if (poolConfig?.id) {
-              refreshAfterMutation({ txHash: info.txHash, blockNumber: info.blockNumber, poolId: poolConfig.id }).catch(console.error);
+              refreshAfterMutation({
+                txHash: info.txHash,
+                blockNumber: info.blockNumber,
+                poolId: poolConfig.id,
+                tvlDelta, // Pass TVL delta for pool cache invalidation
+              }).catch(console.error);
             }
           }}
           onAfterLiquidityRemoved={(tvlDelta, info) => {
-            // Trigger global cache invalidation for this pool
+            // Trigger global cache invalidation for this pool with optimistic updates
             const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === selectedPosition.poolId?.toLowerCase());
             if (poolConfig?.id) {
-              refreshAfterMutation({ txHash: info.txHash, blockNumber: info.blockNumber, poolId: poolConfig.id }).catch(console.error);
+              refreshAfterMutation({
+                txHash: info.txHash,
+                blockNumber: info.blockNumber,
+                poolId: poolConfig.id,
+                tvlDelta, // Pass TVL delta (negative for removal) for pool cache invalidation
+              }).catch(console.error);
             }
           }}
           currentPrice={poolDataByPoolId[selectedPosition.poolId?.toLowerCase()]?.price?.toString() || null}

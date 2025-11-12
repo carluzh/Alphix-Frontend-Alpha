@@ -5,6 +5,7 @@ import { Slot } from "@radix-ui/react-slot"
 import { VariantProps, cva } from "class-variance-authority"
 import { PanelLeft } from "lucide-react"
 import { GrainGradient } from "@paper-design/shaders-react"
+import { usePathname } from "next/navigation"
 
 import { useIsMobile } from "@/hooks/use-mobile"
 import { cn } from "@/lib/utils"
@@ -69,7 +70,11 @@ const SidebarProvider = React.forwardRef<
     ref
   ) => {
     const isMobile = useIsMobile()
+    const pathname = usePathname()
     const [openMobile, setOpenMobile] = React.useState(false)
+
+    // Hide paper shader on marketing/home page
+    const showPaperShader = pathname !== '/'
 
     // This is the internal state of the sidebar.
     // We use openProp and setOpenProp for control from outside the component.
@@ -130,6 +135,16 @@ const SidebarProvider = React.forwardRef<
       [state, open, setOpen, isMobile, openMobile, setOpenMobile, toggleSidebar]
     )
 
+    // Keep shader animation continuous across page navigations by seeding frame from a global start time.
+    const shaderFrame = React.useMemo(() => {
+      if (typeof window === "undefined" || typeof performance === "undefined") return 0
+      const w = window as unknown as { __shaderStartMs?: number }
+      if (w.__shaderStartMs == null) {
+        w.__shaderStartMs = performance.now()
+      }
+      return performance.now() - w.__shaderStartMs
+    }, [])
+
     return (
       <SidebarContext.Provider value={contextValue}>
         <TooltipProvider delayDuration={0}>
@@ -138,27 +153,53 @@ const SidebarProvider = React.forwardRef<
               {
                 "--sidebar-width": SIDEBAR_WIDTH,
                 "--sidebar-width-icon": SIDEBAR_WIDTH_ICON,
+                backgroundColor: '#060606',
                 ...style,
               } as React.CSSProperties
             }
             className={cn(
-              "group/sidebar-wrapper flex min-h-svh w-full bg-background has-[[data-variant=inset]]:relative",
+              "group/sidebar-wrapper flex min-h-svh w-full has-[[data-variant=inset]]:relative",
               className
             )}
             ref={ref}
             {...props}
           >
-            <div className="pointer-events-none absolute inset-0 z-0 h-full w-full">
-              <GrainGradient
-                style={{ height: "100%", width: "100%" }}
-                colors={["hsl(16, 95%, 50%)", "hsl(20, 100%, 40%)", "hsl(25, 100%, 55%)"]}
-                colorBack="#060606"
-                softness={0.76}
-                intensity={0.45}
-                noise={0}
-                shape="corners"
-              />
-            </div>
+            {showPaperShader && (
+              <div className="pointer-events-none fixed inset-0 z-0 h-screen w-screen [&_canvas]:bg-[#060606]">
+                {/* Top-right blob - tighter grain containment */}
+                <div className="fixed top-0 right-0 w-4/5 h-4/5 overflow-hidden z-10">
+                  <GrainGradient
+                    style={{ height: "100%", width: "100%" }}
+                    colors={["#f94706", "#ff7919"]}
+                    colorBack="#060606"
+                    softness={0.35}
+                    intensity={0.4}
+                    noise={0}
+                    shape="corners"
+                    speed={0.3}
+                    frame={shaderFrame}
+                  />
+                </div>
+                {/* Full-page wave background below top-right */}
+                <div className="fixed inset-0 z-0 overflow-hidden">
+                  <GrainGradient
+                    style={{ height: "100%", width: "100%" }}
+                    colors={["#f94706", "#ff7919"]}
+                    colorBack="#060606"
+                    softness={0.30}
+                    intensity={0.20}
+                    noise={0.00}
+                    shape="wave"
+                    speed={0.26}
+                    scale={1.04}
+                    rotation={32}
+                    offsetX={-0.06}
+                    offsetY={0.70}
+                    frame={shaderFrame}
+                  />
+                </div>
+              </div>
+            )}
             {children}
           </div>
         </TooltipProvider>

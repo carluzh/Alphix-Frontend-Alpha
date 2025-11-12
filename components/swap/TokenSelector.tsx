@@ -260,7 +260,7 @@ export function TokenSelector({
     };
 
     fetchBalances();
-  }, [isOpen, isConnected, currentChainId, accountAddress, filteredTokens, tokenPrices]);
+  }, [isOpen, isConnected, currentChainId, accountAddress, filteredTokens]);
 
   const handleTokenSelect = (token: TokenSelectorToken) => {
     onTokenSelect(token);

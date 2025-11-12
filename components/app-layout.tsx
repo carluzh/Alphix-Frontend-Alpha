@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { AppSidebar } from "./app-sidebar";
-import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
+import { SidebarInset } from "@/components/ui/sidebar";
 import { UpdatesNotification } from "./updates-notification";
 // import { MobileMenuButton } from "./MobileMenuButton"; // Keep this commented
 import { MobileHeader } from "./MobileHeader"; // Import MobileHeader
@@ -25,7 +25,7 @@ export function AppLayout({ children }: AppLayoutProps) {
   };
 
   return (
-    <SidebarProvider>
+    <>
       <AppSidebar variant="inset" onBetaClick={handleBetaClick} />
       <MobileHeader />
       <SidebarInset
@@ -36,6 +36,6 @@ export function AppLayout({ children }: AppLayoutProps) {
         </div>
       </SidebarInset>
       <UpdatesNotification open={showUpdatesNotification} onClose={() => setShowUpdatesNotification(false)} />
-    </SidebarProvider>
+    </>
   );
 } 

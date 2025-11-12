@@ -89,6 +89,7 @@ interface PositionCardCompactProps {
     showMenuButton?: boolean;
     onVisitPool?: () => void;
     disableHover?: boolean;
+    className?: string;
 }
 
 const SDK_MIN_TICK = -887272;
@@ -106,6 +107,7 @@ export function PositionCardCompact({
     showMenuButton = false,
     onVisitPool,
     disableHover = false,
+    className,
 }: PositionCardCompactProps) {
     const [isHovered, setIsHovered] = useState(false);
     const { currentPrice, currentPoolTick, poolAPY, isLoadingPrices, isLoadingPoolStates } = poolContext;
@@ -210,7 +212,8 @@ export function PositionCardCompact({
                 "relative flex flex-col rounded-lg border border-sidebar-border bg-muted/30 transition-colors",
                 showMenuButton ? "overflow-visible" : "overflow-hidden",
                 !disableHover && "cursor-pointer group",
-                !disableHover && isHovered && "border-white/20"
+                !disableHover && isHovered && "border-white/20",
+                className
             )}
             onClick={disableHover ? undefined : onClick}
             onMouseEnter={() => !disableHover && setIsHovered(true)}

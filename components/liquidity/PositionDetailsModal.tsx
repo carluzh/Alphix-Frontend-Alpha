@@ -675,15 +675,8 @@ export function PositionDetailsModal({
       }
     }
 
-    // Invalidate all caches (React Query + client-side) for this position
-    if (accountAddress && selectedPoolId) {
-      await invalidateAfterTx(queryClient, {
-        owner: accountAddress,
-        poolId: selectedPoolId,
-        positionIds: [position.positionId],
-        reason: 'liquidity-added'
-      });
-    }
+    // Note: Cache invalidation handled by parent onAfterLiquidityAdded callback
+    // to avoid double-invalidation
 
     // Reset transaction state to clear success flags
     resetIncrease();
@@ -714,15 +707,8 @@ export function PositionDetailsModal({
       }
     }
 
-    // Invalidate all caches (React Query + client-side) for this position
-    if (accountAddress && selectedPoolId) {
-      await invalidateAfterTx(queryClient, {
-        owner: accountAddress,
-        poolId: selectedPoolId,
-        positionIds: [position.positionId],
-        reason: 'liquidity-removed'
-      });
-    }
+    // Note: Cache invalidation handled by parent onAfterLiquidityRemoved callback
+    // to avoid double-invalidation
 
     resetDecrease();
 
@@ -746,8 +732,8 @@ export function PositionDetailsModal({
   }, [onRefreshPosition, queryClient, accountAddress, selectedPoolId, position.positionId, resetDecrease, isWithdrawBurn, onClose, onAfterLiquidityRemoved, withdrawAmount0, withdrawAmount1, position.token0.symbol, position.token1.symbol, getUsdPriceForSymbol]);
 
   const handleCollectFeesSuccess = useCallback(async () => {
-    // Invalidate all caches (React Query + client-side) for this position
-    // This is critical for clearing stale fee data
+    // Note: For fee collection, we still need invalidation since there's no parent callback
+    // Fee collection doesn't change TVL/volume, just clears fees
     if (accountAddress && selectedPoolId) {
       await invalidateAfterTx(queryClient, {
         owner: accountAddress,

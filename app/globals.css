@@ -195,6 +195,100 @@
   .hover-surface:hover {
     background-color: var(--hover-bg);
   }
+
+  /* === BRAND GRADIENT UTILITIES === */
+  /* Animated dot gradient using brand colors */
+  .brand-gradient-bg {
+    background-image: 
+      radial-gradient(circle at 20% 30%, #f94706 0%, transparent 50%),
+      radial-gradient(circle at 60% 70%, #ff7919 0%, transparent 50%),
+      radial-gradient(circle at 80% 20%, #f94706 0%, transparent 50%),
+      radial-gradient(circle at 30% 80%, #ff7919 0%, transparent 50%),
+      radial-gradient(circle at 50% 50%, #f94706 0%, transparent 50%),
+      radial-gradient(circle at 90% 60%, #ff7919 0%, transparent 50%),
+      radial-gradient(circle at 10% 90%, #f94706 0%, transparent 50%),
+      radial-gradient(circle at 70% 10%, #ff7919 0%, transparent 50%);
+    background-size: 400% 400%;
+    animation: brandGradientMove 20s ease-in-out infinite;
+    mix-blend-mode: screen;
+  }
+
+  .brand-gradient-text {
+    background-image: 
+      radial-gradient(circle at 20% 30%, #f94706 0%, transparent 50%),
+      radial-gradient(circle at 60% 70%, #ff7919 0%, transparent 50%),
+      radial-gradient(circle at 80% 20%, #f94706 0%, transparent 50%),
+      radial-gradient(circle at 30% 80%, #ff7919 0%, transparent 50%),
+      radial-gradient(circle at 50% 50%, #f94706 0%, transparent 50%),
+      radial-gradient(circle at 90% 60%, #ff7919 0%, transparent 50%);
+    background-size: 400% 400%;
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: brandGradientMove 20s ease-in-out infinite;
+  }
+
+  .brand-gradient-border {
+    position: relative;
+    border: 1px solid transparent;
+    background-clip: padding-box;
+  }
+
+  .brand-gradient-border::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: 
+      radial-gradient(circle at 20% 30%, #f94706 0%, transparent 50%),
+      radial-gradient(circle at 60% 70%, #ff7919 0%, transparent 50%),
+      radial-gradient(circle at 80% 20%, #f94706 0%, transparent 50%),
+      radial-gradient(circle at 30% 80%, #ff7919 0%, transparent 50%);
+    background-size: 400% 400%;
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    animation: brandGradientMove 20s ease-in-out infinite;
+    z-index: -1;
+  }
+
+  .brand-gradient-button {
+    position: relative;
+    background: 
+      radial-gradient(circle at 20% 30%, #f94706 0%, transparent 50%),
+      radial-gradient(circle at 60% 70%, #ff7919 0%, transparent 50%),
+      radial-gradient(circle at 80% 20%, #f94706 0%, transparent 50%),
+      radial-gradient(circle at 30% 80%, #ff7919 0%, transparent 50%);
+    background-size: 400% 400%;
+    background-clip: padding-box;
+    animation: brandGradientMove 20s ease-in-out infinite;
+    mix-blend-mode: screen;
+  }
+
+  @keyframes brandGradientMove {
+    0% {
+      background-position: 0% 0%, 100% 100%, 50% 50%, 25% 75%, 75% 25%, 90% 10%, 10% 90%, 60% 40%;
+    }
+    16.66% {
+      background-position: 5% 10%, 95% 90%, 55% 45%, 30% 70%, 70% 30%, 85% 15%, 15% 85%, 65% 35%;
+    }
+    33.33% {
+      background-position: 10% 5%, 90% 95%, 45% 55%, 35% 65%, 65% 35%, 80% 25%, 20% 75%, 55% 45%;
+    }
+    50% {
+      background-position: 15% 15%, 85% 85%, 40% 60%, 40% 60%, 60% 40%, 75% 35%, 25% 65%, 50% 50%;
+    }
+    66.66% {
+      background-position: 10% 20%, 90% 80%, 45% 55%, 35% 65%, 65% 35%, 80% 30%, 20% 70%, 55% 45%;
+    }
+    83.33% {
+      background-position: 5% 15%, 95% 85%, 50% 50%, 30% 70%, 70% 30%, 85% 20%, 15% 80%, 60% 40%;
+    }
+    100% {
+      background-position: 0% 0%, 100% 100%, 50% 50%, 25% 75%, 75% 25%, 90% 10%, 10% 90%, 60% 40%;
+    }
+  }
 }
 
 /* Custom AppKit Button Styles */
@@ -317,5 +411,33 @@ input[type=number]::-webkit-outer-spin-button {
 
 input[type=number] {
   -moz-appearance: textfield;
+}
+
+/* Cache staleness pulsing animation */
+@keyframes cache-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+.cache-stale {
+  animation: cache-pulse 2s ease-in-out infinite;
+}
+
+/* Subtle border pulse for containers */
+@keyframes border-pulse {
+  0%, 100% {
+    border-color: var(--border-primary);
+  }
+  50% {
+    border-color: var(--sidebar-primary);
+  }
+}
+
+.cache-stale-border {
+  animation: border-pulse 2s ease-in-out infinite;
 }
 

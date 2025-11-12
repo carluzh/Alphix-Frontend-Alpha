@@ -33,13 +33,15 @@ import {
 import { toast } from "sonner";
 import { getEnabledPools, getToken, getPoolSubgraphId, getPoolById } from "../../lib/pools-config";
 import { getFromCache, getFromCacheWithTtl, setToCache, getUserPositionsCacheKey, getPoolStatsCacheKey, loadUserPositionIds, derivePositionsFromIds, getPoolFeeBps } from "../../lib/client-cache";
-import { getCachedBatchData, setCachedBatchData, clearBatchDataCache } from "@/lib/cache-version";
 import { fetchPoolFullRangeAPY } from "../../lib/apy-calculator";
 import { Pool } from "../../types";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ChevronUpIcon, ChevronDownIcon, ChevronsUpDownIcon, PlusIcon, BadgeCheck, OctagonX } from "lucide-react";
+import { ChevronUpIcon, ChevronDownIcon, ChevronsUpDownIcon, PlusIcon, BadgeCheck, OctagonX, Filter as FilterIcon, X as XIcon } from "lucide-react";
 import { ArrowUpRight, ArrowDownRight } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Separator } from "@/components/ui/separator";
+import { cn } from "@/lib/utils";
 import { TOKEN_DEFINITIONS, type TokenSymbol } from "@/lib/pools-config";
 import { useIncreaseLiquidity, type IncreasePositionData } from "@/components/liquidity/useIncreaseLiquidity";
 import { useDecreaseLiquidity, type DecreasePositionData } from "@/components/liquidity/useDecreaseLiquidity";
@@ -133,6 +135,8 @@ export default function LiquidityPage() {
   );
   const router = useRouter();
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
+  const [apyTimeframe, setApyTimeframe] = useState<'24h' | '7d'>('24h');
+  const [is7dApyLoading, setIs7dApyLoading] = useState(false);
   // Removed expanded row behavior
   const [poolDataByPoolId, setPoolDataByPoolId] = useState<Record<string, any>>({});
   const [priceMap, setPriceMap] = useState<Record<string, number>>({});
@@ -140,139 +144,27 @@ export default function LiquidityPage() {
 
   const fetchAllPoolStatsBatch = useCallback(async () => {
       try {
-        // Honor explicit invalidation flag and drop any client-side cache
-        try {
-          if (localStorage.getItem('cache:pools-batch:invalidated') === 'true') {
-            localStorage.removeItem('cache:pools-batch:invalidated');
-            clearBatchDataCache();
-          }
-        } catch {}
+        // Fetch from API - Redis cache handles caching on server side
+        console.log('[LiquidityPage] Fetching batch from server (Redis-cached)...');
+        const response = await fetch('/api/liquidity/get-pools-batch');
+        console.log('[LiquidityPage] Batch fetch status:', response.status);
+        if (!response.ok) throw new Error(`Batch API failed: ${response.status}`);
+        const batchData = await response.json();
+        if (!batchData.success) throw new Error(`Batch API error: ${batchData.message}`);
 
-        // PERFORMANCE: Check localStorage cache FIRST (cross-session persistence)
-        const cachedBatchData = getCachedBatchData();
-        let batchData = cachedBatchData;
-
-        if (cachedBatchData) {
-          console.log('[LiquidityPage] Using cached batch data (cross-session cache HIT)');
-          // Use cached data immediately, skip API call entirely
-        } else {
-          // No cache - fetch from server
-          console.log('[LiquidityPage] No cache found, fetching versioned batch from server...');
-          const versionResponse = await fetch('/api/cache-version', { cache: 'no-store' as any } as any);
-          const versionData = await versionResponse.json();
-          // If we have a server-bumped version stored locally from a previous mutation, prefer it
-          try {
-            const hinted = localStorage.getItem('pools-cache-version');
-            if (hinted && /^\d+$/.test(hinted)) {
-              versionData.cacheUrl = `/api/liquidity/get-pools-batch?v=${hinted}`;
-              console.log('[LiquidityPage] Using hinted version', hinted);
-            }
-          } catch {}
-          const response = await fetch(versionData.cacheUrl, { cache: 'no-store' as any } as any);
-          console.log('[LiquidityPage] Batch URL', versionData.cacheUrl, 'status', response.status);
-          if (!response.ok) throw new Error(`Batch API failed: ${response.status}`);
-          batchData = await response.json();
-          if (!batchData.success) throw new Error(`Batch API error: ${batchData.message}`);
-
-          // Cache the fetched data for future page loads (cross-session)
-          try {
-            setCachedBatchData(batchData);
-            localStorage.removeItem('pools-cache-version');
-          } catch {}
-        }
-
-        // PERFORMANCE: Batch all dynamic fee fetches in parallel
-        const feePromises = dynamicPools.map(async (pool) => {
-          const apiPoolId = getPoolSubgraphId(pool.id) || pool.id;
-          try {
-            return { poolId: pool.id, feeBps: await getPoolFeeBps(apiPoolId) };
-          } catch (e) {
-            console.error(`[LiquidityPage] Failed to get dynamic fee for pool ${pool.id}:`, e);
-            return { poolId: pool.id, feeBps: null };
-          }
-        });
-
-        const feeResults = await Promise.all(feePromises);
-        const feeMap = new Map(feeResults.map(r => [r.poolId, r.feeBps]));
-
-        // PERFORMANCE: Batch all APY fetches in parallel
-        const apyPromises = dynamicPools.map(async (pool) => {
-          const aprCacheKey = `poolApr_${pool.id}_7d`;
-          const cachedApr = getFromCacheWithTtl<string>(aprCacheKey, 15 * 60 * 1000); // 15 minutes
-
-          if (cachedApr && cachedApr !== 'Loading...' && cachedApr !== '0.00%') {
-            return { poolId: pool.id, apr: cachedApr };
-          }
-
-          try {
-            const metricsResponse = await fetch('/api/liquidity/pool-metrics', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ poolId: pool.id, days: 7 })
-            });
-
-            if (metricsResponse.ok) {
-              const metricsData = await metricsResponse.json();
-              const { totalFeesToken0, avgTVLToken0, days } = metricsData.metrics || {};
-
-              if (avgTVLToken0 && avgTVLToken0 > 0 && days > 0) {
-                const feesPerDay = totalFeesToken0 / days;
-                const annualFees = feesPerDay * 365;
-                const apy = (annualFees / avgTVLToken0) * 100;
-
-                let calculatedApr = 'Loading...';
-                if (isNaN(apy) || !isFinite(apy)) {
-                  calculatedApr = 'Loading...';
-                } else if (apy >= 1000) {
-                  calculatedApr = `${Math.round(apy)}%`;
-                } else if (apy >= 100) {
-                  calculatedApr = `${apy.toFixed(0)}%`;
-                } else if (apy >= 10) {
-                  calculatedApr = `${apy.toFixed(1)}%`;
-                } else if (apy > 0) {
-                  calculatedApr = `${apy.toFixed(2)}%`;
-                } else {
-                  calculatedApr = 'Loading...';
-                }
-
-                if (calculatedApr !== 'Loading...' && calculatedApr !== '0.00%') {
-                  setToCache(aprCacheKey, calculatedApr);
-                  return { poolId: pool.id, apr: calculatedApr };
-                }
-              }
-            } else if (metricsResponse.status === 429) {
-              console.warn(`[LiquidityPage] Pool ${pool.id}: Rate limited (429) - will retry later`);
-            }
-          } catch (e) {
-            console.error(`[LiquidityPage] Pool ${pool.id}: Failed to fetch metrics:`, e);
-          }
-
-          return { poolId: pool.id, apr: 'Loading...' };
-        });
-
-        const apyResults = await Promise.all(apyPromises);
-        const apyMap = new Map(apyResults.map(r => [r.poolId, r.apr]));
-
-        // PERFORMANCE: Map all results synchronously (no more awaits in loop)
+        // PERFORMANCE: All data now comes from batch endpoint (fees + 24h APY included)
         const updatedPools = dynamicPools.map((pool) => {
           const apiPoolId = getPoolSubgraphId(pool.id) || pool.id;
           const batchPoolData = batchData.pools.find((p: any) => p.poolId.toLowerCase() === apiPoolId.toLowerCase());
 
           if (batchPoolData) {
-            const tvlUSD = typeof batchPoolData.tvlUSD === 'number' ? batchPoolData.tvlUSD : undefined;
-            const tvlYesterdayUSD = typeof batchPoolData.tvlYesterdayUSD === 'number' ? batchPoolData.tvlYesterdayUSD : undefined;
-            const volume24hUSD = typeof batchPoolData.volume24hUSD === 'number' ? batchPoolData.volume24hUSD : undefined;
-            const volumePrev24hUSD = typeof batchPoolData.volumePrev24hUSD === 'number' ? batchPoolData.volumePrev24hUSD : undefined;
+            const { tvlUSD, tvlYesterdayUSD, volume24hUSD, volumePrev24hUSD, fees24hUSD, apr24h } = batchPoolData;
 
-            // Calculate 24h fees from volume and dynamic fee (from pre-fetched map)
-            let fees24hUSD: number | undefined = undefined;
-            const dynamicFeeBps = feeMap.get(pool.id);
-            if (typeof dynamicFeeBps === 'number' && dynamicFeeBps >= 0 && typeof volume24hUSD === 'number') {
-              const feeRate = dynamicFeeBps / 10_000;
-              fees24hUSD = volume24hUSD * feeRate;
+            // Format 24h APY for display
+            let aprStr = 'Loading...';
+            if (typeof apr24h === 'number' && apr24h > 0) {
+              aprStr = formatAPR(apr24h);
             }
-
-            const aprStr = apyMap.get(pool.id) || 'Loading...';
 
             return {
               ...pool,
@@ -310,6 +202,86 @@ export default function LiquidityPage() {
   useEffect(() => {
     fetchAllPoolStatsBatch();
   }, [fetchAllPoolStatsBatch]);
+
+  // Fetch 7d APY on-demand when user switches timeframe
+  const fetch7dApyForAllPools = useCallback(async () => {
+    setIs7dApyLoading(true);
+
+    try {
+      const apyPromises = dynamicPools.map(async (pool) => {
+        const aprCacheKey = `poolApr_${pool.id}_7d`;
+        const cachedApr = getFromCacheWithTtl<string>(aprCacheKey, 15 * 60 * 1000); // 15 minutes
+
+        if (cachedApr && cachedApr !== 'Loading...' && cachedApr !== '0.00%') {
+          return { poolId: pool.id, apr: cachedApr };
+        }
+
+        try {
+          const metricsResponse = await fetch('/api/liquidity/pool-metrics', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ poolId: pool.id, days: 7 })
+          });
+
+          if (metricsResponse.ok) {
+            const metricsData = await metricsResponse.json();
+            const { totalFeesToken0, avgTVLToken0, days } = metricsData.metrics || {};
+
+            if (avgTVLToken0 && avgTVLToken0 > 0 && days > 0) {
+              const feesPerDay = totalFeesToken0 / days;
+              const annualFees = feesPerDay * 365;
+              const apy = (annualFees / avgTVLToken0) * 100;
+
+              let calculatedApr = 'Loading...';
+              if (isNaN(apy) || !isFinite(apy)) {
+                calculatedApr = 'Loading...';
+              } else if (apy >= 1000) {
+                calculatedApr = `${Math.round(apy)}%`;
+              } else if (apy >= 100) {
+                calculatedApr = `${apy.toFixed(0)}%`;
+              } else if (apy >= 10) {
+                calculatedApr = `${apy.toFixed(1)}%`;
+              } else if (apy > 0) {
+                calculatedApr = `${apy.toFixed(2)}%`;
+              } else {
+                calculatedApr = 'Loading...';
+              }
+
+              if (calculatedApr !== 'Loading...' && calculatedApr !== '0.00%') {
+                setToCache(aprCacheKey, calculatedApr);
+                return { poolId: pool.id, apr: calculatedApr };
+              }
+            }
+          }
+        } catch (e) {
+          console.error(`[LiquidityPage] Pool ${pool.id}: Failed to fetch 7d metrics:`, e);
+        }
+
+        return { poolId: pool.id, apr: 'Loading...' };
+      });
+
+      const apyResults = await Promise.all(apyPromises);
+      const apyMap = new Map(apyResults.map(r => [r.poolId, r.apr]));
+
+      // Update pools with 7d APY
+      setPoolsData(prev => prev.map(pool => ({
+        ...pool,
+        apr: apyMap.get(pool.id) || pool.apr
+      })));
+    } finally {
+      setIs7dApyLoading(false);
+    }
+  }, []);
+
+  // Trigger 7d fetch when user switches to 7d timeframe
+  useEffect(() => {
+    if (apyTimeframe === '7d' && !is7dApyLoading) {
+      fetch7dApyForAllPools();
+    } else if (apyTimeframe === '24h') {
+      // Switch back to 24h - refetch batch to restore 24h APY
+      fetchAllPoolStatsBatch();
+    }
+  }, [apyTimeframe]);
 
   // No periodic listeners: rely on version hints and one-shot refresh
 
@@ -955,21 +927,114 @@ export default function LiquidityPage() {
                   </div>
                 </div>
                 <div className="hidden md:flex items-end">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {categories.map((cat) => (
-                      <button
-                        key={cat}
-                        onClick={() => setSelectedCategory(cat)}
-                        className={`px-2 py-1 text-xs rounded-md transition-all duration-200 cursor-pointer ${
-                          selectedCategory === cat
-                            ? 'border border-sidebar-border bg-button text-foreground brightness-110'
-                            : 'text-muted-foreground hover:text-foreground'
-                        }`}
-                        style={selectedCategory === cat ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
-                      >
-                        {cat}
-                      </button>
-                    ))}
+                  <div className="flex items-center gap-2">
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <button className="h-8 px-3 rounded-md border border-sidebar-border bg-container hover:bg-surface text-muted-foreground hover:text-foreground flex items-center gap-2 text-xs transition-colors">
+                          <FilterIcon className="h-3.5 w-3.5" />
+                          <span>Filter</span>
+                          {(selectedCategory !== 'All' || apyTimeframe !== '24h') && (
+                            <span className="ml-1 flex h-4 w-4 items-center justify-center rounded-full bg-sidebar-primary text-[10px] font-medium text-background">
+                              {(selectedCategory !== 'All' ? 1 : 0) + (apyTimeframe !== '24h' ? 1 : 0)}
+                            </span>
+                          )}
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-64 p-0 bg-container border-sidebar-border" align="end">
+                        <div className="p-4 space-y-4">
+                          {/* Pool Type Filter */}
+                          <div className="space-y-2">
+                            <label className="text-xs font-medium text-muted-foreground">Pool Type</label>
+                            <div className="space-y-1">
+                              {categories.map(cat => (
+                                <button
+                                  key={cat}
+                                  onClick={() => setSelectedCategory(cat)}
+                                  className={cn(
+                                    "w-full text-left px-2 py-1.5 rounded text-xs transition-colors",
+                                    selectedCategory === cat
+                                      ? "bg-button text-foreground font-medium"
+                                      : "text-muted-foreground hover:text-foreground hover:bg-surface/50"
+                                  )}
+                                  style={selectedCategory === cat ? {
+                                    backgroundImage: 'url(/pattern.svg)',
+                                    backgroundSize: 'cover',
+                                    backgroundPosition: 'center'
+                                  } : {}}
+                                >
+                                  {cat}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          <Separator className="bg-sidebar-border/60" />
+
+                          {/* APY Timeframe Filter */}
+                          <div className="space-y-2">
+                            <label className="text-xs font-medium text-muted-foreground">APY Timeframe</label>
+                            <div className="space-y-1">
+                              {[
+                                { value: '24h', label: '24 Hour APY', desc: 'Real-time yield' },
+                                { value: '7d', label: '7 Day APY', desc: 'Averaged over 7 days' }
+                              ].map(option => (
+                                <button
+                                  key={option.value}
+                                  onClick={() => setApyTimeframe(option.value as '24h' | '7d')}
+                                  disabled={is7dApyLoading && option.value === '7d'}
+                                  className={cn(
+                                    "w-full text-left px-2 py-1.5 rounded text-xs transition-colors",
+                                    apyTimeframe === option.value
+                                      ? "bg-button text-foreground font-medium"
+                                      : "text-muted-foreground hover:text-foreground hover:bg-surface/50",
+                                    is7dApyLoading && option.value === '7d' && "opacity-50 cursor-not-allowed"
+                                  )}
+                                  style={apyTimeframe === option.value ? {
+                                    backgroundImage: 'url(/pattern.svg)',
+                                    backgroundSize: 'cover',
+                                    backgroundPosition: 'center'
+                                  } : {}}
+                                >
+                                  <div className="flex items-center justify-between">
+                                    <div>
+                                      <div>{option.label}</div>
+                                      <div className="text-[10px] text-muted-foreground mt-0.5">{option.desc}</div>
+                                    </div>
+                                    {is7dApyLoading && option.value === '7d' && (
+                                      <div className="h-3 w-3 border-2 border-muted-foreground border-t-transparent rounded-full animate-spin" />
+                                    )}
+                                  </div>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+
+                    {/* Active filters chips */}
+                    {(selectedCategory !== 'All' || apyTimeframe !== '24h') && (
+                      <div className="flex items-center gap-1.5">
+                        {selectedCategory !== 'All' && (
+                          <button
+                            onClick={() => setSelectedCategory('All')}
+                            className="group flex items-center gap-1 px-2 py-1 rounded-md border border-sidebar-border/60 bg-muted/40 text-xs text-muted-foreground hover:bg-muted/50"
+                          >
+                            <XIcon className="h-3 w-3" />
+                            <span className="uppercase tracking-wider font-mono font-bold text-xs">{selectedCategory}</span>
+                          </button>
+                        )}
+                        {apyTimeframe !== '24h' && (
+                          <button
+                            onClick={() => setApyTimeframe('24h')}
+                            className="group flex items-center gap-1 px-2 py-1 rounded-md border border-sidebar-border/60 bg-muted/40 text-xs text-muted-foreground hover:bg-muted/50"
+                          >
+                            <XIcon className="h-3 w-3" />
+                            <span className="uppercase tracking-wider font-mono font-bold text-xs">7D APY</span>
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>

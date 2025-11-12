@@ -13,9 +13,9 @@ import { baseSepolia } from '@/lib/wagmiConfig';
 import { getAddress, type Hex, BaseError, parseUnits, encodeAbiParameters, keccak256, formatUnits } from 'viem';
 import { getPositionDetails, getPoolState } from '@/lib/liquidity-utils';
 import { prefetchService } from '@/lib/prefetch-service';
-import { invalidateActivityCache, invalidateUserPositionsCache, invalidateUserPositionIdsCache, refreshFeesAfterTransaction } from '@/lib/client-cache';
+import { invalidateUserPositionIdsCache } from '@/lib/client-cache';
 import { invalidateAfterTx } from '@/lib/invalidation';
-import { clearBatchDataCache } from '@/lib/cache-version';
+import { deleteCachedData } from '@/lib/redis';
 import { publicClient } from '@/lib/viemClient';
 
 // Helper function to safely parse amounts without precision loss
@@ -746,18 +746,12 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
         } else if (onLiquidityDecreased) {
           onLiquidityDecreased({ txHash: hash as `0x${string}`, blockNumber, isFullBurn: lastIsFullBurn.current } as any);
         }
-        
-        // Refresh fee data for this position
+
+        // CRITICAL: Invalidate Redis cache after liquidity decrease
         try {
-          const decreasePosition = currentDecreasePositionRef.current;
-          if (decreasePosition?.tokenId) {
-            refreshFeesAfterTransaction(decreasePosition.tokenId.toString(), queryClient);
-          }
-        } catch {}
-        // CRITICAL: Invalidate global batch cache after liquidity decrease
-        try {
-          clearBatchDataCache();
-          fetch('/api/internal/revalidate-pools', { method: 'POST' }).catch(() => {});
+          deleteCachedData('pools-batch:v1').catch(err =>
+            console.error('[Cache] Failed to invalidate after liquidity decrease:', err)
+          );
         } catch {}
         
         // CRITICAL: Invalidate React Query caches including fee data
@@ -775,8 +769,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
         } catch {}
       })();
       try { if (accountAddress) prefetchService.notifyPositionsRefresh(accountAddress, lastWasCollectOnly.current ? 'collect' : 'decrease'); } catch {}
-      try { if (accountAddress) invalidateActivityCache(accountAddress); } catch {}
-      try { if (accountAddress) { invalidateUserPositionsCache(accountAddress); invalidateUserPositionIdsCache(accountAddress); } } catch {}
+      try { if (accountAddress) invalidateUserPositionIdsCache(accountAddress); } catch {}
       // Removed hook-level revalidate to avoid duplicates; page handles revalidation after subgraph sync
       setIsDecreasing(false);
     } else if (decreaseConfirmError) {

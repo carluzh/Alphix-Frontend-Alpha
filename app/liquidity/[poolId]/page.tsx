@@ -23,7 +23,6 @@ import { formatUnits, type Hex } from "viem";
 import { Bar, BarChart, Line, LineChart, CartesianGrid, XAxis, YAxis, ResponsiveContainer, ComposedChart, Area, ReferenceLine, ReferenceArea } from "recharts";
 import { getPoolById, getPoolSubgraphId, getToken, getAllTokens } from "@/lib/pools-config";
 import { usePoolState, useAllPrices, useUncollectedFeesBatch } from "@/components/data/hooks";
-import { getPoolFeeBps } from "@/lib/client-cache";
 import { SafeStorage } from "@/lib/safe-storage";
 import { RetryUtility } from "@/lib/retry-utility";
 import {
@@ -462,6 +461,7 @@ export default function PoolDetailPage() {
   const poolId = params?.poolId || '';
   const queryClient = useQueryClient();
   const [userPositions, setUserPositions] = useState<ProcessedPosition[]>([]);
+
   const [pendingNewPositions, setPendingNewPositions] = useState<Array<{
     id: string,
     token0Symbol: string,
@@ -918,7 +918,7 @@ export default function PoolDetailPage() {
         async () => {
           if (!accountAddress) throw new Error('Missing account');
 
-          // Use gated loader to avoid stale cache writes
+          // Fetch from on-chain
           const ids = await loadUserPositionIds(accountAddress);
           const data = await derivePositionsFromIds(accountAddress, ids);
           const filtered = data.filter((pos: any) =>
@@ -982,7 +982,14 @@ export default function PoolDetailPage() {
     setShowBurnConfirmDialog(false);
     setPositionToBurn(null);
     pendingActionRef.current = null;
-    try { if (accountAddress) loadUserPositionIds(accountAddress).then((ids)=>derivePositionsFromIds(accountAddress, ids)); } catch {}
+    (async () => {
+      try {
+        if (accountAddress) {
+          const ids = await loadUserPositionIds(accountAddress);
+          await derivePositionsFromIds(accountAddress, ids);
+        }
+      } catch {}
+    })();
   }, [accountAddress]);
 
 
@@ -1020,7 +1027,7 @@ export default function PoolDetailPage() {
       await RetryUtility.execute(
         async () => {
           if (!accountAddress) throw new Error('Missing account');
-          // Use gated loader to avoid stale cache writes
+          // Fetch from on-chain
           const ids = await loadUserPositionIds(accountAddress);
           const data = await derivePositionsFromIds(accountAddress, ids);
           const filtered = data.filter((pos: any) => String(pos?.poolId || '').toLowerCase() === subId);
@@ -1097,7 +1104,7 @@ export default function PoolDetailPage() {
       const result = await RetryUtility.execute(
         async () => {
           if (!accountAddress) throw new Error('Missing account');
-          // Use gated loader to avoid stale cache writes
+          // Fetch from on-chain
           const ids = await loadUserPositionIds(accountAddress);
           const data = await derivePositionsFromIds(accountAddress, ids);
           const filtered = data.filter((pos: any) => String(pos?.poolId || '').toLowerCase() === subId);
@@ -1140,48 +1147,31 @@ export default function PoolDetailPage() {
     const poolInfo = getPoolConfiguration(poolId);
     if (!poolInfo) return;
 
+    // PARALLELIZED DATA LOADING: Positions + Chart + Pool Stats all run concurrently
+    // Set loading states immediately
     if (!skipPositions && isConnected && accountAddress) {
       setIsLoadingPositions(true);
-      (async () => {
-        let allUserPositions: any[] = [];
-        try {
-          const ids = await loadUserPositionIds(accountAddress);
-          allUserPositions = await derivePositionsFromIds(accountAddress, ids);
-        } catch (error) {
-          console.error("Failed to derive user positions:", error);
-          allUserPositions = [];
-        }
-        if (allUserPositions && allUserPositions.length > 0 && poolInfo) {
-          const subgraphId = (poolInfo.subgraphId || '').toLowerCase();
-          const filteredPositions = allUserPositions.filter(pos => String(pos.poolId || '').toLowerCase() === subgraphId);
-          setUserPositions(filteredPositions);
-        } else {
-          setUserPositions([]);
-        }
-        setIsLoadingPositions(false);
-      })();
-    } else if (!skipPositions && (!isConnected || !accountAddress)) {
+    } else if (!skipPositions) {
       setUserPositions([]);
       setIsLoadingPositions(false);
     }
 
-    // Only show loading on initial load (when no chart data exists)
     if (apiChartData.length === 0) {
       setIsLoadingChartData(true);
     }
 
-    // Declare variables that will be used throughout the function
-    let tvlFromHeader = 0;
-    // If a recent swap was recorded for this pool, force a refresh once and clear the hint
+    // Check for recent swap hint (force refresh if needed)
+    let forceRefresh = force;
     try {
       const hintKey = `recentSwap:${String(poolId).toLowerCase()}`;
       const hint = SafeStorage.get(hintKey);
       if (hint) {
-        force = true;
+        forceRefresh = true;
         SafeStorage.remove(hintKey);
       }
     } catch {}
-    // Load daily series for volume & TVL (excluding today), and fee/targets; then merge
+
+    // PARALLEL EXECUTION: Run positions, chart, and pool stats loading simultaneously
     ;(async () => {
       try {
         const basePoolInfoTmp = getPoolConfiguration(poolId);
@@ -1189,117 +1179,98 @@ export default function PoolDetailPage() {
         if (!subgraphIdForHist) throw new Error('Missing subgraph id for pool');
         const targetDays = 60;
 
-        const todayKey = new Date().toISOString().split('T')[0];
+        const todayKeyLocal = new Date().toISOString().split('T')[0];
 
-        // Centralized retry utility for chart data fetching
+        console.log('[Pool Detail] Starting parallel data fetch (positions + chart + pool stats)...');
 
-        // Enhanced validation for chart data to ensure completeness and validity
-        const validateChartData = (json: any, dataType: 'tvl' | 'volume' | 'fees'): boolean => {
-          if (!json) return false;
-
-          if (dataType === 'fees') {
-            return Array.isArray(json) && json.length > 0;
-          }
-
-          const data = json?.data;
-          if (!Array.isArray(data) || data.length === 0) return false;
-
-          // For historical data (tvl, volume), we don't require today's data as it's added client-side
-          // But we do require at least some recent data points
-          if (dataType === 'tvl' || dataType === 'volume') {
-            const today = new Date();
-            const todayKey = today.toISOString().split('T')[0];
-
-            // Calculate yesterday properly (avoid timezone issues)
-            const yesterday = new Date(today);
-            yesterday.setDate(yesterday.getDate() - 1);
-            const yesterdayKey = yesterday.toISOString().split('T')[0];
-
-            // Check if we have data for yesterday or today (indicating recent data)
-            const hasRecentData = data.some(item => {
-              const itemDate = String(item?.date || '');
-              return itemDate === yesterdayKey || itemDate === todayKey;
-            });
-
-            // For TVL data, ensure we have reasonable values (not all zeros)
-            if (dataType === 'tvl') {
-              const nonZeroValues = data.filter(item => Number(item?.tvlUSD || 0) > 0);
-              // Relax validation: accept if we have any non-zero historical TVL OR a recent data point
-              return nonZeroValues.length > 0 || hasRecentData;
+        // PARALLEL DATA FETCH: All 3 data sources load simultaneously
+        const [chartResult, poolStatsResult, positionsResult] = await Promise.all([
+          // 1. Chart data (TVL, Volume, Fees, Dynamic Fee Events)
+          RetryUtility.fetchJson(
+            `/api/liquidity/pool-chart-data?poolId=${encodeURIComponent(poolId)}&days=${targetDays}`,
+            {
+              attempts: 4,
+              baseDelay: 700,
+              validate: (j) => j?.success && Array.isArray(j?.data) && j.data.length > 0,
+              throwOnFailure: true
             }
+          ),
 
-            // For volume data, accept if we have recent data or at least a small history
-            return hasRecentData || data.length >= 7;
-          }
+          // 2. Pool stats (from batch API)
+          (async () => {
+            try {
+              const versionResponse = await fetch('/api/cache-version', { cache: 'no-store' as any } as any);
+              const versionData = await versionResponse.json();
+              const resp = await fetch(versionData.cacheUrl);
 
-          return true;
-        };
+              if (resp.ok) {
+                const data = await resp.json();
+                const poolIdLc = String(subgraphIdForHist || '').toLowerCase();
+                const match = Array.isArray(data?.pools) ? data.pools.find((p: any) => String(p.poolId || '').toLowerCase() === poolIdLc) : null;
 
-        // Use version-based cache busting for chart data
-        let chartVersionParam = '';
-        if (force) {
-          try {
-            const chartVersion = SafeStorage.get('chart-cache-version');
-            chartVersionParam = chartVersion ? `&v=${chartVersion}` : `&bust=${Date.now()}`;
-          } catch {
-            chartVersionParam = `&bust=${Date.now()}`;
-          }
+                if (match) {
+                  return {
+                    tvlUSD: Number(match.tvlUSD) || 0,
+                    volume24hUSD: Number(match.volume24hUSD) || 0,
+                    tvlYesterdayUSD: Number(match.tvlYesterdayUSD) || 0,
+                    volumePrev24hUSD: Number(match.volumePrev24hUSD) || 0,
+                    fees24hUSD: Number(match.fees24hUSD) || 0,
+                    apr24h: Number(match.apr24h) || 0,
+                    dynamicFeeBps: typeof match.dynamicFeeBps === 'number' ? match.dynamicFeeBps : null,
+                  };
+                }
+              }
+              return null;
+            } catch (error) {
+              console.error('Error loading pool stats:', error);
+              return null;
+            }
+          })(),
+
+          // 3. User positions (if connected)
+          (async () => {
+            if (!skipPositions && isConnected && accountAddress) {
+              try {
+                const ids = await loadUserPositionIds(accountAddress);
+                const allUserPositions = await derivePositionsFromIds(accountAddress, ids);
+                const subgraphId = (poolInfo.subgraphId || '').toLowerCase();
+                return allUserPositions.filter(pos => String(pos.poolId || '').toLowerCase() === subgraphId);
+              } catch (error) {
+                console.error("Failed to load user positions:", error);
+                return [];
+              }
+            }
+            return [];
+          })()
+        ]);
+
+        console.log('[Pool Detail] Parallel fetch completed:', {
+          chartData: !!chartResult.data,
+          poolStats: !!poolStatsResult,
+          positions: positionsResult?.length || 0
+        });
+
+        // Process positions result
+        if (!skipPositions) {
+          setUserPositions(positionsResult || []);
+          setIsLoadingPositions(false);
         }
 
-        // Fetch chart data with centralized retry utility
-        const feeResult = await RetryUtility.fetchJson(
-          `/api/liquidity/get-historical-dynamic-fees?poolId=${encodeURIComponent(subgraphIdForHist)}&days=${targetDays}${chartVersionParam}`,
-          {
-            attempts: 4,
-            baseDelay: 700,
-            validate: (j) => validateChartData(j, 'fees'),
-            throwOnFailure: true
-          }
-        );
+        // Process chart data
+        const chartData = chartResult.data!;
+        const dayData = Array.isArray(chartData.data) ? chartData.data : [];
+        const feeEvents = Array.isArray(chartData.feeEvents) ? chartData.feeEvents : [];
 
-        const tvlResult = await RetryUtility.fetchJson(
-          `/api/liquidity/chart-tvl?poolId=${encodeURIComponent(poolId)}&days=${targetDays}${chartVersionParam}`,
-          {
-            attempts: 4,
-            baseDelay: 700,
-            validate: (j) => validateChartData(j, 'tvl'),
-            throwOnFailure: true
-          }
-        );
+        // Build date-indexed maps for quick lookup
+        const dataByDate = new Map<string, { tvlUSD: number; volumeUSD: number }>();
+        for (const d of dayData) {
+          dataByDate.set(d.date, { tvlUSD: d.tvlUSD || 0, volumeUSD: d.volumeUSD || 0 });
+        }
 
-        const volResult = await RetryUtility.fetchJson(
-          `/api/liquidity/chart-volume?poolId=${encodeURIComponent(poolId)}&days=${targetDays}${chartVersionParam}`,
-          {
-            attempts: 4,
-            baseDelay: 700,
-            validate: (j) => validateChartData(j, 'volume'),
-            throwOnFailure: true
-          }
-        );
-
-        const feeJson = feeResult.data!;
-        const tvlJson = tvlResult.data!;
-        const volJson = volResult.data!;
-        // No ad-hoc quick retries; handled by RetryUtility
-
-        // Base date set from separate series (both exclude today)
-        const tvlArr: Array<{ date: string; tvlUSD?: number }> = Array.isArray(tvlJson?.data) ? tvlJson.data : [];
-        const volArr: Array<{ date: string; volumeUSD?: number }> = Array.isArray(volJson?.data) ? volJson.data : [];
-        const todayKeyLocal = new Date().toISOString().split('T')[0];
-        const allDates = Array.from(new Set<string>([
-          ...tvlArr.map(d => String(d?.date || '')),
-          ...volArr.map(d => String(d?.date || '')),
-        ])).filter(Boolean).sort((a, b) => a.localeCompare(b));
-
-        const tvlByDate = new Map<string, number>();
-        for (const d of tvlArr) tvlByDate.set(String(d.date), Number(d?.tvlUSD) || 0);
-        const volByDate = new Map<string, number>();
-        for (const d of volArr) volByDate.set(String(d.date), Number(d?.volumeUSD) || 0);
-
-        // Map fee events to per-day overlays over the same date domain
+        // Map fee events to per-day overlays
         const feeByDate = new Map<string, { ratio: number; ema: number; feePct: number }>();
-        const events: any[] = Array.isArray(feeJson) ? feeJson : [];
-        const evAsc = [...events].sort((a, b) => Number(a?.timestamp || 0) - Number(b?.timestamp || 0));
+        const evAsc = [...feeEvents].sort((a, b) => Number(a?.timestamp || 0) - Number(b?.timestamp || 0));
+
         const scaleRatio = (val: any): number => {
           const n = typeof val === 'string' ? Number(val) : (typeof val === 'number' ? val : 0);
           if (!Number.isFinite(n)) return 0;
@@ -1308,214 +1279,113 @@ export default function PoolDetailPage() {
           if (Math.abs(n) >= 1e4) return n / 1e4;
           return n;
         };
-        // Ensure we compute overlays for today as well
-        const datesForOverlay = Array.from(new Set<string>([...allDates, todayKeyLocal])).sort((a,b) => a.localeCompare(b));
+
+        // Get all dates (from data + today)
+        const allDates = Array.from(new Set([
+          ...dayData.map(d => d.date),
+          todayKeyLocal
+        ])).sort((a, b) => a.localeCompare(b));
+
+        // Process fee events for each date
         let ei = 0, curFeePct = 0, curRatio = 0, curEma = 0;
-        for (const dateStr of datesForOverlay) {
+        for (const dateStr of allDates) {
           const endTs = Math.floor(new Date(`${dateStr}T23:59:59Z`).getTime() / 1000);
           while (ei < evAsc.length && Number(evAsc[ei]?.timestamp || 0) <= endTs) {
             const e = evAsc[ei];
-            const bps = Number(e?.newFeeBps ?? e?.newFeeRateBps ?? 0);
+            const bps = Number(e?.newFeeBps ?? 0);
             curFeePct = Number.isFinite(bps) ? (bps / 10_000) : curFeePct;
-            curRatio = scaleRatio(e?.currentRatio); // Normalized in API (Activity)
+            curRatio = scaleRatio(e?.currentRatio); // Activity
             curEma = scaleRatio(e?.newTargetRatio); // Target
             ei++;
           }
           feeByDate.set(dateStr, { ratio: curRatio, ema: curEma, feePct: curFeePct });
         }
 
-        // Build merged series from separate endpoints (no today entry here)
-        const merged: ChartDataPoint[] = allDates.map((k) => {
-          const v = volByDate.get(k) || 0;
-          const t = tvlByDate.get(k) || 0;
-          const f = feeByDate.get(k);
+        // Build final merged chart data
+        const merged: ChartDataPoint[] = allDates.map((dateStr) => {
+          const dayInfo = dataByDate.get(dateStr);
+          const feeInfo = feeByDate.get(dateStr);
+
           return {
-            date: k,
-            volumeUSD: v,
-            tvlUSD: t,
-            volumeTvlRatio: f?.ratio ?? 0,
-            emaRatio: f?.ema ?? 0,
-            dynamicFee: f?.feePct ?? 0,
+            date: dateStr,
+            volumeUSD: dayInfo?.volumeUSD || 0,
+            tvlUSD: dayInfo?.tvlUSD || 0,
+            volumeTvlRatio: feeInfo?.ratio ?? 0,
+            emaRatio: feeInfo?.ema ?? 0,
+            dynamicFee: feeInfo?.feePct ?? 0,
           } as ChartDataPoint;
         });
 
-        // Volume API now includes today's partial data, so merged already has today's volume
-        let finalMerged = merged;
-
-        // Update today's TVL with real-time data from header stats
-        const hasToday = finalMerged.some(d => d.date === todayKeyLocal);
-        const overlayToday = feeByDate.get(todayKeyLocal);
-        if (hasToday) {
-          // Update existing today point with current TVL and overlay
-          finalMerged = finalMerged.map(d =>
-            d.date === todayKeyLocal
-              ? {
-                  ...d,
-                  tvlUSD: Number.isFinite(tvlFromHeader) && tvlFromHeader > 0 ? tvlFromHeader : d.tvlUSD,
-                  volumeTvlRatio: overlayToday?.ratio ?? d.volumeTvlRatio ?? 0,
-                  emaRatio: overlayToday?.ema ?? d.emaRatio ?? 0,
-                  dynamicFee: overlayToday?.feePct ?? d.dynamicFee ?? 0,
-                }
-              : d
-          );
-        }
+        // Update today's TVL with pool stats if available
+        const tvlFromPoolStats = poolStatsResult?.tvlUSD || 0;
+        const finalMerged = merged.map(d =>
+          d.date === todayKeyLocal && Number.isFinite(tvlFromPoolStats) && tvlFromPoolStats > 0
+            ? { ...d, tvlUSD: tvlFromPoolStats }
+            : d
+        );
 
         setApiChartData(finalMerged);
-        // Keep header TVL strictly in sync with the chart's latest point
-        try {
-          const latest = finalMerged.find(d => d.date === todayKeyLocal) || finalMerged[finalMerged.length - 1];
-          const latestTvl = Number(latest?.tvlUSD || 0);
-          if (Number.isFinite(latestTvl)) {
-            setCurrentPoolData(prev => prev ? { ...prev, liquidity: formatUSD(latestTvl) } : prev);
-          }
-        } catch {}
-        // Client no longer writes chart to local cache; rely on server cache for sharing across users
-        // Chart data loaded successfully; end loading state unless we are in a controlled backoff
+
+        // Process pool stats and update pool data
+        if (poolStatsResult) {
+          const vol24 = poolStatsResult.volume24hUSD || 0;
+          const tvlNow = poolStatsResult.tvlUSD || 0;
+          const dynamicFeeBps = poolStatsResult.dynamicFeeBps ?? null;
+
+          // Use fees from batch API if available
+          const fees24hUSD = typeof poolStatsResult.fees24hUSD === 'number'
+            ? poolStatsResult.fees24hUSD
+            : (() => {
+                const feeRate = (typeof dynamicFeeBps === 'number' && dynamicFeeBps >= 0) ? dynamicFeeBps / 10_000 : 0;
+                return vol24 * feeRate;
+              })();
+
+          // Format APY helper function
+          const formatAPR = (aprValue: number) => {
+            if (!isFinite(aprValue)) return '0.00%';
+            if (aprValue < 1000) return `${aprValue.toFixed(2)}%`;
+            return `${(aprValue / 1000).toFixed(2)}K%`;
+          };
+
+          // Use 24h APR from batch API
+          const calculatedApr = typeof poolStatsResult.apr24h === 'number' && poolStatsResult.apr24h > 0
+            ? formatAPR(poolStatsResult.apr24h)
+            : '0.00%';
+
+          const combinedPoolData = {
+            ...poolInfo,
+            ...poolStatsResult,
+            apr: calculatedApr,
+            dynamicFeeBps: dynamicFeeBps,
+            tickSpacing: getPoolById(poolId)?.tickSpacing || DEFAULT_TICK_SPACING,
+            volume24h: isFinite(vol24) ? formatUSD(vol24) : poolInfo.volume24h,
+            fees24h: isFinite(fees24hUSD) ? formatUSD(fees24hUSD) : poolInfo.fees24h,
+            liquidity: isFinite(tvlNow) ? formatUSD(tvlNow) : poolInfo.liquidity,
+            highlighted: false,
+          };
+
+          setCurrentPoolData(combinedPoolData);
+        }
+
+        console.log('[Pool Detail] All data processed successfully');
         if (!keepLoading) setIsLoadingChartData(false);
       } catch (error: any) {
-        console.error('Failed to fetch daily chart series:', error);
+        console.error('Failed to fetch chart data:', error);
         const errorMessage = error?.message || String(error);
-        toast.error('Chart Data Failed', { 
-          icon: <OctagonX className="h-4 w-4 text-red-500" />, 
+        toast.error('Chart Data Failed', {
+          icon: <OctagonX className="h-4 w-4 text-red-500" />,
           description: errorMessage,
           action: {
             label: "Copy Error",
             onClick: () => navigator.clipboard.writeText(errorMessage)
           }
         });
-        // End loading unless caller wants to keep spinner (e.g., backoff window)
         if (!keepLoading) setIsLoadingChartData(false);
       }
     })();
-
-    const poolInfoLocal = getPoolConfiguration(poolId);
-    if (!poolInfoLocal) {
-      toast.error("Pool Not Found", {
-        icon: <OctagonX className="h-4 w-4 text-red-500" />,
-        description: "Pool configuration not found for this ID.",
-        action: {
-          label: "Open Ticket",
-          onClick: () => window.open('https://discord.gg/alphix', '_blank')
-        }
-      });
-      router.push('/liquidity');
-      return;
-    }
-
-    // Use the subgraph ID from the pool configuration for API calls
-    const apiPoolIdToUse = poolInfoLocal.subgraphId; 
-
-    // Pool state now handled by usePoolState hook at component level
-
-    // 1. Get Pool Stats from shared cache or fetch fresh
-    let poolStats: Partial<Pool> | null = null;
-    try {
-      let params = '';
-      if (force) {
-        // Try to use cache version first, fallback to bust
-        try {
-          const cacheVersion = SafeStorage.get('pools-cache-version');
-          params = cacheVersion ? `?v=${cacheVersion}` : `?bust=${Date.now()}`;
-        } catch {
-          params = `?bust=${Date.now()}`;
-        }
-      }
-
-      // Use versioned URL to avoid stale cache
-      const versionResponse = await fetch('/api/cache-version', { cache: 'no-store' as any } as any);
-      const versionData = await versionResponse.json();
-      const resp = await fetch(versionData.cacheUrl);
-      if (resp.ok) {
-        const data = await resp.json();
-        const poolIdLc = String(apiPoolIdToUse || '').toLowerCase();
-        const match = Array.isArray(data?.pools) ? data.pools.find((p: any) => String(p.poolId || '').toLowerCase() === poolIdLc) : null;
-        if (match) {
-          const tvlUSD = Number(match.tvlUSD) || 0;
-          poolStats = {
-            tvlUSD,
-            volume24hUSD: Number(match.volume24hUSD) || 0,
-            tvlYesterdayUSD: Number(match.tvlYesterdayUSD) || 0,
-            volumePrev24hUSD: Number(match.volumePrev24hUSD) || 0,
-          } as any;
-          // Also set tvlFromHeader to avoid the separate call above
-          tvlFromHeader = tvlUSD;
-        }
-      }
-    } catch (error) {
-      console.error(`Error loading stats for pool ${apiPoolIdToUse}:`, error);
-    }
-
-    let dynamicFeeBps: number | null = null;
-    try {
-      dynamicFeeBps = await getPoolFeeBps(apiPoolIdToUse);
-    } catch (e) {
-      dynamicFeeBps = null;
-    }
-
-    const vol24 = Number(poolStats?.volume24hUSD || 0);
-    const tvlNow = Number(poolStats?.tvlUSD || 0);
-
-    // Calculate 24h fees for display
-    const feeRate = (typeof dynamicFeeBps === 'number' && dynamicFeeBps >= 0) ? dynamicFeeBps / 10_000 : 0;
-    const fees24hUSD = vol24 * feeRate;
-
-    // Fetch 7-day pool metrics for accurate APY calculation (same as range selector)
-    let calculatedApr = '0.00%';
-    try {
-      const metricsResponse = await fetch('/api/liquidity/pool-metrics', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ poolId, days: 7 })
-      });
-
-      if (metricsResponse.ok) {
-        const metricsData = await metricsResponse.json();
-        const { totalFeesToken0, avgTVLToken0, days } = metricsData.metrics || {};
-
-        if (avgTVLToken0 && avgTVLToken0 > 0 && days > 0) {
-          // Calculate APY from 7-day data: (Daily Fees * 365) / TVL * 100
-          const feesPerDay = totalFeesToken0 / days;
-          const annualFees = feesPerDay * 365;
-          const apy = (annualFees / avgTVLToken0) * 100;
-
-          // Format APY
-          if (isNaN(apy) || !isFinite(apy)) {
-            calculatedApr = '0.00%';
-          } else if (apy >= 1000) {
-            calculatedApr = `${Math.round(apy)}%`;
-          } else if (apy >= 100) {
-            calculatedApr = `${apy.toFixed(0)}%`;
-          } else if (apy >= 10) {
-            calculatedApr = `${apy.toFixed(1)}%`;
-          } else if (apy > 0) {
-            calculatedApr = `${apy.toFixed(2)}%`;
-          } else {
-            calculatedApr = '0.00%';
-          }
-        }
-      }
-    } catch (e) {
-      console.error('Failed to fetch pool metrics for APY:', e);
-      calculatedApr = '0.00%';
-    }
-
-    const combinedPoolData = {
-        ...poolInfo,
-        ...(poolStats || {}),
-        apr: calculatedApr,
-        dynamicFeeBps: dynamicFeeBps,
-        tickSpacing: getPoolById(poolId)?.tickSpacing || DEFAULT_TICK_SPACING,
-        volume24h: isFinite(vol24) ? formatUSD(vol24) : poolInfo.volume24h,
-        fees24h: isFinite(fees24hUSD) ? formatUSD(fees24hUSD) : poolInfo.fees24h,
-        liquidity: isFinite(tvlNow) ? formatUSD(tvlNow) : poolInfo.liquidity,
-        highlighted: false,
-    } as PoolDetailData;
-
-    // Set pool data immediately
-    setCurrentPoolData(combinedPoolData);
   }, [poolId, isConnected, accountAddress, router]);
 
-  const refreshAfterLiquidityAddedWithSkeleton = useCallback(async (token0Symbol?: string, token1Symbol?: string, txInfo?: { txHash?: `0x${string}`; blockNumber?: bigint; tvlDelta?: number }) => {
+  const refreshAfterLiquidityAddedWithSkeleton = useCallback(async (token0Symbol?: string, token1Symbol?: string, txInfo?: { txHash?: `0x${string}`; blockNumber?: bigint; tvlDelta?: number; volumeDelta?: number }) => {
     const now = Date.now();
     const timeSinceLastCall = now - (refreshAfterLiquidityAddedWithSkeleton as any).lastCallTime;
     if ((refreshAfterLiquidityAddedWithSkeleton as any).lastCallTime && timeSinceLastCall < 2000) return;
@@ -1527,6 +1397,7 @@ export default function PoolDetailPage() {
       const currentBaselineIds = userPositions.map(p => p.positionId);
       setPendingNewPositions(prev => [...prev, { id: skeletonId, token0Symbol, token1Symbol, createdAt, baselineIds: currentBaselineIds }]);
 
+      // Optimistic UI updates for TVL and volume
       if (txInfo?.tvlDelta && currentPoolData?.liquidity) {
         const currentTvl = parseFloat(String(currentPoolData.liquidity).replace(/[$,]/g, ''));
         if (Number.isFinite(currentTvl)) {
@@ -1534,13 +1405,32 @@ export default function PoolDetailPage() {
           setCurrentPoolData(prev => prev ? { ...prev, liquidity: formatUSD(optimisticTvl) } : prev);
         }
       }
+
+      // Optimistic volume update for zap transactions
+      if (txInfo?.volumeDelta && currentPoolData?.volume24h) {
+        const currentVol = parseFloat(String(currentPoolData.volume24h).replace(/[$,]/g, ''));
+        if (Number.isFinite(currentVol)) {
+          const optimisticVol = Math.max(0, currentVol + txInfo.volumeDelta);
+          setCurrentPoolData(prev => prev ? { ...prev, volume24h: formatUSD(optimisticVol) } : prev);
+        }
+      }
     }
 
     if (txInfo?.txHash && txInfo?.blockNumber && accountAddress && poolId) {
       try {
         await invalidateAfterTx(queryClient, {
-          owner: accountAddress, poolId, reason: 'liquidity-added', awaitSubgraphSync: true, blockNumber: txInfo.blockNumber, reloadPositions: true,
+          owner: accountAddress,
+          poolId,
+          reason: 'liquidity-added',
+          awaitSubgraphSync: true,
+          blockNumber: txInfo.blockNumber,
+          reloadPositions: true,
           refreshPoolData: silentRefreshTVL,
+          // Pass optimistic updates to ensure Redis cache invalidation
+          optimisticUpdates: {
+            tvlDelta: txInfo.tvlDelta,
+            volumeDelta: txInfo.volumeDelta, // Include volume delta for zap transactions
+          },
           onPositionsReloaded: (allDerived) => {
             const subId = (getPoolConfiguration(poolId)?.subgraphId || '').toLowerCase();
             const filtered = allDerived.filter((pos: any) => String(pos.poolId || '').toLowerCase() === subId);

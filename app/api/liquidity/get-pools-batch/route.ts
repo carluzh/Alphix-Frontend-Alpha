@@ -3,63 +3,33 @@ export const preferredRegion = 'auto';
 
 import { NextResponse } from 'next/server';
 import { unstable_cache } from 'next/cache';
-import { getPoolSubgraphId, getAllPools, getTokenDecimals } from '@/lib/pools-config';
+import { getPoolSubgraphId, getAllPools, getTokenDecimals, getStateViewAddress } from '@/lib/pools-config';
 import { batchGetTokenPrices, calculateTotalUSD } from '@/lib/price-service';
-import { formatUnits } from 'viem';
-import { getCacheKeyWithVersion } from '@/lib/cache-version';
+import { formatUnits, parseAbi } from 'viem';
 import { getSubgraphUrlForPool, isDaiPool } from '@/lib/subgraph-url-helper';
+import { publicClient } from '@/lib/viemClient';
+import { STATE_VIEW_ABI } from '@/lib/abis/state_view_abi';
+import { getCachedData, setCachedData, getCachedDataWithStale } from '@/lib/redis';
 
-// For unstable_cache compatibility, create a synchronous version
-function getCacheKeyWithVersionSync(baseKey: string): string[] {
-  // Use a simple timestamp-based versioning for cache keys
-  const version = Math.floor(Date.now() / (10 * 60 * 1000)); // 10-minute buckets
-  return [`${baseKey}-v${version}`];
-}
-
-const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
-
-// We rely on Next Data Cache via unstable_cache for caching + global tag invalidation
-
-const GET_POOLS_TVL_BULK = `
-  query GetPoolsTVL($poolIds: [String!]!) {
+// ULTRA-SIMPLIFIED: Use ONLY daily data instead of hourly (92% fewer entities fetched!)
+// For 7 pools: ~21 entities (7 pools + 14 daily) vs 182 entities (7 pools + 168 hourly + 7 daily)
+const GET_POOLS_COMBINED = `
+  query GetPoolsSimplified($poolIds: [String!]!, $cutoffDays: Int!) {
     pools(where: { id_in: $poolIds }) {
       id
       totalValueLockedToken0
       totalValueLockedToken1
     }
-  }
-`;
-
-const GET_POOLS_HOURLY_BULK = `
-  query GetPoolsHourly($poolIds: [String!]!, $cutoff: Int!) {
-    poolHourDatas(
-      where: { pool_in: $poolIds, periodStartUnix_gte: $cutoff }
-      orderBy: periodStartUnix
+    poolDayDatas(
+      first: 20
+      where: { pool_in: $poolIds, date_gte: $cutoffDays }
+      orderBy: date
       orderDirection: desc
     ) {
       pool { id }
-      periodStartUnix
+      date
       volumeToken0
       volumeToken1
-    }
-  }
-`;
-
-const GET_BLOCK_FOR_TS = `
-  query BlockForTs($ts: Int!) {
-    transactions(first: 1, orderBy: timestamp, orderDirection: desc, where: { timestamp_lte: $ts }) {
-      timestamp
-      blockNumber
-    }
-  }
-`;
-
-const GET_POOLS_AT_BLOCK_BULK = `
-  query PoolsAtBlock($poolIds: [String!]!, $block: Int!) {
-    pools(where: { id_in: $poolIds }, block: { number: $block }) {
-      id
-      totalValueLockedToken0
-      totalValueLockedToken1
     }
   }
 `;
@@ -70,10 +40,55 @@ interface BatchPoolStatsMinimal {
   tvlYesterdayUSD?: number;
   volume24hUSD: number;
   volumePrev24hUSD?: number;
+  fees24hUSD?: number;
+  feesPrev24hUSD?: number;
+  dynamicFeeBps?: number;
+  apr24h?: number;
 }
 
 const getSubgraphUrl = () => process.env.SUBGRAPH_URL as string | undefined;
 const getDaiSubgraphUrl = () => process.env.SUBGRAPH_URL_DAI as string | undefined;
+
+// SIMPLIFIED: Direct fetch without rate limiting wrapper (Satsuma handles its own rate limits)
+async function fetchSubgraphDirect(
+  url: string,
+  query: string,
+  variables: any,
+  timeoutMs: number = 20000  // 20s timeout to allow slow queries to complete
+): Promise<{ success: boolean; data: any; error?: string }> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, variables }),
+      signal: controller.signal,
+      next: { tags: ['pools-batch'], revalidate: 300 }, // 5min cache
+    });
+
+    clearTimeout(timeout);
+
+    if (!response.ok) {
+      return {
+        success: false,
+        data: {},
+        error: `HTTP ${response.status}: ${response.statusText}`,
+      };
+    }
+
+    const json = await response.json();
+    return { success: true, data: json };
+  } catch (error) {
+    clearTimeout(timeout);
+    return {
+      success: false,
+      data: {},
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
 
 async function computePoolsBatch(): Promise<any> {
   const SUBGRAPH_URL = getSubgraphUrl();
@@ -106,8 +121,6 @@ async function computePoolsBatch(): Promise<any> {
     tokenSymbols.add(p.currency1.symbol);
   }
 
-  const tokenPrices = await batchGetTokenPrices(Array.from(tokenSymbols));
-
   const poolIdToConfig = new Map<string, { symbol0: string; symbol1: string; dec0: number; dec1: number }>();
   for (const p of allPools) {
     const id = (getPoolSubgraphId(p.id) || p.id).toLowerCase();
@@ -122,163 +135,119 @@ async function computePoolsBatch(): Promise<any> {
   }
 
   const nowSec = Math.floor(Date.now() / 1000);
-  const cutoff24h = nowSec - 24 * 60 * 60;
-  const cutoff25h = nowSec - 25 * 60 * 60;
-  const cutoff49h = nowSec - 49 * 60 * 60;
   const dayStart = Math.floor(nowSec / 86400) * 86400;
-  const dayStartPrev = dayStart - 86400;
-  const dayEndPrev = dayStartPrev + 86400 - 1;
 
-  // TVL for all pools (query both subgraphs if DAI pools exist)
+  // IMPORTANT: Subgraph stores dates as TIMESTAMPS (seconds), not day counts
+  // Convert to timestamps for matching
+  const todayTimestamp = dayStart; // Today at 00:00 UTC (seconds)
+  const yesterdayTimestamp = dayStart - 86400; // Yesterday at 00:00 UTC (seconds)
+  const cutoffDays = Math.floor(yesterdayTimestamp / 86400); // For subgraph query (day count)
+
+  // SIMPLIFIED: Only TVL and daily data needed
   const tvlById = new Map<string, { tvl0: any; tvl1: any }>();
+  const dailyByPoolId = new Map<string, Array<any>>();
+  const errors: string[] = [];
+  const stateViewAddress = getStateViewAddress();
 
-  // Query non-DAI pools from main subgraph
-  if (nonDaiPoolIds.length > 0) {
-    const tvlResp = await fetch(SUBGRAPH_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        query: GET_POOLS_TVL_BULK,
-        variables: { poolIds: nonDaiPoolIds.map((id) => id.toLowerCase()) },
-      }),
-      next: { tags: ['pools-batch'] },
-    });
-    const tvlJson = tvlResp.ok ? await tvlResp.json() : { data: { pools: [] } };
-    for (const p of tvlJson?.data?.pools || []) {
-      tvlById.set(String(p.id).toLowerCase(), { tvl0: p.totalValueLockedToken0, tvl1: p.totalValueLockedToken1 });
-    }
+  // RUN EVERYTHING IN PARALLEL: Prices, fees, and subgraph queries have zero dependencies
+  console.time('[PERF] All data fetches (parallel)');
+  const [tokenPrices, feeResults, combinedResult, combinedResultDai] = await Promise.all([
+    // 1. Token prices via quote API (~3-4s)
+    batchGetTokenPrices(Array.from(tokenSymbols)),
+
+    // 2. Fee multicall (~1s)
+    (async () => {
+      try {
+        const feeCalls = targetPoolIds.map(poolId => ({
+          address: stateViewAddress as `0x${string}`,
+          abi: parseAbi(STATE_VIEW_ABI),
+          functionName: 'getSlot0',
+          args: [poolId as `0x${string}`],
+        }));
+        return await publicClient.multicall({
+          contracts: feeCalls,
+          allowFailure: true,
+        });
+      } catch (e) {
+        console.error('[Batch] Multicall for fees failed:', e);
+        return [];
+      }
+    })(),
+
+    // 3. Main subgraph query (~5-6s)
+    nonDaiPoolIds.length > 0
+      ? fetchSubgraphDirect(SUBGRAPH_URL, GET_POOLS_COMBINED, {
+          poolIds: nonDaiPoolIds.map((id) => id.toLowerCase()),
+          cutoffDays,
+        })
+      : Promise.resolve({ success: true, data: { data: { pools: [], poolDayDatas: [] } } }),
+
+    // 4. DAI subgraph query (~5-6s, runs parallel with #3)
+    daiPoolIds.length > 0 && SUBGRAPH_URL_DAI
+      ? fetchSubgraphDirect(SUBGRAPH_URL_DAI, GET_POOLS_COMBINED, {
+          poolIds: daiPoolIds.map((id) => id.toLowerCase()),
+          cutoffDays,
+        })
+      : Promise.resolve({ success: true, data: { data: { pools: [], poolDayDatas: [] } } }),
+  ]);
+  console.timeEnd('[PERF] All data fetches (parallel)');
+
+  // ERROR ACCUMULATION: Track failures to distinguish from empty data
+  if (!combinedResult.success && 'error' in combinedResult) {
+    errors.push(`Combined query failed: ${combinedResult.error}`);
+  }
+  if (!combinedResultDai.success && 'error' in combinedResultDai) {
+    errors.push(`Combined DAI query failed: ${combinedResultDai.error}`);
   }
 
-  // Query DAI pools from DAI subgraph
-  if (daiPoolIds.length > 0 && SUBGRAPH_URL_DAI) {
-    const tvlRespDai = await fetch(SUBGRAPH_URL_DAI, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        query: GET_POOLS_TVL_BULK,
-        variables: { poolIds: daiPoolIds.map((id) => id.toLowerCase()) },
-      }),
-      next: { tags: ['pools-batch'] },
-    });
-    const tvlJsonDai = tvlRespDai.ok ? await tvlRespDai.json() : { data: { pools: [] } };
-    for (const p of tvlJsonDai?.data?.pools || []) {
-      tvlById.set(String(p.id).toLowerCase(), { tvl0: p.totalValueLockedToken0, tvl1: p.totalValueLockedToken1 });
-    }
+  // Process TVL results
+  for (const p of combinedResult.data?.data?.pools || []) {
+    tvlById.set(String(p.id).toLowerCase(), { tvl0: p.totalValueLockedToken0, tvl1: p.totalValueLockedToken1 });
+  }
+  for (const p of combinedResultDai.data?.data?.pools || []) {
+    tvlById.set(String(p.id).toLowerCase(), { tvl0: p.totalValueLockedToken0, tvl1: p.totalValueLockedToken1 });
   }
 
-  // Hourly volume for all pools (query both subgraphs)
-  const hourlyByPoolId = new Map<string, Array<any>>();
-
-  // Query non-DAI pools
-  if (nonDaiPoolIds.length > 0) {
-    const hourlyResp = await fetch(SUBGRAPH_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        query: GET_POOLS_HOURLY_BULK,
-        variables: { poolIds: nonDaiPoolIds.map((id) => id.toLowerCase()), cutoff: cutoff49h },
-      }),
-      next: { tags: ['pools-batch'] },
-    });
-    const hourlyJson = hourlyResp.ok ? await hourlyResp.json() : { data: { poolHourDatas: [] } };
-    for (const h of hourlyJson?.data?.poolHourDatas || []) {
-      const id = String(h?.pool?.id || '').toLowerCase();
-      if (!id) continue;
-      if (!hourlyByPoolId.has(id)) hourlyByPoolId.set(id, []);
-      hourlyByPoolId.get(id)!.push(h);
-    }
+  // Process daily results (today + yesterday for volume)
+  for (const d of combinedResult.data?.data?.poolDayDatas || []) {
+    const id = String(d?.pool?.id || '').toLowerCase();
+    if (!id) continue;
+    if (!dailyByPoolId.has(id)) dailyByPoolId.set(id, []);
+    dailyByPoolId.get(id)!.push(d);
+  }
+  for (const d of combinedResultDai.data?.data?.poolDayDatas || []) {
+    const id = String(d?.pool?.id || '').toLowerCase();
+    if (!id) continue;
+    if (!dailyByPoolId.has(id)) dailyByPoolId.set(id, []);
+    dailyByPoolId.get(id)!.push(d);
   }
 
-  // Query DAI pools
-  if (daiPoolIds.length > 0 && SUBGRAPH_URL_DAI) {
-    const hourlyRespDai = await fetch(SUBGRAPH_URL_DAI, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        query: GET_POOLS_HOURLY_BULK,
-        variables: { poolIds: daiPoolIds.map((id) => id.toLowerCase()), cutoff: cutoff49h },
-      }),
-      next: { tags: ['pools-batch'] },
+  // Process fee results from multicall
+  const dynamicFeesByPoolId = new Map<string, number>();
+  if (Array.isArray(feeResults) && feeResults.length > 0) {
+    feeResults.forEach((result, index) => {
+      if (result.status === 'success') {
+        const slot0 = result.result as readonly [bigint, number, number, number];
+        const lpFeeRaw = Number(slot0?.[3] ?? 3000);
+        // Preserve hundredths of a basis point
+        const bps = Math.max(0, Math.round((((lpFeeRaw / 1_000_000) * 10_000) * 100)) / 100);
+        dynamicFeesByPoolId.set(targetPoolIds[index].toLowerCase(), bps);
+      }
     });
-    const hourlyJsonDai = hourlyRespDai.ok ? await hourlyRespDai.json() : { data: { poolHourDatas: [] } };
-    for (const h of hourlyJsonDai?.data?.poolHourDatas || []) {
-      const id = String(h?.pool?.id || '').toLowerCase();
-      if (!id) continue;
-      if (!hourlyByPoolId.has(id)) hourlyByPoolId.set(id, []);
-      hourlyByPoolId.get(id)!.push(h);
-    }
   }
 
-  // Previous-day block (get from main subgraph - blocks should be the same)
-  let prevDayBlock = 0;
-  try {
-    const blkResp = await fetch(SUBGRAPH_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: GET_BLOCK_FOR_TS, variables: { ts: dayEndPrev } }),
-      next: { tags: ['pools-batch'] },
-    });
-    if (blkResp.ok) {
-      const blkJson = await blkResp.json();
-      prevDayBlock = Number(blkJson?.data?.transactions?.[0]?.blockNumber) || 0;
-    }
-  } catch {}
+  // Report errors if any occurred (but continue execution)
+  if (errors.length > 0) {
+    console.warn('[Batch] Subgraph errors:', errors);
+  }
 
+  // PERF OPTIMIZATION: Skip previous-day TVL query (saves ~1.4s)
+  // Trade-off: TVL change % will be unavailable, but load time is critical
   const prevTvlByPoolId = new Map<string, { tvl0: number; tvl1: number }>();
-  if (prevDayBlock > 0) {
-    // Query non-DAI pools
-    if (nonDaiPoolIds.length > 0) {
-      try {
-        const poolsAtBlockResp = await fetch(SUBGRAPH_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            query: GET_POOLS_AT_BLOCK_BULK,
-            variables: { poolIds: nonDaiPoolIds.map((id) => id.toLowerCase()), block: prevDayBlock },
-          }),
-          next: { tags: ['pools-batch'] },
-        });
-        if (poolsAtBlockResp.ok) {
-          const poolsAtBlockJson = await poolsAtBlockResp.json();
-          const items = poolsAtBlockJson?.data?.pools || [];
-          for (const it of items) {
-            const id = String(it?.id || '').toLowerCase();
-            if (!id) continue;
-            const tvl0 = Number(it?.totalValueLockedToken0) || 0;
-            const tvl1 = Number(it?.totalValueLockedToken1) || 0;
-            prevTvlByPoolId.set(id, { tvl0, tvl1 });
-          }
-        }
-      } catch {}
-    }
+  console.log('[Batch] Skipping previous-day TVL query for performance (TVL change % unavailable)');
 
-    // Query DAI pools
-    if (daiPoolIds.length > 0 && SUBGRAPH_URL_DAI) {
-      try {
-        const poolsAtBlockRespDai = await fetch(SUBGRAPH_URL_DAI, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            query: GET_POOLS_AT_BLOCK_BULK,
-            variables: { poolIds: daiPoolIds.map((id) => id.toLowerCase()), block: prevDayBlock },
-          }),
-          next: { tags: ['pools-batch'] },
-        });
-        if (poolsAtBlockRespDai.ok) {
-          const poolsAtBlockJsonDai = await poolsAtBlockRespDai.json();
-          const items = poolsAtBlockJsonDai?.data?.pools || [];
-          for (const it of items) {
-            const id = String(it?.id || '').toLowerCase();
-            if (!id) continue;
-            const tvl0 = Number(it?.totalValueLockedToken0) || 0;
-            const tvl1 = Number(it?.totalValueLockedToken1) || 0;
-            prevTvlByPoolId.set(id, { tvl0, tvl1 });
-          }
-        }
-      } catch {}
-    }
-  }
-
+  // NOTE: Fee multicall now runs in parallel with first batch (moved above)
+  console.time('[PERF] Calculate pool stats');
   const poolsStats: BatchPoolStatsMinimal[] = [];
   for (const pool of allPools) {
     try {
@@ -309,20 +278,25 @@ async function computePoolsBatch(): Promise<any> {
         tvlUSD = calculateTotalUSD(amt0, amt1, safeToken0Price, safeToken1Price);
       }
 
+      // SIMPLIFIED: Use daily data only (today + yesterday)
+      const days = dailyByPoolId.get(poolId) || [];
+      const today = days.find(d => Number(d?.date) === todayTimestamp);
+      const yesterday = days.find(d => Number(d?.date) === yesterdayTimestamp);
+
+      // Today's volume (from midnight to now) - fallback to yesterday if today has no data
       let volume24hUSD = 0;
+      const volumeData = today || yesterday;
+      if (volumeData) {
+        const v0 = Number(volumeData?.volumeToken0) || 0;
+        volume24hUSD = v0 * safeToken0Price;
+      }
+
+      // Yesterday's full day volume (or day before if yesterday is being used above)
       let volumePrev24hUSD = 0;
-      const hours = hourlyByPoolId.get(poolId) || [];
-      if (hours.length > 0) {
-        let sumCurr0 = 0;
-        let sumPrev0 = 0;
-        for (const h of hours) {
-          const ts = Number(h?.periodStartUnix) || 0;
-          const v0 = Number(h?.volumeToken0) || 0;
-          if (ts >= cutoff24h) sumCurr0 += v0;
-          else if (ts >= cutoff49h && ts < cutoff25h) sumPrev0 += v0;
-        }
-        volume24hUSD = sumCurr0 * safeToken0Price;
-        volumePrev24hUSD = sumPrev0 * safeToken0Price;
+      const prevVolumeData = today ? yesterday : days.find(d => Number(d?.date) === yesterdayTimestamp - 86400);
+      if (prevVolumeData) {
+        const v0 = Number(prevVolumeData?.volumeToken0) || 0;
+        volumePrev24hUSD = v0 * safeToken0Price;
       }
 
       let tvlYesterdayUSD = 0;
@@ -333,69 +307,114 @@ async function computePoolsBatch(): Promise<any> {
         tvlYesterdayUSD = calculateTotalUSD(amt0Prev, amt1Prev, safeToken0Price, safeToken1Price);
       }
 
+      // NEW: Calculate fees and 24h APY
+      const dynamicFeeBps = dynamicFeesByPoolId.get(poolId) || 30; // default 0.30%
+      const feeRate = dynamicFeeBps / 10_000;
+      const fees24hUSD = volume24hUSD * feeRate;
+      const feesPrev24hUSD = volumePrev24hUSD * feeRate;
+
+      // 24h APY calculation
+      let apr24h = 0;
+      if (tvlUSD > 0 && fees24hUSD > 0) {
+        const annualFees = fees24hUSD * 365;
+        apr24h = (annualFees / tvlUSD) * 100;
+        // Ensure finite and positive
+        if (!isFinite(apr24h) || apr24h < 0) apr24h = 0;
+      }
+
       poolsStats.push({
         poolId,
         tvlUSD,
         tvlYesterdayUSD,
         volume24hUSD,
         volumePrev24hUSD,
+        fees24hUSD,
+        feesPrev24hUSD,
+        dynamicFeeBps,
+        apr24h,
       });
     } catch {}
   }
+  console.timeEnd('[PERF] Calculate pool stats');
 
-  const payload = { success: true, pools: poolsStats, timestamp: Date.now() };
+  const payload = {
+    success: true,
+    pools: poolsStats,
+    timestamp: Date.now(),
+    errors: errors.length > 0 ? errors : undefined // Include errors for cache validation
+  };
+
+  // NOTE: Caching is now handled in GET handler to prevent caching invalid data
   return payload;
-}
-
-// Validate if data looks reasonable (not all zeros due to stale subgraph)
-function isDataValid(pools: any[]): boolean {
-  if (!pools || pools.length === 0) return false;
-
-  // Check if any pool has non-zero TVL AND at least one pool has non-zero volume
-  // This handles the case where subgraph lag affects volume differently than TVL
-  const hasValidTVL = pools.some(pool => pool.tvlUSD && pool.tvlUSD > 0);
-  const hasValidVolume = pools.some(pool => pool.volume24hUSD && pool.volume24hUSD > 0);
-
-  return hasValidTVL && hasValidVolume;
 }
 
 export async function GET(request: Request) {
   try {
-    const url = new URL(request.url);
-    const version = url.searchParams.get('v') || 'default';
+    const cacheKey = 'pools-batch:v1';
 
-    const cachedCompute = unstable_cache(
-      async () => {
-        return await computePoolsBatch();
-      },
-      [`pools-batch-${version}`],
-      { tags: ['pools-batch'], revalidate: 3600 }
+    // Check cache with staleness and invalidation status
+    const { data: cachedData, isStale, isInvalidated } = await getCachedDataWithStale<any>(
+      cacheKey,
+      5 * 60,   // 5 minutes fresh
+      60 * 60   // 1 hour stale window
     );
 
-    let payload = await cachedCompute();
-
-    // If data appears invalid (all zeros), implement custom backoff retry
-    if (payload.success && payload.pools && !isDataValid(payload.pools)) {
-      const delays = [0, 2000, 5000, 10000, 30000]; // immediate, 2s, 5s, 10s, 30s
-      let attempt = 0;
-
-      while (attempt < delays.length && !isDataValid(payload.pools)) {
-        const delay = delays[attempt];
-        attempt++;
-
-        if (delay > 0) {
-          await new Promise(resolve => setTimeout(resolve, delay));
-        }
-
-        // Clear cache and recompute fresh data
-        payload = await computePoolsBatch();
-      }
+    // Fresh cache: return immediately
+    if (cachedData && !isStale && !isInvalidated) {
+      console.log('[Batch] Redis cache HIT (fresh)');
+      return NextResponse.json(cachedData);
     }
 
-    return NextResponse.json(payload, {
-      headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=3600' },
-    });
+    // Invalidated cache: blocking fetch (user just did an action)
+    if (cachedData && isInvalidated) {
+      console.log('[Batch] Redis cache INVALIDATED - performing blocking refresh');
+      const payload = await computePoolsBatch();
+
+      const hasErrors = payload.errors && payload.errors.length > 0;
+      if (payload.success && !hasErrors) {
+        const cachePayload = { ...payload, errors: undefined };
+        await setCachedData(cacheKey, cachePayload, 3600); // 1 hour
+      }
+
+      return NextResponse.json({ ...payload, isStale: false });
+    }
+
+    // Stale cache (not invalidated): return immediately, refresh in background
+    if (cachedData && isStale) {
+      console.log('[Batch] Redis cache HIT (stale) - returning stale data, triggering background refresh');
+
+      // Trigger background revalidation (fire-and-forget)
+      void computePoolsBatch()
+        .then((payload) => {
+          if (payload.success && !(payload.errors && payload.errors.length > 0)) {
+            const cachePayload = { ...payload, errors: undefined };
+            return setCachedData(cacheKey, cachePayload, 3600);
+          }
+        })
+        .catch((error) => {
+          console.error('[Batch] Background revalidation failed:', error);
+        });
+
+      // Return stale data with flag so frontend can show pulse animation
+      return NextResponse.json({ ...cachedData, isStale: true });
+    }
+
+    // Cache miss: fetch fresh data
+    console.log('[Batch] Redis cache MISS, fetching fresh data');
+    const payload = await computePoolsBatch();
+
+    const hasErrors = payload.errors && payload.errors.length > 0;
+    if (payload.success && !hasErrors) {
+      console.log('[Batch] Caching data (1-hour TTL)');
+      const cachePayload = { ...payload, errors: undefined };
+      await setCachedData(cacheKey, cachePayload, 3600); // 1 hour
+    } else {
+      console.warn('[Batch] Skipping cache - subgraph errors:', payload.errors);
+    }
+
+    return NextResponse.json(payload);
   } catch (error: any) {
+    console.error('[Batch] Unexpected error:', error);
     return NextResponse.json({ success: false, message: error?.message || 'Unknown error' }, { status: 500 });
   }
 }

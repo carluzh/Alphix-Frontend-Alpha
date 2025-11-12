@@ -11,7 +11,6 @@ import { baseSepolia } from '@/lib/wagmiConfig';
 import { getAddress, type Hex, BaseError, parseUnits, formatUnits, encodeAbiParameters, keccak256 } from 'viem';
 import { getPositionDetails, getPoolState, preparePermit2BatchForPosition } from '@/lib/liquidity-utils';
 import { publicClient } from '@/lib/viemClient';
-import { refreshFeesAfterTransaction } from '@/lib/client-cache';
 import { invalidateAfterTx } from '@/lib/invalidation';
 import { OctagonX, InfoIcon, BadgeCheck } from 'lucide-react';
 
@@ -466,19 +465,11 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
           const receipt = await publicClient.getTransactionReceipt({ hash: hash as `0x${string}` });
           blockNumber = receipt?.blockNumber;
         } catch {}
-        onLiquidityIncreased({ 
-          txHash: hash as `0x${string}`, 
-          blockNumber, 
-          increaseAmounts: increaseAmountsRef.current 
+        onLiquidityIncreased({
+          txHash: hash as `0x${string}`,
+          blockNumber,
+          increaseAmounts: increaseAmountsRef.current
         });
-        
-        // Refresh fee data for this position
-        try {
-          const positionId = currentPositionIdRef.current;
-          if (positionId) {
-            refreshFeesAfterTransaction(positionId, queryClient);
-          }
-        } catch {}
       })();
 
       if (accountAddress && currentPositionDataRef.current && hash) {
