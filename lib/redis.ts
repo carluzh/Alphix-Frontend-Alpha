@@ -104,22 +104,36 @@ export async function deleteCachedData(key: string): Promise<void> {
 
 // Mark cache as invalidated without deleting (data remains but will trigger blocking refresh)
 export async function invalidateCachedData(key: string): Promise<void> {
-  if (!redis) return;
+  if (!redis) {
+    console.error(`[Redis] ❌ Cannot invalidate ${key} - Redis not initialized`);
+    return;
+  }
 
   try {
     const wrapper = await redis.get<CachedDataWrapper<any>>(key);
 
-    if (wrapper && wrapper.meta) {
-      wrapper.meta.invalidated = true;
-      // Keep the same TTL by re-setting with the original data
-      const ttl = await redis.ttl(key);
-      if (ttl > 0) {
-        await redis.setex(key, ttl, wrapper);
-        console.log(`[Redis] Cache invalidated: ${key}`);
-      }
+    if (!wrapper || !wrapper.meta) {
+      console.warn(`[Redis] ⚠️ Key not found or invalid: ${key}`);
+      return;
     }
+
+    const ttl = await redis.ttl(key);
+
+    if (ttl <= 0) {
+      console.warn(`[Redis] ⚠️ Key expired (TTL=${ttl}): ${key}`);
+      return;
+    }
+
+    // Mark as invalidated
+    wrapper.meta.invalidated = true;
+
+    // Use safe TTL to prevent race condition (min 5 seconds)
+    const safeTTL = Math.max(ttl, 5);
+    await redis.setex(key, safeTTL, wrapper);
+
+    console.log(`[Redis] ✅ Cache invalidated: ${key} (TTL: ${safeTTL}s)`);
   } catch (error) {
-    console.error('[Redis] Invalidation failed:', error);
+    console.error(`[Redis] ❌ Invalidation failed for ${key}:`, error);
   }
 }
 

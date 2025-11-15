@@ -7,7 +7,7 @@
  * - All prices cached in Redis with 5min fresh / 15min stale window
  */
 
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { redis, getCachedDataWithStale } from '@/lib/redis';
 import { priceKeys } from '@/lib/redis-keys';
 
@@ -19,11 +19,11 @@ const TARGET_CHAIN_ID = 84532; // Base Sepolia
 let ongoingFetch: Promise<TokenPriceData> | null = null;
 
 interface TokenPriceData {
-  BTC: { usd: number };
-  USDC: { usd: number };
-  ETH: { usd: number };
-  USDT: { usd: number };
-  DAI: { usd: number };
+  BTC: { usd: number; usd_24h_change?: number };
+  USDC: { usd: number; usd_24h_change?: number };
+  ETH: { usd: number; usd_24h_change?: number };
+  USDT: { usd: number; usd_24h_change?: number };
+  DAI: { usd: number; usd_24h_change?: number };
   lastUpdated: number;
 }
 
@@ -79,28 +79,91 @@ async function getTokenUSDPriceViaQuote(tokenSymbol: string): Promise<number | n
 }
 
 /**
+ * Fetch 24h price change data from CoinGecko
+ */
+async function fetch24hPriceChanges(): Promise<Record<string, number>> {
+  try {
+    const coinGeckoIds = {
+      BTC: 'bitcoin',
+      ETH: 'ethereum',
+      USDC: 'usd-coin',
+      USDT: 'tether',
+      DAI: 'dai'
+    };
+
+    const ids = Object.values(coinGeckoIds).join(',');
+    const url = `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true`;
+
+    const response = await fetch(url, {
+      headers: { 'Accept': 'application/json' }
+    });
+
+    if (!response.ok) {
+      console.warn('[Prices API] CoinGecko API failed:', response.status);
+      return {};
+    }
+
+    const data = await response.json();
+    const changes: Record<string, number> = {};
+
+    for (const [symbol, geckoId] of Object.entries(coinGeckoIds)) {
+      const priceData = data[geckoId];
+      if (priceData && typeof priceData.usd_24h_change === 'number') {
+        changes[symbol] = priceData.usd_24h_change;
+      }
+    }
+
+    return changes;
+  } catch (error) {
+    console.error('[Prices API] Error fetching 24h changes from CoinGecko:', error);
+    return {};
+  }
+}
+
+/**
  * Fetch all prices fresh (no cache)
  */
 async function fetchAllPricesFresh(): Promise<TokenPriceData> {
   console.log('[Prices API] Fetching all prices via quote API...');
 
-  const [btcPrice, ethPrice, usdtPrice, daiPrice] = await Promise.all([
-    getTokenUSDPriceViaQuote('aBTC'),
-    getTokenUSDPriceViaQuote('aETH'),
-    getTokenUSDPriceViaQuote('aUSDT'),
-    getTokenUSDPriceViaQuote('aDAI'),
+  // Fetch both quote prices and 24h changes in parallel
+  const [quotePrices, priceChanges] = await Promise.all([
+    Promise.all([
+      getTokenUSDPriceViaQuote('aBTC'),
+      getTokenUSDPriceViaQuote('aETH'),
+      getTokenUSDPriceViaQuote('aUSDT'),
+      getTokenUSDPriceViaQuote('aDAI'),
+    ]),
+    fetch24hPriceChanges()
   ]);
 
+  const [btcPrice, ethPrice, usdtPrice, daiPrice] = quotePrices;
+
   const prices: TokenPriceData = {
-    BTC: { usd: btcPrice || 0 },
-    USDC: { usd: 1 },
-    ETH: { usd: ethPrice || 0 },
-    USDT: { usd: usdtPrice || 1 },
-    DAI: { usd: daiPrice || 1 },
+    BTC: {
+      usd: btcPrice || 0,
+      usd_24h_change: priceChanges.BTC
+    },
+    USDC: {
+      usd: 1,
+      usd_24h_change: priceChanges.USDC || 0
+    },
+    ETH: {
+      usd: ethPrice || 0,
+      usd_24h_change: priceChanges.ETH
+    },
+    USDT: {
+      usd: usdtPrice || 1,
+      usd_24h_change: priceChanges.USDT || 0
+    },
+    DAI: {
+      usd: daiPrice || 1,
+      usd_24h_change: priceChanges.DAI || 0
+    },
     lastUpdated: Date.now()
   };
 
-  console.log('[Prices API] Fetched prices:', prices);
+  console.log('[Prices API] Fetched prices with 24h changes:', prices);
   return prices;
 }
 
@@ -126,7 +189,7 @@ async function fetchAllPricesWithDedup(): Promise<TokenPriceData> {
   return await ongoingFetch;
 }
 
-export async function GET(request: NextRequest) {
+export async function GET() {
   try {
     const cacheKey = priceKeys.batch();
 

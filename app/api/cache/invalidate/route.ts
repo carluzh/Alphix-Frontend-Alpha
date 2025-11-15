@@ -49,7 +49,7 @@ export async function POST(request: Request) {
     }
 
     // Invalidate pool caches (if pool-affecting transaction)
-    if (poolId || reason === 'swap' || reason === 'mint' || reason === 'liquidity-added' || reason === 'decrease') {
+    if (poolId || reason === 'swap' || reason === 'mint' || reason === 'liquidity-added' || reason === 'decrease' || reason === 'collect') {
       const poolCacheKeys = getPoolCacheKeys(poolId);
       keysToInvalidate.push(...poolCacheKeys);
 

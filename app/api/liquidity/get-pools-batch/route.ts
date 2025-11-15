@@ -1,5 +1,7 @@
 export const runtime = 'nodejs';
 export const preferredRegion = 'auto';
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 import { NextResponse } from 'next/server';
 import { unstable_cache } from 'next/cache';
@@ -65,7 +67,7 @@ async function fetchSubgraphDirect(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query, variables }),
       signal: controller.signal,
-      next: { tags: ['pools-batch'], revalidate: 300 }, // 5min cache
+      cache: 'no-store', // Let Redis handle all caching
     });
 
     clearTimeout(timeout);

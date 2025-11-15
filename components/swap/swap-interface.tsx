@@ -1600,16 +1600,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       return;
     }
 
-    // Immediate optimistic cache invalidation - before any tx work
-    try { localStorage.setItem('cache:pools-batch:invalidated', 'true'); } catch {}
-    const newVersion = Date.now();
-    try { localStorage.setItem('pools-cache-version', String(newVersion)); } catch {}
-    console.log('[SwapUltraOptimistic] Cache invalidated on button click; version', newVersion);
-    
-    // Background revalidation (fire and forget)
-    try {
-      fetch('/api/internal/revalidate-pools', { method: 'POST' } as any).catch(() => {});
-    } catch {}
     setIsSwapping(true); // Disable button immediately
     const stateBeforeAction = swapProgressState; // Store state before this action attempt
 
