@@ -16,7 +16,7 @@
  * ├─────────────────────────────────────────────────────────────┤
  * │ Bottom Section (padding 16px, background surface2)          │
  * │ ┌──────────┬──────────┬──────────┬──────────────┐          │
- * │ │ Position │ Fees     │ APR      │ Min-Max Range│          │
+ * │ │ Position │ Fees     │ APY      │ Min-Max Range│          │
  * │ │ $X.XX    │ $X.XX    │ X.X%     │ X - Y        │          │
  * │ └──────────┴──────────┴──────────┴──────────────┘          │
  * └─────────────────────────────────────────────────────────────┘
@@ -85,7 +85,6 @@ interface PositionCardCompactProps {
         raw0: string | null;
         raw1: string | null;
     };
-    onDenominationData?: (data: { denominationBase: string; minPrice: string; maxPrice: string; displayedCurrentPrice: string | null; feesUSD: number; formattedAPY: string; isAPYFallback: boolean; isLoadingAPY: boolean }) => void;
     showMenuButton?: boolean;
     onVisitPool?: () => void;
     disableHover?: boolean;
@@ -103,7 +102,6 @@ export function PositionCardCompact({
     convertTickToPrice,
     poolContext,
     fees,
-    onDenominationData,
     showMenuButton = false,
     onVisitPool,
     disableHover = false,
@@ -113,6 +111,7 @@ export function PositionCardCompact({
     const { currentPrice, currentPoolTick, poolAPY, isLoadingPrices, isLoadingPoolStates } = poolContext;
     const { raw0: prefetchedRaw0, raw1: prefetchedRaw1 } = fees;
 
+    // Calculate fees USD from raw fee amounts
     const { feesUSD, hasZeroFees } = React.useMemo(() => {
         if (prefetchedRaw0 === null || prefetchedRaw1 === null) {
             return { feesUSD: 0, hasZeroFees: false };
@@ -174,6 +173,7 @@ export function PositionCardCompact({
         };
     }, [position.tickLower, position.tickUpper, currentPrice, currentPoolTick, denominationBase, position.token0.symbol, position.token1.symbol, convertTickToPrice, shouldInvert]);
 
+    // Calculate APY using fees, position value, lastTimestamp, and pool APY
     const { formattedAPY, isFallback: isAPYFallback, isLoading: isLoadingAPY } = React.useMemo(() => {
         if (isLoadingPrices || valueUSD <= 0 || poolAPY === undefined || poolAPY === null) {
             return { formattedAPY: '—', isFallback: false, isLoading: true };
@@ -184,23 +184,6 @@ export function PositionCardCompact({
         const result = calculateClientAPY(feesUSD, valueUSD, position.lastTimestamp || position.blockTimestamp, poolAPY);
         return { ...result, isLoading: false };
     }, [feesUSD, valueUSD, position.lastTimestamp, position.blockTimestamp, poolAPY, isLoadingPrices, position.isInRange, isFullRange]);
-
-    // Notify parent of denomination data for modal usage
-    React.useEffect(() => {
-        if (onDenominationData) {
-            onDenominationData({
-                denominationBase,
-                minPrice,
-                maxPrice,
-                displayedCurrentPrice: displayedCurrentPrice?.toString() || null,
-                feesUSD,
-                formattedAPY,
-                isAPYFallback,
-                isLoadingAPY
-            });
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [denominationBase, minPrice, maxPrice, displayedCurrentPrice, feesUSD, formattedAPY, isAPYFallback, isLoadingAPY]);
 
     // Determine status
     const statusText = isFullRange ? 'Full Range' : position.isInRange ? 'In Range' : 'Out of Range';
@@ -282,7 +265,7 @@ export function PositionCardCompact({
                 )}
             </div>
 
-            {/* BOTTOM SECTION - Position, Fees, APR, Range */}
+            {/* BOTTOM SECTION - Position, Range */}
             <div className={cn(
                 "flex items-center justify-between gap-5 py-1.5 px-4 rounded-b-lg transition-colors",
                 isHovered ? "bg-muted/50" : "bg-muted/30"

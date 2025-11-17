@@ -276,7 +276,7 @@ interface PortfolioData {
 
 // Removed legacy composite id parsing
 
-import { loadUserPositionIds, derivePositionsFromIds, getPoolFeeBps, loadUncollectedFeesBatch, loadUncollectedFees, waitForSubgraphBlock } from '@/lib/client-cache';
+import { loadUserPositionIds, derivePositionsFromIds, getPoolFeeBps, waitForSubgraphBlock } from '@/lib/client-cache';
 
 // Removed: getUserPositionsOnchain - now using centralized useUserPositions hook
 
@@ -877,37 +877,6 @@ export default function PortfolioPage() {
     }
   }, []);
   const [positionsError, setPositionsError] = useState<string | undefined>(undefined);
-  const [unclaimedFeesMap, setUnclaimedFeesMap] = useState<Record<string, { amount0: string; amount1: string }>>({});
-  const [isLoadingUnclaimedFees, setIsLoadingUnclaimedFees] = useState<boolean>(false);
-
-
-  const totalUnclaimedUsd = useMemo(() => {
-    try {
-      let usd = 0;
-      const seen = new Set<string>();
-      for (const pos of activePositions) {
-        const id = String(pos?.positionId || pos?.tokenId || '') || '';
-        if (!id || seen.has(id)) continue;
-        seen.add(id);
-        const rec = unclaimedFeesMap[id];
-        if (!rec) continue;
-        const sym0 = pos?.token0?.symbol as string | undefined;
-        const sym1 = pos?.token1?.symbol as string | undefined;
-        // Match FeesCell's price lookup logic including stable coin fallback
-        const stable = (s: string) => s.includes('USDC') || s.includes('USDT');
-        const sym0U = (sym0 || '').toUpperCase();
-        const sym1U = (sym1 || '').toUpperCase();
-        const px0 = (sym0 && (portfolioData.priceMap[sym0] ?? portfolioData.priceMap[sym0U])) || (stable(sym0U) ? 1 : 0);
-        const px1 = (sym1 && (portfolioData.priceMap[sym1] ?? portfolioData.priceMap[sym1U])) || (stable(sym1U) ? 1 : 0);
-        const d0 = TOKEN_DEFINITIONS[sym0 as TokenSymbol]?.decimals ?? 18;
-        const d1 = TOKEN_DEFINITIONS[sym1 as TokenSymbol]?.decimals ?? 18;
-        const a0 = Number(rec?.amount0 ? viemFormatUnits(BigInt(rec.amount0), d0) : 0);
-        const a1 = Number(rec?.amount1 ? viemFormatUnits(BigInt(rec.amount1), d1) : 0);
-        usd += a0 * px0 + a1 * px1;
-      }
-      return usd;
-    } catch { return 0; }
-  }, [unclaimedFeesMap, activePositions, portfolioData.priceMap]);
 
 
   
@@ -1329,7 +1298,6 @@ export default function PortfolioPage() {
   const [openPositionMenuKey, setOpenPositionMenuKey] = useState<string | null>(null);
   const [selectedPosition, setSelectedPosition] = useState<any | null>(null);
   const [isPositionModalOpen, setIsPositionModalOpen] = useState(false);
-  const [denominationDataByPositionId, setDenominationDataByPositionId] = useState<Record<string, any>>({});
 
   // Close the group-row action menu when clicking anywhere outside it
   useEffect(() => {
@@ -1592,40 +1560,6 @@ export default function PortfolioPage() {
     return [...positions].sort((a, b) => getValueKey(b) - getValueKey(a));
   }, [filteredPositions, positionStatusFilter, portfolioData.priceMap]);
 
-  // Unclaimed fees for the positions currently displayed (after filter)
-  const displayedUnclaimedUsd = useMemo(() => {
-    try {
-      let usd = 0;
-      const list = Array.isArray(filteredPositions) ? filteredPositions : [];
-      const seen = new Set<string>();
-      for (const pos of list) {
-        const id = String(pos?.positionId || pos?.tokenId || '') || '';
-        if (!id || seen.has(id)) continue;
-        seen.add(id);
-        const rec = unclaimedFeesMap[id];
-        if (!rec) continue;
-        const sym0 = pos?.token0?.symbol as string | undefined;
-        const sym1 = pos?.token1?.symbol as string | undefined;
-        // Match FeesCell's price lookup logic including stable coin fallback
-        const stable = (s: string) => s.includes('USDC') || s.includes('USDT');
-        const sym0U = (sym0 || '').toUpperCase();
-        const sym1U = (sym1 || '').toUpperCase();
-        const px0 = (sym0 && (portfolioData.priceMap[sym0] ?? portfolioData.priceMap[sym0U])) || (stable(sym0U) ? 1 : 0);
-        const px1 = (sym1 && (portfolioData.priceMap[sym1] ?? portfolioData.priceMap[sym1U])) || (stable(sym1U) ? 1 : 0);
-        const d0 = TOKEN_DEFINITIONS[sym0 as TokenSymbol]?.decimals ?? 18;
-        const d1 = TOKEN_DEFINITIONS[sym1 as TokenSymbol]?.decimals ?? 18;
-        const a0 = Number(rec?.amount0 ? viemFormatUnits(BigInt(rec.amount0), d0) : 0);
-        const a1 = Number(rec?.amount1 ? viemFormatUnits(BigInt(rec.amount1), d1) : 0);
-        const positionUsd = a0 * px0 + a1 * px1;
-        usd += positionUsd;
-      }
-      return usd;
-    } catch (e) { 
-      console.error('[DEBUG] Error calculating displayedUnclaimedUsd:', e);
-      return 0; 
-    }
-  }, [filteredPositions.length, unclaimedFeesMap, portfolioData.priceMap]);
-
 
 
   const getUsdPriceForSymbol = useCallback((symbolRaw?: string): number => {
@@ -1728,35 +1662,6 @@ export default function PortfolioPage() {
     const m = Math.floor(seconds / 60);
     return `${m}m`;
   };
-
-
-  // Ensure unclaimed fees are loaded if map is empty (guard against missed fetch)
-  useEffect(() => {
-    let cancelled = false;
-    const run = async () => {
-      try {
-        if (!isConnected || !accountAddress) return;
-        if (isLoadingUnclaimedFees) return;
-        if (Object.keys(unclaimedFeesMap || {}).length > 0) return;
-        const ids: string[] = (activePositions || []).map((p: any) => String(p?.positionId || p?.tokenId || '')).filter(Boolean);
-        if (ids.length === 0) return;
-        setIsLoadingUnclaimedFees(true);
-        const items = await loadUncollectedFeesBatch(ids, 60 * 1000);
-        if (cancelled) return;
-        if (Array.isArray(items)) {
-          const map: Record<string, { amount0: string; amount1: string }> = {};
-          for (const it of items) map[String(it.positionId)] = { amount0: String(it.amount0 ?? '0'), amount1: String(it.amount1 ?? '0') };
-          setUnclaimedFeesMap(map);
-        }
-      } catch (e) {
-        // swallow
-      } finally {
-        if (!cancelled) setIsLoadingUnclaimedFees(false);
-      }
-    };
-    run();
-    return () => { cancelled = true; };
-  }, [activePositions.length, isConnected, accountAddress]);
 
   // Set initial responsive states before paint to avoid layout flicker
   useLayoutEffect(() => {
@@ -2128,55 +2033,6 @@ export default function PortfolioPage() {
   }, [currentFilter, activePositions, portfolioData.tokenBalances, portfolioData.totalValue, composition, effectiveSegmentIndex]);
 
   // Filtered total fees for metrics display
-  const filteredTotalUnclaimedUsd = useMemo(() => {
-    if (!currentFilter) return totalUnclaimedUsd;
-
-    try {
-      let usd = 0;
-      const token = String(currentFilter).toUpperCase();
-
-      for (const pos of activePositions) {
-        const sym0 = pos?.token0?.symbol;
-        const sym1 = pos?.token1?.symbol;
-
-        // Check if this position matches the current filter
-        const matchesFilter = (() => {
-          if (token === 'Rest' || token === 'OTHERS') {
-            const total = portfolioData.totalValue;
-            const topThreeTokens = portfolioData.tokenBalances
-              .map(tb => ({
-                symbol: tb.symbol,
-                pct: total > 0 ? (tb.usdValue / total) * 100 : 0,
-              }))
-              .sort((a, b) => b.pct - a.pct)
-              .slice(0, 3)
-              .map(item => item.symbol.toUpperCase());
-
-            return (sym0 && !topThreeTokens.includes(sym0.toUpperCase())) ||
-                   (sym1 && !topThreeTokens.includes(sym1.toUpperCase()));
-          } else {
-            return sym0?.toUpperCase() === token || sym1?.toUpperCase() === token;
-          }
-        })();
-
-        if (matchesFilter) {
-          const rec = unclaimedFeesMap[String(pos.positionId)];
-          if (!rec) continue;
-
-          // Use the same price lookup as the original totalUnclaimedUsd calculation
-          const px0 = (sym0 && portfolioData.priceMap[sym0]) || 0;
-          const px1 = (sym1 && portfolioData.priceMap[sym1]) || 0;
-          const d0 = TOKEN_DEFINITIONS[sym0 as TokenSymbol]?.decimals ?? 18;
-          const d1 = TOKEN_DEFINITIONS[sym1 as TokenSymbol]?.decimals ?? 18;
-          const a0 = Number(rec?.amount0 ? viemFormatUnits(BigInt(rec.amount0), d0) : 0);
-          const a1 = Number(rec?.amount1 ? viemFormatUnits(BigInt(rec.amount1), d1) : 0);
-          usd += a0 * px0 + a1 * px1;
-        }
-      }
-
-      return usd;
-    } catch { return 0; }
-  }, [currentFilter, totalUnclaimedUsd, activePositions, unclaimedFeesMap, portfolioData.priceMap, portfolioData.tokenBalances, portfolioData.totalValue, composition, effectiveSegmentIndex]);
 
   // Clicked + Hover combined logic for header USD
   const displayValue = (() => {
@@ -2531,11 +2387,7 @@ export default function PortfolioPage() {
             </div>
                     <div className="flex justify-between items-center py-1.5">
                       <span className="text-[11px] tracking-wider text-muted-foreground font-mono font-bold uppercase">Fees</span>
-                      {isLoadingUnclaimedFees ? (
-                        <span className="inline-block h-3 w-14 rounded bg-muted/40 animate-pulse" />
-                      ) : (
-                        <span className="text-[11px] font-medium">{formatUSD(displayedUnclaimedUsd)}</span>
-                      )}
+                      <span className="text-[11px] font-medium">$0.00</span>
                 </div>
             </div>
             </div>
@@ -2683,11 +2535,7 @@ export default function PortfolioPage() {
                       </div>
                       <div className="flex justify-between items-center pl-4">
                         <span className="text-[11px] tracking-wider text-muted-foreground font-mono font-bold uppercase">Fees</span>
-                        {isLoadingUnclaimedFees ? (
-                          <span className="inline-block h-3 w-14 rounded bg-muted/40 animate-pulse" />
-                        ) : (
-                          <span className="text-[11px] font-medium">{formatUSD(displayedUnclaimedUsd)}</span>
-                        )}
+                        <span className="text-[11px] font-medium">$0.00</span>
                       </div>
                     </div>
                   </div>
@@ -3071,10 +2919,6 @@ export default function PortfolioPage() {
                                       const p1 = isFinite(price1) ? price1 : 0;
                                       return a0 * p0 + a1 * p1;
                                     })();
-                                    const feesPref = (() => {
-                                      const rec = unclaimedFeesMap[String(position.positionId)];
-                                      return rec ? { raw0: rec.amount0, raw1: rec.amount1 } : { raw0: null, raw1: null };
-                                    })();
                                     return (
                                       <PositionCardCompact
                                         key={position.positionId}
@@ -3093,14 +2937,11 @@ export default function PortfolioPage() {
                                           isLoadingPrices: !readiness.prices,
                                           isLoadingPoolStates: isLoadingPoolStates,
                                         }}
-                                        fees={feesPref}
-                                        className={isPositionsStale ? 'cache-stale' : undefined}
-                                        onDenominationData={(data) => {
-                                          setDenominationDataByPositionId(prev => ({
-                                            ...prev,
-                                            [position.positionId]: data
-                                          }));
+                                        fees={{
+                                          raw0: batchFeesData?.find(f => f.positionId === position.positionId)?.amount0 ?? null,
+                                          raw1: batchFeesData?.find(f => f.positionId === position.positionId)?.amount1 ?? null
                                         }}
+                                        className={isPositionsStale ? 'cache-stale' : undefined}
                                         showMenuButton={true}
                                         onVisitPool={() => {
                                           const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === position.poolId.toLowerCase());
@@ -3397,8 +3238,8 @@ export default function PortfolioPage() {
             const amt1 = parseFloat(selectedPosition.token1?.amount || '0');
             return amt0 * price0 + amt1 * price1;
           })()}
-          prefetchedRaw0={unclaimedFeesMap[selectedPosition.positionId]?.amount0 || null}
-          prefetchedRaw1={unclaimedFeesMap[selectedPosition.positionId]?.amount1 || null}
+          prefetchedRaw0={null}
+          prefetchedRaw1={null}
           formatTokenDisplayAmount={formatTokenDisplayAmount}
           getUsdPriceForSymbol={getUsdPriceForSymbol}
           onRefreshPosition={() => refreshSinglePosition(selectedPosition.positionId)}
@@ -3448,13 +3289,6 @@ export default function PortfolioPage() {
             const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === selectedPosition.poolId?.toLowerCase());
             return poolConfig ? getToken(poolConfig.currency1.symbol) : undefined;
           })()}
-          denominationBase={denominationDataByPositionId[selectedPosition.positionId]?.denominationBase}
-          initialMinPrice={denominationDataByPositionId[selectedPosition.positionId]?.minPrice}
-          initialMaxPrice={denominationDataByPositionId[selectedPosition.positionId]?.maxPrice}
-          initialCurrentPrice={denominationDataByPositionId[selectedPosition.positionId]?.displayedCurrentPrice}
-          prefetchedFormattedAPY={denominationDataByPositionId[selectedPosition.positionId]?.formattedAPY}
-          prefetchedIsAPYFallback={denominationDataByPositionId[selectedPosition.positionId]?.isAPYFallback}
-          prefetchedIsLoadingAPY={denominationDataByPositionId[selectedPosition.positionId]?.isLoadingAPY}
           showViewPoolButton={true}
           onViewPool={() => {
             const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === selectedPosition.poolId?.toLowerCase());

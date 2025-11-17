@@ -742,18 +742,6 @@ export default function PoolDetailPage() {
   const [selectedPositionForDetails, setSelectedPositionForDetails] = useState<ProcessedPosition | null>(null);
   const [isPositionDetailsModalOpen, setIsPositionDetailsModalOpen] = useState(false);
 
-  // Store denomination data per position ID
-  const [denominationDataByPositionId, setDenominationDataByPositionId] = useState<Record<string, {
-    denominationBase: string;
-    minPrice: string;
-    maxPrice: string;
-    displayedCurrentPrice: string | null;
-    feesUSD: number;
-    formattedAPY: string;
-    isAPYFallback: boolean;
-    isLoadingAPY: boolean;
-  }>>({});
-
   // Debounce versioning to avoid stale API results applying to current inputs
   const increaseCalcVersionRef = React.useRef(0);
   const withdrawCalcVersionRef = React.useRef(0);
@@ -3355,14 +3343,8 @@ export default function PoolDetailPage() {
                           isLoadingPoolStates: !currentPoolData
                         }}
                         fees={{
-                          raw0: feeData?.amount0 ?? null,
-                          raw1: feeData?.amount1 ?? null
-                        }}
-                        onDenominationData={(data) => {
-                          setDenominationDataByPositionId(prev => ({
-                            ...prev,
-                            [position.positionId]: data
-                          }));
+                          raw0: batchFeesData?.find(f => f.positionId === position.positionId)?.amount0 ?? null,
+                          raw1: batchFeesData?.find(f => f.positionId === position.positionId)?.amount1 ?? null
                         }}
                       />
                     );
@@ -3806,13 +3788,6 @@ export default function PoolDetailPage() {
           convertTickToPrice={convertTickToPrice}
           selectedPoolId={selectedPositionForDetails.poolId}
           chainId={chainId}
-          denominationBase={denominationDataByPositionId[selectedPositionForDetails.positionId]?.denominationBase}
-          initialMinPrice={denominationDataByPositionId[selectedPositionForDetails.positionId]?.minPrice}
-          initialMaxPrice={denominationDataByPositionId[selectedPositionForDetails.positionId]?.maxPrice}
-          initialCurrentPrice={denominationDataByPositionId[selectedPositionForDetails.positionId]?.displayedCurrentPrice}
-          prefetchedFormattedAPY={denominationDataByPositionId[selectedPositionForDetails.positionId]?.formattedAPY}
-          prefetchedIsAPYFallback={denominationDataByPositionId[selectedPositionForDetails.positionId]?.isAPYFallback}
-          prefetchedIsLoadingAPY={denominationDataByPositionId[selectedPositionForDetails.positionId]?.isLoadingAPY}
         />
       )}
 

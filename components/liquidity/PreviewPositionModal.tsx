@@ -455,10 +455,7 @@ export function PreviewPositionModal({
                     isLoadingPrices: false,
                     isLoadingPoolStates: false,
                   }}
-                  fees={{
-                    raw0: "0",
-                    raw1: "0",
-                  }}
+                  fees={{ raw0: "0", raw1: "0" }}
                   showMenuButton={false}
                   disableHover={true}
                 />
