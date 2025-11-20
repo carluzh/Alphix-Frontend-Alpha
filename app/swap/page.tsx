@@ -2,7 +2,6 @@
 
 import { AppLayout } from "@/components/app-layout"
 import { SwapInterface } from "@/components/swap/swap-interface"
-import { StarrySkyBackground } from "@/components/StarrySkyBackground"
 import type { Metadata } from 'next'
 import React, { useState, useCallback, useEffect } from "react";
 import { SwapRoute } from "@/lib/routing-engine";
@@ -38,9 +37,6 @@ export default function Page() {
 
   return (
     <AppLayout>
-      {/* Starry sky background - sits behind everything */}
-      <StarrySkyBackground />
-      
       <div className="flex flex-1 flex-col relative"> {/* Added relative positioning */}
         <div className="flex flex-1 justify-center py-10 md:py-16">
           <div className="w-full max-w-2xl">

@@ -266,17 +266,90 @@ export function SwapInputView({
       </div>
 
       {/* Arrow button */}
-      <div className="flex justify-center">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="rounded-lg bg-muted/30 border-0 hover:bg-muted/50 hover:border hover:border-sidebar-border/60 z-10 h-8 w-8"
-          onClick={handleSwapTokens}
-          disabled={!isConnected || isAttemptingSwitch}
+      <div className="flex justify-center relative" style={{ minHeight: '32px' }}>
+        <style dangerouslySetInnerHTML={{__html: `
+          @keyframes arrowGlare {
+            from { background-position: 0% 0%; }
+            to { background-position: 300% 0%; }
+          }
+
+          .arrow-loading-wrapper {
+            position: absolute;
+            left: calc(50% - 16px);
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: inherit;
+            border-radius: 8px;
+            overflow: visible;
+          }
+
+          .arrow-loading-wrapper::before {
+            content: '';
+            position: absolute;
+            inset: -1px;
+            border-radius: 9px;
+            background: linear-gradient(
+              45deg,
+              #f94706,
+              #ff7919 30%,
+              rgba(0, 0, 0, 0.4) 50%,
+              #f94706 70%,
+              #ff7919 100%
+            );
+            background-size: 300% 100%;
+            opacity: 0;
+            transition: opacity 0.5s ease-out;
+            pointer-events: none;
+            z-index: 0;
+            animation: arrowGlare 1.5s linear infinite;
+          }
+
+          .arrow-loading-wrapper.loading::before {
+            opacity: 1;
+          }
+
+          .arrow-loading-inner {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            border-radius: 8px;
+            background: var(--surface-bg);
+            border: 1px solid transparent;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: border-color 0.2s ease;
+            z-index: 1;
+          }
+
+          .arrow-loading-wrapper:not(.loading):hover {
+            cursor: pointer;
+          }
+
+          .arrow-loading-wrapper:not(.loading):hover .arrow-loading-inner {
+            border-color: rgba(50, 50, 50, 0.6);
+          }
+
+          .arrow-loading-wrapper.loading .arrow-loading-inner {
+            border-color: transparent;
+          }
+        `}} />
+        <div
+          className={cn(
+            "arrow-loading-wrapper",
+            quoteLoading && "loading",
+            (!isConnected || isAttemptingSwitch) && "cursor-not-allowed"
+          )}
+          onClick={!isConnected || isAttemptingSwitch || quoteLoading ? undefined : handleSwapTokens}
         >
-          <ArrowDownIcon className="h-4 w-4" />
+          <div className="arrow-loading-inner">
+            <ArrowDownIcon className="h-4 w-4" />
+          </div>
           <span className="sr-only">Swap tokens</span>
-        </Button>
+        </div>
       </div>
 
       {/* Buy Section */}
