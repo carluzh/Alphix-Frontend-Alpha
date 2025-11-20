@@ -11,7 +11,7 @@ import { Analytics } from '@vercel/analytics/react'
 import { SpeedInsights } from '@vercel/speed-insights/next'
 import ErrorBoundary from '@/components/ErrorBoundary'
 import type { Metadata } from 'next'
-import { SidebarProvider } from "@/components/ui/sidebar"
+import { ConditionalSidebarProvider } from "@/components/ConditionalSidebarProvider"
 
 // Load Inter font
 const inter = Inter({
@@ -51,9 +51,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         >
           <AppKitProvider cookies={cookie}>
             <ErrorBoundary>
-              <SidebarProvider>
+              <ConditionalSidebarProvider>
                 {children}
-              </SidebarProvider>
+              </ConditionalSidebarProvider>
             </ErrorBoundary>
           </AppKitProvider>
           <Toaster position="top-right" />
