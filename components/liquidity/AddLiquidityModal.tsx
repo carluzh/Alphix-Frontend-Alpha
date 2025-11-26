@@ -350,8 +350,8 @@ export function AddLiquidityModal({
     if (!currentToken0Def || !currentToken1Def) return { poolToken0: null, poolToken1: null };
 
     // Create SDK Token instances using the modal's currently selected token0Symbol and token1Symbol
-    const sdkBaseToken0 = new Token(chainId, getAddress(currentToken0Def.addressRaw), currentToken0Def.decimals, currentToken0Def.symbol);
-    const sdkBaseToken1 = new Token(chainId, getAddress(currentToken1Def.addressRaw), currentToken1Def.decimals, currentToken1Def.symbol);
+    const sdkBaseToken0 = new Token(chainId, getAddress(currentToken0Def.address), currentToken0Def.decimals, currentToken0Def.symbol);
+    const sdkBaseToken1 = new Token(chainId, getAddress(currentToken1Def.address), currentToken1Def.decimals, currentToken1Def.symbol);
 
     // Sort them to get the canonical poolToken0 and poolToken1
     const [pt0, pt1] = sdkBaseToken0.sortsBefore(sdkBaseToken1)
@@ -379,8 +379,8 @@ export function AddLiquidityModal({
     if (!token0Def || !token1Def) return null;
 
     try {
-      const sdkToken0 = new Token(chainId, getAddress(token0Def.addressRaw), token0Def.decimals);
-      const sdkToken1 = new Token(chainId, getAddress(token1Def.addressRaw), token1Def.decimals);
+      const sdkToken0 = new Token(chainId, getAddress(token0Def.address), token0Def.decimals);
+      const sdkToken1 = new Token(chainId, getAddress(token1Def.address), token1Def.decimals);
 
       const [sortedSdkToken0, sortedSdkToken1] = sdkToken0.sortsBefore(sdkToken1)
         ? [sdkToken0, sdkToken1]
@@ -410,16 +410,16 @@ export function AddLiquidityModal({
 
   const { data: token0BalanceData, isLoading: isLoadingToken0Balance } = useBalance({
     address: accountAddress,
-    token: TOKEN_DEFINITIONS[token0Symbol]?.addressRaw as `0x${string}` | undefined,
+    token: TOKEN_DEFINITIONS[token0Symbol]?.address as `0x${string}` | undefined,
     chainId,
-    query: { enabled: !!accountAddress && !!chainId && !!TOKEN_DEFINITIONS[token0Symbol]?.addressRaw },
+    query: { enabled: !!accountAddress && !!chainId && !!TOKEN_DEFINITIONS[token0Symbol]?.address },
   });
 
   const { data: token1BalanceData, isLoading: isLoadingToken1Balance } = useBalance({
     address: accountAddress,
-    token: TOKEN_DEFINITIONS[token1Symbol]?.addressRaw as `0x${string}` | undefined,
+    token: TOKEN_DEFINITIONS[token1Symbol]?.address as `0x${string}` | undefined,
     chainId,
-    query: { enabled: !!accountAddress && !!chainId && !!TOKEN_DEFINITIONS[token1Symbol]?.addressRaw },
+    query: { enabled: !!accountAddress && !!chainId && !!TOKEN_DEFINITIONS[token1Symbol]?.address },
   });
 
   const [initialDefaultApplied, setInitialDefaultApplied] = useState(false);
@@ -1050,7 +1050,18 @@ export function AddLiquidityModal({
   // Custom shape for ReferenceArea with rounded top corners
   const RoundedTopReferenceArea = (props: any) => {
     const { x, y, width, height, fill, fillOpacity, strokeOpacity } = props;
-    if (width <= 0 || height <= 0) return null;
+    
+    // Validate all required numeric props
+    if (
+      typeof x !== 'number' || isNaN(x) ||
+      typeof y !== 'number' || isNaN(y) ||
+      typeof width !== 'number' || isNaN(width) ||
+      typeof height !== 'number' || isNaN(height) ||
+      width <= 0 || height <= 0
+    ) {
+      console.warn("[RoundedTopReferenceArea] Invalid props received:", { x, y, width, height });
+      return null;
+    }
 
     const r = 6;
 
@@ -1091,8 +1102,8 @@ export function AddLiquidityModal({
             return;
           }
 
-          const sdkToken0 = new Token(chainId, getAddress(token0Def.addressRaw), token0Def.decimals);
-          const sdkToken1 = new Token(chainId, getAddress(token1Def.addressRaw), token1Def.decimals);
+                  const sdkToken0 = new Token(chainId, getAddress(token0Def.address), token0Def.decimals);
+        const sdkToken1 = new Token(chainId, getAddress(token1Def.address), token1Def.decimals);
 
           const [sortedSdkToken0, sortedSdkToken1] = sdkToken0.sortsBefore(sdkToken1)
             ? [sdkToken0, sdkToken1]
@@ -1250,79 +1261,41 @@ export function AddLiquidityModal({
     const token0Dec = TOKEN_DEFINITIONS[token0Symbol]?.decimals;
     const token1Dec = TOKEN_DEFINITIONS[token1Symbol]?.decimals;
 
+    // Simple price calculation - if user selected token0, show prices in token0 terms
     if (baseTokenForPriceDisplay === token0Symbol) {
-        // UI Displays: Price of Token1 in terms of Token0 (e.g., BTCRL per YUSDC)
-        if (token0Dec !== undefined && token1Dec !== undefined) {
-            const decimalAdjFactor = Math.pow(10, token1Dec - token0Dec);
-
-            // Min Price (T0 in T1) at numTickUpper
-            if (rawApiPriceAtTickUpper !== null) { // rawApiPriceAtTickUpper is Price(T0 per T1)
-                if (rawApiPriceAtTickUpper === 0) valForMinInput = Infinity;
-                else valForMinInput = 1 / (1 / rawApiPriceAtTickUpper); // Price(T0/T1) = 1 / Price(T1/T0) ; P(T1/T0) at TickUpper is rawApiPriceAtTickUpper
-            } else if (!isNaN(numTickUpper)) { // Upper tick corresponds to the MIN T0/T1 price
-                // P_raw(T1/T0) at numTickUpper = 1.0001^numTickUpper
-                // P_raw(T0/T1) at numTickUpper = 1 / (1.0001^numTickUpper) = 1.0001^(-numTickUpper)
-                // Price (T0 in T1) = P_raw(T0/T1) * decimalAdjFactor
-                if (numTickUpper === sdkMaxTick) valForMinInput = 0; // At T1/T0 price of Inf, T0/T1 price is 0
-                else valForMinInput = Math.pow(1.0001, -numTickUpper) * decimalAdjFactor;
-            } else {
-                valForMinInput = NaN;
-            }
-
-            // Max Price (T0 in T1) at numTickLower
-            if (rawApiPriceAtTickLower !== null) { // rawApiPriceAtTickLower is Price(T0 per T1)
-                 if (rawApiPriceAtTickLower === 0) valForMaxInput = Infinity;
-                 else valForMaxInput = 1 / (1 / rawApiPriceAtTickLower); // Price(T0/T1) = 1 / Price(T1/T0) ; P(T1/T0) at TickLower is rawApiPriceAtTickLower
-            } else if (!isNaN(numTickLower)) { // Lower tick corresponds to the MAX T0/T1 price
-                // P_raw(T1/T0) at numTickLower = 1.0001^numTickLower
-                // P_raw(T0/T1) at numTickLower = 1 / (1.0001^numTickLower) = 1.0001^(-numTickLower)
-                // Price (T0 in T1) = P_raw(T0/T1) * decimalAdjFactor
-                if (numTickLower === sdkMinTick) valForMaxInput = Infinity; // At T1/T0 price of 0, T0/T1 price is Inf
-                else valForMaxInput = Math.pow(1.0001, -numTickLower) * decimalAdjFactor;
-            } else {
-                valForMaxInput = NaN;
-            }
-        } else {
-            valForMinInput = NaN;
-            valForMaxInput = NaN;
-        }
-    } else { // baseTokenForPriceDisplay === token1Symbol
-        // UI Displays: Price of Token0 in terms of Token1 (e.g., YUSDC per BTCRL)
-        if (token0Dec !== undefined && token1Dec !== undefined) {
-            const decimalAdjFactor = Math.pow(10, token0Dec - token1Dec);
-
-            // Min Price (T1 in T0) at numTickLower
-            if (rawApiPriceAtTickLower !== null) { // rawApiPriceAtTickLower is Price(T0 per T1)
-                if (rawApiPriceAtTickLower === 0) valForMinInput = Infinity;
-                else valForMinInput = 1 / rawApiPriceAtTickLower;
+        // Show prices denominated in token0
+        const decimalAdjFactor = Math.pow(10, token1Dec - token0Dec);
+        
+        if (rawApiPriceAtTickLower !== null) {
+            valForMaxInput = rawApiPriceAtTickLower * decimalAdjFactor;
         } else if (!isNaN(numTickLower)) {
-            if (numTickLower === sdkMinTick) valForMinInput = 0;
-                else valForMinInput = Math.pow(1.0001, numTickLower) * decimalAdjFactor;
-            } else {
-                valForMinInput = NaN;
+            const rawPrice = Math.pow(1.0001, -numTickLower);
+            valForMaxInput = rawPrice * decimalAdjFactor;
         }
-
-            // Max Price (T1 in T0) at numTickUpper
-            if (rawApiPriceAtTickUpper !== null) { // rawApiPriceAtTickUpper is Price(T0 per T1)
-                if (rawApiPriceAtTickUpper === 0) valForMaxInput = Infinity;
-                else valForMaxInput = 1 / rawApiPriceAtTickUpper;
+        
+        if (rawApiPriceAtTickUpper !== null) {
+            valForMinInput = rawApiPriceAtTickUpper * decimalAdjFactor;
         } else if (!isNaN(numTickUpper)) {
-            if (numTickUpper === sdkMaxTick) valForMaxInput = Infinity;
-                else valForMaxInput = Math.pow(1.0001, numTickUpper) * decimalAdjFactor;
-            } else {
-                valForMaxInput = NaN;
-            }
-        } else {
-            valForMinInput = NaN;
-            valForMaxInput = NaN;
+            const rawPrice = Math.pow(1.0001, -numTickUpper);
+            valForMinInput = rawPrice * decimalAdjFactor;
         }
-    }
-
-    // Ensure min < max after all calculations, only if both are finite numbers
-    // This check is only logically necessary when displaying Token1/Token0 price.
-    // When displaying Token0/Token1 price, the min/max are naturally derived from upper/lower ticks respectively.
-    if (baseTokenForPriceDisplay === token0Symbol && valForMinInput !== null && valForMaxInput !== null && isFinite(valForMinInput) && isFinite(valForMaxInput) && valForMinInput > valForMaxInput) {
-        [valForMinInput, valForMaxInput] = [valForMaxInput, valForMinInput];
+    } else {
+        // Show prices denominated in token1  
+        const decimalAdjFactor = Math.pow(10, token0Dec - token1Dec);
+        
+        if (rawApiPriceAtTickLower !== null) {
+            valForMinInput = (1 / rawApiPriceAtTickLower) * decimalAdjFactor;
+        } else if (!isNaN(numTickLower)) {
+            const rawPrice = Math.pow(1.0001, numTickLower);
+            valForMinInput = rawPrice * decimalAdjFactor;
+        }
+        
+        if (rawApiPriceAtTickUpper !== null) {
+            valForMaxInput = (1 / rawApiPriceAtTickUpper) * decimalAdjFactor;
+        } else if (!isNaN(numTickUpper)) {
+            const rawPrice = Math.pow(1.0001, numTickUpper);
+            valForMaxInput = rawPrice * decimalAdjFactor;
+        }
     }
 
     let finalMinPriceString = "";
@@ -1549,8 +1522,8 @@ export function AddLiquidityModal({
       }
 
       try {
-        const sdkBaseToken0 = new Token(chainId, getAddress(token0Def.addressRaw), token0Def.decimals);
-        const sdkBaseToken1 = new Token(chainId, getAddress(token1Def.addressRaw), token1Def.decimals);
+        const sdkBaseToken0 = new Token(chainId, getAddress(token0Def.address), token0Def.decimals);
+        const sdkBaseToken1 = new Token(chainId, getAddress(token1Def.address), token1Def.decimals);
         const [sdkSortedToken0, sdkSortedToken1] = sdkBaseToken0.sortsBefore(sdkBaseToken1) 
             ? [sdkBaseToken0, sdkBaseToken1] 
             : [sdkBaseToken1, sdkBaseToken0];
@@ -1895,7 +1868,7 @@ export function AddLiquidityModal({
         // Determine if the pool's canonical token0 (poolToken0Symbol) matches the modal's token0Symbol (token0)
         // This is to correctly interpret the tick direction for price calculation.
         // The tick value from the chart (currentTick) is always for price of pool's token1 in terms of pool's token0.
-        const isPoolToken0MatchingModalToken0 = TOKEN_DEFINITIONS[poolToken0Symbol as TokenSymbol]?.addressRaw.toLowerCase() === token0Def.addressRaw.toLowerCase();
+        const isPoolToken0MatchingModalToken0 = TOKEN_DEFINITIONS[poolToken0Symbol as TokenSymbol]?.address.toLowerCase() === token0Def.address.toLowerCase();
 
         let actualTickForCalc = currentTick;
         // If the modal's token0 is NOT the pool's token0, then the relationship is flipped.
@@ -1908,11 +1881,22 @@ export function AddLiquidityModal({
           const decimalAdjFactor = Math.pow(10, t1Dec - t0Dec);
           if (isPoolToken0MatchingModalToken0) {
             // ModalT0 is PoolT0, ModalT1 is PoolT1. Tick directly gives P(PoolT1/PoolT0)
-            price = Math.pow(1.0001, actualTickForCalc) * decimalAdjFactor;
+            const rawPrice = Math.pow(1.0001, actualTickForCalc);
+            price = rawPrice * decimalAdjFactor;
+            // Handle extreme decimal differences
+            if (price > 1e15 || (price < 1e-15 && price > 0)) {
+              price = rawPrice;
+            }
           } else {
             // ModalT0 is PoolT1, ModalT1 is PoolT0. Tick gives P(PoolT0/PoolT1) effectively.
             // We want P(ModalT1/ModalT0) = P(PoolT0/PoolT1)
-            price = Math.pow(1.0001, actualTickForCalc) * Math.pow(10, t0Dec - t1Dec); // This is P_poolT0_per_poolT1
+            const rawPrice = Math.pow(1.0001, actualTickForCalc);
+            const alternativeDecimalAdjFactor = Math.pow(10, t0Dec - t1Dec);
+            price = rawPrice * alternativeDecimalAdjFactor; // This is P_poolT0_per_poolT1
+            // Handle extreme decimal differences
+            if (price > 1e15 || (price < 1e-15 && price > 0)) {
+              price = rawPrice;
+            }
           }
         } else { // User wants to see Price of Token0 (modal's token0) in terms of Token1 (modal's token1)
           quoteTokenSymbol = token1;
@@ -1921,11 +1905,22 @@ export function AddLiquidityModal({
           if (isPoolToken0MatchingModalToken0) {
             // ModalT0 is PoolT0, ModalT1 is PoolT1. Tick gives P(PoolT1/PoolT0).
             // We want P(ModalT0/ModalT1) = 1 / P(PoolT1/PoolT0)
-            price = (1 / Math.pow(1.0001, actualTickForCalc)) * decimalAdjFactor;
+            const rawPrice = (1 / Math.pow(1.0001, actualTickForCalc));
+            price = rawPrice * decimalAdjFactor;
+            // Handle extreme decimal differences
+            if (price > 1e15 || (price < 1e-15 && price > 0)) {
+              price = rawPrice;
+            }
           } else {
             // ModalT0 is PoolT1, ModalT1 is PoolT0. Tick gives P(PoolT0/PoolT1) effectively.
             // We want P(ModalT0/ModalT1) = P(PoolT1/PoolT0)
-            price = Math.pow(1.0001, actualTickForCalc) * Math.pow(10, t1Dec - t0Dec); // This is P_poolT1_per_poolT0
+            const rawPrice = Math.pow(1.0001, actualTickForCalc);
+            const alternativeDecimalAdjFactor = Math.pow(10, t1Dec - t0Dec);
+            price = rawPrice * alternativeDecimalAdjFactor; // This is P_poolT1_per_poolT0
+            // Handle extreme decimal differences
+            if (price > 1e15 || (price < 1e-15 && price > 0)) {
+              price = rawPrice;
+            }
           }
         }
 
@@ -2086,7 +2081,7 @@ export function AddLiquidityModal({
                         
                         {simplifiedChartPlotData && simplifiedChartPlotData.length > 0 && (
                           <Area 
-                            type="stepBefore" 
+                            type="stepAfter" 
                             dataKey="displayCumulativeValue"
                             yAxisId="leftCumulativeUnifiedValueAxis"
                             name={poolToken0 ? `Cumulative Liquidity (in ${poolToken0.symbol})` : "Cumulative Unified Liquidity"}
@@ -2358,16 +2353,16 @@ export function AddLiquidityModal({
                       {step === 'approve' || step === 'mint' || step === 'permit2Sign' ? 'Cancel & Edit' : 'Change Pool'}
                     </Button>
                     {!isConnected ? (
-                      <div className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md bg-accent text-accent-foreground px-3 text-sm font-medium transition-colors hover:bg-accent/90 shadow-md">
-                        {/* 
-                          The AppKit button will handle the wallet connection. 
-                          Ensure your project has AppKit configured for this to work.
-                          If you are using a different wallet connection library (e.g. Web3Modal, RainbowKit directly),
-                          you might need to use its specific button component here.
-                        */}
-                        <appkit-button className="absolute inset-0 z-10 block h-full w-full cursor-pointer p-0 opacity-0" />
-                        <span className="relative z-0 pointer-events-none">Connect Wallet</span>
-                      </div>
+                      <Button
+                        className="w-full"
+                        variant="default"
+                        onClick={() => {
+                          // Wallet connection logic would go here
+                          console.log('Connect wallet clicked');
+                        }}
+                      >
+                        Connect Wallet
+                      </Button>
                     ) : (
                       <Button
                         onClick={() => {

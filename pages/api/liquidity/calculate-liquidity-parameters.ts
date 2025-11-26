@@ -4,10 +4,9 @@ import { TickMath } from '@uniswap/v3-sdk';
 import JSBI from 'jsbi';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
-import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from "../../../lib/abis/state_view_abi";
-import { TOKEN_DEFINITIONS, TokenSymbol } from "../../../lib/swap-constants";
-import { TOKEN_DEFINITIONS as POOLS_TOKEN_DEFINITIONS } from "../../../lib/pools-config";
-import { publicClient } from "../../../lib/viemClient"; 
+import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from "@/lib/abis/state_view_abi";
+import { getToken, TokenSymbol, getStateViewAddress } from "@/lib/pools-config";
+import { publicClient } from "@/lib/viemClient"; 
 import { 
     parseUnits, 
     isAddress, 
@@ -16,12 +15,9 @@ import {
     type Hex 
 } from "viem";
 
-// Contract addresses & constants (ensure these are appropriate for the chainId being used)
-const STATE_VIEW_ADDRESS = getAddress("0x571291b572ed32ce6751a2cb2486ebee8defb9b4"); 
-const DEFAULT_HOOK_ADDRESS = getAddress("0x94ba380a340E020Dc29D7883f01628caBC975000"); 
+// Contract addresses from pools config
+const STATE_VIEW_ADDRESS = getStateViewAddress(); 
 const ETHERS_ADDRESS_ZERO = "0x0000000000000000000000000000000000000000";
-const DEFAULT_FEE = 8388608; 
-const DEFAULT_TICK_SPACING = 60;
 const SDK_MIN_TICK = -887272;
 const SDK_MAX_TICK = 887272;
 
@@ -135,7 +131,11 @@ export default async function handler(
         } = req.body;
 
         // --- Input Validation ---
-        if (!POOLS_TOKEN_DEFINITIONS[token0Symbol] || !POOLS_TOKEN_DEFINITIONS[token1Symbol] || !POOLS_TOKEN_DEFINITIONS[inputTokenSymbol]) {
+        const token0Config = getToken(token0Symbol);
+        const token1Config = getToken(token1Symbol);
+        const inputTokenConfig = getToken(inputTokenSymbol);
+
+        if (!token0Config || !token1Config || !inputTokenConfig) {
             return res.status(400).json({ message: "Invalid token symbol(s) provided." });
         }
         if (isNaN(parseFloat(inputAmount)) || parseFloat(inputAmount) <= 0) {
@@ -149,11 +149,8 @@ export default async function handler(
         }
         // TODO: Add more validation for chainId, perhaps ensure it matches a configured supported ID
 
-        const token0Config = POOLS_TOKEN_DEFINITIONS[token0Symbol];
-        const token1Config = POOLS_TOKEN_DEFINITIONS[token1Symbol];
-
         // --- Get Pool Configuration ---
-        const { getPoolByTokens } = await import('../../../lib/pools-config');
+        const { getPoolByTokens } = await import('@/lib/pools-config');
         const poolConfig = getPoolByTokens(token0Symbol, token1Symbol);
         
         if (!poolConfig) {
@@ -161,17 +158,16 @@ export default async function handler(
         }
 
         // --- SDK Token Objects (using original symbols first) ---
-        // console.log("[API] Creating Token0 with", { symbol: token0Symbol, addressRaw: token0Config.addressRaw });
-        const sdkToken0Original = new Token(chainId, getAddress(token0Config.addressRaw), token0Config.decimals, token0Config.symbol);
+        // console.log("[API] Creating Token0 with", { symbol: token0Symbol, address: token0Config.address });
+        const sdkToken0Original = new Token(chainId, getAddress(token0Config.address), token0Config.decimals, token0Config.symbol);
         // console.log("[API] Successfully created Token0.", sdkToken0Original);
 
-        // console.log("[API] Creating Token1 with", { symbol: token1Symbol, addressRaw: token1Config.addressRaw });
-        const sdkToken1Original = new Token(chainId, getAddress(token1Config.addressRaw), token1Config.decimals, token1Config.symbol);
+        // console.log("[API] Creating Token1 with", { symbol: token1Symbol, address: token1Config.address });
+        const sdkToken1Original = new Token(chainId, getAddress(token1Config.address), token1Config.decimals, token1Config.symbol);
         // console.log("[API] Successfully created Token1.", sdkToken1Original);
 
-        const inputTokenConfig = POOLS_TOKEN_DEFINITIONS[inputTokenSymbol];
-        // console.log("[API] Creating InputToken with", { symbol: inputTokenSymbol, addressRaw: inputTokenConfig.addressRaw });
-        const sdkInputToken = new Token(chainId, getAddress(inputTokenConfig.addressRaw), inputTokenConfig.decimals, inputTokenConfig.symbol);
+        // console.log("[API] Creating InputToken with", { symbol: inputTokenSymbol, address: inputTokenConfig.address });
+        const sdkInputToken = new Token(chainId, getAddress(inputTokenConfig.address), inputTokenConfig.decimals, inputTokenConfig.symbol);
         // console.log("[API] Successfully created InputToken.", sdkInputToken);
 
         const parsedInputAmount = parseUnits(inputAmount, sdkInputToken.decimals);

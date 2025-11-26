@@ -10,7 +10,8 @@ const COINGECKO_PRICE_ENDPOINT = 'https://api.coingecko.com/api/v3/simple/price'
 // Token IDs mapping (CoinGecko IDs)
 const TOKEN_COINGECKO_IDS = {
   'BTC': 'bitcoin',
-  'USDC': 'usd-coin'
+  'USDC': 'usd-coin',
+  'ETH': 'ethereum'
 };
 
 // Interface for price data
@@ -80,7 +81,8 @@ export async function getTokenPrice(tokenSymbol: string): Promise<number | null>
 export function getFallbackPrice(tokenSymbol: string): number {
   const fallbacks: Record<string, number> = {
     'BTC': 77000,
-    'USDC': 1
+    'USDC': 1,
+    'ETH': 3500
   };
   
   return fallbacks[tokenSymbol] || 0;

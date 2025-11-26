@@ -14,7 +14,8 @@ import { useRouter, useParams } from "next/navigation";
 import { useAccount } from "wagmi";
 import { toast } from "sonner";
 import type { ProcessedPosition } from "../../../pages/api/liquidity/get-positions";
-import { TOKEN_DEFINITIONS, TokenSymbol } from "../../../lib/swap-constants";
+import { TOKEN_DEFINITIONS, TokenSymbol, SDK_MIN_TICK, SDK_MAX_TICK, DEFAULT_TICK_SPACING } from "@/lib/pools-config";
+import { formatUSD } from "@/lib/format";
 import { formatUnits as viemFormatUnits, type Hex } from "viem";
 import { Bar, BarChart, CartesianGrid, XAxis } from "recharts";
 import { getPoolById, getPoolSubgraphId, getToken } from "@/lib/pools-config";
@@ -85,11 +86,7 @@ interface ChartDataPoint {
   // apr?: number; // Optional, if your API provides it
 }
 
-// Reusing components from the main liquidity page
-const SDK_MIN_TICK = -887272;
-const SDK_MAX_TICK = 887272;
 const TICK_BARS_COUNT = 31;
-const DEFAULT_TICK_SPACING = 60;
 const TICKS_PER_BAR = 10 * DEFAULT_TICK_SPACING;
 
 // Format token amounts for display
@@ -99,13 +96,6 @@ const formatTokenDisplayAmount = (amount: string) => {
   if (num === 0) return "0.00";
   if (num < 0.0001) return "< 0.0001";
   return num.toFixed(4);
-};
-
-// Format USD value
-const formatUSD = (value: number) => {
-  if (value < 0.01) return "< $0.01";
-  if (value < 1000) return `$${value.toFixed(2)}`;
-  return `$${(value).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 };
 
 // Mock function to calculate USD value (in a real app, you'd use actual price feeds)
@@ -137,19 +127,34 @@ const calculateTotalValueUSD = (position: ProcessedPosition) => {
 const TickRangeVisualization = ({ 
   tickLower, 
   tickUpper, 
-  currentTick 
+  currentTick,
+  tickSpacing
 }: { 
   tickLower: number; 
   tickUpper: number; 
-  currentTick: number; 
+  currentTick: number;
+  tickSpacing: number;
 }) => {
+  // Adaptive TICKS_PER_BAR based on tick spacing and position range
+  const positionRange = tickUpper - tickLower;
+  let TICKS_PER_BAR: number;
+  
+  if (tickSpacing === 1) {
+    // For very fine tick spacing, use a larger multiplier to make visualization meaningful
+    TICKS_PER_BAR = Math.max(50, positionRange / 10);
+  } else {
+    // For larger tick spacing, use the original logic
+    TICKS_PER_BAR = 10 * tickSpacing;
+  }
+
   // Calculate center of the visualization
   const centerBarIndex = Math.floor(TICK_BARS_COUNT / 2);
   
-  // Calculate start tick of the center bar
-  const centerBarStartTick = Math.floor(currentTick / TICKS_PER_BAR) * TICKS_PER_BAR;
+  // For positions, center around the middle of the position range rather than current tick
+  const positionCenter = Math.floor((tickLower + tickUpper) / 2);
+  const centerBarStartTick = Math.floor(positionCenter / TICKS_PER_BAR) * TICKS_PER_BAR;
   
-  // Generate bars centered around the current tick
+  // Generate bars centered around the position
   const bars = Array.from({ length: TICK_BARS_COUNT }, (_, i) => {
     const offset = i - centerBarIndex;
     const barStartTick = centerBarStartTick + (offset * TICKS_PER_BAR);
@@ -159,7 +164,9 @@ const TickRangeVisualization = ({
     const containsCurrentTick = currentTick >= barStartTick && currentTick < barEndTick;
     const containsPosition = 
       (barStartTick <= tickUpper && barEndTick > tickLower) || 
-      (tickLower <= barStartTick && tickUpper >= barEndTick);
+      (tickLower <= barStartTick && tickUpper >= barEndTick) ||
+      (tickLower <= barStartTick && tickUpper >= barStartTick) ||
+      (tickLower <= barEndTick && tickUpper >= barEndTick);
     
     return { containsCurrentTick, containsPosition };
   });
@@ -226,6 +233,7 @@ const getPoolConfiguration = (poolId: string) => {
 interface PoolDetailData extends Pool { // Extend the main Pool type
   // Add any specific fields needed for this page that are not in the global Pool type
   // For now, the global Pool type should cover what we fetch (volume, fees, tvl USD values)
+  tickSpacing?: number; // Add tickSpacing property
 }
 
 export default function PoolDetailPage() {
@@ -301,7 +309,7 @@ export default function PoolDetailPage() {
   });
 
   // Define columns for the User Positions table (can be defined early)
-  const positionColumns: ColumnDef<ProcessedPosition>[] = [
+  const positionColumns: ColumnDef<ProcessedPosition>[] = useMemo(() => [
     {
       id: "pair",
       header: "Pair / Range",
@@ -315,8 +323,8 @@ export default function PoolDetailPage() {
         const estimatedCurrentTick = position.isInRange 
           ? Math.floor((position.tickLower + position.tickUpper) / 2)
           : (position.tickLower > 0 
-              ? position.tickLower - TICKS_PER_BAR 
-              : position.tickUpper + TICKS_PER_BAR);
+              ? position.tickLower - (10 * (currentPoolData?.tickSpacing || DEFAULT_TICK_SPACING))
+              : position.tickUpper + (10 * (currentPoolData?.tickSpacing || DEFAULT_TICK_SPACING)));
 
         return (
           <div className="flex flex-col gap-1">
@@ -337,6 +345,7 @@ export default function PoolDetailPage() {
               tickLower={position.tickLower}
               tickUpper={position.tickUpper}
               currentTick={estimatedCurrentTick}
+              tickSpacing={currentPoolData?.tickSpacing || DEFAULT_TICK_SPACING}
             />
           </div>
         );
@@ -415,16 +424,11 @@ export default function PoolDetailPage() {
         );
       },
     },
-  ];
+  ], [isBurningLiquidity, isIncreasingLiquidity, isDecreasingLiquidity, positionToBurn?.positionId, currentPoolData?.tickSpacing]);
 
   // Memoize table data and config to prevent unnecessary re-renders
   const memoizedPositions = useMemo(() => userPositions, [userPositions]);
-  const memoizedColumns = useMemo(() => positionColumns, [
-    isBurningLiquidity, 
-    isIncreasingLiquidity, 
-    isDecreasingLiquidity, 
-    positionToBurn?.positionId
-  ]);
+  const memoizedColumns = useMemo(() => positionColumns, [positionColumns]);
 
   // Initialize the table instance (Hook call)
   const positionsTable = useReactTable({
@@ -582,6 +586,7 @@ export default function PoolDetailPage() {
         ...(poolStats || {}),
         apr: calculatedApr,
         dynamicFeeBps: dynamicFeeBps,
+        tickSpacing: getPoolById(poolId)?.tickSpacing || DEFAULT_TICK_SPACING,
         // Ensure display strings use fetched numeric data if available
         volume24h: poolStats?.volume24hUSD !== undefined ? formatUSD(poolStats.volume24hUSD) : basePoolInfo.volume24h,
         volume7d: poolStats?.volume7dUSD !== undefined ? formatUSD(poolStats.volume7dUSD) : basePoolInfo.volume7d,
@@ -624,17 +629,13 @@ export default function PoolDetailPage() {
 
       // Filter positions for the current pool
       if (allUserPositions && basePoolInfo) {
-        const [poolToken0Raw, poolToken1Raw] = basePoolInfo.pair.split(' / ');
-        const poolToken0 = poolToken0Raw?.trim().toUpperCase();
-        const poolToken1 = poolToken1Raw?.trim().toUpperCase();
+        const poolSubgraphId = getPoolSubgraphId(poolId); // Get the subgraph ID for the current pool
         const filteredPositions = allUserPositions.filter(pos => {
-          const posToken0 = pos.token0.symbol?.trim().toUpperCase();
-          const posToken1 = pos.token1.symbol?.trim().toUpperCase();
-          return (posToken0 === poolToken0 && posToken1 === poolToken1) ||
-                 (posToken0 === poolToken1 && posToken1 === poolToken0);
+          // Compare the pool ID from the position with the subgraph ID of the current page's pool
+          return pos.poolId.toLowerCase() === poolSubgraphId?.toLowerCase();
         });
         setUserPositions(filteredPositions);
-        console.log(`Filtered ${filteredPositions.length} positions for pool ${basePoolInfo.pair} from ${allUserPositions.length} total cached/fetched positions.`);
+        console.log(`Filtered ${filteredPositions.length} positions for pool ID ${poolSubgraphId} from ${allUserPositions.length} total cached/fetched positions.`);
       } else {
         setUserPositions([]);
       }
@@ -665,10 +666,30 @@ export default function PoolDetailPage() {
 
   const confirmBurnPosition = () => {
     if (positionToBurn && positionToBurn.positionId && positionToBurn.token0.symbol && positionToBurn.token1.symbol) {
+      // Map position token addresses to correct token symbols from our configuration
+      const getTokenSymbolByAddress = (address: string): TokenSymbol | null => {
+        const normalizedAddress = address.toLowerCase();
+        for (const [symbol, tokenConfig] of Object.entries(TOKEN_DEFINITIONS)) {
+          if (tokenConfig.address.toLowerCase() === normalizedAddress) {
+            return symbol as TokenSymbol;
+          }
+        }
+        return null;
+      };
+      
+      const token0Symbol = getTokenSymbolByAddress(positionToBurn.token0.address);
+      const token1Symbol = getTokenSymbolByAddress(positionToBurn.token1.address);
+      
+      if (!token0Symbol || !token1Symbol) {
+        toast.error("Token definitions not found for position tokens. Addresses: " + 
+          `${positionToBurn.token0.address}, ${positionToBurn.token1.address}`);
+        return;
+      }
+
       const burnData: BurnPositionData = {
         tokenId: positionToBurn.positionId,
-        token0Symbol: positionToBurn.token0.symbol as TokenSymbol,
-        token1Symbol: positionToBurn.token1.symbol as TokenSymbol,
+        token0Symbol: token0Symbol,
+        token1Symbol: token1Symbol,
         poolId: positionToBurn.poolId,
         tickLower: positionToBurn.tickLower,
         tickUpper: positionToBurn.tickUpper,
@@ -832,14 +853,32 @@ export default function PoolDetailPage() {
         }
 
         // For in-range positions, use the API for proper calculations
+        // Map position token addresses to correct token symbols from our configuration
+        const getTokenSymbolByAddress = (address: string): TokenSymbol | null => {
+          const normalizedAddress = address.toLowerCase();
+          for (const [symbol, tokenConfig] of Object.entries(TOKEN_DEFINITIONS)) {
+            if (tokenConfig.address.toLowerCase() === normalizedAddress) {
+              return symbol as TokenSymbol;
+            }
+          }
+          return null;
+        };
+        
+        const token0Symbol = getTokenSymbolByAddress(positionToModify.token0.address);
+        const token1Symbol = getTokenSymbolByAddress(positionToModify.token1.address);
+        
+        if (!token0Symbol || !token1Symbol) {
+          throw new Error(`Token definitions not found for position tokens: ${positionToModify.token0.address}, ${positionToModify.token1.address}`);
+        }
+        
         const calcResponse = await fetch('/api/liquidity/calculate-liquidity-parameters', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            token0Symbol: positionToModify.token0.symbol,
-            token1Symbol: positionToModify.token1.symbol,
+            token0Symbol: token0Symbol,
+            token1Symbol: token1Symbol,
             inputAmount: inputAmount,
-            inputTokenSymbol: inputSide === 'amount0' ? positionToModify.token0.symbol : positionToModify.token1.symbol,
+            inputTokenSymbol: inputSide === 'amount0' ? token0Symbol : token1Symbol,
             userTickLower: positionToModify.tickLower,
             userTickUpper: positionToModify.tickUpper,
             chainId: chainId,
@@ -951,10 +990,30 @@ export default function PoolDetailPage() {
       }
     }
 
+    // Map position token addresses to correct token symbols from our configuration
+    const getTokenSymbolByAddress = (address: string): TokenSymbol | null => {
+      const normalizedAddress = address.toLowerCase();
+      for (const [symbol, tokenConfig] of Object.entries(TOKEN_DEFINITIONS)) {
+        if (tokenConfig.address.toLowerCase() === normalizedAddress) {
+          return symbol as TokenSymbol;
+        }
+      }
+      return null;
+    };
+    
+    const token0Symbol = getTokenSymbolByAddress(positionToModify.token0.address);
+    const token1Symbol = getTokenSymbolByAddress(positionToModify.token1.address);
+    
+    if (!token0Symbol || !token1Symbol) {
+      toast.error("Token definitions not found for position tokens. Addresses: " + 
+        `${positionToModify.token0.address}, ${positionToModify.token1.address}`);
+      return;
+    }
+
     const decreaseData: DecreasePositionData = {
       tokenId: positionToModify.positionId,
-      token0Symbol: positionToModify.token0.symbol as TokenSymbol,
-      token1Symbol: positionToModify.token1.symbol as TokenSymbol,
+      token0Symbol: token0Symbol,
+      token1Symbol: token1Symbol,
       decreaseAmount0: decreaseAmount0 || "0",
       decreaseAmount1: decreaseAmount1 || "0",
       isFullBurn: isFullBurn,
@@ -963,7 +1022,7 @@ export default function PoolDetailPage() {
       tickUpper: positionToModify.tickUpper,
     };
 
-    decreaseLiquidity(decreaseData);
+    decreaseLiquidity(decreaseData, 0); // 0 percentage means use specific amounts from decreaseData
     setShowDecreaseModal(false);
   };
 

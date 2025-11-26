@@ -3,6 +3,8 @@
 import { LineChart, Line, ResponsiveContainer, XAxis, YAxis } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { ArrowRightIcon } from "lucide-react";
+import Image from "next/image";
+import { getToken } from "@/lib/pools-config";
 
 interface FeeHistoryPoint {
   timeLabel: string;
@@ -14,9 +16,14 @@ interface FeeHistoryPoint {
 interface DynamicFeeChartPreviewProps {
   data: FeeHistoryPoint[];
   onClick?: () => void; // To handle click for opening the modal
+  poolInfo?: {
+    token0Symbol: string;
+    token1Symbol: string;
+    poolName: string;
+  };
 }
 
-export function DynamicFeeChartPreview({ data, onClick }: DynamicFeeChartPreviewProps) {
+export function DynamicFeeChartPreview({ data, onClick, poolInfo }: DynamicFeeChartPreviewProps) {
   if (!data || data.length === 0) {
     return null; // Don't render if no data
   }
@@ -78,7 +85,35 @@ export function DynamicFeeChartPreview({ data, onClick }: DynamicFeeChartPreview
         <div className="space-y-0.5">
             <CardTitle className="text-sm font-medium">Dynamic Fee Trend</CardTitle>
             <CardDescription className="text-xs text-muted-foreground">
-                30-Day Fee Snapshot
+                {poolInfo ? (
+                  <div className="flex items-center">
+                    {/* Overlapping token icons - smaller version */}
+                    <div className="relative w-8 h-4">
+                      <div className="absolute top-0 left-0 w-4 h-4 rounded-full overflow-hidden bg-background border border-border/50">
+                        <Image 
+                          src={getToken(poolInfo.token0Symbol)?.icon || "/placeholder-logo.svg"} 
+                          alt={poolInfo.token0Symbol} 
+                          width={16} 
+                          height={16} 
+                          className="w-full h-full object-cover" 
+                        />
+                      </div>
+                      <div className="absolute top-0 left-2.5 w-4 h-4 rounded-full overflow-hidden bg-background border border-border/50">
+                        <Image 
+                          src={getToken(poolInfo.token1Symbol)?.icon || "/placeholder-logo.svg"} 
+                          alt={poolInfo.token1Symbol} 
+                          width={16} 
+                          height={16} 
+                          className="w-full h-full object-cover" 
+                        />
+                      </div>
+                    </div>
+                    {/* Pool pair name */}
+                    <span>{poolInfo.token0Symbol}/{poolInfo.token1Symbol}</span>
+                  </div>
+                ) : (
+                  "30-Day Fee Snapshot"
+                )}
             </CardDescription>
         </div>
         <ArrowRightIcon className="h-4 w-4 text-muted-foreground group-hover:text-white transition-colors duration-150" />

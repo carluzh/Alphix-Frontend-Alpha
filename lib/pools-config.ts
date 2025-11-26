@@ -1,6 +1,12 @@
 import { getAddress, type Address } from 'viem';
 import { Token } from '@uniswap/sdk-core';
 import poolsConfig from '../config/pools.json';
+import type { Pool } from '@/types';
+
+// Tick constants (Uniswap V3/V4 SDK bounds)
+export const SDK_MIN_TICK = -887272;
+export const SDK_MAX_TICK = 887272;
+export const DEFAULT_TICK_SPACING = 60;
 
 // Types based on pools.json structure
 export interface TokenConfig {
@@ -75,15 +81,42 @@ export function getPoolById(poolId: string): PoolConfig | null {
 
 // Create Token SDK instances
 export function createTokenSDK(tokenSymbol: string, chainId: number): Token | null {
-  const tokenConfig = getToken(tokenSymbol);
-  if (!tokenConfig) return null;
+  console.log(`[createTokenSDK] Creating token for symbol: ${tokenSymbol}, chainId: ${chainId}`);
   
-  return new Token(
-    chainId,
-    getAddress(tokenConfig.address),
-    tokenConfig.decimals,
-    tokenConfig.symbol
-  );
+  const tokenConfig = getToken(tokenSymbol);
+  console.log(`[createTokenSDK] Token config found:`, tokenConfig);
+  
+  if (!tokenConfig) {
+    console.log(`[createTokenSDK] No token config found for ${tokenSymbol}`);
+    return null;
+  }
+  
+  console.log(`[createTokenSDK] Raw address from config: ${tokenConfig.address}, type: ${typeof tokenConfig.address}`);
+  
+  try {
+    const checksummedAddress = getAddress(tokenConfig.address);
+    console.log(`[createTokenSDK] Checksummed address: ${checksummedAddress}, type: ${typeof checksummedAddress}`);
+    
+    const token = new Token(
+      chainId,
+      checksummedAddress,
+      tokenConfig.decimals,
+      tokenConfig.symbol
+    );
+    
+    console.log(`[createTokenSDK] Created token:`, {
+      symbol: token.symbol,
+      address: token.address,
+      addressType: typeof token.address,
+      decimals: token.decimals,
+      chainId: token.chainId
+    });
+    
+    return token;
+  } catch (error) {
+    console.error(`[createTokenSDK] Error creating token for ${tokenSymbol}:`, error);
+    return null;
+  }
 }
 
 // Get pool configuration for two tokens
@@ -139,7 +172,7 @@ export function getStateViewAddress(): Address {
 
 // Legacy compatibility - create TOKEN_DEFINITIONS from pools config
 export const TOKEN_DEFINITIONS: Record<string, {
-  addressRaw: string;
+  address: string;
   decimals: number;
   symbol: string;
   displayDecimals: number;
@@ -147,7 +180,7 @@ export const TOKEN_DEFINITIONS: Record<string, {
   Object.entries(poolsConfig.tokens).map(([symbol, token]) => [
     symbol,
     {
-      addressRaw: token.address,
+      address: token.address,
       decimals: token.decimals,
       symbol: token.symbol,
       displayDecimals: token.displayDecimals
@@ -157,6 +190,44 @@ export const TOKEN_DEFINITIONS: Record<string, {
 
 export type TokenSymbol = keyof typeof TOKEN_DEFINITIONS;
 
+// Utility function to map token addresses to correct symbols from pools config
+export function getTokenSymbolByAddress(address: string): TokenSymbol | null {
+  const normalizedAddress = address.toLowerCase();
+  for (const [symbol, tokenConfig] of Object.entries(TOKEN_DEFINITIONS)) {
+    if (tokenConfig.address.toLowerCase() === normalizedAddress) {
+      return symbol as TokenSymbol;
+    }
+  }
+  return null;
+}
+
 // Export chain info
 export const CHAIN_ID = poolsConfig.meta.chainId;
-export const CHAIN_NAME = poolsConfig.meta.chainName; 
+export const CHAIN_NAME = poolsConfig.meta.chainName;
+
+// Get pools formatted for display (with token icons, pair names)
+export function getPoolsForDisplay(): Pool[] {
+  return getEnabledPools()
+    .map(poolConfig => {
+      const token0 = getToken(poolConfig.currency0.symbol);
+      const token1 = getToken(poolConfig.currency1.symbol);
+      if (!token0 || !token1) return null;
+
+      return {
+        id: poolConfig.id,
+        tokens: [
+          { symbol: token0.symbol, icon: token0.icon },
+          { symbol: token1.symbol, icon: token1.icon }
+        ],
+        pair: `${token0.symbol} / ${token1.symbol}`,
+        volume24h: "Loading...",
+        volume7d: "Loading...",
+        fees24h: "Loading...",
+        fees7d: "Loading...",
+        liquidity: "Loading...",
+        apr: "Loading...",
+        highlighted: poolConfig.featured,
+      } as Pool;
+    })
+    .filter((p): p is Pool => p !== null);
+} 

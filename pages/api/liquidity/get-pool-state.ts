@@ -4,8 +4,7 @@ import JSBI from 'jsbi';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from "../../../lib/abis/state_view_abi";
-import { TOKEN_DEFINITIONS, TokenSymbol } from "../../../lib/swap-constants";
-import { TOKEN_DEFINITIONS as POOLS_TOKEN_DEFINITIONS } from "../../../lib/pools-config";
+import { getToken, TokenSymbol, getStateViewAddress } from "../../../lib/pools-config";
 import { publicClient } from "../../../lib/viemClient";
 import {
     isAddress,
@@ -14,11 +13,8 @@ import {
     type Hex
 } from "viem";
 
-// Contract addresses & constants
-const STATE_VIEW_ADDRESS = getAddress("0x571291b572ed32ce6751a2cb2486ebee8defb9b4"); // Ensure this is correct
-const DEFAULT_HOOK_ADDRESS = getAddress("0x94ba380a340E020Dc29D7883f01628caBC975000"); // Ensure this is correct
-const DEFAULT_FEE = 8388608; // Uniswap V4 default pool fee
-const DEFAULT_TICK_SPACING = 60; // Uniswap V4 default tick spacing
+// Contract addresses from pools config
+const STATE_VIEW_ADDRESS = getStateViewAddress();
 
 interface GetPoolStateRequest extends NextApiRequest {
     body: {
@@ -119,17 +115,17 @@ export default async function handler(
         } = req.body;
 
         // --- Input Validation ---
-        if (!POOLS_TOKEN_DEFINITIONS[token0Symbol] || !POOLS_TOKEN_DEFINITIONS[token1Symbol]) {
+        const token0Config = getToken(token0Symbol);
+        const token1Config = getToken(token1Symbol);
+
+        if (!token0Config || !token1Config) {
             return res.status(400).json({ message: "Invalid token symbol(s) provided." });
         }
         // TODO: Add validation for chainId
 
-        const token0Config = POOLS_TOKEN_DEFINITIONS[token0Symbol];
-        const token1Config = POOLS_TOKEN_DEFINITIONS[token1Symbol];
-
         // --- SDK Token Objects (using original symbols from request) ---
-        const sdkToken0Req = new Token(chainId, getAddress(token0Config.addressRaw), token0Config.decimals, token0Config.symbol);
-        const sdkToken1Req = new Token(chainId, getAddress(token1Config.addressRaw), token1Config.decimals, token1Config.symbol);
+        const sdkToken0Req = new Token(chainId, getAddress(token0Config.address), token0Config.decimals, token0Config.symbol);
+        const sdkToken1Req = new Token(chainId, getAddress(token1Config.address), token1Config.decimals, token1Config.symbol);
 
         // --- Token Sorting (Crucial for V4 SDK pool key) ---
         const [sortedSdkToken0, sortedSdkToken1] = sdkToken0Req.sortsBefore(sdkToken1Req)

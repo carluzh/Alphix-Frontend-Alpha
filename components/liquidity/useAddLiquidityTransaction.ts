@@ -8,10 +8,12 @@ import {
   useSignTypedData
 } from "wagmi";
 import { toast } from "sonner";
-import { TokenSymbol, TOKEN_DEFINITIONS } from "@/lib/swap-constants";
+import { V4_POOL_FEE, V4_POOL_TICK_SPACING, V4_POOL_HOOKS } from "@/lib/swap-constants";
+import { TOKEN_DEFINITIONS } from "@/lib/pools-config";
 import { baseSepolia } from "@/lib/wagmiConfig";
 import { ERC20_ABI } from "@/lib/abis/erc20";
 import { type Hex, formatUnits, parseUnits, encodeFunctionData } from "viem";
+import { TokenSymbol } from "@/lib/pools-config";
 
 // Minimal ABI for Permit2 functions (both single and batch)
 const PERMIT2_PERMIT_ABI_MINIMAL = [

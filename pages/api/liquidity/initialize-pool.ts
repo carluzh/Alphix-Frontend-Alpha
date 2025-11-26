@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getAddress, parseAbi, type Hex } from "viem";
-import { TOKEN_DEFINITIONS as POOLS_TOKEN_DEFINITIONS, getPoolByTokens } from "../../../lib/pools-config";
+import { getToken, getPoolByTokens } from "../../../lib/pools-config";
 import { TokenSymbol } from "../../../lib/swap-constants";
 import { publicClient } from "../../../lib/viemClient";
 import { Token } from '@uniswap/sdk-core';
@@ -42,7 +42,10 @@ export default async function handler(
     try {
         const { token0Symbol, token1Symbol, chainId } = req.body;
 
-        if (!POOLS_TOKEN_DEFINITIONS[token0Symbol] || !POOLS_TOKEN_DEFINITIONS[token1Symbol]) {
+        const token0Config = getToken(token0Symbol);
+        const token1Config = getToken(token1Symbol);
+
+        if (!token0Config || !token1Config) {
             return res.status(400).json({ message: "Invalid token symbol(s) provided.", isInitialized: false });
         }
 

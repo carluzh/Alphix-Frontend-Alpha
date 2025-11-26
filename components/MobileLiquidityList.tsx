@@ -3,21 +3,13 @@
 import Image from "next/image";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import type { Pool } from "@/types"; // Import the centralized Pool type
+import { formatUSD } from "@/lib/format";
+import type { Pool } from "@/types";
 
 interface MobileLiquidityListProps {
   pools: Pool[];
   onSelectPool: (poolId: string) => void;
 }
-
-// Helper function to format USD values, similar to the one in app/liquidity/page.tsx
-const formatUSD = (value: number) => {
-  if (value < 0.01 && value > 0) return "< $0.01"; // Handle very small positive values
-  if (value === 0) return "$0.00";
-  if (Math.abs(value) < 0.01) return "< $0.01"; // For small negative values if they ever occur
-  if (Math.abs(value) < 1000) return `$${value.toFixed(2)}`;
-  return `$${(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-};
 
 export function MobileLiquidityList({ pools, onSelectPool }: MobileLiquidityListProps) {
   if (!pools || pools.length === 0) {

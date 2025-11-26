@@ -266,16 +266,20 @@ export function AddLiquidityForm({
   // Balance hooks
   const { data: token0BalanceData, isLoading: isLoadingToken0Balance } = useBalance({
     address: accountAddress,
-    token: TOKEN_DEFINITIONS[token0Symbol]?.addressRaw as `0x${string}` | undefined,
+    token: TOKEN_DEFINITIONS[token0Symbol]?.address === "0x0000000000000000000000000000000000000000" 
+      ? undefined 
+      : TOKEN_DEFINITIONS[token0Symbol]?.address as `0x${string}` | undefined,
     chainId,
-    query: { enabled: !!accountAddress && !!chainId && !!TOKEN_DEFINITIONS[token0Symbol]?.addressRaw },
+    query: { enabled: !!accountAddress && !!chainId && !!TOKEN_DEFINITIONS[token0Symbol] },
   });
 
   const { data: token1BalanceData, isLoading: isLoadingToken1Balance } = useBalance({
     address: accountAddress,
-    token: TOKEN_DEFINITIONS[token1Symbol]?.addressRaw as `0x${string}` | undefined,
+    token: TOKEN_DEFINITIONS[token1Symbol]?.address === "0x0000000000000000000000000000000000000000" 
+      ? undefined 
+      : TOKEN_DEFINITIONS[token1Symbol]?.address as `0x${string}` | undefined,
     chainId,
-    query: { enabled: !!accountAddress && !!chainId && !!TOKEN_DEFINITIONS[token1Symbol]?.addressRaw },
+    query: { enabled: !!accountAddress && !!chainId && !!TOKEN_DEFINITIONS[token1Symbol] },
   });
   
   // Derived pool tokens (for labels/formatting)
@@ -286,8 +290,8 @@ export function AddLiquidityForm({
     if (!currentToken0Def || !currentToken1Def) return { poolToken0: null, poolToken1: null };
 
     // Create SDK Token instances using the modal's currently selected token0Symbol and token1Symbol
-    const sdkBaseToken0 = new Token(chainId, getAddress(currentToken0Def.addressRaw), currentToken0Def.decimals, currentToken0Def.symbol);
-    const sdkBaseToken1 = new Token(chainId, getAddress(currentToken1Def.addressRaw), currentToken1Def.decimals, currentToken1Def.symbol);
+    const sdkBaseToken0 = new Token(chainId, getAddress(currentToken0Def.address), currentToken0Def.decimals, currentToken0Def.symbol);
+    const sdkBaseToken1 = new Token(chainId, getAddress(currentToken1Def.address), currentToken1Def.decimals, currentToken1Def.symbol);
 
     // Sort them to get the canonical poolToken0 and poolToken1
     const [pt0, pt1] = sdkBaseToken0.sortsBefore(sdkBaseToken1)
@@ -350,7 +354,6 @@ export function AddLiquidityForm({
           setActivePreset("±15%"); // Reset preset on pool change
           setBaseTokenForPriceDisplay(t0); // Reset base token for price display
           // Reset chart specific states too
-          setXDomain([-120000, 120000]);
           setCurrentPriceLine(null);
         }
       }
@@ -372,7 +375,6 @@ export function AddLiquidityForm({
     setActivePreset("±15%"); // Reset preset on token/chain change
     setBaseTokenForPriceDisplay(token0Symbol); // Reset base token for price display
     // Reset chart specific states too
-    setXDomain([-120000, 120000]);
     setCurrentPriceLine(null);
   }, [token0Symbol, token1Symbol, chainId, sdkMinTick, sdkMaxTick]);
 
@@ -412,20 +414,29 @@ export function AddLiquidityForm({
           const numericCurrentPrice = parseFloat(poolState.currentPrice);
           if (!isNaN(numericCurrentPrice)) {
             setCurrentPriceLine(numericCurrentPrice);
-            if (typeof poolState.currentPoolTick === 'number') {
-              const centerTick = poolState.currentPoolTick;
-              const percentage = 0.30;
-              const tickDeltaUpper = Math.log(1 + percentage) / Math.log(1.0001);
-              const tickDeltaLower = Math.log(1 - percentage) / Math.log(1.0001);
-              const domainTickLower = Math.round(centerTick + tickDeltaLower);
-              const domainTickUpper = Math.round(centerTick + tickDeltaUpper);
-              setXDomain([domainTickLower, domainTickUpper]);
-            } else {
-              setXDomain([numericCurrentPrice * 0.5, numericCurrentPrice * 1.5]); 
-            }
+            
+            // Set a fixed 20% zoom level around the current tick
+            const centerTick = poolState.currentPoolTick;
+            const percentage = 0.20; // 20% zoom
+            
+            const priceRatioUpper = 1 + percentage;
+            const priceRatioLower = 1 - percentage;
+
+            // This calculation is now correct for price of T0 in T1
+            const tickDeltaForT0T1Upper = Math.round(Math.log(priceRatioUpper) / Math.log(1.0001));
+            const tickDeltaForT0T1Lower = Math.round(Math.log(priceRatioLower) / Math.log(1.0001));
+
+            // The prices are symmetrical around the current tick in price space, but not in tick space.
+            // We use the larger of the two deltas (in absolute terms) to create a symmetrical zoom in tick space.
+            const largestDelta = Math.max(Math.abs(tickDeltaForT0T1Upper), Math.abs(tickDeltaForT0T1Lower));
+            
+            const domainTickLower = centerTick - largestDelta;
+            const domainTickUpper = centerTick + largestDelta;
+
+            setXDomain([domainTickLower, domainTickUpper]);
+
           } else {
             setCurrentPriceLine(null);
-            setXDomain([-120000, 120000]); 
           }
         } else {
           setCurrentPriceLine(null);
@@ -444,7 +455,7 @@ export function AddLiquidityForm({
     if (selectedPoolId) {
       fetchPoolState();
     }
-  }, [token0Symbol, token1Symbol, chainId, selectedPoolId]);
+  }, [selectedPoolId, chainId, token0Symbol, token1Symbol]);
 
   // Effect to update custom X-axis ticks when domain changes
   useEffect(() => {
@@ -463,14 +474,15 @@ export function AddLiquidityForm({
         // Simplified: just show one label if domain is a single point
         // Price calculation for a single tick
         let priceAtTick = NaN;
-        if (token0Def?.decimals !== undefined && token1Def?.decimals !== undefined) {
-          const decimalAdjFactor = baseTokenForPriceDisplay === token0Symbol 
-            ? Math.pow(10, token1Def.decimals - token0Def.decimals)
-            : Math.pow(10, token0Def.decimals - token1Def.decimals);
-          priceAtTick = baseTokenForPriceDisplay === token0Symbol 
-            ? Math.pow(1.0001, -minTickDomain) * decimalAdjFactor 
-            : Math.pow(1.0001, minTickDomain) * decimalAdjFactor;
-        }
+                  if (token0Def?.decimals !== undefined && token1Def?.decimals !== undefined) {
+            const decimalAdjFactor = baseTokenForPriceDisplay === token0Symbol 
+              ? Math.pow(10, token1Def.decimals - token0Def.decimals)
+              : Math.pow(10, token0Def.decimals - token1Def.decimals);
+            const rawPrice = baseTokenForPriceDisplay === token0Symbol 
+              ? Math.pow(1.0001, -minTickDomain)
+              : Math.pow(1.0001, minTickDomain);
+            priceAtTick = rawPrice * decimalAdjFactor;
+          }
         newLabels.push({ 
           tickValue: minTickDomain, 
           displayLabel: isNaN(priceAtTick) ? minTickDomain.toString() : priceAtTick.toLocaleString(undefined, { maximumFractionDigits: displayDecimals, minimumFractionDigits: 2 })
@@ -483,13 +495,15 @@ export function AddLiquidityForm({
           const tickVal = Math.round(minTickDomain + (i * step));
           let priceAtTick = NaN;
 
-          if (token0Def?.decimals !== undefined && token1Def?.decimals !== undefined) {
-            if (baseTokenForPriceDisplay === token0Symbol) { // Display price of T1 in T0
-              const decimalAdj = Math.pow(10, token1Def.decimals - token0Def.decimals);
-              priceAtTick = Math.pow(1.0001, -tickVal) * decimalAdj;
-            } else { // Display price of T0 in T1
-              const decimalAdj = Math.pow(10, token0Def.decimals - token1Def.decimals);
-              priceAtTick = Math.pow(1.0001, tickVal) * decimalAdj; 
+          if (currentPrice && currentPoolTick !== null) {
+            // Use currentPrice as reference (same approach as min/max prices)
+            const currentPriceNum = parseFloat(currentPrice);
+            const priceDelta = Math.pow(1.0001, tickVal - currentPoolTick);
+            
+            if (baseTokenForPriceDisplay === token0Symbol) {
+              priceAtTick = 1 / (currentPriceNum * priceDelta); // Invert for token0 denomination
+            } else {
+              priceAtTick = currentPriceNum * priceDelta; // Direct for token1 denomination
             }
           }
           newLabels.push({ 
@@ -511,6 +525,29 @@ export function AddLiquidityForm({
     const numTickLower = parseInt(tickLower);
     const numTickUpper = parseInt(tickUpper);
 
+    // Don't calculate prices if we're still using extreme initial values before pool data loads
+    // or if we don't have current pool price data yet
+    if (currentPoolTick === null || currentPrice === null) {
+      setMinPriceInputString("");
+      setMaxPriceInputString("");
+      return;
+    }
+    
+    // Also skip if using extreme tick values that haven't been preset-adjusted yet
+    const tickRange = Math.abs(numTickUpper - numTickLower);
+    if (tickRange > 1000000 && activePreset !== "Full Range") { // Extremely wide range suggests initial values
+      setMinPriceInputString("");
+      setMaxPriceInputString("");
+      return;
+    }
+    
+    // Additional safety check: if we haven't applied a preset yet and we're using extreme values, wait
+    if (!initialDefaultApplied && (numTickLower === sdkMinTick || numTickUpper === sdkMaxTick)) {
+      setMinPriceInputString("");
+      setMaxPriceInputString("");
+      return;
+    }
+
     let valForMinInput: number | null = null;
     let valForMaxInput: number | null = null;
 
@@ -524,71 +561,45 @@ export function AddLiquidityForm({
     const token0Dec = TOKEN_DEFINITIONS[token0Symbol]?.decimals;
     const token1Dec = TOKEN_DEFINITIONS[token1Symbol]?.decimals;
 
+    // Use API prices when available, fallback to tick calculation with same logic as currentPrice
     if (baseTokenForPriceDisplay === token0Symbol) {
-        // UI Displays: Price of Token1 in terms of Token0 (e.g., BTCRL per YUSDC)
-        if (token0Dec !== undefined && token1Dec !== undefined) {
-            const decimalAdjFactor = Math.pow(10, token1Dec - token0Dec);
-
-            // Min Price (T0 in T1) at numTickUpper
-            if (rawApiPriceAtTickUpper !== null) { // rawApiPriceAtTickUpper is Price(T0 per T1)
-                if (rawApiPriceAtTickUpper === 0) valForMinInput = Infinity;
-                else valForMinInput = 1 / (1 / rawApiPriceAtTickUpper);
-            } else if (!isNaN(numTickUpper)) { // Upper tick corresponds to the MIN T0/T1 price
-                if (numTickUpper === sdkMaxTick) valForMinInput = 0;
-                else valForMinInput = Math.pow(1.0001, -numTickUpper) * decimalAdjFactor;
-            } else {
-                valForMinInput = NaN;
-            }
-
-            // Max Price (T0 in T1) at numTickLower
-            if (rawApiPriceAtTickLower !== null) { // rawApiPriceAtTickLower is Price(T0 per T1)
-                 if (rawApiPriceAtTickLower === 0) valForMaxInput = Infinity;
-                 else valForMaxInput = 1 / (1 / rawApiPriceAtTickLower);
-            } else if (!isNaN(numTickLower)) { // Lower tick corresponds to the MAX T0/T1 price
-                if (numTickLower === sdkMinTick) valForMaxInput = Infinity;
-                else valForMaxInput = Math.pow(1.0001, -numTickLower) * decimalAdjFactor;
-            } else {
-                valForMaxInput = NaN;
-            }
-        } else {
-            valForMinInput = NaN;
-            valForMaxInput = NaN;
+        // Show prices denominated in token0 - need to invert API prices
+        if (rawApiPriceAtTickLower !== null) {
+            valForMinInput = 1 / rawApiPriceAtTickLower; // Invert API price
+        } else if (!isNaN(numTickLower) && currentPrice) {
+            // Fallback: use currentPrice as reference
+            const currentPriceNum = parseFloat(currentPrice);
+            const priceDelta = Math.pow(1.0001, numTickLower - (currentPoolTick || 0));
+            valForMinInput = 1 / (currentPriceNum * priceDelta);
         }
-    } else { // baseTokenForPriceDisplay === token1Symbol
-        // UI Displays: Price of Token0 in terms of Token1 (e.g., YUSDC per BTCRL)
-        if (token0Dec !== undefined && token1Dec !== undefined) {
-            const decimalAdjFactor = Math.pow(10, token0Dec - token1Dec);
-
-            // Min Price (T1 in T0) at numTickLower
-            if (rawApiPriceAtTickLower !== null) { // rawApiPriceAtTickLower is Price(T0 per T1)
-                if (rawApiPriceAtTickLower === 0) valForMinInput = Infinity;
-                else valForMinInput = 1 / rawApiPriceAtTickLower;
-            } else if (!isNaN(numTickLower)) {
-                if (numTickLower === sdkMinTick) valForMinInput = 0;
-                else valForMinInput = Math.pow(1.0001, numTickLower) * decimalAdjFactor;
-            } else {
-                valForMinInput = NaN;
-            }
-
-            // Max Price (T1 in T0) at numTickUpper
-            if (rawApiPriceAtTickUpper !== null) { // rawApiPriceAtTickUpper is Price(T0 per T1)
-                if (rawApiPriceAtTickUpper === 0) valForMaxInput = Infinity;
-                else valForMaxInput = 1 / rawApiPriceAtTickUpper;
-            } else if (!isNaN(numTickUpper)) {
-                if (numTickUpper === sdkMaxTick) valForMaxInput = Infinity;
-                else valForMaxInput = Math.pow(1.0001, numTickUpper) * decimalAdjFactor;
-            } else {
-                valForMaxInput = NaN;
-            }
-        } else {
-            valForMinInput = NaN;
-            valForMaxInput = NaN;
+        
+        if (rawApiPriceAtTickUpper !== null) {
+            valForMaxInput = 1 / rawApiPriceAtTickUpper; // Invert API price
+        } else if (!isNaN(numTickUpper) && currentPrice) {
+            // Fallback: use currentPrice as reference
+            const currentPriceNum = parseFloat(currentPrice);
+            const priceDelta = Math.pow(1.0001, numTickUpper - (currentPoolTick || 0));
+            valForMaxInput = 1 / (currentPriceNum * priceDelta);
         }
-    }
-
-    // Ensure min < max after all calculations, only if both are finite numbers
-    if (baseTokenForPriceDisplay === token0Symbol && valForMinInput !== null && valForMaxInput !== null && isFinite(valForMinInput) && isFinite(valForMaxInput) && valForMinInput > valForMaxInput) {
-        [valForMinInput, valForMaxInput] = [valForMaxInput, valForMinInput];
+    } else {
+        // Show prices denominated in token1 - use API prices directly
+        if (rawApiPriceAtTickLower !== null) {
+            valForMaxInput = rawApiPriceAtTickLower; // API already handles decimals
+        } else if (!isNaN(numTickLower) && currentPrice) {
+            // Fallback: use currentPrice as reference for decimal handling
+            const currentPriceNum = parseFloat(currentPrice);
+            const priceDelta = Math.pow(1.0001, numTickLower - (currentPoolTick || 0));
+            valForMaxInput = currentPriceNum * priceDelta;
+        }
+        
+        if (rawApiPriceAtTickUpper !== null) {
+            valForMinInput = rawApiPriceAtTickUpper; // API already handles decimals
+        } else if (!isNaN(numTickUpper) && currentPrice) {
+            // Fallback: use currentPrice as reference for decimal handling
+            const currentPriceNum = parseFloat(currentPrice);
+            const priceDelta = Math.pow(1.0001, numTickUpper - (currentPoolTick || 0));
+            valForMinInput = currentPriceNum * priceDelta;
+        }
     }
 
     let finalMinPriceString = "";
@@ -596,7 +607,7 @@ export function AddLiquidityForm({
     const displayDecimals = baseTokenForPriceDisplay === token0Symbol ? decimalsForToken0Display : decimalsForToken1Display;
 
     // Formatting for Min Price String
-    if (valForMinInput !== null) {
+    if (valForMinInput !== null && !isNaN(valForMinInput)) {
         if (valForMinInput >= 0 && valForMinInput < 1e-11) {
             finalMinPriceString = "0";
         } else if (!isFinite(valForMinInput) || valForMinInput > 1e30) {
@@ -604,10 +615,12 @@ export function AddLiquidityForm({
         } else {
             finalMinPriceString = valForMinInput.toFixed(displayDecimals);
         }
+    } else {
+        finalMinPriceString = ""; // Show empty for null/NaN values
     }
 
     // Formatting for Max Price String
-    if (valForMaxInput !== null) {
+    if (valForMaxInput !== null && !isNaN(valForMaxInput)) {
         if (valForMaxInput >= 0 && valForMaxInput < 1e-11) {
             finalMaxPriceString = "0";
         } else if (!isFinite(valForMaxInput) || valForMaxInput > 1e30) {
@@ -615,6 +628,8 @@ export function AddLiquidityForm({
         } else {
             finalMaxPriceString = valForMaxInput.toFixed(displayDecimals);
         }
+    } else {
+        finalMaxPriceString = ""; // Show empty for null/NaN values
     }
 
     setMinPriceInputString(finalMinPriceString);
@@ -1312,7 +1327,18 @@ export function AddLiquidityForm({
   // Custom shape for ReferenceArea with rounded top corners
   const RoundedTopReferenceArea = (props: any) => {
     const { x, y, width, height, fill, fillOpacity, strokeOpacity } = props;
-    if (width <= 0 || height <= 0) return null;
+    
+    // Validate all required numeric props
+    if (
+      typeof x !== 'number' || isNaN(x) ||
+      typeof y !== 'number' || isNaN(y) ||
+      typeof width !== 'number' || isNaN(width) ||
+      typeof height !== 'number' || isNaN(height) ||
+      width <= 0 || height <= 0
+    ) {
+      console.warn("[RoundedTopReferenceArea] Invalid props received:", { x, y, width, height });
+      return null;
+    }
 
     const r = 6;
 
@@ -1338,13 +1364,13 @@ export function AddLiquidityForm({
   const CustomTooltip = ({ active, payload, label, poolToken0Symbol, token0, token1, baseTokenForPrice }: any) => { 
     if (active && payload && payload.length && token0 && token1) {
       const tooltipData = payload[0].payload; 
-      const currentTick = tooltipData.tick || label;
-      const formattedTickLabel = currentTick ? currentTick.toLocaleString() : 'N/A'; 
+      const currentTick = tooltipData.tick ?? label;
+      const formattedTickLabel = typeof currentTick === 'number' ? currentTick.toLocaleString() : 'N/A'; 
       const displayPoolTokenSymbol = poolToken0Symbol || '';
 
       let priceAtTickDisplay = "Price N/A";
-          const token0Def = TOKEN_DEFINITIONS[token0 as TokenSymbol];
-    const token1Def = TOKEN_DEFINITIONS[token1 as TokenSymbol];
+      const token0Def = TOKEN_DEFINITIONS[token0 as TokenSymbol];
+      const token1Def = TOKEN_DEFINITIONS[token1 as TokenSymbol];
 
       if (token0Def && token1Def && typeof currentTick === 'number') {
         const t0Dec = token0Def.decimals;
@@ -1353,29 +1379,27 @@ export function AddLiquidityForm({
         let quoteTokenSymbol = "";
         let priceOfTokenSymbol = "";
 
-        // Logic for calculating price at tick
-        const isPoolToken0MatchingModalToken0 = TOKEN_DEFINITIONS[poolToken0Symbol as TokenSymbol]?.addressRaw.toLowerCase() === token0Def.addressRaw.toLowerCase();
+        const sdkToken0 = new Token(baseSepolia.id, getAddress(token0Def.address), t0Dec, token0);
+        const sdkToken1 = new Token(baseSepolia.id, getAddress(token1Def.address), t1Dec, token1);
 
-        let actualTickForCalc = currentTick;
+        const formToken0IsPoolToken0 = sdkToken0.sortsBefore(sdkToken1);
 
-        if (baseTokenForPrice === token0) {
-          quoteTokenSymbol = token0;
-          priceOfTokenSymbol = token1;
-          const decimalAdjFactor = Math.pow(10, t1Dec - t0Dec);
-          if (isPoolToken0MatchingModalToken0) {
-            price = Math.pow(1.0001, actualTickForCalc) * decimalAdjFactor;
-          } else {
-            price = Math.pow(1.0001, actualTickForCalc) * Math.pow(10, t0Dec - t1Dec);
-          }
-        } else {
-          quoteTokenSymbol = token1;
-          priceOfTokenSymbol = token0;
-          const decimalAdjFactor = Math.pow(10, t0Dec - t1Dec);
-          if (isPoolToken0MatchingModalToken0) {
-            price = (1 / Math.pow(1.0001, actualTickForCalc)) * decimalAdjFactor;
-          } else {
-            price = Math.pow(1.0001, actualTickForCalc) * Math.pow(10, t1Dec - t0Dec);
-          }
+        if (baseTokenForPrice === token0) { // Show price denominated in token0
+            quoteTokenSymbol = token0;
+            priceOfTokenSymbol = token1;
+            const decimalAdjFactor = Math.pow(10, t1Dec - t0Dec);
+            const rawPrice = formToken0IsPoolToken0 
+                ? Math.pow(1.0001, -currentTick) 
+                : Math.pow(1.0001, currentTick);
+            price = rawPrice * decimalAdjFactor;
+        } else { // Show price denominated in token1
+            quoteTokenSymbol = token1;
+            priceOfTokenSymbol = token0;
+            const decimalAdjFactor = Math.pow(10, t0Dec - t1Dec);
+            const rawPrice = formToken0IsPoolToken0 
+                ? Math.pow(1.0001, currentTick)
+                : Math.pow(1.0001, -currentTick);
+            price = rawPrice * decimalAdjFactor;
         }
 
         if (!isNaN(price)) {
@@ -1423,7 +1447,14 @@ export function AddLiquidityForm({
 
   // Helper function to get the canonical on-chain pool ID (Bytes! string)
   const getDerivedOnChainPoolId = useCallback((): string | null => {
-    if (!token0Symbol || !token1Symbol || !chainId) return null;
+    if (!token0Symbol || !token1Symbol || !chainId || !selectedPoolId) return null;
+
+    // Get the actual pool configuration instead of using hardcoded values
+    const poolConfig = getPoolById(selectedPoolId);
+    if (!poolConfig) {
+      console.error("[AddLiquidityForm] Could not find pool configuration for:", selectedPoolId);
+      return null;
+    }
 
     const token0Def = TOKEN_DEFINITIONS[token0Symbol];
     const token1Def = TOKEN_DEFINITIONS[token1Symbol];
@@ -1431,27 +1462,27 @@ export function AddLiquidityForm({
     if (!token0Def || !token1Def) return null;
 
     try {
-      const sdkToken0 = new Token(chainId, getAddress(token0Def.addressRaw), token0Def.decimals);
-      const sdkToken1 = new Token(chainId, getAddress(token1Def.addressRaw), token1Def.decimals);
+      const sdkToken0 = new Token(chainId, getAddress(token0Def.address), token0Def.decimals);
+      const sdkToken1 = new Token(chainId, getAddress(token1Def.address), token1Def.decimals);
 
       const [sortedSdkToken0, sortedSdkToken1] = sdkToken0.sortsBefore(sdkToken1)
         ? [sdkToken0, sdkToken1]
         : [sdkToken1, sdkToken0];
       
-      // Ensure V4_POOL_HOOKS is defined and is a valid Address type if needed by V4PoolSDK.getPoolId
+      // Use the actual pool configuration values
       const poolIdBytes32 = V4PoolSDK.getPoolId(
         sortedSdkToken0,
         sortedSdkToken1,
-        V4_POOL_FEE, 
-        V4_POOL_TICK_SPACING, 
-        V4_POOL_HOOKS as Hex 
+        poolConfig.fee, 
+        poolConfig.tickSpacing, 
+        poolConfig.hooks as Hex 
       );
       return poolIdBytes32.toLowerCase();
     } catch (error) {
       console.error("[AddLiquidityForm] Error deriving on-chain pool ID:", error);
       return null;
     }
-  }, [token0Symbol, token1Symbol, chainId]);
+  }, [token0Symbol, token1Symbol, chainId, selectedPoolId]);
 
   // Fetch liquidity depth data using the EXACT implementation from AddLiquidityModal
   useEffect(() => {
@@ -1534,7 +1565,7 @@ export function AddLiquidityForm({
         toast.error("Liquidity Depth Error", { description: error.message });
         setRawHookPositions(null); // Clear data on error
         // Use fallback chart data
-        generateFallbackChartData();
+        // generateFallbackChartData(); // This function is defined below, but causing a scope issue here. Let's rely on the other fallback mechanisms.
       } finally {
         setIsFetchingLiquidityDepth(false);
         setIsChartDataLoading(false);
@@ -1551,8 +1582,14 @@ export function AddLiquidityForm({
       currentPoolTick !== null &&
       currentPoolSqrtPriceX96 !== null && 
       token0Symbol && token1Symbol && chainId &&
-      poolToken0 && poolToken1 
+      poolToken0 && poolToken1 && selectedPoolId
     ) {
+      const poolConfig = getPoolById(selectedPoolId);
+      if (!poolConfig) {
+        console.error("[AddLiquidityForm] Could not find pool config for processing positions.");
+        setProcessedPositions(null);
+        return;
+      }
       const newProcessedPositions: ProcessedPositionDetail[] = [];
 
       const token0Def = TOKEN_DEFINITIONS[token0Symbol];
@@ -1564,8 +1601,8 @@ export function AddLiquidityForm({
       }
 
       try {
-        const sdkBaseToken0 = new Token(chainId, getAddress(token0Def.addressRaw), token0Def.decimals);
-        const sdkBaseToken1 = new Token(chainId, getAddress(token1Def.addressRaw), token1Def.decimals);
+        const sdkBaseToken0 = new Token(chainId, getAddress(token0Def.address), token0Def.decimals);
+        const sdkBaseToken1 = new Token(chainId, getAddress(token1Def.address), token1Def.decimals);
         const [sdkSortedToken0, sdkSortedToken1] = sdkBaseToken0.sortsBefore(sdkBaseToken1) 
             ? [sdkBaseToken0, sdkBaseToken1] 
             : [sdkBaseToken1, sdkBaseToken0];
@@ -1576,9 +1613,9 @@ export function AddLiquidityForm({
         const poolForCalculations = new V4PoolSDK(
           sdkSortedToken0,
           sdkSortedToken1,
-          V4_POOL_FEE,
-          V4_POOL_TICK_SPACING,
-          V4_POOL_HOOKS as Hex,
+          poolConfig.fee,
+          poolConfig.tickSpacing,
+          poolConfig.hooks as Hex,
           poolSqrtPriceX96JSBI, 
           JSBI.BigInt(0), // Placeholder liquidity for the pool object
           currentPoolTick
@@ -1648,7 +1685,7 @@ export function AddLiquidityForm({
         setProcessedPositions([]);
         console.log("[AddLiquidityForm] No raw positions to process into ProcessedPositionDetail.");
     }
-  }, [rawHookPositions, currentPoolTick, currentPoolSqrtPriceX96, token0Symbol, token1Symbol, chainId, poolToken0, poolToken1, currentPrice, baseTokenForPriceDisplay]);
+  }, [rawHookPositions, currentPoolTick, currentPoolSqrtPriceX96, token0Symbol, token1Symbol, chainId, poolToken0, poolToken1, currentPrice, baseTokenForPriceDisplay, selectedPoolId]);
 
   // Create delta events and aggregate them
   useEffect(() => {
@@ -1690,6 +1727,9 @@ export function AddLiquidityForm({
 
   // Create simplified plot data from sorted net changes
   useEffect(() => {
+    console.log("[DEBUG] Chart data effect - sortedNetUnifiedValueChanges:", sortedNetUnifiedValueChanges?.length);
+    console.log("[DEBUG] Chart data effect - poolToken0:", poolToken0?.symbol);
+    
     if (sortedNetUnifiedValueChanges && sortedNetUnifiedValueChanges.length > 0 && poolToken0) {
       
       let newData: DepthChartDataPoint[] = [];
@@ -1720,16 +1760,34 @@ export function AddLiquidityForm({
       
       setSimplifiedChartPlotData(newData as any);
       setChartData(newData);
-      console.log("[DEBUG] Updated chart data with", newData.length, "points");
+      console.log("[DEBUG] Updated chart data with", newData.length, "points from real liquidity data");
+      
+      /*
+      // Dynamically set the xDomain based on the liquidity data
+      const ticksWithLiquidity = newData.map(d => d.tick);
+      if (ticksWithLiquidity.length > 1) {
+        const minTick = Math.min(...ticksWithLiquidity);
+        const maxTick = Math.max(...ticksWithLiquidity);
+        const range = maxTick - minTick;
+        const padding = Math.max(range * 0.1, 50 * (defaultTickSpacing || 60)); 
+        setXDomain([Math.floor(minTick - padding), Math.ceil(maxTick + padding)]);
+      } else if (currentPoolTick !== null) {
+        const padding = 100 * (defaultTickSpacing || 60);
+        setXDomain([currentPoolTick - padding, currentPoolTick + padding]);
+      }
+      */
+
     } else if (sortedNetUnifiedValueChanges === null) {
       setSimplifiedChartPlotData(null);
+      console.log("[DEBUG] No sorted changes data, clearing chart data");
       // Don't clear chart data here, let the fallback mechanism work
     } else {
       // Empty array case, generate simple fallback
       setSimplifiedChartPlotData([]);
+      console.log("[DEBUG] Empty sorted changes, using fallback");
       generateFallbackChartData(); // Use the fallback
     }
-  }, [sortedNetUnifiedValueChanges, poolToken0, tickLower, tickUpper, currentPoolTick]);
+  }, [sortedNetUnifiedValueChanges, poolToken0, currentPoolTick, defaultTickSpacing]);
 
   // Generate simplified fallback chart data when API fails
   const generateFallbackChartData = () => {
@@ -1741,44 +1799,15 @@ export function AddLiquidityForm({
     const simpleData: DepthChartDataPoint[] = [];
     const centerTick = currentPoolTick;
     
-    // Create a simple bell curve with 5 points
+    // Create a simple bell curve with 5 points - independent of user's selected range
     simpleData.push({ tick: centerTick - 20000, token0Depth: 0, normToken0Depth: 0, value: 0 });
     simpleData.push({ tick: centerTick - 10000, token0Depth: 50, normToken0Depth: 0.5, value: 0.5 });
     simpleData.push({ tick: centerTick, token0Depth: 100, normToken0Depth: 1, value: 1 });
     simpleData.push({ tick: centerTick + 10000, token0Depth: 50, normToken0Depth: 0.5, value: 0.5 });
     simpleData.push({ tick: centerTick + 20000, token0Depth: 0, normToken0Depth: 0, value: 0 });
     
-    // Add the lower and upper ticks of the selected range
-    const lowerTickNum = parseInt(tickLower);
-    const upperTickNum = parseInt(tickUpper);
-    
-    if (!isNaN(lowerTickNum) && !isNaN(upperTickNum)) {
-      // Add markers at ticks if not already present
-      if (!simpleData.some(d => d.tick === lowerTickNum)) {
-        const distFromCenter = Math.abs(lowerTickNum - centerTick) / 20000;
-        const depth = Math.max(0, 1 - distFromCenter);
-        simpleData.push({
-          tick: lowerTickNum,
-          token0Depth: depth * 100,
-          normToken0Depth: depth,
-          value: depth
-        });
-      }
-      
-      if (!simpleData.some(d => d.tick === upperTickNum)) {
-        const distFromCenter = Math.abs(upperTickNum - centerTick) / 20000;
-        const depth = Math.max(0, 1 - distFromCenter);
-        simpleData.push({
-          tick: upperTickNum,
-          token0Depth: depth * 100,
-          normToken0Depth: depth,
-          value: depth
-        });
-      }
-      
-      // Sort by tick for proper rendering
-      simpleData.sort((a, b) => a.tick - b.tick);
-    }
+    // Sort by tick for proper rendering
+    simpleData.sort((a, b) => a.tick - b.tick);
     
     setChartData(simpleData);
   };
@@ -1809,12 +1838,12 @@ export function AddLiquidityForm({
       <ResponsiveContainer width="100%" height="100%">
         <ComposedChart 
           data={simplifiedChartPlotData || (chartData.length > 0 ? chartData : [
-            // Fallback data points if no chart data available
-            { tick: parseInt(tickLower) - 10000, token0Depth: 0, normToken0Depth: 0, cumulativeUnifiedValue: 0, value: 0 },
-            { tick: parseInt(tickLower), token0Depth: 50, normToken0Depth: 0.5, cumulativeUnifiedValue: 50, value: 0.5 },
-            { tick: Math.floor((parseInt(tickLower) + parseInt(tickUpper)) / 2), token0Depth: 100, normToken0Depth: 1, cumulativeUnifiedValue: 100, value: 1 },
-            { tick: parseInt(tickUpper), token0Depth: 50, normToken0Depth: 0.5, cumulativeUnifiedValue: 50, value: 0.5 },
-            { tick: parseInt(tickUpper) + 10000, token0Depth: 0, normToken0Depth: 0, cumulativeUnifiedValue: 0, value: 0 }
+            // Fallback data points if no chart data available - independent of user's range
+            { tick: (currentPoolTick || 0) - 20000, token0Depth: 0, normToken0Depth: 0, cumulativeUnifiedValue: 0, value: 0 },
+            { tick: (currentPoolTick || 0) - 10000, token0Depth: 50, normToken0Depth: 0.5, cumulativeUnifiedValue: 50, value: 0.5 },
+            { tick: (currentPoolTick || 0), token0Depth: 100, normToken0Depth: 1, cumulativeUnifiedValue: 100, value: 1 },
+            { tick: (currentPoolTick || 0) + 10000, token0Depth: 50, normToken0Depth: 0.5, cumulativeUnifiedValue: 50, value: 0.5 },
+            { tick: (currentPoolTick || 0) + 20000, token0Depth: 0, normToken0Depth: 0, cumulativeUnifiedValue: 0, value: 0 }
           ])} 
           margin={{ top: 2, right: 5, bottom: 5, left: 5 }}
           onMouseDown={handlePanMouseDown}
@@ -1848,7 +1877,7 @@ export function AddLiquidityForm({
           {/* Use the same chart visualizations as AddLiquidityModal */}
           {simplifiedChartPlotData ? (
             <Area 
-              type="stepBefore" 
+              type="stepAfter" 
               dataKey="displayCumulativeValue"
               yAxisId="leftAxis"
               name={poolToken0 ? `Cumulative Liquidity (in ${poolToken0.symbol})` : "Cumulative Unified Liquidity"}
@@ -1859,7 +1888,7 @@ export function AddLiquidityForm({
             />
           ) : (
             <Area
-              type="monotone"
+              type="stepAfter"
               dataKey="normToken0Depth"
               stroke="#a1a1aa"
               fill="#a1a1aa"
@@ -2026,12 +2055,12 @@ export function AddLiquidityForm({
                   <ResponsiveContainer width="100%" height="100%">
                     <ComposedChart 
                       data={simplifiedChartPlotData || (chartData.length > 0 ? chartData : [
-                        // Fallback data points if no chart data available
-                        { tick: parseInt(tickLower) - 10000, token0Depth: 0, normToken0Depth: 0, cumulativeUnifiedValue: 0, value: 0 },
-                        { tick: parseInt(tickLower), token0Depth: 50, normToken0Depth: 0.5, cumulativeUnifiedValue: 50, value: 0.5 },
-                        { tick: Math.floor((parseInt(tickLower) + parseInt(tickUpper)) / 2), token0Depth: 100, normToken0Depth: 1, cumulativeUnifiedValue: 100, value: 1 },
-                        { tick: parseInt(tickUpper), token0Depth: 50, normToken0Depth: 0.5, cumulativeUnifiedValue: 50, value: 0.5 },
-                        { tick: parseInt(tickUpper) + 10000, token0Depth: 0, normToken0Depth: 0, cumulativeUnifiedValue: 0, value: 0 }
+                        // Fallback data points if no chart data available - independent of user's range
+                        { tick: (currentPoolTick || 0) - 20000, token0Depth: 0, normToken0Depth: 0, cumulativeUnifiedValue: 0, value: 0 },
+                        { tick: (currentPoolTick || 0) - 10000, token0Depth: 50, normToken0Depth: 0.5, cumulativeUnifiedValue: 50, value: 0.5 },
+                        { tick: (currentPoolTick || 0), token0Depth: 100, normToken0Depth: 1, cumulativeUnifiedValue: 100, value: 1 },
+                        { tick: (currentPoolTick || 0) + 10000, token0Depth: 50, normToken0Depth: 0.5, cumulativeUnifiedValue: 50, value: 0.5 },
+                        { tick: (currentPoolTick || 0) + 20000, token0Depth: 0, normToken0Depth: 0, cumulativeUnifiedValue: 0, value: 0 }
                       ])} 
                       margin={{ top: 2, right: 5, bottom: 5, left: 5 }}
                       onMouseDown={handlePanMouseDown}
@@ -2076,7 +2105,7 @@ export function AddLiquidityForm({
                         />
                       ) : (
                         <Area
-                          type="monotone"
+                          type="stepAfter"
                           dataKey="normToken0Depth"
                           stroke="#a1a1aa"
                           fill="#a1a1aa"
@@ -2106,7 +2135,6 @@ export function AddLiquidityForm({
                           fill="#e85102" 
                           fillOpacity={0.25} 
                           ifOverflow="extendDomain"
-                          shape={<RoundedTopReferenceArea />}
                         />
                       )}
                       
@@ -2143,7 +2171,7 @@ export function AddLiquidityForm({
                         <span className="text-xs text-muted-foreground cursor-default hover:underline">Min Price</span>
                       </TooltipTrigger>
                       <TooltipContent side="top" className="max-w-xs">
-                        <p className="text-xs text-muted-foreground">The minimum price at which your position earns fees. Below this point, your position converts fully to {token1Symbol}.</p>
+                        <p className="text-xs text-muted-foreground">The minimum price at which your position earns fees. Below this point, your position converts fully to {baseTokenForPriceDisplay === token0Symbol ? token0Symbol : token1Symbol}.</p>
                       </TooltipContent>
                     </Tooltip>
                     {isPoolStateLoading ? (
@@ -2160,7 +2188,7 @@ export function AddLiquidityForm({
                         <span className="text-xs text-muted-foreground cursor-default hover:underline">Max Price</span>
                       </TooltipTrigger>
                       <TooltipContent side="bottom" className="max-w-xs">
-                        <p className="text-xs text-muted-foreground">The maximum price at which your position earns fees. Beyond this point, your position converts fully to {token0Symbol}.</p>
+                        <p className="text-xs text-muted-foreground">The maximum price at which your position earns fees. Beyond this point, your position converts fully to {baseTokenForPriceDisplay === token0Symbol ? token1Symbol : token0Symbol}.</p>
                       </TooltipContent>
                     </Tooltip>
                     {isPoolStateLoading ? (
@@ -2183,15 +2211,15 @@ export function AddLiquidityForm({
                       <div className="h-4 w-40 bg-muted/40 rounded animate-pulse"></div>
                     ) : currentPrice && !isCalculating ? (
                       baseTokenForPriceDisplay === token0Symbol ? (
-                        `1 ${token1Symbol} = ${(1 / parseFloat(currentPrice)).toLocaleString(undefined, { 
+                        `1 ${token0Symbol} = ${(1 / parseFloat(currentPrice)).toLocaleString(undefined, { 
                           minimumFractionDigits: TOKEN_DEFINITIONS[token0Symbol]?.displayDecimals || 2, 
                           maximumFractionDigits: TOKEN_DEFINITIONS[token0Symbol]?.displayDecimals || 4
-                        })} ${token0Symbol}`
+                        })} ${token1Symbol}`
                       ) : (
-                        `1 ${token0Symbol} = ${parseFloat(currentPrice).toLocaleString(undefined, { 
+                        `1 ${token1Symbol} = ${parseFloat(currentPrice).toLocaleString(undefined, { 
                           minimumFractionDigits: TOKEN_DEFINITIONS[token1Symbol]?.displayDecimals || 2,
                           maximumFractionDigits: TOKEN_DEFINITIONS[token1Symbol]?.displayDecimals || 4
-                        })} ${token1Symbol}`
+                        })} ${token0Symbol}`
                       )
                     ) : isCalculating ? (
                       "Calculating price..."

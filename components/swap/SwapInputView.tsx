@@ -12,6 +12,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { Token, FeeDetail, OutlineArcIcon } from './swap-interface';
+import { TokenSelector, TokenSelectorToken } from './TokenSelector';
+import { getToken } from '@/lib/pools-config';
 
 interface SwapInputViewProps {
   displayFromToken: Token;
@@ -21,6 +23,9 @@ interface SwapInputViewProps {
   handleFromAmountChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   handleSwapTokens: () => void;
   handleUseFullBalance: (token: Token, isFrom: boolean) => void;
+  availableTokens: Token[];
+  onFromTokenSelect: (token: Token) => void;
+  onToTokenSelect: (token: Token) => void;
   handleCyclePercentage: () => void;
   handleMouseEnterArc: () => void;
   handleMouseLeaveArc: () => void;
@@ -47,6 +52,16 @@ interface SwapInputViewProps {
   currentChainId: number | undefined;
   TARGET_CHAIN_ID: number;
   strokeWidth?: number;
+  routeInfo?: {
+    path: string[];
+    hops: number;
+    isDirectRoute: boolean;
+    pools: string[];
+  } | null;
+  routeFees?: Array<{ poolName: string; fee: number }>;
+  routeFeesLoading?: boolean;
+  selectedPoolIndexForChart?: number;
+  onSelectPoolForChart?: (poolIndex: number) => void;
 }
 
 export function SwapInputView({
@@ -57,6 +72,9 @@ export function SwapInputView({
   handleFromAmountChange,
   handleSwapTokens,
   handleUseFullBalance,
+  availableTokens,
+  onFromTokenSelect,
+  onToTokenSelect,
   handleCyclePercentage,
   handleMouseEnterArc,
   handleMouseLeaveArc,
@@ -81,6 +99,11 @@ export function SwapInputView({
   currentChainId,
   TARGET_CHAIN_ID,
   strokeWidth = 2,
+  routeInfo,
+  routeFees,
+  routeFeesLoading,
+  selectedPoolIndexForChart = 0,
+  onSelectPoolForChart,
 }: SwapInputViewProps) {
   return (
     <motion.div key="input" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, y: -20 }} transition={{ duration: 0.2 }}>
@@ -112,10 +135,13 @@ export function SwapInputView({
         </div>
         <div className={cn("rounded-lg bg-muted/30 p-4 hover:outline hover:outline-1 hover:outline-muted", { "outline outline-1 outline-muted": isSellInputFocused })}>
           <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
-              <Image src={displayFromToken.icon} alt={displayFromToken.symbol} width={20} height={20} className="rounded-full"/>
-              <span className="text-sm">{displayFromToken.symbol}</span>
-            </div>
+            <TokenSelector
+              selectedToken={displayFromToken as TokenSelectorToken}
+              availableTokens={availableTokens as TokenSelectorToken[]}
+              onTokenSelect={onFromTokenSelect}
+              excludeToken={displayToToken as TokenSelectorToken}
+              disabled={!isConnected || isAttemptingSwitch}
+            />
             <div className="flex-1">
               <Input
                 value={fromAmount}
@@ -151,15 +177,22 @@ export function SwapInputView({
         </div>
         <div className="rounded-lg bg-muted/30 p-4">
           <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
-              <Image src={displayToToken.icon} alt={displayToToken.symbol} width={20} height={20} className="rounded-full" />
-              <span className="text-sm font-medium">{displayToToken.symbol}</span>
-            </div>
+            <TokenSelector
+              selectedToken={displayToToken as TokenSelectorToken}
+              availableTokens={availableTokens as TokenSelectorToken[]}
+              onTokenSelect={onToTokenSelect}
+              excludeToken={displayFromToken as TokenSelectorToken}
+              disabled={!isConnected || isAttemptingSwitch}
+            />
             <div className="flex-1">
               {quoteError ? (
-                <div className="text-right text-xl md:text-xl font-medium text-red-500 h-auto p-0">
-                  Error: {quoteError}
-                </div>
+                <Input
+                  value="0"
+                  readOnly
+                  disabled={!isConnected || isAttemptingSwitch}
+                  className="text-right text-xl md:text-xl font-medium h-auto p-0 focus-visible:ring-0 focus-visible:ring-offset-0 border-0 bg-transparent text-muted-foreground"
+                  placeholder="0.00"
+                />
               ) : (
                 <>
                   <Input
@@ -189,73 +222,59 @@ export function SwapInputView({
         </div>
       </div>
 
-      {/* Fee Information - Shows if connected on target chain */}
-      {isConnected && currentChainId === TARGET_CHAIN_ID && (
-        <div className="space-y-1 text-sm mt-3">
-          {calculatedValues.fees.map((fee, index) => (
-            <div key={index} className="flex items-center justify-between">
-              <span className={cn(
-                'text-xs text-muted-foreground flex items-center'
-              )}>
-                {fee.name}
-              </span>
-              {fee.name === "Fee" ? (
-                dynamicFeeLoading ? (
-                  <motion.svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    width="15"
-                    height="15"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="flex-shrink-0 -translate-y-0.5"
-                  >
-                    {[
-                      { x: 8, initialHeight: 7, fullHeight: 10 },
-                      { x: 13, initialHeight: 12, fullHeight: 15 },
-                      { x: 18, initialHeight: 10, fullHeight: 13 },
-                    ].map((bar, i) => {
-                      return (
-                        <motion.line
-                          key={i}
-                          x1={bar.x}
-                          y1={24}
-                          x2={bar.x}
-                          y2={24 - bar.initialHeight}
-                          fill="currentColor"
-                          stroke="currentColor"
-                          strokeWidth={strokeWidth}
-                          strokeLinecap="round"
-                          animate={{
-                            y2: [24 - bar.initialHeight, 24 - bar.fullHeight, 24 - bar.initialHeight],
-                          }}
-                          transition={{
-                            duration: 0.8,
-                            repeat: Infinity,
-                            ease: "easeInOut",
-                            delay: i * 0.15,
-                          }}
-                        />
-                      );
-                    })}
-                  </motion.svg>
-                ) : (
-                  <span className={'text-xs text-foreground'}>
-                    {fee.value}
-                  </span>
-                )
-              ) : (
-                <span className={'text-xs text-muted-foreground'}>
-                  {fee.value}
-                </span>
-              )}
+      {/* Route Information - Shows if we have route info and connected */}
+      {routeInfo && isConnected && currentChainId === TARGET_CHAIN_ID && !quoteError && (
+        <div className="mt-3 mb-1">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span>Route:</span>
+            <div className="flex items-center gap-1.5">
+              {routeInfo.path.map((tokenSymbol, index) => {
+                const tokenConfig = getToken(tokenSymbol);
+                const tokenIcon = tokenConfig?.icon || "/placeholder-logo.svg";
+                
+                // Get the fee for this token (if it's not the last token in the path)
+                const showFee = index < routeInfo.path.length - 1;
+                const fee = showFee && routeFees && routeFees[index] 
+                  ? `${(routeFees[index].fee / 10000).toFixed(2)}%` 
+                  : null;
+                
+                const isSelectedForChart = selectedPoolIndexForChart === index;
+                
+                return (
+                  <React.Fragment key={`${tokenSymbol}-${index}`}>
+                    <div className="flex items-center gap-1">
+                      <Image 
+                        src={tokenIcon} 
+                        alt={tokenSymbol} 
+                        width={16} 
+                        height={16} 
+                        className="rounded-full"
+                      />
+                      {fee && (
+                        <button 
+                          onClick={() => onSelectPoolForChart?.(index)}
+                          className={`text-xs font-medium transition-colors hover:text-foreground cursor-pointer ${
+                            isSelectedForChart 
+                              ? 'text-foreground/80 underline decoration-dotted decoration-1 underline-offset-2' 
+                              : 'text-foreground/80'
+                          }`}
+                        >
+                          {fee}
+                        </button>
+                      )}
+                    </div>
+                    {index < routeInfo.path.length - 1 && (
+                      <div className="h-1 w-1 rounded-full bg-muted-foreground/60"></div>
+                    )}
+                  </React.Fragment>
+                );
+              })}
             </div>
-          ))}
+          </div>
         </div>
       )}
+
+
 
       <div className="mt-4 h-10">
         {!isMounted ? null : isConnected ? (

@@ -14,9 +14,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Get USDC price
     const usdcPrice = await getTokenPrice('USDC') || getFallbackPrice('USDC');
     
+    // Get ETH price
+    const ethPrice = await getTokenPrice('ETH') || getFallbackPrice('ETH');
+    
     return res.status(200).json({
       BTC: btcPrice,
       USDC: usdcPrice,
+      ETH: ethPrice,
       timestamp: Date.now()
     });
   } catch (error: any) {

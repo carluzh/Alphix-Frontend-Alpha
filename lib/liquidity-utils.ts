@@ -6,7 +6,8 @@ import JSBI from 'jsbi'; // v3-sdk utilities often return JSBI
 
 import { publicClient } from './viemClient'; 
 // Removed WETH_TOKEN, USDC_TOKEN from this import as they are not in swap-constants.ts
-import { TOKEN_DEFINITIONS, CHAIN_ID as DEFAULT_CHAIN_ID } from './swap-constants'; 
+import { CHAIN_ID as DEFAULT_CHAIN_ID } from './swap-constants';
+import { TOKEN_DEFINITIONS } from './pools-config'; 
 
 // --- Constants (Placeholders - replace with actual deployed addresses for your network) ---
 const POSITION_MANAGER_ADDRESS: Address = '0xPOSITION_MANAGER_ADDRESS_PLACEHOLDER'; 
