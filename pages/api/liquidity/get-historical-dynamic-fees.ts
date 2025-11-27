@@ -9,13 +9,14 @@ function selectSubgraphUrl(poolId: string | undefined): string {
 }
 
 // DAI subgraph uses currentRatio (Activity), old subgraph uses currentTargetRatio
+// Fetch up to 500 events to cover 60+ days of data (some pools have multiple events per day)
 const GET_LAST_HOOK_EVENTS_DAI = `
   query GetLastHookEvents($poolId: Bytes!) {
     alphixHooks(
       where: { pool: $poolId }
       orderBy: timestamp
       orderDirection: desc
-      first: 60
+      first: 500
     ) {
       timestamp
       newFeeBps
@@ -32,7 +33,7 @@ const GET_LAST_HOOK_EVENTS_OLD = `
       where: { pool: $poolId }
       orderBy: timestamp
       orderDirection: desc
-      first: 60
+      first: 500
     ) {
       timestamp
       newFeeBps
