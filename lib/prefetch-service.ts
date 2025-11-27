@@ -1,9 +1,10 @@
-import { getFromCache, getPoolStatsCacheKey } from './client-cache';
 import { getAllPools } from './pools-config';
 
 /**
  * Simplified prefetch service for liquidity pools
  * Removed over-engineering: no queues, no priorities, no complex listeners
+ *
+ * NOTE: Cache checks removed - all caching now handled by Redis on server side
  */
 class SimplePrefetchService {
   private static positionsListeners: Array<{
@@ -13,13 +14,9 @@ class SimplePrefetchService {
 
   /**
    * Simple pool data prefetch
+   * Cache checks removed - Redis handles all server-side caching
    */
   static async prefetchPoolData(poolId: string): Promise<void> {
-    // Only prefetch if completely empty cache
-    if (getFromCache(getPoolStatsCacheKey(poolId))) {
-      return;
-    }
-
     try {
       // Get cache version for fresh data
       const versionResponse = await fetch('/api/cache-version', { cache: 'no-store' as any });

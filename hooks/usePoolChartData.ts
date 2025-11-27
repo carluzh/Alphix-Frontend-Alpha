@@ -82,7 +82,7 @@ export function usePoolLiquidityTicks(poolId?: string) {
           },
           body: JSON.stringify({
             poolId,
-            first: 1000
+            first: 500
           }),
           signal: controller.signal
         });

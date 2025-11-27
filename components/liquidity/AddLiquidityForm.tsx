@@ -349,8 +349,7 @@ export function AddLiquidityForm({
     zapSlippageToleranceBps: zapSlippageToleranceBps
   });
 
-  // Get user's deadline setting
-  const userDeadlineSeconds = useMemo(() => getStoredDeadlineSeconds(), []);
+  const userDeadlineSeconds = getStoredDeadlineSeconds();
 
   // Use the same transaction hook for both regular and zap modes
   const regularTransaction = useAddLiquidityTransactionV2({

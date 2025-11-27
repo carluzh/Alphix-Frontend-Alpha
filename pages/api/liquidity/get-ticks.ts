@@ -7,8 +7,6 @@ type TickRow = {
   tickIdx: string;
   liquidityGross: string;
   liquidityNet: string;
-  price0: string;
-  price1: string;
 };
 type CachedTicks = {
   ts: number;
@@ -27,13 +25,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
-    const { poolId, first = 1000 } = req.body ?? {};
+    const { poolId, first = 500 } = req.body ?? {};
 
     if (!poolId || typeof poolId !== 'string') {
       return res.status(400).json({ error: 'Missing poolId in body' });
     }
 
-    const limit = Math.min(Number(first) || 1000, 2000);
+    const limit = Math.min(Number(first) || 500, 1000);
     const apiId = getPoolSubgraphId(poolId) || poolId;
     const cacheKey = getCacheKey(apiId);
     const cached = tickCache.get(cacheKey);
@@ -59,8 +57,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           tickIdx
           liquidityGross
           liquidityNet
-          price0
-          price1
         }
       }
     `;

@@ -264,7 +264,7 @@ export function InteractiveRangeChart({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             poolId: selectedPoolId,
-            first: 1000
+            first: 500
           })
         });
 

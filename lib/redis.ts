@@ -42,7 +42,7 @@ export async function setCachedData<T>(key: string, data: T, ttlSeconds: number 
         invalidated: false,
       },
     };
-    // Upstash handles JSON serialization automatically - don't double-stringify
+
     await redis.setex(key, ttlSeconds, wrapper);
   } catch (error) {
     console.error('[Redis] Set failed:', error);
@@ -126,9 +126,11 @@ export async function invalidateCachedData(key: string): Promise<void> {
 
     // Mark as invalidated
     wrapper.meta.invalidated = true;
+    wrapper.meta.timestamp = Date.now();
 
     // Use safe TTL to prevent race condition (min 5 seconds)
     const safeTTL = Math.max(ttl, 5);
+
     await redis.setex(key, safeTTL, wrapper);
 
     console.log(`[Redis] ✅ Cache invalidated: ${key} (TTL: ${safeTTL}s)`);

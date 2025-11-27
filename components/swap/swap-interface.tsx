@@ -72,7 +72,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 // Chart Import
 import { DynamicFeeChart, generateMockFeeHistory } from "../dynamic-fee-chart";
 import { DynamicFeeChartPreview } from "../dynamic-fee-chart-preview";
-import { getFromCache, setToCache, getFromCacheWithTtl, getPoolDynamicFeeCacheKey } from "@/lib/client-cache";
+// Deprecated cache functions removed - dynamic fee fetching happens directly via API
 import { getPoolByTokens } from "@/lib/pools-config";
 import { findBestRoute, SwapRoute, PoolHop } from "@/lib/routing-engine";
 
@@ -572,37 +572,25 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     
     try {
       for (const pool of route.pools) {
-        const cacheKey = getPoolDynamicFeeCacheKey(pool.token0 as TokenSymbol, pool.token1 as TokenSymbol, TARGET_CHAIN_ID);
-        let poolFee: number;
+        // Fetch dynamic fee directly from API (no client-side caching - handled by React Query)
+        const response = await fetch('/api/swap/get-dynamic-fee', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fromTokenSymbol: pool.token0,
+            toTokenSymbol: pool.token1,
+            chainId: TARGET_CHAIN_ID,
+          }),
+        });
 
-        // Check cache first
-        const cachedFee = getFromCache<{ dynamicFee: string }>(cacheKey);
-        
-        if (cachedFee) {
-          poolFee = Number(cachedFee.dynamicFee);
-        } else {
-          const response = await fetch('/api/swap/get-dynamic-fee', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              fromTokenSymbol: pool.token0,
-              toTokenSymbol: pool.token1,
-              chainId: TARGET_CHAIN_ID,
-            }),
-          });
-          
-          const data = await response.json();
-          if (!response.ok) {
-            throw new Error(data.message || data.errorDetails || `Failed to fetch dynamic fee for ${pool.poolName}`);
-          }
-          
-          poolFee = Number(data.dynamicFee);
-          if (isNaN(poolFee)) {
-            throw new Error(`Dynamic fee received is not a number for ${pool.poolName}: ${data.dynamicFee}`);
-          }
-          
-          // Cache the result
-          setToCache(cacheKey, { dynamicFee: data.dynamicFee });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.message || data.errorDetails || `Failed to fetch dynamic fee for ${pool.poolName}`);
+        }
+
+        const poolFee = Number(data.dynamicFee);
+        if (isNaN(poolFee)) {
+          throw new Error(`Dynamic fee received is not a number for ${pool.poolName}: ${data.dynamicFee}`);
         }
 
         fees.push({ poolName: pool.poolName, fee: poolFee });
@@ -1645,9 +1633,8 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 icon: <InfoIcon className="h-4 w-4" />
             });
 
-            // Determine approval amount based on user settings
-            const useInfiniteApproval = isInfiniteApprovalEnabled();
-            const approvalAmount = useInfiniteApproval ? maxUint256 : parsedAmount;
+            const isInfinite = isInfiniteApprovalEnabled();
+            const approvalAmount = isInfinite ? maxUint256 : parsedAmount + 1n; // +1 wei buffer
 
             const approveTxHash = await sendApprovalTx({
                 address: fromToken.address,
@@ -1661,10 +1648,9 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
             const approvalReceipt = await publicClient.waitForTransactionReceipt({ hash: approveTxHash as Hex });
             if (!approvalReceipt || approvalReceipt.status !== 'success') throw new Error("Approval transaction failed on-chain");
 
-            // Show approval success toast with appropriate message
             toast.success(`${fromToken.symbol} Approved`, {
                 icon: <BadgeCheck className="h-4 w-4 text-green-500" />,
-                description: useInfiniteApproval
+                description: isInfinite
                     ? `Approved infinite ${fromToken.symbol} for swapping`
                     : `Approved ${fromAmount} ${fromToken.symbol} for this swap`,
                 action: {

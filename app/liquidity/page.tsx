@@ -32,7 +32,7 @@ import {
 } from "wagmi";
 import { toast } from "sonner";
 import { getEnabledPools, getToken, getPoolSubgraphId, getPoolById } from "../../lib/pools-config";
-import { getFromCache, getFromCacheWithTtl, setToCache, getUserPositionsCacheKey, getPoolStatsCacheKey, loadUserPositionIds, derivePositionsFromIds, getPoolFeeBps } from "../../lib/client-cache";
+import { loadUserPositionIds, derivePositionsFromIds } from "../../lib/client-cache";
 import { fetchPoolFullRangeAPY } from "../../lib/apy-calculator";
 import { Pool } from "../../types";
 import { useRouter } from "next/navigation";
@@ -209,13 +209,6 @@ export default function LiquidityPage() {
 
     try {
       const apyPromises = dynamicPools.map(async (pool) => {
-        const aprCacheKey = `poolApr_${pool.id}_7d`;
-        const cachedApr = getFromCacheWithTtl<string>(aprCacheKey, 15 * 60 * 1000); // 15 minutes
-
-        if (cachedApr && cachedApr !== 'Loading...' && cachedApr !== '0.00%') {
-          return { poolId: pool.id, apr: cachedApr };
-        }
-
         try {
           const metricsResponse = await fetch('/api/liquidity/pool-metrics', {
             method: 'POST',
@@ -248,7 +241,6 @@ export default function LiquidityPage() {
               }
 
               if (calculatedApr !== 'Loading...' && calculatedApr !== '0.00%') {
-                setToCache(aprCacheKey, calculatedApr);
                 return { poolId: pool.id, apr: calculatedApr };
               }
             }

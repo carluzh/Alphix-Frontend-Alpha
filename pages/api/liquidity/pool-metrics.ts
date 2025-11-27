@@ -99,41 +99,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const poolQuery = isDAI ? poolQuerySatsuma : poolQueryOriginal;
 
-  // DAI subgraph uses currentRatio (Activity), old subgraph uses currentTargetRatio
-  const feeEventsQueryDai = `
-    query GetFeeEvents($poolId: Bytes!) {
-      alphixHooks(
-        where: { pool: $poolId }
-        orderBy: timestamp
-        orderDirection: desc
-        first: 100
-      ) {
-        timestamp
-        newFeeBps
-        currentRatio
-        newTargetRatio
-      }
-    }
-  `;
-
-  const feeEventsQueryOld = `
-    query GetFeeEvents($poolId: Bytes!) {
-      alphixHooks(
-        where: { pool: $poolId }
-        orderBy: timestamp
-        orderDirection: desc
-        first: 100
-      ) {
-        timestamp
-        newFeeBps
-        currentTargetRatio
-        newTargetRatio
-      }
-    }
-  `;
-
-  const feeEventsQuery = isDaiPool(poolId) ? feeEventsQueryDai : feeEventsQueryOld;
-
   try {
     // Determine the appropriate subgraph URL for this pool
     const subgraphUrlForPool = getSubgraphUrlForPool(poolId);
@@ -151,14 +116,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           variables: { poolId: apiId.toLowerCase(), days }
         })
       }),
-      fetch(subgraphUrlForPool, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          query: feeEventsQuery,
-          variables: { poolId: apiId.toLowerCase() }
-        })
-      })
+      // Use unified fee events endpoint instead of duplicate query
+      fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/liquidity/get-historical-dynamic-fees?poolId=${encodeURIComponent(poolId)}`)
     ]);
 
     // Check response status first
@@ -199,16 +158,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     try {
-      const feeText = await feeResponse.text();
-      if (!feeText || feeText.trim() === '') {
-        console.log('[pool-metrics] Empty fee response');
-        feeResult = { data: { alphixHooks: [] } };
-      } else {
-        feeResult = JSON.parse(feeText);
-      }
+      // Fee events come from unified endpoint, already in array format
+      feeResult = await feeResponse.json();
     } catch (e) {
       console.error('[pool-metrics] Failed to parse fee response:', e);
-      feeResult = { data: { alphixHooks: [] } };
+      feeResult = [];
     }
 
     if (poolResult?.errors) {
@@ -227,12 +181,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
     }
 
-    if (feeResult?.errors) {
-      console.error('[pool-metrics] Fee events query errors:', feeResult.errors);
-    }
-
     const { data } = poolResult;
-    const feeEvents = feeResult?.data?.alphixHooks || [];
+    // Fee events already come as an array from the unified endpoint
+    const feeEvents = Array.isArray(feeResult) ? feeResult : [];
 
     // Handle both schema types
     const pool = isDAI ? data?.pool : data?.trackedPool;

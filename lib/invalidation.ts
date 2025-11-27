@@ -165,37 +165,6 @@ export async function invalidateAfterTx(qc: QueryClient, params: Params) {
       }
     }
 
-    // Invalidate Redis caches (server-side) via API call
-    // IMPORTANT: This must happen BEFORE the early return to ensure server cache is always invalidated
-    console.log('[invalidateAfterTx] Calling Redis cache invalidation API');
-    try {
-      const requestBody = {
-        ownerAddress: ownerLc,
-        poolId: params.poolId,
-        positionIds: params.positionIds,
-        reason: params.reason || 'tx_confirmed'
-      };
-      console.log('[invalidateAfterTx] Redis invalidation request:', requestBody);
-
-      const response = await fetch('/api/cache/invalidate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody)
-      });
-
-      console.log('[invalidateAfterTx] Redis invalidation response status:', response.status);
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('[invalidateAfterTx] Redis invalidation failed with status:', response.status, errorText);
-      } else {
-        const result = await response.json();
-        console.log('[invalidateAfterTx] Redis invalidation succeeded:', result);
-      }
-    } catch (error) {
-      console.error('[invalidateAfterTx] Redis cache invalidation failed:', error)
-      // Non-blocking - continue with other invalidations
-    }
-
     if (hasOptimisticUpdates && !params.awaitSubgraphSync) {
       return;
     }

@@ -362,63 +362,7 @@ export function clearDeprecatedCaches(): void {
  */
 export { derivePositionsFromIds, decodePositionInfo } from './on-chain-data';
 
-/**
- * DEPRECATED: In-memory cache functions (no-op stubs for backward compatibility)
- * These functions were removed during Redis migration.
- * Server-side caching is now handled via Redis API endpoints where appropriate.
- * For user positions, use direct on-chain calls (derivePositionsFromIds).
- * For fees, use /api/fees/get-batch.
- */
-export function getFromCache<T>(_key: string): T | null {
-  return null; // No-op: in-memory cache removed
-}
-
-export function setToCache<T>(_key: string, _data: T): void {
-  // No-op: in-memory cache removed
-}
-
-export function getFromCacheWithTtl<T>(_key: string, _ttlMs: number = 600000): T | null {
-  return null; // No-op: in-memory cache removed
-}
-
-export function getUserPositionsCacheKey(address: string): string {
-  const prefix = getNetworkPrefix();
-  return `${prefix}:user:positions:${address.toLowerCase()}`;
-}
-
-export function getPoolStatsCacheKey(poolId: string): string {
-  const prefix = getNetworkPrefix();
-  return `${prefix}:pool:stats:${poolId.toLowerCase()}`;
-}
-
-export function getPoolDynamicFeeCacheKey(poolId: string): string {
-  const prefix = getNetworkPrefix();
-  return `${prefix}:pool:dynamicFee:${poolId.toLowerCase()}`;
-}
-
-export function getPoolChartDataCacheKey(poolId: string, days: number): string {
-  const prefix = getNetworkPrefix();
-  return `${prefix}:pool:chart:${poolId.toLowerCase()}:${days}d`;
-}
-
-export function invalidateCacheEntry(_key: string): void {
-  // No-op: in-memory cache removed
-}
-
-export function refreshFeesAfterTransaction(_positionId: string, _queryClient: any): void {
-  // No-op: deprecated - fees are auto-invalidated via invalidateAfterTx
-}
-
-export function getPoolFeeBps(_poolId: string): number | null {
-  return null; // No-op: use pool config instead
-}
-
-export async function loadUncollectedFees(_positionId: string, _ttlMs?: number): Promise<any> {
-  // No-op: deprecated - use /api/fees/get-batch instead
-  return null;
-}
-
-export async function loadUncollectedFeesBatch(_positionIds: string[], _ttlMs?: number): Promise<any[]> {
-  // No-op: deprecated - use /api/fees/get-batch instead
-  return [];
-}
+// All deprecated cache functions removed (2025-11-27 Phase 0 cleanup).
+// Server-side caching is handled by Redis via API endpoints.
+// For user positions: use derivePositionsFromIds (re-exported from on-chain-data.ts)
+// For fees: use /api/fees/get-batch

@@ -3,17 +3,6 @@ let globalVersion = Date.now();
 const VERSION_TTL = 60 * 60 * 1000; // 1 hour TTL
 let lastVersionUpdate = Date.now();
 
-// Client-side batch data cache - PERSISTENT across sessions
-interface CachedBatchData {
-  data: any;
-  timestamp: number;
-  version: number;
-}
-
-// In-memory cache for fast access within session
-let batchDataCache: CachedBatchData | null = null;
-const BATCH_CACHE_TTL = 10 * 60 * 1000; // 10 minutes for cross-session cache (was 5 minutes)
-const BATCH_CACHE_KEY = 'alphix:pools-batch-cache';
 const GLOBAL_VERSION_KEY = 'alphix:global-version';
 const VERSION_UPDATE_KEY = 'alphix:version-update-time';
 
@@ -56,103 +45,12 @@ export function bumpGlobalVersion(): number {
     }
   }
 
-  // Clear both in-memory and localStorage cache when version changes
-  batchDataCache = null;
-  if (typeof window !== 'undefined') {
-    try {
-      localStorage.removeItem(BATCH_CACHE_KEY);
-    } catch {}
-  }
-
   return globalVersion;
 }
 
 export function getCacheKeyWithVersion(baseKey: string): string[] {
   const version = getGlobalVersion();
   return [`${baseKey}-v${version}`];
-}
-
-// Client-side batch data caching - PERSISTENT across sessions
-export function getCachedBatchData(): any | null {
-  const now = Date.now();
-
-  // Try in-memory cache first (fastest)
-  if (batchDataCache) {
-    const age = now - batchDataCache.timestamp;
-    if (age <= BATCH_CACHE_TTL && batchDataCache.version === getGlobalVersion()) {
-      console.log('[cache-version] In-memory cache HIT, age:', Math.round(age / 1000), 's');
-      return batchDataCache.data;
-    }
-    // Expired or version mismatch
-    batchDataCache = null;
-  }
-
-  // Try localStorage (cross-session persistence)
-  if (typeof window !== 'undefined') {
-    try {
-      const stored = localStorage.getItem(BATCH_CACHE_KEY);
-      if (stored) {
-        const parsed: CachedBatchData = JSON.parse(stored);
-        const age = now - parsed.timestamp;
-
-        if (age <= BATCH_CACHE_TTL && parsed.version === getGlobalVersion()) {
-          console.log('[cache-version] localStorage cache HIT, age:', Math.round(age / 1000), 's');
-          // Restore to in-memory cache for faster subsequent access
-          batchDataCache = parsed;
-          return parsed.data;
-        } else {
-          console.log('[cache-version] localStorage cache EXPIRED or version mismatch, age:', Math.round(age / 1000), 's');
-          localStorage.removeItem(BATCH_CACHE_KEY);
-        }
-      }
-    } catch (e) {
-      console.warn('[cache-version] Failed to read localStorage cache:', e);
-      // Clear corrupted cache
-      try {
-        localStorage.removeItem(BATCH_CACHE_KEY);
-      } catch {}
-    }
-  }
-
-  return null;
-}
-
-export function setCachedBatchData(data: any): void {
-  const cacheEntry: CachedBatchData = {
-    data,
-    timestamp: Date.now(),
-    version: getGlobalVersion()
-  };
-
-  // Set in-memory cache
-  batchDataCache = cacheEntry;
-
-  // Persist to localStorage for cross-session
-  if (typeof window !== 'undefined') {
-    try {
-      localStorage.setItem(BATCH_CACHE_KEY, JSON.stringify(cacheEntry));
-      console.log('[cache-version] Cached batch data to localStorage (TTL: 10min)');
-    } catch (e) {
-      console.warn('[cache-version] Failed to cache to localStorage (quota exceeded?):', e);
-      // Try to clear old data and retry once
-      try {
-        localStorage.removeItem(BATCH_CACHE_KEY);
-        localStorage.setItem(BATCH_CACHE_KEY, JSON.stringify(cacheEntry));
-      } catch (e2) {
-        console.error('[cache-version] Failed to cache even after cleanup:', e2);
-      }
-    }
-  }
-}
-
-export function clearBatchDataCache(): void {
-  batchDataCache = null;
-  if (typeof window !== 'undefined') {
-    try {
-      localStorage.removeItem(BATCH_CACHE_KEY);
-      console.log('[cache-version] Cleared batch data cache');
-    } catch {}
-  }
 }
 
 // Cleanup old cache entries from localStorage to prevent quota issues
@@ -207,15 +105,13 @@ if (typeof window !== 'undefined') {
 }
 
 // For debugging
-export function debugVersion(): { version: number, ttl: number, expiresAt: number, age: number, hasCache: boolean, cacheAge: number | undefined } {
+export function debugVersion(): { version: number, ttl: number, expiresAt: number, age: number } {
   const now = Date.now();
   const result = {
     version: globalVersion,
     ttl: VERSION_TTL,
     expiresAt: lastVersionUpdate + VERSION_TTL,
-    age: now - lastVersionUpdate,
-    hasCache: batchDataCache !== null,
-    cacheAge: batchDataCache ? now - batchDataCache.timestamp : undefined
+    age: now - lastVersionUpdate
   };
 
   return result;

@@ -21,7 +21,7 @@ const queryClient = new QueryClient({
       refetchOnWindowFocus: false,
       refetchOnMount: true, // Refetch only if stale (respects staleTime)
       refetchOnReconnect: false, // Disable refetch on reconnect
-      staleTime: 0, // Default to always refetch unless hook overrides
+      staleTime: 2 * 60 * 1000, // 2min client-side cache (critical hooks override with shorter values)
       gcTime: 10 * 60 * 1000,
       networkMode: 'online',
     },

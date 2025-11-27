@@ -11,7 +11,8 @@ import { formatUnits, parseAbi } from 'viem';
 import { getSubgraphUrlForPool, isDaiPool } from '@/lib/subgraph-url-helper';
 import { publicClient } from '@/lib/viemClient';
 import { STATE_VIEW_ABI } from '@/lib/abis/state_view_abi';
-import { getCachedData, setCachedData, getCachedDataWithStale } from '@/lib/redis';
+import { cacheService } from '@/lib/cache/CacheService';
+import { poolKeys } from '@/lib/redis-keys';
 
 // ULTRA-SIMPLIFIED: Use ONLY daily data instead of hourly (92% fewer entities fetched!)
 // For 7 pools: ~21 entities (7 pools + 14 daily) vs 182 entities (7 pools + 168 hourly + 7 daily)
@@ -352,69 +353,26 @@ async function computePoolsBatch(): Promise<any> {
 
 export async function GET(request: Request) {
   try {
-    const cacheKey = 'pools-batch:v1';
+    // Use CacheService for clean stale-while-revalidate pattern
+    const result = await cacheService.cachedApiCall(
+      poolKeys.batch(), // 'pools-batch:v1'
+      { fresh: 5 * 60, stale: 60 * 60 }, // 5min fresh, 1hr stale
+      async () => {
+        const payload = await computePoolsBatch();
 
-    // Check cache with staleness and invalidation status
-    const { data: cachedData, isStale, isInvalidated } = await getCachedDataWithStale<any>(
-      cacheKey,
-      5 * 60,   // 5 minutes fresh
-      60 * 60   // 1 hour stale window
+        // Only cache if successful and no errors
+        const hasErrors = payload.errors && payload.errors.length > 0;
+        if (!payload.success || hasErrors) {
+          console.warn('[Batch] Skipping cache - errors:', payload.errors);
+          // For error cases, remove errors field before returning
+          return { ...payload, errors: undefined };
+        }
+
+        return payload;
+      }
     );
 
-    // Fresh cache: return immediately
-    if (cachedData && !isStale && !isInvalidated) {
-      console.log('[Batch] Redis cache HIT (fresh)');
-      return NextResponse.json(cachedData);
-    }
-
-    // Invalidated cache: blocking fetch (user just did an action)
-    if (cachedData && isInvalidated) {
-      console.log('[Batch] Redis cache INVALIDATED - performing blocking refresh');
-      const payload = await computePoolsBatch();
-
-      const hasErrors = payload.errors && payload.errors.length > 0;
-      if (payload.success && !hasErrors) {
-        const cachePayload = { ...payload, errors: undefined };
-        await setCachedData(cacheKey, cachePayload, 3600); // 1 hour
-      }
-
-      return NextResponse.json({ ...payload, isStale: false });
-    }
-
-    // Stale cache (not invalidated): return immediately, refresh in background
-    if (cachedData && isStale) {
-      console.log('[Batch] Redis cache HIT (stale) - returning stale data, triggering background refresh');
-
-      // Trigger background revalidation (fire-and-forget)
-      void computePoolsBatch()
-        .then((payload) => {
-          if (payload.success && !(payload.errors && payload.errors.length > 0)) {
-            const cachePayload = { ...payload, errors: undefined };
-            return setCachedData(cacheKey, cachePayload, 3600);
-          }
-        })
-        .catch((error) => {
-          console.error('[Batch] Background revalidation failed:', error);
-        });
-
-      // Return stale data with flag so frontend can show pulse animation
-      return NextResponse.json({ ...cachedData, isStale: true });
-    }
-
-    // Cache miss: fetch fresh data
-    console.log('[Batch] Redis cache MISS, fetching fresh data');
-    const payload = await computePoolsBatch();
-
-    const hasErrors = payload.errors && payload.errors.length > 0;
-    if (payload.success && !hasErrors) {
-      console.log('[Batch] Caching data (1-hour TTL)');
-      const cachePayload = { ...payload, errors: undefined };
-      await setCachedData(cacheKey, cachePayload, 3600); // 1 hour
-    } else {
-      console.warn('[Batch] Skipping cache - subgraph errors:', payload.errors);
-    }
-
-    return NextResponse.json(payload);
+    return NextResponse.json({ ...result.data, isStale: result.isStale });
   } catch (error: any) {
     console.error('[Batch] Unexpected error:', error);
     return NextResponse.json({ success: false, message: error?.message || 'Unknown error' }, { status: 500 });

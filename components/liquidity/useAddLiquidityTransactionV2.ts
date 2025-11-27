@@ -174,8 +174,7 @@ export function useAddLiquidityTransactionV2({
   const processedDepositHashRef = useRef<string | null>(null);
   const processedFailedHashRef = useRef<string | null>(null);
 
-  // Handle ERC20 approval for a specific token
-  // If exactAmount is provided and user has exact approval mode enabled, approves only that amount
+  // Approves exact amount (+1 wei buffer) or infinite based on user setting
   const handleApprove = useCallback(
     async (tokenSymbol: TokenSymbol, exactAmount?: string) => {
       const tokenConfig = getToken(tokenSymbol);
@@ -185,16 +184,13 @@ export function useAddLiquidityTransactionV2({
         icon: React.createElement(InfoIcon, { className: 'h-4 w-4' }),
       });
 
-      // Determine approval amount based on user settings
-      const useInfiniteApproval = isInfiniteApprovalEnabled();
       let approvalAmount: bigint = maxUint256;
 
-      if (!useInfiniteApproval && exactAmount) {
+      if (!isInfiniteApprovalEnabled() && exactAmount) {
         try {
-          approvalAmount = viemParseUnits(exactAmount, tokenConfig.decimals);
+          approvalAmount = viemParseUnits(exactAmount, tokenConfig.decimals) + 1n; // +1 wei buffer
         } catch {
-          // Fall back to infinite if parsing fails
-          approvalAmount = maxUint256;
+          approvalAmount = maxUint256; // Fall back to infinite on parse error
         }
       }
 

@@ -44,7 +44,7 @@ import { useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { useQueryClient } from '@tanstack/react-query';
 import { getPositionManagerAddress } from '@/lib/pools-config';
 import { position_manager_abi } from '@/lib/abis/PositionManager_abi';
-import { getFromCache, setToCache, getFromCacheWithTtl, getUserPositionsCacheKey, getPoolStatsCacheKey, getPoolDynamicFeeCacheKey, getPoolChartDataCacheKey, loadUserPositionIds, derivePositionsFromIds, invalidateCacheEntry, waitForSubgraphBlock, setIndexingBarrier, invalidateUserPositionIdsCache, refreshFeesAfterTransaction } from "../../../lib/client-cache";
+import { loadUserPositionIds, derivePositionsFromIds, waitForSubgraphBlock, setIndexingBarrier, invalidateUserPositionIdsCache } from "../../../lib/client-cache";
 import { invalidateAfterTx } from "@/lib/invalidation";
 
 import type { Pool } from "../../../types";
@@ -496,8 +496,7 @@ export default function PoolDetailPage() {
         }
       });
 
-      // Refresh fee data for the collected position
-      refreshFeesAfterTransaction(lastCollectPositionId, queryClient);
+      // Fees are auto-invalidated via invalidateAfterTx (no manual refresh needed)
 
       // Clear loading state
       setUserPositions(prev => prev.map(p =>

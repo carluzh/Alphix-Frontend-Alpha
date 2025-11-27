@@ -149,32 +149,18 @@ export default function SettingsPage() {
     setDeadline(newDeadline);
     updateApprovalMode(approvalMode);
 
-    toast.success("Settings saved", {
-      icon: <BadgeCheck className="h-4 w-4 text-green-500" />,
-    });
+    toast.info("Settings Changed");
   };
 
-  // Handle slippage preset click - save immediately
+  // Handle slippage preset click - don't save, just update local state
   const handleSlippagePresetClick = (value: string) => {
     setSlippageTolerance(value);
     setCustomSlippage("");
-    // Save immediately
-    setSlippage(parseFloat(value));
-    toast.success("Slippage updated", {
-      icon: <BadgeCheck className="h-4 w-4 text-green-500" />,
-      duration: 1500,
-    });
   };
 
-  // Handle approval mode change - save immediately
+  // Handle approval mode change - just update local state
   const handleApprovalModeChange = (value: string) => {
-    const mode = value as ApprovalMode;
-    setApprovalMode(mode);
-    updateApprovalMode(mode);
-    toast.success("Approval mode updated", {
-      icon: <BadgeCheck className="h-4 w-4 text-green-500" />,
-      duration: 1500,
-    });
+    setApprovalMode(value as ApprovalMode);
   };
 
   // Determine if we have a valid selection to show highlight
@@ -201,17 +187,18 @@ export default function SettingsPage() {
                     <div className="flex gap-x-8 gap-y-3 flex-col md:flex-row md:items-center md:justify-between">
                       <div className="flex items-center gap-2">
                         <h3 className="text-sm font-medium">Testnet Mode</h3>
-                        {isNetworkSwitching && (
-                          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                        )}
                       </div>
                       <div className="flex items-center md:w-auto md:justify-end">
-                        <Checkbox
-                          checked={testnetMode}
-                          disabled={isNetworkSwitching}
-                          onCheckedChange={(checked) => handleNetworkToggle(checked === true)}
-                          className="h-5 w-5 border-sidebar-border data-[state=checked]:bg-sidebar-primary data-[state=checked]:border-sidebar-primary"
-                        />
+                        {isNetworkSwitching ? (
+                          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                        ) : (
+                          <Checkbox
+                            checked={testnetMode}
+                            disabled={isNetworkSwitching}
+                            onCheckedChange={(checked) => handleNetworkToggle(checked === true)}
+                            className="h-5 w-5 border-sidebar-border data-[state=checked]:bg-sidebar-primary data-[state=checked]:border-sidebar-primary"
+                          />
+                        )}
                       </div>
                     </div>
                     {!testnetMode && (
@@ -280,15 +267,6 @@ export default function SettingsPage() {
                               setSlippageTolerance(e.target.value);
                             }
                           }}
-                          onBlur={() => {
-                            // Save custom value on blur if valid
-                            if (customSlippage) {
-                              const val = parseFloat(customSlippage);
-                              if (!isNaN(val) && val > 0 && val <= 50) {
-                                setSlippage(val, customSlippage);
-                              }
-                            }
-                          }}
                           className={`h-7 w-[50px] bg-transparent border-none text-sm text-left focus:outline-none placeholder:text-muted-foreground/60 ${isCustom ? "text-sidebar-primary" : "text-foreground"}`}
                         />
                         {isCustom && (
@@ -307,13 +285,6 @@ export default function SettingsPage() {
                         type="number"
                         value={transactionDeadline}
                         onChange={(e) => setTransactionDeadline(e.target.value)}
-                        onBlur={() => {
-                          // Save deadline on blur if valid
-                          const val = parseInt(transactionDeadline, 10);
-                          if (!isNaN(val) && val >= 1 && val <= 60) {
-                            setDeadline(val);
-                          }
-                        }}
                         className="h-9 w-[72px] bg-surface border-sidebar-border text-sm text-center"
                       />
                       <span className="text-sm text-muted-foreground">minutes</span>

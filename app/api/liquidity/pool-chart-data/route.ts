@@ -26,41 +26,6 @@ const GET_POOL_DAY_DATA = `
   }
 `;
 
-// Dynamic fee events (separate because these are events, not daily aggregates)
-const GET_DYNAMIC_FEE_EVENTS_DAI = `
-  query GetLastHookEvents($poolId: Bytes!) {
-    alphixHooks(
-      where: { pool: $poolId }
-      orderBy: timestamp
-      orderDirection: desc
-      first: 60
-    ) {
-      timestamp
-      newFeeBps
-      currentRatio
-      newTargetRatio
-      oldTargetRatio
-    }
-  }
-`;
-
-const GET_DYNAMIC_FEE_EVENTS_OLD = `
-  query GetLastHookEvents($poolId: Bytes!) {
-    alphixHooks(
-      where: { pool: $poolId }
-      orderBy: timestamp
-      orderDirection: desc
-      first: 60
-    ) {
-      timestamp
-      newFeeBps
-      currentTargetRatio
-      newTargetRatio
-      oldTargetRatio
-    }
-  }
-`;
-
 interface ChartDataPoint {
   date: string;
   tvlUSD: number;
@@ -102,7 +67,7 @@ async function computeChartData(poolId: string, days: number): Promise<ChartData
 
     console.log(`[pool-chart-data] Fetching data for pool ${subgraphId}, days: ${days}, cutoff timestamp: ${cutoffTimestamp}`);
 
-    // Run both queries in parallel
+    // Fetch poolDayDatas from subgraph and fee events from unified endpoint in parallel
     const [dayDataResult, feeEventsResult] = await Promise.all([
       // Query 1: poolDayDatas (TVL + Volume + Fees)
       fetch(subgraphUrl, {
@@ -114,15 +79,8 @@ async function computeChartData(poolId: string, days: number): Promise<ChartData
         })
       }),
 
-      // Query 2: alphixHooks (dynamic fee events)
-      fetch(subgraphUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          query: isDaiPool(poolId) ? GET_DYNAMIC_FEE_EVENTS_DAI : GET_DYNAMIC_FEE_EVENTS_OLD,
-          variables: { poolId: subgraphId }
-        })
-      })
+      // Query 2: Fee events from unified endpoint (consolidates duplicate queries)
+      fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/liquidity/get-historical-dynamic-fees?poolId=${encodeURIComponent(poolId)}`)
     ]);
 
     if (!dayDataResult.ok) {
@@ -130,20 +88,16 @@ async function computeChartData(poolId: string, days: number): Promise<ChartData
     }
 
     if (!feeEventsResult.ok) {
-      throw new Error(`alphixHooks query failed: ${feeEventsResult.status} ${feeEventsResult.statusText}`);
+      throw new Error(`fee events query failed: ${feeEventsResult.status} ${feeEventsResult.statusText}`);
     }
 
-    const [dayDataJson, feeEventsJson] = await Promise.all([
+    const [dayDataJson, feeEvents] = await Promise.all([
       dayDataResult.json(),
       feeEventsResult.json()
     ]);
 
     if (dayDataJson.errors) {
       throw new Error(`poolDayDatas errors: ${JSON.stringify(dayDataJson.errors)}`);
-    }
-
-    if (feeEventsJson.errors) {
-      throw new Error(`alphixHooks errors: ${JSON.stringify(feeEventsJson.errors)}`);
     }
 
     // Process poolDayDatas
@@ -187,15 +141,7 @@ async function computeChartData(poolId: string, days: number): Promise<ChartData
       .filter((d): d is ChartDataPoint => d !== null)
       .sort((a, b) => a.date.localeCompare(b.date)); // Sort ascending by date
 
-    // Process fee events
-    let feeEvents = Array.isArray(feeEventsJson?.data?.alphixHooks) ? feeEventsJson.data.alphixHooks : [];
-
-    // Normalize: DAI pools have currentRatio, old pools have currentTargetRatio
-    feeEvents = feeEvents.map((e: any) => ({
-      ...e,
-      currentRatio: e.currentRatio || e.currentTargetRatio
-    }));
-
+    // Fee events are already normalized by get-historical-dynamic-fees endpoint
     console.log(`[pool-chart-data] Success: ${data.length} data points, ${feeEvents.length} fee events`);
 
     return {

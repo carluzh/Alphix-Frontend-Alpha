@@ -42,12 +42,11 @@ import { Separator } from "@/components/ui/separator";
 import { useNetwork } from "@/lib/network-context";
 
 // Loading phases for skeleton system
-type LoadPhases = { phase: 0 | 1 | 2 | 3 | 4; startedAt: number };
+type LoadPhases = { phase: 0 | 1 | 2 | 3; startedAt: number };
 type Readiness = {
   core: boolean;            // positions, balances loaded
   prices: boolean;          // price map available
   apr: boolean;             // APR calculations done
-  buckets: Record<string, boolean>; // per-pool bucket readiness
 };
 
 // Multi-phase skeleton loading orchestration hook
@@ -67,18 +66,15 @@ function useLoadPhases(readiness: Readiness) {
     const initialDelay = 100; // initial delay to avoid flicker
     
     // Determine target phase based on readiness
-    let targetPhase: 0 | 1 | 2 | 3 | 4 = 0;
+    let targetPhase: 0 | 1 | 2 | 3 = 0;
     if (readiness.core && readiness.prices) {
       targetPhase = 2; // core data ready
     }
     if (readiness.core && readiness.prices && readiness.apr) {
-      targetPhase = 3; // APR ready
-    }
-    if (readiness.core && readiness.prices && readiness.apr && Object.values(readiness.buckets).every(Boolean)) {
-      targetPhase = 4; // everything ready
+      targetPhase = 3; // APR ready (everything ready)
     }
     if (readiness.core || readiness.prices) {
-      targetPhase = Math.max(targetPhase, 1) as 0 | 1 | 2 | 3 | 4; // at least show layout
+      targetPhase = Math.max(targetPhase, 1) as 0 | 1 | 2 | 3; // at least show layout
     }
     
 
@@ -277,7 +273,7 @@ interface PortfolioData {
 
 // Removed legacy composite id parsing
 
-import { loadUserPositionIds, derivePositionsFromIds, getPoolFeeBps, waitForSubgraphBlock } from '@/lib/client-cache';
+import { loadUserPositionIds, derivePositionsFromIds, waitForSubgraphBlock } from '@/lib/client-cache';
 
 // Removed: getUserPositionsOnchain - now using centralized useUserPositions hook
 
@@ -466,12 +462,9 @@ function usePortfolio(refreshKey: number = 0, userPositionsData?: any[], pricesD
   const [activePositions, setActivePositions] = useState<any[]>([]);
   const [aprByPoolId, setAprByPoolId] = useState<Record<string, string>>({});
   const [poolDataByPoolId, setPoolDataByPoolId] = useState<Record<string, any>>({});
-  const [bucketDataCache, setBucketDataCache] = useState<Record<string, any>>({});
-
   // All loading states
   const [isLoadingPositions, setIsLoadingPositions] = useState<boolean>(true);
   const [isLoadingPoolStates, setIsLoadingPoolStates] = useState<boolean>(true);
-  const [loadingBuckets, setLoadingBuckets] = useState<Set<string>>(new Set());
   
   // Process positions using centralized hooks
   useEffect(() => {
@@ -522,16 +515,9 @@ function usePortfolio(refreshKey: number = 0, userPositionsData?: any[], pricesD
         for (const p of data.pools as any[]) {
           const tvl = typeof p.tvlUSD === 'number' ? p.tvlUSD : 0;
           const vol24 = typeof p.volume24hUSD === 'number' ? p.volume24hUSD : 0;
+          // TODO: APR calculation removed (was using deprecated getPoolFeeBps which returns null)
+          // Will be fixed in Phase 2 with proper fee rate lookup from pool config
           let aprStr = 'N/A';
-          try {
-            if (tvl > 0 && vol24 > 0 && p.poolId) {
-              const bps = await getPoolFeeBps(String(p.poolId));
-              const feeRate = Math.max(0, bps) / 10_000;
-              const fees24h = vol24 * feeRate;
-              const apr = (fees24h * 365 / tvl) * 100;
-              aprStr = `${apr.toFixed(2)}%`;
-            }
-          } catch {}
           if (p.poolId) map[String(p.poolId).toLowerCase()] = aprStr;
         }
         setAprByPoolId(map);
@@ -548,69 +534,8 @@ function usePortfolio(refreshKey: number = 0, userPositionsData?: any[], pricesD
 
   // Fetch Wallet Balances is handled in the main component body now
 
-  const getCacheKey = useCallback((poolId: string, tickLower: number, tickUpper: number) => {
-    const positionRange = Math.abs(tickUpper - tickLower);
-    const maxRange = 5000;
-    const padding = Math.min(positionRange * 0.5, maxRange * 0.3);
-    const minTick = Math.floor(Math.min(tickLower, tickUpper) - padding);
-    const maxTick = Math.ceil(Math.max(tickLower, tickUpper) + padding);
-    return `${poolId}-${minTick}-${maxTick}`;
-  }, []);
-
-  // Fetch Bucket Data (managed inside hook now)
-  const fetchBucketData = useCallback(async (poolId: string, tickLower: number, tickUpper: number, tickSpacing: number) => {
-    const cacheKey = getCacheKey(poolId, tickLower, tickUpper);
-    if (bucketDataCache[cacheKey] || loadingBuckets.has(cacheKey)) return;
-
-    setLoadingBuckets(prev => new Set(prev).add(cacheKey));
-    try {
-      const positionRange = Math.abs(tickUpper - tickLower);
-      const maxRange = 5000;
-      const padding = Math.min(positionRange * 0.5, maxRange * 0.3);
-      const minTick = Math.floor(Math.min(tickLower, tickUpper) - padding);
-      const maxTick = Math.ceil(Math.max(tickLower, tickUpper) + padding);
-      
-      const response = await fetch('/api/liquidity/get-bucket-depths', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ poolId, tickLower: minTick, tickUpper: maxTick, tickSpacing: Number(tickSpacing), bucketCount: 25 }),
-      });
-
-      if (response.ok) {
-        const result = await response.json();
-        if (result.success && result.buckets) {
-          setBucketDataCache(prev => ({ ...prev, [cacheKey]: result.buckets }));
-        }
-      }
-    } catch (error) {
-      console.error('Error fetching bucket data:', error);
-    } finally {
-      setLoadingBuckets(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(cacheKey);
-        return newSet;
-      });
-    }
-  }, [getCacheKey, bucketDataCache, loadingBuckets]);
-
-  useEffect(() => {
-    activePositions.forEach(p => {
-      // Disabled: do not fetch bucket depths to avoid spamming
-    });
-  }, [activePositions, poolDataByPoolId, fetchBucketData]);
-
   // Calculate readiness object - separate positions/APRs from other data
   const readiness: Readiness = useMemo(() => {
-    const buckets: Record<string, boolean> = {};
-    activePositions.forEach(position => {
-      if (position?.poolId) {
-        const tl = position.tickLower;
-        const tu = position.tickUpper;
-        const cacheKey = getCacheKey(position.poolId, tl, tu);
-        buckets[cacheKey] = !loadingBuckets.has(cacheKey);
-      }
-    });
-
     // Positions are empty only when loading is complete and no positions exist
     const isPositionsLoaded = !isLoadingPositions;
     const isEmptyPortfolio = isPositionsLoaded && activePositions.length === 0;
@@ -621,17 +546,14 @@ function usePortfolio(refreshKey: number = 0, userPositionsData?: any[], pricesD
       // Prices can be ready independently
       prices: isEmptyPortfolio || Object.keys(portfolioData.priceMap).length > 0,
       apr: isEmptyPortfolio || Object.keys(aprByPoolId).length > 0,
-      buckets,
     };
-  }, [portfolioData.priceMap, aprByPoolId, activePositions, loadingBuckets, getCacheKey, isLoadingPositions, isLoadingPoolStates]);
+  }, [portfolioData.priceMap, aprByPoolId, activePositions, isLoadingPositions, isLoadingPoolStates]);
 
   return {
     portfolioData,
     activePositions,
     aprByPoolId,
     poolDataByPoolId,
-    bucketDataCache,
-    loadingBuckets,
     readiness,
     isLoadingPositions,
     isLoadingPoolStates,
@@ -660,7 +582,6 @@ export default function PortfolioPage() {
     activePositions,
     aprByPoolId,
     poolDataByPoolId,
-    bucketDataCache,
     isLoadingPositions,
     readiness,
     isLoadingPoolStates,
@@ -1636,16 +1557,9 @@ export default function PortfolioPage() {
         for (const p of data.pools as any[]) {
           const tvl = typeof p.tvlUSD === 'number' ? p.tvlUSD : 0;
           const vol24 = typeof p.volume24hUSD === 'number' ? p.volume24hUSD : 0;
+          // TODO: APR calculation removed (was using deprecated getPoolFeeBps which returns null)
+          // Will be fixed in Phase 2 with proper fee rate lookup from pool config
           let aprStr = 'N/A';
-          try {
-            if (tvl > 0 && vol24 > 0 && p.poolId) {
-              const bps = await getPoolFeeBps(String(p.poolId));
-              const feeRate = Math.max(0, bps) / 10_000;
-              const fees24h = vol24 * feeRate;
-              const apr = (fees24h * 365 / tvl) * 100;
-              aprStr = `${apr.toFixed(2)}%`;
-            }
-          } catch {}
           if (p.poolId) map[String(p.poolId).toLowerCase()] = aprStr;
         }
         if (!cancelled) setAprByPoolId(map);
