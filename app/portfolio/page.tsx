@@ -491,37 +491,24 @@ function usePortfolio(refreshKey: number = 0, userPositionsData?: any[], pricesD
     setActivePositions(positions);
   }, [isConnected, accountAddress, userPositionsData, isLoadingHookPositions]);
 
-  // Fetch APRs
+  // Fetch APRs from pools-batch (already Redis-cached server-side)
+  // NOTE: APR calculation is currently disabled - all values are 'N/A'
+  // localStorage caching removed (2025-11-27) - API endpoint has Redis caching
   useEffect(() => {
-    // This can run independently
     const fetchApr = async () => {
       try {
-        const cacheKey = 'apr:get-pools-batch';
-        try {
-          const cached = localStorage.getItem(cacheKey);
-          if (cached) {
-            const parsed = JSON.parse(cached);
-            if (parsed?.ts && (Date.now() - parsed.ts) < 10 * 60 * 1000 && parsed?.map) {
-              setAprByPoolId(parsed.map);
-              return;
-            }
-          }
-        } catch {}
         const response = await fetch('/api/liquidity/get-pools-batch', { cache: 'no-store' as any } as any);
         if (!response.ok) return;
         const data = await response.json();
         if (!data?.success || !Array.isArray(data.pools)) return;
         const map: Record<string, string> = {};
         for (const p of data.pools as any[]) {
-          const tvl = typeof p.tvlUSD === 'number' ? p.tvlUSD : 0;
-          const vol24 = typeof p.volume24hUSD === 'number' ? p.volume24hUSD : 0;
           // TODO: APR calculation removed (was using deprecated getPoolFeeBps which returns null)
           // Will be fixed in Phase 2 with proper fee rate lookup from pool config
           let aprStr = 'N/A';
           if (p.poolId) map[String(p.poolId).toLowerCase()] = aprStr;
         }
         setAprByPoolId(map);
-        try { localStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), map })); } catch {}
       } catch {}
     };
     fetchApr();
@@ -1534,41 +1521,7 @@ export default function PortfolioPage() {
   // Claim Fees handled via useDecreaseLiquidity.onFeesCollected
 
 
-  useEffect(() => {
-    let cancelled = false;
-    const fetchApr = async () => {
-      try {
-        const cacheKey = 'apr:get-pools-batch:secondary';
-        try {
-          const cached = localStorage.getItem(cacheKey);
-          if (cached) {
-            const parsed = JSON.parse(cached);
-            if (parsed?.ts && (Date.now() - parsed.ts) < 10 * 60 * 1000 && parsed?.map) {
-              if (!cancelled) setAprByPoolId(parsed.map);
-              return;
-            }
-          }
-        } catch {}
-        const response = await fetch('/api/liquidity/get-pools-batch', { cache: 'no-store' as any } as any);
-        if (!response.ok) return;
-        const data = await response.json();
-        if (!data?.success || !Array.isArray(data.pools)) return;
-        const map: Record<string, string> = {};
-        for (const p of data.pools as any[]) {
-          const tvl = typeof p.tvlUSD === 'number' ? p.tvlUSD : 0;
-          const vol24 = typeof p.volume24hUSD === 'number' ? p.volume24hUSD : 0;
-          // TODO: APR calculation removed (was using deprecated getPoolFeeBps which returns null)
-          // Will be fixed in Phase 2 with proper fee rate lookup from pool config
-          let aprStr = 'N/A';
-          if (p.poolId) map[String(p.poolId).toLowerCase()] = aprStr;
-        }
-        if (!cancelled) setAprByPoolId(map);
-        try { localStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), map })); } catch {}
-      } catch {}
-    };
-    fetchApr();
-    return () => { cancelled = true; };
-  }, []);
+  // (removed duplicate APR fetch 2025-11-27 - already handled in useEffect above)
   // (removed local pool state and bucket depth fetching; handled in usePortfolio)
 
   const formatAgeShort = (seconds: number | undefined) => {
@@ -2851,7 +2804,12 @@ export default function PortfolioPage() {
                                         poolContext={{
                                           currentPrice: poolDataByPoolId[poolKey]?.price ? String(poolDataByPoolId[poolKey].price) : null,
                                           currentPoolTick: typeof poolDataByPoolId[poolKey]?.tick === 'number' ? poolDataByPoolId[poolKey].tick : null,
-                                          poolAPY: aprByPoolId[poolKey] ? parseFloat(aprByPoolId[poolKey].replace('%', '')) : null,
+                                          poolAPY: (() => {
+                                            const aprStr = aprByPoolId[poolKey];
+                                            if (!aprStr || aprStr === 'N/A' || aprStr === 'Loading...') return 0;
+                                            const parsed = parseFloat(aprStr.replace('%', ''));
+                                            return isFinite(parsed) ? parsed : 0;
+                                          })(),
                                           isLoadingPrices: !readiness.prices,
                                           isLoadingPoolStates: isLoadingPoolStates,
                                         }}

@@ -114,27 +114,27 @@ export class CacheService {
     // Create promise for this request
     const promise = (async () => {
       try {
-        // Check cache first
-        const { data: cachedData, isStale, isInvalidated } = await this.getWithStale<T>(
-          key,
-          ttl
-        )
+        // Check cache first (now includes noCacheUntil for cooldown protection)
+        const result = await getCachedDataWithStale<T>(key, ttl.fresh, ttl.stale)
+        const { data: cachedData, isStale, isInvalidated, noCacheUntil } = result
 
         // Fresh cache hit - return immediately
         if (cachedData && !isStale && !isInvalidated) {
           return { data: cachedData, isStale: false }
         }
 
-        // Invalidated cache - blocking fetch
         if (cachedData && isInvalidated) {
           const freshData = await fetchFn()
-          await this.set(key, freshData, ttl.stale)
+          const isInCooldown = noCacheUntil && Date.now() < noCacheUntil
+          if (isInCooldown) {
+            console.log(`[CacheService] Cooldown active for ${key}, skipping cache write (${Math.round((noCacheUntil - Date.now()) / 1000)}s remaining)`)
+          } else {
+            await this.set(key, freshData, ttl.stale)
+          }
           return { data: freshData, isStale: false }
         }
 
-        // Stale cache - return stale, refresh in background
         if (cachedData && isStale) {
-          // Fire and forget background refresh
           fetchFn()
             .then(freshData => this.set(key, freshData, ttl.stale))
             .catch(err => console.error('[CacheService] Background refresh failed:', err))
@@ -142,17 +142,14 @@ export class CacheService {
           return { data: cachedData, isStale: true }
         }
 
-        // Cache miss - fetch and cache
         const freshData = await fetchFn()
         await this.set(key, freshData, ttl.stale)
         return { data: freshData, isStale: false }
       } finally {
-        // Clean up ongoing request
         this.ongoingRequests.delete(key)
       }
     })()
 
-    // Track this request for deduplication
     this.ongoingRequests.set(key, promise)
     return promise
   }
@@ -175,11 +172,9 @@ export class CacheService {
     ttl: TTLConfig,
     fetchFn: () => Promise<T>
   ): Promise<CacheApiResult<T>> {
-    // Enforce lowercase and proper keying format
     const userKey = `${dataType}:${userId.toLowerCase()}`
     return this.cachedApiCall(userKey, ttl, fetchFn)
   }
 }
 
-// Singleton instance for use across the app
 export const cacheService = new CacheService()

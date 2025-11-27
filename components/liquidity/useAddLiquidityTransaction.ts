@@ -21,13 +21,12 @@ const showErrorToast = (title: string, description?: string) => {
     }
   });
 };
-import { TOKEN_DEFINITIONS } from "@/lib/pools-config";
+import { TOKEN_DEFINITIONS, TokenSymbol, getPoolSubgraphId } from "@/lib/pools-config";
 import { prefetchService } from "@/lib/prefetch-service";
 import { invalidateAfterTx } from '@/lib/invalidation';
 import { invalidateUserPositionIdsCache } from "@/lib/client-cache";
 import { ERC20_ABI } from "@/lib/abis/erc20";
 import { type Hex, formatUnits, parseUnits, encodeFunctionData, parseAbi } from "viem";
-import { TokenSymbol } from "@/lib/pools-config";
 import { preparePermit2BatchForNewPosition, type PreparedPermit2Batch } from "@/lib/liquidity-utils";
 import { publicClient } from "@/lib/viemClient";
 import { PERMIT2_ADDRESS, V4_POSITION_MANAGER_ADDRESS } from "@/lib/swap-constants";
@@ -1018,8 +1017,10 @@ export function useAddLiquidityTransaction({
           invalidateUserPositionIdsCache(accountAddress);
 
           // Invalidate Redis + React Query caches (handles pools, positions, activity)
+          const poolId = getPoolSubgraphId(`${token0Symbol}/${token1Symbol}`) || undefined;
           invalidateAfterTx(queryClient, {
             owner: accountAddress,
+            poolId,
             reason: 'mint'
           }).catch(() => {});
         }

@@ -175,8 +175,12 @@ export function PositionCardCompact({
 
     // Calculate APY using fees, position value, lastTimestamp, and pool APY
     const { formattedAPY, isFallback: isAPYFallback, isLoading: isLoadingAPY } = React.useMemo(() => {
-        if (isLoadingPrices || valueUSD <= 0 || poolAPY === undefined || poolAPY === null) {
+        if (isLoadingPrices || valueUSD <= 0) {
             return { formattedAPY: '—', isFallback: false, isLoading: true };
+        }
+        // Handle missing/invalid poolAPY - show 0% instead of skeleton
+        if (poolAPY === undefined || poolAPY === null || !isFinite(poolAPY)) {
+            return { formattedAPY: '0.00%', isFallback: true, isLoading: false };
         }
         if (!position.isInRange && !isFullRange) {
             return { formattedAPY: '0.00%', isFallback: false, isLoading: false };

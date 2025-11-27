@@ -16,6 +16,7 @@ export interface CachedDataWrapper<T> {
   meta: {
     timestamp: number;
     invalidated: boolean;
+    noCacheUntil?: number;
   };
 }
 
@@ -54,7 +55,7 @@ export async function getCachedDataWithStale<T>(
   key: string,
   freshTTL: number = 300, // 5 minutes fresh
   staleTTL: number = 900  // 15 minutes total (10 min stale window)
-): Promise<{ data: T | null; isStale: boolean; isInvalidated: boolean }> {
+): Promise<{ data: T | null; isStale: boolean; isInvalidated: boolean; noCacheUntil?: number }> {
   if (!redis) return { data: null, isStale: false, isInvalidated: false };
 
   try {
@@ -69,22 +70,18 @@ export async function getCachedDataWithStale<T>(
     const freshThreshold = freshTTL * 1000; // Convert to ms
     const staleThreshold = staleTTL * 1000; // Convert to ms
 
-    // If explicitly invalidated, treat as cache miss (will trigger blocking refresh)
     if (meta.invalidated) {
-      return { data, isStale: true, isInvalidated: true };
+      return { data, isStale: true, isInvalidated: true, noCacheUntil: meta.noCacheUntil };
     }
 
-    // Data is fresh if younger than freshTTL
     if (age < freshThreshold) {
       return { data, isStale: false, isInvalidated: false };
     }
 
-    // Data is stale if older than freshTTL but younger than staleTTL
     if (age < staleThreshold) {
       return { data, isStale: true, isInvalidated: false };
     }
 
-    // Data is too old, treat as missing
     return { data: null, isStale: false, isInvalidated: false };
   } catch (error) {
     console.error('[Redis] Get with stale failed:', error);
@@ -102,8 +99,9 @@ export async function deleteCachedData(key: string): Promise<void> {
   }
 }
 
-// Mark cache as invalidated without deleting (data remains but will trigger blocking refresh)
-export async function invalidateCachedData(key: string): Promise<void> {
+const INVALIDATION_COOLDOWN_MS = 15000;
+
+export async function invalidateCachedData(key: string, cooldownMs: number = INVALIDATION_COOLDOWN_MS): Promise<void> {
   if (!redis) {
     console.error(`[Redis] ❌ Cannot invalidate ${key} - Redis not initialized`);
     return;
@@ -124,16 +122,15 @@ export async function invalidateCachedData(key: string): Promise<void> {
       return;
     }
 
-    // Mark as invalidated
     wrapper.meta.invalidated = true;
     wrapper.meta.timestamp = Date.now();
+    wrapper.meta.noCacheUntil = Date.now() + cooldownMs;
 
-    // Use safe TTL to prevent race condition (min 5 seconds)
     const safeTTL = Math.max(ttl, 5);
 
     await redis.setex(key, safeTTL, wrapper);
 
-    console.log(`[Redis] ✅ Cache invalidated: ${key} (TTL: ${safeTTL}s)`);
+    console.log(`[Redis] ✅ Cache invalidated: ${key} (TTL: ${safeTTL}s, cooldown: ${cooldownMs}ms)`);
   } catch (error) {
     console.error(`[Redis] ❌ Invalidation failed for ${key}:`, error);
   }

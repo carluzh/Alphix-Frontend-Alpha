@@ -71,12 +71,9 @@ export default async function handler(
 
   const cacheKey = `dynamic-fees:${poolId.toLowerCase()}`;
 
-  // CDN: cache for 12h, serve stale for 12h while revalidating
-  res.setHeader('Cache-Control', 'public, s-maxage=43200, stale-while-revalidate=43200');
-
   // Support version-based cache busting
   const version = versionQuery || '';
-  const shouldBypassCache = version && version !== 'default';
+  const shouldBypassCache = !!(version && version !== 'default');
 
   try {
     // Use CacheService for Redis-backed caching with stale-while-revalidate
@@ -113,6 +110,12 @@ export default async function handler(
       },
       { skipCache: shouldBypassCache }
     );
+
+    // Set cache headers
+    res.setHeader('Cache-Control', 'no-store'); // Let Redis handle caching, not CDN
+    if (result.isStale) {
+      res.setHeader('X-Cache-Status', 'stale');
+    }
 
     return res.status(200).json(result.data);
   } catch (error: any) {

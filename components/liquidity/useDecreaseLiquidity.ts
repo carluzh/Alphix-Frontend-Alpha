@@ -15,7 +15,6 @@ import { getPositionDetails, getPoolState } from '@/lib/liquidity-utils';
 import { prefetchService } from '@/lib/prefetch-service';
 import { invalidateUserPositionIdsCache } from '@/lib/client-cache';
 import { invalidateAfterTx } from '@/lib/invalidation';
-import { deleteCachedData } from '@/lib/redis';
 import { publicClient } from '@/lib/viemClient';
 
 // Helper function to safely parse amounts without precision loss
@@ -747,14 +746,6 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
           onLiquidityDecreased({ txHash: hash as `0x${string}`, blockNumber, isFullBurn: lastIsFullBurn.current } as any);
         }
 
-        // CRITICAL: Invalidate Redis cache after liquidity decrease
-        try {
-          deleteCachedData('pools-batch:v1').catch(err =>
-            console.error('[Cache] Failed to invalidate after liquidity decrease:', err)
-          );
-        } catch {}
-        
-        // CRITICAL: Invalidate React Query caches including fee data
         try {
           if (accountAddress) {
             const currentPositionId = lastDecreaseData.current?.tokenId;

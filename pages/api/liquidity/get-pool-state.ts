@@ -9,10 +9,6 @@ const stateViewAbi = parseAbi([
   'function getLiquidity(bytes32 poolId) external view returns (uint128 liquidity)'
 ]);
 
-// Simple in-memory server cache for this endpoint
-const serverCache = new Map<string, { data: any; ts: number }>();
-const CACHE_TTL_MS = 15 * 1000; // 15 seconds
-
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET') {
     res.setHeader('Allow', ['GET']);
@@ -26,9 +22,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const all = getAllPools();
   const maybe = all.find(p => String(p.id).toLowerCase() === raw.toLowerCase());
   const subgraphId = (maybe?.subgraphId || getPoolSubgraphId(raw) || raw) as string;
-  const cacheKey = `pool-state:${subgraphId}`;
 
   try {
+    // No caching - pool state (sqrtPriceX96, tick, liquidity) must always be fresh for accurate quotes
     const poolIdHex = subgraphId as Hex;
     const address = getStateViewAddress() as `0x${string}`;
 
@@ -63,7 +59,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     } catch {
       // ignore decimals adjustment failure; fallback to raw ratio
     }
-    const currentPriceString = String(currentPrice);
 
     const responseData = {
       poolId: subgraphId,
@@ -73,24 +68,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       lpFee,
       liquidity: liquidity.toString(),
       currentPoolTick: tick,
-      currentPrice: currentPriceString,
+      currentPrice: String(currentPrice),
     };
 
-    const validatedData = validateApiResponse(PoolStateSchema, responseData, 'get-pool-state');
-    
-    // On success, update cache
-    serverCache.set(cacheKey, { data: validatedData, ts: Date.now() });
-
+    const validated = validateApiResponse(PoolStateSchema, responseData, 'get-pool-state');
     res.setHeader('Cache-Control', 'no-store');
-    return res.status(200).json(validatedData);
+    return res.status(200).json(validated);
   } catch (error: any) {
-    // On failure, try to serve from cache
-    const cached = serverCache.get(cacheKey);
-    if (cached && (Date.now() - cached.ts) < CACHE_TTL_MS) {
-      console.warn(`[get-pool-state] Serving stale state for ${subgraphId} due to fetch error.`);
-      res.setHeader('Cache-Control', 'no-store');
-      return res.status(200).json(cached.data);
-    }
     return res.status(500).json({ message: 'Failed to read pool state', error: String(error?.message || error) });
   }
 } 

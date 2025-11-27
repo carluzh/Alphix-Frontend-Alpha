@@ -1,17 +1,18 @@
 import { NextResponse } from 'next/server';
 import { invalidateCachedData } from '@/lib/redis';
-import { getUserCacheKeys, getPoolCacheKeys, poolKeys } from '@/lib/redis-keys';
+import { getPoolCacheKeys, getPoolTicksCacheKey } from '@/lib/redis-keys';
 
 /**
  * Cache Invalidation API
  *
  * Supports two modes:
  * 1. Single key invalidation: ?key=pools-batch:v1
- * 2. Bulk user invalidation: POST body { ownerAddress, reason, poolId, positionIds }
+ * 2. Bulk transaction invalidation: POST body { ownerAddress, reason, poolId, positionIds }
  *
- * Usage:
- * - After user transactions: POST with ownerAddress to invalidate all user data
- * - Manual cache clear: ?key=specific-key
+ * Invalidation strategy:
+ * - Swap: pools-batch (volume/APY changed)
+ * - Mint/Burn/Decrease: pools-batch (TVL changed) + pool:ticks (liquidity distribution changed)
+ * - Collect: pools-batch only (fees claimed, no liquidity change)
  */
 export async function POST(request: Request) {
   try {
@@ -29,7 +30,7 @@ export async function POST(request: Request) {
       });
     }
 
-    // Mode 2: Bulk user cache invalidation
+    // Mode 2: Bulk transaction cache invalidation
     const body = await request.json().catch(() => ({}));
     const { ownerAddress, reason, poolId, positionIds } = body;
 
@@ -42,29 +43,26 @@ export async function POST(request: Request) {
 
     const keysToInvalidate: string[] = [];
 
-    // Invalidate user-specific caches
-    if (ownerAddress) {
-      const userKeys = getUserCacheKeys(ownerAddress);
-      keysToInvalidate.push(...userKeys);
-    }
+    // Invalidate pool caches based on transaction type
+    // Normalize reason values (callers use various names for the same operations)
+    const isSwap = reason === 'swap' || reason === 'swap_complete';
+    const isMint = reason === 'mint' || reason === 'liquidity-added';
+    const isDecrease = reason === 'decrease' || reason === 'liquidity-withdrawn';
+    const isCollect = reason === 'collect' || reason === 'fees-collected';
 
-    // Invalidate pool caches (if pool-affecting transaction)
-    if (poolId || reason === 'swap' || reason === 'mint' || reason === 'liquidity-added' || reason === 'decrease' || reason === 'collect') {
-      const poolCacheKeys = getPoolCacheKeys(poolId);
-      keysToInvalidate.push(...poolCacheKeys);
+    const isPoolAffecting = poolId || isSwap || isMint || isDecrease || isCollect;
+    if (isPoolAffecting) {
+      // Always invalidate pools-batch for any pool-affecting transaction
+      keysToInvalidate.push(...getPoolCacheKeys(poolId));
 
-      // Always invalidate pool batch for liquidity-affecting transactions
-      keysToInvalidate.push(poolKeys.batch());
-    }
-
-    // Invalidate position fees if position IDs provided
-    if (positionIds && Array.isArray(positionIds)) {
-      for (const posId of positionIds) {
-        keysToInvalidate.push(`fees:${posId}`);
+      // For LP operations (not swap, not collect), also invalidate tick data
+      const isLpOperation = isMint || isDecrease;
+      if (isLpOperation && poolId) {
+        keysToInvalidate.push(getPoolTicksCacheKey(poolId));
       }
-      // Also invalidate any batch fee caches (they're ephemeral, can just clear all)
-      keysToInvalidate.push('fees:batch:*'); // Pattern for later SCAN-based deletion
     }
+
+    // Note: Position fees not cached in Redis (user-specific, React Query handles client-side)
 
     // Remove duplicates
     const uniqueKeys = Array.from(new Set(keysToInvalidate));

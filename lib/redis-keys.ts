@@ -28,43 +28,23 @@ export const poolKeys = {
   stats: (poolId: string) => `pool:stats:${poolId.toLowerCase()}`,
 
   /**
-   * @deprecated Individual pool state - NOT USED, all data comes from on-chain calls
-   * Kept for backward compatibility only
+   * @deprecated Individual pool state - NOT CACHED
+   * Pool state (sqrtPriceX96, tick, liquidity) must always be fresh for accurate quotes.
+   * Stale sqrtPriceX96 would cause swap transactions to fail.
    */
   state: (poolId: string) => `pool:state:${poolId.toLowerCase()}`,
-} as const;
-
-/**
- * Position fees cache keys (position data itself is NOT cached - use on-chain calls)
- */
-export const positionKeys = {
-  /**
-   * Uncollected fees for a single position
-   * TTL: 1min (updates frequently)
-   */
-  fees: (positionId: string) => `fees:${positionId}`,
 
   /**
-   * Batch uncollected fees for multiple positions
-   * TTL: 1min
-   * Note: IDs are sorted for cache key consistency
+   * Pool tick data (liquidityGross, liquidityNet per tick)
+   * TTL: 5min fresh, 1hr stale
    */
-  feesBatch: (positionIds: string[]) => {
-    const sorted = [...positionIds].sort();
-    return `fees:batch:${sorted.join(',')}`;
-  },
-} as const;
+  ticks: (poolId: string) => `pool:ticks:${poolId.toLowerCase()}`,
 
-/**
- * @deprecated User activity cache keys - Activity feed no longer displayed in UI
- * Kept for backward compatibility only
- */
-export const activityKeys = {
   /**
-   * @deprecated Portfolio activity for a user - NOT USED
+   * Pool metrics (APY calculations, TVL, volume)
+   * TTL: 5min fresh, 1hr stale
    */
-  byOwner: (address: string, first: number = 50) =>
-    `activity:${address.toLowerCase()}:${first}`,
+  metrics: (poolId: string, days: number) => `pool:metrics:${poolId.toLowerCase()}:${days}d`,
 } as const;
 
 /**
@@ -85,32 +65,39 @@ export const priceKeys = {
 } as const;
 
 /**
- * Helper to get all cache keys for a specific user
- * Used for bulk invalidation after transactions
+ * Helper to get pool-related cache keys for invalidation
+ * Used for bulk invalidation after pool-affecting transactions
  *
- * Note: Currently returns empty array as:
- * - Activity feed is no longer displayed (deprecated)
- * - Position data is NOT cached (use on-chain calls)
- * - Position fees are invalidated separately since we need position IDs
+ * Invalidates:
+ * - pools-batch: All pool stats (TVL, volume, APY) - always
+ * - pool:metrics: Pool APY/volume metrics for specific pool - when poolId provided
+ * - pool:ticks: Tick data (liquidity distribution) - only for LP operations (separate function)
+ *
+ * Does NOT invalidate (acceptable staleness / auto-refresh):
+ * - pool:state: 30s TTL, contains sqrtPriceX96/tick/liquidity only - auto-refreshes fast
+ * - pool:chart: CoinGecko price data - not affected by our transactions
+ * - dynamic-fees: Historical fee events - only changes on hook triggers
  */
-export function getUserCacheKeys(address: string): string[] {
-  // Activity feed removed from UI - no user-specific cache keys to invalidate
-  return [];
+export function getPoolCacheKeys(poolId?: string): string[] {
+  const keys = [poolKeys.batch()];
+
+  // If specific pool, also invalidate its metrics (all time ranges)
+  if (poolId) {
+    keys.push(poolKeys.metrics(poolId, 1));
+    keys.push(poolKeys.metrics(poolId, 7));
+    keys.push(poolKeys.metrics(poolId, 30));
+    keys.push(poolKeys.metrics(poolId, 60));
+  }
+
+  return keys;
 }
 
 /**
- * Helper to get all pool-related cache keys
- * Used for bulk invalidation after pool-affecting transactions
- *
- * Note: Only invalidates pools-batch as:
- * - Individual pool:stats and pool:state are deprecated (not read by any endpoint)
- * - All pool data comes from pools-batch cache
- * - Charts have 1h TTL and use stale-while-revalidate (acceptable staleness)
+ * Get tick cache key for a specific pool
+ * Use this for LP operations (mint/burn) that change liquidity distribution
  */
-export function getPoolCacheKeys(poolId?: string): string[] {
-  // Always invalidate pools-batch regardless of specific pool
-  // This ensures all pool data refreshes on next request
-  return [poolKeys.batch()];
+export function getPoolTicksCacheKey(poolId: string): string {
+  return poolKeys.ticks(poolId);
 }
 
 /**
@@ -119,7 +106,5 @@ export function getPoolCacheKeys(poolId?: string): string[] {
  */
 export const patterns = {
   allPools: 'pool:*',
-  allFees: 'fees:*',
-  allActivity: 'activity:*',
   allPrices: 'price*',
 } as const;

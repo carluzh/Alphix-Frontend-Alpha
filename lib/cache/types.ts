@@ -20,6 +20,7 @@ export interface CacheResult<T> {
   data: T | null
   isStale: boolean
   isInvalidated: boolean
+  noCacheUntil?: number
 }
 
 export interface CacheApiResult<T> {

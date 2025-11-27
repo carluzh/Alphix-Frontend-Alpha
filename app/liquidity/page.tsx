@@ -31,16 +31,13 @@ import {
     useAccount,
 } from "wagmi";
 import { toast } from "sonner";
-import { getEnabledPools, getToken, getPoolSubgraphId, getPoolById } from "../../lib/pools-config";
+import { getEnabledPools, getToken, getPoolSubgraphId } from "../../lib/pools-config";
 import { loadUserPositionIds, derivePositionsFromIds } from "../../lib/client-cache";
-import { fetchPoolFullRangeAPY } from "../../lib/apy-calculator";
 import { Pool } from "../../types";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ChevronUpIcon, ChevronDownIcon, ChevronsUpDownIcon, PlusIcon, BadgeCheck, OctagonX, Filter as FilterIcon, X as XIcon } from "lucide-react";
-import { ArrowUpRight, ArrowDownRight } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { TOKEN_DEFINITIONS, type TokenSymbol } from "@/lib/pools-config";
 import { useIncreaseLiquidity, type IncreasePositionData } from "@/components/liquidity/useIncreaseLiquidity";
@@ -80,14 +77,10 @@ const generatePoolsFromConfig = (() => {
         ],
         pair: `${token0.symbol} / ${token1.symbol}`,
         volume24h: "Loading...",
-        volume7d: "Loading...",
         fees24h: "Loading...",
-        fees7d: "Loading...",
         liquidity: "Loading...",
         apr: "Loading...",
         highlighted: poolConfig.featured,
-        volumeChangeDirection: 'loading',
-        tvlChangeDirection: 'loading',
         type: poolConfig.type,
       } as Pool;
     }).filter(Boolean) as Pool[];
@@ -135,9 +128,6 @@ export default function LiquidityPage() {
   );
   const router = useRouter();
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
-  const [apyTimeframe, setApyTimeframe] = useState<'24h' | '7d'>('24h');
-  const [is7dApyLoading, setIs7dApyLoading] = useState(false);
-  // Removed expanded row behavior
   const [poolDataByPoolId, setPoolDataByPoolId] = useState<Record<string, any>>({});
   const [priceMap, setPriceMap] = useState<Record<string, number>>({});
   const [isLoadingPoolStates, setIsLoadingPoolStates] = useState(true);
@@ -152,15 +142,13 @@ export default function LiquidityPage() {
         const batchData = await response.json();
         if (!batchData.success) throw new Error(`Batch API error: ${batchData.message}`);
 
-        // PERFORMANCE: All data now comes from batch endpoint (fees + 24h APY included)
         const updatedPools = dynamicPools.map((pool) => {
           const apiPoolId = getPoolSubgraphId(pool.id) || pool.id;
           const batchPoolData = batchData.pools.find((p: any) => p.poolId.toLowerCase() === apiPoolId.toLowerCase());
 
           if (batchPoolData) {
-            const { tvlUSD, tvlYesterdayUSD, volume24hUSD, volumePrev24hUSD, fees24hUSD, apr24h } = batchPoolData;
+            const { tvlUSD, volume24hUSD, fees24hUSD, apr24h } = batchPoolData;
 
-            // Format 24h APY for display
             let aprStr = 'Loading...';
             if (typeof apr24h === 'number' && apr24h > 0) {
               aprStr = formatAPR(apr24h);
@@ -169,15 +157,9 @@ export default function LiquidityPage() {
             return {
               ...pool,
               tvlUSD,
-              tvlYesterdayUSD,
               volume24hUSD,
-              volumePrev24hUSD,
               fees24hUSD,
               apr: aprStr,
-              volumeChangeDirection: (volume24hUSD !== undefined && volumePrev24hUSD !== undefined) ?
-                (volume24hUSD > volumePrev24hUSD ? 'up' : volume24hUSD < volumePrev24hUSD ? 'down' : 'neutral') : 'loading',
-              tvlChangeDirection: (tvlUSD !== undefined && tvlYesterdayUSD !== undefined) ?
-                (tvlUSD > tvlYesterdayUSD ? 'up' : tvlUSD < tvlYesterdayUSD ? 'down' : 'neutral') : 'loading',
             };
           }
           return pool;
@@ -202,80 +184,6 @@ export default function LiquidityPage() {
   useEffect(() => {
     fetchAllPoolStatsBatch();
   }, [fetchAllPoolStatsBatch]);
-
-  // Fetch 7d APY on-demand when user switches timeframe
-  const fetch7dApyForAllPools = useCallback(async () => {
-    setIs7dApyLoading(true);
-
-    try {
-      const apyPromises = dynamicPools.map(async (pool) => {
-        try {
-          const metricsResponse = await fetch('/api/liquidity/pool-metrics', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ poolId: pool.id, days: 7 })
-          });
-
-          if (metricsResponse.ok) {
-            const metricsData = await metricsResponse.json();
-            const { totalFeesToken0, avgTVLToken0, days } = metricsData.metrics || {};
-
-            if (avgTVLToken0 && avgTVLToken0 > 0 && days > 0) {
-              const feesPerDay = totalFeesToken0 / days;
-              const annualFees = feesPerDay * 365;
-              const apy = (annualFees / avgTVLToken0) * 100;
-
-              let calculatedApr = 'Loading...';
-              if (isNaN(apy) || !isFinite(apy)) {
-                calculatedApr = 'Loading...';
-              } else if (apy >= 1000) {
-                calculatedApr = `${Math.round(apy)}%`;
-              } else if (apy >= 100) {
-                calculatedApr = `${apy.toFixed(0)}%`;
-              } else if (apy >= 10) {
-                calculatedApr = `${apy.toFixed(1)}%`;
-              } else if (apy > 0) {
-                calculatedApr = `${apy.toFixed(2)}%`;
-              } else {
-                calculatedApr = 'Loading...';
-              }
-
-              if (calculatedApr !== 'Loading...' && calculatedApr !== '0.00%') {
-                return { poolId: pool.id, apr: calculatedApr };
-              }
-            }
-          }
-        } catch (e) {
-          console.error(`[LiquidityPage] Pool ${pool.id}: Failed to fetch 7d metrics:`, e);
-        }
-
-        return { poolId: pool.id, apr: 'Loading...' };
-      });
-
-      const apyResults = await Promise.all(apyPromises);
-      const apyMap = new Map(apyResults.map(r => [r.poolId, r.apr]));
-
-      // Update pools with 7d APY
-      setPoolsData(prev => prev.map(pool => ({
-        ...pool,
-        apr: apyMap.get(pool.id) || pool.apr
-      })));
-    } finally {
-      setIs7dApyLoading(false);
-    }
-  }, []);
-
-  // Trigger 7d fetch when user switches to 7d timeframe
-  useEffect(() => {
-    if (apyTimeframe === '7d' && !is7dApyLoading) {
-      fetch7dApyForAllPools();
-    } else if (apyTimeframe === '24h') {
-      // Switch back to 24h - refetch batch to restore 24h APY
-      fetchAllPoolStatsBatch();
-    }
-  }, [apyTimeframe]);
-
-  // No periodic listeners: rely on version hints and one-shot refresh
 
   // PERFORMANCE: Memoize with stable reference (no dependencies)
   const determineBaseTokenForPriceDisplay = useMemo(() => (token0: string, token1: string): string => {
@@ -510,20 +418,9 @@ export default function LiquidityPage() {
       },
       sortDescFirst: true,
       cell: ({ row }) => (
-        <div className="flex items-center justify-start gap-1">
+        <div className="flex items-center justify-start">
           {typeof row.original.volume24hUSD === 'number' ? (
-            <>
-              <span className="mr-1">{formatUSD(row.original.volume24hUSD)}</span>
-              {row.original.volumeChangeDirection === 'up' && (
-                <ArrowUpRight className="h-3 w-3 text-green-500" />
-              )}
-              {row.original.volumeChangeDirection === 'down' && (
-                <ArrowDownRight className="h-3 w-3 text-red-500" />
-              )}
-              {row.original.volumeChangeDirection === 'loading' && (
-                <div className="inline-block h-3 w-3 bg-muted/60 rounded-full animate-pulse"></div>
-              )}
-            </>
+            formatUSD(row.original.volume24hUSD)
           ) : (
             <div className="inline-block h-4 w-16 bg-muted/60 rounded animate-pulse"></div>
           )}
@@ -605,20 +502,9 @@ export default function LiquidityPage() {
       },
       sortDescFirst: true,
       cell: ({ row }) => (
-         <div className="flex items-center justify-start gap-1">
+        <div className="flex items-center justify-start">
           {typeof row.original.tvlUSD === 'number' ? (
-            <>
-              <span className="mr-1">{formatUSD(row.original.tvlUSD)}</span>
-              {(row.original.tvlChangeDirection === 'up' || row.original.tvlChangeDirection === 'neutral') && (
-                <ArrowUpRight className="h-3 w-3 text-green-500" />
-              )}
-              {row.original.tvlChangeDirection === 'down' && (
-                <ArrowDownRight className="h-3 w-3 text-red-500" />
-              )}
-               {row.original.tvlChangeDirection === 'loading' && (
-                 <div className="inline-block h-3 w-3 bg-muted/60 rounded-full animate-pulse"></div>
-              )}
-            </>
+            formatUSD(row.original.tvlUSD)
           ) : (
             <div className="inline-block h-4 w-20 bg-muted/60 rounded animate-pulse"></div>
           )}
@@ -771,41 +657,18 @@ export default function LiquidityPage() {
     let totalTVL = 0;
     let totalVol24h = 0;
     let totalFees24h = 0;
-    let totalVolPrev24h = 0;
-    let totalTVLYesterday = 0;
-    let totalFeesPrev24h = 0;
     let counted = 0;
     for (const p of poolsData || []) {
       const tvl = (p as any).tvlUSD;
       const vol = (p as any).volume24hUSD;
       const fees = (p as any).fees24hUSD;
-      const volPrev24 = (p as any).volumePrev24hUSD;
-      const tvlYesterday = (p as any).tvlYesterdayUSD;
-      // Prefer precise previous 24h fees if present; fallback to rough 7d/7 approximation
-      const feesPrev24Exact = (p as any).feesPrev24hUSD;
-      const fees7d = (p as any).fees7dUSD;
-      const feesPrev24 = (typeof feesPrev24Exact === 'number' && isFinite(feesPrev24Exact))
-        ? feesPrev24Exact
-        : (typeof fees7d === 'number' && isFinite(fees7d))
-          ? Math.max(0, fees7d / 7)
-          : 0;
       if (typeof tvl === 'number' && isFinite(tvl)) totalTVL += tvl;
       if (typeof vol === 'number' && isFinite(vol)) totalVol24h += vol;
       if (typeof fees === 'number' && isFinite(fees)) totalFees24h += fees;
-      if (typeof volPrev24 === 'number' && isFinite(volPrev24)) totalVolPrev24h += volPrev24;
-      if (typeof tvlYesterday === 'number' && isFinite(tvlYesterday)) totalTVLYesterday += tvlYesterday;
-      totalFeesPrev24h += feesPrev24;
       if (typeof tvl === 'number' || typeof vol === 'number' || typeof fees === 'number') counted++;
     }
     const isLoading = counted === 0;
-    const pct = (cur: number, prev: number) => {
-      if (!isFinite(cur) || !isFinite(prev) || prev <= 0) return 0;
-      return ((cur - prev) / prev) * 100;
-    };
-    const tvlDeltaPct = pct(totalTVL, totalTVLYesterday);
-    const volDeltaPct = pct(totalVol24h, totalVolPrev24h);
-    const feesDeltaPct = pct(totalFees24h, totalFeesPrev24h);
-    return { totalTVL, totalVol24h, totalFees24h, tvlDeltaPct, volDeltaPct, feesDeltaPct, isLoading };
+    return { totalTVL, totalVol24h, totalFees24h, isLoading };
   }, [poolsData]);
 
   // handlePoolClick removed - using Link components for navigation
@@ -840,23 +703,9 @@ export default function LiquidityPage() {
                   <div className="mt-4">
                     <div className="rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 p-2 md:p-4">
                       <div className="flex items-stretch gap-1.5 md:gap-3">
-                        <div className="w-[165px] md:w-[260px] rounded-lg bg-muted/30 border border-sidebar-border/60">
-                          <div className="flex items-center justify-between px-3 md:px-4 h-7 md:h-9">
-                            <h2 className="mt-0.5 text-[10px] md:text-xs tracking-wider text-muted-foreground font-mono font-bold">TVL</h2>
-                            <div className="flex items-center gap-1">
-                              {poolAggregates.isLoading ? (
-                                <span className="inline-block h-2.5 w-7 md:h-3 md:w-8 bg-muted/60 rounded animate-pulse" />
-                              ) : (() => {
-                                const deltaPct = poolAggregates.tvlDeltaPct || 0;
-                                const isPos = deltaPct >= 0;
-                                return (
-                                  <>
-                                    {isPos ? <ArrowUpRight className="h-2.5 w-2.5 md:h-3 md:w-3 text-green-500" /> : <ArrowDownRight className="h-2.5 w-2.5 md:h-3 md:w-3 text-red-500" />}
-                                    <span className={`${isPos ? 'text-green-500' : 'text-red-500'} text-[10px] md:text-[11px] font-medium`}>{Math.abs(deltaPct).toFixed(2)}%</span>
-                                  </>
-                                );
-                              })()}
-                            </div>
+                        <div className="w-[140px] md:w-[180px] rounded-lg bg-muted/30 border border-sidebar-border/60">
+                          <div className="px-3 md:px-4 h-7 md:h-9 flex items-center">
+                            <h2 className="text-[10px] md:text-xs tracking-wider text-muted-foreground font-mono font-bold">TVL</h2>
                           </div>
                           <div className="px-3 md:px-4 py-1">
                             <div className="text-base md:text-lg font-medium">
@@ -864,56 +713,26 @@ export default function LiquidityPage() {
                             </div>
                           </div>
                         </div>
-                        <div className="w-[165px] md:w-[260px] rounded-lg bg-muted/30 border border-sidebar-border/60">
-                          <div className="flex items-center justify-between px-3 md:px-4 h-7 md:h-9">
-                            <h2 className="mt-0.5 text-[10px] md:text-xs tracking-wider text-muted-foreground font-mono font-bold">VOLUME (24H)</h2>
-                            <div className="flex items-center gap-1">
-                              {poolAggregates.isLoading ? (
-                                <span className="inline-block h-2.5 w-7 md:h-3 md:w-8 bg-muted/60 rounded animate-pulse" />
-                              ) : (() => {
-                                const deltaPct = poolAggregates.volDeltaPct || 0;
-                                const isPos = deltaPct >= 0;
-                                return (
-                                  <>
-                                    {isPos ? <ArrowUpRight className="h-2.5 w-2.5 md:h-3 md:w-3 text-green-500" /> : <ArrowDownRight className="h-2.5 w-2.5 md:h-3 md:w-3 text-red-500" />}
-                                    <span className={`${isPos ? 'text-green-500' : 'text-red-500'} text-[10px] md:text-[11px] font-medium`}>{Math.abs(deltaPct).toFixed(2)}%</span>
-                                  </>
-                                );
-                              })()}
-                            </div>
+                        <div className="w-[140px] md:w-[180px] rounded-lg bg-muted/30 border border-sidebar-border/60">
+                          <div className="px-3 md:px-4 h-7 md:h-9 flex items-center">
+                            <h2 className="text-[10px] md:text-xs tracking-wider text-muted-foreground font-mono font-bold">VOLUME (24H)</h2>
                           </div>
                           <div className="px-3 md:px-4 py-1">
                             <div className="text-base md:text-lg font-medium">
-                              {poolAggregates.isLoading ? <span className="inline-block h-5 w-20 md:h-6 md:w-24 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalVol24h)}
+                              {poolAggregates.isLoading ? <span className="inline-block h-5 w-16 md:h-6 md:w-20 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalVol24h)}
                             </div>
                           </div>
                         </div>
-                        {windowWidth >= 1400 && (
-                          <div className="w-[165px] md:w-[260px] rounded-lg bg-muted/30 border border-sidebar-border/60">
-                            <div className="flex items-center justify-between px-3 md:px-4 h-7 md:h-9">
-                              <h2 className="mt-0.5 text-[10px] md:text-xs tracking-wider text-muted-foreground font-mono font-bold">FEES (24H)</h2>
-                              <div className="flex items-center gap-1">
-                                {poolAggregates.isLoading ? (
-                                  <span className="inline-block h-2.5 w-7 md:h-3 md:w-8 bg-muted/60 rounded animate-pulse" />
-                                ) : (() => {
-                                  const deltaPct = poolAggregates.feesDeltaPct || 0;
-                                  const isPos = deltaPct >= 0;
-                                  return (
-                                    <>
-                                      {isPos ? <ArrowUpRight className="h-2.5 w-2.5 md:h-3 md:w-3 text-green-500" /> : <ArrowDownRight className="h-2.5 w-2.5 md:h-3 md:w-3 text-red-500" />}
-                                      <span className={`${isPos ? 'text-green-500' : 'text-red-500'} text-[10px] md:text-[11px] font-medium`}>{Math.abs(deltaPct).toFixed(2)}%</span>
-                                    </>
-                                  );
-                                })()}
-                              </div>
-                            </div>
-                            <div className="px-3 md:px-4 py-1">
-                              <div className="text-base md:text-lg font-medium">
-                                {poolAggregates.isLoading ? <span className="inline-block h-5 w-16 md:h-6 md:w-20 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalFees24h)}
-                              </div>
+                        <div className="w-[140px] md:w-[180px] rounded-lg bg-muted/30 border border-sidebar-border/60">
+                          <div className="px-3 md:px-4 h-7 md:h-9 flex items-center">
+                            <h2 className="text-[10px] md:text-xs tracking-wider text-muted-foreground font-mono font-bold">FEES (24H)</h2>
+                          </div>
+                          <div className="px-3 md:px-4 py-1">
+                            <div className="text-base md:text-lg font-medium">
+                              {poolAggregates.isLoading ? <span className="inline-block h-5 w-16 md:h-6 md:w-20 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalFees24h)}
                             </div>
                           </div>
-                        )}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -925,16 +744,15 @@ export default function LiquidityPage() {
                         <button className="h-8 px-3 rounded-md border border-sidebar-border bg-container hover:bg-surface text-muted-foreground hover:text-foreground flex items-center gap-2 text-xs transition-colors">
                           <FilterIcon className="h-3.5 w-3.5" />
                           <span>Filter</span>
-                          {(selectedCategory !== 'All' || apyTimeframe !== '24h') && (
+                          {selectedCategory !== 'All' && (
                             <span className="ml-1 flex h-4 w-4 items-center justify-center rounded-full bg-sidebar-primary text-[10px] font-medium text-background">
-                              {(selectedCategory !== 'All' ? 1 : 0) + (apyTimeframe !== '24h' ? 1 : 0)}
+                              1
                             </span>
                           )}
                         </button>
                       </PopoverTrigger>
                       <PopoverContent className="w-64 p-0 bg-container border-sidebar-border" align="end">
-                        <div className="p-4 space-y-4">
-                          {/* Pool Type Filter */}
+                        <div className="p-4">
                           <div className="space-y-2">
                             <label className="text-xs font-medium text-muted-foreground">Pool Type</label>
                             <div className="space-y-1">
@@ -959,73 +777,18 @@ export default function LiquidityPage() {
                               ))}
                             </div>
                           </div>
-
-                          <Separator className="bg-sidebar-border/60" />
-
-                          {/* APY Timeframe Filter */}
-                          <div className="space-y-2">
-                            <label className="text-xs font-medium text-muted-foreground">APY Timeframe</label>
-                            <div className="space-y-1">
-                              {[
-                                { value: '24h', label: '24 Hour APY', desc: 'Real-time yield' },
-                                { value: '7d', label: '7 Day APY', desc: 'Averaged over 7 days' }
-                              ].map(option => (
-                                <button
-                                  key={option.value}
-                                  onClick={() => setApyTimeframe(option.value as '24h' | '7d')}
-                                  disabled={is7dApyLoading && option.value === '7d'}
-                                  className={cn(
-                                    "w-full text-left px-2 py-1.5 rounded text-xs transition-colors",
-                                    apyTimeframe === option.value
-                                      ? "bg-button text-foreground font-medium"
-                                      : "text-muted-foreground hover:text-foreground hover:bg-surface/50",
-                                    is7dApyLoading && option.value === '7d' && "opacity-50 cursor-not-allowed"
-                                  )}
-                                  style={apyTimeframe === option.value ? {
-                                    backgroundImage: 'url(/pattern.svg)',
-                                    backgroundSize: 'cover',
-                                    backgroundPosition: 'center'
-                                  } : {}}
-                                >
-                                  <div className="flex items-center justify-between">
-                                    <div>
-                                      <div>{option.label}</div>
-                                      <div className="text-[10px] text-muted-foreground mt-0.5">{option.desc}</div>
-                                    </div>
-                                    {is7dApyLoading && option.value === '7d' && (
-                                      <div className="h-3 w-3 border-2 border-muted-foreground border-t-transparent rounded-full animate-spin" />
-                                    )}
-                                  </div>
-                                </button>
-                              ))}
-                            </div>
-                          </div>
                         </div>
                       </PopoverContent>
                     </Popover>
 
-                    {/* Active filters chips */}
-                    {(selectedCategory !== 'All' || apyTimeframe !== '24h') && (
-                      <div className="flex items-center gap-1.5">
-                        {selectedCategory !== 'All' && (
-                          <button
-                            onClick={() => setSelectedCategory('All')}
-                            className="group flex items-center gap-1 px-2 py-1 rounded-md border border-sidebar-border/60 bg-muted/40 text-xs text-muted-foreground hover:bg-muted/50"
-                          >
-                            <XIcon className="h-3 w-3" />
-                            <span className="uppercase tracking-wider font-mono font-bold text-xs">{selectedCategory}</span>
-                          </button>
-                        )}
-                        {apyTimeframe !== '24h' && (
-                          <button
-                            onClick={() => setApyTimeframe('24h')}
-                            className="group flex items-center gap-1 px-2 py-1 rounded-md border border-sidebar-border/60 bg-muted/40 text-xs text-muted-foreground hover:bg-muted/50"
-                          >
-                            <XIcon className="h-3 w-3" />
-                            <span className="uppercase tracking-wider font-mono font-bold text-xs">7D APY</span>
-                          </button>
-                        )}
-                      </div>
+                    {selectedCategory !== 'All' && (
+                      <button
+                        onClick={() => setSelectedCategory('All')}
+                        className="group flex items-center gap-1 px-2 py-1 rounded-md border border-sidebar-border/60 bg-muted/40 text-xs text-muted-foreground hover:bg-muted/50"
+                      >
+                        <XIcon className="h-3 w-3" />
+                        <span className="uppercase tracking-wider font-mono font-bold text-xs">{selectedCategory}</span>
+                      </button>
                     )}
                   </div>
                 </div>

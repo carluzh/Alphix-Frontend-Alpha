@@ -732,16 +732,8 @@ export function PositionDetailsModal({
   }, [onRefreshPosition, queryClient, accountAddress, selectedPoolId, position.positionId, resetDecrease, isWithdrawBurn, onClose, onAfterLiquidityRemoved, withdrawAmount0, withdrawAmount1, position.token0.symbol, position.token1.symbol, getUsdPriceForSymbol]);
 
   const handleCollectFeesSuccess = useCallback(async () => {
-    // Note: For fee collection, we still need invalidation since there's no parent callback
-    // Fee collection doesn't change TVL/volume, just clears fees
-    if (accountAddress && selectedPoolId) {
-      await invalidateAfterTx(queryClient, {
-        owner: accountAddress,
-        poolId: selectedPoolId,
-        positionIds: [position.positionId],
-        reason: 'fees-collected'
-      });
-    }
+    // Note: Cache invalidation is handled by useDecreaseLiquidity hook (reason: 'collect')
+    // This callback only handles UI state reset and parent refresh
 
     setCurrentView('default');
     setShowInterimConfirmation(false);
@@ -758,7 +750,7 @@ export function PositionDetailsModal({
     } else {
       onRefreshPosition();
     }
-  }, [onRefreshPosition, queryClient, accountAddress, selectedPoolId, position.positionId]);
+  }, [onRefreshPosition]);
 
   // Handlers for preview updates
   const handleAddAmountsChange = useCallback((amount0: number, amount1: number) => {

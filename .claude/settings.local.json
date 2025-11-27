@@ -56,7 +56,11 @@
       "Bash(then echo '=== .env.local exists ===')",
       "Bash(else echo \"=== .env.local NOT FOUND ===\")",
       "Bash(fi)",
-      "Bash(git fetch:*)"
+      "Bash(git fetch:*)",
+      "Bash(for pool in \"ausdc-abtc\" \"ausdc-ausdt\" \"eth-ausdt\" \"abtc-aeth\" \"ausdc-adai\" \"adai-aeth\")",
+      "Bash(do)",
+      "Bash(echo:*)",
+      "Bash(for pool in \"ausdt-aeth\" \"ausdc-abtc\" \"ausdc-ausdt\" \"eth-ausdt\" \"abtc-aeth\" \"ausdc-adai\" \"adai-aeth\")"
     ],
     "deny": [],
     "ask": []

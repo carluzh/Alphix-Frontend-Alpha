@@ -372,7 +372,15 @@ export async function GET(request: Request) {
       }
     );
 
-    return NextResponse.json({ ...result.data, isStale: result.isStale });
+    // Set cache headers for consistency with other endpoints
+    const headers: HeadersInit = {
+      'Cache-Control': 'no-store', // Let Redis handle caching, not CDN
+    };
+    if (result.isStale) {
+      headers['X-Cache-Status'] = 'stale';
+    }
+
+    return NextResponse.json({ ...result.data, isStale: result.isStale }, { headers });
   } catch (error: any) {
     console.error('[Batch] Unexpected error:', error);
     return NextResponse.json({ success: false, message: error?.message || 'Unknown error' }, { status: 500 });

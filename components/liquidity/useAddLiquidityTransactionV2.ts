@@ -350,12 +350,12 @@ export function useAddLiquidityTransactionV2({
         }
 
         // Get balances before swap to calculate actual received amounts
-        const getTokenBalance = async (tokenAddress: string, isNative: boolean, blockNumber?: bigint): Promise<bigint> => {
-          const blockTag = blockNumber ? blockNumber : 'latest';
+        const getTokenBalance = async (tokenAddress: string, isNative: boolean, atBlockNumber?: bigint): Promise<bigint> => {
+          const blockParam = atBlockNumber ? { blockNumber: atBlockNumber } : { blockTag: 'latest' as const };
           if (isNative) {
-            return await publicClient.getBalance({ 
-              address: accountAddress, 
-              blockTag 
+            return await publicClient.getBalance({
+              address: accountAddress,
+              ...blockParam
             });
           } else {
             return await publicClient.readContract({
@@ -363,7 +363,7 @@ export function useAddLiquidityTransactionV2({
               abi: ERC20_ABI,
               functionName: 'balanceOf',
               args: [accountAddress],
-              blockTag,
+              ...blockParam,
             }) as bigint;
           }
         };

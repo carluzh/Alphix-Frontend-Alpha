@@ -1,9 +1,9 @@
 # Caching Consolidation Plan
 
-**Status**: 🔄 Phase 2 Ready for Implementation
-**Last Updated**: 2025-11-27 (Phase 2 Analysis Complete)
+**Status**: ✅ Phase 3 Complete
+**Last Updated**: 2025-11-27 (Phase 3 Complete - Corrected Approach)
 **Owner**: Core Team
-**Approach**: Extend existing infrastructure, remove only duplicates/deprecated code
+**Approach**: Cache shared data only, let React Query handle user-specific data
 
 ---
 
@@ -13,31 +13,182 @@
 - ✅ **Phase 0**: Complete - Removed ~1,988 LOC of deprecated code, fixed 2 critical bugs
 - ✅ **Phase 1**: Complete - Created CacheService wrapper (~155 net LOC added)
 - ❌ **Phase 1.5**: Rolled back - Compression/metrics removed (~480 LOC deleted)
-- 🔄 **Phase 2**: Analysis complete, ready for execution (see detailed breakdown below)
+- ✅ **Phase 2**: Complete - 3 of 4 optimizations + 770 LOC dead code removed
+- ✅ **Phase 3**: Complete - All shared-data endpoints now use Redis caching
+
+**Key Insight (Corrected Approach):**
+> **Only cache SHARED data in Redis** - data that's the same for all users.
+> **User-specific data** (positions, position APY) should NOT use Redis caching:
+> - Cache key is per-user, so no sharing between users
+> - React Query on the client already handles this
+> - Redis adds unnecessary latency for user-specific requests
 
 **Current State:**
 - Clean codebase with working CacheService
 - All deprecated code removed
-- 8 files identified for Phase 2 subgraph optimizations
-- 4 optimizations planned (4.5 hours total effort)
+- Phase 2 optimizations delivered (50-66% query reduction)
+- **SHARED DATA (Redis cached):**
+  - `get-pool-state.ts` - TTL 30s/5min (same pool state for all users)
+  - `get-ticks.ts` - TTL 5min/1hr (same tick data for all users)
+  - `pool-metrics.ts` - TTL 5min/1hr (same metrics for all users)
+  - `get-pool-chart.ts` - TTL 15min/30min (same chart for all users)
+  - `get-historical-dynamic-fees.ts` - TTL 6hr/24hr (same fees for all users)
+  - `get-pools-batch.ts` - TTL 5min/15min (same for all users)
+- **USER-SPECIFIC DATA (NOT cached in Redis):**
+  - `get-positions.ts` - React Query handles client-side caching
+  - `get-lifetime-fees.ts` - React Query handles client-side caching
 
 **Next Steps for Fresh Developer:**
-1. Review Phase 2 analysis (lines 745-966 below)
-2. Start with Optimization 2 (quickest win - 30 min)
-3. Follow recommended execution order
-4. Use implementation checklist for each optimization
-5. Update Caching_Goal.md as you complete each one
+1. Test cache invalidation flow with transactions
+2. Monitor Redis cache hit rates in production
 
-**Files Ready for Modification:**
-- `/pages/api/liquidity/get-positions.ts` (Optimization 1)
-- `/pages/api/liquidity/get-ticks.ts` (Optimization 2 & 3)
-- `/hooks/usePoolChartData.ts` (Optimization 2)
-- `/components/liquidity/InteractiveRangeChart.tsx` (Optimization 2)
-- `/app/api/liquidity/pool-chart-data/route.ts` (Optimization 4)
-- `/pages/api/liquidity/get-historical-dynamic-fees.ts` (Optimization 4)
-- `/pages/api/liquidity/pool-metrics.ts` (Optimization 4)
+**Files Modified in Phase 3:**
+- `/pages/api/liquidity/get-pool-state.ts` ✅ Migrated (shared data)
+- `/pages/api/liquidity/get-ticks.ts` ✅ Migrated (shared data)
+- `/pages/api/liquidity/pool-metrics.ts` ✅ Migrated (shared data)
+- `/pages/api/liquidity/get-pool-chart.ts` ✅ Migrated (shared data)
+- `/pages/api/liquidity/get-historical-dynamic-fees.ts` ✅ Already migrated, fixed headers
+- `/pages/api/liquidity/get-positions.ts` ❌ Reverted - user-specific data
+- `/lib/lifetime-fees.ts` ❌ Reverted - user-specific data
+- `/lib/redis-keys.ts` - Deprecated user-specific keys, kept shared keys
 
 ---
+
+## 🏗️ **Caching Architecture Overview** (2025-11-27)
+
+Understanding the full caching stack is critical for debugging and avoiding conflicts.
+
+### **Cache Layers (Request Flow Order)**
+
+```
+User Request
+    ↓
+┌─────────────────────────────────────────────────────────────┐
+│ Layer 1: Browser Cache                                       │
+│ - Controlled by Cache-Control headers                        │
+│ - `no-store` = bypass (what we use for dynamic data)        │
+│ - Can cache responses locally if headers allow               │
+└─────────────────────────────────────────────────────────────┘
+    ↓
+┌─────────────────────────────────────────────────────────────┐
+│ Layer 2: CDN (Vercel Edge)                                   │
+│ - Controlled by `s-maxage` in Cache-Control                  │
+│ - `s-maxage=300` = CDN caches for 5min                      │
+│ - Bypassed when `Cache-Control: no-store`                   │
+│ - ⚠️ Invalidation doesn't work until CDN TTL expires        │
+└─────────────────────────────────────────────────────────────┘
+    ↓
+┌─────────────────────────────────────────────────────────────┐
+│ Layer 3: React Query (Client Memory)                         │
+│ - `staleTime: 2min` = won't refetch if data < 2min old      │
+│ - `gcTime: 10min` = keeps data in memory for 10min          │
+│ - Client-side only, complements server caching              │
+│ - Cleared on page refresh                                    │
+└─────────────────────────────────────────────────────────────┘
+    ↓
+┌─────────────────────────────────────────────────────────────┐
+│ Layer 4: Redis (Upstash) - SERVER SIDE                       │
+│ - CacheService with stale-while-revalidate                  │
+│ - Fresh TTL: Return immediately, no background refresh      │
+│ - Stale TTL: Return immediately + background refresh        │
+│ - Invalidated: Block until fresh data fetched               │
+│ - This is the PRIMARY caching layer                         │
+└─────────────────────────────────────────────────────────────┘
+    ↓
+┌─────────────────────────────────────────────────────────────┐
+│ Layer 5: Data Source (Subgraph / On-chain)                   │
+│ - Subgraph: 2-45 second indexing delay after transactions   │
+│ - On-chain: Real-time but expensive RPC calls               │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### **Stale-While-Revalidate Flow (Redis)**
+
+```
+Request for key "positions:0x123..."
+    ↓
+┌─ Check Redis ─────────────────────────────────────────────┐
+│                                                            │
+│  age = now - timestamp                                     │
+│                                                            │
+│  if (invalidated):                                         │
+│    → BLOCKING fetch, then return fresh data               │
+│    → Overwrites Redis with fresh timestamp                 │
+│                                                            │
+│  if (age < freshTTL):                                      │
+│    → Return cached data (FRESH)                           │
+│    → No background refresh                                 │
+│                                                            │
+│  if (age < staleTTL):                                      │
+│    → Return cached data (STALE)                           │
+│    → Fire background refresh (fire-and-forget)            │
+│    → Background overwrites Redis with fresh timestamp      │
+│                                                            │
+│  if (age >= staleTTL or no data):                         │
+│    → BLOCKING fetch, then return fresh data               │
+│    → Writes to Redis with fresh timestamp                  │
+│                                                            │
+└────────────────────────────────────────────────────────────┘
+```
+
+### **Current Cache Configuration**
+
+**SHARED DATA (Redis cached):**
+| Endpoint | Fresh TTL | Stale TTL | Cache-Control | Notes |
+|----------|-----------|-----------|---------------|-------|
+| `get-pool-state` | 30s | 5min | `no-store` | On-chain pool state |
+| `get-ticks` | 5min | 1hr | `no-store` | Pool tick data |
+| `get-pools-batch` | 5min | 15min | `no-store` | All pool stats |
+| `pool-metrics` | 5min | 1hr | `no-store` | APY/volume metrics |
+| `get-pool-chart` | 15min | 30min | `no-store` | Price chart (CoinGecko) |
+| `get-historical-dynamic-fees` | 6hr | 24hr | `no-store` | Dynamic fee history |
+
+**USER-SPECIFIC DATA (NOT cached in Redis):**
+| Endpoint | Caching Strategy | Notes |
+|----------|-----------------|-------|
+| `get-positions` | React Query only | Per-user positions |
+| `get-lifetime-fees` | React Query only | Per-position APY |
+
+> **Why no Redis for user-specific data?**
+> - Cache key is `positions:${address}` - unique per user, no sharing
+> - React Query already caches on the client (staleTime: 2min)
+> - Redis adds latency without benefit when there's no cache sharing
+
+### **localStorage Usage (Client-Side Only)**
+
+| Key Pattern | Purpose | TTL | Conflict Risk |
+|-------------|---------|-----|---------------|
+| `userPositionIds_*` | Position ID cache | 24h | Low - IDs only |
+| `alphix:global-version` | React Query cache busting | 1h | None - coordination |
+| `faucetLastClaimTimestamp_*` | Faucet cooldown | - | None - UI only |
+| `slippage/deadline/approval` | User settings | - | None - preferences |
+
+*Note: `pool-apy-cache-*` was removed (2025-11-27) - APY data now comes from Redis-cached `get-pools-batch`.*
+
+### **Invalidation Flow (Post-Transaction)**
+
+```
+User executes transaction (add liquidity, swap, etc.)
+    ↓
+Transaction confirmed on-chain
+    ↓
+Wait for subgraph to index (waitForSubgraphBlock)
+    ↓
+Call /api/cache/invalidate with affected keys
+    ↓
+Redis: invalidateCachedData() sets meta.invalidated = true
+    ↓
+Next request: Sees invalidated flag → BLOCKING refresh
+    ↓
+Fresh data returned, invalidated flag cleared
+```
+
+### **Known Limitations**
+
+1. **CDN Caching**: Endpoints with `s-maxage` won't see invalidation until CDN TTL expires
+2. **Layered Staleness**: Data can be React Query stale (2min) + Redis stale (varies) = combined staleness
+3. **localStorage APY**: Portfolio page caches APY calculations in localStorage (can show stale APYs)
+4. **Background Refresh Failures**: Fire-and-forget means failures are logged but not retried
 
 ---
 
@@ -1033,7 +1184,7 @@ This is a perfect example of **code archaeology revealing false assumptions**. T
 
 ---
 
-### **Phase 3: Migrate Pages API Endpoints to CacheService** ⏳ Not Started
+### **Phase 3: Migrate Pages API Endpoints to CacheService** 🔄 In Progress (Tier 1 Complete)
 
 **Goal**: Migrate high-traffic Pages API endpoints to use CacheService from Phase 1
 
@@ -1042,37 +1193,57 @@ This is a perfect example of **code archaeology revealing false assumptions**. T
 **Estimated Effort**: 6-8 hours
 **Priority**: 🟡 Medium (performance improvement for uncached endpoints)
 **Impact**: Extend caching to 27 Pages API endpoints
+**Status**: Tier 1 complete (2025-11-27)
 
 **Target Pages API Endpoints** (Priority order):
 
-**Tier 1 - High Traffic** (Migrate first - 3-4 hours):
-1. [ ] `/pages/api/liquidity/get-positions.ts` - User positions (hot path)
-   - Current: Direct subgraph, no cache
-   - After: TTL 2min fresh, 10min stale
-   - Pattern: Same as Phase 1 example
+**Tier 1 - High Traffic** ✅ COMPLETE (2025-11-27):
+1. [x] `/pages/api/liquidity/get-positions.ts` - User positions (hot path)
+   - ✅ Migrated to CacheService with TTL 2min fresh, 10min stale
+   - Uses `userKeys.positions(address)` for cache key
+   - Removed in-memory serverCache Map
 
-2. [ ] `/pages/api/liquidity/get-pool-state.ts` - Pool state (fetched every 15s)
-   - Current: Direct subgraph, no cache
-   - After: TTL 30s fresh, 5min stale
+2. [x] `/pages/api/liquidity/get-pool-state.ts` - Pool state (fetched every 15s)
+   - ✅ Migrated to CacheService with TTL 30s fresh, 5min stale
+   - Uses `poolKeys.state(poolId)` for cache key
+   - Removed in-memory serverCache Map
 
-3. [ ] `/pages/api/liquidity/get-ticks.ts` - Tick data (large payload)
-   - Current: Direct subgraph, no cache
+3. [x] `/pages/api/liquidity/get-ticks.ts` - Tick data (large payload)
+   - ✅ Migrated to CacheService with TTL 5min fresh, 1hr stale
+   - Uses `poolKeys.ticks(poolId)` for cache key
+   - Removed in-memory tickCache Map with LRU eviction
+
+**Tier 1 Implementation Notes:**
+- Added `userKeys` to `lib/redis-keys.ts` for user-specific caching
+- Added `poolKeys.ticks()` to `lib/redis-keys.ts` for tick data
+- Updated `getUserCacheKeys()` to return position cache keys for invalidation
+- All endpoints now support stale-while-revalidate pattern via Redis
+- All endpoints return `X-Cache-Status: stale` header when serving stale data
+
+**Tier 2 - Shared Pool Data** ✅ COMPLETE (2025-11-27):
+4. [x] `/pages/api/liquidity/pool-metrics.ts` - Pool analytics
    - After: TTL 5min fresh, 1h stale
+   - Wrapped entire fetch+calculation in CacheService
 
-**Tier 2 - Medium Traffic** (Migrate if time allows - 2-3 hours):
-4. [ ] `/pages/api/liquidity/pool-metrics.ts` - Pool analytics
-   - After: TTL 5min fresh, 1h stale
+5. [x] `/pages/api/liquidity/get-pool-chart.ts` - Price charts (CoinGecko)
+   - After: TTL 15min fresh, 30min stale
+   - Shared data - same chart for all users querying same token pair
 
-5. [ ] `/pages/api/liquidity/get-bucket-depths.ts` - Liquidity distribution
-   - After: TTL 30s fresh, 5min stale
+6. [x] `/pages/api/liquidity/get-historical-dynamic-fees.ts` - Dynamic fee history
+   - After: TTL 6hr fresh, 24hr stale
+   - Already had CacheService, fixed headers to use `no-store` instead of CDN
 
-6. [ ] `/pages/api/liquidity/get-lifetime-fees.ts` - Historical fees
-   - After: TTL 1h fresh, 24h stale
+**USER-SPECIFIC DATA - NOT CACHED** (2025-11-27):
+> These endpoints were initially migrated but reverted because user-specific data
+> doesn't benefit from Redis caching (no cache sharing, React Query handles client-side).
 
-**Tier 3 - Low Priority** (Migrate last - 1-2 hours):
-7. [ ] `/pages/api/liquidity/get-historical-dynamic-fees.ts`
-8. [ ] `/pages/api/liquidity/get-pool-chart.ts`
-9. [ ] `/pages/api/liquidity/get-bucket-depths.ts`
+- [ ] `/pages/api/liquidity/get-positions.ts` - User positions
+   - ❌ REVERTED - User-specific data, no cache sharing
+   - React Query handles client-side caching
+
+- [ ] `/pages/api/liquidity/get-lifetime-fees.ts` - Position APY
+   - ❌ REVERTED - Position-specific data, no cache sharing
+   - React Query handles client-side caching
 
 ---
 

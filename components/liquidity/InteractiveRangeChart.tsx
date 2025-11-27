@@ -3,20 +3,16 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { ResponsiveContainer, ComposedChart, XAxis, YAxis, Area, ReferenceLine, ReferenceArea, Tooltip as RechartsTooltip, Brush } from "recharts";
 import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Maximize } from "lucide-react";
-import { TOKEN_DEFINITIONS, TokenSymbol } from "@/lib/pools-config";
+import { TOKEN_DEFINITIONS, TokenSymbol, getPoolSubgraphId, getPoolById } from "@/lib/pools-config";
 import { formatUnits as viemFormatUnits } from "viem";
 import { Token } from '@uniswap/sdk-core';
 import { Pool as V4PoolSDK, Position as V4PositionSDK } from "@uniswap/v4-sdk";
 import JSBI from "jsbi";
 import { getAddress, type Hex } from "viem";
 
-// Import pools configuration
-import poolsConfig from "@/config/pools.json";
-
 // Helper function to get subgraphId from human-readable pool ID
 const getSubgraphIdFromPoolId = (poolId: string): string | null => {
-  const pool = poolsConfig.pools.find(p => p.id === poolId);
-  return pool?.subgraphId || null;
+  return getPoolSubgraphId(poolId) || null;
 };
 
 // Chart data interfaces
@@ -186,7 +182,7 @@ export function InteractiveRangeChart({
 
   const isStablePool = useMemo(() => {
     if (!selectedPoolId) return false;
-    const pool = poolsConfig.pools.find(p => p.id === selectedPoolId);
+    const pool = getPoolById(selectedPoolId);
     return (pool?.type || '').toLowerCase() === 'stable';
   }, [selectedPoolId]);
 

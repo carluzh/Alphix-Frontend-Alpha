@@ -322,10 +322,6 @@ async function fetchAndProcessUserPositionsForApi(ownerAddress: string): Promise
     return [];
 }
 
-// Simple in-memory server cache to hold the last successful positions payload for an owner
-const serverCache = new Map<string, { data: any; ts: number }>();
-const CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes
-
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse<ProcessedPosition[] | { message: string; count?: number; error?: any }>
@@ -341,32 +337,20 @@ export default async function handler(
     return res.status(400).json({ message: 'Valid ownerAddress query parameter is required.' });
   }
 
-  const cacheKey = `positions:${ownerAddress.toLowerCase()}`;
-
   try {
+    // For lightweight modes (countOnly/idsOnly), use optimized query
     if (countOnly === '1' || idsOnly === '1') {
-      // For lightweight modes, bypass the main cache and fetch directly.
-      // These are less critical and have their own internal fallbacks.
       const resp = await fetchIdsOrCount(ownerAddress, idsOnly === '1', withCreatedAt === '1');
       return res.status(200).json(resp as any);
     }
 
+    // Fetch positions directly - user-specific data doesn't benefit from server-side Redis caching
+    // React Query on the client handles caching for user-specific requests
     const positions = await fetchAndProcessUserPositionsForApi(ownerAddress);
-    // On success, update the cache.
-    serverCache.set(cacheKey, { data: positions, ts: Date.now() });
+
     return res.status(200).json(positions);
   } catch (error: any) {
     console.error(`API Error in /api/liquidity/get-positions for ${ownerAddress}:`, error);
-    
-    // On failure, attempt to serve from cache
-    const cached = serverCache.get(cacheKey);
-    if (cached && (Date.now() - cached.ts) < CACHE_TTL_MS * 10) { // Allow stale for up to 20 mins
-      console.warn(`[get-positions] Serving stale positions for ${ownerAddress} due to fetch error.`);
-      res.setHeader('Cache-Control', 'no-store'); // Do not cache the stale response
-      return res.status(200).json(cached.data);
-    }
-    
-    // If fetch fails and cache is empty or too old, return an error
     const errorMessage = error instanceof Error ? error.message : "An unknown error occurred while fetching positions.";
     return res.status(500).json({ message: errorMessage });
   }

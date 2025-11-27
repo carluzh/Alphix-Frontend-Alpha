@@ -6,43 +6,36 @@ interface ChartDataPoint {
 }
 
 export function usePoolChartData(token0?: string, token1?: string) {
+  // Normalize token order for cache key (alphabetical) so ETH/USDC and USDC/ETH share cache
+  const [sortedToken0, sortedToken1] = token0 && token1
+    ? [token0, token1].sort((a, b) => a.localeCompare(b))
+    : [token0, token1];
+
   return useQuery({
-    queryKey: ['pools', 'chart', token0, token1],
+    queryKey: ['pools', 'chart', sortedToken0, sortedToken1],
     queryFn: async ({ signal }) => {
       if (!token0 || !token1) {
-        console.log('[usePoolChartData] Missing tokens:', { token0, token1 });
         return { data: [] };
       }
 
-      console.log('[usePoolChartData] Fetching chart data for:', token0, token1);
-
-      // Add timeout to prevent hanging requests
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
 
       try {
         const response = await fetch(
           `/api/liquidity/get-pool-chart?token0=${token0}&token1=${token1}`,
           { signal: controller.signal }
         );
-
         clearTimeout(timeoutId);
 
         if (!response.ok) {
-          console.error('[usePoolChartData] HTTP error:', response.status, response.statusText);
           throw new Error(`HTTP error! status: ${response.status}`);
         }
 
-        const result = await response.json();
-        console.log('[usePoolChartData] Received data:', {
-          dataPoints: result?.data?.length || 0,
-          cached: result?.cached
-        });
-        return result;
+        return await response.json();
       } catch (error) {
         clearTimeout(timeoutId);
         if (error instanceof Error && error.name === 'AbortError') {
-          console.error('[usePoolChartData] Request timed out after 30 seconds');
           throw new Error('Request timed out');
         }
         throw error;

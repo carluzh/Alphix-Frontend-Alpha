@@ -80,7 +80,8 @@ async function computeChartData(poolId: string, days: number): Promise<ChartData
       }),
 
       // Query 2: Fee events from unified endpoint (consolidates duplicate queries)
-      fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/liquidity/get-historical-dynamic-fees?poolId=${encodeURIComponent(poolId)}`)
+      // IMPORTANT: Pass subgraphId (0x hash), not poolId (human-readable), because the subgraph stores pools by hash
+      fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/liquidity/get-historical-dynamic-fees?poolId=${encodeURIComponent(subgraphId)}`)
     ]);
 
     if (!dayDataResult.ok) {

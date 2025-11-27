@@ -445,8 +445,8 @@ export function TransactionFlowPanel({
           tickUpper={tickUpper || ""}
           amount0={amount0 || ""}
           amount1={amount1 || ""}
-          currentPrice={currentPrice}
-          currentPoolTick={currentPoolTick}
+          currentPrice={currentPrice ?? null}
+          currentPoolTick={currentPoolTick ?? null}
           currentPoolSqrtPriceX96={currentPoolSqrtPriceX96}
           selectedPoolId={selectedPoolId}
           getUsdPriceForSymbol={getUsdPriceForSymbol}

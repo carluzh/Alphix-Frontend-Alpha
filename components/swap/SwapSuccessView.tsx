@@ -12,8 +12,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { useAccount } from "wagmi";
 import { useEffect } from "react";
-import { Token, SwapTxInfo } from './swap-interface'; // Assuming types are exported
-import { deleteCachedData } from "@/lib/redis";
+import { Token, SwapTxInfo } from './swap-interface';
 
 interface SwapSuccessViewProps {
   displayFromToken: Token;
@@ -42,12 +41,13 @@ export function SwapSuccessView({
   const { address: accountAddress } = useAccount();
 
   useEffect(() => {
-    if (!accountAddress) return;
+    if (!accountAddress || !swapTxInfo?.hash) return;
 
-    // Invalidate Redis cache for pool data after successful swap
-    deleteCachedData('pools-batch:v1').catch(err =>
-      console.error('[Cache] Failed to invalidate after swap:', err)
-    );
+    fetch('/api/cache/invalidate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ownerAddress: accountAddress, reason: 'swap_complete' })
+    }).catch(err => console.error('[Cache] Failed to invalidate after swap:', err));
   }, [accountAddress, swapTxInfo?.hash]);
   return (
     <motion.div key="success" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
