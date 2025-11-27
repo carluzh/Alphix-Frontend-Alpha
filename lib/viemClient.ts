@@ -1,15 +1,23 @@
 import { createPublicClient, http, fallback, custom } from 'viem';
 import { getTargetChain } from './swap-constants';
-import { baseSepolia } from './wagmiConfig';
+import { activeChain, baseSepolia, baseMainnet, isMainnet } from './wagmiConfig';
 import { executeRPCCall, executeRPCBatch } from './rpcClient';
 
-// Multiple RPC endpoints for better reliability
+// Network-specific RPC endpoints
+const TESTNET_RPC_URLS = [
+  "https://sepolia.base.org",
+  "https://base-sepolia.drpc.org",
+];
+
+const MAINNET_RPC_URLS = [
+  "https://mainnet.base.org",
+  "https://base.drpc.org",
+];
+
+// Multiple RPC endpoints for better reliability - use network-aware URLs
 const RPC_URLS = [
   process.env.NEXT_PUBLIC_RPC_URL || process.env.RPC_URL,
-  // Prefer the official endpoint first
-  "https://sepolia.base.org",
-  // Keep one reliable fallback
-  "https://base-sepolia.drpc.org",
+  ...(isMainnet ? MAINNET_RPC_URLS : TESTNET_RPC_URLS),
 ].filter(Boolean) as string[];
 
 if (RPC_URLS.length === 0) {
@@ -55,7 +63,7 @@ const fallbackTransport = fallback(
 const transport = process.env.USE_RATE_LIMITED_RPC === 'true' ? rateLimitedTransport : fallbackTransport;
 
 export const publicClient = createPublicClient({
-    chain: baseSepolia,
+    chain: activeChain,
     transport,
     // Ensure viem knows about multicall, otherwise fallback to individual calls
     batch: {
@@ -63,5 +71,8 @@ export const publicClient = createPublicClient({
     },
 });
 
-// You can also export the chain object if it's needed elsewhere directly
-export { baseSepolia as targetChain }; 
+// Export the active chain object
+export { activeChain as targetChain };
+
+// Legacy export for backwards compatibility
+export { baseSepolia }; 

@@ -49,6 +49,7 @@ interface PrepareMintAfterSwapTxRequest extends NextApiRequest {
         userTickUpper: number;
         chainId: number;
         slippageTolerance?: number;
+        deadlineSeconds?: number; // Transaction deadline in seconds (default: 1800 = 30 minutes)
         permitSignature?: string;
         permitBatchData?: {
             domain?: {
@@ -159,6 +160,7 @@ export default async function handler(
             userTickUpper,
             chainId,
             slippageTolerance = 50, // 0.5% default
+            deadlineSeconds = 1800, // 30 minutes default (matches TX_DEADLINE_SECONDS)
             permitSignature,
             permitBatchData,
         } = req.body;
@@ -411,7 +413,7 @@ export default async function handler(
 
         // ========== STEP 4: Build mint transaction ==========
         const now = Math.floor(Date.now() / 1000);
-        const deadline = BigInt(now + 600); // 10 minutes
+        const deadline = BigInt(now + deadlineSeconds);
 
         let mintOptions: MintOptions = {
             slippageTolerance: new Percent(slippageTolerance, 10_000),

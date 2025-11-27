@@ -1,9 +1,14 @@
 import { getAddress, parseAbi, type Address, type Hex, type Chain, type Abi } from 'viem';
 import { position_manager_abi } from './abis/PositionManager_abi';
+import { getStoredNetworkMode, MAINNET_CHAIN_ID, TESTNET_CHAIN_ID } from './network-mode';
+
+// Get current network mode
+const networkMode = getStoredNetworkMode();
+const isMainnet = networkMode === 'mainnet';
 
 // --- Blockchain & Network Configuration ---
-export const CHAIN_ID = 84532; // Base Sepolia
-export const CHAIN_NAME = 'Base Sepolia';
+export const CHAIN_ID = isMainnet ? MAINNET_CHAIN_ID : TESTNET_CHAIN_ID;
+export const CHAIN_NAME = isMainnet ? 'Base' : 'Base Sepolia';
 export const NATIVE_CURRENCY_NAME = 'Ether';
 export const NATIVE_CURRENCY_SYMBOL = 'ETH';
 export const NATIVE_CURRENCY_DECIMALS = 18;
@@ -12,8 +17,8 @@ export const NATIVE_CURRENCY_DECIMALS = 18;
 export const PERMIT2_ADDRESS_RAW = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
 export const PERMIT2_ADDRESS: Address = getAddress(PERMIT2_ADDRESS_RAW);
 
-// --- TOKEN DEFINITIONS ---
-export const TOKEN_DEFINITIONS = {
+// --- TOKEN DEFINITIONS (Testnet) ---
+const TESTNET_TOKEN_DEFINITIONS = {
     'aUSDC': {
         addressRaw: '0x663cf82e49419a3dc88eec65c2155b4b2d0fa335',
         decimals: 6,
@@ -41,20 +46,53 @@ export const TOKEN_DEFINITIONS = {
     }
 } as const;
 
+// --- TOKEN DEFINITIONS (Mainnet) ---
+// TODO: Replace with actual mainnet token addresses when deployed
+const MAINNET_TOKEN_DEFINITIONS = {
+    'USDC': {
+        addressRaw: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', // Base USDC
+        decimals: 6,
+        symbol: 'USDC'
+    },
+    'USDbC': {
+        addressRaw: '0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA', // Base bridged USDC
+        decimals: 6,
+        symbol: 'USDbC'
+    },
+    'WETH': {
+        addressRaw: '0x4200000000000000000000000000000000000006', // Base WETH
+        decimals: 18,
+        symbol: 'WETH'
+    },
+    'ETH': {
+        addressRaw: '0x0000000000000000000000000000000000000000',
+        decimals: 18,
+        symbol: 'ETH'
+    }
+} as const;
+
+// Export network-specific token definitions
+export const TOKEN_DEFINITIONS = isMainnet ? MAINNET_TOKEN_DEFINITIONS : TESTNET_TOKEN_DEFINITIONS;
+
 // Define a type for the token symbols for better type safety
-export type TokenSymbol = keyof typeof TOKEN_DEFINITIONS;
+export type TokenSymbol = keyof typeof TESTNET_TOKEN_DEFINITIONS | keyof typeof MAINNET_TOKEN_DEFINITIONS;
 
 // Explicitly define the type for a single token definition
 export interface TokenDefinition {
     readonly addressRaw: string;
     readonly decimals: number;
-    readonly symbol: TokenSymbol;
+    readonly symbol: string;
 }
 
 // --- V4 Pool Configuration ---
 export const V4_POOL_FEE = 2000; // Updated to match new fee from pools.json
 export const V4_POOL_TICK_SPACING = 60;
-export const V4_POOL_HOOKS_RAW = '0xd450f7f8e4C11EE8620a349f73e7aC3905Dfd000';
+
+// Hooks addresses differ per network
+const TESTNET_HOOKS_ADDRESS = '0xd450f7f8e4C11EE8620a349f73e7aC3905Dfd000';
+const MAINNET_HOOKS_ADDRESS = '0x0000000000000000000000000000000000000000'; // TODO: Replace with mainnet hooks address
+
+export const V4_POOL_HOOKS_RAW = isMainnet ? MAINNET_HOOKS_ADDRESS : TESTNET_HOOKS_ADDRESS;
 export const V4_POOL_HOOKS: Address = getAddress(V4_POOL_HOOKS_RAW);
 
 // Permit2 expiration durations - matching Uniswap's approach
@@ -125,7 +163,10 @@ export const getTargetChain = (rpcUrl: string) => ({
 
 // --- V4 Position Manager Configuration ---
 // These constants are needed for the burn liquidity functionality
-export const V4_POSITION_MANAGER_ADDRESS_RAW = '0x4b2c77d209d3405f41a037ec6c77f7f5b8e2ca80'; // TODO: Replace with actual address
+const TESTNET_POSITION_MANAGER_ADDRESS = '0x4b2c77d209d3405f41a037ec6c77f7f5b8e2ca80';
+const MAINNET_POSITION_MANAGER_ADDRESS = '0x0000000000000000000000000000000000000000'; // TODO: Replace with mainnet address
+
+export const V4_POSITION_MANAGER_ADDRESS_RAW = isMainnet ? MAINNET_POSITION_MANAGER_ADDRESS : TESTNET_POSITION_MANAGER_ADDRESS;
 export const V4_POSITION_MANAGER_ADDRESS: Address = getAddress(V4_POSITION_MANAGER_ADDRESS_RAW);
 
 // --- V4 Quoter Configuration ---

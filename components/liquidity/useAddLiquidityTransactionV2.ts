@@ -12,6 +12,7 @@ import { type Hex, maxUint256, formatUnits, formatUnits as viemFormatUnits, pars
 import { publicClient } from '@/lib/viemClient';
 import { useCheckLiquidityApprovals } from './useCheckLiquidityApprovals';
 import { useCheckZapApprovals } from './useCheckZapApprovals';
+import { isInfiniteApprovalEnabled } from '@/hooks/useUserSettings';
 
 export interface UseAddLiquidityTransactionV2Props {
   token0Symbol: TokenSymbol;
@@ -27,6 +28,7 @@ export interface UseAddLiquidityTransactionV2Props {
   isZapMode?: boolean;
   zapInputToken?: 'token0' | 'token1';
   zapSlippageToleranceBps?: number; // Slippage tolerance in basis points for zap mode
+  deadlineSeconds?: number; // Transaction deadline in seconds (default: 1800 = 30 minutes)
 }
 
 export function useAddLiquidityTransactionV2({
@@ -43,6 +45,7 @@ export function useAddLiquidityTransactionV2({
   isZapMode = false,
   zapInputToken = 'token0',
   zapSlippageToleranceBps = 50, // Default 0.5% (50 basis points)
+  deadlineSeconds = 1800, // Default 30 minutes
 }: UseAddLiquidityTransactionV2Props) {
   const { address: accountAddress, chainId } = useAccount();
   const queryClient = useQueryClient();
@@ -107,6 +110,7 @@ export function useAddLiquidityTransactionV2({
           chainId,
           tickLower: calculatedData.finalTickLower ?? parseInt(tickLower),
           tickUpper: calculatedData.finalTickUpper ?? parseInt(tickUpper),
+          slippageToleranceBps: zapSlippageToleranceBps,
         }
       : undefined,
     {
@@ -171,8 +175,9 @@ export function useAddLiquidityTransactionV2({
   const processedFailedHashRef = useRef<string | null>(null);
 
   // Handle ERC20 approval for a specific token
+  // If exactAmount is provided and user has exact approval mode enabled, approves only that amount
   const handleApprove = useCallback(
-    async (tokenSymbol: TokenSymbol) => {
+    async (tokenSymbol: TokenSymbol, exactAmount?: string) => {
       const tokenConfig = getToken(tokenSymbol);
       if (!tokenConfig) throw new Error(`Token ${tokenSymbol} not found`);
 
@@ -180,19 +185,35 @@ export function useAddLiquidityTransactionV2({
         icon: React.createElement(InfoIcon, { className: 'h-4 w-4' }),
       });
 
+      // Determine approval amount based on user settings
+      const useInfiniteApproval = isInfiniteApprovalEnabled();
+      let approvalAmount: bigint = maxUint256;
+
+      if (!useInfiniteApproval && exactAmount) {
+        try {
+          approvalAmount = viemParseUnits(exactAmount, tokenConfig.decimals);
+        } catch {
+          // Fall back to infinite if parsing fails
+          approvalAmount = maxUint256;
+        }
+      }
+
       const hash = await approveAsync({
         address: tokenConfig.address as `0x${string}`,
         abi: ERC20_ABI,
         functionName: 'approve',
-        args: [PERMIT2_ADDRESS, maxUint256],
+        args: [PERMIT2_ADDRESS, approvalAmount],
       });
 
       // Wait for confirmation
       const receipt = await publicClient.waitForTransactionReceipt({ hash });
 
+      const isInfinite = approvalAmount === maxUint256;
       toast.success(`${tokenSymbol} Approved`, {
         icon: React.createElement(BadgeCheck, { className: 'h-4 w-4 text-green-500' }),
-        description: `Approved infinite ${tokenSymbol} for liquidity`,
+        description: isInfinite
+          ? `Approved infinite ${tokenSymbol} for liquidity`
+          : `Approved ${exactAmount} ${tokenSymbol} for this transaction`,
         action: {
           label: 'View Transaction',
           onClick: () => window.open(`https://sepolia.basescan.org/tx/${hash}`, '_blank'),
@@ -261,6 +282,7 @@ export function useAddLiquidityTransactionV2({
           userTickUpper: tu,
           chainId,
           slippageTolerance: zapSlippageToleranceBps,
+          deadlineSeconds,
         };
 
         // Include permit signature if it was required
@@ -463,6 +485,7 @@ export function useAddLiquidityTransactionV2({
             userTickUpper: tu,
             chainId,
             slippageTolerance: zapSlippageToleranceBps,
+            deadlineSeconds,
           }),
         });
 
@@ -533,6 +556,7 @@ export function useAddLiquidityTransactionV2({
               userTickUpper: tu,
               chainId,
               slippageTolerance: zapSlippageToleranceBps,
+              deadlineSeconds,
               permitSignature: batchPermitSignature,
               permitBatchData: mintResult.permitBatchData, // Include permit batch data
             }),

@@ -15,6 +15,7 @@ import { useEthersSigner } from "@/hooks/useEthersSigner";
 import { usePercentageInput } from "@/hooks/usePercentageInput";
 import { V4_POOL_FEE, V4_POOL_TICK_SPACING, V4_POOL_HOOKS } from "@/lib/swap-constants";
 import { DEFAULT_LP_SLIPPAGE, MAX_AUTO_SLIPPAGE_TOLERANCE } from "@/lib/slippage-constants";
+import { getStoredDeadlineSeconds } from "@/hooks/useUserSettings";
 import { TOKEN_DEFINITIONS, TokenSymbol, NATIVE_TOKEN_ADDRESS } from "@/lib/pools-config";
 import { getPoolById, getToken } from "@/lib/pools-config";
 import { formatUnits as viemFormatUnits, parseUnits as viemParseUnits, getAddress, type Hex } from "viem";
@@ -348,6 +349,9 @@ export function AddLiquidityForm({
     zapSlippageToleranceBps: zapSlippageToleranceBps
   });
 
+  // Get user's deadline setting
+  const userDeadlineSeconds = useMemo(() => getStoredDeadlineSeconds(), []);
+
   // Use the same transaction hook for both regular and zap modes
   const regularTransaction = useAddLiquidityTransactionV2({
     token0Symbol,
@@ -363,6 +367,7 @@ export function AddLiquidityForm({
     isZapMode,
     zapInputToken,
     zapSlippageToleranceBps: isZapMode ? zapSlippageToleranceBps : undefined,
+    deadlineSeconds: userDeadlineSeconds,
   });
 
   // For zap mode, just use the regular transaction hook

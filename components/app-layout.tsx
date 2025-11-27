@@ -31,7 +31,7 @@ export function AppLayout({ children }: AppLayoutProps) {
       <SidebarInset
         className={isMobile === true ? MOBILE_HEADER_PADDING_CLASS : ""}
       >
-        <div className="flex flex-1 flex-col overflow-y-auto">
+        <div className="flex flex-1 flex-col">
           {children}
         </div>
       </SidebarInset>

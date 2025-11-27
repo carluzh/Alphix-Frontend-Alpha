@@ -25,6 +25,7 @@ interface PrepareZapSwapTxRequest extends NextApiRequest {
         minOutputAmount: string;
         chainId: number;
         slippageTolerance?: number;
+        deadlineSeconds?: number; // Transaction deadline in seconds (default: 1800 = 30 minutes)
         // Permit2 signature (if provided)
         permitSignature?: string;
         permitNonce?: number;
@@ -111,6 +112,7 @@ export default async function handler(
             minOutputAmount,
             chainId,
             slippageTolerance = 50, // 0.5% default
+            deadlineSeconds = 1800, // 30 minutes default (matches TX_DEADLINE_SECONDS)
             permitSignature,
             permitNonce,
             permitExpiration,
@@ -322,7 +324,7 @@ export default async function handler(
 
         // Finalize transaction
         const { commands, inputs } = routePlanner;
-        const deadline = BigInt(now + 600); // 10 minutes
+        const deadline = BigInt(now + deadlineSeconds);
         const txValue = isNativeInput ? parsedSwapAmount.toString() : '0';
 
         return res.status(200).json({

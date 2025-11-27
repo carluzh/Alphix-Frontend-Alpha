@@ -1,6 +1,7 @@
 // Server-side Subgraph client with concurrency cap, retry, jitter, rate limiting, and timeout
 
 import { withRateLimitRetry, rateLimitMiddleware } from './rateLimiter';
+import { getBaseSubgraphUrl } from './subgraph-url-helper';
 
 type GraphQLRequest = {
   query: string;
@@ -12,7 +13,8 @@ type GraphQLResponse<T> = {
   errors?: Array<{ message?: string; [k: string]: any }>;
 };
 
-const SUBGRAPH_URL: string | undefined = process.env.SUBGRAPH_URL;
+// Use network-aware subgraph URL
+const SUBGRAPH_URL: string = getBaseSubgraphUrl();
 const SUBGRAPH_API_KEY: string | undefined = process.env.SUBGRAPH_API_KEY;
 
 if (typeof window !== 'undefined') {

@@ -1,28 +1,18 @@
 "use client"
 
 import type * as React from "react"
-import { useEffect, useState, useRef } from "react"
+import { useEffect, useState, useRef, useMemo } from "react"
 import {
-  BarChartIcon,
-  ClipboardListIcon,
   HelpCircleIcon,
-  LockIcon,
-  TrendingUpIcon,
   ArrowRightLeftIcon,
   LayersIcon,
-  GiftIcon,
-  BriefcaseIcon,
-  TrophyIcon,
   ChartPieIcon,
-  AwardIcon,
-  KeySquareIcon,
-  GaugeIcon,
   CoinsIcon,
   BookTextIcon,
+  SettingsIcon,
 } from "lucide-react"
 import { ReactSVG } from "react-svg"
 import { NavMain } from "./nav-main"
-import { NavGovernance } from "./nav-governance"
 import { AccountStatus } from "./AccountStatus"
 import { ConnectWalletButton } from "./ConnectWalletButton"
 import { CustomLockIcon } from "./CustomLockIcon"
@@ -45,6 +35,42 @@ import { Badge } from "@/components/ui/badge"
 import { useRouter } from "next/navigation"; // Import useRouter
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { getLatestVersion } from "@/lib/version-log"
+import { useNetwork } from "@/lib/network-context"
+
+// Base navigation items (always shown)
+const baseNavItems = [
+  {
+    title: "Swap",
+    url: "/swap",
+    icon: ArrowRightLeftIcon,
+  },
+  {
+    title: "Liquidity",
+    url: "/liquidity",
+    icon: LayersIcon,
+  },
+  {
+    title: "Portfolio",
+    url: "/portfolio",
+    icon: ChartPieIcon,
+  },
+];
+
+// Testnet-only navigation items
+const testnetNavItems = [
+  {
+    title: "Faucet",
+    icon: CoinsIcon,
+    isFaucet: true,
+  },
+];
+
+// Always shown at the end
+const settingsNavItem = {
+  title: "Settings",
+  url: "/settings",
+  icon: SettingsIcon,
+};
 
 const data = {
   user: {
@@ -52,48 +78,6 @@ const data = {
     address: "0x1234...5678",
     avatar: "/avatars/shadcn.jpg",
   },
-  navMain: [
-    {
-      title: "Swap",
-      url: "/swap",
-      icon: ArrowRightLeftIcon,
-    },
-    {
-      title: "Liquidity",
-      url: "/liquidity",
-      icon: LayersIcon,
-    },
-    {
-      title: "Portfolio",
-      url: "/portfolio",
-      icon: ChartPieIcon,
-    },
-    {
-      title: "Faucet",
-      icon: CoinsIcon,
-      isFaucet: true,
-    },
-  ],
-  navGovernance: [
-    {
-      title: "Lock",
-      icon: KeySquareIcon,
-      url: "#",
-      disabled: true,
-    },
-    {
-      title: "Vote",
-      icon: ClipboardListIcon,
-      url: "#",
-      disabled: true,
-    },
-    {
-      title: "Gauges",
-      icon: GaugeIcon,
-      url: "#",
-      disabled: true,
-    },
-  ],
   navSecondary: [
     {
       title: "Documentation",
@@ -113,10 +97,19 @@ const BETA_BADGE_STORAGE_KEY = "alphix:betaBadge:lastSeenVersion";
 export function AppSidebar({ variant = "floating", onBetaClick, ...props }: AppSidebarProps) {
   const isMobile = useIsMobile()
   const router = useRouter(); // Initialize useRouter
+  const { isTestnet } = useNetwork();
   const [showVersionInitial, setShowVersionInitial] = useState(false);
   const [badgeHovered, setBadgeHovered] = useState(false);
   const [lockedItem, setLockedItem] = useState<string | null>(null)
   const timeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+  // Build navigation items based on network mode
+  const navMain = useMemo(() => {
+    if (isTestnet) {
+      return [...baseNavItems, ...testnetNavItems, settingsNavItem];
+    }
+    return [...baseNavItems, settingsNavItem];
+  }, [isTestnet]);
 
   const handleLockedClick = (itemName: string) => {
     if (timeoutRef.current) {
@@ -244,8 +237,7 @@ export function AppSidebar({ variant = "floating", onBetaClick, ...props }: AppS
         </div>
       </SidebarHeader>
       <SidebarContent>
-        <NavMain items={data.navMain} />
-        <NavGovernance items={data.navGovernance} className="mt-2" />
+        <NavMain items={navMain} />
         <div className="mt-auto space-y-2">
           {/* Links section (contains Documentation, Twitter, Discord) */}
           <SidebarGroup>

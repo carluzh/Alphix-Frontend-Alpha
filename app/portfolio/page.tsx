@@ -39,6 +39,7 @@ import { cn } from '@/lib/utils';
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Folder, Rows3, Filter as FilterIcon, X as XIcon } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
+import { useNetwork } from "@/lib/network-context";
 
 // Loading phases for skeleton system
 type LoadPhases = { phase: 0 | 1 | 2 | 3 | 4; startedAt: number };
@@ -642,6 +643,7 @@ function usePortfolio(refreshKey: number = 0, userPositionsData?: any[], pricesD
 
 export default function PortfolioPage() {
   const router = useRouter();
+  const { isTestnet } = useNetwork();
   const [positionsRefresh, setPositionsRefresh] = useState(0);
   const { address: accountAddress, isConnected } = useAccount();
   const queryClient = useQueryClient();
@@ -883,7 +885,9 @@ export default function PortfolioPage() {
   // NEW: selector state for switching between sections
   const [selectedSection, setSelectedSection] = useState<string>('Active Positions');
   const isMobile = viewportWidth <= 768;
-  const isIntegrateBalances = viewportWidth < 1400 && !isMobile;
+  // Balances panel only shown on testnet
+  const isIntegrateBalances = isTestnet && viewportWidth < 1400 && !isMobile;
+  const showBalancesPanel = isTestnet; // Controls whether to show balances at all
   const sectionsList = useMemo(() => {
     const base = ['Active Positions'];
     return isIntegrateBalances ? [...base, 'Balances'] : base;
@@ -2249,7 +2253,7 @@ export default function PortfolioPage() {
               )
             )}
             </div>
-            {!isIntegrateBalances && (
+            {showBalancesPanel && !isIntegrateBalances && (
               <aside className="lg:flex-none" style={{ width: viewportWidth >= 1024 ? '450px' : '100%' }}>
                 <div className="mb-2 flex items-center gap-2 justify-between">
                   <button
@@ -2547,8 +2551,8 @@ export default function PortfolioPage() {
 
         {/* NEW: Portfolio sections with selector + right Balances aside */}
         <div className="mt-6 flex flex-col lg:flex-row" style={{ gap: `${getColumnGapPx(viewportWidth)}px` }}>
-          {/* Mobile: Show Balances first */}
-          {isMobile && !isIntegrateBalances && (
+          {/* Mobile: Show Balances first (only on testnet) */}
+          {showBalancesPanel && isMobile && !isIntegrateBalances && (
             <aside className="lg:flex-none" style={{ width: viewportWidth >= 1024 ? '450px' : '100%' }}>
               <div className="mb-2 flex items-center gap-2 justify-between">
                 <button

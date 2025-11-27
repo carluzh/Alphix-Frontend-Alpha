@@ -657,7 +657,7 @@ function Navbar({
               variant="alphix"
               className="text-sm flex items-center px-3 py-2 h-auto rounded-md cursor-pointer"
               style={{ fontFamily: 'Inter, sans-serif' }}
-              onClick={() => router.push('/swap')}
+              onClick={() => router.push('/liquidity')}
             >
               Open App
             </Button>
@@ -702,7 +702,7 @@ function Navbar({
                 Documentation
               </a>
             </div>
-            <button onClick={() => { router.push('/swap'); setIsMobileMenuOpen(false); }} className="-m-1 flex items-center gap-x-2 p-1 text-gray-500 transition-colors hover:text-white text-xl tracking-tight">
+            <button onClick={() => { router.push('/liquidity'); setIsMobileMenuOpen(false); }} className="-m-1 flex items-center gap-x-2 p-1 text-gray-500 transition-colors hover:text-white text-xl tracking-tight">
               Open App
             </button>
           </div>

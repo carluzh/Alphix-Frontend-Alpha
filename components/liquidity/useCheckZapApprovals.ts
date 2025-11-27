@@ -14,6 +14,7 @@ export interface CheckZapApprovalsParams {
   chainId?: number;
   tickLower?: number;
   tickUpper?: number;
+  slippageToleranceBps?: number; // Slippage in basis points (e.g., 50 = 0.5%)
 }
 
 export interface CheckZapApprovalsResponse {
@@ -154,7 +155,7 @@ export function useCheckZapApprovals(
           userTickLower: params.tickLower || 0,
           userTickUpper: params.tickUpper || 0,
           chainId: params.chainId,
-          slippageTolerance: 50,
+          slippageTolerance: params.slippageToleranceBps ?? 50,
         }),
       })
         .then(res => {
@@ -195,6 +196,7 @@ export function useCheckZapApprovals(
     params?.tickLower,
     params?.tickUpper,
     params?.chainId,
+    params?.slippageToleranceBps,
     inputAmountWei,
   ]);
 

@@ -23,6 +23,13 @@
 
 import { SafeStorage } from './safe-storage';
 import { RetryUtility } from './retry-utility';
+import { getStoredNetworkMode } from './network-mode';
+
+// Get network prefix for cache keys to prevent data contamination between networks
+function getNetworkPrefix(): string {
+  const networkMode = getStoredNetworkMode();
+  return networkMode === 'mainnet' ? 'mainnet' : 'testnet';
+}
 
 // Request deduplication: track ongoing requests to prevent duplicates
 const ongoingRequests = new Map<string, Promise<any>>();
@@ -83,9 +90,11 @@ export function setOngoingRequest<T>(key: string, promise: Promise<T>): Promise<
 
 /**
  * Cache key for user position IDs in localStorage
+ * Includes network prefix to prevent data contamination between networks
  */
 function getUserPositionIdsCacheKey(address: string): string {
-  return `userPositionIds_${address.toLowerCase()}`;
+  const prefix = getNetworkPrefix();
+  return `${prefix}:userPositionIds_${address.toLowerCase()}`;
 }
 
 /**
@@ -373,19 +382,23 @@ export function getFromCacheWithTtl<T>(_key: string, _ttlMs: number = 600000): T
 }
 
 export function getUserPositionsCacheKey(address: string): string {
-  return `user:positions:${address.toLowerCase()}`;
+  const prefix = getNetworkPrefix();
+  return `${prefix}:user:positions:${address.toLowerCase()}`;
 }
 
 export function getPoolStatsCacheKey(poolId: string): string {
-  return `pool:stats:${poolId.toLowerCase()}`;
+  const prefix = getNetworkPrefix();
+  return `${prefix}:pool:stats:${poolId.toLowerCase()}`;
 }
 
 export function getPoolDynamicFeeCacheKey(poolId: string): string {
-  return `pool:dynamicFee:${poolId.toLowerCase()}`;
+  const prefix = getNetworkPrefix();
+  return `${prefix}:pool:dynamicFee:${poolId.toLowerCase()}`;
 }
 
 export function getPoolChartDataCacheKey(poolId: string, days: number): string {
-  return `pool:chart:${poolId.toLowerCase()}:${days}d`;
+  const prefix = getNetworkPrefix();
+  return `${prefix}:pool:chart:${poolId.toLowerCase()}:${days}d`;
 }
 
 export function invalidateCacheEntry(_key: string): void {

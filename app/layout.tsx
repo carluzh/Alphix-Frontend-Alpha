@@ -6,6 +6,7 @@ import { config } from '@/lib/wagmiConfig'
 import { cookieToInitialState } from 'wagmi'
 import { headers } from 'next/headers'
 import { ThemeProvider } from "@/components/theme-provider"
+import { NetworkProvider } from "@/lib/network-context"
 import { Toaster } from "@/components/ui/sonner"
 import { Analytics } from '@vercel/analytics/react'
 import { SpeedInsights } from '@vercel/speed-insights/next'
@@ -45,20 +46,22 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       <body>
         <ThemeProvider
           attribute="class"
-          defaultTheme="dark" 
+          defaultTheme="dark"
           enableSystem
           disableTransitionOnChange
         >
-          <AppKitProvider cookies={cookie}>
-            <ErrorBoundary>
-              <SidebarProvider>
-                {children}
-              </SidebarProvider>
-            </ErrorBoundary>
-          </AppKitProvider>
-          <Toaster position="top-right" />
-          <Analytics />
-          <SpeedInsights />
+          <NetworkProvider>
+            <AppKitProvider cookies={cookie}>
+              <ErrorBoundary>
+                <SidebarProvider>
+                  {children}
+                </SidebarProvider>
+              </ErrorBoundary>
+            </AppKitProvider>
+            <Toaster position="top-right" />
+            <Analytics />
+            <SpeedInsights />
+          </NetworkProvider>
         </ThemeProvider>
       </body>
     </html>

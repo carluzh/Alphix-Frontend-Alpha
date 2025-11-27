@@ -89,6 +89,7 @@ interface PrepareZapMintTxRequest extends NextApiRequest {
         userTickUpper: number;
         chainId: number;
         slippageTolerance?: number; // in basis points (50 = 0.5%), max 500 (5%)
+        deadlineSeconds?: number; // Transaction deadline in seconds (default: TX_DEADLINE_SECONDS)
 
         // Permit2 signature (if provided)
         permitSignature?: string;
@@ -716,6 +717,7 @@ export default async function handler(
             userTickUpper,
             chainId,
             slippageTolerance = 50, // 0.5% default (50 basis points)
+            deadlineSeconds = TX_DEADLINE_SECONDS, // Default to constant if not provided
         } = req.body;
 
         // Validate inputs
@@ -1094,7 +1096,7 @@ export default async function handler(
 
         // Finalize swap transaction
         const currentTimestamp = BigInt(Math.floor(Date.now() / 1000));
-        const swapTxDeadline = currentTimestamp + BigInt(TX_DEADLINE_SECONDS);
+        const swapTxDeadline = currentTimestamp + BigInt(deadlineSeconds);
         const swapTxValue = isNativeInput ? optimalSwapAmount.toString() : '0';
 
         console.log('[prepare-zap-mint-tx] Finalizing swap transaction:', {

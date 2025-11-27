@@ -37,6 +37,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { useSwapPercentageInput } from "@/hooks/usePercentageInput";
 import { useUserSlippageTolerance } from "@/hooks/useSlippage";
 import { getAutoSlippage } from "@/lib/slippage-api";
+import { isInfiniteApprovalEnabled } from "@/hooks/useUserSettings";
 import { useTokenUSDPrice } from "@/hooks/useTokenUSDPrice";
 
 import {
@@ -1644,11 +1645,15 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 icon: <InfoIcon className="h-4 w-4" />
             });
 
+            // Determine approval amount based on user settings
+            const useInfiniteApproval = isInfiniteApprovalEnabled();
+            const approvalAmount = useInfiniteApproval ? maxUint256 : parsedAmount;
+
             const approveTxHash = await sendApprovalTx({
                 address: fromToken.address,
                 abi: Erc20AbiDefinition,
                 functionName: 'approve',
-                args: [PERMIT2_ADDRESS, maxUint256], // Infinite approval (Uniswap-style)
+                args: [PERMIT2_ADDRESS, approvalAmount],
             });
             if (!approveTxHash) throw new Error("Failed to send approval transaction");
 
@@ -1656,10 +1661,12 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
             const approvalReceipt = await publicClient.waitForTransactionReceipt({ hash: approveTxHash as Hex });
             if (!approvalReceipt || approvalReceipt.status !== 'success') throw new Error("Approval transaction failed on-chain");
 
-            // Show approval success toast with infinite approval message
+            // Show approval success toast with appropriate message
             toast.success(`${fromToken.symbol} Approved`, {
                 icon: <BadgeCheck className="h-4 w-4 text-green-500" />,
-                description: `Approved infinite ${fromToken.symbol} for swapping`,
+                description: useInfiniteApproval
+                    ? `Approved infinite ${fromToken.symbol} for swapping`
+                    : `Approved ${fromAmount} ${fromToken.symbol} for this swap`,
                 action: {
                     label: "View Transaction",
                     onClick: () => window.open(`https://sepolia.basescan.org/tx/${approveTxHash}`, '_blank')

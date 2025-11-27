@@ -1,6 +1,39 @@
 import { getAddress, type Address } from 'viem';
 import { Token } from '@uniswap/sdk-core';
-import poolsConfig from '../config/pools.json';
+import testnetPoolsConfig from '../config/testnet_pools.json';
+import mainnetPoolsConfig from '../config/pools.json';
+import { getStoredNetworkMode } from './network-mode';
+
+// Type definitions for pools config structure
+interface PoolsConfigFile {
+  meta: { version: string; description: string; chainId: number; chainName: string };
+  contracts: { poolManager: string; universalRouter?: string; quoter: string; positionManager: string; stateView: string };
+  hooks: { alphixHookId: string };
+  tokens: Record<string, { symbol: string; name: string; address: string; decimals: number; icon: string; usdPrice?: string }>;
+  pools: Array<{
+    id: string;
+    name: string;
+    description: string;
+    subgraphId: string;
+    currency0: { symbol: string; address: string };
+    currency1: { symbol: string; address: string };
+    fee: number;
+    tickSpacing: number;
+    hooks: string;
+    enabled: boolean;
+    featured: boolean;
+    type?: string;
+  }>;
+  fees: { initialFee: number; initialTargetRatio: string; currentRatio: string };
+}
+
+// Select the appropriate pools config based on network mode
+// pools.json = mainnet config
+// testnet_pools.json = testnet config (Base Sepolia)
+const networkMode = getStoredNetworkMode();
+const poolsConfig: PoolsConfigFile = networkMode === 'mainnet'
+  ? (mainnetPoolsConfig as PoolsConfigFile)
+  : (testnetPoolsConfig as PoolsConfigFile);
 
 // Types based on pools.json structure
 export interface TokenConfig {
