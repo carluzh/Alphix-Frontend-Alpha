@@ -1346,6 +1346,40 @@ export function AddLiquidityModal({
       <DialogContent className="p-0 border-0 bg-transparent shadow-none max-w-lg w-[calc(100%-2rem)] sm:w-full [&>button]:hidden">
         {!showSuccessView ? (
           <div className="space-y-6">
+            <style dangerouslySetInnerHTML={{__html: `
+              @keyframes inputGradientFlow {
+                from { background-position: 0% 0%; }
+                to { background-position: 300% 0%; }
+              }
+              .input-gradient-hover {
+                position: relative;
+                border-radius: 8px;
+              }
+              .input-gradient-hover::before {
+                content: '';
+                position: absolute;
+                inset: -1px;
+                border-radius: 9px;
+                background: linear-gradient(
+                  45deg,
+                  #f94706,
+                  #ff7919 25%,
+                  #f94706 50%,
+                  #ff7919 75%,
+                  #f94706 100%
+                );
+                background-size: 300% 100%;
+                opacity: 0;
+                transition: opacity 0.3s ease;
+                pointer-events: none;
+                z-index: 0;
+                animation: inputGradientFlow 10s linear infinite;
+              }
+              .input-gradient-hover:hover::before,
+              .input-gradient-hover:focus-within::before {
+                opacity: 1;
+              }
+            `}} />
         {isExistingPosition ? (
           <>
             {/* Addition Logic Container with Buttons */}
@@ -1368,15 +1402,16 @@ export function AddLiquidityModal({
                         Balance: {displayToken0Balance} {positionToModify.token0.symbol}
                       </button>
                     </div>
-                    <motion.div
-                      className="group rounded-lg bg-muted/30 border border-sidebar-border/60 p-4"
-                      animate={wiggleControls0}
-                    >
-                      <div className="flex items-center gap-2">
-                        <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
-                          <Image src={getTokenIcon(positionToModify.token0.symbol)} alt={positionToModify.token0.symbol} width={20} height={20} className="rounded-full" />
-                          <span className="text-sm font-medium">{positionToModify.token0.symbol}</span>
-                        </div>
+                    <div className="input-gradient-hover">
+                      <motion.div
+                        className="relative z-[1] group rounded-lg bg-surface border border-sidebar-border/60 p-4"
+                        animate={wiggleControls0}
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-1.5 bg-[var(--token-selector-background)] border border-sidebar-border/60 rounded-lg h-11 px-3">
+                            <Image src={getTokenIcon(positionToModify.token0.symbol)} alt={positionToModify.token0.symbol} width={20} height={20} className="rounded-full" />
+                            <span className="text-sm font-medium">{positionToModify.token0.symbol}</span>
+                          </div>
                         <div className="flex-1">
                           <Input
                             id="increase-amount0"
@@ -1448,7 +1483,8 @@ export function AddLiquidityModal({
                           </div>
                         </div>
                       </div>
-                    </motion.div>
+                      </motion.div>
+                    </div>
                   </div>
 
                   <div className="flex justify-center items-center my-2">
@@ -1469,15 +1505,16 @@ export function AddLiquidityModal({
                         Balance: {displayToken1Balance} {positionToModify.token1.symbol}
                       </button>
                     </div>
-                    <motion.div
-                      className="group rounded-lg bg-muted/30 border border-sidebar-border/60 p-4"
-                      animate={wiggleControls1}
-                    >
-                      <div className="flex items-center gap-2">
-                        <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
-                          <Image src={getTokenIcon(positionToModify.token1.symbol)} alt={positionToModify.token1.symbol} width={20} height={20} className="rounded-full" />
-                          <span className="text-sm font-medium">{positionToModify.token1.symbol}</span>
-                        </div>
+                    <div className="input-gradient-hover">
+                      <motion.div
+                        className="relative z-[1] group rounded-lg bg-surface border border-sidebar-border/60 p-4"
+                        animate={wiggleControls1}
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-1.5 bg-[var(--token-selector-background)] border border-sidebar-border/60 rounded-lg h-11 px-3">
+                            <Image src={getTokenIcon(positionToModify.token1.symbol)} alt={positionToModify.token1.symbol} width={20} height={20} className="rounded-full" />
+                            <span className="text-sm font-medium">{positionToModify.token1.symbol}</span>
+                          </div>
                         <div className="flex-1">
                           <Input
                             id="increase-amount1"
@@ -1549,7 +1586,8 @@ export function AddLiquidityModal({
                           </div>
                         </div>
                       </div>
-                    </motion.div>
+                      </motion.div>
+                    </div>
                   </div>
                 </>
               ) : (
@@ -1570,15 +1608,16 @@ export function AddLiquidityModal({
                           Balance: {displayToken0Balance} {positionToModify.token0.symbol}
                         </button>
                       </div>
-                      <motion.div 
-                        className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4"
-                        animate={wiggleControls0}
-                      >
-                        <div className="flex items-center gap-2">
-                          <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
-                            <Image src={getTokenIcon(positionToModify.token0.symbol)} alt={positionToModify.token0.symbol} width={20} height={20} className="rounded-full" />
-                            <span className="text-sm font-medium">{positionToModify.token0.symbol}</span>
-                          </div>
+                      <div className="input-gradient-hover">
+                        <motion.div
+                          className="relative z-[1] rounded-lg bg-surface border border-sidebar-border/60 p-4"
+                          animate={wiggleControls0}
+                        >
+                          <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1.5 bg-[var(--token-selector-background)] border border-sidebar-border/60 rounded-lg h-11 px-3">
+                              <Image src={getTokenIcon(positionToModify.token0.symbol)} alt={positionToModify.token0.symbol} width={20} height={20} className="rounded-full" />
+                              <span className="text-sm font-medium">{positionToModify.token0.symbol}</span>
+                            </div>
                           <div className="flex-1">
                             <Input
                               id="increase-amount0-oor"
@@ -1606,7 +1645,8 @@ export function AddLiquidityModal({
                             </div>
                           </div>
                         </div>
-                      </motion.div>
+                        </motion.div>
+                      </div>
                     </div>
                   )}
 
@@ -1625,15 +1665,16 @@ export function AddLiquidityModal({
                           Balance: {displayToken1Balance} {positionToModify.token1.symbol}
                         </button>
                       </div>
-                      <motion.div 
-                        className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4"
-                        animate={wiggleControls1}
-                      >
-                        <div className="flex items-center gap-2">
-                          <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
-                            <Image src={getTokenIcon(positionToModify.token1.symbol)} alt={positionToModify.token1.symbol} width={20} height={20} className="rounded-full" />
-                            <span className="text-sm font-medium">{positionToModify.token1.symbol}</span>
-                          </div>
+                      <div className="input-gradient-hover">
+                        <motion.div
+                          className="relative z-[1] rounded-lg bg-surface border border-sidebar-border/60 p-4"
+                          animate={wiggleControls1}
+                        >
+                          <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1.5 bg-[var(--token-selector-background)] border border-sidebar-border/60 rounded-lg h-11 px-3">
+                              <Image src={getTokenIcon(positionToModify.token1.symbol)} alt={positionToModify.token1.symbol} width={20} height={20} className="rounded-full" />
+                              <span className="text-sm font-medium">{positionToModify.token1.symbol}</span>
+                            </div>
                           <div className="flex-1">
                             <Input
                               id="increase-amount1-oor"
@@ -1661,7 +1702,8 @@ export function AddLiquidityModal({
                             </div>
                           </div>
                         </div>
-                      </motion.div>
+                        </motion.div>
+                      </div>
                     </div>
                   )}
                 </>

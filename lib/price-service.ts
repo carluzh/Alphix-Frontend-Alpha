@@ -104,17 +104,26 @@ export function getFallbackPrice(tokenSymbol: string): number {
   return 0;
 }
 
+// Client-side cache for batch prices (10 second TTL)
+let batchCache: { prices: AllPricesData; timestamp: number } | null = null;
+const BATCH_CACHE_TTL_MS = 10 * 1000;
+
 /**
  * Batch fetch multiple token prices
  * Leverages the fact that /api/prices always returns all prices
  */
 export async function batchGetTokenPrices(tokenSymbols: string[]): Promise<Record<string, number>> {
-  console.log(`[PriceService] Batch request for: ${tokenSymbols.join(', ')}`);
-
   try {
-    const allPrices = await getAllTokenPrices();
-    const result: Record<string, number> = {};
+    // Use cached prices if fresh
+    let allPrices: AllPricesData;
+    if (batchCache && Date.now() - batchCache.timestamp < BATCH_CACHE_TTL_MS) {
+      allPrices = batchCache.prices;
+    } else {
+      allPrices = await getAllTokenPrices();
+      batchCache = { prices: allPrices, timestamp: Date.now() };
+    }
 
+    const result: Record<string, number> = {};
     for (const symbol of tokenSymbols) {
       const baseSymbol = getUnderlyingAsset(symbol);
       if (baseSymbol) {
@@ -124,12 +133,9 @@ export async function batchGetTokenPrices(tokenSymbols: string[]): Promise<Recor
         result[symbol] = 0;
       }
     }
-
-    console.log('[PriceService] Batch result:', result);
     return result;
   } catch (error) {
     console.error('[PriceService] Error in batch fetch:', error);
-    // Return zeros for all requested symbols on error
     return Object.fromEntries(tokenSymbols.map(symbol => [symbol, 0]));
   }
 }

@@ -1,12 +1,11 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { PlusIcon, RefreshCwIcon, MinusIcon, ActivityIcon, CheckIcon, InfoIcon, ArrowLeftIcon, OctagonX, BadgeCheck, Maximize, CircleHelp, AlertTriangle } from "lucide-react";
+import { Plus, InfoIcon, OctagonX, BadgeCheck, Maximize, CircleHelp, ArrowLeftRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
 import { cn, formatTokenDisplayAmount } from "@/lib/utils";
 import Image from "next/image";
 import { useAccount, useBalance } from "wagmi";
@@ -16,9 +15,9 @@ import { usePercentageInput } from "@/hooks/usePercentageInput";
 import { V4_POOL_FEE, V4_POOL_TICK_SPACING, V4_POOL_HOOKS } from "@/lib/swap-constants";
 import { DEFAULT_LP_SLIPPAGE, MAX_AUTO_SLIPPAGE_TOLERANCE } from "@/lib/slippage-constants";
 import { getStoredDeadlineSeconds } from "@/hooks/useUserSettings";
-import { TOKEN_DEFINITIONS, TokenSymbol, NATIVE_TOKEN_ADDRESS } from "@/lib/pools-config";
+import { TOKEN_DEFINITIONS, TokenSymbol } from "@/lib/pools-config";
 import { getPoolById, getToken } from "@/lib/pools-config";
-import { formatUnits as viemFormatUnits, parseUnits as viemParseUnits, getAddress, type Hex } from "viem";
+import { formatUnits as viemFormatUnits, parseUnits as viemParseUnits, getAddress } from "viem";
 
 // Helper function to safely parse amounts and prevent scientific notation errors
 const safeParseUnits = (amount: string, decimals: number): bigint => {
@@ -61,13 +60,6 @@ const showErrorToast = (title: string, description?: string, action?: { label: s
   });
 };
 
-const showSuccessToast = (title: string, description?: string) => {
-  toast.success(title, {
-    icon: React.createElement(BadgeCheck, { className: "h-4 w-4 text-green-500" }),
-    description: description
-  });
-};
-
 const showInfoToast = (title: string) => {
   toast(title, {
     icon: React.createElement(InfoIcon, { className: "h-4 w-4" })
@@ -75,13 +67,12 @@ const showInfoToast = (title: string) => {
 };
 
 import { Token } from '@uniswap/sdk-core';
-import { Pool as V4PoolSDK, Position as V4PositionSDK } from "@uniswap/v4-sdk";
+import { Pool as V4PoolSDK } from "@uniswap/v4-sdk";
 import JSBI from "jsbi";
-import poolsConfig from "../../config/pools.json";
 import { formatUSD } from "@/lib/format";
+import { calculateUserPositionAPY, calculatePositionAPY, formatUserAPY, type PoolMetrics } from "@/lib/apy-calculator";
 import { useTokenUSDPrice } from "@/hooks/useTokenUSDPrice";
 import { getOptimalBaseToken, getDecimalsForDenomination, convertTickToPrice as convertTickToPriceUtil } from "@/lib/denomination-utils";
-import { calculateUserPositionAPY, formatUserAPY, type PoolMetrics } from "@/lib/user-position-apy";
 
 // Utility functions
 const getTokenIcon = (symbol?: string) => {
@@ -105,34 +96,32 @@ function debounce<F extends (...args: any[]) => any>(func: F, waitFor: number) {
   return debounced as (...args: Parameters<F>) => ReturnType<F> | void;
 }
 
-// Chart data interfaces
-// Chart data interfaces - now handled in InteractiveRangeChart
-
 export interface AddLiquidityFormProps {
-  onLiquidityAdded: (token0Symbol?: string, token1Symbol?: string) => void; 
+  onLiquidityAdded: (token0Symbol?: string, token1Symbol?: string) => void;
   selectedPoolId?: string;
   sdkMinTick: number;
   sdkMaxTick: number;
   defaultTickSpacing: number;
-  poolApr?: string;
-  activeTab: 'deposit' | 'withdraw' | 'swap'; // Added activeTab prop
-  // Props for copying position parameters
+  activeTab: 'deposit' | 'withdraw' | 'swap';
   initialTickLower?: number;
   initialTickUpper?: number;
   initialToken0Amount?: string;
+  onRangeChange?: (rangeInfo: { preset: string | null; label: string; estimatedApy: string; hasUserInteracted: boolean; isCalculating: boolean }) => void;
+  poolState?: { currentPrice: string; currentPoolTick: number; sqrtPriceX96: string; liquidity?: string };
 }
 
-export function AddLiquidityForm({ 
-  onLiquidityAdded, 
+export function AddLiquidityForm({
+  onLiquidityAdded,
   selectedPoolId,
   sdkMinTick,
   sdkMaxTick,
   defaultTickSpacing,
-  poolApr,
-  activeTab, // Accept activeTab from props
+  activeTab,
   initialTickLower,
   initialTickUpper,
   initialToken0Amount,
+  onRangeChange,
+  poolState,
 }: AddLiquidityFormProps) {
   // Basic state management - initialize tokens based on selected pool
   const getInitialTokens = () => {
@@ -165,8 +154,8 @@ export function AddLiquidityForm({
   // Store full precision values for editing
   const [amount0FullPrecision, setAmount0FullPrecision] = useState<string>("");
   const [amount1FullPrecision, setAmount1FullPrecision] = useState<string>("");
-  const [tickLower, setTickLower] = useState<string>(sdkMinTick.toString());
-  const [tickUpper, setTickUpper] = useState<string>(sdkMaxTick.toString());
+  const [tickLower, setTickLower] = useState<string>("");
+  const [tickUpper, setTickUpper] = useState<string>("");
   const [currentPoolTick, setCurrentPoolTick] = useState<number | null>(null);
   const [activeInputSide, setActiveInputSide] = useState<'amount0' | 'amount1' | null>(null);
   const [isAmount0Focused, setIsAmount0Focused] = useState(false);
@@ -199,13 +188,44 @@ export function AddLiquidityForm({
   const [activePreset, setActivePreset] = useState<string | null>(null);
   const [isPoolStateLoading, setIsPoolStateLoading] = useState<boolean>(false);
   const [isChartLoading, setIsChartLoading] = useState<boolean>(false);
-  const [enhancedAprDisplay, setEnhancedAprDisplay] = useState<string>(poolApr || "Yield N/A");
-  const [capitalEfficiencyFactor, setCapitalEfficiencyFactor] = useState<number>(1);
   const [initialDefaultApplied, setInitialDefaultApplied] = useState(false);
   const [baseTokenForPriceDisplay, setBaseTokenForPriceDisplay] = useState<TokenSymbol>(() =>
     getOptimalBaseToken(initialTokens.token0, initialTokens.token1));
   const [estimatedApy, setEstimatedApy] = useState<string>("0.00");
   const [isCalculatingApy, setIsCalculatingApy] = useState(false);
+  const [hasUserInteracted, setHasUserInteracted] = useState(false);
+
+  // Helper to convert internal preset values to display labels
+  const getPresetDisplayLabel = useCallback((preset: string | null, isStable: boolean): string => {
+    if (!preset) return "Select Range";
+    if (preset === "Full Range") return "Full Range";
+    // Volatile pools: ±15% = Wide, ±3% = Narrow
+    // Stable pools: ±3% = Wide, ±0.5% = Narrow
+    if (isStable) {
+      if (preset === "±3%" || preset === "±1%") return "Wide";
+      if (preset === "±0.5%" || preset === "±0.1%") return "Narrow";
+    } else {
+      if (preset === "±15%") return "Wide";
+      if (preset === "±8%") return "Wide";
+      if (preset === "±3%") return "Narrow";
+    }
+    return "Custom";
+  }, []);
+
+  // Notify parent of range/APY changes (mirrors form's visual state)
+  useEffect(() => {
+    if (onRangeChange) {
+      const label = getPresetDisplayLabel(activePreset, isStablePool);
+      onRangeChange({
+        preset: activePreset,
+        label,
+        estimatedApy,
+        hasUserInteracted,
+        isCalculating: isCalculatingApy,
+      });
+    }
+  }, [activePreset, estimatedApy, isStablePool, onRangeChange, getPresetDisplayLabel, hasUserInteracted, isCalculatingApy]);
+
   // Cache pool metrics and state (fetched once per pool)
   const [cachedPoolMetrics, setCachedPoolMetrics] = useState<{ poolId: string; metrics: any; poolLiquidity: string } | null>(null);
 
@@ -552,10 +572,11 @@ export function AddLiquidityForm({
           setActiveInputSide(null);
           setCurrentPrice(null);
           setInitialDefaultApplied(false);
-          setActivePreset(isStablePool ? "±3%" : "±15%"); // Reset preset on pool change (Wide for stable pools)
+          setActivePreset(null); // No default preset - user must select
           setBaseTokenForPriceDisplay(t0); // Reset base token for price display
           // Reset chart specific states too
           setCurrentPriceLine(null);
+          setHasUserInteracted(false); // Reset interaction state on pool change
         }
       }
     }
@@ -618,58 +639,50 @@ export function AddLiquidityForm({
     setCalculatedData(null);
     setCurrentPoolTick(null);
     setCurrentPrice(null);
-    setActivePreset(isStablePool ? "±3%" : "±15%"); // Reset preset based on pool type (Wide for stable pools)
+    setActivePreset(null); // No default preset - user must select
     setBaseTokenForPriceDisplay(token0Symbol); // Reset base token for price display
     // Reset chart specific states too
     setCurrentPriceLine(null);
   }, [token0Symbol, token1Symbol, chainId, sdkMinTick, sdkMaxTick, isStablePool]);
 
-  // Effect to fetch initial pool state (current price and tick)
+  // Fetch initial pool state - uses prop if provided, otherwise fetches from API
   useEffect(() => {
-    const fetchPoolState = async () => {
+    const applyPoolState = (data: { currentPrice: string; currentPoolTick: number; sqrtPriceX96?: string }) => {
+      setCurrentPrice(data.currentPrice);
+      setCurrentPoolTick(data.currentPoolTick);
+      setCurrentPoolSqrtPriceX96(data.sqrtPriceX96?.toString() || null);
+
+      const price = parseFloat(data.currentPrice);
+      if (!isNaN(price)) {
+        setCurrentPriceLine(price);
+        const percentageRange = isStablePool ? 0.05 : 0.20;
+        const tickRange = Math.round(Math.log(1 + percentageRange) / Math.log(1.0001));
+        setXDomain([data.currentPoolTick - tickRange, data.currentPoolTick + tickRange]);
+      } else {
+        setCurrentPriceLine(null);
+      }
+    };
+
+    if (poolState?.currentPrice && typeof poolState?.currentPoolTick === 'number') {
+      setIsPoolStateLoading(false);
+      applyPoolState(poolState);
+      return;
+    }
+
+    const fetchFromApi = async () => {
       if (!selectedPoolId || !chainId) return;
-      
       setIsPoolStateLoading(true);
       try {
-        const poolConfig = getPoolById(selectedPoolId);
-        const poolIdParam = poolConfig?.subgraphId || selectedPoolId;
-
+        const poolIdParam = getPoolById(selectedPoolId)?.subgraphId || selectedPoolId;
         const response = await fetch(`/api/liquidity/get-pool-state?poolId=${encodeURIComponent(poolIdParam)}`);
-        
         if (!response.ok) {
           const errorData = await response.json();
-          throw new Error(errorData.message || "Failed to fetch initial pool state.");
+          throw new Error(errorData.message || "Failed to fetch pool state.");
         }
-        const poolState = await response.json();
-
-        if (poolState.currentPrice && typeof poolState.currentPoolTick === 'number') {
-          setCurrentPrice(poolState.currentPrice); 
-          setCurrentPoolTick(poolState.currentPoolTick);
-
-          if (poolState.sqrtPriceX96) { 
-            setCurrentPoolSqrtPriceX96(poolState.sqrtPriceX96.toString()); 
-          } else {
-            setCurrentPoolSqrtPriceX96(null); 
-          }
-          
-          const numericCurrentPrice = parseFloat(poolState.currentPrice);
-          if (!isNaN(numericCurrentPrice)) {
-            setCurrentPriceLine(numericCurrentPrice);
-
-            // Set initial viewport based on pool type: ±5% for stable, ±20% for volatile
-            const centerTick = poolState.currentPoolTick;
-            const percentageRange = isStablePool ? 0.05 : 0.20;
-            const tickRange = Math.round(Math.log(1 + percentageRange) / Math.log(1.0001));
-            const domainTickLower = centerTick - tickRange;
-            const domainTickUpper = centerTick + tickRange;
-            setXDomain([domainTickLower, domainTickUpper]);
-
-          } else {
-            setCurrentPriceLine(null);
-          }
+        const data = await response.json();
+        if (data.currentPrice && typeof data.currentPoolTick === 'number') {
+          applyPoolState(data);
         } else {
-          setCurrentPriceLine(null);
-          setCurrentPoolSqrtPriceX96(null);
           throw new Error("Pool state data is incomplete.");
         }
       } catch (error: any) {
@@ -680,11 +693,9 @@ export function AddLiquidityForm({
         setIsPoolStateLoading(false);
       }
     };
-    
-    if (selectedPoolId) {
-      fetchPoolState();
-    }
-  }, [selectedPoolId, chainId]);
+
+    if (selectedPoolId) fetchFromApi();
+  }, [selectedPoolId, chainId, poolState, isStablePool]);
 
   // Effect to update price input strings when underlying ticks or base display token changes
   useEffect(() => {
@@ -834,6 +845,7 @@ export function AddLiquidityForm({
     resetTransaction();
     setActivePreset(preset);
     setShowPresetSelector(false);
+    setHasUserInteracted(true);
 
     if (preset === "Full Range") {
       setTickLower(sdkMinTick.toString());
@@ -1251,103 +1263,6 @@ export function AddLiquidityForm({
     }
   }, [currentPrice, currentPoolTick, activePreset, defaultTickSpacing, sdkMinTick, sdkMaxTick, tickLower, tickUpper, resetTransaction, isStablePool, resetChartViewbox]);
 
-  // Effect to calculate Capital Efficiency and Enhanced APR
-  useEffect(() => {
-    // Initialize or reset if poolApr is not valid or not yet loaded
-    if (!poolApr || ["Loading APR...", "APR N/A", "APR Error", "Yield N/A", "Fees N/A"].includes(poolApr)) {
-      setEnhancedAprDisplay(poolApr || "Yield N/A");
-      setCapitalEfficiencyFactor(1);
-      return;
-    }
-
-    const tl = parseInt(tickLower);
-    const tu = parseInt(tickUpper);
-    // Ensure currentPoolTick is also treated as an integer for comparison
-    const cPt = currentPoolTick !== null ? Math.round(Number(currentPoolTick)) : null;
-
-    const numericBaseApr = parseFloat(poolApr.replace("%", ""));
-    if (isNaN(numericBaseApr)) {
-        setEnhancedAprDisplay(poolApr); // Fallback if APR parsing fails
-        setCapitalEfficiencyFactor(1);
-        return;
-    }
-
-    if (isNaN(tl) || isNaN(tu) || tl >= tu) {
-      setCapitalEfficiencyFactor(1);
-      // If range is invalid, display base APR if in range (or no current price), or 0% if out of range.
-      if (activePreset === "Full Range") {
-         setEnhancedAprDisplay(poolApr);
-      } else {
-         setEnhancedAprDisplay("0.00% (Out of Range)");
-      }
-      return;
-    }
-
-    let M = 1;
-    let concentrationMethod = 'Full Range';
-
-    // Calculate M based on active preset or manual ticks
-    if (activePreset === "Full Range" || (tl <= sdkMinTick && tu >= sdkMaxTick)) {
-      M = 1;
-      concentrationMethod = 'Full Range';
-    } else if (activePreset && ["±3%", "±8%", "±15%", "±1%", "±0.5%", "±0.1%"].includes(activePreset)) {
-        // Use the new simplified formula for percentage presets
-        let percentage = 0;
-        if (activePreset === "±3%") percentage = 0.03;
-        else if (activePreset === "±8%") percentage = 0.08;
-        else if (activePreset === "±15%") percentage = 0.15;
-        else if (activePreset === "±1%") percentage = 0.01;
-        else if (activePreset === "±0.5%") percentage = 0.005;
-        else if (activePreset === "±0.1%") percentage = 0.001;
-
-        if (percentage > 0) {
-             M = 1 / (2 * percentage);
-             concentrationMethod = `Preset ${activePreset} (Formula)`;
-        } else {
-             M = 1;
-             concentrationMethod = 'Preset Zero Range?';
-        }
-         M = Math.min(M, 500);
-    } else {
-      // Use the existing tick-based calculation for manual ranges
-      const P_lower = Math.pow(1.0001, tl);
-      const P_upper = Math.pow(1.0001, tu);
-
-      concentrationMethod = 'Manual Range (Tick Formula)';
-
-      if (P_lower <= 0 || !isFinite(P_upper) || P_lower >= P_upper) {
-        M = 1; // Invalid range for concentration formula
-      } else {
-        const priceRatio = P_upper / P_lower;
-        const ratio_pow_025 = Math.pow(priceRatio, 0.25);
-
-        if (Math.abs(ratio_pow_025 - 1) < 1e-9) {
-            M = 500; // Cap for extremely narrow ranges
-        } else {
-            const denominator = ratio_pow_025 - (1 / ratio_pow_025);
-            if (Math.abs(denominator) < 1e-9) {
-                M = 500; // Denominator too small, cap M
-            } else {
-                M = 2 / denominator;
-            }
-        }
-      }
-      M = Math.max(1, M);
-      M = Math.min(M, 500);
-    }
-    setCapitalEfficiencyFactor(parseFloat(M.toFixed(2)));
-
-    // If not full range, and current price is outside the selected ticks, APR is 0
-    if (activePreset !== "Full Range" && !(tl <= sdkMinTick && tu >= sdkMaxTick) && cPt !== null && (cPt < tl || cPt > tu)) {
-        setEnhancedAprDisplay("0.00% (Out of Range)");
-    } else {
-        const boostedNumericApr = numericBaseApr * M;
-        // Apply a cap to the displayed APR for very narrow ranges
-        const cappedBoostedNumericApr = Math.min(boostedNumericApr, numericBaseApr * 500); 
-        setEnhancedAprDisplay(`${cappedBoostedNumericApr.toFixed(2)}%`);
-    }
-
-  }, [poolApr, activePreset, tickLower, tickUpper, sdkMinTick, sdkMaxTick, currentPoolTick]);
 
   // Panning Handlers for Chart
   const handlePanMouseDown = (e: any) => {
@@ -2049,81 +1964,68 @@ export function AddLiquidityForm({
     setIsInsufficientBalance(insufficient);
   }, [amount0, amount1, token0Symbol, token1Symbol, calculatedData, token0BalanceData, token1BalanceData, isZapMode, zapInputToken]);
 
-  // Fetch pool metrics and state ONCE per pool (cached)
+  // Check if range has been selected
+  const hasRangeSelected = tickLower !== "" && tickUpper !== "";
+
+  // Fetch pool metrics for APY calculation (cached per pool)
+  // Wait for poolState.liquidity to be available before caching to avoid race condition
   useEffect(() => {
-    const fetchPoolData = async () => {
-      if (!selectedPoolId) return;
+    const liquidity = poolState?.liquidity;
+    if (!selectedPoolId || !liquidity) return;
+    if (cachedPoolMetrics?.poolId === selectedPoolId && cachedPoolMetrics.poolLiquidity !== "0") return;
 
-      // Check if already cached for this pool
-      if (cachedPoolMetrics?.poolId === selectedPoolId) return;
-
+    (async () => {
       try {
-        const [metricsResponse, stateResponse] = await Promise.all([
-          fetch('/api/liquidity/pool-metrics', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ poolId: selectedPoolId, days: 7 })
-          }),
-          fetch(`/api/liquidity/get-pool-state?poolId=${encodeURIComponent(selectedPoolId)}`)
-        ]);
-
-        if (metricsResponse.ok) {
-          const data = await metricsResponse.json();
-          let poolLiquidity = "0";
-
-          if (stateResponse.ok) {
-            const stateData = await stateResponse.json();
-            poolLiquidity = stateData.liquidity || "0";
-          }
-
+        const resp = await fetch('/api/liquidity/pool-metrics', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ poolId: selectedPoolId, days: 7 })
+        });
+        if (resp.ok) {
+          const data = await resp.json();
           setCachedPoolMetrics({
             poolId: selectedPoolId,
             metrics: data.metrics,
-            poolLiquidity
+            poolLiquidity: liquidity
           });
         }
-      } catch (error) {
-        // Silently fail - APY will show as unavailable
-      }
-    };
+      } catch {}
+    })();
+  }, [selectedPoolId, cachedPoolMetrics, poolState?.liquidity]);
 
-    fetchPoolData();
-  }, [selectedPoolId, cachedPoolMetrics]);
-
+  // APY calculation effect
   useEffect(() => {
-    const calculateApy = async () => {
-      if (!selectedPoolId || !tickLower || !tickUpper || !currentPoolSqrtPriceX96 || currentPoolTick === null) {
-        setEstimatedApy("0.00");
-        return;
-      }
+    // Early validation - don't show loading for invalid states
+    if (!selectedPoolId || !tickLower || !tickUpper || !currentPoolSqrtPriceX96 || currentPoolTick === null) {
+      setEstimatedApy("0.00");
+      setIsCalculatingApy(false);
+      return;
+    }
 
-      const lowerTick = parseInt(tickLower);
-      const upperTick = parseInt(tickUpper);
+    const lowerTick = parseInt(tickLower);
+    const upperTick = parseInt(tickUpper);
 
-      if (isNaN(lowerTick) || isNaN(upperTick) || lowerTick >= upperTick) {
-        setEstimatedApy("0.00");
-        return;
-      }
+    if (isNaN(lowerTick) || isNaN(upperTick) || lowerTick >= upperTick) {
+      setEstimatedApy("0.00");
+      setIsCalculatingApy(false);
+      return;
+    }
 
-      const amount0Num = parseFloat(amount0 || '0');
-      const amount1Num = parseFloat(amount1 || '0');
-      if (amount0Num <= 0 && amount1Num <= 0) {
-        setEstimatedApy("0.00");
-        return;
-      }
-
-      if (!cachedPoolMetrics || cachedPoolMetrics.poolId !== selectedPoolId) {
-        setIsCalculatingApy(true);
-        return;
-      }
-
-      if (!cachedPoolMetrics.metrics || cachedPoolMetrics.metrics.days === 0) {
-        setEstimatedApy("—");
-        return;
-      }
-
+    if (!cachedPoolMetrics || cachedPoolMetrics.poolId !== selectedPoolId) {
       setIsCalculatingApy(true);
+      return;
+    }
 
+    if (!cachedPoolMetrics.metrics || cachedPoolMetrics.metrics.days === 0) {
+      setEstimatedApy("—");
+      setIsCalculatingApy(false);
+      return;
+    }
+
+    // Only show loading and calculate for valid states
+    setIsCalculatingApy(true);
+
+    const calculateApy = async () => {
       try {
         const poolConfig = getPoolById(selectedPoolId);
         if (!poolConfig) {
@@ -2141,8 +2043,8 @@ export function AddLiquidityForm({
           return;
         }
 
-        const sdkToken0 = poolToken0 || new Token(4002, getAddress(token0Def.address), token0Def.decimals, token0Symbol, token0Symbol);
-        const sdkToken1 = poolToken1 || new Token(4002, getAddress(token1Def.address), token1Def.decimals, token1Symbol, token1Symbol);
+        const sdkToken0 = new Token(4002, getAddress(token0Def.address), token0Def.decimals, token0Symbol, token0Symbol);
+        const sdkToken1 = new Token(4002, getAddress(token1Def.address), token1Def.decimals, token1Symbol, token1Symbol);
 
         const sdkPool = new V4PoolSDK(
           sdkToken0,
@@ -2155,20 +2057,34 @@ export function AddLiquidityForm({
           currentPoolTick
         );
 
-        const userLiquidity = calculatedData?.liquidity;
+        const amount0Num = parseFloat(amount0 || '0');
+        const amount1Num = parseFloat(amount1 || '0');
+        const useDefaultAmount = amount0Num <= 0 && amount1Num <= 0;
 
-        const apy = await calculateUserPositionAPY(
-          sdkPool,
-          lowerTick,
-          upperTick,
-          amount0,
-          amount1,
-          cachedPoolMetrics.metrics as PoolMetrics,
-          userLiquidity
-        );
+        let apy: number;
 
-        const formattedApy = formatUserAPY(apy);
-        setEstimatedApy(formattedApy);
+        if (useDefaultAmount) {
+          apy = await calculatePositionAPY(
+            sdkPool,
+            lowerTick,
+            upperTick,
+            cachedPoolMetrics.metrics as PoolMetrics,
+            100
+          );
+        } else {
+          const userLiquidity = calculatedData?.liquidity;
+          apy = await calculateUserPositionAPY(
+            sdkPool,
+            lowerTick,
+            upperTick,
+            amount0,
+            amount1,
+            cachedPoolMetrics.metrics as PoolMetrics,
+            userLiquidity
+          );
+        }
+
+        setEstimatedApy(formatUserAPY(apy));
       } catch (error) {
         setEstimatedApy("—");
       } finally {
@@ -2176,9 +2092,9 @@ export function AddLiquidityForm({
       }
     };
 
-    const timer = setTimeout(() => calculateApy(), 1000);
+    const timer = setTimeout(calculateApy, 200);
     return () => clearTimeout(timer);
-  }, [selectedPoolId, tickLower, tickUpper, currentPoolSqrtPriceX96, currentPoolTick, token0Symbol, token1Symbol, amount0, amount1, calculatedData, cachedPoolMetrics, poolToken0, poolToken1]);
+  }, [selectedPoolId, tickLower, tickUpper, currentPoolSqrtPriceX96, currentPoolTick, token0Symbol, token1Symbol, amount0, amount1, calculatedData, cachedPoolMetrics]);
 
   // Wrapper for convertTickToPrice that uses component's sdkMinTick and sdkMaxTick
   const convertTickToPrice = useCallback((tick: number, currentPoolTick: number | null, currentPrice: string | null, baseTokenForPriceDisplay: string, token0Symbol: string, token1Symbol: string): string => {
@@ -2274,7 +2190,10 @@ export function AddLiquidityForm({
                 <div className="flex items-center justify-between mb-2">
                   <Label className="text-sm font-medium">Range</Label>
                   <div className="flex items-center gap-2">
-                    {!currentPrice || !minPriceInputString || !maxPriceInputString ? (
+                    {activePreset === null ? (
+                      // No range selected - show prompt
+                      <span className="text-xs text-muted-foreground">Please Select Range</span>
+                    ) : !currentPrice || !minPriceInputString || !maxPriceInputString ? (
                       // Loading skeletons
                       <>
                         <div className="h-4 w-12 bg-muted/50 rounded animate-pulse" />
@@ -2342,7 +2261,8 @@ export function AddLiquidityForm({
                         return null; // Custom
                       })();
 
-                      const isActive = activePreset === presetValue;
+                      // No button is active when activePreset is null (initial state)
+                      const isActive = activePreset !== null && activePreset === presetValue;
                       const isCustom = preset === "Custom";
 
                       return (
@@ -2388,6 +2308,7 @@ export function AddLiquidityForm({
                     setInitialDefaultApplied(true);
                     // Set the preset from the modal instead of clearing it
                     setActivePreset(selectedPreset || null);
+                    setHasUserInteracted(true);
                     // Sync denomination with modal
                     if (denomination) {
                       setBaseTokenForPriceDisplay(denomination);
@@ -2424,69 +2345,114 @@ export function AddLiquidityForm({
                   presetOptions={presetOptions}
                   isInverted={isInverted}
                   initialFocusField={modalInitialFocusField}
+                  poolMetricsData={cachedPoolMetrics}
                 />
               )}
 
-              {/* Zap Mode Toggle */}
+              {/* Single Token Mode Toggle */}
               <div
-                className="flex items-center justify-between p-4 rounded-lg bg-muted/20 mb-4 cursor-pointer transition-colors hover:bg-muted/30"
                 onClick={() => {
                   if (isWorking || showingTransactionSteps) return;
                   const newValue = !isZapMode;
                   setIsZapMode(newValue);
-                  // Reset amounts when toggling mode
                   setAmount0("");
                   setAmount1("");
                   setAmount0FullPrecision("");
                   setAmount1FullPrecision("");
                   setZapQuote(null);
-                  setPriceImpact(null); // Reset price impact when toggling zap mode
+                  setPriceImpact(null);
                   setActiveInputSide(null);
                   setCalculatedData(null);
                   resetTransaction();
                 }}
+                className={cn(
+                  "cursor-pointer hover:bg-muted/20 transition-colors p-4 rounded-lg bg-surface border border-sidebar-border/60 mb-4",
+                  isWorking || showingTransactionSteps ? "opacity-50 pointer-events-none" : ""
+                )}
               >
-                <div className="flex items-center gap-2">
-                  <Label htmlFor="zap-mode" className="font-medium cursor-pointer">Single Token Mode</Label>
-                  <TooltipProvider delayDuration={0}>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <CircleHelp className="h-3 w-3 text-muted-foreground" onClick={(e) => e.stopPropagation()} />
-                      </TooltipTrigger>
-                      <TooltipContent side="top" className="max-w-[280px] text-xs">
-                        <p className="mb-2">Provide liquidity using a single token. We'll automatically swap the optimal amount to maximize your liquidity.</p>
-                        <p className="text-[10px] text-muted-foreground/90">Note: Large deposits relative to pool liquidity may experience higher price impact during the swap.</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="zap-mode" className="text-sm font-medium cursor-pointer">Single Token Mode</Label>
+                    <TooltipProvider delayDuration={0}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <CircleHelp className="h-3 w-3 text-muted-foreground" onClick={(e) => e.stopPropagation()} />
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="max-w-[280px] text-xs">
+                          <p className="mb-2">Provide liquidity using a single token. We'll automatically swap the optimal amount to maximize your liquidity.</p>
+                          <p className="text-[10px] text-muted-foreground/90">Note: Large deposits relative to pool liquidity may experience higher price impact during the swap.</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </div>
+                  <Checkbox
+                    id="zap-mode"
+                    checked={isZapMode}
+                    onCheckedChange={(checked) => {
+                      if (isWorking || showingTransactionSteps) return;
+                      setIsZapMode(checked === true);
+                      setAmount0("");
+                      setAmount1("");
+                      setAmount0FullPrecision("");
+                      setAmount1FullPrecision("");
+                      setZapQuote(null);
+                      setPriceImpact(null);
+                      setActiveInputSide(null);
+                      setCalculatedData(null);
+                      resetTransaction();
+                    }}
+                    disabled={isWorking || showingTransactionSteps}
+                    onClick={(e) => e.stopPropagation()}
+                    className="h-5 w-5"
+                  />
                 </div>
-                <Switch
-                  id="zap-mode"
-                  checked={isZapMode}
-                  onCheckedChange={(checked) => {
-                    setIsZapMode(checked);
-                    // Reset amounts when toggling mode
-                    setAmount0("");
-                    setAmount1("");
-                    setAmount0FullPrecision("");
-                    setAmount1FullPrecision("");
-                    setZapQuote(null);
-                    setActiveInputSide(null);
-                    setCalculatedData(null);
-                    resetTransaction();
-                  }}
-                  disabled={isWorking || showingTransactionSteps}
-                  onClick={(e) => e.stopPropagation()}
-                />
               </div>
 
               {/* Input for Token 0 - Only show when not in zap mode or when token0 is selected */}
               {(!isZapMode || zapInputToken === 'token0') && (
               <div className="space-y-2">
-                <motion.div
-                  className={cn("rounded-lg bg-muted/30 p-4 group", { "outline outline-1 outline-muted": isAmount0Focused })}
-                  animate={balanceWiggleControls0}
-                >
+                <style dangerouslySetInnerHTML={{__html: `
+                  @keyframes inputGradientFlow {
+                    from { background-position: 0% 0%; }
+                    to { background-position: 300% 0%; }
+                  }
+                  .input-gradient-hover {
+                    position: relative;
+                    border-radius: 8px;
+                  }
+                  .input-gradient-hover::before {
+                    content: '';
+                    position: absolute;
+                    inset: -1px;
+                    border-radius: 9px;
+                    background: linear-gradient(
+                      45deg,
+                      #f94706,
+                      #ff7919 25%,
+                      #f94706 50%,
+                      #ff7919 75%,
+                      #f94706 100%
+                    );
+                    background-size: 300% 100%;
+                    opacity: 0;
+                    transition: opacity 0.3s ease;
+                    pointer-events: none;
+                    z-index: 0;
+                    animation: inputGradientFlow 10s linear infinite;
+                  }
+                  .input-gradient-hover:hover::before,
+                  .input-gradient-hover:focus-within::before {
+                    opacity: 1;
+                  }
+                `}} />
+                <div className="input-gradient-hover">
+                  <motion.div
+                    className={cn(
+                      "relative z-[1] rounded-lg bg-surface p-4 border transition-colors group",
+                      isAmount0Focused ? "border-sidebar-primary" : "border-sidebar-border/60"
+                    )}
+                    animate={balanceWiggleControls0}
+                  >
                   <div className="flex items-center justify-between mb-2">
                     <Label className="text-sm font-medium">Amount</Label>
                     <Button
@@ -2499,10 +2465,33 @@ export function AddLiquidityForm({
                     </Button>
                   </div>
                   <div className="flex items-center gap-2">
-                    <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (isZapMode && !showingTransactionSteps) {
+                          setZapInputToken('token1');
+                          setPriceImpact(null);
+                          if (amount0) {
+                            setAmount1(amount0);
+                            setAmount0("");
+                            setActiveInputSide('amount1');
+                          }
+                        }
+                      }}
+                      disabled={!isZapMode || showingTransactionSteps}
+                      className={cn(
+                        "flex items-center gap-1.5 bg-[var(--token-selector-background)] border border-sidebar-border/60 rounded-lg h-11 px-3 transition-colors",
+                        isZapMode && !showingTransactionSteps
+                          ? "cursor-pointer hover:bg-muted/30"
+                          : "cursor-default"
+                      )}
+                    >
                       <Image src={getTokenIcon(token0Symbol)} alt={token0Symbol} width={20} height={20} className="rounded-full"/>
                       <span className="text-sm font-medium">{token0Symbol}</span>
-                    </div>
+                      {isZapMode && !showingTransactionSteps && (
+                        <ArrowLeftRight className="h-3 w-3 text-muted-foreground ml-0.5" />
+                      )}
+                    </button>
                     <div className="flex-1">
                       <Input
                         id="amount0"
@@ -2531,6 +2520,7 @@ export function AddLiquidityForm({
                           setPermitSignature(undefined);
                           setAmount0(newValue);
                           setActiveInputSide('amount0');
+                          setHasUserInteracted(true);
                         }}
                         onFocus={() => {
                           setIsAmount0Focused(true);
@@ -2614,15 +2604,71 @@ export function AddLiquidityForm({
                       </div>
                     </div>
                   </div>
-                </motion.div>
+                  </motion.div>
+                </div>
               </div>
               )}
 
               {/* Plus Icon - Only show when not in zap mode */}
               {!isZapMode && (
-              <div className="flex justify-center items-center my-2">
-                <div className="flex items-center justify-center h-8 w-8 rounded-full bg-muted/20">
-                  <PlusIcon className="h-4 w-4 text-muted-foreground" />
+              <div className="flex justify-center relative my-0" style={{ height: '20px' }}>
+                <style dangerouslySetInnerHTML={{__html: `
+                  @keyframes plusGlare {
+                    from { background-position: 0% 0%; }
+                    to { background-position: 300% 0%; }
+                  }
+                  .plus-loading-wrapper {
+                    position: absolute;
+                    top: 50%;
+                    left: 50%;
+                    transform: translate(-50%, -50%);
+                    width: 32px;
+                    height: 32px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    border-radius: 8px;
+                    overflow: visible;
+                  }
+                  .plus-loading-wrapper::before {
+                    content: '';
+                    position: absolute;
+                    inset: -1px;
+                    border-radius: 9px;
+                    background: linear-gradient(
+                      45deg,
+                      #f94706,
+                      #ff7919 30%,
+                      rgba(0, 0, 0, 0.4) 50%,
+                      #f94706 70%,
+                      #ff7919 100%
+                    );
+                    background-size: 300% 100%;
+                    opacity: 0;
+                    transition: opacity 0.5s ease-out;
+                    pointer-events: none;
+                    z-index: 0;
+                    animation: plusGlare 1.5s linear infinite;
+                  }
+                  .plus-loading-wrapper.loading::before {
+                    opacity: 1;
+                  }
+                  .plus-loading-inner {
+                    position: relative;
+                    width: 100%;
+                    height: 100%;
+                    border-radius: 8px;
+                    background: var(--surface-bg);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    z-index: 1;
+                  }
+                `}} />
+                <div className={cn("plus-loading-wrapper", isCalculating && "loading")}>
+                  <div className="plus-loading-inner">
+                    <Plus className="h-4 w-4" />
+                  </div>
                 </div>
               </div>
               )}
@@ -2630,10 +2676,14 @@ export function AddLiquidityForm({
               {/* Input for Token 1 - Only show when not in zap mode or when token1 is selected */}
               {(!isZapMode || zapInputToken === 'token1') && (
               <div className="space-y-2 mb-4">
-                <motion.div
-                  className={cn("rounded-lg bg-muted/30 p-4 group", { "outline outline-1 outline-muted": isAmount1Focused })}
-                  animate={balanceWiggleControls1}
-                >
+                <div className="input-gradient-hover">
+                  <motion.div
+                    className={cn(
+                      "relative z-[1] rounded-lg bg-surface p-4 border transition-colors group",
+                      isAmount1Focused ? "border-sidebar-primary" : "border-sidebar-border/60"
+                    )}
+                    animate={balanceWiggleControls1}
+                  >
                   <div className="flex items-center justify-between mb-2">
                     <Label className="text-sm font-medium">Amount</Label>
                     <Button
@@ -2646,10 +2696,33 @@ export function AddLiquidityForm({
                     </Button>
                   </div>
                   <div className="flex items-center gap-2">
-                    <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (isZapMode && !showingTransactionSteps) {
+                          setZapInputToken('token0');
+                          setPriceImpact(null);
+                          if (amount1) {
+                            setAmount0(amount1);
+                            setAmount1("");
+                            setActiveInputSide('amount0');
+                          }
+                        }
+                      }}
+                      disabled={!isZapMode || showingTransactionSteps}
+                      className={cn(
+                        "flex items-center gap-1.5 bg-[var(--token-selector-background)] border border-sidebar-border/60 rounded-lg h-11 px-3 transition-colors",
+                        isZapMode && !showingTransactionSteps
+                          ? "cursor-pointer hover:bg-muted/30"
+                          : "cursor-default"
+                      )}
+                    >
                       <Image src={getTokenIcon(token1Symbol)} alt={token1Symbol} width={20} height={20} className="rounded-full"/>
                       <span className="text-sm font-medium">{token1Symbol}</span>
-                    </div>
+                      {isZapMode && !showingTransactionSteps && (
+                        <ArrowLeftRight className="h-3 w-3 text-muted-foreground ml-0.5" />
+                      )}
+                    </button>
                     <div className="flex-1">
                       <Input
                         id="amount1"
@@ -2678,6 +2751,7 @@ export function AddLiquidityForm({
                           setPermitSignature(undefined);
                           setAmount1(newValue);
                           setActiveInputSide('amount1');
+                          setHasUserInteracted(true);
                         }}
                         onFocus={() => {
                           setIsAmount1Focused(true);
@@ -2761,95 +2835,12 @@ export function AddLiquidityForm({
                       </div>
                     </div>
                   </div>
-                </motion.div>
+                  </motion.div>
+                </div>
               </div>
               )}
 
 
-              {/* Token selector and zap info */}
-              {isZapMode && (
-                <div>
-                  <div className="flex gap-2 mb-4">
-                    <button
-                        type="button"
-                        onClick={() => {
-                          setZapInputToken('token0');
-                          setPriceImpact(null); // Reset price impact when switching input token
-                          // Move amount to token0 if switching from token1
-                          if (zapInputToken === 'token1' && amount1) {
-                            setAmount0(amount1);
-                            setAmount1("");
-                            setActiveInputSide('amount0');
-                          }
-                        }}
-                        className={`relative h-10 px-3 flex items-center justify-center gap-2 rounded-md border transition-all duration-200 overflow-hidden text-sm font-medium cursor-pointer flex-1 ${
-                          zapInputToken === 'token0'
-                            ? 'text-sidebar-primary border-sidebar-primary bg-button-primary'
-                            : 'border-sidebar-border bg-button hover:bg-accent hover:brightness-110 hover:border-white/30 text-white'
-                        }`}
-                        style={zapInputToken !== 'token0' ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
-                      >
-                        <Image src={getTokenIcon(token0Symbol)} alt={token0Symbol} width={16} height={16} className="rounded-full relative z-10"/>
-                        <span className="relative z-10">{token0Symbol}</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setZapInputToken('token1');
-                          setPriceImpact(null); // Reset price impact when switching input token
-                          // Move amount to token1 if switching from token0
-                          if (zapInputToken === 'token0' && amount0) {
-                            setAmount1(amount0);
-                            setAmount0("");
-                            setActiveInputSide('amount1');
-                          }
-                        }}
-                        className={`relative h-10 px-3 flex items-center justify-center gap-2 rounded-md border transition-all duration-200 overflow-hidden text-sm font-medium cursor-pointer flex-1 ${
-                          zapInputToken === 'token1'
-                            ? 'text-sidebar-primary border-sidebar-primary bg-button-primary'
-                            : 'border-sidebar-border bg-button hover:bg-accent hover:brightness-110 hover:border-white/30 text-white'
-                        }`}
-                        style={zapInputToken !== 'token1' ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
-                      >
-                        <Image src={getTokenIcon(token1Symbol)} alt={token1Symbol} width={16} height={16} className="rounded-full relative z-10"/>
-                        <span className="relative z-10">{token1Symbol}</span>
-                      </button>
-                    </div>
-
-                </div>
-              )}
-
-              {/* Estimated APY Display - Only show in first view, not in transaction steps */}
-              {!showingTransactionSteps && (
-                <div className="flex items-center justify-between mb-4 px-1">
-                  <TooltipProvider delayDuration={0}>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                          <span>Estimated APY</span>
-                          <CircleHelp className="h-3 w-3" />
-                        </div>
-                      </TooltipTrigger>
-                      <TooltipContent side="top" className="max-w-[240px] text-xs">
-                        <p>
-                          APY is calculated from historical fee data over the last 7 days,
-                          accounting for the liquidity depth change from your position.
-                        </p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                  <div className="text-xs font-medium">
-                    {isCalculatingApy ? (
-                      <div className="h-3.5 w-12 bg-muted/50 rounded animate-pulse" />
-                    ) : (
-                      <span className="text-foreground">{estimatedApy}%</span>
-                    )}
-                  </div>
-                </div>
-              )}
-
-
-              {/* Current Price Display removed per updated UI */}
 
               {/* Transaction Steps - Show when user clicked deposit */}
               {showingTransactionSteps && !isZapMode && (
@@ -2887,8 +2878,6 @@ export function AddLiquidityForm({
                   currentPoolTick={currentPoolTick}
                   currentPoolSqrtPriceX96={currentPoolSqrtPriceX96}
                   selectedPoolId={selectedPoolId}
-                  poolAPY={parseFloat(estimatedApy) / 100 || null}
-                  estimatedApy={estimatedApy}
                   getUsdPriceForSymbol={getUSDPriceForSymbol}
                   convertTickToPrice={convertTickToPrice}
                 />
@@ -2944,8 +2933,6 @@ export function AddLiquidityForm({
                   currentPoolTick={currentPoolTick}
                   currentPoolSqrtPriceX96={currentPoolSqrtPriceX96}
                   selectedPoolId={selectedPoolId}
-                  poolAPY={parseFloat(estimatedApy) / 100 || null}
-                  estimatedApy={estimatedApy}
                   getUsdPriceForSymbol={getUSDPriceForSymbol}
                   convertTickToPrice={convertTickToPrice}
                   zapQuote={zapQuote}
@@ -2968,6 +2955,7 @@ export function AddLiquidityForm({
                   className={cn(
                     "w-full",
                     (isWorking || isCalculating || isPoolStateLoading || isCheckingApprovals ||
+                    !hasRangeSelected ||
                     (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0")) ||
                     isInsufficientBalance) ?
                       "relative border border-sidebar-border bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 !opacity-100 cursor-default text-white/75"
@@ -2975,6 +2963,10 @@ export function AddLiquidityForm({
                       "text-sidebar-primary border border-sidebar-primary bg-button-primary hover-button-primary"
                   )}
                   onClick={async () => {
+                    if (!hasRangeSelected) {
+                      showErrorToast("Select Range", "Please select a price range first");
+                      return;
+                    }
                     if (isInsufficientBalance) {
                       showErrorToast("Insufficient Balance");
                       return;
@@ -3088,10 +3080,12 @@ export function AddLiquidityForm({
                     isCalculating ||
                     isPoolStateLoading ||
                     isCheckingApprovals ||
+                    !hasRangeSelected ||
                     (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0")) ||
                     isInsufficientBalance
                   }
                   style={(isWorking || isCalculating || isPoolStateLoading || isCheckingApprovals ||
+                    !hasRangeSelected ||
                     (!parseFloat(amount0 || "0") && !parseFloat(amount1 || "0")) ||
                     isInsufficientBalance) ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
                 >
@@ -3100,7 +3094,7 @@ export function AddLiquidityForm({
                       ? "animate-pulse"
                       : ""
                   )}>
-                    {isInsufficientBalance ? 'Insufficient Balance' : 'Deposit'}
+                    {!hasRangeSelected ? 'Select Range' : isInsufficientBalance ? 'Insufficient Balance' : 'Deposit'}
                   </span>
                 </Button>
               ) : null}

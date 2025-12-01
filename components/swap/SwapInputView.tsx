@@ -197,13 +197,48 @@ export function SwapInputView({
     >
       {/* Sell Section */}
       <div className="mb-2">
-        <motion.div
-          className={cn(
-            "group rounded-lg bg-surface p-4 border transition-colors hover:border-sidebar-primary",
-            isSellInputFocused ? "border-sidebar-primary" : "border-sidebar-border/60"
-          )}
-          animate={wiggleControls}
-        >
+        <style dangerouslySetInnerHTML={{__html: `
+          @keyframes inputGradientFlow {
+            from { background-position: 0% 0%; }
+            to { background-position: 300% 0%; }
+          }
+          .input-gradient-hover {
+            position: relative;
+            border-radius: 8px;
+          }
+          .input-gradient-hover::before {
+            content: '';
+            position: absolute;
+            inset: -1px;
+            border-radius: 9px;
+            background: linear-gradient(
+              45deg,
+              #f94706,
+              #ff7919 25%,
+              #f94706 50%,
+              #ff7919 75%,
+              #f94706 100%
+            );
+            background-size: 300% 100%;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            pointer-events: none;
+            z-index: 0;
+            animation: inputGradientFlow 10s linear infinite;
+          }
+          .input-gradient-hover:hover::before,
+          .input-gradient-hover:focus-within::before {
+            opacity: 1;
+          }
+        `}} />
+        <div className="input-gradient-hover">
+          <motion.div
+            className={cn(
+              "relative z-[1] group rounded-lg bg-surface p-4 border transition-colors",
+              isSellInputFocused ? "border-sidebar-primary" : "border-sidebar-border/60"
+            )}
+            animate={wiggleControls}
+          >
         <div className="flex items-center justify-between mb-2">
           <Label className="text-sm font-medium">Sell</Label>
           <Button
@@ -276,7 +311,8 @@ export function SwapInputView({
             </div>
           </div>
         </div>
-        </motion.div>
+          </motion.div>
+        </div>
       </div>
 
       {/* Arrow button */}
@@ -368,14 +404,15 @@ export function SwapInputView({
 
       {/* Buy Section */}
       <div className="mt-2">
-        <div
-          className={cn(
-            "group rounded-lg bg-surface p-4 border transition-colors hover:border-sidebar-primary",
-            isBuyInputFocused ? "border-sidebar-primary" : "border-sidebar-border/60"
-          )}
-        >
-        <div className="flex items-center justify-between mb-2">
-          <Label className="text-sm font-medium">Buy</Label>
+        <div className="input-gradient-hover">
+          <div
+            className={cn(
+              "relative z-[1] group rounded-lg bg-surface p-4 border transition-colors",
+              isBuyInputFocused ? "border-sidebar-primary" : "border-sidebar-border/60"
+            )}
+          >
+          <div className="flex items-center justify-between mb-2">
+            <Label className="text-sm font-medium">Buy</Label>
           <Button
             variant="ghost"
             className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent"
@@ -450,6 +487,7 @@ export function SwapInputView({
             </div>
           </div>
         </div>
+          </div>
         </div>
       </div>
 

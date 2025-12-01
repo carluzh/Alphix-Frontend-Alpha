@@ -196,7 +196,7 @@ export default function SettingsPage() {
                             checked={testnetMode}
                             disabled={isNetworkSwitching}
                             onCheckedChange={(checked) => handleNetworkToggle(checked === true)}
-                            className="h-5 w-5 border-sidebar-border data-[state=checked]:bg-sidebar-primary data-[state=checked]:border-sidebar-primary"
+                            className="h-5 w-5"
                           />
                         )}
                       </div>

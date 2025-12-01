@@ -60,7 +60,9 @@
       "Bash(for pool in \"ausdc-abtc\" \"ausdc-ausdt\" \"eth-ausdt\" \"abtc-aeth\" \"ausdc-adai\" \"adai-aeth\")",
       "Bash(do)",
       "Bash(echo:*)",
-      "Bash(for pool in \"ausdt-aeth\" \"ausdc-abtc\" \"ausdc-ausdt\" \"eth-ausdt\" \"abtc-aeth\" \"ausdc-adai\" \"adai-aeth\")"
+      "Bash(for pool in \"ausdt-aeth\" \"ausdc-abtc\" \"ausdc-ausdt\" \"eth-ausdt\" \"abtc-aeth\" \"ausdc-adai\" \"adai-aeth\")",
+      "Bash(for icon in PlusIcon RefreshCwIcon MinusIcon ActivityIcon CheckIcon ArrowLeftIcon)",
+      "Bash(do echo -n \"$icon: \")"
     ],
     "deny": [],
     "ask": []

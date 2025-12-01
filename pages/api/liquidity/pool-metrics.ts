@@ -1,8 +1,10 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { getPoolSubgraphId } from '../../../lib/pools-config';
+import { getPoolSubgraphId, getStateViewAddress, getPoolById } from '../../../lib/pools-config';
 import { getSubgraphUrlForPool, isDaiPool } from '../../../lib/subgraph-url-helper';
 import { cacheService } from '@/lib/cache/CacheService';
 import { poolKeys } from '@/lib/redis-keys';
+import { publicClient } from '../../../lib/viemClient';
+import { parseAbi, type Hex } from 'viem';
 
 // Server-only subgraph URL (original, unswizzled) - for pool data
 const SUBGRAPH_ORIGINAL_URL = process.env.SUBGRAPH_ORIGINAL_URL as string;
@@ -210,26 +212,44 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           return { ...EMPTY_METRICS, pool };
         }
 
-        // Sort fee events by timestamp ascending for chronological processing
-        const sortedFeeEvents = [...feeEvents].sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
+        // Fetch actual LP fee from StateView (dynamic fee from slot0)
+        let actualFeeBps = 0;
+        try {
+          const poolConfig = getPoolById(poolId);
+          const stateViewAddress = getStateViewAddress();
+          const poolIdHex = (poolConfig?.subgraphId || apiId) as Hex;
 
-        // Calculate fees for each day using the appropriate fee rate
+          const stateViewAbi = parseAbi([
+            'function getSlot0(bytes32 poolId) external view returns (uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 lpFee)'
+          ]);
+
+          const slot0Data = await publicClient.readContract({
+            address: stateViewAddress as `0x${string}`,
+            abi: stateViewAbi,
+            functionName: 'getSlot0',
+            args: [poolIdHex]
+          }) as readonly [bigint, number, number, number];
+
+          const [, , , lpFeeMillionths] = slot0Data;
+          // Convert millionths to bps: bps = (lpFee / 1_000_000) * 10_000
+          actualFeeBps = Math.round((Number(lpFeeMillionths) / 1_000_000) * 10_000 * 100) / 100;
+          console.log(`[pool-metrics] Fetched actual LP fee from StateView: ${actualFeeBps} bps`);
+        } catch (error) {
+          console.error('[pool-metrics] Failed to fetch LP fee from StateView:', error);
+          // Fall back to fee events if available
+          const sortedFeeEvents = [...feeEvents].sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
+          if (sortedFeeEvents.length > 0) {
+            actualFeeBps = Number(sortedFeeEvents[sortedFeeEvents.length - 1].newFeeBps || 0);
+          }
+        }
+
+        // Calculate fees using the actual LP fee rate
         let totalFeesToken0 = 0;
         const sortedDayDatas = [...dayDatas].sort((a, b) => a.date - b.date);
+        const feeRate = actualFeeBps / 10_000; // Convert bps to decimal (e.g., 30 bps = 0.003)
 
         for (const day of sortedDayDatas) {
-          const dayEndTimestamp = day.date + 86400;
-          let feeBps = 0;
-          for (const event of sortedFeeEvents) {
-            const eventTimestamp = Number(event.timestamp);
-            if (eventTimestamp <= dayEndTimestamp) {
-              feeBps = Number(event.newFeeBps || 0);
-            } else {
-              break;
-            }
-          }
           const volumeToken0 = parseFloat(day.volumeToken0 || '0');
-          const feeRate = feeBps / 1_000_000;
           totalFeesToken0 += volumeToken0 * feeRate;
         }
 
@@ -242,9 +262,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
 
         const totalVolumeToken0 = dayDatas.reduce((sum, day) => sum + parseFloat(day.volumeToken0 || '0'), 0);
-        const currentActualFeeBps = sortedFeeEvents.length > 0
-          ? Number(sortedFeeEvents[sortedFeeEvents.length - 1].newFeeBps || 0)
-          : 0;
 
         return {
           pool,
@@ -252,7 +269,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             totalFeesToken0,
             avgTVLToken0,
             totalVolumeToken0,
-            currentFeeBps: currentActualFeeBps,
+            currentFeeBps: actualFeeBps,
             days: dayDatas.length
           },
           dayData: dayDatas

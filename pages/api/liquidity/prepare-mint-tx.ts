@@ -1,6 +1,6 @@
 import { Token, Percent, Ether } from '@uniswap/sdk-core';
-import { Pool as V4Pool, Position as V4Position, V4PositionManager } from "@uniswap/v4-sdk"; 
-import type { MintOptions } from "@uniswap/v4-sdk";
+import { Pool as V4Pool, Position as V4Position, V4PositionManager } from "@uniswap/v4-sdk";
+import type { MintOptions, AllowanceTransferPermitBatch } from "@uniswap/v4-sdk";
 import { nearestUsableTick } from '@uniswap/v3-sdk';
 import JSBI from 'jsbi';
 import type { NextApiRequest, NextApiResponse } from 'next';
@@ -25,7 +25,7 @@ import {
     PERMIT_SIG_DEADLINE_DURATION_SECONDS,
 } from "../../../lib/swap-constants";
 import { PERMIT2_TYPES } from "../../../lib/liquidity-utils";
-import { AllowanceTransfer, permit2Address, PermitBatch, PERMIT2_ADDRESS } from '@uniswap/permit2-sdk';
+import { AllowanceTransfer, permit2Address, PERMIT2_ADDRESS, PermitBatch } from '@uniswap/permit2-sdk';
 
 const POSITION_MANAGER_ADDRESS = getPositionManagerAddress();
 const STATE_VIEW_ADDRESS = getStateViewAddress();
@@ -533,15 +533,17 @@ export default async function handler(
 
         if (permitBatchValues) {
             // Ensure permitBatchValues has correct structure for SDK
-            const permitBatchForSDK: PermitBatch = {
+            // Use AllowanceTransferPermitBatch type from v4-sdk for compatibility with MintOptions
+            // Note: BigintIsh expects JSBI | string | number, so we pass values as strings
+            const permitBatchForSDK: AllowanceTransferPermitBatch = {
                 details: permitBatchValues.details.map((detail: any) => ({
                     token: getAddress(detail.token),
-                    amount: BigInt(detail.amount),
-                    expiration: BigInt(detail.expiration),
-                    nonce: BigInt(detail.nonce),
+                    amount: String(detail.amount),
+                    expiration: String(detail.expiration),
+                    nonce: String(detail.nonce),
                 })),
                 spender: getAddress(permitBatchValues.spender),
-                sigDeadline: BigInt(permitBatchValues.sigDeadline),
+                sigDeadline: String(permitBatchValues.sigDeadline),
             };
 
             mintOptions = {

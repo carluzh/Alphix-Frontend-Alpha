@@ -43,14 +43,9 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
   // Loading skeleton flag (follows actual loading state)
   const [showLoadingSkeleton, setShowLoadingSkeleton] = useState(false);
 
-  // Track if this is the initial load to disable animations
-  const [hasLoadedData, setHasLoadedData] = useState(false);
-  // Track if we've ever loaded data to prevent chart disappearing
-  const [hasEverLoadedData, setHasEverLoadedData] = useState(false);
-  // Simple animation control: animate on first load OR when pool changes
-  const [shouldAnimate, setShouldAnimate] = useState(true);
-  // Track if this is the very first load
-  const [isFirstLoad, setIsFirstLoad] = useState(true);
+  // Use refs for animation tracking to avoid re-renders during animation
+  const hasAnimatedRef = useRef(false);
+  const animationTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Hover state for tooltip
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
@@ -157,8 +152,6 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
         }
         
         setAutoData(out);
-        setHasLoadedData(true); // Mark that we've loaded data at least once
-        setHasEverLoadedData(true); // Mark that we've ever loaded data
       } catch {}
       finally {
         setIsChartDataLoading(false);
@@ -231,21 +224,29 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
 
   // Build chart data from supplied series (preferred only if usable) or fetched fallback
   const effectiveData = isParentDataUsable ? data : (autoData || []);
-  
-  // Simple animation control: animate only on first load
+
+  // Determine if we should animate: only on first render with data, using ref to avoid re-renders
+  const shouldAnimate = !hasAnimatedRef.current && !isHovering;
+
+  // Mark animation as complete after it finishes (using ref, no re-render)
   useEffect(() => {
-    if (effectiveData && effectiveData.length > 0) {
-      setHasLoadedData(true);
-      setHasEverLoadedData(true);
-      
-      // Only animate on the very first load
-      if (isFirstLoad) {
-        setShouldAnimate(true);
-        setTimeout(() => setShouldAnimate(false), 600);
-        setIsFirstLoad(false); // Mark that we've done the first load
+    if (effectiveData && effectiveData.length > 0 && !hasAnimatedRef.current) {
+      // Clear any existing timeout
+      if (animationTimeoutRef.current) {
+        clearTimeout(animationTimeoutRef.current);
       }
+      // Mark as animated after the animation duration
+      animationTimeoutRef.current = setTimeout(() => {
+        hasAnimatedRef.current = true;
+      }, 650); // Slightly longer than animation duration (600ms)
     }
-  }, [effectiveData, isFirstLoad]);
+
+    return () => {
+      if (animationTimeoutRef.current) {
+        clearTimeout(animationTimeoutRef.current);
+      }
+    };
+  }, [effectiveData]);
 
   // Removed in-chart CustomTooltip; using external portal container instead
 
@@ -566,7 +567,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
                     strokeWidth={1.5}
                     dot={false}
                     activeDot={false}
-                    isAnimationActive={!isHovering && shouldAnimate}
+                    isAnimationActive={shouldAnimate}
                     animationDuration={600}
                     animationEasing="ease-out"
                   />
@@ -579,7 +580,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
                     strokeDasharray="3 3"
                     dot={false}
                     activeDot={false}
-                    isAnimationActive={!isHovering && shouldAnimate}
+                    isAnimationActive={shouldAnimate}
                     animationDuration={600}
                     animationEasing="ease-out"
                   />
@@ -593,7 +594,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
                     strokeOpacity={hoveredIndex === null ? 1 : 0.6}
                     dot={false}
                     activeDot={false}
-                    isAnimationActive={!isHovering && shouldAnimate}
+                    isAnimationActive={shouldAnimate}
                     animationDuration={600}
                     animationEasing="ease-out"
                   />

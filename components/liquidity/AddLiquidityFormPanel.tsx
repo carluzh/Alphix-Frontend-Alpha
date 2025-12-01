@@ -625,13 +625,47 @@ export function AddLiquidityFormPanel({
   // Input view
   return (
     <div className="space-y-4">
+      <style dangerouslySetInnerHTML={{__html: `
+        @keyframes inputGradientFlow {
+          from { background-position: 0% 0%; }
+          to { background-position: 300% 0%; }
+        }
+        .input-gradient-hover {
+          position: relative;
+          border-radius: 8px;
+        }
+        .input-gradient-hover::before {
+          content: '';
+          position: absolute;
+          inset: -1px;
+          border-radius: 9px;
+          background: linear-gradient(
+            45deg,
+            #f94706,
+            #ff7919 25%,
+            #f94706 50%,
+            #ff7919 75%,
+            #f94706 100%
+          );
+          background-size: 300% 100%;
+          opacity: 0;
+          transition: opacity 0.3s ease;
+          pointer-events: none;
+          z-index: 0;
+          animation: inputGradientFlow 10s linear infinite;
+        }
+        .input-gradient-hover:hover::before,
+        .input-gradient-hover:focus-within::before {
+          opacity: 1;
+        }
+      `}} />
       <h3 className="text-base font-semibold">Add Liquidity</h3>
 
       {/* Token 0 Input */}
       {(!addProductiveSide || addProductiveSide === 'amount0') && parseFloat(position.token0.amount) >= 0 && (
-        <div>
+        <div className="input-gradient-hover">
           <motion.div
-            className="group rounded-lg bg-muted/30 border border-sidebar-border/60 p-4 space-y-3"
+            className="relative z-[1] group rounded-lg bg-surface border border-sidebar-border/60 p-4 space-y-3"
             animate={wiggleControls0}
           >
             <div className="flex items-center justify-between">
@@ -645,7 +679,7 @@ export function AddLiquidityFormPanel({
               </button>
             </div>
             <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
+              <div className="flex items-center gap-1.5 bg-[var(--token-selector-background)] border border-sidebar-border/60 rounded-lg h-11 px-3">
                 <Image src={getTokenIcon(position.token0.symbol)} alt={position.token0.symbol} width={20} height={20} className="rounded-full" />
                 <span className="text-sm font-medium">{position.token0.symbol}</span>
               </div>
@@ -723,9 +757,9 @@ export function AddLiquidityFormPanel({
 
       {/* Token 1 Input */}
       {(!addProductiveSide || addProductiveSide === 'amount1') && parseFloat(position.token1.amount) >= 0 && (
-        <div>
+        <div className="input-gradient-hover">
           <motion.div
-            className="group rounded-lg bg-muted/30 border border-sidebar-border/60 p-4 space-y-3"
+            className="relative z-[1] group rounded-lg bg-surface border border-sidebar-border/60 p-4 space-y-3"
             animate={wiggleControls1}
           >
             <div className="flex items-center justify-between">
@@ -739,7 +773,7 @@ export function AddLiquidityFormPanel({
               </button>
             </div>
             <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
+              <div className="flex items-center gap-1.5 bg-[var(--token-selector-background)] border border-sidebar-border/60 rounded-lg h-11 px-3">
                 <Image src={getTokenIcon(position.token1.symbol)} alt={position.token1.symbol} width={20} height={20} className="rounded-full" />
                 <span className="text-sm font-medium">{position.token1.symbol}</span>
               </div>

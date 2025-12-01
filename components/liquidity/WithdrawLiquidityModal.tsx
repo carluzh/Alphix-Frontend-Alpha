@@ -686,6 +686,40 @@ export function WithdrawLiquidityModal({
         <DialogContent className="p-0 border-0 bg-transparent shadow-none max-w-lg w-[calc(100%-2rem)] sm:w-full [&>button]:hidden">
           {!showSuccessView ? (
             <div className="space-y-6">
+              <style dangerouslySetInnerHTML={{__html: `
+                @keyframes inputGradientFlow {
+                  from { background-position: 0% 0%; }
+                  to { background-position: 300% 0%; }
+                }
+                .input-gradient-hover {
+                  position: relative;
+                  border-radius: 8px;
+                }
+                .input-gradient-hover::before {
+                  content: '';
+                  position: absolute;
+                  inset: -1px;
+                  border-radius: 9px;
+                  background: linear-gradient(
+                    45deg,
+                    #f94706,
+                    #ff7919 25%,
+                    #f94706 50%,
+                    #ff7919 75%,
+                    #f94706 100%
+                  );
+                  background-size: 300% 100%;
+                  opacity: 0;
+                  transition: opacity 0.3s ease;
+                  pointer-events: none;
+                  z-index: 0;
+                  animation: inputGradientFlow 10s linear infinite;
+                }
+                .input-gradient-hover:hover::before,
+                .input-gradient-hover:focus-within::before {
+                  opacity: 1;
+                }
+              `}} />
               {/* Withdrawal Logic Container */}
               <div className="border rounded-lg p-6 space-y-4" style={{ backgroundColor: 'var(--modal-background)' }}>
                 {/* Step 1: Input Form */}
@@ -709,15 +743,16 @@ export function WithdrawLiquidityModal({
                                 Balance: {formatTokenDisplayAmount(position.token0.amount, position.token0.symbol as TokenSymbol)} {position.token0.symbol}
                       </button>
                    </div>
-                  <motion.div
-                    className="group rounded-lg bg-muted/30 border border-sidebar-border/60 p-4"
-                    animate={wiggleControls0}
-                  >
-                    <div className="flex items-center gap-2">
-                      <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
+                   <div className="input-gradient-hover">
+                    <motion.div
+                      className="relative z-[1] group rounded-lg bg-surface border border-sidebar-border/60 p-4"
+                      animate={wiggleControls0}
+                    >
+                      <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1.5 bg-[var(--token-selector-background)] border border-sidebar-border/60 rounded-lg h-11 px-3">
                                   <Image src={getTokenIcon(position.token0.symbol)} alt={position.token0.symbol} width={20} height={20} className="rounded-full" />
-                        <span className="text-sm font-medium">{position.token0.symbol}</span>
-                      </div>
+                          <span className="text-sm font-medium">{position.token0.symbol}</span>
+                        </div>
                       <div className="flex-1">
                         <Input
                           id="withdraw-amount0"
@@ -791,7 +826,8 @@ export function WithdrawLiquidityModal({
                             </div>
                       </div>
                     </div>
-                   </motion.div>
+                    </motion.div>
+                   </div>
                  </div>
 
                           <div className="flex justify-center items-center my-2">
@@ -799,7 +835,7 @@ export function WithdrawLiquidityModal({
                               <PlusIcon className="h-4 w-4 text-muted-foreground" />
                    </div>
                  </div>
- 
+
                  <div>
                             <div className="flex items-center justify-between mb-2">
                               <Label htmlFor="withdraw-amount1" className="text-sm font-medium">Withdraw</Label>
@@ -812,15 +848,16 @@ export function WithdrawLiquidityModal({
                                 Balance: {formatTokenDisplayAmount(position.token1.amount, position.token1.symbol as TokenSymbol)} {position.token1.symbol}
                               </button>
                    </div>
-                  <motion.div
-                    className="group rounded-lg bg-muted/30 border border-sidebar-border/60 p-4"
-                    animate={wiggleControls1}
-                  >
-                    <div className="flex items-center gap-2">
-                      <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
+                   <div className="input-gradient-hover">
+                    <motion.div
+                      className="relative z-[1] group rounded-lg bg-surface border border-sidebar-border/60 p-4"
+                      animate={wiggleControls1}
+                    >
+                      <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1.5 bg-[var(--token-selector-background)] border border-sidebar-border/60 rounded-lg h-11 px-3">
                                   <Image src={getTokenIcon(position.token1.symbol)} alt={position.token1.symbol} width={20} height={20} className="rounded-full" />
-                        <span className="text-sm font-medium">{position.token1.symbol}</span>
-                      </div>
+                          <span className="text-sm font-medium">{position.token1.symbol}</span>
+                        </div>
                       <div className="flex-1">
                         <Input
                           id="withdraw-amount1"
@@ -894,7 +931,8 @@ export function WithdrawLiquidityModal({
                             </div>
                       </div>
                     </div>
-                  </motion.div>
+                    </motion.div>
+                   </div>
                 </div>
               </>
             ) : (
@@ -915,15 +953,16 @@ export function WithdrawLiquidityModal({
                                   Balance: {formatTokenDisplayAmount(position.token0.amount, position.token0.symbol as TokenSymbol)} {position.token0.symbol}
                        </button>
                      </div>
-                    <motion.div 
-                      className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4"
-                      animate={wiggleControls0}
-                    >
-                      <div className="flex items-center gap-2">
-                        <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
+                     <div className="input-gradient-hover">
+                      <motion.div
+                        className="relative z-[1] rounded-lg bg-surface border border-sidebar-border/60 p-4"
+                        animate={wiggleControls0}
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-1.5 bg-[var(--token-selector-background)] border border-sidebar-border/60 rounded-lg h-11 px-3">
                                     <Image src={getTokenIcon(position.token0.symbol)} alt={position.token0.symbol} width={20} height={20} className="rounded-full" />
-                          <span className="text-sm font-medium">{position.token0.symbol}</span>
-                        </div>
+                            <span className="text-sm font-medium">{position.token0.symbol}</span>
+                          </div>
                         <div className="flex-1">
                           <Input
                             id="withdraw-amount0-oor"
@@ -951,7 +990,8 @@ export function WithdrawLiquidityModal({
                           </div>
                         </div>
                       </div>
-                    </motion.div>
+                      </motion.div>
+                     </div>
                   </div>
                 )}
 
@@ -970,43 +1010,45 @@ export function WithdrawLiquidityModal({
                                   Balance: {formatTokenDisplayAmount(position.token1.amount, position.token1.symbol as TokenSymbol)} {position.token1.symbol}
                        </button>
                      </div>
-                    <motion.div 
-                      className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4"
-                      animate={wiggleControls1}
-                    >
-                      <div className="flex items-center gap-2">
-                        <div className="flex items-center gap-1.5 bg-muted/30 border-0 rounded-lg h-10 px-2">
+                     <div className="input-gradient-hover">
+                      <motion.div
+                        className="relative z-[1] rounded-lg bg-surface border border-sidebar-border/60 p-4"
+                        animate={wiggleControls1}
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-1.5 bg-[var(--token-selector-background)] border border-sidebar-border/60 rounded-lg h-11 px-3">
                                     <Image src={getTokenIcon(position.token1.symbol)} alt={position.token1.symbol} width={20} height={20} className="rounded-full" />
-                          <span className="text-sm font-medium">{position.token1.symbol}</span>
-                        </div>
-                        <div className="flex-1">
-                          <Input
-                            id="withdraw-amount1-oor"
-                            placeholder="0.0"
-                            value={withdrawAmount1}
-                            autoComplete="off"
-                            autoCorrect="off"
-                            spellCheck={false}
-                            inputMode="decimal"
-                            enterKeyHint="done"
-                            onChange={(e) => {
-                              const cappedAmount = handleWithdrawAmountChangeWithWiggle(e, 'amount1');
-                              setWithdrawActiveInputSide('amount1');
+                            <span className="text-sm font-medium">{position.token1.symbol}</span>
+                          </div>
+                          <div className="flex-1">
+                            <Input
+                              id="withdraw-amount1-oor"
+                              placeholder="0.0"
+                              value={withdrawAmount1}
+                              autoComplete="off"
+                              autoCorrect="off"
+                              spellCheck={false}
+                              inputMode="decimal"
+                              enterKeyHint="done"
+                              onChange={(e) => {
+                                const cappedAmount = handleWithdrawAmountChangeWithWiggle(e, 'amount1');
+                                setWithdrawActiveInputSide('amount1');
                                         // No calculation needed for OOR positions
-                            }}
-                            disabled={isWorking}
+                              }}
+                              disabled={isWorking}
                                       className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
-                          />
-                          <div className="text-right text-xs text-muted-foreground">
-                            {(() => {
-                              const usdPrice = getUSDPriceForSymbol(position.token1.symbol);
+                            />
+                            <div className="text-right text-xs text-muted-foreground">
+                              {(() => {
+                                const usdPrice = getUSDPriceForSymbol(position.token1.symbol);
                                         const numeric = parseFloat(withdrawAmount1 || "0");
-                              return formatCalculatedAmount(numeric * usdPrice);
-                            })()}
+                                return formatCalculatedAmount(numeric * usdPrice);
+                              })()}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    </motion.div>
+                      </motion.div>
+                     </div>
                   </div>
                 )}
               </>

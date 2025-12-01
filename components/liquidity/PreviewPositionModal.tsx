@@ -16,7 +16,7 @@ import { Pool as V4PoolSDK } from "@uniswap/v4-sdk";
 import JSBI from "jsbi";
 import { getAddress } from "viem";
 import { V4_POOL_FEE, V4_POOL_TICK_SPACING, V4_POOL_HOOKS } from "@/lib/swap-constants";
-import { calculateUserPositionAPY, formatUserAPY, type PoolMetrics } from "@/lib/user-position-apy";
+import { calculateUserPositionAPY, formatUserAPY, type PoolMetrics } from "@/lib/apy-calculator";
 
 // Helper function to get token icon
 const getTokenIcon = (symbol?: string) => {

@@ -43,6 +43,7 @@ interface RangeSelectionModalV2Props {
   presetOptions: string[];
   isInverted?: boolean;
   initialFocusField?: 'min' | 'max' | null;
+  poolMetricsData?: { poolId: string; metrics: any; poolLiquidity: string } | null;
 }
 
 // Helper to abbreviate decimal numbers beyond 10 decimals
@@ -67,7 +68,8 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
     sdkMinTick, sdkMaxTick, defaultTickSpacing,
     xDomain, onXDomainChange, poolToken0, poolToken1, presetOptions,
     isInverted = false,
-    initialFocusField = null
+    initialFocusField = null,
+    poolMetricsData = null
   } = props;
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -133,12 +135,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
 
   const [denominationBase, setDenominationBase] = useState<TokenSymbol>(initialDenomination);
 
-  // Pool metrics for APY calculation
-  const [poolMetrics, setPoolMetrics] = useState<any>(null);
-  const [isLoadingMetrics, setIsLoadingMetrics] = useState(false);
-  const [poolLiquidity, setPoolLiquidity] = useState<string | null>(null);
-
-  // APY values calculated asynchronously
+  // APY values calculated from parent's cached metrics
   const [apyValues, setApyValues] = useState<Record<string, number>>({});
 
   // Calculate if we need to invert based on our local denomination choice
@@ -284,88 +281,6 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
     };
   }, [isOpen, onClose]);
 
-  // Fetch pool metrics, liquidity, and position data when modal opens
-  useEffect(() => {
-    if (!isOpen || !selectedPoolId) return;
-
-    const fetchData = async () => {
-      setIsLoadingMetrics(true);
-      try {
-        // Fetch pool metrics, pool state, and position data in parallel
-        const [metricsResponse, stateResponse, positionsResponse] = await Promise.all([
-          fetch('/api/liquidity/pool-metrics', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ poolId: selectedPoolId, days: 7 })
-          }),
-          fetch(`/api/liquidity/get-pool-state?poolId=${encodeURIComponent(selectedPoolId)}`),
-          fetch('/api/liquidity/get-bucket-depths', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ poolId: selectedPoolId, first: 2000 })
-          })
-        ]);
-
-        // Handle pool state
-        if (stateResponse.ok) {
-          const stateData = await stateResponse.json();
-          console.log('[RangeSelectionModalV2] Pool state response:', stateData);
-          if (stateData.liquidity) {
-            setPoolLiquidity(stateData.liquidity);
-          }
-        }
-
-        // Handle pool metrics
-        if (metricsResponse.ok) {
-          const data = await metricsResponse.json();
-          console.log('[RangeSelectionModalV2] Pool metrics response (7d):', data);
-
-          // If we got valid data, use it
-          if (data.metrics && data.metrics.days > 0) {
-            setPoolMetrics(data.metrics);
-          } else {
-            // Try with 1 day of data for new pools
-            console.log('[RangeSelectionModalV2] No 7-day data, trying 1 day...');
-            const response1d = await fetch('/api/liquidity/pool-metrics', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ poolId: selectedPoolId, days: 1 })
-            });
-
-            if (response1d.ok) {
-              const data1d = await response1d.json();
-              console.log('[RangeSelectionModalV2] Pool metrics response (1d):', data1d);
-              if (data1d.metrics && data1d.metrics.days > 0) {
-                setPoolMetrics(data1d.metrics);
-              }
-            }
-          }
-        } else {
-          console.error('[RangeSelectionModalV2] Pool metrics request failed:', metricsResponse.status, await metricsResponse.text());
-        }
-
-        // Handle position data
-        if (positionsResponse.ok) {
-          const positionsData = await positionsResponse.json();
-          console.log('[RangeSelectionModalV2] Position data response:', {
-            count: positionsData?.positions?.length || 0
-          });
-
-          // Position data is no longer needed - InteractiveRangeChartV2 uses ticks instead
-          // Keeping the fetch for backward compatibility with APY calculations if needed
-        } else {
-          console.error('[RangeSelectionModalV2] Position data request failed:', positionsResponse.status);
-        }
-      } catch (error) {
-        console.error('Failed to fetch pool data:', error);
-      } finally {
-        setIsLoadingMetrics(false);
-      }
-    };
-
-    fetchData();
-  }, [isOpen, selectedPoolId]);
-
   // Update price inputs when ticks or denomination changes
   useEffect(() => {
     if (!isOpen) return;
@@ -389,9 +304,13 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
     }
   }, [localTickLower, localTickUpper, denominationBase, shouldInvert, isMinPriceFocused, isMaxPriceFocused, isOpen]);
 
-  // Calculate APY values asynchronously when dependencies change
+  // Calculate APY values from parent's cached metrics (no fetching needed)
   useEffect(() => {
-    if (!isOpen || !poolMetrics || !poolLiquidity || isLoadingMetrics || currentPoolTick === null || !currentPoolSqrtPriceX96 || !poolToken0 || !poolToken1 || !selectedPoolId) {
+    // Use metrics passed from parent - no fetching!
+    const poolMetrics = poolMetricsData?.metrics;
+    const poolLiquidity = poolMetricsData?.poolLiquidity;
+
+    if (!isOpen || !poolMetrics || !poolLiquidity || currentPoolTick === null || !currentPoolSqrtPriceX96 || !poolToken0 || !poolToken1 || !selectedPoolId) {
       return;
     }
 
@@ -475,11 +394,13 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
           newApyValues[rangeType] = apy;
         }
 
-        // Also calculate APY for current custom selection
+        // Also calculate APY for current custom selection (only if valid ticks)
         const customTickLower = parseInt(localTickLower);
         const customTickUpper = parseInt(localTickUpper);
-        const customAPY = await calculatePositionAPY(pool, customTickLower, customTickUpper, metrics, 100);
-        newApyValues["Custom"] = customAPY;
+        if (!isNaN(customTickLower) && !isNaN(customTickUpper) && customTickLower < customTickUpper) {
+          const customAPY = await calculatePositionAPY(pool, customTickLower, customTickUpper, metrics, 100);
+          newApyValues["Custom"] = customAPY;
+        }
 
         setApyValues(newApyValues);
       } catch (error) {
@@ -488,7 +409,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
     };
 
     calculateAPYs();
-  }, [isOpen, poolMetrics, poolLiquidity, isLoadingMetrics, currentPoolTick, currentPoolSqrtPriceX96, poolToken0, poolToken1, selectedPoolId, chainId, presetOptions, sdkMinTick, sdkMaxTick, localTickLower, localTickUpper]);
+  }, [isOpen, poolMetricsData, currentPoolTick, currentPoolSqrtPriceX96, poolToken0, poolToken1, selectedPoolId, chainId, presetOptions, sdkMinTick, sdkMaxTick, localTickLower, localTickUpper]);
 
   const handlePresetClick = (preset: string) => {
     setSelectedPreset(preset);
@@ -675,12 +596,11 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                   const shouldShowAPY = rangeType !== "Custom" || (rangeType === "Custom" && isActive);
 
                   if (shouldShowAPY) {
-                    if (isLoadingMetrics) {
+                    // Show "..." while waiting for parent metrics or calculating
+                    if (!poolMetricsData || apyValues[rangeType] === undefined) {
                       apyDisplay = "...";
-                    } else if (apyValues[rangeType] !== undefined) {
-                      apyDisplay = formatAPY(apyValues[rangeType]);
                     } else {
-                      apyDisplay = "—";
+                      apyDisplay = formatAPY(apyValues[rangeType]);
                     }
                   }
 

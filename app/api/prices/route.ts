@@ -14,6 +14,10 @@ import { priceKeys } from '@/lib/redis-keys';
 const QUOTE_AMOUNT_USDC = 100;
 const TARGET_CHAIN_ID = 84532; // Base Sepolia
 
+// In-memory cache fallback when Redis is unavailable (development)
+let memoryCache: { data: TokenPriceData; timestamp: number } | null = null;
+const MEMORY_CACHE_TTL_MS = 30 * 1000; // 30 seconds
+
 // Server-side request deduplication - prevents cache stampede
 // When multiple requests arrive simultaneously, they share the same fetch operation
 let ongoingFetch: Promise<TokenPriceData> | null = null;
@@ -124,7 +128,6 @@ async function fetch24hPriceChanges(): Promise<Record<string, number>> {
  * Fetch all prices fresh (no cache)
  */
 async function fetchAllPricesFresh(): Promise<TokenPriceData> {
-  console.log('[Prices API] Fetching all prices via quote API...');
 
   // Fetch both quote prices and 24h changes in parallel
   const [quotePrices, priceChanges] = await Promise.all([
@@ -163,7 +166,6 @@ async function fetchAllPricesFresh(): Promise<TokenPriceData> {
     lastUpdated: Date.now()
   };
 
-  console.log('[Prices API] Fetched prices with 24h changes:', prices);
   return prices;
 }
 
@@ -175,7 +177,6 @@ async function fetchAllPricesFresh(): Promise<TokenPriceData> {
 async function fetchAllPricesWithDedup(): Promise<TokenPriceData> {
   // If there's already an ongoing fetch, wait for it
   if (ongoingFetch) {
-    console.log('[Prices API] Deduplicating request - reusing ongoing fetch');
     return await ongoingFetch;
   }
 
@@ -193,55 +194,72 @@ export async function GET() {
   try {
     const cacheKey = priceKeys.batch();
 
-    // Try to get from Redis with VERY short TTL (10 seconds fresh, 30 seconds stale)
-    // AMM prices change with every trade, so we need near real-time data
-    const { data: cachedData, isStale, isInvalidated } = await getCachedDataWithStale<TokenPriceData>(
-      cacheKey,
-      10,      // 10 seconds fresh (very short for real-time prices)
-      30       // 30 seconds stale window
-    );
+    // Try Redis first (production)
+    if (redis) {
+      const { data: cachedData, isStale, isInvalidated } = await getCachedDataWithStale<TokenPriceData>(
+        cacheKey,
+        10,      // 10 seconds fresh
+        30       // 30 seconds stale window
+      );
 
-    // If we have fresh or stale cached data, return it immediately
-    if (cachedData && !isInvalidated) {
-      // If stale, trigger background refresh (don't block response)
-      if (isStale) {
-        console.log('[Prices API] Returning stale data (age: ~10-30s), triggering background refresh');
-        fetchAllPricesWithDedup()
-          .then(freshData => {
-            if (redis) redis.setex(cacheKey, 60, JSON.stringify(freshData));
-          })
-          .catch(err => console.error('[Prices API] Background refresh failed:', err));
+      if (cachedData && !isInvalidated) {
+        if (isStale) {
+          // Background refresh
+          fetchAllPricesWithDedup()
+            .then(freshData => {
+              redis!.setex(cacheKey, 60, JSON.stringify(freshData));
+              memoryCache = { data: freshData, timestamp: Date.now() };
+            })
+            .catch(err => console.error('[Prices API] Background refresh failed:', err));
+        }
+
+        const response: PriceResponse['data'] = {
+          ...cachedData,
+          aBTC: cachedData.BTC,
+          aUSDC: cachedData.USDC,
+          aETH: cachedData.ETH,
+          aUSDT: cachedData.USDT,
+          aDAI: cachedData.DAI,
+        };
+
+        return NextResponse.json({
+          success: true,
+          data: response,
+          isStale: isStale,
+        } as PriceResponse, {
+          headers: { 'Cache-Control': 'no-store' },
+        });
       }
+    }
 
-      // Add aliases for UI compatibility
+    // Fallback: Check in-memory cache (for development without Redis)
+    if (memoryCache && Date.now() - memoryCache.timestamp < MEMORY_CACHE_TTL_MS) {
       const response: PriceResponse['data'] = {
-        ...cachedData,
-        aBTC: cachedData.BTC,
-        aUSDC: cachedData.USDC,
-        aETH: cachedData.ETH,
-        aUSDT: cachedData.USDT,
-        aDAI: cachedData.DAI,
+        ...memoryCache.data,
+        aBTC: memoryCache.data.BTC,
+        aUSDC: memoryCache.data.USDC,
+        aETH: memoryCache.data.ETH,
+        aUSDT: memoryCache.data.USDT,
+        aDAI: memoryCache.data.DAI,
       };
 
       return NextResponse.json({
         success: true,
         data: response,
-        isStale: isStale,
+        isStale: false,
       } as PriceResponse, {
-        headers: {
-          'Cache-Control': 'no-store', // No browser caching for real-time prices
-        },
+        headers: { 'Cache-Control': 'no-store' },
       });
     }
 
     // No cached data - fetch fresh (with deduplication)
-    console.log('[Prices API] No cached data, fetching fresh prices from AMM');
     const freshData = await fetchAllPricesWithDedup();
 
-    // Store in Redis with short 60 second expiry (prices change with every trade)
+    // Store in both Redis and memory cache
     if (redis) {
       await redis.setex(cacheKey, 60, JSON.stringify(freshData));
     }
+    memoryCache = { data: freshData, timestamp: Date.now() };
 
     const response: PriceResponse['data'] = {
       ...freshData,
@@ -257,9 +275,7 @@ export async function GET() {
       data: response,
       isStale: false,
     } as PriceResponse, {
-      headers: {
-        'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=900',
-      },
+      headers: { 'Cache-Control': 'no-store' },
     });
 
   } catch (error: any) {

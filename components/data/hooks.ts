@@ -99,7 +99,7 @@ export function usePoolState(poolId: string) {
       if (!resp.ok) throw new Error('Failed to load pool state')
       return resp.json()
     },
-    staleTime: 15000,
+    staleTime: 45000, // 45 seconds - pool state doesn't change frequently
     gcTime: 10 * 60 * 1000,
     enabled: !!poolId && poolId.length > 0,
   })

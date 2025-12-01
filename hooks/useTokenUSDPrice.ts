@@ -7,7 +7,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { TokenSymbol } from '@/lib/pools-config';
 
-const POLL_INTERVAL_MS = 15 * 1000; // Poll every 15 seconds for real-time prices
+const POLL_INTERVAL_MS = 60 * 1000; // Poll every 60 seconds for price updates
 const CACHE_DURATION_MS = 10 * 1000; // Client cache for 10 seconds (very short)
 
 interface AllPricesResponse {
@@ -76,15 +76,18 @@ async function fetchAllPrices(): Promise<AllPricesResponse> {
   return ongoingFetch;
 }
 
+// Price keys are the token symbols (excluding lastUpdated which is a number)
+type PriceKey = Exclude<keyof NonNullable<AllPricesResponse['data']>, 'lastUpdated'>;
+
 /**
  * Map token symbol to price key in response
  */
-function getPriceKey(symbol: TokenSymbol): keyof AllPricesResponse['data'] {
+function getPriceKey(symbol: TokenSymbol): PriceKey {
   // Handle both base and "a" prefixed symbols
   if (symbol.startsWith('a')) {
-    return symbol as keyof AllPricesResponse['data'];
+    return symbol as PriceKey;
   }
-  return `a${symbol}` as keyof AllPricesResponse['data'];
+  return `a${symbol}` as PriceKey;
 }
 
 export function useTokenUSDPrice(tokenSymbol: TokenSymbol | null | undefined): {

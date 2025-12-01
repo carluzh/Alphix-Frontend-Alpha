@@ -655,6 +655,15 @@ export default function PoolDetailPage() {
   const [addLiquidityOpen, setAddLiquidityOpen] = useState(false);
   const [addLiquidityFormOpen, setAddLiquidityFormOpen] = useState(false);
 
+  // State for range info from the AddLiquidityForm (mirrors form's visual state)
+  const [formRangeInfo, setFormRangeInfo] = useState<{
+    preset: string | null;
+    label: string;
+    estimatedApy: string;
+    hasUserInteracted: boolean;
+    isCalculating: boolean;
+  } | null>(null);
+
   // Collect all position IDs that need fee data (table positions + modal positions)
   const allPositionIds = React.useMemo(() => {
     const ids = new Set<string>();
@@ -1198,12 +1207,14 @@ export default function PoolDetailPage() {
                 if (match) {
                   return {
                     tvlUSD: Number(match.tvlUSD) || 0,
-                    volume24hUSD: Number(match.volume24hUSD) || 0,
+                    volume7dUSD: Number(match.volume7dUSD) || 0,
+                    volumeAvgDailyUSD: Number(match.volumeAvgDailyUSD) || 0,
                     tvlYesterdayUSD: Number(match.tvlYesterdayUSD) || 0,
-                    volumePrev24hUSD: Number(match.volumePrev24hUSD) || 0,
-                    fees24hUSD: Number(match.fees24hUSD) || 0,
-                    apr24h: Number(match.apr24h) || 0,
+                    fees7dUSD: Number(match.fees7dUSD) || 0,
+                    feesAvgDailyUSD: Number(match.feesAvgDailyUSD) || 0,
+                    apr7d: Number(match.apr7d) || 0,
                     dynamicFeeBps: typeof match.dynamicFeeBps === 'number' ? match.dynamicFeeBps : null,
+                    daysWithData: Number(match.daysWithData) || 0,
                   };
                 }
               }
@@ -1315,16 +1326,17 @@ export default function PoolDetailPage() {
 
         // Process pool stats and update pool data
         if (poolStatsResult) {
-          const vol24 = poolStatsResult.volume24hUSD || 0;
+          // Use daily average for display (from 7d data)
+          const volDaily = poolStatsResult.volumeAvgDailyUSD || 0;
           const tvlNow = poolStatsResult.tvlUSD || 0;
           const dynamicFeeBps = poolStatsResult.dynamicFeeBps ?? null;
 
-          // Use fees from batch API if available
-          const fees24hUSD = typeof poolStatsResult.fees24hUSD === 'number'
-            ? poolStatsResult.fees24hUSD
+          // Use fees from batch API if available (daily average from 7d)
+          const feesDaily = typeof poolStatsResult.feesAvgDailyUSD === 'number'
+            ? poolStatsResult.feesAvgDailyUSD
             : (() => {
                 const feeRate = (typeof dynamicFeeBps === 'number' && dynamicFeeBps >= 0) ? dynamicFeeBps / 10_000 : 0;
-                return vol24 * feeRate;
+                return volDaily * feeRate;
               })();
 
           // Format APY helper function
@@ -1334,9 +1346,9 @@ export default function PoolDetailPage() {
             return `${(aprValue / 1000).toFixed(2)}K%`;
           };
 
-          // Use 24h APR from batch API
-          const calculatedApr = typeof poolStatsResult.apr24h === 'number' && poolStatsResult.apr24h > 0
-            ? formatAPR(poolStatsResult.apr24h)
+          // Use 7-day APR from batch API
+          const calculatedApr = typeof poolStatsResult.apr7d === 'number' && poolStatsResult.apr7d > 0
+            ? formatAPR(poolStatsResult.apr7d)
             : '0.00%';
 
           const combinedPoolData = {
@@ -1345,8 +1357,8 @@ export default function PoolDetailPage() {
             apr: calculatedApr,
             dynamicFeeBps: dynamicFeeBps,
             tickSpacing: getPoolById(poolId)?.tickSpacing || DEFAULT_TICK_SPACING,
-            volume24h: isFinite(vol24) ? formatUSD(vol24) : poolInfo.volume24h,
-            fees24h: isFinite(fees24hUSD) ? formatUSD(fees24hUSD) : poolInfo.fees24h,
+            volume24h: isFinite(volDaily) ? formatUSD(volDaily) : poolInfo.volume24h,
+            fees24h: isFinite(feesDaily) ? formatUSD(feesDaily) : poolInfo.fees24h,
             liquidity: isFinite(tvlNow) ? formatUSD(tvlNow) : poolInfo.liquidity,
             highlighted: false,
           };
@@ -2377,18 +2389,31 @@ export default function PoolDetailPage() {
                         </div>
                       </div>
                     </div>
-                    {/* APY */}
+                    {/* APY with Dynamic Range Badge */}
                     <UITooltipProvider delayDuration={0}>
                       <UITooltip>
                         <UITooltipTrigger asChild>
-                          <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 cursor-default">
+                          <div className={`rounded-lg bg-muted/30 cursor-default ${
+                            formRangeInfo?.hasUserInteracted && formRangeInfo.estimatedApy !== "0.00" && formRangeInfo.estimatedApy !== "—"
+                              ? 'border border-sidebar-primary'
+                              : 'border border-sidebar-border/60'
+                          }`}>
                             <div className="flex items-center justify-between px-4 h-9">
                               <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">APY</h2>
+                              {formRangeInfo?.hasUserInteracted && formRangeInfo.estimatedApy !== "0.00" && formRangeInfo.estimatedApy !== "—" && formRangeInfo.label !== "Select Range" && (
+                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-sidebar-primary/20 text-sidebar-primary border border-sidebar-primary/40">
+                                  {formRangeInfo.label}
+                                </span>
+                              )}
                             </div>
                             <div className="px-4 py-1">
                               <div className="text-lg font-medium truncate">
                                 {currentPoolData.apr === "Loading..." ? (
                                   <span className="inline-block h-5 w-20 bg-muted/60 rounded animate-pulse" />
+                                ) : formRangeInfo?.isCalculating ? (
+                                  <span className="inline-block h-5 w-20 bg-muted/60 rounded animate-pulse" />
+                                ) : formRangeInfo?.hasUserInteracted && formRangeInfo.estimatedApy !== "0.00" && formRangeInfo.estimatedApy !== "—" ? (
+                                  `${formRangeInfo.estimatedApy}%`
                                 ) : (
                                   currentPoolData.apr
                                 )}
@@ -2396,8 +2421,10 @@ export default function PoolDetailPage() {
                             </div>
                           </div>
                         </UITooltipTrigger>
-                        <UITooltipContent side="bottom" sideOffset={6} className="px-2 py-1 text-xs">
-                          <div className="font-medium text-foreground">Average over last 7 days</div>
+                        <UITooltipContent side="bottom" sideOffset={6} className="px-2 py-1 text-xs max-w-[240px]">
+                          <div className="font-medium text-foreground">
+                            Average over last 7 days
+                          </div>
                         </UITooltipContent>
                       </UITooltip>
                     </UITooltipProvider>
@@ -2549,18 +2576,31 @@ export default function PoolDetailPage() {
                     </div>
                   </div>
 
-                      {/* APY (always) - fixed width */}
+                      {/* APY (always) - fixed width with Dynamic Range Badge */}
                       <UITooltipProvider delayDuration={0}>
                         <UITooltip>
                           <UITooltipTrigger asChild>
-                            <div className="w-[160px] flex-shrink-0 rounded-lg bg-muted/30 border border-sidebar-border/60 cursor-default">
+                            <div className={`w-[160px] flex-shrink-0 rounded-lg bg-muted/30 cursor-default ${
+                              formRangeInfo?.hasUserInteracted && formRangeInfo.estimatedApy !== "0.00" && formRangeInfo.estimatedApy !== "—"
+                                ? 'border-2 border-sidebar-primary'
+                                : 'border border-sidebar-border/60'
+                            }`}>
                               <div className="flex items-center justify-between px-3 h-9">
                                 <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">APY</h2>
+                                {formRangeInfo?.hasUserInteracted && formRangeInfo.estimatedApy !== "0.00" && formRangeInfo.estimatedApy !== "—" && formRangeInfo.label !== "Select Range" && (
+                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-sidebar-primary/20 text-sidebar-primary border border-sidebar-primary/40">
+                                    {formRangeInfo.label}
+                                  </span>
+                                )}
                               </div>
                               <div className="px-3 py-1">
                                 <div className="text-lg font-medium truncate">
                                   {currentPoolData.apr === "Loading..." ? (
                                     <span className="inline-block h-5 w-20 bg-muted/60 rounded animate-pulse" />
+                                  ) : formRangeInfo?.isCalculating ? (
+                                    <span className="inline-block h-5 w-20 bg-muted/60 rounded animate-pulse" />
+                                  ) : formRangeInfo?.hasUserInteracted && formRangeInfo.estimatedApy !== "0.00" && formRangeInfo.estimatedApy !== "—" ? (
+                                    `${formRangeInfo.estimatedApy}%`
                                   ) : (
                                     currentPoolData.apr
                                   )}
@@ -2568,8 +2608,10 @@ export default function PoolDetailPage() {
                               </div>
                             </div>
                           </UITooltipTrigger>
-                          <UITooltipContent side="bottom" sideOffset={6} className="px-2 py-1 text-xs">
-                            <div className="font-medium text-foreground">Average over last 7 days</div>
+                          <UITooltipContent side="bottom" sideOffset={6} className="px-2 py-1 text-xs max-w-[240px]">
+                            <div className="font-medium text-foreground">
+                              Average over last 7 days
+                            </div>
                           </UITooltipContent>
                         </UITooltip>
                       </UITooltipProvider>
@@ -3256,14 +3298,20 @@ export default function PoolDetailPage() {
                   <div className="p-3 sm:p-4">
                     <AddLiquidityFormMemo
                       selectedPoolId={poolId}
-                      poolApr={currentPoolData?.apr}
                       onLiquidityAdded={(token0Symbol?: string, token1Symbol?: string, txInfo?) => {
                         refreshAfterLiquidityAddedWithSkeleton(token0Symbol, token1Symbol, txInfo);
                       }}
                       sdkMinTick={SDK_MIN_TICK}
                       sdkMaxTick={SDK_MAX_TICK}
                       defaultTickSpacing={getPoolById(poolId)?.tickSpacing || DEFAULT_TICK_SPACING}
-                      activeTab={'deposit'} // Always pass 'deposit'
+                      activeTab={'deposit'}
+                      onRangeChange={setFormRangeInfo}
+                      poolState={poolState ? {
+                        currentPrice: String(poolState.currentPrice),
+                        currentPoolTick: Number(poolState.currentPoolTick),
+                        sqrtPriceX96: String(poolState.sqrtPriceX96 || ''),
+                        liquidity: String(poolState.liquidity || ''),
+                      } : undefined}
                     />
                   </div>
                 </div>
@@ -3404,7 +3452,6 @@ export default function PoolDetailPage() {
         sdkMinTick={SDK_MIN_TICK}
         sdkMaxTick={SDK_MAX_TICK}
         defaultTickSpacing={getPoolById(poolId)?.tickSpacing || DEFAULT_TICK_SPACING}
-        poolApr={currentPoolData?.apr}
         positionToModify={showIncreaseModal ? positionToModify : null}
         feesForIncrease={showIncreaseModal ? feesForIncrease : null}
         increaseLiquidity={showIncreaseModal ? (data) => {
@@ -3435,18 +3482,27 @@ export default function PoolDetailPage() {
             </DialogDescription>
           </DialogHeader>
           <div className="py-4">
-            <AddLiquidityFormMemo
-              selectedPoolId={poolId}
-              poolApr={currentPoolData?.apr}
-              onLiquidityAdded={(token0Symbol?: string, token1Symbol?: string, txInfo?) => {
-                setAddLiquidityFormOpen(false);
-                refreshAfterLiquidityAddedWithSkeleton(token0Symbol, token1Symbol, txInfo);
-              }}
-              sdkMinTick={SDK_MIN_TICK}
-              sdkMaxTick={SDK_MAX_TICK}
-              defaultTickSpacing={getPoolById(poolId)?.tickSpacing || DEFAULT_TICK_SPACING}
-              activeTab="deposit"
-            />
+            {/* Lazy-load form only when modal is open to prevent duplicate API calls */}
+            {addLiquidityFormOpen && (
+              <AddLiquidityFormMemo
+                selectedPoolId={poolId}
+                onLiquidityAdded={(token0Symbol?: string, token1Symbol?: string, txInfo?) => {
+                  setAddLiquidityFormOpen(false);
+                  refreshAfterLiquidityAddedWithSkeleton(token0Symbol, token1Symbol, txInfo);
+                }}
+                sdkMinTick={SDK_MIN_TICK}
+                sdkMaxTick={SDK_MAX_TICK}
+                defaultTickSpacing={getPoolById(poolId)?.tickSpacing || DEFAULT_TICK_SPACING}
+                activeTab="deposit"
+                onRangeChange={setFormRangeInfo}
+                poolState={poolState ? {
+                  currentPrice: String(poolState.currentPrice),
+                  currentPoolTick: Number(poolState.currentPoolTick),
+                  sqrtPriceX96: String(poolState.sqrtPriceX96 || ''),
+                  liquidity: String(poolState.liquidity || ''),
+                } : undefined}
+              />
+            )}
           </div>
         </DialogContent>
       </Dialog>

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import Image from 'next/image';
 import { ChevronDownIcon, CheckIcon, XIcon, SearchIcon } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -310,8 +311,8 @@ export function TokenSelector({
         />
       </Button>
 
-      {/* Token Selection Modal */}
-      {isOpen && (
+      {/* Token Selection Modal - rendered via portal to escape stacking context */}
+      {isOpen && typeof document !== 'undefined' && createPortal(
         <div
           className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm"
           onClick={() => setIsOpen(false)}
@@ -432,8 +433,9 @@ export function TokenSelector({
                 )}
               </div>
             </motion.div>
-          </div>
-        )}
+          </div>,
+        document.body
+      )}
     </div>
   );
 } 

@@ -14,9 +14,9 @@ import { STATE_VIEW_ABI } from '@/lib/abis/state_view_abi';
 import { cacheService } from '@/lib/cache/CacheService';
 import { poolKeys } from '@/lib/redis-keys';
 
-// ULTRA-SIMPLIFIED: Use ONLY daily data instead of hourly (92% fewer entities fetched!)
-// For 7 pools: ~21 entities (7 pools + 14 daily) vs 182 entities (7 pools + 168 hourly + 7 daily)
-const GET_POOLS_COMBINED = `
+// Fetch 7 days of daily data for accurate APR calculation
+// Dynamic limit: poolCount * 10 (7 days + buffer per pool)
+const buildPoolsQuery = (poolCount: number) => `
   query GetPoolsSimplified($poolIds: [String!]!, $cutoffDays: Int!) {
     pools(where: { id_in: $poolIds }) {
       id
@@ -24,7 +24,7 @@ const GET_POOLS_COMBINED = `
       totalValueLockedToken1
     }
     poolDayDatas(
-      first: 20
+      first: ${Math.max(poolCount * 10, 20)}
       where: { pool_in: $poolIds, date_gte: $cutoffDays }
       orderBy: date
       orderDirection: desc
@@ -41,12 +41,13 @@ interface BatchPoolStatsMinimal {
   poolId: string;
   tvlUSD: number;
   tvlYesterdayUSD?: number;
-  volume24hUSD: number;
-  volumePrev24hUSD?: number;
-  fees24hUSD?: number;
-  feesPrev24hUSD?: number;
+  volume7dUSD: number;
+  volumeAvgDailyUSD?: number;
+  fees7dUSD?: number;
+  feesAvgDailyUSD?: number;
   dynamicFeeBps?: number;
-  apr24h?: number;
+  apr7d?: number;
+  daysWithData?: number;
 }
 
 const getSubgraphUrl = () => process.env.SUBGRAPH_URL as string | undefined;
@@ -141,10 +142,10 @@ async function computePoolsBatch(): Promise<any> {
   const dayStart = Math.floor(nowSec / 86400) * 86400;
 
   // IMPORTANT: Subgraph stores dates as TIMESTAMPS (seconds), not day counts
-  // Convert to timestamps for matching
+  // Fetch 7 days of data for stable APR calculation
   const todayTimestamp = dayStart; // Today at 00:00 UTC (seconds)
-  const yesterdayTimestamp = dayStart - 86400; // Yesterday at 00:00 UTC (seconds)
-  const cutoffDays = Math.floor(yesterdayTimestamp / 86400); // For subgraph query (day count)
+  const sevenDaysAgoTimestamp = dayStart - (7 * 86400); // 7 days ago at 00:00 UTC
+  const cutoffDays = Math.floor(sevenDaysAgoTimestamp / 86400); // For subgraph query (day count)
 
   // SIMPLIFIED: Only TVL and daily data needed
   const tvlById = new Map<string, { tvl0: any; tvl1: any }>();
@@ -177,17 +178,17 @@ async function computePoolsBatch(): Promise<any> {
       }
     })(),
 
-    // 3. Main subgraph query (~5-6s)
+    // 3. Main subgraph query (~5-6s) - dynamic limit based on pool count
     nonDaiPoolIds.length > 0
-      ? fetchSubgraphDirect(SUBGRAPH_URL, GET_POOLS_COMBINED, {
+      ? fetchSubgraphDirect(SUBGRAPH_URL, buildPoolsQuery(nonDaiPoolIds.length), {
           poolIds: nonDaiPoolIds.map((id) => id.toLowerCase()),
           cutoffDays,
         })
       : Promise.resolve({ success: true, data: { data: { pools: [], poolDayDatas: [] } } }),
 
-    // 4. DAI subgraph query (~5-6s, runs parallel with #3)
+    // 4. DAI subgraph query (~5-6s, runs parallel with #3) - dynamic limit based on pool count
     daiPoolIds.length > 0 && SUBGRAPH_URL_DAI
-      ? fetchSubgraphDirect(SUBGRAPH_URL_DAI, GET_POOLS_COMBINED, {
+      ? fetchSubgraphDirect(SUBGRAPH_URL_DAI, buildPoolsQuery(daiPoolIds.length), {
           poolIds: daiPoolIds.map((id) => id.toLowerCase()),
           cutoffDays,
         })
@@ -281,26 +282,22 @@ async function computePoolsBatch(): Promise<any> {
         tvlUSD = calculateTotalUSD(amt0, amt1, safeToken0Price, safeToken1Price);
       }
 
-      // SIMPLIFIED: Use daily data only (today + yesterday)
-      const days = dailyByPoolId.get(poolId) || [];
-      const today = days.find(d => Number(d?.date) === todayTimestamp);
-      const yesterday = days.find(d => Number(d?.date) === yesterdayTimestamp);
+      // Aggregate 7 days of volume data for stable APR
+      const allDays = dailyByPoolId.get(poolId) || [];
+      // Filter to last 7 days (excluding today which may be incomplete)
+      const last7Days = allDays.filter(d => {
+        const date = Number(d?.date);
+        return date >= sevenDaysAgoTimestamp && date < todayTimestamp;
+      });
 
-      // Today's volume (from midnight to now) - fallback to yesterday if today has no data
-      let volume24hUSD = 0;
-      const volumeData = today || yesterday;
-      if (volumeData) {
-        const v0 = Number(volumeData?.volumeToken0) || 0;
-        volume24hUSD = v0 * safeToken0Price;
+      // Calculate 7-day volume total
+      let volume7dToken0 = 0;
+      for (const day of last7Days) {
+        volume7dToken0 += Number(day?.volumeToken0) || 0;
       }
-
-      // Yesterday's full day volume (or day before if yesterday is being used above)
-      let volumePrev24hUSD = 0;
-      const prevVolumeData = today ? yesterday : days.find(d => Number(d?.date) === yesterdayTimestamp - 86400);
-      if (prevVolumeData) {
-        const v0 = Number(prevVolumeData?.volumeToken0) || 0;
-        volumePrev24hUSD = v0 * safeToken0Price;
-      }
+      const volume7dUSD = volume7dToken0 * safeToken0Price;
+      const daysWithData = last7Days.length || 1; // Avoid division by zero
+      const volumeAvgDailyUSD = volume7dUSD / daysWithData;
 
       let tvlYesterdayUSD = 0;
       const prevEntry = prevTvlByPoolId.get(poolId);
@@ -310,31 +307,32 @@ async function computePoolsBatch(): Promise<any> {
         tvlYesterdayUSD = calculateTotalUSD(amt0Prev, amt1Prev, safeToken0Price, safeToken1Price);
       }
 
-      // NEW: Calculate fees and 24h APY
+      // Calculate 7-day fees and APR
       const dynamicFeeBps = dynamicFeesByPoolId.get(poolId) || 30; // default 0.30%
       const feeRate = dynamicFeeBps / 10_000;
-      const fees24hUSD = volume24hUSD * feeRate;
-      const feesPrev24hUSD = volumePrev24hUSD * feeRate;
+      const fees7dUSD = volume7dUSD * feeRate;
+      const feesAvgDailyUSD = fees7dUSD / daysWithData;
 
-      // 24h APY calculation
-      let apr24h = 0;
-      if (tvlUSD > 0 && fees24hUSD > 0) {
-        const annualFees = fees24hUSD * 365;
-        apr24h = (annualFees / tvlUSD) * 100;
+      // 7-day APR calculation (annualized from daily average)
+      let apr7d = 0;
+      if (tvlUSD > 0 && feesAvgDailyUSD > 0) {
+        const annualFees = feesAvgDailyUSD * 365;
+        apr7d = (annualFees / tvlUSD) * 100;
         // Ensure finite and positive
-        if (!isFinite(apr24h) || apr24h < 0) apr24h = 0;
+        if (!isFinite(apr7d) || apr7d < 0) apr7d = 0;
       }
 
       poolsStats.push({
         poolId,
         tvlUSD,
         tvlYesterdayUSD,
-        volume24hUSD,
-        volumePrev24hUSD,
-        fees24hUSD,
-        feesPrev24hUSD,
+        volume7dUSD,
+        volumeAvgDailyUSD,
+        fees7dUSD,
+        feesAvgDailyUSD,
         dynamicFeeBps,
-        apr24h,
+        apr7d,
+        daysWithData,
       });
     } catch {}
   }
