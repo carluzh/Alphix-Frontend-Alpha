@@ -30,13 +30,14 @@ import { RoutePlanner, CommandType } from '@uniswap/universal-router-sdk';
 import { Pool, Route as V4Route, PoolKey, V4Planner, Actions, encodeRouteToPath } from '@uniswap/v4-sdk';
 import { BigNumber } from 'ethers'; // For V4Planner compatibility if it expects Ethers BigNumber
 
-import { publicClient } from '../../../lib/viemClient';
+import { createNetworkClient } from '../../../lib/viemClient';
 import {
     TokenSymbol,
     getPoolConfigForTokens,
     createTokenSDK,
     createPoolKeyFromConfig,
     createCanonicalPoolKey,
+    getNetworkModeFromRequest,
 } from '../../../lib/pools-config';
 import { UniversalRouterAbi, TX_DEADLINE_SECONDS } from '../../../lib/swap-constants';
 import { getUniversalRouterAddress, getStateViewAddress } from '../../../lib/pools-config';
@@ -279,10 +280,11 @@ async function prepareV4MultiHopExactInSwapData(
     route: SwapRoute,
     amountInSmallestUnits: bigint,
     minAmountOutSmallestUnits: bigint,
-    chainId: number
+    chainId: number,
+    networkMode: 'mainnet' | 'testnet'
 ): Promise<V4PlanBuild> {
-    const inputToken = createTokenSDK(route.path[0] as TokenSymbol, chainId);
-    const outputToken = createTokenSDK(route.path[route.path.length - 1] as TokenSymbol, chainId);
+    const inputToken = createTokenSDK(route.path[0] as TokenSymbol, chainId, networkMode);
+    const outputToken = createTokenSDK(route.path[route.path.length - 1] as TokenSymbol, chainId, networkMode);
     if (!inputToken || !outputToken) {
         throw new Error(`Failed to create token instances for multi-hop route`);
     }
@@ -299,12 +301,12 @@ async function prepareV4MultiHopExactInSwapData(
         tickSpacing: p.tickSpacing,
         subgraphId: p.subgraphId
     })));
-    
+
     const poolKeys: PoolKey[] = [];
     for (let i = 0; i < route.pools.length; i++) {
         const hop = route.pools[i];
         console.log(`[ExactIn Debug] Hop ${i}: ${hop.token0} -> ${hop.token1} (${hop.poolName})`);
-        const poolCfg = getPoolConfigForTokens(hop.token0, hop.token1);
+        const poolCfg = getPoolConfigForTokens(hop.token0, hop.token1, networkMode);
         if (!poolCfg) throw new Error(`Pool config not found for hop ${i}: ${hop.poolName}`);
         const poolKey = createPoolKeyFromConfig(poolCfg.pool);
         console.log(`[ExactIn Debug] Pool key ${i}:`, {
@@ -358,7 +360,7 @@ async function prepareV4MultiHopExactInSwapData(
     // For native ETH output, use a very low minimum (1 wei) to avoid precision issues
     // The SWAP action's amountOutMinimum already enforces the actual slippage protection
     const lastPoolKey = poolKeys[poolKeys.length - 1];
-    const finalOutputToken = createTokenSDK(route.path[route.path.length - 1] as TokenSymbol, chainId);
+    const finalOutputToken = createTokenSDK(route.path[route.path.length - 1] as TokenSymbol, chainId, networkMode);
     if (!finalOutputToken) {
         throw new Error('Failed to create output token for TAKE_ALL');
     }
@@ -383,10 +385,11 @@ async function prepareV4MultiHopExactOutSwapData(
     route: SwapRoute,
     maxAmountInSmallestUnits: bigint,
     amountOutSmallestUnits: bigint,
-    chainId: number
+    chainId: number,
+    networkMode: 'mainnet' | 'testnet'
 ): Promise<V4PlanBuild> {
-    const inputToken = createTokenSDK(route.path[0] as TokenSymbol, chainId);
-    const outputToken = createTokenSDK(route.path[route.path.length - 1] as TokenSymbol, chainId);
+    const inputToken = createTokenSDK(route.path[0] as TokenSymbol, chainId, networkMode);
+    const outputToken = createTokenSDK(route.path[route.path.length - 1] as TokenSymbol, chainId, networkMode);
 
     if (!inputToken || !outputToken) {
         throw new Error(`Failed to create token instances for multi-hop route`);
@@ -406,7 +409,7 @@ async function prepareV4MultiHopExactOutSwapData(
     const poolKeys: PoolKey[] = [];
     for (let i = 0; i < route.pools.length; i++) {
         const hop = route.pools[i];
-        const poolCfg = getPoolConfigForTokens(hop.token0, hop.token1);
+        const poolCfg = getPoolConfigForTokens(hop.token0, hop.token1, networkMode);
         if (!poolCfg) {
             throw new Error(`Missing pool config for hop ${i}: ${hop.poolName}`);
         }
@@ -547,6 +550,13 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
 
         console.log("[DEBUG] build-tx received body:", JSON.stringify(req.body, null, 2));
 
+        // Get network mode from cookies for proper chain-specific addresses
+        const networkMode = getNetworkModeFromRequest(req.headers.cookie);
+        console.log('[build-tx] Network mode from cookies:', networkMode);
+
+        // Create network-specific public client
+        const publicClient = createNetworkClient(networkMode);
+
         // Validate required fields (basic check)
         const requiredFields = [userAddress, fromTokenSymbol, toTokenSymbol, swapType, amountDecimalsStr, limitAmountDecimalsStr, permitSignature, permitTokenAddress, permitAmount, permitNonce, permitExpiration, permitSigDeadline, chainId];
         if (requiredFields.some(field => field === undefined || field === null)) {
@@ -572,7 +582,7 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
         }
 
         // Find the best route using the routing engine
-        const routeResult = findBestRoute(fromTokenSymbol, toTokenSymbol);
+        const routeResult = findBestRoute(fromTokenSymbol, toTokenSymbol, networkMode);
         
         if (!routeResult.bestRoute) {
             return res.status(400).json({ 
@@ -588,14 +598,14 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
         // For single-hop, we still need the pool config for backward compatibility
         let poolConfig: any = null;
         if (route.isDirectRoute) {
-            poolConfig = getPoolConfigForTokens(fromTokenSymbol, toTokenSymbol);
+            poolConfig = getPoolConfigForTokens(fromTokenSymbol, toTokenSymbol, networkMode);
             if (!poolConfig) {
                 return res.status(400).json({ ok: false, message: `Pool configuration not found for direct route: ${fromTokenSymbol} → ${toTokenSymbol}` });
             }
         }
 
-        const INPUT_TOKEN = createTokenSDK(fromTokenSymbol, chainId);
-        const OUTPUT_TOKEN = createTokenSDK(toTokenSymbol, chainId);
+        const INPUT_TOKEN = createTokenSDK(fromTokenSymbol, chainId, networkMode);
+        const OUTPUT_TOKEN = createTokenSDK(toTokenSymbol, chainId, networkMode);
 
         if (!INPUT_TOKEN || !OUTPUT_TOKEN) {
             return res.status(400).json({ ok: false, message: 'Failed to create token instances.' });
@@ -622,7 +632,7 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
                         permitExpiration,               // expiration (number)
                         permitNonce                     // nonce (number)
                     ],
-                    getUniversalRouterAddress(),        // spender
+                    getUniversalRouterAddress(networkMode),        // spender
                     parsedPermitSigDeadline             // sigDeadline (bigint)
                 ],
                 permitSignature // The actual signature
@@ -687,7 +697,8 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
                     route,
                     amountInSmallestUnits,
                     minAmountOutSmallestUnits,
-                    chainId
+                    chainId,
+                    networkMode
                 );
             }
         } else { // ExactOut
@@ -710,7 +721,8 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
                     route,
                     maxAmountInSmallestUnits,
                     amountOutSmallestUnits,
-                    chainId
+                    chainId,
+                    networkMode
                 );
             }
         }
@@ -724,7 +736,7 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
         // 4. Simulate Transaction
         await publicClient.simulateContract({
             account: getAddress(userAddress), // Simulate as if the user is sending
-            address: getUniversalRouterAddress(),
+            address: getUniversalRouterAddress(networkMode),
             abi: UniversalRouterAbi, // Ensure UniversalRouterAbi is correctly typed as Abi
             functionName: 'execute',
             args: [routePlanner.commands as Hex, routePlanner.inputs as Hex[], txDeadline],
@@ -735,13 +747,13 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
         const touchedPools: Array<{ poolId: string; subgraphId?: string }> = [];
         try {
             if (route.isDirectRoute) {
-                const poolCfg = getPoolConfigForTokens(fromTokenSymbol, toTokenSymbol);
+                const poolCfg = getPoolConfigForTokens(fromTokenSymbol, toTokenSymbol, networkMode);
                 if (poolCfg) {
                     touchedPools.push({ poolId: poolCfg.pool.id, subgraphId: poolCfg.pool.subgraphId || poolCfg.pool.id });
                 }
             } else {
                 for (const hop of route.pools) {
-                    const cfg = getPoolConfigForTokens(hop.token0 as TokenSymbol, hop.token1 as TokenSymbol);
+                    const cfg = getPoolConfigForTokens(hop.token0 as TokenSymbol, hop.token1 as TokenSymbol, networkMode);
                     if (cfg) touchedPools.push({ poolId: cfg.pool.id, subgraphId: cfg.pool.subgraphId || cfg.pool.id });
                 }
             }
@@ -752,7 +764,7 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
             commands: routePlanner.commands as Hex,
             inputs: routePlanner.inputs as Hex[],
             deadline: txDeadline.toString(),
-            to: getUniversalRouterAddress(),
+            to: getUniversalRouterAddress(networkMode),
             value: txValue.toString(),
             route: {
                 path: route.path,

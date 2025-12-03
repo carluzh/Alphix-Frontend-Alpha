@@ -8,9 +8,9 @@ import JSBI from 'jsbi';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from "@/lib/abis/state_view_abi";
-import { TokenSymbol, getToken, getPositionManagerAddress, getStateViewAddress, getQuoterAddress, getPoolByTokens, getUniversalRouterAddress, createPoolKeyFromConfig } from "../../../lib/pools-config";
+import { TokenSymbol, getToken, getPositionManagerAddress, getStateViewAddress, getQuoterAddress, getPoolByTokens, getUniversalRouterAddress, createPoolKeyFromConfig, getNetworkModeFromRequest } from "../../../lib/pools-config";
 
-import { publicClient } from "../../../lib/viemClient";
+import { createNetworkClient } from "../../../lib/viemClient";
 import {
     isAddress,
     getAddress,
@@ -32,9 +32,8 @@ import {
     Permit2Abi_allowance,
 } from "../../../lib/swap-constants";
 
-const POSITION_MANAGER_ADDRESS = getPositionManagerAddress();
-const STATE_VIEW_ADDRESS = getStateViewAddress();
-const QUOTER_ADDRESS = getQuoterAddress();
+// Note: POSITION_MANAGER_ADDRESS, STATE_VIEW_ADDRESS, QUOTER_ADDRESS are now fetched dynamically per-request
+// using getPositionManagerAddress(networkMode), getStateViewAddress(networkMode), getQuoterAddress(networkMode)
 const ETHERS_ADDRESS_ZERO = "0x0000000000000000000000000000000000000000";
 const SDK_MIN_TICK = -887272;
 const SDK_MAX_TICK = 887272;
@@ -195,7 +194,9 @@ async function getSwapQuote(
     fromToken: Token,
     toToken: Token,
     amountIn: bigint,
-    poolConfig: any
+    poolConfig: any,
+    publicClient: ReturnType<typeof createNetworkClient>,
+    quoterAddress: `0x${string}`
 ): Promise<{ amountOut: bigint; gasEstimate: bigint }> {
     const zeroForOne = fromToken.sortsBefore(toToken);
     const [sortedToken0, sortedToken1] = fromToken.sortsBefore(toToken)
@@ -219,7 +220,7 @@ async function getSwapQuote(
 
     try {
         const [amountOut, gasEstimate] = await publicClient.readContract({
-            address: QUOTER_ADDRESS,
+            address: quoterAddress,
             abi: parseAbi(V4_QUOTER_ABI_STRINGS),
             functionName: 'quoteExactInputSingle',
             args: [quoteParams]
@@ -240,7 +241,9 @@ async function calculateOptimalSwapAmount(
     tickLower: number,
     tickUpper: number,
     poolConfig: any,
-    v4Pool: V4Pool
+    v4Pool: V4Pool,
+    publicClient: ReturnType<typeof createNetworkClient>,
+    quoterAddress: `0x${string}`
 ): Promise<{ optimalSwapAmount: bigint; resultingPosition: V4Position; priceImpact?: number; error?: string }> {
 
     if (inputAmount <= 0n) {
@@ -265,7 +268,7 @@ async function calculateOptimalSwapAmount(
         const needsToken1Only = currentTick <= tickLower;
 
         if ((needsToken0Only && !inputIsToken0) || (needsToken1Only && inputIsToken0)) {
-            const swapQuote = await getSwapQuote(inputToken, otherToken, inputAmount, poolConfig);
+            const swapQuote = await getSwapQuote(inputToken, otherToken, inputAmount, poolConfig, publicClient, quoterAddress);
 
             const position = needsToken0Only
                 ? V4Position.fromAmount0({
@@ -390,7 +393,7 @@ async function calculateOptimalSwapAmount(
         try {
             const clampedSwap = clampBigint(testSwapAmount, 0n, inputAmount);
             const swapQuote = clampedSwap > 0n
-                ? await getSwapQuote(inputToken, otherToken, clampedSwap, poolConfig)
+                ? await getSwapQuote(inputToken, otherToken, clampedSwap, poolConfig, publicClient, quoterAddress)
                 : { amountOut: 0n, gasEstimate: 0n };
 
             const remainingInput = inputAmount - clampedSwap;
@@ -471,7 +474,7 @@ async function calculateOptimalSwapAmount(
             if (leftoverOther > 0n) {
                 if (precise) {
                     try {
-                        const conversionQuote = await getSwapQuote(otherToken, inputToken, leftoverOther, poolConfig);
+                        const conversionQuote = await getSwapQuote(otherToken, inputToken, leftoverOther, poolConfig, publicClient, quoterAddress);
                         convertedOther = conversionQuote.amountOut;
                     } catch {
                         if (clampedSwap > 0n && swapQuote.amountOut > 0n) {
@@ -704,6 +707,14 @@ export default async function handler(
         return res.status(405).json({ message: `Method ${req.method} Not Allowed` });
     }
 
+    // Get network mode from cookies and create network-specific resources
+    const networkMode = getNetworkModeFromRequest(req.headers.cookie);
+    console.log('[prepare-zap-mint-tx] Network mode from cookies:', networkMode);
+    const publicClient = createNetworkClient(networkMode);
+    const POSITION_MANAGER_ADDRESS = getPositionManagerAddress(networkMode);
+    const STATE_VIEW_ADDRESS = getStateViewAddress(networkMode);
+    const QUOTER_ADDRESS = getQuoterAddress(networkMode);
+
     const stateViewAbiViem = parseAbi(STATE_VIEW_HUMAN_READABLE_ABI);
 
     try {
@@ -725,9 +736,9 @@ export default async function handler(
             return res.status(400).json({ message: "Invalid userAddress." });
         }
 
-        const token0Config = getToken(token0Symbol);
-        const token1Config = getToken(token1Symbol);
-        const inputTokenConfig = getToken(inputTokenSymbol);
+        const token0Config = getToken(token0Symbol, networkMode);
+        const token1Config = getToken(token1Symbol, networkMode);
+        const inputTokenConfig = getToken(inputTokenSymbol, networkMode);
 
         if (!token0Config || !token1Config || !inputTokenConfig) {
             return res.status(400).json({ message: "Invalid token symbol(s) provided." });
@@ -744,7 +755,7 @@ export default async function handler(
         // Determine which token is the input and which is the other
         const isInputToken0 = inputTokenSymbol === token0Symbol;
         const otherTokenSymbol = isInputToken0 ? token1Symbol : token0Symbol;
-        const otherTokenConfig = getToken(otherTokenSymbol);
+        const otherTokenConfig = getToken(otherTokenSymbol, networkMode);
 
         if (!otherTokenConfig) {
             return res.status(400).json({ message: "Invalid other token configuration." });
@@ -768,7 +779,7 @@ export default async function handler(
 
         // IMPORTANT: Calculate zap quote FIRST so price impact warning can be shown even when approvals are needed
         // Get pool configuration
-        const poolConfig = getPoolByTokens(token0Symbol, token1Symbol);
+        const poolConfig = getPoolByTokens(token0Symbol, token1Symbol, networkMode);
         if (!poolConfig) {
             return res.status(400).json({ message: `No pool configuration found for ${token0Symbol}/${token1Symbol}` });
         }
@@ -857,7 +868,9 @@ export default async function handler(
             tickLower,
             tickUpper,
             poolConfig,
-            v4Pool
+            v4Pool,
+            publicClient,
+            QUOTER_ADDRESS
         );
         
         console.log('[prepare-zap-mint-tx] Swap calculation result:', {
@@ -950,7 +963,7 @@ export default async function handler(
                 args: [
                     getAddress(userAddress),
                     getAddress(inputTokenConfig.address),
-                    getUniversalRouterAddress()
+                    getUniversalRouterAddress(networkMode)
                 ]
             }) as readonly [bigint, number, number];
 
@@ -974,7 +987,7 @@ export default async function handler(
                         nonce: Number(nonce),
                         expiration: permitExpiration,
                         sigDeadline: permitSigDeadline.toString(),
-                        spender: getUniversalRouterAddress(),
+                        spender: getUniversalRouterAddress(networkMode),
                     },
                     zapQuote: zapQuote // Include zapQuote so price impact warning can be shown
                 });
@@ -1004,7 +1017,7 @@ export default async function handler(
                         permitExpiration,                      // expiration (number)
                         permitNonce                            // nonce (number)
                     ],
-                    getUniversalRouterAddress(),               // spender
+                    getUniversalRouterAddress(networkMode),               // spender
                     BigInt(permitSigDeadline)                  // sigDeadline (bigint)
                 ],
                 permitSignature as Hex // The actual signature
@@ -1023,7 +1036,7 @@ export default async function handler(
         // Get actual swap quote output from V4Quoter (this is what we need to protect with slippage)
         let swapQuoteOutput: bigint = 0n;
         if (optimalSwapAmount > 0n) {
-            const swapQuote = await getSwapQuote(sdkInputToken, sdkOtherToken, optimalSwapAmount, poolConfig);
+            const swapQuote = await getSwapQuote(sdkInputToken, sdkOtherToken, optimalSwapAmount, poolConfig, publicClient, QUOTER_ADDRESS);
             swapQuoteOutput = swapQuote.amountOut;
         }
 
@@ -1126,7 +1139,7 @@ export default async function handler(
         return res.status(200).json({
             needsApproval: false,
             swapTransaction: {
-                to: getUniversalRouterAddress(),
+                to: getUniversalRouterAddress(networkMode),
                 commands: swapRoutePlanner.commands as Hex,
                 inputs: swapRoutePlanner.inputs as Hex[],
                 deadline: swapTxDeadline.toString(),

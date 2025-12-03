@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getAddress, parseUnits, type Address } from 'viem';
+import { getNetworkModeFromRequest, type NetworkMode } from '../../../lib/pools-config';
 
 // Helper function to safely parse amounts and prevent scientific notation errors
 const safeParseUnits = (amount: string, decimals: number): bigint => {
@@ -39,7 +40,7 @@ import {
 } from '../../../lib/pools-config';
 import { STATE_VIEW_ABI } from '../../../lib/abis/state_view_abi';
 import { V4QuoterAbi, EMPTY_BYTES } from '../../../lib/swap-constants';
-import { publicClient } from '../../../lib/viemClient';
+import { getRpcUrlForNetwork } from '../../../lib/viemClient';
 import { ethers } from 'ethers';
 import { findBestRoute, SwapRoute, routeToString } from '../../../lib/routing-engine';
 
@@ -65,17 +66,17 @@ interface PathKey {
 }
 
 // Helper function to encode multi-hop path for V4
-function encodeMultihopPath(route: SwapRoute, chainId: number): PathKey[] {
+function encodeMultihopPath(route: SwapRoute, chainId: number, networkMode?: NetworkMode): PathKey[] {
   const pathKeys: PathKey[] = [];
 
   for (let i = 0; i < route.pools.length; i++) {
     const pool = route.pools[i];
-    
+
     // For each hop, the intermediate currency is the "to" token of this hop
     // (except for the last hop where it's the final destination)
     let intermediateCurrency: Address;
     let targetToken: string;
-    
+
     if (i === route.pools.length - 1) {
       // Last hop - intermediate currency is the final destination
       targetToken = route.path[route.path.length - 1];
@@ -83,8 +84,8 @@ function encodeMultihopPath(route: SwapRoute, chainId: number): PathKey[] {
       // Not the last hop - intermediate currency is the next token in the path
       targetToken = route.path[i + 1];
     }
-    
-    const targetTokenSDK = createTokenSDK(targetToken as TokenSymbol, chainId);
+
+    const targetTokenSDK = createTokenSDK(targetToken as TokenSymbol, chainId, networkMode);
     
     if (!targetTokenSDK) {
       throw new Error(`Failed to create token SDK for ${targetToken} (hop ${i})`);
@@ -130,18 +131,19 @@ function createPoolKeyAndDirection(fromToken: Token, toToken: Token, poolConfig:
 async function getMidPrice(
   fromToken: Token,
   toToken: Token,
-  poolConfig: any
+  poolConfig: any,
+  networkMode?: NetworkMode
 ): Promise<number | null> {
   try {
     const { poolKey, zeroForOne } = createPoolKeyAndDirection(fromToken, toToken, poolConfig);
-    
+
     // Get pool ID
     const poolId = poolConfig.pool.subgraphId;
-    
-    // Get current tick from state view
-    const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL || process.env.RPC_URL || 'https://sepolia.base.org';
+
+    // Get current tick from state view - use network-aware RPC
+    const rpcUrl = getRpcUrlForNetwork(networkMode || 'testnet');
     const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
-    const stateView = new ethers.Contract(getStateViewAddress(), STATE_VIEW_ABI as any, provider);
+    const stateView = new ethers.Contract(getStateViewAddress(networkMode), STATE_VIEW_ABI as any, provider);
     
     const slot0 = await stateView.callStatic.getSlot0(poolId);
     const tickCurrent = slot0.tick;
@@ -172,18 +174,18 @@ async function getMidPrice(
   }
 }
 
-async function computeRouteMidPrice(route: SwapRoute, chainId: number): Promise<number | null> {
+async function computeRouteMidPrice(route: SwapRoute, chainId: number, networkMode?: NetworkMode): Promise<number | null> {
   if (!route.path || route.path.length < 2) return null;
   let cumulativePrice = 1;
   for (let i = 0; i < route.path.length - 1; i++) {
     const fromSymbol = route.path[i] as TokenSymbol;
     const toSymbol = route.path[i + 1] as TokenSymbol;
-    const hopPoolConfig = getPoolConfigForTokens(fromSymbol, toSymbol);
+    const hopPoolConfig = getPoolConfigForTokens(fromSymbol, toSymbol, networkMode);
     if (!hopPoolConfig) return null;
-    const hopFromToken = createTokenSDK(fromSymbol, chainId);
-    const hopToToken = createTokenSDK(toSymbol, chainId);
+    const hopFromToken = createTokenSDK(fromSymbol, chainId, networkMode);
+    const hopToToken = createTokenSDK(toSymbol, chainId, networkMode);
     if (!hopFromToken || !hopToToken) return null;
-    const hopMidPrice = await getMidPrice(hopFromToken, hopToToken, hopPoolConfig);
+    const hopMidPrice = await getMidPrice(hopFromToken, hopToToken, hopPoolConfig, networkMode);
     if (hopMidPrice === null) return null;
     cumulativePrice *= hopMidPrice;
   }
@@ -195,7 +197,8 @@ async function getV4QuoteExactInputSingle(
   fromToken: Token,
   toToken: Token,
   amountInSmallestUnits: bigint,
-  poolConfig: any
+  poolConfig: any,
+  networkMode?: NetworkMode
 ): Promise<{ amountOut: bigint; gasEstimate: bigint; midPrice?: number }> {
   const { poolKey, zeroForOne } = createPoolKeyAndDirection(fromToken, toToken, poolConfig);
 
@@ -207,25 +210,59 @@ async function getV4QuoteExactInputSingle(
     EMPTY_BYTES
   ] as const;
 
+  const rpcUrl = getRpcUrlForNetwork(networkMode || 'testnet');
+  const quoterAddress = getQuoterAddress(networkMode);
+  const stateViewAddress = getStateViewAddress(networkMode);
+  const poolId = poolConfig.pool.subgraphId;
+
+  console.log('[V4 Quoter ExactInputSingle] Config:', {
+    networkMode,
+    rpcUrl,
+    quoterAddress,
+    stateViewAddress,
+    poolId,
+    poolName: poolConfig.pool.name,
+    amountIn: amountInSmallestUnits.toString(),
+    zeroForOne,
+    poolKey: {
+      currency0: poolKey.currency0,
+      currency1: poolKey.currency1,
+      fee: poolKey.fee,
+      tickSpacing: poolKey.tickSpacing,
+      hooks: poolKey.hooks
+    }
+  });
+
   try {
-
-    const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL || process.env.RPC_URL || 'https://sepolia.base.org';
     const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
-    const quoter = new ethers.Contract(getQuoterAddress(), V4QuoterAbi as any, provider);
+    const quoter = new ethers.Contract(quoterAddress, V4QuoterAbi as any, provider);
+    const stateView = new ethers.Contract(stateViewAddress, STATE_VIEW_ABI as any, provider);
 
-    // Use the subgraphId directly as it's the actual on-chain poolId
-    const poolId = poolConfig.pool.subgraphId;
+    // Verify pool exists
+    console.log('[V4 Quoter] Verifying pool exists via StateView.getSlot0...');
+    const slot0 = await stateView.callStatic.getSlot0(poolId);
+    console.log('[V4 Quoter] Pool slot0:', {
+      sqrtPriceX96: slot0.sqrtPriceX96?.toString(),
+      tick: slot0.tick,
+      protocolFee: slot0.protocolFee,
+      lpFee: slot0.lpFee
+    });
 
-    const stateView = new ethers.Contract(getStateViewAddress(), STATE_VIEW_ABI as any, provider);
-    await stateView.callStatic.getSlot0(poolId);
-
+    console.log('[V4 Quoter] Calling quoter.quoteExactInputSingle...');
     const [amountOut, gasEstimate] = await quoter.callStatic.quoteExactInputSingle(quoteParams);
-    
+    console.log('[V4 Quoter] Quote success:', { amountOut: amountOut.toString(), gasEstimate: gasEstimate.toString() });
+
     // Get mid price for price impact calculation
-    const midPrice = await getMidPrice(fromToken, toToken, poolConfig);
-    
+    const midPrice = await getMidPrice(fromToken, toToken, poolConfig, networkMode);
+
     return { amountOut, gasEstimate, midPrice: midPrice || undefined };
   } catch (error: any) {
+    console.error('[V4 Quoter ExactInputSingle] FAILED:', {
+      errorMessage: error.message,
+      errorCode: error.code,
+      errorReason: error.reason,
+      errorData: error.data
+    });
     throw error;
   }
 }
@@ -235,7 +272,8 @@ async function getV4QuoteExactOutputSingle(
   fromToken: Token,
   toToken: Token,
   amountOutSmallestUnits: bigint,
-  poolConfig: any
+  poolConfig: any,
+  networkMode?: NetworkMode
 ): Promise<{ amountIn: bigint; gasEstimate: bigint; midPrice?: number }> {
   const { poolKey, zeroForOne } = createPoolKeyAndDirection(fromToken, toToken, poolConfig);
 
@@ -246,25 +284,47 @@ async function getV4QuoteExactOutputSingle(
     EMPTY_BYTES
   ] as const;
 
-  try {
-    const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL || process.env.RPC_URL || 'https://sepolia.base.org';
-    const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
-    const quoter = new ethers.Contract(getQuoterAddress(), V4QuoterAbi as any, provider);
+  const rpcUrl = getRpcUrlForNetwork(networkMode || 'testnet');
+  const quoterAddress = getQuoterAddress(networkMode);
+  const stateViewAddress = getStateViewAddress(networkMode);
+  // Use subgraphId directly - DO NOT recalculate using keccak256
+  const poolId = poolConfig.pool.subgraphId;
 
-    const poolId = ethers.utils.solidityKeccak256(
-      ['address','address','uint24','int24','address'],
-      [poolKey.currency0, poolKey.currency1, poolKey.fee, poolKey.tickSpacing, poolKey.hooks]
-    );
-    const stateView = new ethers.Contract(getStateViewAddress(), STATE_VIEW_ABI as any, provider);
+  console.log('[V4 Quoter ExactOutputSingle] Config:', {
+    networkMode,
+    rpcUrl,
+    quoterAddress,
+    stateViewAddress,
+    poolId,
+    poolName: poolConfig.pool.name,
+    amountOut: amountOutSmallestUnits.toString(),
+    zeroForOne
+  });
+
+  try {
+    const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
+    const quoter = new ethers.Contract(quoterAddress, V4QuoterAbi as any, provider);
+    const stateView = new ethers.Contract(stateViewAddress, STATE_VIEW_ABI as any, provider);
+
+    // Verify pool exists
+    console.log('[V4 Quoter ExactOutputSingle] Verifying pool exists...');
     await stateView.callStatic.getSlot0(poolId);
 
+    console.log('[V4 Quoter ExactOutputSingle] Calling quoter.quoteExactOutputSingle...');
     const [amountIn, gasEstimate] = await quoter.callStatic.quoteExactOutputSingle(quoteParams);
-    
+    console.log('[V4 Quoter ExactOutputSingle] Quote success:', { amountIn: amountIn.toString(), gasEstimate: gasEstimate.toString() });
+
     // Get mid price for price impact calculation
-    const midPrice = await getMidPrice(fromToken, toToken, poolConfig);
-    
+    const midPrice = await getMidPrice(fromToken, toToken, poolConfig, networkMode);
+
     return { amountIn, gasEstimate, midPrice: midPrice || undefined };
   } catch (error: any) {
+    console.error('[V4 Quoter ExactOutputSingle] FAILED:', {
+      errorMessage: error.message,
+      errorCode: error.code,
+      errorReason: error.reason,
+      errorData: error.data
+    });
     throw error;
   }
 }
@@ -274,15 +334,16 @@ async function getV4QuoteExactInputMultiHop(
   fromToken: Token,
   route: SwapRoute,
   amountInSmallestUnits: bigint,
-  chainId: number
+  chainId: number,
+  networkMode?: NetworkMode
 ): Promise<{ amountOut: bigint; gasEstimate: bigint }> {
-  
+
   if (!fromToken.address) {
     throw new Error(`From token ${fromToken.symbol} has undefined address`);
   }
-  
+
   // Encode the multi-hop path
-  const pathKeys = encodeMultihopPath(route, chainId);
+  const pathKeys = encodeMultihopPath(route, chainId, networkMode);
   
   
 
@@ -305,9 +366,7 @@ async function getV4QuoteExactInputMultiHop(
     amountInSmallestUnits     // uint128 amountIn
   ] as const;
 
-  const quoterAddress = getQuoterAddress();
-  
-  
+  const quoterAddress = getQuoterAddress(networkMode);
 
   // Validate quoter address
   if (!quoterAddress) {
@@ -329,31 +388,42 @@ async function getV4QuoteExactInputMultiHop(
     throw new Error(`Address validation failed: ${validationError.message}`);
   }
 
-  // Note: Cannot JSON.stringify quoteParams due to BigInt values
+  const rpcUrl = getRpcUrlForNetwork(networkMode || 'testnet');
+  console.log('[V4 Quoter ExactInputMultiHop] Config:', {
+    networkMode,
+    rpcUrl,
+    quoterAddress,
+    route: route.path.join(' → '),
+    amountIn: amountInSmallestUnits.toString()
+  });
 
   try {
-    const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL || process.env.RPC_URL || 'https://sepolia.base.org';
     const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
 
     // Preflight: verify each hop pool exists via StateView
-    const stateView = new ethers.Contract(getStateViewAddress(), STATE_VIEW_ABI as any, provider);
+    const stateView = new ethers.Contract(getStateViewAddress(networkMode), STATE_VIEW_ABI as any, provider);
     for (let i = 0; i < route.pools.length; i++) {
       const hop = route.pools[i];
-      const poolCfg = getPoolById(hop.poolId);
+      const poolCfg = getPoolById(hop.poolId, networkMode);
       if (!poolCfg) {
         throw new Error(`Missing pool config for hop ${i}: ${hop.poolId}`);
       }
-      const poolId = ethers.utils.solidityKeccak256(
-        ['address','address','uint24','int24','address'],
-        [poolCfg.currency0.address, poolCfg.currency1.address, poolCfg.fee, poolCfg.tickSpacing, poolCfg.hooks]
-      );
+      // Use subgraphId directly - DO NOT recalculate using keccak256
+      const poolId = poolCfg.subgraphId;
+      console.log(`[V4 Quoter ExactInputMultiHop] Verifying hop ${i}: ${poolCfg.name} (poolId: ${poolId})`);
       await stateView.callStatic.getSlot0(poolId);
     }
 
+    console.log('[V4 Quoter ExactInputMultiHop] Calling quoter.quoteExactInput...');
     const quoter = new ethers.Contract(quoterAddress, V4QuoterAbi as any, provider);
     const [amountOut, gasEstimate] = await quoter.callStatic.quoteExactInput(quoteParams);
+    console.log('[V4 Quoter ExactInputMultiHop] Quote success:', { amountOut: amountOut.toString(), gasEstimate: gasEstimate.toString() });
     return { amountOut, gasEstimate };
   } catch (error: any) {
+    console.error('[V4 Quoter ExactInputMultiHop] FAILED:', {
+      errorMessage: error.message,
+      errorCode: error.code
+    });
     throw error;
   }
 }
@@ -363,10 +433,11 @@ async function getV4QuoteExactOutputMultiHop(
   toToken: Token,
   route: SwapRoute,
   amountOutSmallestUnits: bigint,
-  chainId: number
+  chainId: number,
+  networkMode?: NetworkMode
 ): Promise<{ amountIn: bigint; gasEstimate: bigint }> {
   try {
-    const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL || process.env.RPC_URL || 'https://sepolia.base.org';
+    const rpcUrl = getRpcUrlForNetwork(networkMode || 'testnet');
     const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
 
     // Stepwise chain ExactOut over each hop (reliable across ABI quirks)
@@ -375,20 +446,20 @@ async function getV4QuoteExactOutputMultiHop(
     for (let i = route.pools.length - 1; i >= 0; i--) {
       const outSymbol = route.path[i + 1];
       const inSymbol = route.path[i];
-      const outTok = createTokenSDK(outSymbol as any, chainId);
-      const inTok = createTokenSDK(inSymbol as any, chainId);
+      const outTok = createTokenSDK(outSymbol as any, chainId, networkMode);
+      const inTok = createTokenSDK(inSymbol as any, chainId, networkMode);
       if (!outTok || !inTok) throw new Error(`Token SDK missing for hop ${i}: ${inSymbol}->${outSymbol}`);
       // Prefer resolving by token symbols for robustness
-      let poolCfg = getPoolConfigForTokens(inSymbol as any, outSymbol as any);
+      let poolCfg = getPoolConfigForTokens(inSymbol as any, outSymbol as any, networkMode);
       if (!poolCfg) {
         // Try reverse ordering if config sorted differently
-        poolCfg = getPoolConfigForTokens(outSymbol as any, inSymbol as any);
+        poolCfg = getPoolConfigForTokens(outSymbol as any, inSymbol as any, networkMode);
       }
       if (!poolCfg) throw new Error(`Missing pool config for hop ${i}: ${inSymbol}->${outSymbol}`);
 
       // requiredOut is in outTok decimals already
       try {
-        const { amountIn, gasEstimate } = await getV4QuoteExactOutputSingle(inTok, outTok, requiredOut, poolCfg);
+        const { amountIn, gasEstimate } = await getV4QuoteExactOutputSingle(inTok, outTok, requiredOut, poolCfg, networkMode);
         requiredOut = amountIn; // becomes the exact output target for previous hop
         totalGas += gasEstimate;
       } catch (hopErr: any) {
@@ -411,6 +482,10 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
   try {
     const { fromTokenSymbol, toTokenSymbol, amountDecimalsStr, swapType = 'ExactIn' } = req.body;
 
+    // Get network mode from cookie for proper config selection
+    const networkMode = getNetworkModeFromRequest(req.headers.cookie);
+    console.log(`[V4 Quoter] Using network mode: ${networkMode}`);
+
     // Validate required fields
     if (!fromTokenSymbol || !toTokenSymbol || !amountDecimalsStr) {
       return res.status(400).json({ message: 'Missing required fields' });
@@ -421,10 +496,10 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
     }
 
     console.log(`[V4 Quoter] ${fromTokenSymbol} → ${toTokenSymbol}, amount: ${amountDecimalsStr}, chainId: ${req.body.chainId}`);
-    
-    // Create Token instances
-    const fromToken = createTokenSDK(fromTokenSymbol, req.body.chainId);
-    const toToken = createTokenSDK(toTokenSymbol, req.body.chainId);
+
+    // Create Token instances with network-aware config
+    const fromToken = createTokenSDK(fromTokenSymbol, req.body.chainId, networkMode);
+    const toToken = createTokenSDK(toTokenSymbol, req.body.chainId, networkMode);
     
     console.log(`[V4 Quoter] Token creation debug:`, {
       fromTokenSymbol,
@@ -464,11 +539,11 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
       ? safeParseUnits(amountDecimalsStr, toToken.decimals)
       : 0n;
     
-    // Find the best route using the routing engine
-    const routeResult = findBestRoute(fromTokenSymbol, toTokenSymbol);
-    
+    // Find the best route using the routing engine (network-aware)
+    const routeResult = findBestRoute(fromTokenSymbol, toTokenSymbol, networkMode);
+
     if (!routeResult.bestRoute) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         message: `No route found for token pair: ${fromTokenSymbol} → ${toTokenSymbol}`,
         error: 'No available pools to complete this swap'
       });
@@ -476,43 +551,43 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
 
     const route = routeResult.bestRoute;
     console.log(`[V4 Quoter] Using route: ${routeToString(route)}`);
-    
+
     let amountOut: bigint = 0n;
     let amountIn: bigint = 0n;
     let gasEstimate: bigint;
     let midPrice: number | null = null;
-    
+
     if (swapType === 'ExactIn') {
       if (route.isDirectRoute) {
-        const poolConfig = getPoolConfigForTokens(fromTokenSymbol, toTokenSymbol);
+        const poolConfig = getPoolConfigForTokens(fromTokenSymbol, toTokenSymbol, networkMode);
         if (!poolConfig) {
           return res.status(400).json({ message: `Pool configuration not found for direct route: ${fromTokenSymbol} → ${toTokenSymbol}` });
         }
-        const result = await getV4QuoteExactInputSingle(fromToken, toToken, amountInSmallestUnits, poolConfig);
+        const result = await getV4QuoteExactInputSingle(fromToken, toToken, amountInSmallestUnits, poolConfig, networkMode);
         amountOut = result.amountOut;
         gasEstimate = result.gasEstimate;
         midPrice = result.midPrice || null;
       } else {
-        const result = await getV4QuoteExactInputMultiHop(fromToken, route, amountInSmallestUnits, req.body.chainId);
+        const result = await getV4QuoteExactInputMultiHop(fromToken, route, amountInSmallestUnits, req.body.chainId, networkMode);
         amountOut = result.amountOut;
         gasEstimate = result.gasEstimate;
-        midPrice = await computeRouteMidPrice(route, req.body.chainId);
+        midPrice = await computeRouteMidPrice(route, req.body.chainId, networkMode);
       }
     } else { // ExactOut
       if (route.isDirectRoute) {
-        const poolConfig = getPoolConfigForTokens(fromTokenSymbol, toTokenSymbol);
+        const poolConfig = getPoolConfigForTokens(fromTokenSymbol, toTokenSymbol, networkMode);
         if (!poolConfig) {
           return res.status(400).json({ message: `Pool configuration not found for direct route: ${fromTokenSymbol} → ${toTokenSymbol}` });
         }
-        const result = await getV4QuoteExactOutputSingle(fromToken, toToken, amountOutSmallestUnits, poolConfig);
+        const result = await getV4QuoteExactOutputSingle(fromToken, toToken, amountOutSmallestUnits, poolConfig, networkMode);
         amountIn = result.amountIn;
         gasEstimate = result.gasEstimate;
         midPrice = result.midPrice || null;
       } else {
-        const result = await getV4QuoteExactOutputMultiHop(toToken, route, amountOutSmallestUnits, req.body.chainId);
+        const result = await getV4QuoteExactOutputMultiHop(toToken, route, amountOutSmallestUnits, req.body.chainId, networkMode);
         amountIn = result.amountIn;
         gasEstimate = result.gasEstimate;
-        midPrice = await computeRouteMidPrice(route, req.body.chainId);
+        midPrice = await computeRouteMidPrice(route, req.body.chainId, networkMode);
       }
     }
     
@@ -568,8 +643,14 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
       debug: true
     });
   } catch (error: any) {
-    console.error('[V4 Quoter API] Error:', error);
-    
+    console.error('[V4 Quoter API] Full Error Details:', {
+      message: error.message,
+      code: error.code,
+      reason: error.reason,
+      data: error.data,
+      stack: error.stack?.substring(0, 500)
+    });
+
     // Check for specific error types
     let errorMessage = 'Failed to get quote';
     

@@ -1,6 +1,7 @@
 import { useMemo, useState, useEffect } from 'react';
 import { useReadContract } from 'wagmi';
-import { TokenSymbol, TOKEN_DEFINITIONS, NATIVE_TOKEN_ADDRESS } from '@/lib/pools-config';
+import { TokenSymbol, getTokenDefinitions, NATIVE_TOKEN_ADDRESS } from '@/lib/pools-config';
+import { useNetwork } from '@/lib/network-context';
 import { PERMIT2_ADDRESS } from '@/lib/swap-constants';
 import { ERC20_ABI } from '@/lib/abis/erc20';
 import { parseUnits } from 'viem';
@@ -44,12 +45,15 @@ export function useCheckZapApprovals(
     refetchInterval?: number | false;
   }
 ) {
+  const { networkMode } = useNetwork();
+  const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
+
   const inputTokenConfig = params
-    ? TOKEN_DEFINITIONS[params.inputTokenSymbol === 'token0' ? params.token0Symbol : params.token1Symbol]
+    ? tokenDefinitions[params.inputTokenSymbol === 'token0' ? params.token0Symbol : params.token1Symbol]
     : undefined;
 
   const outputTokenConfig = params
-    ? TOKEN_DEFINITIONS[params.inputTokenSymbol === 'token0' ? params.token1Symbol : params.token0Symbol]
+    ? tokenDefinitions[params.inputTokenSymbol === 'token0' ? params.token1Symbol : params.token0Symbol]
     : undefined;
 
   // Check if tokens are native (ETH) - native tokens don't need approval

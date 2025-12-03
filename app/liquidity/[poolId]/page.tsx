@@ -16,12 +16,14 @@ import { useAccount, useBalance } from "wagmi";
 import { toast } from "sonner";
 import { useIsMobile } from "@/hooks/use-mobile";
 import type { ProcessedPosition } from "../../../pages/api/liquidity/get-positions";
-import { TOKEN_DEFINITIONS, TokenSymbol } from "@/lib/pools-config";
+import { getTokenDefinitions, TokenSymbol } from "@/lib/pools-config";
+import { useNetwork } from "@/lib/network-context";
 import { Tooltip as UITooltip, TooltipContent as UITooltipContent, TooltipProvider as UITooltipProvider, TooltipTrigger as UITooltipTrigger } from "@/components/ui/tooltip";
 import { motion, AnimatePresence } from "framer-motion";
 import { formatUnits, type Hex } from "viem";
 import { Bar, BarChart, Line, LineChart, CartesianGrid, XAxis, YAxis, ResponsiveContainer, ComposedChart, Area, ReferenceLine, ReferenceArea } from "recharts";
 import { getPoolById, getPoolSubgraphId, getToken, getAllTokens } from "@/lib/pools-config";
+import { getExplorerTxUrl } from "@/lib/wagmiConfig";
 import { usePoolState, useAllPrices, useUncollectedFeesBatch } from "@/components/data/hooks";
 import { SafeStorage } from "@/lib/safe-storage";
 import { RetryUtility } from "@/lib/retry-utility";
@@ -44,7 +46,7 @@ import { useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { useQueryClient } from '@tanstack/react-query';
 import { getPositionManagerAddress } from '@/lib/pools-config';
 import { position_manager_abi } from '@/lib/abis/PositionManager_abi';
-import { loadUserPositionIds, derivePositionsFromIds, waitForSubgraphBlock, setIndexingBarrier, invalidateUserPositionIdsCache } from "../../../lib/client-cache";
+import { loadUserPositionIds, derivePositionsFromIds, waitForSubgraphBlock, setIndexingBarrier, invalidateUserPositionIdsCache, getCachedPositionTimestamps } from "../../../lib/client-cache";
 import { invalidateAfterTx } from "@/lib/invalidation";
 
 import type { Pool } from "../../../types";
@@ -161,7 +163,7 @@ interface PoolDetailData extends Pool {
 }
 
 // Helper function to convert tick to price using the same logic as AddLiquidityForm.tsx
-const convertTickToPrice = (tick: number, currentPoolTick: number | null, currentPrice: string | null, baseTokenForPriceDisplay: string, token0Symbol: string, token1Symbol: string): string => {
+const convertTickToPrice = (tick: number, currentPoolTick: number | null, currentPrice: string | null, baseTokenForPriceDisplay: string, token0Symbol: string, token1Symbol: string, tokenDefinitions: Record<string, { address: string; decimals: number; symbol: string }>): string => {
   // Preferred: relative to live current price when available
   if (currentPoolTick !== null && currentPrice) {
     const currentPriceNum = parseFloat(currentPrice);
@@ -181,8 +183,8 @@ const convertTickToPrice = (tick: number, currentPoolTick: number | null, curren
 
   // Fallback: derive absolute price from tick + decimals (v4 orientation)
   try {
-    const cfg0 = TOKEN_DEFINITIONS[token0Symbol as TokenSymbol];
-    const cfg1 = TOKEN_DEFINITIONS[token1Symbol as TokenSymbol];
+    const cfg0 = tokenDefinitions[token0Symbol as TokenSymbol];
+    const cfg1 = tokenDefinitions[token1Symbol as TokenSymbol];
     const addr0 = (cfg0?.address || `0x${token0Symbol}`).toLowerCase();
     const addr1 = (cfg1?.address || `0x${token1Symbol}`).toLowerCase();
     const dec0 = cfg0?.decimals ?? 18;
@@ -376,7 +378,8 @@ function FeesCell({
   sym1,
   price0,
   price1,
-  batchFeesData
+  batchFeesData,
+  tokenDefinitions
 }: {
   positionId: string;
   sym0: string;
@@ -384,6 +387,7 @@ function FeesCell({
   price0: number;
   price1: number;
   batchFeesData?: any[];
+  tokenDefinitions: Record<string, { address: string; decimals: number; symbol: string }>;
 }) {
   // Find fees for this position from batch data
   const fees = React.useMemo(() => {
@@ -410,8 +414,8 @@ function FeesCell({
   );
   if (!fees) return <span className="text-muted-foreground">—</span>;
 
-  const d0 = TOKEN_DEFINITIONS?.[sym0 as keyof typeof TOKEN_DEFINITIONS]?.decimals ?? 18;
-  const d1 = TOKEN_DEFINITIONS?.[sym1 as keyof typeof TOKEN_DEFINITIONS]?.decimals ?? 18;
+  const d0 = tokenDefinitions?.[sym0 as string]?.decimals ?? 18;
+  const d1 = tokenDefinitions?.[sym1 as string]?.decimals ?? 18;
   let amt0 = 0;
   let amt1 = 0;
   try { amt0 = parseFloat(formatUnits(BigInt(fees.amount0), d0)); } catch {}
@@ -480,6 +484,16 @@ export default function PoolDetailPage() {
 
 
   const { address: accountAddress, isConnected, chainId } = useAccount();
+  const { networkMode } = useNetwork();
+  const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
+
+  // Create a wrapper for convertTickToPrice that binds tokenDefinitions
+  const boundConvertTickToPrice = useMemo(() =>
+    (tick: number, currentPoolTick: number | null, currentPrice: string | null, baseTokenForPriceDisplay: string, token0Symbol: string, token1Symbol: string) =>
+      convertTickToPrice(tick, currentPoolTick, currentPrice, baseTokenForPriceDisplay, token0Symbol, token1Symbol, tokenDefinitions),
+    [tokenDefinitions]
+  );
+
   const { writeContract } = useWriteContract();
   const [collectHash, setCollectHash] = useState<`0x${string}` | undefined>(undefined);
   const [lastCollectPositionId, setLastCollectPositionId] = useState<string | null>(null);
@@ -492,7 +506,7 @@ export default function PoolDetailPage() {
         icon: <BadgeCheck className="h-4 w-4 text-green-500" />,
         action: {
           label: "View Transaction",
-          onClick: () => window.open(`https://sepolia.basescan.org/tx/${collectHash}`, '_blank')
+          onClick: () => window.open(getExplorerTxUrl(collectHash), '_blank')
         }
       });
 
@@ -546,20 +560,20 @@ export default function PoolDetailPage() {
   // Balance hooks for tokens
   const { data: token0BalanceData, isLoading: isLoadingToken0Balance } = useBalance({
     address: accountAddress,
-    token: TOKEN_DEFINITIONS['aUSDC']?.address === "0x0000000000000000000000000000000000000000" 
+    token: tokenDefinitions['aUSDC']?.address === "0x0000000000000000000000000000000000000000" 
       ? undefined 
-      : TOKEN_DEFINITIONS['aUSDC']?.address as `0x${string}` | undefined,
+      : tokenDefinitions['aUSDC']?.address as `0x${string}` | undefined,
     chainId,
-    query: { enabled: !!accountAddress && !!chainId && !!TOKEN_DEFINITIONS['aUSDC'] },
+    query: { enabled: !!accountAddress && !!chainId && !!tokenDefinitions['aUSDC'] },
   });
 
   const { data: token1BalanceData, isLoading: isLoadingToken1Balance } = useBalance({
     address: accountAddress,
-    token: TOKEN_DEFINITIONS['aUSDT']?.address === "0x0000000000000000000000000000000000000000" 
+    token: tokenDefinitions['aUSDT']?.address === "0x0000000000000000000000000000000000000000" 
       ? undefined 
-      : TOKEN_DEFINITIONS['aUSDT']?.address as `0x${string}` | undefined,
+      : tokenDefinitions['aUSDT']?.address as `0x${string}` | undefined,
     chainId,
-    query: { enabled: !!accountAddress && !!chainId && !!TOKEN_DEFINITIONS['aUSDT'] },
+    query: { enabled: !!accountAddress && !!chainId && !!tokenDefinitions['aUSDT'] },
   });
 
   // Helper function to get formatted display balance
@@ -753,6 +767,7 @@ export default function PoolDetailPage() {
   // Debounce versioning to avoid stale API results applying to current inputs
   const increaseCalcVersionRef = React.useRef(0);
   const withdrawCalcVersionRef = React.useRef(0);
+  const refreshThrottleRef = useRef(0);
 
   useEffect(() => {
     const handleResize = () => setWindowWidth(window.innerWidth);
@@ -849,7 +864,8 @@ export default function PoolDetailPage() {
       const basePoolInfo = getPoolConfiguration(poolId);
       if (!basePoolInfo) return null;
       const ids = await loadUserPositionIds(accountAddress);
-      const data = await derivePositionsFromIds(accountAddress, ids);
+      const timestamps = getCachedPositionTimestamps(accountAddress);
+      const data = await derivePositionsFromIds(accountAddress, ids, chainId!, timestamps);
       if (!Array.isArray(data)) return null;
       const subgraphId = (basePoolInfo.subgraphId || '').toLowerCase();
       const [poolToken0Raw, poolToken1Raw] = basePoolInfo.pair.split(' / ');
@@ -867,7 +883,7 @@ export default function PoolDetailPage() {
       console.warn('Refetch positions failed', e);
       return null;
     }
-  }, [poolId, isConnected, accountAddress]);
+  }, [poolId, isConnected, accountAddress, chainId]);
 
   // Backoff refresh for a single position after transaction
   const backoffRefreshSinglePosition = useCallback(async (positionId: string) => {
@@ -916,7 +932,8 @@ export default function PoolDetailPage() {
 
           // Fetch from on-chain
           const ids = await loadUserPositionIds(accountAddress);
-          const data = await derivePositionsFromIds(accountAddress, ids);
+          const timestamps = getCachedPositionTimestamps(accountAddress);
+          const data = await derivePositionsFromIds(accountAddress, ids, chainId!, timestamps);
           const filtered = data.filter((pos: any) =>
             String(pos?.poolId || '').toLowerCase() === subId
           );
@@ -980,13 +997,14 @@ export default function PoolDetailPage() {
     pendingActionRef.current = null;
     (async () => {
       try {
-        if (accountAddress) {
+        if (accountAddress && chainId) {
           const ids = await loadUserPositionIds(accountAddress);
-          await derivePositionsFromIds(accountAddress, ids);
+          const timestamps = getCachedPositionTimestamps(accountAddress);
+          await derivePositionsFromIds(accountAddress, ids, chainId, timestamps);
         }
       } catch {}
     })();
-  }, [accountAddress]);
+  }, [accountAddress, chainId]);
 
 
 
@@ -1025,7 +1043,8 @@ export default function PoolDetailPage() {
           if (!accountAddress) throw new Error('Missing account');
           // Fetch from on-chain
           const ids = await loadUserPositionIds(accountAddress);
-          const data = await derivePositionsFromIds(accountAddress, ids);
+          const timestamps = getCachedPositionTimestamps(accountAddress);
+          const data = await derivePositionsFromIds(accountAddress, ids, chainId!, timestamps);
           const filtered = data.filter((pos: any) => String(pos?.poolId || '').toLowerCase() === subId);
           const nextFp = fingerprint(filtered);
 
@@ -1102,7 +1121,8 @@ export default function PoolDetailPage() {
           if (!accountAddress) throw new Error('Missing account');
           // Fetch from on-chain
           const ids = await loadUserPositionIds(accountAddress);
-          const data = await derivePositionsFromIds(accountAddress, ids);
+          const timestamps = getCachedPositionTimestamps(accountAddress);
+          const data = await derivePositionsFromIds(accountAddress, ids, chainId!, timestamps);
           const filtered = data.filter((pos: any) => String(pos?.poolId || '').toLowerCase() === subId);
           const nextFp = fingerprint(filtered);
           if (nextFp !== baselineFp) {
@@ -1195,7 +1215,7 @@ export default function PoolDetailPage() {
           // 2. Pool stats (from batch API)
           (async () => {
             try {
-              const versionResponse = await fetch('/api/cache-version', { cache: 'no-store' as any } as any);
+              const versionResponse = await fetch('/api/cache-version', { cache: 'no-store' });
               const versionData = await versionResponse.json();
               const resp = await fetch(versionData.cacheUrl);
 
@@ -1227,10 +1247,11 @@ export default function PoolDetailPage() {
 
           // 3. User positions (if connected)
           (async () => {
-            if (!skipPositions && isConnected && accountAddress) {
+            if (!skipPositions && isConnected && accountAddress && chainId) {
               try {
                 const ids = await loadUserPositionIds(accountAddress);
-                const allUserPositions = await derivePositionsFromIds(accountAddress, ids);
+                const timestamps = getCachedPositionTimestamps(accountAddress);
+                const allUserPositions = await derivePositionsFromIds(accountAddress, ids, chainId, timestamps);
                 const subgraphId = (poolInfo.subgraphId || '').toLowerCase();
                 return allUserPositions.filter(pos => String(pos.poolId || '').toLowerCase() === subgraphId);
               } catch (error) {
@@ -1386,9 +1407,9 @@ export default function PoolDetailPage() {
 
   const refreshAfterLiquidityAddedWithSkeleton = useCallback(async (token0Symbol?: string, token1Symbol?: string, txInfo?: { txHash?: `0x${string}`; blockNumber?: bigint; tvlDelta?: number; volumeDelta?: number }) => {
     const now = Date.now();
-    const timeSinceLastCall = now - (refreshAfterLiquidityAddedWithSkeleton as any).lastCallTime;
-    if ((refreshAfterLiquidityAddedWithSkeleton as any).lastCallTime && timeSinceLastCall < 2000) return;
-    (refreshAfterLiquidityAddedWithSkeleton as any).lastCallTime = now;
+    const timeSinceLastCall = now - refreshThrottleRef.current;
+    if (refreshThrottleRef.current && timeSinceLastCall < 2000) return;
+    refreshThrottleRef.current = now;
 
     if (token0Symbol && token1Symbol) {
       const skeletonId = `skeleton-${Date.now()}`;
@@ -1415,10 +1436,11 @@ export default function PoolDetailPage() {
       }
     }
 
-    if (txInfo?.txHash && txInfo?.blockNumber && accountAddress && poolId) {
+    if (txInfo?.txHash && txInfo?.blockNumber && accountAddress && poolId && chainId) {
       try {
         await invalidateAfterTx(queryClient, {
           owner: accountAddress,
+          chainId,
           poolId,
           reason: 'liquidity-added',
           awaitSubgraphSync: true,
@@ -1482,9 +1504,10 @@ export default function PoolDetailPage() {
 
           // Load fresh position IDs
           const ids = await loadUserPositionIds(accountAddress);
+          const timestamps = getCachedPositionTimestamps(accountAddress);
 
           // Derive position data
-          const allDerived = await derivePositionsFromIds(accountAddress, ids);
+          const allDerived = await derivePositionsFromIds(accountAddress, ids, chainId!, timestamps);
           const filtered = allDerived.filter((pos: any) => String(pos.poolId || '').toLowerCase() === subId);
 
           // Success condition: we have MORE positions than baseline OR we have validated new position data
@@ -1543,7 +1566,7 @@ export default function PoolDetailPage() {
     const poolInfo = getPoolConfiguration(poolId);
     if (!poolInfo?.subgraphId) return;
     try {
-      const versionResponse = await fetch('/api/cache-version', { cache: 'no-store' as any } as any);
+      const versionResponse = await fetch('/api/cache-version', { cache: 'no-store' });
       const versionData = await versionResponse.json();
       const resp = await fetch(versionData.cacheUrl);
       if (resp.ok) {
@@ -1577,10 +1600,11 @@ export default function PoolDetailPage() {
   };
 
   const refreshAfterMutation = useCallback(async (info?: { txHash?: `0x${string}`; blockNumber?: bigint; tvlDelta?: number }) => {
-    if (!poolId || !isConnected || !accountAddress) return;
+    if (!poolId || !isConnected || !accountAddress || !chainId) return;
 
     await invalidateAfterTx(queryClient, {
       owner: accountAddress,
+      chainId,
       poolId,
       reason: 'liquidity-withdrawn',
       awaitSubgraphSync: true,
@@ -1623,7 +1647,8 @@ export default function PoolDetailPage() {
 
     try {
       // Fetch updated data for just this position
-      const updatedPositions = await derivePositionsFromIds(accountAddress, [positionId]);
+      const timestamps = getCachedPositionTimestamps(accountAddress);
+      const updatedPositions = await derivePositionsFromIds(accountAddress, [positionId], chainId!, timestamps);
       const updatedPosition = updatedPositions[0];
       
       if (updatedPosition) {
@@ -1654,10 +1679,11 @@ export default function PoolDetailPage() {
 
   // Refresh for position increases
   const refreshAfterIncrease = useCallback(async (info?: { txHash?: `0x${string}`; blockNumber?: bigint }) => {
-    if (!poolId || !isConnected || !accountAddress) return;
+    if (!poolId || !isConnected || !accountAddress || !chainId) return;
 
     await invalidateAfterTx(queryClient, {
       owner: accountAddress,
+      chainId,
       poolId,
       reason: 'liquidity-added',
       awaitSubgraphSync: true,
@@ -1819,7 +1845,7 @@ export default function PoolDetailPage() {
         description: 'Fees successfully collected',
         action: info?.txHash ? {
           label: "View Transaction",
-          onClick: () => window.open(`https://sepolia.basescan.org/tx/${info.txHash}`, '_blank')
+          onClick: () => window.open(getExplorerTxUrl(info.txHash!), '_blank')
         } : undefined
       });
     },
@@ -2017,7 +2043,7 @@ export default function PoolDetailPage() {
         return;
       }
       const { buildCollectFeesCall } = await import('@/lib/liquidity-utils');
-      const { calldata, value } = await buildCollectFeesCall({ tokenId, userAddress: accountAddress as `0x${string}` });
+      const { calldata, value } = await buildCollectFeesCall({ tokenId, userAddress: accountAddress as `0x${string}`, chainId: chainId! });
       pendingActionRef.current = { type: 'collect' };
       setLastCollectPositionId(positionId);
 
@@ -2029,7 +2055,7 @@ export default function PoolDetailPage() {
       ));
 
       writeContract({
-        address: getPositionManagerAddress() as `0x${string}`,
+        address: getPositionManagerAddress(networkMode) as `0x${string}`,
         abi: position_manager_abi as any,
         functionName: 'multicall',
         args: [[calldata]],
@@ -2230,7 +2256,7 @@ export default function PoolDetailPage() {
     // Map position token addresses to correct token symbols from our configuration
     const getTokenSymbolByAddress = (address: string): TokenSymbol | null => {
       const normalizedAddress = address.toLowerCase();
-      for (const [symbol, tokenConfig] of Object.entries(TOKEN_DEFINITIONS)) {
+      for (const [symbol, tokenConfig] of Object.entries(tokenDefinitions)) {
         if (tokenConfig.address.toLowerCase() === normalizedAddress) {
           return symbol as TokenSymbol;
         }
@@ -3372,7 +3398,7 @@ export default function PoolDetailPage() {
                         position={positionWithFees as any}
                         valueUSD={calculatePositionUsd(position)}
                         getUsdPriceForSymbol={getUsdPriceForSymbol}
-                        convertTickToPrice={convertTickToPrice}
+                        convertTickToPrice={boundConvertTickToPrice}
                         onClick={() => {
                           setUserPositions(prev => prev.map(p =>
                             p.positionId === position.positionId
@@ -3840,7 +3866,7 @@ export default function PoolDetailPage() {
           }}
           currentPrice={currentPrice}
           currentPoolTick={currentPoolTick}
-          convertTickToPrice={convertTickToPrice}
+          convertTickToPrice={boundConvertTickToPrice}
           selectedPoolId={selectedPositionForDetails.poolId}
           chainId={chainId}
         />

@@ -22,11 +22,12 @@
  * └─────────────────────────────────────────────────────────────┘
  */
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import Image from "next/image";
 import { formatUnits } from "viem";
 import { TokenStack } from "./TokenStack";
-import { TOKEN_DEFINITIONS } from '@/lib/pools-config';
+import { getTokenDefinitions } from '@/lib/pools-config';
+import { useNetwork } from '@/lib/network-context';
 import { cn } from "@/lib/utils";
 import { MiniPoolChart } from './MiniPoolChart';
 import { getDecimalsForDenomination, getOptimalBaseToken } from '@/lib/denomination-utils';
@@ -108,6 +109,8 @@ export function PositionCardCompact({
     className,
 }: PositionCardCompactProps) {
     const [isHovered, setIsHovered] = useState(false);
+    const { networkMode } = useNetwork();
+    const TOKEN_DEFINITIONS = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
     const { currentPrice, currentPoolTick, poolAPY, isLoadingPrices, isLoadingPoolStates } = poolContext;
     const { raw0: prefetchedRaw0, raw1: prefetchedRaw1 } = fees;
 
@@ -120,8 +123,8 @@ export function PositionCardCompact({
             const raw0 = prefetchedRaw0 || '0';
             const raw1 = prefetchedRaw1 || '0';
 
-            const d0 = TOKEN_DEFINITIONS?.[position.token0.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals ?? 18;
-            const d1 = TOKEN_DEFINITIONS?.[position.token1.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals ?? 18;
+            const d0 = TOKEN_DEFINITIONS?.[position.token0.symbol as string]?.decimals ?? 18;
+            const d1 = TOKEN_DEFINITIONS?.[position.token1.symbol as string]?.decimals ?? 18;
 
             const fee0 = parseFloat(formatUnits(BigInt(raw0), d0));
             const fee1 = parseFloat(formatUnits(BigInt(raw1), d1));

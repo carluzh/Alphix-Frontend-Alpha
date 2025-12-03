@@ -1,9 +1,9 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { type Abi, getAddress, keccak256, encodeAbiParameters, parseAbi, formatUnits } from 'viem';
-import { publicClient } from '@/lib/viemClient';
+import { createNetworkClient } from '@/lib/viemClient';
 import { position_manager_abi } from '@/lib/abis/PositionManager_abi';
 import { STATE_VIEW_ABI } from '@/lib/abis/state_view_abi';
-import { getPositionManagerAddress, getStateViewAddress, getTokenSymbolByAddress, getToken } from '@/lib/pools-config';
+import { getPositionManagerAddress, getStateViewAddress, getTokenSymbolByAddress, getToken, getNetworkModeFromRequest } from '@/lib/pools-config';
 import { decodePositionInfo, calculateUnclaimedFeesV4 } from '@/lib/liquidity-utils';
 
 const PM_ABI: Abi = position_manager_abi as unknown as Abi;
@@ -22,6 +22,10 @@ export default async function handler(
     return res.status(405).json({ success: false, error: `Method ${req.method} Not Allowed` });
   }
 
+  // Get network mode from cookies
+  const networkMode = getNetworkModeFromRequest(req.headers.cookie);
+  const client = createNetworkClient(networkMode);
+
   try {
     const body = (typeof req.body === 'string' ? JSON.parse(req.body) : req.body) as { positionId?: string; positionIds?: string[] };
     const { positionId, positionIds } = body || {};
@@ -32,11 +36,11 @@ export default async function handler(
       const tokenIdStr = singlePositionId.includes('-') ? (singlePositionId.split('-').pop() as string) : singlePositionId;
       const tokenId = BigInt(tokenIdStr);
 
-      const pmAddress = getPositionManagerAddress();
-      const stateView = getStateViewAddress();
+      const pmAddress = getPositionManagerAddress(networkMode);
+      const stateView = getStateViewAddress(networkMode);
 
       // 1) Read poolKey + packed info from PositionManager
-      const pmRead = await publicClient.readContract({
+      const pmRead = await client.readContract({
         address: pmAddress as `0x${string}`,
         abi: PM_ABI,
         functionName: 'getPoolAndPositionInfo',
@@ -98,12 +102,12 @@ export default async function handler(
       const decoded = decodePositionInfo(infoPacked);
       const effTickLower = parsedTickLower ?? decoded.tickLower;
       const effTickUpper = parsedTickUpper ?? decoded.tickUpper;
-      const effOwner = getPositionManagerAddress() as `0x${string}`;
+      const effOwner = getPositionManagerAddress(networkMode) as `0x${string}`;
       const salt = (parsedSalt ?? (`0x${tokenId.toString(16).padStart(64, '0')}`)) as `0x${string}`;
 
       // 3) Read stored position info (liquidity and last fee growth inside)
       const stateViewAbiParsed = parseAbi(STATE_VIEW_ABI);
-      const posInfo = await publicClient.readContract({
+      const posInfo = await client.readContract({
         address: stateView as `0x${string}`,
         abi: stateViewAbiParsed,
         functionName: 'getPositionInfo',
@@ -115,7 +119,7 @@ export default async function handler(
       const feeGrowthInside1LastX128 = posInfo[2];
 
       // 4) Read current fee growth inside
-      const feeInside = await publicClient.readContract({
+      const feeInside = await client.readContract({
         address: stateView as `0x${string}`,
         abi: stateViewAbiParsed,
         functionName: 'getFeeGrowthInside',
@@ -135,16 +139,16 @@ export default async function handler(
       );
 
       // 6) Get token symbols
-      const token0Symbol = getTokenSymbolByAddress(poolKey.currency0);
-      const token1Symbol = getTokenSymbolByAddress(poolKey.currency1);
+      const token0Symbol = getTokenSymbolByAddress(poolKey.currency0, networkMode);
+      const token1Symbol = getTokenSymbolByAddress(poolKey.currency1, networkMode);
 
       if (!token0Symbol || !token1Symbol) {
         throw new Error(`Unable to identify token symbols from addresses`);
       }
 
       // 7) Optional formatted (display)
-      const token0Config = getToken(token0Symbol);
-      const token1Config = getToken(token1Symbol);
+      const token0Config = getToken(token0Symbol, networkMode);
+      const token1Config = getToken(token1Symbol, networkMode);
 
       if (!token0Config || !token1Config) {
         throw new Error(`Token configuration not found for ${token0Symbol} or ${token1Symbol}`);
@@ -166,8 +170,8 @@ export default async function handler(
 
     // Batch path with multicall optimization
     if (Array.isArray(positionIds) && positionIds.length > 0) {
-      const pmAddress = getPositionManagerAddress();
-      const stateView = getStateViewAddress();
+      const pmAddress = getPositionManagerAddress(networkMode);
+      const stateView = getStateViewAddress(networkMode);
       const stateViewAbiParsed = parseAbi(STATE_VIEW_ABI);
 
       try {
@@ -181,7 +185,7 @@ export default async function handler(
           };
         });
 
-        const pmResults = await publicClient.multicall({ contracts: pmCalls });
+        const pmResults = await client.multicall({ contracts: pmCalls });
 
         const stateViewCalls: Array<{ address: `0x${string}`; abi: any; functionName: string; args: any[] }> = [];
         const positionMetadata: Array<{ positionId: string; poolIdBytes32: `0x${string}`; tickLower: number; tickUpper: number; salt: `0x${string}`; pmResultIndex: number }> = [];
@@ -233,7 +237,7 @@ export default async function handler(
           );
         }
 
-        const stateResults = await publicClient.multicall({ contracts: stateViewCalls });
+        const stateResults = await client.multicall({ contracts: stateViewCalls });
 
         const items: Array<{ positionId: string; amount0: string; amount1: string; token0Symbol: string; token1Symbol: string; formattedAmount0?: string; formattedAmount1?: string }> = [];
 
@@ -255,10 +259,10 @@ export default async function handler(
             const pmResult = pmResults[meta.pmResultIndex].result as readonly [any, bigint];
             const poolKey = pmResult[0];
 
-            const token0Symbol = getTokenSymbolByAddress(poolKey.currency0) || 'T0';
-            const token1Symbol = getTokenSymbolByAddress(poolKey.currency1) || 'T1';
-            const token0Config = getToken(token0Symbol);
-            const token1Config = getToken(token1Symbol);
+            const token0Symbol = getTokenSymbolByAddress(poolKey.currency0, networkMode) || 'T0';
+            const token1Symbol = getTokenSymbolByAddress(poolKey.currency1, networkMode) || 'T1';
+            const token0Config = getToken(token0Symbol, networkMode);
+            const token1Config = getToken(token1Symbol, networkMode);
 
             if (!token0Config || !token1Config) continue;
 
@@ -292,11 +296,11 @@ export default async function handler(
     const tokenIdStr = positionId.includes('-') ? (positionId.split('-').pop() as string) : positionId;
     const tokenId = BigInt(tokenIdStr);
 
-    const pmAddress = getPositionManagerAddress();
-    const stateView = getStateViewAddress();
+    const pmAddress = getPositionManagerAddress(networkMode);
+    const stateView = getStateViewAddress(networkMode);
 
     // 1) Read poolKey + packed info from PositionManager
-    const pmRead = await publicClient.readContract({
+    const pmRead = await client.readContract({
       address: pmAddress as `0x${string}`,
       abi: PM_ABI,
       functionName: 'getPoolAndPositionInfo',
@@ -367,7 +371,7 @@ export default async function handler(
 
     // 3) Read stored position info (liquidity and last fee growth inside)
     const stateViewAbiParsed = parseAbi(STATE_VIEW_ABI);
-    const posInfo = await publicClient.readContract({
+    const posInfo = await client.readContract({
       address: stateView as `0x${string}`,
       abi: stateViewAbiParsed,
       functionName: 'getPositionInfo',
@@ -379,7 +383,7 @@ export default async function handler(
     const feeGrowthInside1LastX128 = posInfo[2];
 
     // 4) Read current fee growth inside
-    const feeInside = await publicClient.readContract({
+    const feeInside = await client.readContract({
       address: stateView as `0x${string}`,
       abi: stateViewAbiParsed,
       functionName: 'getFeeGrowthInside',
@@ -399,8 +403,8 @@ export default async function handler(
     );
 
     // 6) Get token symbols and format amounts with proper decimals
-    const token0Symbol = getTokenSymbolByAddress(poolKey.currency0);
-    const token1Symbol = getTokenSymbolByAddress(poolKey.currency1);
+    const token0Symbol = getTokenSymbolByAddress(poolKey.currency0, networkMode);
+    const token1Symbol = getTokenSymbolByAddress(poolKey.currency1, networkMode);
 
     if (!token0Symbol || !token1Symbol) {
       return res.status(400).json({
@@ -411,8 +415,8 @@ export default async function handler(
     }
 
     // Import token config to get decimals
-    const token0Config = getToken(token0Symbol);
-    const token1Config = getToken(token1Symbol);
+    const token0Config = getToken(token0Symbol, networkMode);
+    const token1Config = getToken(token1Symbol, networkMode);
 
     if (!token0Config || !token1Config) {
       return res.status(400).json({

@@ -1,9 +1,10 @@
 "use client";
 
-import React from "react";
+import React, { useMemo } from "react";
 import { useAccount } from "wagmi";
 import { formatUnits } from "viem";
-import { TOKEN_DEFINITIONS } from "@/lib/pools-config";
+import { getTokenDefinitions } from "@/lib/pools-config";
+import { useNetwork } from "@/lib/network-context";
 
 interface FeesCellProps {
   positionId: string;
@@ -27,6 +28,8 @@ export function FeesCell({
   prefetchedRaw1,
 }: FeesCellProps) {
   const { address: accountAddress } = useAccount();
+  const { networkMode } = useNetwork();
+  const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
   const [raw0, setRaw0] = React.useState<string | null>(null);
   const [raw1, setRaw1] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState<boolean>(true);
@@ -130,8 +133,8 @@ export function FeesCell({
     </span>
   );
 
-  const d0 = TOKEN_DEFINITIONS?.[sym0 as keyof typeof TOKEN_DEFINITIONS]?.decimals ?? 18;
-  const d1 = TOKEN_DEFINITIONS?.[sym1 as keyof typeof TOKEN_DEFINITIONS]?.decimals ?? 18;
+  const d0 = tokenDefinitions?.[sym0 as string]?.decimals ?? 18;
+  const d1 = tokenDefinitions?.[sym1 as string]?.decimals ?? 18;
   let amt0 = 0;
   let amt1 = 0;
   try {

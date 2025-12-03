@@ -96,7 +96,7 @@
   .dark body {
     background-color: var(--main-bg) !important;
   }
-  
+
   .dark {
     --background: var(--main-bg) !important;
   }

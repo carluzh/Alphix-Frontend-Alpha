@@ -65,7 +65,6 @@ export default function SettingsPage() {
     setTestnetMode(isTestnet);
   }, [isTestnet]);
 
-  // Handle network toggle
   const handleNetworkToggle = (newTestnetMode: boolean) => {
     if (isNetworkSwitching) return;
     setTestnetMode(newTestnetMode);
@@ -114,7 +113,6 @@ export default function SettingsPage() {
     updateHighlight();
   }, [slippageTolerance, customSlippage, isCustom]);
 
-  // Check if there are unsaved changes
   const hasUnsavedChanges = useMemo(() => {
     if (!isLoaded) return false;
     const currentSlippage = parseFloat(customSlippage || slippageTolerance);

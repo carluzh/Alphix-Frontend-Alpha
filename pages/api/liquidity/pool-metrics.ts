@@ -1,22 +1,13 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { getPoolSubgraphId, getStateViewAddress, getPoolById } from '../../../lib/pools-config';
-import { getSubgraphUrlForPool, isDaiPool } from '../../../lib/subgraph-url-helper';
+import { getPoolSubgraphId, getStateViewAddress, getPoolById, getNetworkModeFromRequest } from '../../../lib/pools-config';
+import { getSubgraphUrlForPool, isDaiPool, isMainnetSubgraphMode, getUniswapV4SubgraphUrl } from '../../../lib/subgraph-url-helper';
 import { cacheService } from '@/lib/cache/CacheService';
 import { poolKeys } from '@/lib/redis-keys';
-import { publicClient } from '../../../lib/viemClient';
+import { createNetworkClient } from '../../../lib/viemClient';
 import { parseAbi, type Hex } from 'viem';
 
-// Server-only subgraph URL (original, unswizzled) - for pool data
+// Server-only subgraph URL (original, unswizzled) - for pool data (testnet only)
 const SUBGRAPH_ORIGINAL_URL = process.env.SUBGRAPH_ORIGINAL_URL as string;
-if (!SUBGRAPH_ORIGINAL_URL) {
-  throw new Error('SUBGRAPH_ORIGINAL_URL env var is required');
-}
-
-// Default subgraph URL
-const SUBGRAPH_URL = process.env.NEXT_PUBLIC_SUBGRAPH_URL || process.env.SUBGRAPH_URL as string;
-if (!SUBGRAPH_URL) {
-  throw new Error('SUBGRAPH_URL env var is required');
-}
 
 interface PoolDayData {
   date: number;
@@ -50,19 +41,48 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
+  // Get network mode from cookies
+  const networkMode = getNetworkModeFromRequest(req.headers.cookie);
+
   const { poolId, days = 7 } = req.body;
 
   if (!poolId) {
     return res.status(400).json({ error: 'poolId required' });
   }
 
-  const apiId = getPoolSubgraphId(poolId) || poolId;
-  const isDAI = isDaiPool(poolId);
+  const apiId = getPoolSubgraphId(poolId, networkMode) || poolId;
+  const isMainnet = isMainnetSubgraphMode(networkMode);
+  const isDAI = isDaiPool(poolId, networkMode); // Only relevant for testnet
   const daysNum = Number(days) || 7;
 
-  console.log('[pool-metrics] Request:', { poolId, apiId: apiId.toLowerCase(), days: daysNum, isDAI });
+  console.log('[pool-metrics] Request:', { poolId, apiId: apiId.toLowerCase(), days: daysNum, isDAI, isMainnet, networkMode });
 
-  // Use different query based on whether it's a DAI pool (Satsuma schema) or not (Original schema)
+  // Mainnet query: Uses Uniswap v4 subgraph schema
+  const poolQueryMainnet = `
+    query PoolMetrics($poolId: ID!, $days: Int!) {
+      pool(id: $poolId) {
+        id
+        totalValueLockedToken0
+        totalValueLockedToken1
+        feeTier
+        txCount
+      }
+
+      poolDayDatas(
+        where: { pool: $poolId }
+        first: $days
+        orderBy: date
+        orderDirection: desc
+      ) {
+        date
+        volumeToken0
+        volumeToken1
+        tvlUSD
+      }
+    }
+  `;
+
+  // Testnet: Use different query based on whether it's a DAI pool (Satsuma schema) or not (Original schema)
   const poolQueryOriginal = `
     query PoolMetrics($poolId: Bytes!, $days: Int!) {
       trackedPool(id: $poolId) {
@@ -93,7 +113,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
   `;
 
-  // Satsuma schema (for DAI pools) - uses standard Uniswap V3 field names
+  // Satsuma schema (for DAI pools on testnet) - uses standard Uniswap V3 field names
   const poolQuerySatsuma = `
     query PoolMetrics($poolId: ID!, $days: Int!) {
       pool(id: $poolId) {
@@ -118,7 +138,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
   `;
 
-  const poolQuery = isDAI ? poolQuerySatsuma : poolQueryOriginal;
+  // Select query based on network and pool type
+  const poolQuery = isMainnet ? poolQueryMainnet : (isDAI ? poolQuerySatsuma : poolQueryOriginal);
 
   try {
     // Use CacheService for pool metrics with stale-while-revalidate
@@ -127,11 +148,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       CACHE_TTL,
       async () => {
         // Determine the appropriate subgraph URL for this pool
-        const subgraphUrlForPool = getSubgraphUrlForPool(poolId);
+        // Mainnet: Use Uniswap v4 subgraph for Pool/PoolDayData
+        // Testnet: DAI pools use Satsuma, others use ORIGINAL
+        let poolDataUrl: string;
+        if (isMainnet) {
+          poolDataUrl = getUniswapV4SubgraphUrl(networkMode);
+        } else {
+          const subgraphUrlForPool = getSubgraphUrlForPool(poolId, networkMode);
+          poolDataUrl = isDAI ? subgraphUrlForPool : SUBGRAPH_ORIGINAL_URL;
+        }
 
-        // For DAI pools, use pool-specific Satsuma subgraph for both pool data and fee events
-        // For non-DAI pools, use ORIGINAL subgraph for pool data and Satsuma for fee events
-        const poolDataUrl = isDAI ? subgraphUrlForPool : SUBGRAPH_ORIGINAL_URL;
+        if (!poolDataUrl) {
+          console.error('[pool-metrics] No subgraph URL available');
+          return EMPTY_METRICS;
+        }
 
         const [poolResponse, feeResponse] = await Promise.all([
           fetch(poolDataUrl, {
@@ -190,8 +220,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         // Fee events already come as an array from the unified endpoint
         const feeEvents = Array.isArray(feeResult) ? feeResult : [];
 
-        // Handle both schema types
-        const pool = isDAI ? data?.pool : data?.trackedPool;
+        // Handle both schema types (mainnet uses same schema as DAI/Satsuma)
+        const pool = (isMainnet || isDAI) ? data?.pool : data?.trackedPool;
 
         if (!data?.poolDayDatas || data.poolDayDatas.length === 0) {
           console.log('[pool-metrics] No poolDayDatas found for pool. Pool may not be in subgraph yet.');
@@ -215,15 +245,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         // Fetch actual LP fee from StateView (dynamic fee from slot0)
         let actualFeeBps = 0;
         try {
-          const poolConfig = getPoolById(poolId);
-          const stateViewAddress = getStateViewAddress();
+          const poolConfig = getPoolById(poolId, networkMode);
+          const stateViewAddress = getStateViewAddress(networkMode);
           const poolIdHex = (poolConfig?.subgraphId || apiId) as Hex;
+          const client = createNetworkClient(networkMode);
 
           const stateViewAbi = parseAbi([
             'function getSlot0(bytes32 poolId) external view returns (uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 lpFee)'
           ]);
 
-          const slot0Data = await publicClient.readContract({
+          const slot0Data = await client.readContract({
             address: stateViewAddress as `0x${string}`,
             abi: stateViewAbi,
             functionName: 'getSlot0',
@@ -253,9 +284,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           totalFeesToken0 += volumeToken0 * feeRate;
         }
 
-        // Calculate TVL
+        // Calculate TVL (mainnet and DAI pools use totalValueLockedToken0 from pool entity)
         let avgTVLToken0: number;
-        if (isDAI && pool?.totalValueLockedToken0) {
+        if ((isMainnet || isDAI) && pool?.totalValueLockedToken0) {
           avgTVLToken0 = parseFloat(pool.totalValueLockedToken0);
         } else {
           avgTVLToken0 = dayDatas.reduce((sum, day) => sum + parseFloat(day.tvlToken0 || '0'), 0) / dayDatas.length;

@@ -165,7 +165,7 @@ const SidebarProvider = React.forwardRef<
             {...props}
           >
             {showPaperShader && (
-              <div className="pointer-events-none fixed inset-0 z-0 h-screen w-screen [&_canvas]:bg-[#060606]">
+              <div className="pointer-events-none fixed inset-0 z-0 h-screen w-screen">
                 {/* Top-right blob - tighter grain containment */}
                 <div className="fixed top-0 right-0 w-4/5 h-4/5 overflow-hidden z-10">
                   <GrainGradient

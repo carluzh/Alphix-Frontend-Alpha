@@ -19,7 +19,7 @@ class SimplePrefetchService {
   static async prefetchPoolData(poolId: string): Promise<void> {
     try {
       // Get cache version for fresh data
-      const versionResponse = await fetch('/api/cache-version', { cache: 'no-store' as any });
+      const versionResponse = await fetch('/api/cache-version', { cache: 'no-store' });
       if (!versionResponse.ok) return;
 
       const versionData = await versionResponse.json();

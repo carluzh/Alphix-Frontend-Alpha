@@ -13,11 +13,11 @@ import JSBI from 'jsbi';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from "@/lib/abis/state_view_abi";
-import { TokenSymbol, getToken, getPositionManagerAddress, getStateViewAddress, getPoolByTokens } from "../../../lib/pools-config";
+import { TokenSymbol, getToken, getPositionManagerAddress, getStateViewAddress, getPoolByTokens, getNetworkModeFromRequest } from "../../../lib/pools-config";
 import { PERMIT2_TYPES } from "../../../lib/liquidity-utils";
 import { AllowanceTransfer, PERMIT2_ADDRESS } from '@uniswap/permit2-sdk';
 
-import { publicClient } from "../../../lib/viemClient";
+import { createNetworkClient } from "../../../lib/viemClient";
 import {
     isAddress,
     getAddress,
@@ -32,8 +32,8 @@ import {
     PERMIT_SIG_DEADLINE_DURATION_SECONDS,
 } from "../../../lib/swap-constants";
 
-const POSITION_MANAGER_ADDRESS = getPositionManagerAddress();
-const STATE_VIEW_ADDRESS = getStateViewAddress();
+// Note: POSITION_MANAGER_ADDRESS and STATE_VIEW_ADDRESS are now fetched dynamically per-request
+// using getPositionManagerAddress(networkMode) and getStateViewAddress(networkMode)
 const ETHERS_ADDRESS_ZERO = "0x0000000000000000000000000000000000000000";
 const SDK_MIN_TICK = -887272;
 const SDK_MAX_TICK = 887272;
@@ -149,6 +149,13 @@ export default async function handler(
         return res.status(405).json({ error: 'Method not allowed' });
     }
 
+    // Get network mode from cookies and create network-specific resources
+    const networkMode = getNetworkModeFromRequest(req.headers.cookie);
+    console.log('[prepare-mint-after-swap-tx] Network mode from cookies:', networkMode);
+    const publicClient = createNetworkClient(networkMode);
+    const POSITION_MANAGER_ADDRESS = getPositionManagerAddress(networkMode);
+    const STATE_VIEW_ADDRESS = getStateViewAddress(networkMode);
+
     try {
         const {
             userAddress,
@@ -189,15 +196,15 @@ export default async function handler(
         }
 
         // Get token configurations
-        const token0Config = getToken(token0Symbol);
-        const token1Config = getToken(token1Symbol);
+        const token0Config = getToken(token0Symbol, networkMode);
+        const token1Config = getToken(token1Symbol, networkMode);
 
         if (!token0Config || !token1Config) {
             return res.status(400).json({ error: 'Invalid token symbols' });
         }
 
         // Get pool configuration
-        const poolConfig = getPoolByTokens(token0Symbol, token1Symbol);
+        const poolConfig = getPoolByTokens(token0Symbol, token1Symbol, networkMode);
         if (!poolConfig) {
             return res.status(400).json({ error: 'Pool not found for token pair' });
         }

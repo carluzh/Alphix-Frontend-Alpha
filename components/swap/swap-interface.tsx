@@ -29,7 +29,7 @@ import { useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
 import React from "react"
 import { switchChain } from '@wagmi/core'
-import { config, baseSepolia } from "../../lib/wagmiConfig";
+import { config, baseSepolia, activeChain, activeChainId, isMainnet, getExplorerTxUrl } from "../../lib/wagmiConfig";
 import { toast } from "sonner";
 import { getAddress, parseUnits, formatUnits, maxUint256, type Address, type Hex } from "viem"
 import { publicClient } from "../../lib/viemClient";
@@ -45,9 +45,10 @@ import {
   getToken,
   createTokenSDK,
   TokenSymbol,
-  TOKEN_DEFINITIONS,
+  getTokenDefinitions,
   CHAIN_ID
 } from "@/lib/pools-config"
+import { useNetwork } from "@/lib/network-context"
 import {
   PERMIT2_ADDRESS,
   UniversalRouterAbi,
@@ -90,7 +91,7 @@ interface FeeHistoryPoint {
   dynamicFee: number;
 }
 
-const TARGET_CHAIN_ID = baseSepolia.id;
+const TARGET_CHAIN_ID = activeChainId;
 
 const getTokenPriceMapping = (tokenSymbol: string): 'BTC' | 'USDC' | 'ETH' | 'DAI' => {
   switch (tokenSymbol) {
@@ -117,6 +118,7 @@ const getTokenPriceMapping = (tokenSymbol: string): 'BTC' | 'USDC' | 'ETH' | 'DA
 const invalidateSwapCache = async (
   queryClient: any,
   accountAddress: string,
+  chainId: number,
   touchedPools: Array<{ poolId: string }>,
   swapVolumeUSD: number,
   blockNumber: bigint
@@ -141,6 +143,7 @@ const invalidateSwapCache = async (
     console.log(`[Swap] Calling invalidateAfterTx for pool: ${pool.poolId}`);
     invalidateAfterTx(queryClient, {
       owner: accountAddress,
+      chainId,
       poolId: pool.poolId,
       reason: 'swap_complete',
       awaitSubgraphSync: false, // Don't block UX
@@ -403,6 +406,10 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   const [isMounted, setIsMounted] = useState(false);
   useEffect(() => { setIsMounted(true); }, []);
 
+  // Network context for dynamic token definitions
+  const { networkMode } = useNetwork();
+  const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
+
   // Query client for cache invalidation
   const queryClient = useQueryClient();
   // Removed route-row hover logic; arrows only show on preview hover
@@ -624,11 +631,11 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       return;
     }
 
-    const fromTokenSymbolForCache = Object.keys(TOKEN_DEFINITIONS).find(
-      (key) => TOKEN_DEFINITIONS[key as TokenSymbol].address === fromToken.address
+    const fromTokenSymbolForCache = Object.keys(tokenDefinitions).find(
+      (key) => tokenDefinitions[key as TokenSymbol].address === fromToken.address
     ) as TokenSymbol | undefined;
-    const toTokenSymbolForCache = Object.keys(TOKEN_DEFINITIONS).find(
-      (key) => TOKEN_DEFINITIONS[key as TokenSymbol].address === toToken.address
+    const toTokenSymbolForCache = Object.keys(tokenDefinitions).find(
+      (key) => tokenDefinitions[key as TokenSymbol].address === toToken.address
     ) as TokenSymbol | undefined;
 
     if (!fromTokenSymbolForCache || !toTokenSymbolForCache) {
@@ -731,7 +738,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   useEffect(() => {
     if (isMounted && isConnected && currentChainId !== TARGET_CHAIN_ID && !isAttemptingSwitch) {
       const newToastId = toast.error("Network Error", {
-        description: "Please switch to Base Sepolia.",
+        description: isMainnet ? "Please switch to Base." : "Please switch to Base Sepolia.",
         icon: <OctagonX className="h-4 w-4 text-red-500" />,
         duration: 5000,
         action: {
@@ -1655,7 +1662,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                     : `Approved ${fromAmount} ${fromToken.symbol} for this swap`,
                 action: {
                     label: "View Transaction",
-                    onClick: () => window.open(`https://sepolia.basescan.org/tx/${approveTxHash}`, '_blank')
+                    onClick: () => window.open(getExplorerTxUrl(approveTxHash), '_blank')
                 }
             });
 
@@ -1941,13 +1948,13 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 if (!txHash) throw new Error("Failed to send swap transaction (no hash received)");
 
                 console.log("ETH Swap - Transaction Hash received:", txHash);
-                setSwapTxInfo({ 
+                setSwapTxInfo({
                     hash: txHash as string,
                     fromAmount: fromAmount,
                     fromSymbol: fromToken.symbol,
                     toAmount: toAmount,
                     toSymbol: toToken.symbol,
-                    explorerUrl: `https://sepolia.basescan.org/tx/${txHash}`,
+                    explorerUrl: getExplorerTxUrl(txHash as string),
                     touchedPools: Array.isArray(buildTxApiData?.touchedPools) ? buildTxApiData.touchedPools : undefined
                 });
                 console.log("ETH Swap - setSwapTxInfo called with hash:", txHash);
@@ -1973,6 +1980,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 await invalidateSwapCache(
                   queryClient,
                   accountAddress!,
+                  currentChainId!,
                   buildTxApiData.touchedPools,
                   swapVolumeUSD,
                   receipt.blockNumber
@@ -2211,24 +2219,24 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
             if (!txHash) throw new Error("Failed to send swap transaction (no hash received)");
 
             console.log("ETH Swap - Transaction Hash received:", txHash);
-            setSwapTxInfo({ 
+            setSwapTxInfo({
                 hash: txHash as string,
                 fromAmount: fromAmount,
                 fromSymbol: fromToken.symbol,
                 toAmount: toAmount,
                 toSymbol: toToken.symbol,
-                explorerUrl: `https://sepolia.basescan.org/tx/${txHash}`,
+                explorerUrl: getExplorerTxUrl(txHash as string),
                 touchedPools: Array.isArray(buildTxApiData?.touchedPools) ? buildTxApiData.touchedPools : undefined
             });
-            console.log("ETH Swap - setSwapTxInfo called with hash:", txHash);
+            console.log("Permit2 Swap - setSwapTxInfo called with hash:", txHash);
 
             setSwapProgressState("waiting_confirmation");
-            console.log("ETH Swap - Waiting for confirmation of hash:", txHash);
+            console.log("Permit2 Swap - Waiting for confirmation of hash:", txHash);
             const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash as Hex });
 
             if (!receipt || receipt.status !== 'success') throw new Error("Swap transaction failed on-chain");
 
-            console.log("ETH Swap - Transaction confirmed! Hash:", txHash, "Receipt:", receipt);
+            console.log("Permit2 Swap - Transaction confirmed! Hash:", txHash, "Receipt:", receipt);
             setSwapProgressState("complete");
             setIsSwapping(false);
 
@@ -2243,6 +2251,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
             await invalidateSwapCache(
               queryClient,
               accountAddress!,
+              currentChainId!,
               buildTxApiData.touchedPools,
               swapVolumeUSD,
               receipt.blockNumber
@@ -2640,7 +2649,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       return "Connect Wallet";
     } else if (isConnected) {
       if (currentChainId !== TARGET_CHAIN_ID) {
-        return "Switch to Base Sepolia";
+        return isMainnet ? "Switch to Base" : "Switch to Base Sepolia";
       } else if (isLoadingCurrentFromTokenBalance || isLoadingCurrentToTokenBalance) {
         return "Swap";
       } else {

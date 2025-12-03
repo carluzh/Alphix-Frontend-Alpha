@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { type Address } from 'viem';
-import { publicClient } from '../../../lib/viemClient';
+import { createNetworkClient } from '../../../lib/viemClient';
 import {
     PERMIT2_ADDRESS,
     PERMIT_EXPIRATION_DURATION_SECONDS,
@@ -9,7 +9,7 @@ import {
     MaxAllowanceTransferAmount,
     getPermit2Domain,
 } from '../../../lib/swap-constants';
-import { TokenSymbol } from '../../../lib/pools-config';
+import { TokenSymbol, getNetworkModeFromRequest } from '../../../lib/pools-config';
 import { iallowance_transfer_abi } from '../../../lib/abis/IAllowanceTransfer_abi';
 import { getUniversalRouterAddress } from '../../../lib/pools-config';
 import { Erc20AbiDefinition } from '../../../lib/swap-constants';
@@ -53,6 +53,10 @@ export default async function handler(req: PreparePermitRequest, res: NextApiRes
     try {
         const { userAddress, fromTokenSymbol, fromTokenAddress, chainId, amountIn } = req.body;
 
+        // Get network mode from cookies for proper chain-specific addresses
+        const networkMode = getNetworkModeFromRequest(req.headers.cookie);
+        console.log('[prepare-permit] Network mode from cookies:', networkMode);
+
         if (fromTokenSymbol === 'ETH') {
             return res.status(200).json({
                 ok: true,
@@ -68,10 +72,15 @@ export default async function handler(req: PreparePermitRequest, res: NextApiRes
             });
         }
 
-        const UNIVERSAL_ROUTER_ADDRESS = getUniversalRouterAddress();
+        // Get network-specific Universal Router address
+        const UNIVERSAL_ROUTER_ADDRESS = getUniversalRouterAddress(networkMode);
         if (!UNIVERSAL_ROUTER_ADDRESS) {
             return res.status(400).json({ ok: false, message: `Chain ID ${chainId} not supported` });
         }
+        console.log('[prepare-permit] Using Universal Router:', UNIVERSAL_ROUTER_ADDRESS);
+
+        // Create network-specific public client
+        const publicClient = createNetworkClient(networkMode);
 
         // Check ERC20 approval to Permit2 first
         const tokenAllowance = await publicClient.readContract({

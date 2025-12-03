@@ -8,7 +8,9 @@ import { Label } from "@/components/ui/label";
 import Image from "next/image";
 import { useAccount } from "wagmi";
 import { toast } from "sonner";
-import { TOKEN_DEFINITIONS, TokenSymbol } from "@/lib/pools-config";
+import { getTokenDefinitions, TokenSymbol } from "@/lib/pools-config";
+import { useNetwork } from "@/lib/network-context";
+import { getExplorerTxUrl } from "@/lib/wagmiConfig";
 import { useDecreaseLiquidity, type DecreasePositionData } from "./useDecreaseLiquidity";
 import { motion, useAnimation } from "framer-motion";
 import type { ProcessedPosition } from "../../pages/api/liquidity/get-positions";
@@ -46,7 +48,10 @@ export function RemoveLiquidityFormPanel({
   externalTxHash,
   onLiquidityDecreased: onLiquidityDecreasedProp
 }: RemoveLiquidityFormPanelProps) {
-  const { address: accountAddress } = useAccount();
+  const { address: accountAddress, chainId: walletChainId } = useAccount();
+  const { chainId: networkChainId, networkMode } = useNetwork();
+  const chainId = walletChainId || networkChainId;
+  const tokenDefinitions = React.useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
   const { data: allPrices } = useAllPrices();
 
   const [withdrawAmount0, setWithdrawAmount0] = useState<string>("");
@@ -192,20 +197,20 @@ export function RemoveLiquidityFormPanel({
           inputTokenSymbol: inputSide === 'amount0' ? token0Symbol : token1Symbol,
           userTickLower: position.tickLower,
           userTickUpper: position.tickUpper,
-          chainId: 8453,
+          chainId,
         });
 
         if (version === withdrawCalcVersionRef.current) {
           if (inputSide === 'amount0') {
             // Convert from raw units to display units for token1 - keep full precision
             const token1Symbol = getTokenSymbolByAddress(position.token1.address);
-            const token1Decimals = token1Symbol ? TOKEN_DEFINITIONS[token1Symbol]?.decimals || 18 : 18;
+            const token1Decimals = token1Symbol ? tokenDefinitions[token1Symbol]?.decimals || 18 : 18;
             const amount1Display = formatUnits(BigInt(result.amount1 || '0'), token1Decimals);
             setWithdrawAmount1(formatCalculatedInput(amount1Display));
           } else {
             // Convert from raw units to display units for token0 - keep full precision
             const token0Symbol = getTokenSymbolByAddress(position.token0.address);
-            const token0Decimals = token0Symbol ? TOKEN_DEFINITIONS[token0Symbol]?.decimals || 18 : 18;
+            const token0Decimals = token0Symbol ? tokenDefinitions[token0Symbol]?.decimals || 18 : 18;
             const amount0Display = formatUnits(BigInt(result.amount0 || '0'), token0Decimals);
             setWithdrawAmount0(formatCalculatedInput(amount0Display));
           }
@@ -392,7 +397,7 @@ export function RemoveLiquidityFormPanel({
         </div>
         {(externalTxHash || decreaseTxHash) && (
           <a
-            href={`https://ftmscan.com/tx/${externalTxHash || decreaseTxHash}`}
+            href={getExplorerTxUrl(externalTxHash || decreaseTxHash || '')}
             target="_blank"
             rel="noopener noreferrer"
             className="text-xs text-muted-foreground hover:text-foreground underline"
@@ -576,7 +581,7 @@ export function RemoveLiquidityFormPanel({
                               className="h-5 px-2 text-[10px] font-medium rounded-md border-sidebar-border bg-muted/20 hover:bg-muted/40 transition-colors"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                const token0Decimals = TOKEN_DEFINITIONS[position.token0.symbol as TokenSymbol]?.decimals || 18;
+                                const token0Decimals = tokenDefinitions[position.token0.symbol as TokenSymbol]?.decimals || 18;
                                 const amount = calculatePercentageFromString(position.token0.amount, percentage, token0Decimals);
                                 const syntheticEvent = {
                                   target: { value: amount }
@@ -674,7 +679,7 @@ export function RemoveLiquidityFormPanel({
                               className="h-5 px-2 text-[10px] font-medium rounded-md border-sidebar-border bg-muted/20 hover:bg-muted/40 transition-colors"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                const token1Decimals = TOKEN_DEFINITIONS[position.token1.symbol as TokenSymbol]?.decimals || 18;
+                                const token1Decimals = tokenDefinitions[position.token1.symbol as TokenSymbol]?.decimals || 18;
                                 const amount = calculatePercentageFromString(position.token1.amount, percentage, token1Decimals);
                                 const syntheticEvent = {
                                   target: { value: amount }
@@ -764,7 +769,7 @@ export function RemoveLiquidityFormPanel({
                                 className="h-5 px-2 text-[10px] font-medium rounded-md border-sidebar-border bg-muted/20 hover:bg-muted/40 transition-colors"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  const token0Decimals = TOKEN_DEFINITIONS[position.token0.symbol as TokenSymbol]?.decimals || 18;
+                                  const token0Decimals = tokenDefinitions[position.token0.symbol as TokenSymbol]?.decimals || 18;
                                   const amount = calculatePercentageFromString(position.token0.amount, percentage, token0Decimals);
                                   const syntheticEvent = {
                                     target: { value: amount }
@@ -849,7 +854,7 @@ export function RemoveLiquidityFormPanel({
                                 className="h-5 px-2 text-[10px] font-medium rounded-md border-sidebar-border bg-muted/20 hover:bg-muted/40 transition-colors"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  const token1Decimals = TOKEN_DEFINITIONS[position.token1.symbol as TokenSymbol]?.decimals || 18;
+                                  const token1Decimals = tokenDefinitions[position.token1.symbol as TokenSymbol]?.decimals || 18;
                                   const amount = calculatePercentageFromString(position.token1.amount, percentage, token1Decimals);
                                   const syntheticEvent = {
                                     target: { value: amount }

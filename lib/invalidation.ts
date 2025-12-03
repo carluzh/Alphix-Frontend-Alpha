@@ -29,6 +29,7 @@ export type OptimisticUpdates = {
 
 type Params = {
   owner: string
+  chainId: number
   poolId?: string
   positionIds?: string[]
   reason?: string
@@ -249,10 +250,11 @@ export async function invalidateAfterTx(qc: QueryClient, params: Params) {
 
     if (params.reloadPositions) {
       try {
-        const { loadUserPositionIds } = await import('@/lib/client-cache')
+        const { loadUserPositionIds, getCachedPositionTimestamps } = await import('@/lib/client-cache')
         const { derivePositionsFromIds } = await import('@/lib/on-chain-data')
         const ids = await loadUserPositionIds(ownerLc)
-        const allDerived = await derivePositionsFromIds(ownerLc, ids)
+        const timestamps = getCachedPositionTimestamps(ownerLc)
+        const allDerived = await derivePositionsFromIds(ownerLc, ids, params.chainId, timestamps)
 
         // Update React Query cache with fresh data, replacing pending positions and removing deleted ones
         qc.setQueryData(qk.userPositions(ownerLc), (old: any) => {

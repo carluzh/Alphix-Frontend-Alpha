@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { useAccount } from "wagmi";
 import { useEffect } from "react";
 import { Token, SwapTxInfo } from './swap-interface';
+import { getExplorerUrl } from '@/lib/wagmiConfig';
 
 interface SwapSuccessViewProps {
   displayFromToken: Token;
@@ -108,7 +109,7 @@ export function SwapSuccessView({
         <Button
           variant="link"
           className="text-xs font-normal text-muted-foreground hover:text-muted-foreground/80"
-          onClick={() => window.open(swapTxInfo?.explorerUrl || `https://base-sepolia.blockscout.com/`, "_blank")}
+          onClick={() => window.open(swapTxInfo?.explorerUrl || getExplorerUrl(), "_blank")}
         >
           View on Explorer
         </Button>

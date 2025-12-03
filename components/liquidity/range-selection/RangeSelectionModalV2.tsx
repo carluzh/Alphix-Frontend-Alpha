@@ -4,7 +4,7 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { TokenSymbol, getToken, TOKEN_DEFINITIONS } from "@/lib/pools-config";
+import { TokenSymbol, getToken, getChainId } from "@/lib/pools-config";
 import { InteractiveRangeChart } from "../InteractiveRangeChart";
 import { PlusIcon, MinusIcon, ArrowLeftRight, CircleHelp } from "lucide-react";
 import Image from "next/image";
@@ -321,14 +321,15 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
         if (!poolConfig) return;
 
         // Create SDK Token objects
+        const effectiveChainId = chainId || getChainId();
         const token0 = new Token(
-          chainId || 84532,
+          effectiveChainId,
           poolToken0.address as `0x${string}`,
           poolToken0.decimals,
           poolToken0.symbol
         );
         const token1 = new Token(
-          chainId || 84532,
+          effectiveChainId,
           poolToken1.address as `0x${string}`,
           poolToken1.decimals,
           poolToken1.symbol

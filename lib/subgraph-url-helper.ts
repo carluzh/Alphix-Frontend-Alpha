@@ -1,9 +1,12 @@
 // Helper to determine which subgraph URL to use for a given pool
-// DAI pools use a separate subgraph (SUBGRAPH_URL_DAI)
-// Mainnet uses different subgraph URLs
+// DAI pools use a separate subgraph (SUBGRAPH_URL_DAI) on testnet
+// Mainnet uses dual-subgraph architecture:
+//   - Alphix subgraph: HookPosition, AlphixHook entities
+//   - Uniswap v4 subgraph: Pool, PoolDayData, Token entities
 
-import { getStoredNetworkMode } from './network-mode';
+import { getStoredNetworkMode, type NetworkMode } from './network-mode';
 
+// DAI pools on testnet (not applicable to mainnet)
 const DAI_POOL_IDS = [
   'ausdc-adai',
   'adai-aeth',
@@ -12,54 +15,97 @@ const DAI_POOL_IDS = [
 ];
 
 /**
- * Returns the base subgraph URL based on current network mode.
+ * Returns the Alphix subgraph URL for HookPosition and AlphixHook queries.
+ * - Testnet: Uses SUBGRAPH_URL (full subgraph)
+ * - Mainnet: Uses SUBGRAPH_URL_MAINNET_ALPHIX (minimal subgraph)
  */
-export function getBaseSubgraphUrl(): string {
-  const networkMode = getStoredNetworkMode();
+export function getAlphixSubgraphUrl(networkModeOverride?: NetworkMode): string {
+  const networkMode = networkModeOverride ?? getStoredNetworkMode();
   if (networkMode === 'mainnet') {
-    // TODO: Update with actual mainnet subgraph URL when deployed
-    return process.env.SUBGRAPH_URL_MAINNET || process.env.SUBGRAPH_URL || '';
+    return process.env.SUBGRAPH_URL_MAINNET_ALPHIX || '';
+  }
+  return process.env.SUBGRAPH_URL || '';
+}
+
+/**
+ * Returns the Uniswap v4 subgraph URL for Pool/PoolDayData queries.
+ * - Testnet: Uses SUBGRAPH_URL (our full subgraph has these entities)
+ * - Mainnet: Uses UNISWAP_V4_SUBGRAPH_URL (public Uniswap subgraph)
+ */
+export function getUniswapV4SubgraphUrl(networkModeOverride?: NetworkMode): string {
+  const networkMode = networkModeOverride ?? getStoredNetworkMode();
+  if (networkMode === 'mainnet') {
+    return process.env.UNISWAP_V4_SUBGRAPH_URL || '';
+  }
+  // Testnet: our full subgraph has Pool/PoolDayData entities
+  return process.env.SUBGRAPH_URL || '';
+}
+
+/**
+ * Returns the base subgraph URL based on current network mode.
+ * @deprecated Use getAlphixSubgraphUrl() or getUniswapV4SubgraphUrl() for clarity
+ */
+export function getBaseSubgraphUrl(networkModeOverride?: NetworkMode): string {
+  const networkMode = networkModeOverride ?? getStoredNetworkMode();
+  if (networkMode === 'mainnet') {
+    return process.env.SUBGRAPH_URL_MAINNET_ALPHIX || process.env.SUBGRAPH_URL || '';
   }
   return process.env.SUBGRAPH_URL || '';
 }
 
 /**
  * Returns the DAI subgraph URL based on current network mode.
+ * Only applicable to testnet - mainnet doesn't have separate DAI pools.
  */
-export function getDaiSubgraphUrl(): string {
-  const networkMode = getStoredNetworkMode();
+export function getDaiSubgraphUrl(networkModeOverride?: NetworkMode): string {
+  const networkMode = networkModeOverride ?? getStoredNetworkMode();
   if (networkMode === 'mainnet') {
-    // TODO: Update with actual mainnet DAI subgraph URL when deployed
-    return process.env.SUBGRAPH_URL_DAI_MAINNET || process.env.SUBGRAPH_URL_MAINNET || process.env.SUBGRAPH_URL || '';
+    // Mainnet uses single Alphix subgraph for all Alphix entities
+    return process.env.SUBGRAPH_URL_MAINNET_ALPHIX || '';
   }
   return process.env.SUBGRAPH_URL_DAI || process.env.SUBGRAPH_URL || '';
 }
 
 /**
- * Returns the appropriate subgraph URL for a given pool ID.
- * DAI pools use SUBGRAPH_URL_DAI, all others use SUBGRAPH_URL.
- * Network-aware: uses mainnet URLs when in mainnet mode.
+ * Returns the appropriate subgraph URL for Alphix entities (HookPosition, AlphixHook).
+ * Network-aware: handles DAI pool separation on testnet.
  */
-export function getSubgraphUrlForPool(poolId: string | undefined): string {
-  if (!poolId) {
-    return getBaseSubgraphUrl();
+export function getSubgraphUrlForPool(poolId: string | undefined, networkModeOverride?: NetworkMode): string {
+  const networkMode = networkModeOverride ?? getStoredNetworkMode();
+
+  // Mainnet: all Alphix entities go to the minimal subgraph
+  if (networkMode === 'mainnet') {
+    return getAlphixSubgraphUrl(networkMode);
   }
 
-  const normalizedPoolId = poolId.toLowerCase();
-  const isDaiPoolId = DAI_POOL_IDS.some(id => normalizedPoolId === id.toLowerCase());
-
-  if (isDaiPoolId) {
-    return getDaiSubgraphUrl();
+  // Testnet: DAI pools use separate subgraph
+  if (poolId) {
+    const normalizedPoolId = poolId.toLowerCase();
+    const isDaiPoolId = DAI_POOL_IDS.some(id => normalizedPoolId === id.toLowerCase());
+    if (isDaiPoolId) {
+      return getDaiSubgraphUrl(networkMode);
+    }
   }
 
-  return getBaseSubgraphUrl();
+  return process.env.SUBGRAPH_URL || '';
 }
 
 /**
- * Check if a pool ID is a DAI pool
+ * Check if a pool ID is a DAI pool (testnet only)
  */
-export function isDaiPool(poolId: string | undefined): boolean {
+export function isDaiPool(poolId: string | undefined, networkModeOverride?: NetworkMode): boolean {
   if (!poolId) return false;
+  // DAI pool separation only exists on testnet
+  const networkMode = networkModeOverride ?? getStoredNetworkMode();
+  if (networkMode === 'mainnet') return false;
   const normalizedPoolId = poolId.toLowerCase();
   return DAI_POOL_IDS.some(id => normalizedPoolId === id.toLowerCase());
+}
+
+/**
+ * Check if we're in mainnet mode (for conditional query logic)
+ */
+export function isMainnetSubgraphMode(networkModeOverride?: NetworkMode): boolean {
+  const networkMode = networkModeOverride ?? getStoredNetworkMode();
+  return networkMode === 'mainnet';
 }

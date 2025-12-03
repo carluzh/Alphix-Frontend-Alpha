@@ -1,5 +1,10 @@
+// Quote token priority for determining base token in price display
+// Includes both mainnet (USDC, USDT, etc.) and testnet (aUSDC, aUSDT, etc.) symbols
 const QUOTE_TOKEN_PRIORITY: Record<string, number> = {
-  'aUSDC': 10, 'aUSDT': 9, 'aDAI': 8, 'aBTC': 5, 'aETH': 4, 'ETH': 2
+  // Mainnet symbols
+  'USDC': 10, 'USDT': 9, 'DAI': 8, 'BTC': 5, 'WETH': 4, 'ETH': 2,
+  // Testnet symbols (same priority as mainnet counterparts)
+  'aUSDC': 10, 'aUSDT': 9, 'aDAI': 8, 'aBTC': 5, 'aETH': 4
 };
 
 export function getOptimalBaseToken(token0: string, token1: string, currentPrice?: number): string {

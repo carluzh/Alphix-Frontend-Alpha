@@ -6,14 +6,14 @@
     "chainName": "Base"
   },
   "contracts": {
-    "poolManager": "0x0000000000000000000000000000000000000000",
-    "universalRouter": "0x0000000000000000000000000000000000000000",
-    "quoter": "0x0000000000000000000000000000000000000000",
-    "positionManager": "0x0000000000000000000000000000000000000000",
-    "stateView": "0x0000000000000000000000000000000000000000"
+    "poolManager": "0x498581ff718922c3f8e6a244956af099b2652b2b",
+    "universalRouter": "0x6ff5693b99212da76ad316178a184ab56d299b43",
+    "quoter": "0x0d5e0f971ed27fbff6c2837bf31316121532048d",
+    "positionManager": "0x7c5f5a4bbd8fd63184577525326123b519429bdc",
+    "stateView": "0xa3c0c9b65bad0b08107aa264b0f3db444b867a71"
   },
   "hooks": {
-    "alphixHookId": "0x0000000000000000000000000000000000000000"
+    "alphixHookId": "0x450F6EbABFed98B3A60A98Be0a7DF43B03B1ffFF"
   },
   "tokens": {
     "USDC": {
@@ -24,45 +24,44 @@
       "icon": "/tokens/USDC.png",
       "usdPrice": "1.0"
     },
-    "USDbC": {
-      "symbol": "USDbC",
-      "name": "USD Base Coin",
-      "address": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "USDT": {
+      "symbol": "USDT",
+      "name": "Tether USD",
+      "address": "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2",
       "decimals": 6,
-      "icon": "/tokens/USDbC.png",
-      "usdPrice": "1.0"
-    },
-    "WETH": {
-      "symbol": "WETH",
-      "name": "Wrapped Ether",
-      "address": "0x4200000000000000000000000000000000000006",
-      "decimals": 18,
-      "icon": "/tokens/WETH.png"
-    },
-    "ETH": {
-      "symbol": "ETH",
-      "name": "Ethereum",
-      "address": "0x0000000000000000000000000000000000000000",
-      "decimals": 18,
-      "icon": "/tokens/ETH.png"
-    },
-    "DAI": {
-      "symbol": "DAI",
-      "name": "Dai Stablecoin",
-      "address": "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb",
-      "decimals": 18,
-      "icon": "/tokens/DAI.png",
+      "icon": "/tokens/USDT.png",
       "usdPrice": "1.0"
     }
   },
-  "pools": [],
+  "pools": [
+    {
+      "id": "usdc-usdt",
+      "name": "USDC/USDT",
+      "description": "Stablecoin pair with dynamic fees",
+      "subgraphId": "0x98b4a18fe487edf4622a9069ac9b2ec2739689b2288c4b41392cc2f570fd60a8",
+      "currency0": {
+        "symbol": "USDC",
+        "address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+      },
+      "currency1": {
+        "symbol": "USDT",
+        "address": "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2"
+      },
+      "fee": 8388608,
+      "tickSpacing": 1,
+      "hooks": "0x450F6EbABFed98B3A60A98Be0a7DF43B03B1ffFF",
+      "enabled": true,
+      "featured": true,
+      "type": "Stable"
+    }
+  ],
   "fees": {
     "initialFee": 8388608,
     "initialTargetRatio": "1000000000000000000",
     "currentRatio": "700000000000000000"
   },
   "_comments": {
-    "note": "This is a placeholder mainnet configuration. Contract addresses need to be updated after mainnet deployment.",
+    "note": "Base Mainnet configuration for Alphix V4 pools.",
     "subgraphId": "CRITICAL: The 'subgraphId' field contains the ACTUAL on-chain poolId (bytes32). DO NOT recalculate this value using keccak256 or any other method.",
     "fee": "The fee value 8388608 is the dynamic fee flag (0x800000). This indicates the pool uses dynamic fees managed by the hook contract."
   }

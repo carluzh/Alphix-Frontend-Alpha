@@ -1,7 +1,7 @@
-import { createPublicClient, http, fallback, custom } from 'viem';
-import { getTargetChain } from './swap-constants';
+import { createPublicClient, http, fallback, custom, type PublicClient, type Chain } from 'viem';
 import { activeChain, baseSepolia, baseMainnet, isMainnet } from './wagmiConfig';
 import { executeRPCCall, executeRPCBatch } from './rpcClient';
+import { type NetworkMode } from './network-mode';
 
 // Network-specific RPC endpoints
 const TESTNET_RPC_URLS = [
@@ -14,7 +14,14 @@ const MAINNET_RPC_URLS = [
   "https://base.drpc.org",
 ];
 
-// Multiple RPC endpoints for better reliability - use network-aware URLs
+// Get RPC URLs for a specific network mode
+function getRpcUrlsForNetwork(networkMode: NetworkMode): string[] {
+  const customRpcUrl = process.env.NEXT_PUBLIC_RPC_URL || process.env.RPC_URL;
+  const networkUrls = networkMode === 'mainnet' ? MAINNET_RPC_URLS : TESTNET_RPC_URLS;
+  return [customRpcUrl, ...networkUrls].filter(Boolean) as string[];
+}
+
+// Multiple RPC endpoints for better reliability - use network-aware URLs (for default client)
 const RPC_URLS = [
   process.env.NEXT_PUBLIC_RPC_URL || process.env.RPC_URL,
   ...(isMainnet ? MAINNET_RPC_URLS : TESTNET_RPC_URLS),
@@ -75,4 +82,69 @@ export const publicClient = createPublicClient({
 export { activeChain as targetChain };
 
 // Legacy export for backwards compatibility
-export { baseSepolia }; 
+export { baseSepolia };
+
+/**
+ * Create a public client for a specific network mode.
+ * Use this in API routes where network mode comes from request cookies.
+ */
+export function createNetworkClient(networkMode: NetworkMode): PublicClient {
+  const rpcUrls = getRpcUrlsForNetwork(networkMode);
+  const chain = networkMode === 'mainnet' ? baseMainnet : baseSepolia;
+
+  const networkTransport = fallback(
+    rpcUrls.map(url => http(url, {
+      timeout: 12000,
+      retryCount: 1,
+      retryDelay: 800
+    }))
+  );
+
+  return createPublicClient({
+    chain,
+    transport: networkTransport,
+    batch: {
+      multicall: true,
+    },
+  });
+}
+
+/**
+ * Get the chain definition for a specific network mode.
+ */
+export function getChainForNetwork(networkMode: NetworkMode): Chain {
+  return networkMode === 'mainnet' ? baseMainnet : baseSepolia;
+}
+
+/**
+ * Get the primary RPC URL for a specific network mode.
+ * Useful for ethers.js providers that need a single URL.
+ *
+ * Note: Custom RPC URL is only used if it matches the requested network,
+ * otherwise we fall back to default public endpoints.
+ */
+export function getRpcUrlForNetwork(networkMode: NetworkMode): string {
+  const customRpcUrl = process.env.NEXT_PUBLIC_RPC_URL || process.env.RPC_URL;
+
+  // Check if custom URL is set and matches the requested network
+  if (customRpcUrl) {
+    const isMainnetUrl = customRpcUrl.includes('mainnet') ||
+                         customRpcUrl.includes('base.g.alchemy') ||
+                         customRpcUrl.includes('base-mainnet');
+    const isTestnetUrl = customRpcUrl.includes('sepolia') ||
+                         customRpcUrl.includes('testnet');
+
+    // Use custom URL only if it matches the requested network
+    if (networkMode === 'mainnet' && (isMainnetUrl || (!isMainnetUrl && !isTestnetUrl))) {
+      return customRpcUrl;
+    }
+    if (networkMode === 'testnet' && isTestnetUrl) {
+      return customRpcUrl;
+    }
+    // Custom URL doesn't match requested network, fall through to defaults
+  }
+
+  return networkMode === 'mainnet'
+    ? MAINNET_RPC_URLS[0]
+    : TESTNET_RPC_URLS[0];
+} 

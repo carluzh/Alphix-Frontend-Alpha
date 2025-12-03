@@ -1,17 +1,19 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getToken, getPoolByTokens, getStateViewAddress } from '../../../lib/pools-config';
-import { publicClient } from '../../../lib/viemClient';
+import { getToken, getPoolByTokens, getStateViewAddress, getNetworkModeFromRequest } from '../../../lib/pools-config';
+import { createNetworkClient } from '../../../lib/viemClient';
 import { parseAbi, type Hex } from 'viem';
 import { DynamicFeeSchema, validateApiResponse } from '../../../lib/validation';
 
 const DEFAULT_DYNAMIC_FEE = 3000; // 0.30% - fallback default
-const STATE_VIEW_ADDRESS = getStateViewAddress();
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
     if (req.method !== 'POST') {
         res.setHeader('Allow', ['POST']);
         return res.status(405).json({ message: `Method ${req.method} Not Allowed` });
     }
+
+    // Get network mode from cookies
+    const networkMode = getNetworkModeFromRequest(req.headers.cookie);
 
     try {
         const { fromTokenSymbol, toTokenSymbol, chainId } = req.body;
@@ -20,15 +22,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             return res.status(400).json({ message: 'Missing required parameters: fromTokenSymbol, toTokenSymbol, chainId' });
         }
 
-        const fromTokenConfig = getToken(fromTokenSymbol);
-        const toTokenConfig = getToken(toTokenSymbol);
+        const fromTokenConfig = getToken(fromTokenSymbol, networkMode);
+        const toTokenConfig = getToken(toTokenSymbol, networkMode);
 
         if (!fromTokenConfig || !toTokenConfig) {
             return res.status(400).json({ message: 'Invalid token symbol(s).' });
         }
 
         // Find the pool configuration for this token pair
-        const poolConfig = getPoolByTokens(fromTokenSymbol, toTokenSymbol);
+        const poolConfig = getPoolByTokens(fromTokenSymbol, toTokenSymbol, networkMode);
         if (!poolConfig) {
             return res.status(400).json({ message: `No pool found for token pair ${fromTokenSymbol}/${toTokenSymbol}` });
         }
@@ -40,8 +42,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 'function getSlot0(bytes32 poolId) external view returns (uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 lpFee)'
             ]);
 
-            const slot0Data = await publicClient.readContract({
-                address: STATE_VIEW_ADDRESS,
+            const stateViewAddress = getStateViewAddress(networkMode);
+            const client = createNetworkClient(networkMode);
+
+            const slot0Data = await client.readContract({
+                address: stateViewAddress as `0x${string}`,
                 abi: stateViewAbi,
                 functionName: 'getSlot0',
                 args: [poolConfig.subgraphId as Hex]

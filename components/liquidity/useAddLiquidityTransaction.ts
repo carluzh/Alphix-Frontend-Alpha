@@ -21,7 +21,9 @@ const showErrorToast = (title: string, description?: string) => {
     }
   });
 };
-import { TOKEN_DEFINITIONS, TokenSymbol, getPoolSubgraphId } from "@/lib/pools-config";
+import { getTokenDefinitions, TokenSymbol, getPoolSubgraphId } from "@/lib/pools-config";
+import { useNetwork } from "@/lib/network-context";
+import { getExplorerTxUrl } from "@/lib/wagmiConfig";
 import { prefetchService } from "@/lib/prefetch-service";
 import { invalidateAfterTx } from '@/lib/invalidation';
 import { invalidateUserPositionIdsCache } from "@/lib/client-cache";
@@ -132,7 +134,9 @@ export function useAddLiquidityTransaction({
 }: UseAddLiquidityTransactionProps) {
   const queryClient = useQueryClient();
   const { address: accountAddress, chainId } = useAccount();
-  
+  const { networkMode } = useNetwork();
+  const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
+
   const [isWorking, setIsWorking] = useState(false);
   const [step, setStep] = useState<TransactionStep>('input');
   const [preparedTxData, setPreparedTxData] = useState<PreparedTxData | null>(null);
@@ -178,7 +182,7 @@ export function useAddLiquidityTransaction({
     ];
 
     for (const token of tokens) {
-      const tokenDef = TOKEN_DEFINITIONS[token.symbol];
+      const tokenDef = tokenDefinitions[token.symbol];
       if (!tokenDef || tokenDef.address === "0x0000000000000000000000000000000000000000") continue;
 
       try {
@@ -224,7 +228,7 @@ export function useAddLiquidityTransaction({
     console.log('[Debug] Processing tokens:', tokens);
 
     for (const tokenSymbol of tokens) {
-      const tokenDef = TOKEN_DEFINITIONS[tokenSymbol];
+      const tokenDef = tokenDefinitions[tokenSymbol];
       console.log('[Debug] Token definition for', tokenSymbol, ':', tokenDef);
       
       if (!tokenDef || tokenDef.address === "0x0000000000000000000000000000000000000000") {
@@ -273,7 +277,7 @@ export function useAddLiquidityTransaction({
       const currentTime = Number(latestBlock.timestamp);
 
       for (const tokenSymbol of tokens) {
-        const tokenDef = TOKEN_DEFINITIONS[tokenSymbol];
+        const tokenDef = tokenDefinitions[tokenSymbol];
         if (!tokenDef || tokenDef.address === "0x0000000000000000000000000000000000000000") continue;
 
         const [permitAmt, permitExp, permitNonce] = await publicClient.readContract({
@@ -342,7 +346,7 @@ export function useAddLiquidityTransaction({
           needsApproval: true,
           approvalType: 'ERC20_TO_PERMIT2',
           approvalTokenSymbol: needsApprovals[0],
-          approvalTokenAddress: TOKEN_DEFINITIONS[needsApprovals[0]]?.address,
+          approvalTokenAddress: tokenDefinitions[needsApprovals[0]]?.address,
           approvalAmount: "115792089237316195423570985008687907853269984665640564039457584007913129639935", // max uint256
           approveToAddress: PERMIT2_ADDRESS,
         });
@@ -809,7 +813,7 @@ export function useAddLiquidityTransaction({
           
           // Show approval success toast with transaction link (like swap)
           const approvalAmount = BigInt(preparedTxData.approvalAmount || "0");
-          const tokenDef = TOKEN_DEFINITIONS[approvedToken];
+          const tokenDef = tokenDefinitions[approvedToken];
           const approvalAmountFormatted = tokenDef ? Number(formatUnits(approvalAmount, tokenDef.decimals)) : 0;
           const approvalDescription = approvalAmountFormatted >= 100000000
             ? `Approved infinite ${approvedToken} for liquidity`
@@ -820,7 +824,7 @@ export function useAddLiquidityTransaction({
             description: approvalDescription,
             action: {
               label: "View Transaction",
-              onClick: () => window.open(`https://sepolia.basescan.org/tx/${approveTxHash}`, '_blank')
+              onClick: () => window.open(getExplorerTxUrl(approveTxHash), '_blank')
             }
           });
           
@@ -847,7 +851,7 @@ export function useAddLiquidityTransaction({
               needsApproval: true,
               approvalType: 'ERC20_TO_PERMIT2',
               approvalTokenSymbol: nextToken,
-              approvalTokenAddress: TOKEN_DEFINITIONS[nextToken]?.address,
+              approvalTokenAddress: tokenDefinitions[nextToken]?.address,
               approvalAmount: "115792089237316195423570985008687907853269984665640564039457584007913129639935",
               approveToAddress: PERMIT2_ADDRESS,
             });
@@ -984,7 +988,7 @@ export function useAddLiquidityTransaction({
         description: `Liquidity added to ${token0Symbol}/${token1Symbol} pool successfully`,
         action: mintTxHash ? {
           label: "View Transaction",
-          onClick: () => window.open(`https://sepolia.basescan.org/tx/${mintTxHash}`, '_blank')
+          onClick: () => window.open(getExplorerTxUrl(mintTxHash), '_blank')
         } : undefined
       });
       localStorage.setItem(`walletBalancesRefreshAt_${accountAddress}`, String(Date.now()));
@@ -1012,7 +1016,7 @@ export function useAddLiquidityTransaction({
       
       // Invalidate caches after successful mint
       try {
-        if (accountAddress) {
+        if (accountAddress && chainId) {
           // Invalidate localStorage position IDs
           invalidateUserPositionIdsCache(accountAddress);
 
@@ -1020,6 +1024,7 @@ export function useAddLiquidityTransaction({
           const poolId = getPoolSubgraphId(`${token0Symbol}/${token1Symbol}`) || undefined;
           invalidateAfterTx(queryClient, {
             owner: accountAddress,
+            chainId,
             poolId,
             reason: 'mint'
           }).catch(() => {});
@@ -1047,10 +1052,10 @@ export function useAddLiquidityTransaction({
   // Calculate involved tokens count (exclude native ETH)
   const involvedTokensCount = useMemo(() => {
     const tokens: TokenSymbol[] = [];
-    if (TOKEN_DEFINITIONS[token0Symbol]?.address !== "0x0000000000000000000000000000000000000000") {
+    if (tokenDefinitions[token0Symbol]?.address !== "0x0000000000000000000000000000000000000000") {
       tokens.push(token0Symbol);
     }
-    if (TOKEN_DEFINITIONS[token1Symbol]?.address !== "0x0000000000000000000000000000000000000000") {
+    if (tokenDefinitions[token1Symbol]?.address !== "0x0000000000000000000000000000000000000000") {
       tokens.push(token1Symbol);
     }
     return tokens.length;

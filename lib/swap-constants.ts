@@ -90,7 +90,7 @@ export const V4_POOL_TICK_SPACING = 60;
 
 // Hooks addresses differ per network
 const TESTNET_HOOKS_ADDRESS = '0xd450f7f8e4C11EE8620a349f73e7aC3905Dfd000';
-const MAINNET_HOOKS_ADDRESS = '0x0000000000000000000000000000000000000000'; // TODO: Replace with mainnet hooks address
+const MAINNET_HOOKS_ADDRESS = '0x450F6EbABFed98B3A60A98Be0a7DF43B03B1ffFF'; // Alphix Hook on Base mainnet
 
 export const V4_POOL_HOOKS_RAW = isMainnet ? MAINNET_HOOKS_ADDRESS : TESTNET_HOOKS_ADDRESS;
 export const V4_POOL_HOOKS: Address = getAddress(V4_POOL_HOOKS_RAW);
@@ -164,7 +164,7 @@ export const getTargetChain = (rpcUrl: string) => ({
 // --- V4 Position Manager Configuration ---
 // These constants are needed for the burn liquidity functionality
 const TESTNET_POSITION_MANAGER_ADDRESS = '0x4b2c77d209d3405f41a037ec6c77f7f5b8e2ca80';
-const MAINNET_POSITION_MANAGER_ADDRESS = '0x0000000000000000000000000000000000000000'; // TODO: Replace with mainnet address
+const MAINNET_POSITION_MANAGER_ADDRESS = '0x7c5f5a4bbd8fd63184577525326123b519429bdc'; // Uniswap V4 Position Manager on Base mainnet
 
 export const V4_POSITION_MANAGER_ADDRESS_RAW = isMainnet ? MAINNET_POSITION_MANAGER_ADDRESS : TESTNET_POSITION_MANAGER_ADDRESS;
 export const V4_POSITION_MANAGER_ADDRESS: Address = getAddress(V4_POSITION_MANAGER_ADDRESS_RAW);

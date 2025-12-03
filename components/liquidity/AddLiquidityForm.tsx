@@ -15,7 +15,8 @@ import { usePercentageInput } from "@/hooks/usePercentageInput";
 import { V4_POOL_FEE, V4_POOL_TICK_SPACING, V4_POOL_HOOKS } from "@/lib/swap-constants";
 import { DEFAULT_LP_SLIPPAGE, MAX_AUTO_SLIPPAGE_TOLERANCE } from "@/lib/slippage-constants";
 import { getStoredDeadlineSeconds } from "@/hooks/useUserSettings";
-import { TOKEN_DEFINITIONS, TokenSymbol } from "@/lib/pools-config";
+import { getTokenDefinitions, TokenSymbol } from "@/lib/pools-config";
+import { useNetwork } from "@/lib/network-context";
 import { getPoolById, getToken } from "@/lib/pools-config";
 import { formatUnits as viemFormatUnits, parseUnits as viemParseUnits, getAddress } from "viem";
 
@@ -311,6 +312,8 @@ export function AddLiquidityForm({
   const [maxPriceInputString, setMaxPriceInputString] = useState<string>("");
 
   const { address: accountAddress, chainId, isConnected } = useAccount();
+  const { networkMode, chainId: targetChainId } = useNetwork();
+  const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
   const signer = useEthersSigner();
 
   // Get USD prices using mid-price quotes (replaces CoinGecko/useAllPrices)
@@ -425,18 +428,18 @@ export function AddLiquidityForm({
   // Balance hooks with refetch
   const { data: token0BalanceData, isLoading: isLoadingToken0Balance, refetch: refetchToken0Balance } = useBalance({
     address: accountAddress,
-    token: TOKEN_DEFINITIONS[token0Symbol]?.address === "0x0000000000000000000000000000000000000000"
-      ? undefined : TOKEN_DEFINITIONS[token0Symbol]?.address as `0x${string}` | undefined,
+    token: tokenDefinitions[token0Symbol]?.address === "0x0000000000000000000000000000000000000000"
+      ? undefined : tokenDefinitions[token0Symbol]?.address as `0x${string}` | undefined,
     chainId,
-    query: { enabled: !!accountAddress && !!chainId && !!TOKEN_DEFINITIONS[token0Symbol] },
+    query: { enabled: !!accountAddress && !!chainId && !!tokenDefinitions[token0Symbol] },
   });
 
   const { data: token1BalanceData, isLoading: isLoadingToken1Balance, refetch: refetchToken1Balance } = useBalance({
     address: accountAddress,
-    token: TOKEN_DEFINITIONS[token1Symbol]?.address === "0x0000000000000000000000000000000000000000"
-      ? undefined : TOKEN_DEFINITIONS[token1Symbol]?.address as `0x${string}` | undefined,
+    token: tokenDefinitions[token1Symbol]?.address === "0x0000000000000000000000000000000000000000"
+      ? undefined : tokenDefinitions[token1Symbol]?.address as `0x${string}` | undefined,
     chainId,
-    query: { enabled: !!accountAddress && !!chainId && !!TOKEN_DEFINITIONS[token1Symbol] },
+    query: { enabled: !!accountAddress && !!chainId && !!tokenDefinitions[token1Symbol] },
   });
 
   // Percentage input handlers using the new shared hook
@@ -453,21 +456,21 @@ export function AddLiquidityForm({
 
   const handleToken0Percentage = usePercentageInput(
     token0BalanceData,
-    { decimals: TOKEN_DEFINITIONS[token0Symbol]?.decimals || 18, symbol: token0Symbol },
+    { decimals: tokenDefinitions[token0Symbol]?.decimals || 18, symbol: token0Symbol },
     setAmount0WithPrecision
   );
 
   const handleToken1Percentage = usePercentageInput(
     token1BalanceData,
-    { decimals: TOKEN_DEFINITIONS[token1Symbol]?.decimals || 18, symbol: token1Symbol },
+    { decimals: tokenDefinitions[token1Symbol]?.decimals || 18, symbol: token1Symbol },
     setAmount1WithPrecision
   );
 
   // Derived pool tokens (for labels/formatting)
   const { poolToken0, poolToken1 } = useMemo(() => {
     if (!token0Symbol || !token1Symbol || !chainId) return { poolToken0: null, poolToken1: null };
-      const currentToken0Def = TOKEN_DEFINITIONS[token0Symbol];
-  const currentToken1Def = TOKEN_DEFINITIONS[token1Symbol]; 
+      const currentToken0Def = tokenDefinitions[token0Symbol];
+  const currentToken1Def = tokenDefinitions[token1Symbol]; 
     if (!currentToken0Def || !currentToken1Def) return { poolToken0: null, poolToken1: null };
 
     // Create SDK Token instances using the modal's currently selected token0Symbol and token1Symbol
@@ -735,8 +738,8 @@ export function AddLiquidityForm({
     const rawApiPriceAtTickUpper = calculatedData?.priceAtTickUpper ? parseFloat(calculatedData.priceAtTickUpper) : null;
 
     // Define token decimals early for use in both branches
-    const token0Dec = TOKEN_DEFINITIONS[token0Symbol]?.decimals;
-    const token1Dec = TOKEN_DEFINITIONS[token1Symbol]?.decimals;
+    const token0Dec = tokenDefinitions[token0Symbol]?.decimals;
+    const token1Dec = tokenDefinitions[token1Symbol]?.decimals;
 
     // Use API prices when available, fallback to tick calculation with same logic as currentPrice
     if (baseTokenForPriceDisplay === token0Symbol) {
@@ -1648,7 +1651,7 @@ export function AddLiquidityForm({
         let result;
 
         if (isOOR) {
-          const primaryTokenDef = TOKEN_DEFINITIONS[primaryTokenSymbol];
+          const primaryTokenDef = tokenDefinitions[primaryTokenSymbol];
           const primaryAmountWei = viemParseUnits(primaryAmount, primaryTokenDef.decimals);
 
           result = {
@@ -1705,7 +1708,7 @@ export function AddLiquidityForm({
         if (inputSide === 'amount0') {
           try {
             // Format amount1 using token1Symbol decimals (result.amount1 is always in token1 decimals)
-            const token1Decimals = TOKEN_DEFINITIONS[token1Symbol]?.decimals;
+            const token1Decimals = tokenDefinitions[token1Symbol]?.decimals;
             if (token1Decimals === undefined) {
               throw new Error(`Missing decimals for token ${token1Symbol}`);
             }
@@ -1730,7 +1733,7 @@ export function AddLiquidityForm({
         } else {
           try {
             // Format amount0 using token0Symbol decimals (result.amount0 is always in token0 decimals)
-            const token0Decimals = TOKEN_DEFINITIONS[token0Symbol]?.decimals;
+            const token0Decimals = tokenDefinitions[token0Symbol]?.decimals;
             if (token0Decimals === undefined) {
               throw new Error(`Missing decimals for token ${token0Symbol}`);
             }
@@ -1885,8 +1888,8 @@ export function AddLiquidityForm({
 
   // Check for insufficient balance
   useEffect(() => {
-    const t0Def = TOKEN_DEFINITIONS[token0Symbol];
-    const t1Def = TOKEN_DEFINITIONS[token1Symbol];
+    const t0Def = tokenDefinitions[token0Symbol];
+    const t1Def = tokenDefinitions[token1Symbol];
     let insufficient = false;
 
     if (!t0Def || !t1Def) {
@@ -1964,8 +1967,7 @@ export function AddLiquidityForm({
     setIsInsufficientBalance(insufficient);
   }, [amount0, amount1, token0Symbol, token1Symbol, calculatedData, token0BalanceData, token1BalanceData, isZapMode, zapInputToken]);
 
-  // Check if range has been selected
-  const hasRangeSelected = tickLower !== "" && tickUpper !== "";
+  const hasRangeSelected = (activePreset !== null || initialDefaultApplied) && tickLower !== "" && tickUpper !== "";
 
   // Fetch pool metrics for APY calculation (cached per pool)
   // Wait for poolState.liquidity to be available before caching to avoid race condition
@@ -2034,8 +2036,8 @@ export function AddLiquidityForm({
           return;
         }
 
-        const token0Def = TOKEN_DEFINITIONS[token0Symbol];
-        const token1Def = TOKEN_DEFINITIONS[token1Symbol];
+        const token0Def = tokenDefinitions[token0Symbol];
+        const token1Def = tokenDefinitions[token1Symbol];
 
         if (!token0Def || !token1Def) {
           setEstimatedApy("—");
@@ -2043,8 +2045,8 @@ export function AddLiquidityForm({
           return;
         }
 
-        const sdkToken0 = new Token(4002, getAddress(token0Def.address), token0Def.decimals, token0Symbol, token0Symbol);
-        const sdkToken1 = new Token(4002, getAddress(token1Def.address), token1Def.decimals, token1Symbol, token1Symbol);
+        const sdkToken0 = new Token(targetChainId, getAddress(token0Def.address), token0Def.decimals, token0Symbol, token0Symbol);
+        const sdkToken1 = new Token(targetChainId, getAddress(token1Def.address), token1Def.decimals, token1Symbol, token1Symbol);
 
         const sdkPool = new V4PoolSDK(
           sdkToken0,
@@ -2555,7 +2557,7 @@ export function AddLiquidityForm({
                             // Use precise backend data when available, fallback to display amount
                             if (calculatedData && calculatedData.amount0) {
                               try {
-                                const preciseAmount = parseFloat(viemFormatUnits(BigInt(calculatedData.amount0), TOKEN_DEFINITIONS[token0Symbol]?.decimals || 18));
+                                const preciseAmount = parseFloat(viemFormatUnits(BigInt(calculatedData.amount0), tokenDefinitions[token0Symbol]?.decimals || 18));
                                 return formatUSD(preciseAmount * usdPrice);
                               } catch {
                                 // Fallback to display amount if parsing fails
@@ -2786,7 +2788,7 @@ export function AddLiquidityForm({
                             // Use precise backend data when available, fallback to display amount
                             if (calculatedData && calculatedData.amount1) {
                               try {
-                                const preciseAmount = parseFloat(viemFormatUnits(BigInt(calculatedData.amount1), TOKEN_DEFINITIONS[token1Symbol]?.decimals || 18));
+                                const preciseAmount = parseFloat(viemFormatUnits(BigInt(calculatedData.amount1), tokenDefinitions[token1Symbol]?.decimals || 18));
                                 return formatUSD(preciseAmount * usdPrice);
                               } catch {
                                 // Fallback to display amount if parsing fails

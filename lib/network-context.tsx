@@ -4,6 +4,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import {
   type NetworkMode,
   NETWORK_STORAGE_KEY,
+  NETWORK_COOKIE_NAME,
   MAINNET_CHAIN_ID,
   TESTNET_CHAIN_ID,
   getStoredNetworkMode,
@@ -37,15 +38,25 @@ export function NetworkProvider({ children }: { children: React.ReactNode }) {
   // Default to testnet for safety
   const [networkMode, setNetworkModeState] = useState<NetworkMode>('testnet');
 
-  // Load from localStorage on mount
+  // Load from localStorage on mount and sync to cookie
   useEffect(() => {
     try {
       const stored = localStorage.getItem(NETWORK_STORAGE_KEY);
       if (stored === 'mainnet' || stored === 'testnet') {
         setNetworkModeState(stored);
+        // Sync localStorage value to cookie for server-side access
+        document.cookie = `${NETWORK_COOKIE_NAME}=${stored}; path=/; max-age=31536000; SameSite=Lax`;
+      } else {
+        // No stored value - use env default or fallback to testnet
+        const defaultMode = process.env.NEXT_PUBLIC_DEFAULT_NETWORK === 'mainnet' ? 'mainnet' : 'testnet';
+        setNetworkModeState(defaultMode);
+        localStorage.setItem(NETWORK_STORAGE_KEY, defaultMode);
+        document.cookie = `${NETWORK_COOKIE_NAME}=${defaultMode}; path=/; max-age=31536000; SameSite=Lax`;
       }
     } catch {
-      // localStorage not available (SSR or error)
+      // localStorage not available (SSR or error) - still set cookie with default
+      const defaultMode = process.env.NEXT_PUBLIC_DEFAULT_NETWORK === 'mainnet' ? 'mainnet' : 'testnet';
+      document.cookie = `${NETWORK_COOKIE_NAME}=${defaultMode}; path=/; max-age=31536000; SameSite=Lax`;
     }
   }, []);
 
@@ -56,6 +67,8 @@ export function NetworkProvider({ children }: { children: React.ReactNode }) {
     } catch {
       // localStorage not available
     }
+    // Set cookie for server-side access (expires in 1 year)
+    document.cookie = `${NETWORK_COOKIE_NAME}=${mode}; path=/; max-age=31536000; SameSite=Lax`;
     // Trigger a page reload to reinitialize all clients with new network
     // This ensures wagmi, viem, and all other configs pick up the change
     window.location.reload();

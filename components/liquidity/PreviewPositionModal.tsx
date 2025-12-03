@@ -5,7 +5,8 @@ import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { PositionCardCompact } from "./PositionCardCompact";
-import { TOKEN_DEFINITIONS, TokenSymbol, getToken, getPoolById } from "@/lib/pools-config";
+import { getTokenDefinitions, TokenSymbol, getToken, getPoolById } from "@/lib/pools-config";
+import { useNetwork } from "@/lib/network-context";
 import { formatUnits } from "viem";
 import { formatTokenDisplayAmount } from "@/lib/utils";
 import Image from "next/image";
@@ -81,7 +82,9 @@ export function PreviewPositionModal({
   const [mounted, setMounted] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const { chainId } = useAccount();
-  
+  const { networkMode, chainId: targetChainId } = useNetwork();
+  const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
+
   useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -101,8 +104,8 @@ export function PreviewPositionModal({
   // Derived pool tokens
   const { poolToken0, poolToken1 } = useMemo(() => {
     if (!token0Symbol || !token1Symbol || !chainId) return { poolToken0: null, poolToken1: null };
-    const currentToken0Def = TOKEN_DEFINITIONS[token0Symbol];
-    const currentToken1Def = TOKEN_DEFINITIONS[token1Symbol];
+    const currentToken0Def = tokenDefinitions[token0Symbol];
+    const currentToken1Def = tokenDefinitions[token1Symbol];
     if (!currentToken0Def || !currentToken1Def) return { poolToken0: null, poolToken1: null };
 
     const sdkBaseToken0 = new Token(chainId, getAddress(currentToken0Def.address), currentToken0Def.decimals, currentToken0Def.symbol);
@@ -194,16 +197,16 @@ export function PreviewPositionModal({
           return;
         }
 
-        const token0Def = TOKEN_DEFINITIONS[token0Symbol];
-        const token1Def = TOKEN_DEFINITIONS[token1Symbol];
+        const token0Def = tokenDefinitions[token0Symbol];
+        const token1Def = tokenDefinitions[token1Symbol];
 
         if (!token0Def || !token1Def) {
           setCalculatedAPY(null);
           return;
         }
 
-        const sdkToken0 = poolToken0 || new Token(4002, getAddress(token0Def.address), token0Def.decimals, token0Symbol, token0Symbol);
-        const sdkToken1 = poolToken1 || new Token(4002, getAddress(token1Def.address), token1Def.decimals, token1Symbol, token1Symbol);
+        const sdkToken0 = poolToken0 || new Token(targetChainId, getAddress(token0Def.address), token0Def.decimals, token0Symbol, token0Symbol);
+        const sdkToken1 = poolToken1 || new Token(targetChainId, getAddress(token1Def.address), token1Def.decimals, token1Symbol, token1Symbol);
 
         const sdkPool = new V4PoolSDK(
           sdkToken0,
@@ -247,8 +250,8 @@ export function PreviewPositionModal({
   if (!mounted || !calculatedData) return null;
 
   // Get token definitions
-  const token0Def = TOKEN_DEFINITIONS[token0Symbol];
-  const token1Def = TOKEN_DEFINITIONS[token1Symbol];
+  const token0Def = tokenDefinitions[token0Symbol];
+  const token1Def = tokenDefinitions[token1Symbol];
 
   // Format amounts with proper decimals
   const formatAmount = (rawAmount: string | bigint, decimals: number): string => {

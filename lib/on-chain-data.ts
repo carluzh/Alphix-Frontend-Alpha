@@ -9,11 +9,12 @@ import { encodeAbiParameters, keccak256, type Hex, formatUnits, parseAbi, type A
 import { Token } from '@uniswap/sdk-core';
 import { Pool as V4Pool, Position as V4Position } from '@uniswap/v4-sdk';
 import JSBI from 'jsbi';
-import { publicClient } from './viemClient';
+import { createNetworkClient } from './viemClient';
 import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from './abis/state_view_abi';
 import { getStateViewAddress, getPositionManagerAddress } from './pools-config';
-import { getToken as getTokenConfig, getTokenSymbolByAddress, CHAIN_ID } from './pools-config';
+import { getToken as getTokenConfig, getTokenSymbolByAddress } from './pools-config';
 import { position_manager_abi } from './abis/PositionManager_abi';
+import { MAINNET_CHAIN_ID, type NetworkMode } from './network-mode';
 
 /**
  * Decoded position tick and subscription info from on-chain position data
@@ -40,29 +41,31 @@ export function decodePositionInfo(value: bigint): DecodedPositionInfo {
   };
 }
 
+/** Position timestamp data from subgraph */
+export interface PositionTimestamps { createdAt: number; lastTimestamp: number; }
+
 /**
  * Derive full position data from token IDs using current on-chain state
  *
- * Performs two multicalls:
- * 1. Get position info and liquidity for all token IDs
- * 2. Get pool state (sqrtPrice, tick, liquidity) for all unique pools
- *
- * Then assembles the data using Uniswap V4 SDK to calculate token amounts
- *
  * @param ownerAddress - Position owner address
  * @param tokenIds - Array of position token IDs
- * @param createdAtMap - Optional map of tokenId -> createdAt timestamp for age calculation
- * @returns Array of position data with amounts, ticks, and metadata
+ * @param chainId - Chain ID to determine network mode
+ * @param timestampsMap - Optional map of tokenId -> { createdAt, lastTimestamp } for APY calculation
  */
 export async function derivePositionsFromIds(
   ownerAddress: string,
   tokenIds: Array<string | number | bigint>,
-  createdAtMap?: Map<string, number>
+  chainId: number,
+  timestampsMap?: Map<string, PositionTimestamps>
 ): Promise<any[]> {
   if (!Array.isArray(tokenIds) || tokenIds.length === 0) return [];
 
-  const pmAddress = getPositionManagerAddress() as Address;
-  const stateViewAddr = getStateViewAddress() as Address;
+  // Derive network mode from chainId
+  const networkMode: NetworkMode = chainId === MAINNET_CHAIN_ID ? 'mainnet' : 'testnet';
+  const publicClient = createNetworkClient(networkMode);
+
+  const pmAddress = getPositionManagerAddress(networkMode) as Address;
+  const stateViewAddr = getStateViewAddress(networkMode) as Address;
 
   // 1. First Multicall: Get position info and liquidity for all tokenIds
   const positionDetailsContracts = tokenIds.flatMap(id => ([
@@ -175,14 +178,14 @@ export async function derivePositionsFromIds(
 
       const t0Addr = poolKey.currency0 as Address;
       const t1Addr = poolKey.currency1 as Address;
-      const sym0 = getTokenSymbolByAddress(t0Addr) || 'T0';
-      const sym1 = getTokenSymbolByAddress(t1Addr) || 'T1';
-      const cfg0 = sym0 ? getTokenConfig(sym0) : undefined;
-      const cfg1 = sym1 ? getTokenConfig(sym1) : undefined;
+      const sym0 = getTokenSymbolByAddress(t0Addr, networkMode) || 'T0';
+      const sym1 = getTokenSymbolByAddress(t1Addr, networkMode) || 'T1';
+      const cfg0 = sym0 ? getTokenConfig(sym0, networkMode) : undefined;
+      const cfg1 = sym1 ? getTokenConfig(sym1, networkMode) : undefined;
       const dec0 = cfg0?.decimals ?? 18;
       const dec1 = cfg1?.decimals ?? 18;
-      const tok0 = new Token(CHAIN_ID, t0Addr, dec0, sym0);
-      const tok1 = new Token(CHAIN_ID, t1Addr, dec1, sym1);
+      const tok0 = new Token(chainId, t0Addr, dec0, sym0);
+      const tok1 = new Token(chainId, t1Addr, dec1, sym1);
 
       const v4Pool = new V4Pool(
         tok0, tok1, poolKey.fee, poolKey.tickSpacing, poolKey.hooks,
@@ -203,8 +206,11 @@ export async function derivePositionsFromIds(
       const raw0 = BigInt(v4Position.amount0.quotient.toString());
       const raw1 = BigInt(v4Position.amount1.quotient.toString());
 
-      let created = createdAtMap?.get(tokenIdStr) || 0;
+      const ts = timestampsMap?.get(tokenIdStr);
+      let created = ts?.createdAt || 0;
+      let lastMod = ts?.lastTimestamp || created;
       if (created > 1e12) created = Math.floor(created / 1000);
+      if (lastMod > 1e12) lastMod = Math.floor(lastMod / 1000);
 
       out.push({
         positionId: tokenIdStr,
@@ -216,7 +222,8 @@ export async function derivePositionsFromIds(
         tickUpper,
         liquidityRaw: liquidity.toString(),
         ageSeconds: created > 0 ? Math.max(0, Math.floor(Date.now() / 1000) - created) : 0,
-        blockTimestamp: String(created || '0'),
+        blockTimestamp: created,
+        lastTimestamp: lastMod || created,
         isInRange: poolState.tick >= tickLower && poolState.tick < tickUpper,
       });
     } catch (e) {

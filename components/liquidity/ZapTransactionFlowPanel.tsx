@@ -94,7 +94,6 @@ export function ZapTransactionFlowPanel({
     }
   }, [isDepositSuccess, state.currentStep, state.completedSteps, actions]);
 
-  // Handle proceeding to next step
   const handleProceed = useCallback(async () => {
     if (!canProceed() || !approvalData || isCheckingApprovals) {
       console.log('[ZapFlow] Cannot proceed:', { canProceed: canProceed(), approvalData, isCheckingApprovals });

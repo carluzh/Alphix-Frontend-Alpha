@@ -5,7 +5,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { BadgeCheck, OctagonX, InfoIcon } from 'lucide-react';
 import React from 'react';
-import { TokenSymbol, TOKEN_DEFINITIONS, NATIVE_TOKEN_ADDRESS, getToken } from '@/lib/pools-config';
+import { TokenSymbol, NATIVE_TOKEN_ADDRESS, getToken } from '@/lib/pools-config';
+import { getExplorerTxUrl } from '@/lib/wagmiConfig';
 import { PERMIT2_ADDRESS, getPermit2Domain, PERMIT_TYPES } from '@/lib/swap-constants';
 import { ERC20_ABI } from '@/lib/abis/erc20';
 import { type Hex, maxUint256, formatUnits, formatUnits as viemFormatUnits, parseUnits as viemParseUnits } from 'viem';
@@ -212,12 +213,11 @@ export function useAddLiquidityTransactionV2({
           : `Approved ${exactAmount} ${tokenSymbol} for this transaction`,
         action: {
           label: 'View Transaction',
-          onClick: () => window.open(`https://sepolia.basescan.org/tx/${hash}`, '_blank'),
+          onClick: () => window.open(getExplorerTxUrl(hash), '_blank'),
         },
       });
 
       // Don't refetch here - the form component handles refetch after a delay
-      // This prevents the loop but ensures state is updated
     },
     [approveAsync]
   );
@@ -807,7 +807,7 @@ export function useAddLiquidityTransactionV2({
         description: `Transaction was submitted but reverted on-chain.`,
         action: {
           label: 'View on Explorer',
-          onClick: () => window.open(`https://sepolia.basescan.org/tx/${depositTxHash}`, '_blank'),
+          onClick: () => window.open(getExplorerTxUrl(depositTxHash), '_blank'),
         },
       });
 
@@ -823,7 +823,7 @@ export function useAddLiquidityTransactionV2({
       toast.success('Position Created', {
         icon: React.createElement(BadgeCheck, { className: 'h-4 w-4 text-green-500' }),
         description: `Liquidity added to ${token0Symbol}/${token1Symbol} pool successfully`,
-        action: { label: 'View Transaction', onClick: () => window.open(`https://sepolia.basescan.org/tx/${depositTxHash}`, '_blank') },
+        action: { label: 'View Transaction', onClick: () => window.open(getExplorerTxUrl(depositTxHash), '_blank') },
       });
 
       (async () => {

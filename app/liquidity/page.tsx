@@ -32,14 +32,15 @@ import {
 } from "wagmi";
 import { toast } from "sonner";
 import { getEnabledPools, getToken, getPoolSubgraphId } from "../../lib/pools-config";
-import { loadUserPositionIds, derivePositionsFromIds } from "../../lib/client-cache";
+import { loadUserPositionIds, derivePositionsFromIds, getCachedPositionTimestamps } from "../../lib/client-cache";
 import { Pool } from "../../types";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ChevronUpIcon, ChevronDownIcon, ChevronsUpDownIcon, PlusIcon, BadgeCheck, OctagonX, Filter as FilterIcon, X as XIcon } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { TOKEN_DEFINITIONS, type TokenSymbol } from "@/lib/pools-config";
+import { getTokenDefinitions, type TokenSymbol } from "@/lib/pools-config";
+import { useNetwork } from "@/lib/network-context";
 import { useIncreaseLiquidity, type IncreasePositionData } from "@/components/liquidity/useIncreaseLiquidity";
 import { useDecreaseLiquidity, type DecreasePositionData } from "@/components/liquidity/useDecreaseLiquidity";
 import { toast as sonnerToast } from "sonner";
@@ -121,7 +122,7 @@ export default function LiquidityPage() {
   const [columnSizing, setColumnSizing] = useState<ColumnSizingState>({});
   const [poolsData, setPoolsData] = useState<Pool[]>(dynamicPools);
   const isMobile = useIsMobile();
-  const { address: accountAddress, isConnected } = useAccount();
+  const { address: accountAddress, isConnected, chainId } = useAccount();
   const [selectedPoolId, setSelectedPoolId] = useState<string>("");
   const [windowWidth, setWindowWidth] = useState<number>(
     typeof window !== 'undefined' ? window.innerWidth : 1200
@@ -274,11 +275,12 @@ export default function LiquidityPage() {
   }, []);
 
   useEffect(() => {
-    if (isConnected && accountAddress) {
+    if (isConnected && accountAddress && chainId) {
       (async () => {
         try {
           const ids = await loadUserPositionIds(accountAddress);
-          const positions = await derivePositionsFromIds(accountAddress, ids);
+          const timestamps = getCachedPositionTimestamps(accountAddress);
+          const positions = await derivePositionsFromIds(accountAddress, ids, chainId, timestamps);
           setUserPositions(positions as any);
         } catch (error) {
           console.error("Failed to load derived positions:", error);
@@ -288,7 +290,7 @@ export default function LiquidityPage() {
     } else {
       setUserPositions([]);
     }
-  }, [isConnected, accountAddress]);
+  }, [isConnected, accountAddress, chainId]);
 
   useEffect(() => {
     const fetchPrices = async () => {

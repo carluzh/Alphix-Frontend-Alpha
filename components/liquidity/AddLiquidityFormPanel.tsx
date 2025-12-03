@@ -9,7 +9,8 @@ import Image from "next/image";
 import { useAccount, useBalance, useSignTypedData } from "wagmi";
 import { toast } from "sonner";
 import { usePercentageInput } from "@/hooks/usePercentageInput";
-import { TOKEN_DEFINITIONS, TokenSymbol } from "@/lib/pools-config";
+import { getTokenDefinitions, TokenSymbol } from "@/lib/pools-config";
+import { useNetwork } from "@/lib/network-context";
 import { useIncreaseLiquidity, type IncreasePositionData, providePreSignedIncreaseBatchPermit } from "./useIncreaseLiquidity";
 import { motion, useAnimation } from "framer-motion";
 import type { ProcessedPosition } from "../../pages/api/liquidity/get-positions";
@@ -21,6 +22,7 @@ import {
   getTokenIcon, formatCalculatedAmount, getUSDPriceForSymbol,
   calculateCorrespondingAmount, PERMIT2_ADDRESS, MAX_UINT256, PERCENTAGE_OPTIONS
 } from './liquidity-form-utils';
+import { getExplorerTxUrl } from '@/lib/wagmiConfig';
 
 interface AddLiquidityFormPanelProps {
   position: ProcessedPosition;
@@ -43,7 +45,10 @@ export function AddLiquidityFormPanel({
   externalTxHash,
   currentPoolTick
 }: AddLiquidityFormPanelProps) {
-  const { address: accountAddress, chainId } = useAccount();
+  const { address: accountAddress, chainId: walletChainId } = useAccount();
+  const { chainId: networkChainId, networkMode } = useNetwork();
+  const chainId = walletChainId || networkChainId;
+  const tokenDefinitions = React.useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
   const { signTypedDataAsync } = useSignTypedData();
   const { data: allPrices } = useAllPrices();
 
@@ -73,31 +78,31 @@ export function AddLiquidityFormPanel({
   // Balance data
   const { data: token0BalanceData } = useBalance({
     address: accountAddress,
-    token: TOKEN_DEFINITIONS[position.token0.symbol as TokenSymbol]?.address === "0x0000000000000000000000000000000000000000"
+    token: tokenDefinitions[position.token0.symbol as TokenSymbol]?.address === "0x0000000000000000000000000000000000000000"
       ? undefined
-      : TOKEN_DEFINITIONS[position.token0.symbol as TokenSymbol]?.address as `0x${string}` | undefined,
+      : tokenDefinitions[position.token0.symbol as TokenSymbol]?.address as `0x${string}` | undefined,
     chainId,
     query: { enabled: !!accountAddress && !!chainId },
   });
 
   const { data: token1BalanceData } = useBalance({
     address: accountAddress,
-    token: TOKEN_DEFINITIONS[position.token1.symbol as TokenSymbol]?.address === "0x0000000000000000000000000000000000000000"
+    token: tokenDefinitions[position.token1.symbol as TokenSymbol]?.address === "0x0000000000000000000000000000000000000000"
       ? undefined
-      : TOKEN_DEFINITIONS[position.token1.symbol as TokenSymbol]?.address as `0x${string}` | undefined,
+      : tokenDefinitions[position.token1.symbol as TokenSymbol]?.address as `0x${string}` | undefined,
     chainId,
     query: { enabled: !!accountAddress && !!chainId },
   });
 
   const handleToken0Percentage = usePercentageInput(
     token0BalanceData,
-    { decimals: TOKEN_DEFINITIONS[position.token0.symbol as TokenSymbol]?.decimals || 18, symbol: position.token0.symbol as TokenSymbol },
+    { decimals: tokenDefinitions[position.token0.symbol as TokenSymbol]?.decimals || 18, symbol: position.token0.symbol as TokenSymbol },
     setIncreaseAmount0
   );
 
   const handleToken1Percentage = usePercentageInput(
     token1BalanceData,
-    { decimals: TOKEN_DEFINITIONS[position.token1.symbol as TokenSymbol]?.decimals || 18, symbol: position.token1.symbol as TokenSymbol },
+    { decimals: tokenDefinitions[position.token1.symbol as TokenSymbol]?.decimals || 18, symbol: position.token1.symbol as TokenSymbol },
     setIncreaseAmount1
   );
 
@@ -174,11 +179,11 @@ export function AddLiquidityFormPanel({
         inputTokenSymbol: inputSide === 'amount0' ? token0Symbol : token1Symbol,
         userTickLower: position.tickLower,
         userTickUpper: position.tickUpper,
-        chainId: chainId || 8453,
+        chainId,
       });
 
       if (version === calcVersionRef.current) {
-        const decimals = TOKEN_DEFINITIONS[inputSide === 'amount0' ? token1Symbol : token0Symbol]?.decimals || 18;
+        const decimals = tokenDefinitions[inputSide === 'amount0' ? token1Symbol : token0Symbol]?.decimals || 18;
         const amount = formatUnits(BigInt(result[inputSide === 'amount0' ? 'amount1' : 'amount0'] || '0'), decimals);
         inputSide === 'amount0' ? setIncreaseAmount1(amount) : setIncreaseAmount0(amount);
       }
@@ -211,7 +216,6 @@ export function AddLiquidityFormPanel({
     }
   }, [balanceWiggleCount1, wiggleControls1]);
 
-  // Check if amounts exceed balance
   useEffect(() => {
     const amount0 = parseFloat(increaseAmount0 || "0");
     const balance0 = parseFloat(token0BalanceData?.formatted || "0");
@@ -276,7 +280,7 @@ export function AddLiquidityFormPanel({
       for (const token of tokens) {
         if (!token.amount || parseFloat(token.amount) <= 0) continue;
 
-        const tokenDef = TOKEN_DEFINITIONS[token.symbol];
+        const tokenDef = tokenDefinitions[token.symbol];
         if (!tokenDef || tokenDef.address === "0x0000000000000000000000000000000000000000") continue;
 
         try {
@@ -315,7 +319,7 @@ export function AddLiquidityFormPanel({
           needsApproval: true,
           approvalType: 'ERC20_TO_PERMIT2',
           approvalTokenSymbol: needsApproval[0],
-          approvalTokenAddress: TOKEN_DEFINITIONS[needsApproval[0]]?.address,
+          approvalTokenAddress: tokenDefinitions[needsApproval[0]]?.address,
           approvalAmount: MAX_UINT256,
           approveToAddress: PERMIT2_ADDRESS,
         });
@@ -369,7 +373,7 @@ export function AddLiquidityFormPanel({
           needsApproval: true,
           approvalType: 'ERC20_TO_PERMIT2',
           approvalTokenSymbol: nextToken,
-          approvalTokenAddress: TOKEN_DEFINITIONS[nextToken]?.address,
+          approvalTokenAddress: tokenDefinitions[nextToken]?.address,
           approvalAmount: MAX_UINT256,
           approveToAddress: PERMIT2_ADDRESS,
         });
@@ -515,7 +519,7 @@ export function AddLiquidityFormPanel({
           <h3 className="text-lg font-medium">Liquidity Added!</h3>
           {(externalTxHash || increaseTxHash) && (
             <a
-              href={`https://sepolia.basescan.org/tx/${externalTxHash || increaseTxHash}`}
+              href={getExplorerTxUrl(externalTxHash || increaseTxHash || '')}
               target="_blank"
               rel="noopener noreferrer"
               className="text-xs text-muted-foreground hover:underline"

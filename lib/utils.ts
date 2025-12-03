@@ -1,7 +1,7 @@
 import { clsx, type ClassValue } from "clsx"
 import { twMerge } from "tailwind-merge"
 import { getAddress, formatUnits } from "viem";
-import { getToken, type TokenSymbol, TOKEN_DEFINITIONS } from "./pools-config";
+import { getToken, getTokenDefinitions, type TokenSymbol, type NetworkMode } from "./pools-config";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -32,7 +32,7 @@ export function absoluteUrl(path: string) {
 }
 
 // Token display utilities - Format to actual token decimals (up to 6 max)
-export const formatTokenDisplayAmount = (amount: string, tokenSymbol?: TokenSymbol) => {
+export const formatTokenDisplayAmount = (amount: string, tokenSymbol?: TokenSymbol, networkMode: NetworkMode = 'mainnet') => {
   const num = parseFloat(amount);
   if (isNaN(num)) return amount;
   if (num === 0) return "0";
@@ -41,7 +41,8 @@ export const formatTokenDisplayAmount = (amount: string, tokenSymbol?: TokenSymb
   // Determine the number of decimals to use
   let decimalsToUse = 6; // default max
   if (tokenSymbol) {
-    const tokenConfig = TOKEN_DEFINITIONS[tokenSymbol];
+    const tokenDefinitions = getTokenDefinitions(networkMode);
+    const tokenConfig = tokenDefinitions[tokenSymbol];
     const tokenDecimals = tokenConfig?.decimals ?? 18;
     // Use the minimum of token's actual decimals and 6
     decimalsToUse = Math.min(tokenDecimals, 6);
@@ -53,14 +54,14 @@ export const formatTokenDisplayAmount = (amount: string, tokenSymbol?: TokenSymb
   return formatted.replace(/\.?0+$/, '') || "0";
 };
 
-export const getTokenIcon = (symbol?: string) => {
+export const getTokenIcon = (symbol?: string, networkMode: NetworkMode = 'mainnet') => {
   if (!symbol) return "/placeholder-logo.svg";
-  
-  const tokenConfig = getToken(symbol as TokenSymbol);
+
+  const tokenConfig = getToken(symbol as TokenSymbol, networkMode);
   if (tokenConfig?.icon) {
     return tokenConfig.icon;
   }
-  
+
   return "/placeholder-logo.svg";
 };
 
@@ -87,9 +88,10 @@ export const debounce = <T extends (...args: any[]) => any>(func: T, waitFor: nu
 };
 
 // Token symbol mapping utility
-export const getTokenSymbolByAddress = (address: string): TokenSymbol | null => {
+export const getTokenSymbolByAddress = (address: string, networkMode: NetworkMode = 'mainnet'): TokenSymbol | null => {
   const normalizedAddress = address.toLowerCase();
-  for (const [symbol, tokenConfig] of Object.entries(TOKEN_DEFINITIONS)) {
+  const tokenDefinitions = getTokenDefinitions(networkMode);
+  for (const [symbol, tokenConfig] of Object.entries(tokenDefinitions)) {
     if (tokenConfig.address.toLowerCase() === normalizedAddress) {
       return symbol as TokenSymbol;
     }
@@ -98,9 +100,10 @@ export const getTokenSymbolByAddress = (address: string): TokenSymbol | null => 
 };
 
 // Fee display utility for uncollected fees
-export const formatUncollectedFee = (feeAmount: string, tokenSymbol: TokenSymbol) => {
+export const formatUncollectedFee = (feeAmount: string, tokenSymbol: TokenSymbol, networkMode: NetworkMode = 'mainnet') => {
   try {
-    const decimals = TOKEN_DEFINITIONS[tokenSymbol]?.decimals ?? 18;
+    const tokenDefinitions = getTokenDefinitions(networkMode);
+    const decimals = tokenDefinitions[tokenSymbol]?.decimals ?? 18;
     const amount = parseFloat(formatUnits(BigInt(feeAmount), decimals));
 
     if (!Number.isFinite(amount) || amount <= 0) return null;

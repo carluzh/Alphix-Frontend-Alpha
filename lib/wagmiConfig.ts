@@ -120,4 +120,27 @@ if (!projectId) {
 }
 
 // Export helpers for network-aware code
-export { isMainnet, networkMode, chainId as activeChainId } 
+export { isMainnet, networkMode, chainId as activeChainId }
+
+/**
+ * Get the block explorer URL for the active chain
+ */
+export function getExplorerUrl(): string {
+  return activeChain.blockExplorers?.default?.url || 'https://basescan.org';
+}
+
+/**
+ * Get the block explorer URL for a transaction
+ */
+export function getExplorerTxUrl(txHash: string): string {
+  const baseUrl = getExplorerUrl();
+  return `${baseUrl}/tx/${txHash}`;
+}
+
+/**
+ * Get the block explorer URL for an address
+ */
+export function getExplorerAddressUrl(address: string): string {
+  const baseUrl = getExplorerUrl();
+  return `${baseUrl}/address/${address}`;
+} 

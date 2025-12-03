@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { ChevronLeftIcon } from "lucide-react";
+import { isMainnet } from "@/lib/wagmiConfig";
 import {
   Accordion,
   AccordionContent,
@@ -352,14 +353,20 @@ export default function LoginPage() {
                   </li>
                   <li className="flex items-start">
                     <span className="w-6 text-left text-white" style={{ fontFamily: 'Consolas, monospace' }}>2.</span>
-                    <span><strong className="text-white">Add Network</strong> - Connect to <a href="https://docs.base.org/base-chain/quickstart/connecting-to-base#base-testnet-sepolia" target="_blank" rel="noopener noreferrer" className="text-white hover:text-gray-200">Base Sepolia</a></span>
+                    {isMainnet ? (
+                      <span><strong className="text-white">Add Network</strong> - Connect to <a href="https://docs.base.org/base-chain/quickstart/connecting-to-base" target="_blank" rel="noopener noreferrer" className="text-white hover:text-gray-200">Base</a></span>
+                    ) : (
+                      <span><strong className="text-white">Add Network</strong> - Connect to <a href="https://docs.base.org/base-chain/quickstart/connecting-to-base#base-testnet-sepolia" target="_blank" rel="noopener noreferrer" className="text-white hover:text-gray-200">Base Sepolia</a></span>
+                    )}
                   </li>
-                  <li className="flex items-start">
-                    <span className="w-6 text-left text-white" style={{ fontFamily: 'Consolas, monospace' }}>3.</span>
-                    <span><strong className="text-white">Get ETH</strong> - Claim free test tokens from a <a href="https://www.alchemy.com/faucets/base-sepolia" target="_blank" rel="noopener noreferrer" className="text-white hover:text-gray-200">Faucet</a></span>
-                  </li>
+                  {!isMainnet && (
+                    <li className="flex items-start">
+                      <span className="w-6 text-left text-white" style={{ fontFamily: 'Consolas, monospace' }}>3.</span>
+                      <span><strong className="text-white">Get ETH</strong> - Claim free test tokens from a <a href="https://www.alchemy.com/faucets/base-sepolia" target="_blank" rel="noopener noreferrer" className="text-white hover:text-gray-200">Faucet</a></span>
+                    </li>
+                  )}
                 </ol>
-                <p>You're all set. Explore Alphix and help us build the future of AMMs.</p>
+                <p>You're all set. Explore Alphix and {isMainnet ? "trade on Base" : "help us build the future of AMMs"}.</p>
               </AccordionContent>
             </AccordionItem>
           </Accordion>

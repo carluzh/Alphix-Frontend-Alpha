@@ -5,11 +5,11 @@ import { nearestUsableTick } from '@uniswap/v3-sdk';
 import JSBI from 'jsbi';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
-import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from "@/lib/abis/state_view_abi"; 
-import { TokenSymbol, getToken, getPositionManagerAddress, getStateViewAddress } from "../../../lib/pools-config";
+import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from "@/lib/abis/state_view_abi";
+import { TokenSymbol, getToken, getPositionManagerAddress, getStateViewAddress, getNetworkModeFromRequest } from "../../../lib/pools-config";
 import { iallowance_transfer_abi } from "../../../lib/abis/IAllowanceTransfer_abi"; // For Permit2 allowance method
 
-import { publicClient } from "../../../lib/viemClient"; 
+import { createNetworkClient } from "../../../lib/viemClient"; 
 import { 
     isAddress, 
     getAddress, 
@@ -27,8 +27,8 @@ import {
 import { PERMIT2_TYPES } from "../../../lib/liquidity-utils";
 import { AllowanceTransfer, permit2Address, PERMIT2_ADDRESS, PermitBatch } from '@uniswap/permit2-sdk';
 
-const POSITION_MANAGER_ADDRESS = getPositionManagerAddress();
-const STATE_VIEW_ADDRESS = getStateViewAddress();
+// Note: POSITION_MANAGER_ADDRESS and STATE_VIEW_ADDRESS are now fetched dynamically per-request
+// using getPositionManagerAddress(networkMode) and getStateViewAddress(networkMode)
 const ETHERS_ADDRESS_ZERO = "0x0000000000000000000000000000000000000000";
 const SDK_MIN_TICK = -887272;
 const SDK_MAX_TICK = 887272;
@@ -149,6 +149,17 @@ export default async function handler(
         return res.status(405).json({ message: `Method ${req.method} Not Allowed` });
     }
 
+    // Get network mode from cookies for proper chain-specific addresses
+    const networkMode = getNetworkModeFromRequest(req.headers.cookie);
+    console.log('[prepare-mint-tx] Network mode from cookies:', networkMode);
+
+    // Create network-specific public client
+    const publicClient = createNetworkClient(networkMode);
+
+    // Get network-specific contract addresses
+    const POSITION_MANAGER_ADDRESS = getPositionManagerAddress(networkMode);
+    const STATE_VIEW_ADDRESS = getStateViewAddress(networkMode);
+
     const stateViewAbiViem = parseAbi(STATE_VIEW_HUMAN_READABLE_ABI);
 
     try {
@@ -166,10 +177,10 @@ export default async function handler(
         if (!isAddress(userAddress)) {
             return res.status(400).json({ message: "Invalid userAddress." });
         }
-        
-        const token0Config = getToken(token0Symbol);
-        const token1Config = getToken(token1Symbol);
-        const inputTokenConfig = getToken(inputTokenSymbol);
+
+        const token0Config = getToken(token0Symbol, networkMode);
+        const token1Config = getToken(token1Symbol, networkMode);
+        const inputTokenConfig = getToken(inputTokenSymbol, networkMode);
 
         if (!token0Config || !token1Config || !inputTokenConfig) {
             return res.status(400).json({ message: "Invalid token symbol(s) provided." });
@@ -223,7 +234,7 @@ export default async function handler(
 
         // Use configured pool ID from pools.json instead of deriving
         const { getPoolByTokens } = await import('../../../lib/pools-config');
-        const poolConfig = getPoolByTokens(token0Symbol, token1Symbol);
+        const poolConfig = getPoolByTokens(token0Symbol, token1Symbol, networkMode);
         
         if (!poolConfig) {
             return res.status(400).json({ message: `No pool configuration found for ${token0Symbol}/${token1Symbol}` });
@@ -334,7 +345,7 @@ export default async function handler(
         // to avoid InsufficientAllowance from pool state changes between signature and execution
         const permitBatchValues = hasBatchPermit ? (permitBatchData.values || {
             details: permitBatchData.details || [],
-            spender: permitBatchData.spender || getPositionManagerAddress(),
+            spender: permitBatchData.spender || POSITION_MANAGER_ADDRESS,
             sigDeadline: permitBatchData.sigDeadline || '0'
         }) : null;
 
@@ -395,8 +406,8 @@ export default async function handler(
         }
 
         const tokensToCheck = [
-            { sdkToken: sortedToken0, requiredAmount: amount0, symbol: getToken(sortedToken0.symbol as TokenSymbol)?.symbol || sortedToken0.symbol || "Token0" },
-            { sdkToken: sortedToken1, requiredAmount: amount1, symbol: getToken(sortedToken1.symbol as TokenSymbol)?.symbol || sortedToken1.symbol || "Token1" }
+            { sdkToken: sortedToken0, requiredAmount: amount0, symbol: getToken(sortedToken0.symbol as TokenSymbol, networkMode)?.symbol || sortedToken0.symbol || "Token0" },
+            { sdkToken: sortedToken1, requiredAmount: amount1, symbol: getToken(sortedToken1.symbol as TokenSymbol, networkMode)?.symbol || sortedToken1.symbol || "Token1" }
         ];
 
         const hasNativeETH = sortedToken0.address === ETHERS_ADDRESS_ZERO || sortedToken1.address === ETHERS_ADDRESS_ZERO;
@@ -569,8 +580,8 @@ export default async function handler(
             },
             deadline: deadlineBigInt.toString(),
             details: {
-                token0: { address: sortedToken0.address, symbol: (getToken(sortedToken0.symbol as TokenSymbol)?.symbol || sortedToken0.symbol) as TokenSymbol, amount: amount0.toString() },
-                token1: { address: sortedToken1.address, symbol: (getToken(sortedToken1.symbol as TokenSymbol)?.symbol || sortedToken1.symbol) as TokenSymbol, amount: amount1.toString() },
+                token0: { address: sortedToken0.address, symbol: (getToken(sortedToken0.symbol as TokenSymbol, networkMode)?.symbol || sortedToken0.symbol) as TokenSymbol, amount: amount0.toString() },
+                token1: { address: sortedToken1.address, symbol: (getToken(sortedToken1.symbol as TokenSymbol, networkMode)?.symbol || sortedToken1.symbol) as TokenSymbol, amount: amount1.toString() },
                 liquidity: liquidity.toString(), 
                 finalTickLower: tickLower,
                 finalTickUpper: tickUpper

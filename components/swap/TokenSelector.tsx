@@ -11,7 +11,8 @@ import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 import { useAccount } from 'wagmi';
 import { getAllTokenPrices } from '@/lib/price-service';
-import { getToken, CHAIN_ID } from '@/lib/pools-config';
+import { getToken } from '@/lib/pools-config';
+import { useNetwork } from '@/lib/network-context';
 import { readContract, getBalance } from '@wagmi/core';
 import { erc20Abi, formatUnits } from 'viem';
 import { config } from '@/lib/wagmiConfig';
@@ -127,6 +128,7 @@ export function TokenSelector({
 
   const { address: accountAddress, isConnected, chain } = useAccount();
   const currentChainId = chain?.id;
+  const { chainId: targetChainId } = useNetwork();
 
   useEffect(() => {
     if (!isOpen) return;
@@ -179,7 +181,7 @@ export function TokenSelector({
   }, [isOpen]);
 
   useEffect(() => {
-    if (!isOpen || !isConnected || currentChainId !== CHAIN_ID || !accountAddress) {
+    if (!isOpen || !isConnected || currentChainId !== targetChainId || !accountAddress) {
       const resetBalances: Record<string, TokenBalanceData> = {};
       filteredTokens.forEach(token => {
         resetBalances[token.address] = {
@@ -210,7 +212,7 @@ export function TokenSelector({
           if (token.address === "0x0000000000000000000000000000000000000000") {
             const ethBalance = await getBalance(config, {
               address: accountAddress,
-              chainId: CHAIN_ID,
+              chainId: targetChainId,
             });
             balance = formatUnits(ethBalance.value, 18);
           } else {
@@ -219,7 +221,7 @@ export function TokenSelector({
               abi: erc20Abi,
               functionName: 'balanceOf',
               args: [accountAddress],
-              chainId: CHAIN_ID,
+              chainId: targetChainId,
             });
 
             balance = formatUnits(result, token.decimals);

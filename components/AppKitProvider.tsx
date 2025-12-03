@@ -1,11 +1,10 @@
 'use client'
 
 // Import config, adapter, networks etc. needed for BOTH provider and init
-import { config, wagmiAdapter, projectId, networks as wagmiNetworks, baseSepolia } from '@/lib/wagmiConfig' 
+import { config, wagmiAdapter, projectId, isMainnet } from '@/lib/wagmiConfig'
 import { createAppKit } from '@reown/appkit'
-// Removed import of non-existent provider
-// Import AppKit networks separately for initialization
-import { mainnet as appKitMainnet, arbitrum as appKitArbitrum, sepolia as appKitSepolia, polygon as appKitPolygon } from '@reown/appkit/networks'
+// Import AppKit networks for initialization
+import { base as appKitBase, baseSepolia as appKitBaseSepolia } from '@reown/appkit/networks'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React, { type ReactNode, useEffect, useState } from 'react'
 // Use WagmiProvider
@@ -52,8 +51,8 @@ function AppKitProvider({ children, cookies }: { children: ReactNode, cookies: s
     createAppKit({
       adapters: [wagmiAdapter],
       projectId: projectId,
-      networks: [baseSepolia],
-      defaultNetwork: baseSepolia,
+      networks: [appKitBaseSepolia, appKitBase], // Both Base Sepolia and Base Mainnet
+      defaultNetwork: isMainnet ? appKitBase : appKitBaseSepolia, // Network based on stored preference
       metadata,
       features: {
         analytics: true,

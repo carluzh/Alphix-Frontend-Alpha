@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getPoolSubgraphId } from '../../../lib/pools-config';
+import { getPoolSubgraphId, getNetworkModeFromRequest } from '../../../lib/pools-config';
 import { getSubgraphUrlForPool } from '../../../lib/subgraph-url-helper';
 import { cacheService } from '@/lib/cache/CacheService';
 import { poolKeys } from '@/lib/redis-keys';
@@ -19,6 +19,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
 
+  // Get network mode from cookies
+  const networkMode = getNetworkModeFromRequest(req.headers.cookie);
+
   try {
     const { poolId, first = 500 } = req.body ?? {};
 
@@ -27,14 +30,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     const limit = Math.min(Number(first) || 500, 1000);
-    const apiId = getPoolSubgraphId(poolId) || poolId;
+    const apiId = getPoolSubgraphId(poolId, networkMode) || poolId;
 
     // Use CacheService for tick data with stale-while-revalidate
     const result = await cacheService.cachedApiCall(
       poolKeys.ticks(apiId),
       CACHE_TTL,
       async () => {
-        const subgraphUrl = getSubgraphUrlForPool(poolId);
+        const subgraphUrl = getSubgraphUrlForPool(poolId, networkMode);
         const query = `
           query GetTicks($pool: Bytes!, $first: Int!) {
             ticks(

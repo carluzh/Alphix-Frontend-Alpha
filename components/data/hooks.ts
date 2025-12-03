@@ -2,8 +2,9 @@ import { useQuery } from '@tanstack/react-query'
 import { qk } from '@/lib/queryKeys'
 import { useEffect } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { publicClient } from '@/lib/viemClient'
+import { createNetworkClient } from '@/lib/viemClient'
 import { logger } from '@/lib/logger'
+import { useNetwork } from '@/lib/network-context'
 
 export function useAllPrices() {
   return useQuery({
@@ -30,13 +31,15 @@ export function useAllPrices() {
 }
 
 export function useUserPositions(ownerAddress: string) {
+  const { chainId } = useNetwork()
   return useQuery({
     queryKey: qk.userPositions(ownerAddress || ''),
     queryFn: async () => {
       const cache = await import('@/lib/client-cache')
       const onChain = await import('@/lib/on-chain-data')
       const ids = await cache.loadUserPositionIds(ownerAddress)
-      return onChain.derivePositionsFromIds(ownerAddress, ids)
+      const timestamps = cache.getCachedPositionTimestamps(ownerAddress)
+      return onChain.derivePositionsFromIds(ownerAddress, ids, chainId, timestamps)
     },
     staleTime: Infinity,
     gcTime: 60 * 60 * 1000,
@@ -49,7 +52,7 @@ export function useUncollectedFeesBatch(positionIds: string[], ttlMs: number = 6
   return useQuery({
     queryKey: qk.uncollectedFeesBatch(key),
     queryFn: async () => {
-      const resp = await fetch('/api/fees/get-batch', {
+      const resp = await fetch('/api/liquidity/get-uncollected-fees', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ positionIds }),
@@ -57,37 +60,12 @@ export function useUncollectedFeesBatch(positionIds: string[], ttlMs: number = 6
       })
       if (!resp.ok) throw new Error('Failed to load fees')
       const data = await resp.json()
-      // Return array with isStale as property for backward compatibility
-      const items = data.items || []
-      // @ts-ignore - Add isStale as property on array
-      items.isStale = data.isStale || false
-      return items
+      if (!data.success) throw new Error(data.error || 'Failed to load fees')
+      return data.items || []
     },
     staleTime: ttlMs,
     gcTime: Math.max(ttlMs * 10, 10 * 60 * 1000),
     enabled: Array.isArray(positionIds) && positionIds.length > 0,
-  })
-}
-
-/**
- * @deprecated Activity feed removed from UI - kept for backward compatibility only
- * This hook is no longer used in the application
- */
-export function useActivity(ownerAddress: string, first: number = 20) {
-  return useQuery({
-    queryKey: qk.activity(ownerAddress || '', first),
-    queryFn: async () => {
-      const resp = await fetch('/api/portfolio/get-activity', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ owner: ownerAddress, first }),
-      } as any)
-      if (!resp.ok) throw new Error('Failed to load activity')
-      return resp.json()
-    },
-    staleTime: 10 * 60 * 1000,
-    gcTime: 60 * 60 * 1000,
-    enabled: false, // Disabled since activity feed is removed
   })
 }
 
@@ -105,41 +83,27 @@ export function usePoolState(poolId: string) {
   })
 }
 
-// Temporarily disabled - was causing excessive subgraph spam
-// Pool state data doesn't need real-time updates every 10s
 export function useBlockRefetch(options?: { poolIds?: string[]; onBlock?: (n?: bigint) => void }) {
   const qc = useQueryClient()
+  const { networkMode } = useNetwork()
   useEffect(() => {
     let lastRefetchAt = 0
-    const minIntervalMs = 60_000 // Increased to 60s to reduce spam
+    const minIntervalMs = 60_000
     const isTabVisible = () => (typeof document === 'undefined') || document.visibilityState === 'visible'
 
+    const publicClient = createNetworkClient(networkMode)
     const unwatch = publicClient.watchBlockNumber({
       onBlockNumber: (n) => {
-        // Skip when tab is hidden to avoid background churn
         if (!isTabVisible()) return
-        // Throttle invalidations
         const now = Date.now()
         if (now - lastRefetchAt < minIntervalMs) return
         lastRefetchAt = now
-
         try { options?.onBlock?.(n) } catch {}
-        // Only invalidate if explicitly needed - not automatic
-        // Comment out the automatic invalidations to stop subgraph spam
-        /*
-        for (const pid of options?.poolIds || []) {
-          qc.invalidateQueries({ queryKey: qk.poolState(pid), exact: true })
-          qc.invalidateQueries({ queryKey: qk.dynamicFeeNow(pid), exact: true })
-        }
-        */
       },
-      emitOnBegin: false, // do not spam immediately on mount
+      emitOnBegin: false,
     })
 
     return () => { try { unwatch?.() } catch {} }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [qc, JSON.stringify(options?.poolIds)])
+  }, [qc, JSON.stringify(options?.poolIds), networkMode])
 }
-
-
-

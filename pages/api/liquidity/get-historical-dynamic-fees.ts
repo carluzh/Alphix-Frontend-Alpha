@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getSubgraphUrlForPool, isDaiPool } from '../../../lib/subgraph-url-helper';
+import { getSubgraphUrlForPool, isDaiPool, isMainnetSubgraphMode } from '../../../lib/subgraph-url-helper';
 import { cacheService } from '../../../lib/cache/CacheService';
 
 // Subgraph URL selection (Satsuma default with env/query overrides)
@@ -7,6 +7,24 @@ const LEGACY_SUBGRAPH_URL = process.env.SUBGRAPH_URL || "";
 function selectSubgraphUrl(poolId: string | undefined): string {
   return getSubgraphUrlForPool(poolId) || LEGACY_SUBGRAPH_URL;
 }
+
+// Mainnet query: uses poolId filter (minimal subgraph stores poolId as String, not Pool relation)
+const GET_LAST_HOOK_EVENTS_MAINNET = `
+  query GetLastHookEvents($poolId: String!) {
+    alphixHooks(
+      where: { poolId: $poolId }
+      orderBy: timestamp
+      orderDirection: desc
+      first: 500
+    ) {
+      timestamp
+      newFeeBps
+      currentRatio
+      newTargetRatio
+      oldTargetRatio
+    }
+  }
+`;
 
 // DAI subgraph uses currentRatio (Activity), old subgraph uses currentTargetRatio
 // Fetch up to 500 events to cover 60+ days of data (some pools have multiple events per day)
@@ -56,6 +74,14 @@ type HookEvent = {
 
 type HookResp = { data?: { alphixHooks?: HookEvent[] }, errors?: any[] };
 
+// Select the appropriate query based on network mode and pool type
+function selectQuery(poolId: string): string {
+  if (isMainnetSubgraphMode()) {
+    return GET_LAST_HOOK_EVENTS_MAINNET;
+  }
+  return isDaiPool(poolId) ? GET_LAST_HOOK_EVENTS_DAI : GET_LAST_HOOK_EVENTS_OLD;
+}
+
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse<HookEvent[] | { message: string; error?: any }>
@@ -83,7 +109,7 @@ export default async function handler(
       { fresh: 6 * 60 * 60, stale: 24 * 60 * 60 }, // 6h fresh, 24h stale
       async () => {
         const SUBGRAPH_URL = selectSubgraphUrl(poolId);
-        const query = isDaiPool(poolId) ? GET_LAST_HOOK_EVENTS_DAI : GET_LAST_HOOK_EVENTS_OLD;
+        const query = selectQuery(poolId);
 
         const resp = await fetch(SUBGRAPH_URL, {
           method: 'POST',
@@ -125,5 +151,3 @@ export default async function handler(
     return res.status(500).json({ message: errorMessage });
   }
 }
-
-

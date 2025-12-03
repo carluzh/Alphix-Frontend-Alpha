@@ -1,4 +1,4 @@
-import { getAllPools, getToken } from './pools-config';
+import { getAllPools, getToken, type NetworkMode } from './pools-config';
 
 export interface SwapRoute {
   path: string[]; // Array of token symbols in order [from, intermediate1, intermediate2, ..., to]
@@ -27,9 +27,9 @@ export interface RouteResult {
 /**
  * Build a graph representation of all available pools for pathfinding
  */
-function buildPoolGraph(): Map<string, PoolHop[]> {
+function buildPoolGraph(networkMode?: NetworkMode): Map<string, PoolHop[]> {
   const graph = new Map<string, PoolHop[]>();
-  const allPools = getAllPools();
+  const allPools = getAllPools(networkMode);
 
   // Initialize empty arrays for each token
   const allTokens = new Set<string>();
@@ -67,15 +67,16 @@ function buildPoolGraph(): Map<string, PoolHop[]> {
  * Find all possible routes between two tokens using BFS with max depth
  */
 function findAllRoutes(
-  fromToken: string, 
-  toToken: string, 
-  maxHops: number = 3
+  fromToken: string,
+  toToken: string,
+  maxHops: number = 3,
+  networkMode?: NetworkMode
 ): SwapRoute[] {
   if (fromToken === toToken) {
     return [];
   }
 
-  const graph = buildPoolGraph();
+  const graph = buildPoolGraph(networkMode);
   const routes: SwapRoute[] = [];
   
   // BFS queue: [currentToken, path, usedPools, visitedTokens]
@@ -154,7 +155,8 @@ function scoreRoute(route: SwapRoute): number {
   });
 
   // Bonus for stablecoin pairs (lower slippage typically)
-  const stablecoins = ['aUSDC', 'aUSDT'];
+  // Include both mainnet (USDC, USDT) and testnet (aUSDC, aUSDT) stablecoins
+  const stablecoins = ['USDC', 'USDT', 'DAI', 'aUSDC', 'aUSDT', 'aDAI'];
   route.pools.forEach(pool => {
     const isStablePair = stablecoins.includes(pool.token0) && stablecoins.includes(pool.token1);
     if (isStablePair) score += 25;
@@ -166,13 +168,13 @@ function scoreRoute(route: SwapRoute): number {
 /**
  * Main function to find the best route between two tokens
  */
-export function findBestRoute(fromToken: string, toToken: string): RouteResult {
+export function findBestRoute(fromToken: string, toToken: string, networkMode?: NetworkMode): RouteResult {
   console.log(`[RoutingEngine] Finding routes from ${fromToken} to ${toToken}`);
-  
+
   // Validate tokens exist
-  const fromTokenConfig = getToken(fromToken);
-  const toTokenConfig = getToken(toToken);
-  
+  const fromTokenConfig = getToken(fromToken, networkMode);
+  const toTokenConfig = getToken(toToken, networkMode);
+
   if (!fromTokenConfig || !toTokenConfig) {
     console.error(`[RoutingEngine] Invalid tokens: ${fromToken} or ${toToken} not found`);
     return {
@@ -183,7 +185,7 @@ export function findBestRoute(fromToken: string, toToken: string): RouteResult {
   }
 
   // Find all possible routes
-  const allRoutes = findAllRoutes(fromToken, toToken, 3); // Max 3 hops
+  const allRoutes = findAllRoutes(fromToken, toToken, 3, networkMode); // Max 3 hops
   
   if (allRoutes.length === 0) {
     console.warn(`[RoutingEngine] No routes found from ${fromToken} to ${toToken}`);
@@ -215,16 +217,16 @@ export function findBestRoute(fromToken: string, toToken: string): RouteResult {
 /**
  * Get a direct route if one exists (for simple validation)
  */
-export function getDirectRoute(fromToken: string, toToken: string): SwapRoute | null {
-  const result = findBestRoute(fromToken, toToken);
+export function getDirectRoute(fromToken: string, toToken: string, networkMode?: NetworkMode): SwapRoute | null {
+  const result = findBestRoute(fromToken, toToken, networkMode);
   return result.hasDirectRoute ? result.allRoutes.find(route => route.isDirectRoute) || null : null;
 }
 
 /**
  * Check if a direct route exists between two tokens
  */
-export function hasDirectRoute(fromToken: string, toToken: string): boolean {
-  return getDirectRoute(fromToken, toToken) !== null;
+export function hasDirectRoute(fromToken: string, toToken: string, networkMode?: NetworkMode): boolean {
+  return getDirectRoute(fromToken, toToken, networkMode) !== null;
 }
 
 /**

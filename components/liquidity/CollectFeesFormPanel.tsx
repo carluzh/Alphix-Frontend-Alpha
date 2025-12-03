@@ -1,10 +1,12 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { BadgeCheck, OctagonX } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import Image from "next/image";
-import { TOKEN_DEFINITIONS, TokenSymbol, getToken } from "@/lib/pools-config";
+import { getTokenDefinitions, TokenSymbol, getToken } from "@/lib/pools-config";
+import { useNetwork } from "@/lib/network-context";
+import { getExplorerTxUrl } from "@/lib/wagmiConfig";
 import type { ProcessedPosition } from "../../pages/api/liquidity/get-positions";
 import { formatUnits } from "viem";
 import { useDecreaseLiquidity } from "./useDecreaseLiquidity";
@@ -31,8 +33,9 @@ export function CollectFeesFormPanel({
   getUsdPriceForSymbol
 }: CollectFeesFormPanelProps) {
   const [showSuccessView, setShowSuccessView] = useState(false);
+  const { networkMode } = useNetwork();
+  const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
 
-  // @ts-ignore - onFeesCollected is optional in the hook
   const { claimFees, isLoading: isClaimingFees, hash: claimTxHash } = useDecreaseLiquidity({
     onFeesCollected: (info) => {
       setShowSuccessView(true);
@@ -50,8 +53,8 @@ export function CollectFeesFormPanel({
       const raw0 = prefetchedRaw0 || '0';
       const raw1 = prefetchedRaw1 || '0';
 
-      const d0 = TOKEN_DEFINITIONS?.[position.token0.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals ?? 18;
-      const d1 = TOKEN_DEFINITIONS?.[position.token1.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals ?? 18;
+      const d0 = tokenDefinitions?.[position.token0.symbol as string]?.decimals ?? 18;
+      const d1 = tokenDefinitions?.[position.token1.symbol as string]?.decimals ?? 18;
 
       const fee0 = parseFloat(formatUnits(BigInt(raw0), d0));
       const fee1 = parseFloat(formatUnits(BigInt(raw1), d1));
@@ -100,7 +103,7 @@ export function CollectFeesFormPanel({
         </div>
         {claimTxHash && (
           <a
-            href={`https://ftmscan.com/tx/${claimTxHash}`}
+            href={getExplorerTxUrl(claimTxHash)}
             target="_blank"
             rel="noopener noreferrer"
             className="text-xs text-muted-foreground hover:text-foreground underline"

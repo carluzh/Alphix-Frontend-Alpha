@@ -6,12 +6,11 @@ import { AppLayout } from "@/components/app-layout";
 import Image from "next/image";
 import { useMemo, useState, useEffect, useRef, useCallback, useLayoutEffect } from "react";
 import { formatUSD as formatUSDShared, formatUSDHeader as formatUSDHeaderShared, formatNumber, formatPercent } from "@/lib/format";
-import { Pool as V4Pool, Position as V4Position } from "@uniswap/v4-sdk";
 import { publicClient } from "@/lib/viemClient";
-import { getAllPools, getToken, CHAIN_ID, getAllTokens, NATIVE_TOKEN_ADDRESS } from "@/lib/pools-config";
+import { getAllPools, getToken, getAllTokens, NATIVE_TOKEN_ADDRESS } from "@/lib/pools-config";
 import { parseAbi, type Abi } from "viem";
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract } from "wagmi";
-import { baseSepolia } from "@/lib/wagmiConfig";
+import { baseSepolia, getExplorerTxUrl } from "@/lib/wagmiConfig";
 import { useUserPositions, useAllPrices, useUncollectedFeesBatch } from "@/components/data/hooks";
 import { prefetchService } from "@/lib/prefetch-service";
 import { setIndexingBarrier, invalidateUserPositionIdsCache } from "@/lib/client-cache";
@@ -24,7 +23,7 @@ import { ChevronUpIcon, ChevronDownIcon, ChevronsUpDownIcon, OctagonX, BadgeChec
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { PortfolioTickBar } from "@/components/portfolio/PortfolioTickBar";
 import { ConnectWalletButton } from "@/components/ConnectWalletButton";
-import { TOKEN_DEFINITIONS, type TokenSymbol, getToken as getTokenCfg } from "@/lib/pools-config";
+import { getTokenDefinitions, type TokenSymbol, getToken as getTokenCfg } from "@/lib/pools-config";
 import { getOptimalBaseToken } from "@/lib/denomination-utils";
 import { formatUnits as viemFormatUnits } from "viem";
 import { useIncreaseLiquidity } from "@/components/liquidity/useIncreaseLiquidity";
@@ -35,6 +34,7 @@ import { PositionCardCompact } from "@/components/liquidity/PositionCardCompact"
 import { PositionDetailsModal } from "@/components/liquidity/PositionDetailsModal";
 import { PositionSkeleton } from "@/components/liquidity/PositionSkeleton";
 import { batchGetTokenPrices } from '@/lib/price-service';
+import { calculateClientAPY } from '@/lib/client-apy';
 import { cn } from '@/lib/utils';
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Folder, Rows3, Filter as FilterIcon, X as XIcon } from "lucide-react";
@@ -120,7 +120,6 @@ function useLoadPhases(readiness: Readiness) {
   return { phase: phases.phase, showSkeletonFor };
 }
 
-// Skeleton primitives - use synchronized animation from globals.css
 const SkeletonBlock = ({ className = "", ...props }: React.HTMLAttributes<HTMLDivElement>) => (
   <div className={`bg-muted/60 rounded ${className}`} {...props} />
 );
@@ -196,12 +195,6 @@ const PortfolioHeaderSkeleton = ({ viewportWidth = 1440 }: { viewportWidth?: num
   );
 };
 
-// Positions table skeleton removed (unused)
-
-// Deprecated skeleton removed
-
-// Token balance cards skeleton removed (unused)
-
 // Balances list skeleton (matches integrated balances list layout)
 const BalancesListSkeleton = () => (
   <div className="flex flex-col divide-y divide-sidebar-border/60">
@@ -246,10 +239,6 @@ const PortfolioFilterContext = React.createContext<{
   hoverTokenLabel: null,
 });
 
-
-const RANGES = ["1D", "1W", "1M", "1Y", "MAX"] as const;
-type Range = typeof RANGES[number];
-
 interface TokenBalance {
   symbol: string;
   balance: number;
@@ -267,28 +256,15 @@ interface PortfolioData {
   priceChange24hPctMap: Record<string, number>;
 }
 
-// Positions are now fetched via /api/liquidity/get-positions (subgraph only for discovery there)
-
-// Removed legacy GQL types (positions now come from API)
-
-// Removed legacy composite id parsing
-
-import { loadUserPositionIds, derivePositionsFromIds, waitForSubgraphBlock } from '@/lib/client-cache';
-
-// Removed: getUserPositionsOnchain - now using centralized useUserPositions hook
+import { loadUserPositionIds, derivePositionsFromIds, waitForSubgraphBlock, getCachedPositionTimestamps } from '@/lib/client-cache';
 
 function formatUSD(num: number) {
   return formatUSDShared(num);
 }
 
-// For the PORTFOLIO header only: show no decimals at >= $1,000,000
 function formatUSDHeader(num: number) {
   return formatUSDHeaderShared(num);
 }
-
-// (removed old PortfolioSkeleton)
-
-// Hook to fetch and aggregate portfolio data
 function usePortfolioData(refreshKey: number = 0, userPositionsData?: any[], pricesData?: any): PortfolioData {
   const { address: accountAddress, isConnected, chainId: currentChainId } = useAccount();
   const [portfolioData, setPortfolioData] = useState<PortfolioData>({
@@ -491,22 +467,17 @@ function usePortfolio(refreshKey: number = 0, userPositionsData?: any[], pricesD
     setActivePositions(positions);
   }, [isConnected, accountAddress, userPositionsData, isLoadingHookPositions]);
 
-  // Fetch APRs from pools-batch (already Redis-cached server-side)
-  // NOTE: APR calculation is currently disabled - all values are 'N/A'
-  // localStorage caching removed (2025-11-27) - API endpoint has Redis caching
   useEffect(() => {
     const fetchApr = async () => {
       try {
-        const response = await fetch('/api/liquidity/get-pools-batch', { cache: 'no-store' as any } as any);
+        const response = await fetch('/api/liquidity/get-pools-batch', { cache: 'no-store' });
         if (!response.ok) return;
         const data = await response.json();
         if (!data?.success || !Array.isArray(data.pools)) return;
         const map: Record<string, string> = {};
         for (const p of data.pools as any[]) {
-          // TODO: APR calculation removed (was using deprecated getPoolFeeBps which returns null)
-          // Will be fixed in Phase 2 with proper fee rate lookup from pool config
-          let aprStr = 'N/A';
-          if (p.poolId) map[String(p.poolId).toLowerCase()] = aprStr;
+          const apr = typeof p.apr7d === 'number' && isFinite(p.apr7d) && p.apr7d > 0 ? `${p.apr7d.toFixed(2)}%` : 'N/A';
+          if (p.poolId) map[String(p.poolId).toLowerCase()] = apr;
         }
         setAprByPoolId(map);
       } catch {}
@@ -514,23 +485,15 @@ function usePortfolio(refreshKey: number = 0, userPositionsData?: any[], pricesD
     fetchApr();
   }, []);
 
-  // Simplify: we no longer need to prefetch pool state for ranges; only for current tick on hover elsewhere
   useEffect(() => {
     setIsLoadingPoolStates(false);
   }, [activePositions, isLoadingPositions]);
 
-  // Fetch Wallet Balances is handled in the main component body now
-
-  // Calculate readiness object - separate positions/APRs from other data
   const readiness: Readiness = useMemo(() => {
-    // Positions are empty only when loading is complete and no positions exist
     const isPositionsLoaded = !isLoadingPositions;
     const isEmptyPortfolio = isPositionsLoaded && activePositions.length === 0;
-
     return {
-      // Core readiness requires positions to be loaded (not just prices)
       core: isPositionsLoaded && !isLoadingPoolStates,
-      // Prices can be ready independently
       prices: isEmptyPortfolio || Object.keys(portfolioData.priceMap).length > 0,
       apr: isEmptyPortfolio || Object.keys(aprByPoolId).length > 0,
     };
@@ -552,9 +515,10 @@ function usePortfolio(refreshKey: number = 0, userPositionsData?: any[], pricesD
 
 export default function PortfolioPage() {
   const router = useRouter();
-  const { isTestnet } = useNetwork();
+  const { isTestnet, networkMode, chainId: targetChainId } = useNetwork();
+  const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
   const [positionsRefresh, setPositionsRefresh] = useState(0);
-  const { address: accountAddress, isConnected } = useAccount();
+  const { address: accountAddress, isConnected, chainId } = useAccount();
   const queryClient = useQueryClient();
 
   // Centralized hooks for positions (Category 2: user-action invalidated)
@@ -647,8 +611,8 @@ export default function PortfolioPage() {
 
     // Fallback: absolute price from tick (no current price required)
     try {
-      const cfg0 = TOKEN_DEFINITIONS[token0Symbol as TokenSymbol];
-      const cfg1 = TOKEN_DEFINITIONS[token1Symbol as TokenSymbol];
+      const cfg0 = tokenDefinitions[token0Symbol as TokenSymbol];
+      const cfg1 = tokenDefinitions[token1Symbol as TokenSymbol];
       // Fallback-safe token data
       const addr0 = (cfg0?.address || `0x${token0Symbol}`).toLowerCase();
       const addr1 = (cfg1?.address || `0x${token1Symbol}`).toLowerCase();
@@ -793,9 +757,8 @@ export default function PortfolioPage() {
   // NEW: selector state for switching between sections
   const [selectedSection, setSelectedSection] = useState<string>('Active Positions');
   const isMobile = viewportWidth <= 768;
-  // Balances panel only shown on testnet
   const isIntegrateBalances = isTestnet && viewportWidth < 1400 && !isMobile;
-  const showBalancesPanel = isTestnet; // Controls whether to show balances at all
+  const showBalancesPanel = isTestnet;
   const sectionsList = useMemo(() => {
     const base = ['Active Positions'];
     return isIntegrateBalances ? [...base, 'Balances'] : base;
@@ -864,9 +827,10 @@ export default function PortfolioPage() {
 
   // Enhanced refetching functions (based on pool page logic)
   const refreshSinglePosition = useCallback(async (positionId: string) => {
-    if (!accountAddress) return;
+    if (!accountAddress || !chainId) return;
     try {
-      const updatedPositions = await derivePositionsFromIds(accountAddress, [positionId]);
+      const timestamps = getCachedPositionTimestamps(accountAddress);
+      const updatedPositions = await derivePositionsFromIds(accountAddress, [positionId], chainId, timestamps);
       const updatedPosition = updatedPositions[0];
 
       if (updatedPosition) {
@@ -891,14 +855,15 @@ export default function PortfolioPage() {
         p.positionId === positionId ? { ...p, isOptimisticallyUpdating: undefined } : p
       ));
     }
-  }, [accountAddress]);
+  }, [accountAddress, chainId]);
 
   const refreshAfterMutation = useCallback(async (info?: { txHash?: `0x${string}`; blockNumber?: bigint; poolId?: string; tvlDelta?: number; volumeDelta?: number }) => {
-    if (!accountAddress) return;
+    if (!accountAddress || !chainId) return;
 
     try {
       await invalidateAfterTx(queryClient, {
         owner: accountAddress,
+        chainId,
         poolId: info?.poolId, // Can be undefined for portfolio-wide operations
         reason: 'liquidity-withdrawn',
         awaitSubgraphSync: true,
@@ -1101,7 +1066,7 @@ export default function PortfolioPage() {
       description: 'Fees successfully collected',
       action: info?.txHash ? {
         label: "View Transaction",
-        onClick: () => window.open(`https://sepolia.basescan.org/tx/${info.txHash}`, '_blank')
+        onClick: () => window.open(getExplorerTxUrl(info.txHash!), '_blank')
       } : undefined
     });
     if (lastTxBlockRef.current) {
@@ -1274,7 +1239,7 @@ export default function PortfolioPage() {
               });
               raw = BigInt(bal as any);
             }
-            const dec = (TOKEN_DEFINITIONS as any)?.[symbol]?.decimals ?? 18;
+            const dec = (tokenDefinitions as any)?.[symbol]?.decimals ?? 18;
             const asFloat = parseFloat(viemFormatUnits(raw, dec));
             balances[symbol] = asFloat;
           } catch {}
@@ -1451,24 +1416,6 @@ export default function PortfolioPage() {
       return (isFinite(amt0) ? amt0 : 0) * px0 + (isFinite(amt1) ? amt1 : 0) * px1;
     };
 
-    // TODO: Sorting by fees/APR - to be implemented
-    // const getFeesKey = (p: any) => {
-    //   const fees = getFeesForPosition(p.positionId);
-    //   if (!fees) return 0;
-    //   const sym0 = p?.token0?.symbol;
-    //   const sym1 = p?.token1?.symbol;
-    //   const px0 = (sym0 && portfolioData.priceMap[sym0]) || 0;
-    //   const px1 = (sym1 && portfolioData.priceMap[sym1]) || 0;
-    //   const amt0 = parseFloat((fees as any).amount0 || '0');
-    //   const amt1 = parseFloat((fees as any).amount1 || '0');
-    //   return amt0 * px0 + amt1 * px1;
-    // };
-    // const getAprKey = (p: any) => {
-    //   const aprStr = aprByPoolId[String(p?.poolId || '').toLowerCase()] || '';
-    //   const num = typeof aprStr === 'string' && aprStr.endsWith('%') ? parseFloat(aprStr.replace('%', '')) : 0;
-    //   return isFinite(num) ? num : 0;
-    // };
-
     return [...positions].sort((a, b) => getValueKey(b) - getValueKey(a));
   }, [filteredPositions, positionStatusFilter, portfolioData.priceMap]);
 
@@ -1516,13 +1463,6 @@ export default function PortfolioPage() {
       timeout = setTimeout(() => func(...args), waitFor);
     };
   };
-
-
-  // Claim Fees handled via useDecreaseLiquidity.onFeesCollected
-
-
-  // (removed duplicate APR fetch 2025-11-27 - already handled in useEffect above)
-  // (removed local pool state and bucket depth fetching; handled in usePortfolio)
 
   const formatAgeShort = (seconds: number | undefined) => {
     if (!seconds || !isFinite(seconds)) return '';
@@ -1680,9 +1620,6 @@ export default function PortfolioPage() {
       setIsMobileVisReady(false);
     }
   }, [isHiddenVis, isMobileVisOpen, composition.length]);
-
-  // (removed skeleton early-return gate)
-
 
   // Calculate proportional value with persistent selection via token filter
   const selectedSegmentIndex = activeTokenFilter
@@ -1974,9 +1911,8 @@ export default function PortfolioPage() {
     return portfolioData.priceChange24hPctMap[effectiveTokenLabel] ?? 0;
   })();
 
-  // Compute simple annualized net fees (APR) weighted by USD value
   const effectiveAprPct = (() => {
-    // Clicked + Hover combined selection for APR weighting - synchronized with effectiveSegmentIndex
+    if (!batchFeesData || !Array.isArray(batchFeesData)) return null;
     const clicked = (activeTokenFilter && activeTokenFilter !== 'Rest') ? activeTokenFilter.toUpperCase() : null;
     const hovered = (currentFilter && currentFilter !== 'Rest') ? currentFilter.toUpperCase() : null;
 
@@ -2003,36 +1939,68 @@ export default function PortfolioPage() {
     let weighted = 0;
     let totalUsd = 0;
     for (const p of candidates) {
-      // Only count in-range liquidity towards NET APY
-      if (!p?.isInRange) {
-        continue;
-      }
-      const poolKey = String(p?.poolId || '').toLowerCase();
-      const aprStr = aprByPoolId[poolKey];
-      const aprNum = typeof aprStr === 'string' && aprStr.endsWith('%')
-        ? parseFloat(aprStr.replace('%', ''))
-        : 0; // treat unknown APR as 0 instead of skipping
       const sym0 = p?.token0?.symbol as string | undefined;
       const sym1 = p?.token1?.symbol as string | undefined;
       const amt0 = parseFloat(p?.token0?.amount || '0');
       const amt1 = parseFloat(p?.token1?.amount || '0');
       const px0 = (sym0 && portfolioData.priceMap[sym0.toUpperCase()]) || (sym0 && portfolioData.priceMap[sym0]) || 0;
       const px1 = (sym1 && portfolioData.priceMap[sym1.toUpperCase()]) || (sym1 && portfolioData.priceMap[sym1]) || 0;
-      const usd = (isFinite(amt0) ? amt0 : 0) * px0 + (isFinite(amt1) ? amt1 : 0) * px1;
-      if (usd <= 0) continue;
-      weighted += usd * aprNum;
-      totalUsd += usd;
+      const positionUsd = (isFinite(amt0) ? amt0 : 0) * px0 + (isFinite(amt1) ? amt1 : 0) * px1;
+      if (positionUsd <= 0) continue;
+
+      const feeData = batchFeesData.find(f => f.positionId === p.positionId);
+      let feesUSD = 0;
+      if (feeData) {
+        const raw0 = feeData.amount0 || '0';
+        const raw1 = feeData.amount1 || '0';
+        const d0 = (sym0 ? tokenDefinitions?.[sym0 as string]?.decimals : undefined) ?? 18;
+        const d1 = (sym1 ? tokenDefinitions?.[sym1 as string]?.decimals : undefined) ?? 18;
+        try {
+          const fee0 = parseFloat(viemFormatUnits(BigInt(raw0), d0));
+          const fee1 = parseFloat(viemFormatUnits(BigInt(raw1), d1));
+          feesUSD = (isFinite(fee0) ? fee0 : 0) * px0 + (isFinite(fee1) ? fee1 : 0) * px1;
+        } catch {}
+      }
+
+      const poolKey = String(p?.poolId || '').toLowerCase();
+      const aprStr = aprByPoolId[poolKey];
+      const poolApr = typeof aprStr === 'string' && aprStr.endsWith('%') ? parseFloat(aprStr.replace('%', '')) : null;
+      const lastTs = p.lastTimestamp || p.blockTimestamp || 0;
+      const { apy } = calculateClientAPY(feesUSD, positionUsd, lastTs, poolApr);
+      const positionApy = apy ?? 0;
+
+      weighted += positionUsd * positionApy;
+      totalUsd += positionUsd;
     }
-    if (totalUsd <= 0) return null as number | null;
+    if (totalUsd <= 0) return null;
     return weighted / totalUsd;
   })();
-  const positionsCount = portfolioData.tokenBalances.length;
-  const poolsCount = portfolioData.tokenBalances.length; // Simplified for now
+
+  const totalFeesUSD = (() => {
+    if (!batchFeesData || !Array.isArray(batchFeesData)) return 0;
+    let sum = 0;
+    for (const p of activePositions) {
+      const feeData = batchFeesData.find(f => f.positionId === p.positionId);
+      if (!feeData) continue;
+      const raw0 = feeData.amount0 || '0';
+      const raw1 = feeData.amount1 || '0';
+      const sym0 = p?.token0?.symbol as string | undefined;
+      const sym1 = p?.token1?.symbol as string | undefined;
+      const d0 = (sym0 ? tokenDefinitions?.[sym0 as string]?.decimals : undefined) ?? 18;
+      const d1 = (sym1 ? tokenDefinitions?.[sym1 as string]?.decimals : undefined) ?? 18;
+      try {
+        const fee0 = parseFloat(viemFormatUnits(BigInt(raw0), d0));
+        const fee1 = parseFloat(viemFormatUnits(BigInt(raw1), d1));
+        const px0 = (sym0 && portfolioData.priceMap[sym0.toUpperCase()]) || (sym0 && portfolioData.priceMap[sym0]) || 0;
+        const px1 = (sym1 && portfolioData.priceMap[sym1.toUpperCase()]) || (sym1 && portfolioData.priceMap[sym1]) || 0;
+        sum += (isFinite(fee0) ? fee0 : 0) * px0 + (isFinite(fee1) ? fee1 : 0) * px1;
+      } catch {}
+    }
+    return sum;
+  })();
+
   const isPositive = pnl24hPct >= 0;
   const forceHideLabels = (!isConnected || activePositions.length === 0) && portfolioData.tokenBalances.length === 0;
-  // Labels visibility control: hide only when not connected OR no positions AND no token balances
-  const hideCompositionLabelsFlag = (!isConnected || activePositions.length === 0) && portfolioData.tokenBalances.length === 0;
-
 
   // Show skeleton during loading, empty state only after data is loaded
   if (showSkeletonFor.header || showSkeletonFor.table) {
@@ -2151,7 +2119,6 @@ export default function PortfolioPage() {
     );
   }
 
-  // Removed early empty-state return; render full structure with section-level messages instead
   return (
     <PortfolioFilterContext.Provider value={{ activeTokenFilter, setActiveTokenFilter, isStickyHover, setIsStickyHover, hoverTokenLabel: effectiveTokenLabel }}>
       <AppLayout>
@@ -2258,7 +2225,7 @@ export default function PortfolioPage() {
             </div>
                     <div className="flex justify-between items-center py-1.5">
                       <span className="text-[11px] tracking-wider text-muted-foreground font-mono font-bold uppercase">Fees</span>
-                      <span className="text-[11px] font-medium">$0.00</span>
+                      <span className="text-[11px] font-medium">{formatUSD(totalFeesUSD)}</span>
                 </div>
             </div>
             </div>
@@ -2406,7 +2373,7 @@ export default function PortfolioPage() {
                       </div>
                       <div className="flex justify-between items-center pl-4">
                         <span className="text-[11px] tracking-wider text-muted-foreground font-mono font-bold uppercase">Fees</span>
-                        <span className="text-[11px] font-medium">$0.00</span>
+                        <span className="text-[11px] font-medium">{formatUSD(totalFeesUSD)}</span>
                       </div>
                     </div>
                   </div>
@@ -2748,17 +2715,47 @@ export default function PortfolioPage() {
                                           <div>
                                             {(() => {
                                               const aprStr = aprByPoolId[poolKey];
-                                              const showApr = typeof aprStr === 'string' && aprStr !== 'N/A' && aprStr !== 'Loading...';
-                                              const formatAprShort = (s: string): string => {
-                                                const n = parseFloat(String(s).replace('%', ''));
+                                              const poolApr = typeof aprStr === 'string' && aprStr.endsWith('%') ? parseFloat(aprStr.replace('%', '')) : null;
+
+                                              let weightedApy = 0;
+                                              let groupTotalUsd = 0;
+                                              for (const pos of items) {
+                                                const s0 = pos?.token0?.symbol as string | undefined;
+                                                const s1 = pos?.token1?.symbol as string | undefined;
+                                                const a0 = parseFloat(pos?.token0?.amount || '0');
+                                                const a1 = parseFloat(pos?.token1?.amount || '0');
+                                                const p0 = (s0 && portfolioData.priceMap[s0.toUpperCase()]) || (s0 && portfolioData.priceMap[s0]) || 0;
+                                                const p1 = (s1 && portfolioData.priceMap[s1.toUpperCase()]) || (s1 && portfolioData.priceMap[s1]) || 0;
+                                                const posUsd = (isFinite(a0) ? a0 : 0) * p0 + (isFinite(a1) ? a1 : 0) * p1;
+                                                if (posUsd <= 0) continue;
+
+                                                const feeData = batchFeesData?.find(f => f.positionId === pos.positionId);
+                                                let feesUSD = 0;
+                                                if (feeData) {
+                                                  const d0 = (s0 ? tokenDefinitions?.[s0 as string]?.decimals : undefined) ?? 18;
+                                                  const d1 = (s1 ? tokenDefinitions?.[s1 as string]?.decimals : undefined) ?? 18;
+                                                  try {
+                                                    const f0 = parseFloat(viemFormatUnits(BigInt(feeData.amount0 || '0'), d0));
+                                                    const f1 = parseFloat(viemFormatUnits(BigInt(feeData.amount1 || '0'), d1));
+                                                    feesUSD = (isFinite(f0) ? f0 : 0) * p0 + (isFinite(f1) ? f1 : 0) * p1;
+                                                  } catch {}
+                                                }
+                                                const lastTs = pos.lastTimestamp || pos.blockTimestamp || 0;
+                                                const { apy } = calculateClientAPY(feesUSD, posUsd, lastTs, poolApr);
+                                                weightedApy += posUsd * (apy ?? 0);
+                                                groupTotalUsd += posUsd;
+                                              }
+
+                                              const groupApy = groupTotalUsd > 0 ? weightedApy / groupTotalUsd : null;
+                                              const formatAprShort = (n: number): string => {
                                                 if (!Number.isFinite(n)) return '—';
                                                 if (n >= 1000) return `${(n / 1000).toFixed(1)}K%`;
                                                 if (n > 99.99) return `${Math.round(n)}%`;
                                                 if (n > 9.99) return `${n.toFixed(1)}%`;
                                                 return `${n.toFixed(2)}%`;
                                               };
-                                              return showApr ? (
-                                                <span className="h-5 px-2 flex items-center justify-center text-[10px] rounded bg-green-500/20 text-green-500 font-medium">{formatAprShort(aprStr)}</span>
+                                              return groupApy !== null && groupApy > 0 ? (
+                                                <span className="h-5 px-2 flex items-center justify-center text-[10px] rounded bg-green-500/20 text-green-500 font-medium">{formatAprShort(groupApy)}</span>
                                               ) : (
                                                 <span className="text-xs text-muted-foreground">—</span>
                                               );
@@ -3155,7 +3152,7 @@ export default function PortfolioPage() {
             const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === selectedPosition.poolId?.toLowerCase());
             return poolConfig?.id;
           })()}
-          chainId={CHAIN_ID}
+          chainId={targetChainId}
           currentPoolSqrtPriceX96={poolDataByPoolId[selectedPosition.poolId?.toLowerCase()]?.sqrtPriceX96?.toString() || null}
           poolToken0={(() => {
             const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === selectedPosition.poolId?.toLowerCase());

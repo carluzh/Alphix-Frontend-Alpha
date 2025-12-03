@@ -11,10 +11,10 @@ import JSBI from 'jsbi';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from "@/lib/abis/state_view_abi";
-import { TokenSymbol, getToken, getQuoterAddress, getPoolByTokens, getStateViewAddress } from "../../../lib/pools-config";
+import { TokenSymbol, getToken, getQuoterAddress, getPoolByTokens, getStateViewAddress, getNetworkModeFromRequest } from "../../../lib/pools-config";
 import { V4_QUOTER_ABI_STRINGS, EMPTY_BYTES } from "../../../lib/swap-constants";
 
-import { publicClient } from "../../../lib/viemClient";
+import { createNetworkClient } from "../../../lib/viemClient";
 import {
     getAddress,
     parseAbi,
@@ -22,8 +22,8 @@ import {
     formatUnits,
 } from "viem";
 
-const QUOTER_ADDRESS = getQuoterAddress();
-const STATE_VIEW_ADDRESS = getStateViewAddress();
+// Note: QUOTER_ADDRESS and STATE_VIEW_ADDRESS are now fetched dynamically per-request
+// using getQuoterAddress(networkMode) and getStateViewAddress(networkMode)
 
 const Q96n = 1n << 96n;
 const Q192n = Q96n * Q96n;
@@ -98,7 +98,9 @@ async function getSwapQuote(
     fromToken: Token,
     toToken: Token,
     amountIn: bigint,
-    poolConfig: any
+    poolConfig: any,
+    publicClient: ReturnType<typeof createNetworkClient>,
+    quoterAddress: `0x${string}`
 ): Promise<{ amountOut: bigint; gasEstimate: bigint }> {
     const zeroForOne = fromToken.sortsBefore(toToken);
     const [sortedToken0, sortedToken1] = fromToken.sortsBefore(toToken)
@@ -122,7 +124,7 @@ async function getSwapQuote(
 
     try {
         const [amountOut, gasEstimate] = await publicClient.readContract({
-            address: QUOTER_ADDRESS,
+            address: quoterAddress,
             abi: parseAbi(V4_QUOTER_ABI_STRINGS),
             functionName: 'quoteExactInputSingle',
             args: [quoteParams]
@@ -143,7 +145,9 @@ async function calculateOptimalSwapAmount(
     tickLower: number,
     tickUpper: number,
     poolConfig: any,
-    v4Pool: V4Pool
+    v4Pool: V4Pool,
+    publicClient: ReturnType<typeof createNetworkClient>,
+    quoterAddress: `0x${string}`
 ): Promise<{ optimalSwapAmount: bigint; resultingPosition: V4Position; priceImpact?: number; error?: string }> {
 
     if (inputAmount <= 0n) {
@@ -168,7 +172,7 @@ async function calculateOptimalSwapAmount(
         const needsToken1Only = currentTick <= tickLower;
 
         if ((needsToken0Only && !inputIsToken0) || (needsToken1Only && inputIsToken0)) {
-            const swapQuote = await getSwapQuote(inputToken, otherToken, inputAmount, poolConfig);
+            const swapQuote = await getSwapQuote(inputToken, otherToken, inputAmount, poolConfig, publicClient, quoterAddress);
 
             const position = needsToken0Only
                 ? V4Position.fromAmount0({
@@ -293,7 +297,7 @@ async function calculateOptimalSwapAmount(
         try {
             const clampedSwap = clampBigint(testSwapAmount, 0n, inputAmount);
             const swapQuote = clampedSwap > 0n
-                ? await getSwapQuote(inputToken, otherToken, clampedSwap, poolConfig)
+                ? await getSwapQuote(inputToken, otherToken, clampedSwap, poolConfig, publicClient, quoterAddress)
                 : { amountOut: 0n, gasEstimate: 0n };
 
             const remainingInput = inputAmount - clampedSwap;
@@ -353,7 +357,7 @@ async function calculateOptimalSwapAmount(
             if (leftoverOther > 0n) {
                 if (precise) {
                     try {
-                        const conversionQuote = await getSwapQuote(otherToken, inputToken, leftoverOther, poolConfig);
+                        const conversionQuote = await getSwapQuote(otherToken, inputToken, leftoverOther, poolConfig, publicClient, quoterAddress);
                         convertedOther = conversionQuote.amountOut;
                     } catch {
                         if (clampedSwap > 0n && swapQuote.amountOut > 0n) {
@@ -576,6 +580,17 @@ export default async function handler(
         return res.status(405).json({ error: 'Method not allowed' });
     }
 
+    // Get network mode from cookies for proper chain-specific addresses
+    const networkMode = getNetworkModeFromRequest(req.headers.cookie);
+    console.log('[calculate-zap-amounts] Network mode from cookies:', networkMode);
+
+    // Create network-specific public client
+    const publicClient = createNetworkClient(networkMode);
+
+    // Get network-specific contract addresses
+    const QUOTER_ADDRESS = getQuoterAddress(networkMode);
+    const STATE_VIEW_ADDRESS = getStateViewAddress(networkMode);
+
     try {
         const {
             token0Symbol,
@@ -594,23 +609,23 @@ export default async function handler(
         }
 
         // Get token configurations
-        const token0Config = getToken(token0Symbol);
-        const token1Config = getToken(token1Symbol);
-        const inputTokenConfig = getToken(inputTokenSymbol);
+        const token0Config = getToken(token0Symbol, networkMode);
+        const token1Config = getToken(token1Symbol, networkMode);
+        const inputTokenConfig = getToken(inputTokenSymbol, networkMode);
 
         if (!token0Config || !token1Config || !inputTokenConfig) {
             return res.status(400).json({ error: 'Invalid token symbols' });
         }
 
         // Get pool configuration
-        const poolConfig = getPoolByTokens(token0Symbol, token1Symbol);
+        const poolConfig = getPoolByTokens(token0Symbol, token1Symbol, networkMode);
         if (!poolConfig) {
             return res.status(400).json({ error: 'Pool not found for token pair' });
         }
 
         // Determine the other token
         const otherTokenSymbol = inputTokenSymbol === token0Symbol ? token1Symbol : token0Symbol;
-        const otherTokenConfig = getToken(otherTokenSymbol);
+        const otherTokenConfig = getToken(otherTokenSymbol, networkMode);
 
         if (!otherTokenConfig) {
             return res.status(400).json({ error: 'Invalid other token' });
@@ -700,20 +715,22 @@ export default async function handler(
             tickLower,
             tickUpper,
             poolConfig,
-            v4Pool
+            v4Pool,
+            publicClient,
+            QUOTER_ADDRESS
         );
 
         // Get swap quote for the optimal amount (if > 0)
         let minSwapOutput = 0n;
         if (optimalSwapAmount > 0n) {
-            const swapQuote = await getSwapQuote(sdkInputToken, sdkOtherToken, optimalSwapAmount, poolConfig);
+            const swapQuote = await getSwapQuote(sdkInputToken, sdkOtherToken, optimalSwapAmount, poolConfig, publicClient, QUOTER_ADDRESS);
             minSwapOutput = (swapQuote.amountOut * BigInt(10000 - slippageTolerance)) / BigInt(10000);
         }
 
         // Calculate final amounts - these should add up to the full input value
         const remainingInput = parsedInputAmount - optimalSwapAmount;
         const swappedOutput = optimalSwapAmount > 0n
-            ? (await getSwapQuote(sdkInputToken, sdkOtherToken, optimalSwapAmount, poolConfig)).amountOut
+            ? (await getSwapQuote(sdkInputToken, sdkOtherToken, optimalSwapAmount, poolConfig, publicClient, QUOTER_ADDRESS)).amountOut
             : 0n;
 
         const inputIsToken0 = inputTokenSymbol === token0Symbol;

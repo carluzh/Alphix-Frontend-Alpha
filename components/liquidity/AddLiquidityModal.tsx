@@ -18,15 +18,15 @@ import Image from "next/image";
 import { useAccount, useBalance, useSignTypedData, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { toast } from "sonner";
 import { usePercentageInput } from "@/hooks/usePercentageInput";
-import { TOKEN_DEFINITIONS, TokenSymbol, getToken, getAllTokens, getPoolById } from "@/lib/pools-config";
+import { getTokenDefinitions, TokenSymbol, getToken, getAllTokens, getPoolById } from "@/lib/pools-config";
+import { useNetwork } from "@/lib/network-context";
 import { useAddLiquidityTransaction } from "./useAddLiquidityTransaction";
 import { useIncreaseLiquidity, type IncreasePositionData } from "./useIncreaseLiquidity";
 import { TokenSelectorToken } from "../swap/TokenSelector";
 import { AnimatePresence, motion, useAnimation } from "framer-motion";
 import { readContract, getBalance } from '@wagmi/core';
 import { erc20Abi } from 'viem';
-import { config } from '@/lib/wagmiConfig';
-import { CHAIN_ID } from "@/lib/pools-config";
+import { config, getExplorerTxUrl, getExplorerUrl } from '@/lib/wagmiConfig';
 import { formatUnits as viemFormatUnits, parseUnits as viemParseUnits, getAddress } from "viem";
 import type { ProcessedPosition } from "../../pages/api/liquidity/get-positions";
 import { useAllPrices } from "@/components/data/hooks";
@@ -111,7 +111,10 @@ export function AddLiquidityModal({
   isIncreaseSuccess: parentIsIncreaseSuccess,
   increaseTxHash: parentIncreaseTxHash
 }: AddLiquidityModalProps) {
-  const { address: accountAddress, chainId, isConnected } = useAccount();
+  const { address: accountAddress, chainId: walletChainId, isConnected } = useAccount();
+  const { chainId: networkChainId, networkMode } = useNetwork();
+  const chainId = walletChainId || networkChainId;
+  const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
   const { signTypedDataAsync } = useSignTypedData();
   const { data: incApproveHash, writeContractAsync: approveERC20Async, reset: resetIncreaseApprove } = useWriteContract();
   const { isLoading: isIncreaseApproving, isSuccess: isIncreaseApproved } = useWaitForTransactionReceipt({ hash: incApproveHash });
@@ -327,32 +330,32 @@ export function AddLiquidityModal({
   // Balance data
   const { data: token0BalanceData, isLoading: isLoadingToken0Balance } = useBalance({
     address: accountAddress,
-    token: TOKEN_DEFINITIONS[balanceToken0Symbol]?.address === "0x0000000000000000000000000000000000000000" 
+    token: tokenDefinitions[balanceToken0Symbol]?.address === "0x0000000000000000000000000000000000000000" 
       ? undefined 
-      : TOKEN_DEFINITIONS[balanceToken0Symbol]?.address as `0x${string}` | undefined,
+      : tokenDefinitions[balanceToken0Symbol]?.address as `0x${string}` | undefined,
     chainId,
-    query: { enabled: !!accountAddress && !!chainId && !!TOKEN_DEFINITIONS[balanceToken0Symbol] },
+    query: { enabled: !!accountAddress && !!chainId && !!tokenDefinitions[balanceToken0Symbol] },
   });
 
   const { data: token1BalanceData, isLoading: isLoadingToken1Balance } = useBalance({
     address: accountAddress,
-    token: TOKEN_DEFINITIONS[balanceToken1Symbol]?.address === "0x0000000000000000000000000000000000000000"
+    token: tokenDefinitions[balanceToken1Symbol]?.address === "0x0000000000000000000000000000000000000000"
       ? undefined
-      : TOKEN_DEFINITIONS[balanceToken1Symbol]?.address as `0x${string}` | undefined,
+      : tokenDefinitions[balanceToken1Symbol]?.address as `0x${string}` | undefined,
     chainId,
-    query: { enabled: !!accountAddress && !!chainId && !!TOKEN_DEFINITIONS[balanceToken1Symbol] },
+    query: { enabled: !!accountAddress && !!chainId && !!tokenDefinitions[balanceToken1Symbol] },
   });
 
   // Percentage input handlers using the new shared hook
   const handleToken0Percentage = usePercentageInput(
     token0BalanceData,
-    { decimals: TOKEN_DEFINITIONS[balanceToken0Symbol]?.decimals || 18, symbol: balanceToken0Symbol },
+    { decimals: tokenDefinitions[balanceToken0Symbol]?.decimals || 18, symbol: balanceToken0Symbol },
     isExistingPosition ? setIncreaseAmount0 : setAmount0
   );
 
   const handleToken1Percentage = usePercentageInput(
     token1BalanceData,
-    { decimals: TOKEN_DEFINITIONS[balanceToken1Symbol]?.decimals || 18, symbol: balanceToken1Symbol },
+    { decimals: tokenDefinitions[balanceToken1Symbol]?.decimals || 18, symbol: balanceToken1Symbol },
     isExistingPosition ? setIncreaseAmount1 : setAmount1
   );
 
@@ -419,7 +422,7 @@ export function AddLiquidityModal({
     for (const token of tokens) {
       if (!token.amount || parseFloat(token.amount) <= 0) continue;
       
-      const tokenDef = TOKEN_DEFINITIONS[token.symbol];
+      const tokenDef = tokenDefinitions[token.symbol];
       if (!tokenDef || tokenDef.address === "0x0000000000000000000000000000000000000000") continue;
 
       try {
@@ -485,7 +488,7 @@ export function AddLiquidityModal({
           needsApproval: true,
           approvalType: 'ERC20_TO_PERMIT2',
           approvalTokenSymbol: needsApprovals[0], // Show first token needing approval
-          approvalTokenAddress: TOKEN_DEFINITIONS[needsApprovals[0]]?.address,
+          approvalTokenAddress: tokenDefinitions[needsApprovals[0]]?.address,
           approvalAmount: "115792089237316195423570985008687907853269984665640564039457584007913129639935", // max uint256
           approveToAddress: "0x000000000022D473030F116dDEE9F6B43aC78BA3", // PERMIT2_ADDRESS
         });
@@ -560,7 +563,7 @@ export function AddLiquidityModal({
         for (const token of tokens) {
           if (!token.amount || parseFloat(token.amount) <= 0) continue;
           
-          const tokenDef = TOKEN_DEFINITIONS[token.symbol];
+          const tokenDef = tokenDefinitions[token.symbol];
           if (!tokenDef || !accountAddress) continue;
 
           try {
@@ -603,7 +606,7 @@ export function AddLiquidityModal({
           
           // Calculate exact amount needed for the first token that needs approval
           const nextTokenSymbol = stillNeedsApprovals[0];
-          const nextTokenDef = TOKEN_DEFINITIONS[nextTokenSymbol];
+          const nextTokenDef = tokenDefinitions[nextTokenSymbol];
           const nextTokenAmount = nextTokenSymbol === positionToModify?.token0.symbol ? increaseAmount0 : increaseAmount1;
           const exactAmountNeeded = viemParseUnits(nextTokenAmount || '0', nextTokenDef.decimals);
           
@@ -812,7 +815,7 @@ export function AddLiquidityModal({
               args: [accountAddress, PERMIT2_ADDRESS],
             });
             
-            const requiredAmount0 = viemParseUnits(increaseAmount0, TOKEN_DEFINITIONS[positionToModify.token0.symbol as TokenSymbol]?.decimals || 18);
+            const requiredAmount0 = viemParseUnits(increaseAmount0, tokenDefinitions[positionToModify.token0.symbol as TokenSymbol]?.decimals || 18);
             setHasToken0Allowance(allowance0 >= requiredAmount0);
           } else {
             setHasToken0Allowance(true); // No approval needed if amount is 0 or ETH
@@ -830,7 +833,7 @@ export function AddLiquidityModal({
               args: [accountAddress, PERMIT2_ADDRESS],
             });
             
-            const requiredAmount1 = viemParseUnits(increaseAmount1, TOKEN_DEFINITIONS[positionToModify.token1.symbol as TokenSymbol]?.decimals || 18);
+            const requiredAmount1 = viemParseUnits(increaseAmount1, tokenDefinitions[positionToModify.token1.symbol as TokenSymbol]?.decimals || 18);
             setHasToken1Allowance(allowance1 >= requiredAmount1);
           } else {
             setHasToken1Allowance(true); // No approval needed if amount is 0 or ETH
@@ -1001,20 +1004,20 @@ export function AddLiquidityModal({
           inputTokenSymbol: inputSide === 'amount0' ? token0Symbol : token1Symbol,
           userTickLower: positionToModify.tickLower,
           userTickUpper: positionToModify.tickUpper,
-          chainId: 8453,
+          chainId,
         });
         
         if (version === increaseCalcVersionRef.current) {
           if (inputSide === 'amount0') {
             // Only update the calculated field, not the user input field
             const token1Symbol = getTokenSymbolByAddress(positionToModify.token1.address);
-            const token1Decimals = token1Symbol ? TOKEN_DEFINITIONS[token1Symbol]?.decimals || 18 : 18;
+            const token1Decimals = token1Symbol ? tokenDefinitions[token1Symbol]?.decimals || 18 : 18;
             const amount1Display = formatUnits(BigInt(result.amount1 || '0'), token1Decimals);
             setIncreaseAmount1(formatCalculatedInput(amount1Display));
           } else {
             // Only update the calculated field, not the user input field
             const token0Symbol = getTokenSymbolByAddress(positionToModify.token0.address);
-            const token0Decimals = token0Symbol ? TOKEN_DEFINITIONS[token0Symbol]?.decimals || 18 : 18;
+            const token0Decimals = token0Symbol ? tokenDefinitions[token0Symbol]?.decimals || 18 : 18;
             const amount0Display = formatUnits(BigInt(result.amount0 || '0'), token0Decimals);
             setIncreaseAmount0(formatCalculatedInput(amount0Display));
           }
@@ -1322,10 +1325,10 @@ export function AddLiquidityModal({
   const increaseInvolvedTokensCount = useMemo(() => {
     if (!positionToModify) return 0;
     const tokens: TokenSymbol[] = [];
-    if (TOKEN_DEFINITIONS[positionToModify.token0.symbol as TokenSymbol]?.address !== "0x0000000000000000000000000000000000000000") {
+    if (tokenDefinitions[positionToModify.token0.symbol as TokenSymbol]?.address !== "0x0000000000000000000000000000000000000000") {
       tokens.push(positionToModify.token0.symbol as TokenSymbol);
     }
-    if (TOKEN_DEFINITIONS[positionToModify.token1.symbol as TokenSymbol]?.address !== "0x0000000000000000000000000000000000000000") {
+    if (tokenDefinitions[positionToModify.token1.symbol as TokenSymbol]?.address !== "0x0000000000000000000000000000000000000000") {
       tokens.push(positionToModify.token1.symbol as TokenSymbol);
     }
     return tokens.length;
@@ -1763,7 +1766,7 @@ export function AddLiquidityModal({
                                     const baseAmount = parseFloat(increaseAmount0 || "0");
                                     if (!feesForIncrease) return formatTokenDisplayAmount(baseAmount.toString());
                                     
-                                    const decimals = getTokenSymbolByAddress(positionToModify.token0.address) ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(positionToModify.token0.address)!]?.decimals || 18 : 18;
+                                    const decimals = getTokenSymbolByAddress(positionToModify.token0.address) ? tokenDefinitions[getTokenSymbolByAddress(positionToModify.token0.address)!]?.decimals || 18 : 18;
                                     const feeAmount = parseFloat(formatUnits(BigInt(feesForIncrease.amount0 || '0'), decimals));
                                     const totalAmount = baseAmount + feeAmount;
                                     return formatTokenDisplayAmount(totalAmount.toString());
@@ -1776,7 +1779,7 @@ export function AddLiquidityModal({
                                   const baseAmount = parseFloat(increaseAmount0 || "0");
                                   if (!feesForIncrease) return formatUSD(baseAmount * getUSDPriceForSymbol(positionToModify.token0.symbol));
                                   
-                                  const decimals = getTokenSymbolByAddress(positionToModify.token0.address) ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(positionToModify.token0.address)!]?.decimals || 18 : 18;
+                                  const decimals = getTokenSymbolByAddress(positionToModify.token0.address) ? tokenDefinitions[getTokenSymbolByAddress(positionToModify.token0.address)!]?.decimals || 18 : 18;
                                   const feeAmount = parseFloat(formatUnits(BigInt(feesForIncrease.amount0 || '0'), decimals));
                                   const totalAmount = baseAmount + feeAmount;
                                   return formatUSD(totalAmount * getUSDPriceForSymbol(positionToModify.token0.symbol));
@@ -1794,7 +1797,7 @@ export function AddLiquidityModal({
                                     const baseAmount = parseFloat(increaseAmount1 || "0");
                                     if (!feesForIncrease) return formatTokenDisplayAmount(baseAmount.toString());
                                     
-                                    const decimals = getTokenSymbolByAddress(positionToModify.token1.address) ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(positionToModify.token1.address)!]?.decimals || 18 : 18;
+                                    const decimals = getTokenSymbolByAddress(positionToModify.token1.address) ? tokenDefinitions[getTokenSymbolByAddress(positionToModify.token1.address)!]?.decimals || 18 : 18;
                                     const feeAmount = parseFloat(formatUnits(BigInt(feesForIncrease.amount1 || '0'), decimals));
                                     const totalAmount = baseAmount + feeAmount;
                                     return formatTokenDisplayAmount(totalAmount.toString());
@@ -1807,7 +1810,7 @@ export function AddLiquidityModal({
                                   const baseAmount = parseFloat(increaseAmount1 || "0");
                                   if (!feesForIncrease) return formatUSD(baseAmount * getUSDPriceForSymbol(positionToModify.token1.symbol));
                                   
-                                  const decimals = getTokenSymbolByAddress(positionToModify.token1.address) ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(positionToModify.token1.address)!]?.decimals || 18 : 18;
+                                  const decimals = getTokenSymbolByAddress(positionToModify.token1.address) ? tokenDefinitions[getTokenSymbolByAddress(positionToModify.token1.address)!]?.decimals || 18 : 18;
                                   const feeAmount = parseFloat(formatUnits(BigInt(feesForIncrease.amount1 || '0'), decimals));
                                   const totalAmount = baseAmount + feeAmount;
                                   return formatUSD(totalAmount * getUSDPriceForSymbol(positionToModify.token1.symbol));
@@ -1824,8 +1827,8 @@ export function AddLiquidityModal({
                       // Check if there are any non-zero fees
                       const token0Symbol = getTokenSymbolByAddress(positionToModify.token0.address);
                       const token1Symbol = getTokenSymbolByAddress(positionToModify.token1.address);
-                      const token0Decimals = token0Symbol ? TOKEN_DEFINITIONS[token0Symbol]?.decimals || 18 : 18;
-                      const token1Decimals = token1Symbol ? TOKEN_DEFINITIONS[token1Symbol]?.decimals || 18 : 18;
+                      const token0Decimals = token0Symbol ? tokenDefinitions[token0Symbol]?.decimals || 18 : 18;
+                      const token1Decimals = token1Symbol ? tokenDefinitions[token1Symbol]?.decimals || 18 : 18;
                       
                       const fee0Amount = parseFloat(formatUnits(BigInt(feesForIncrease?.amount0 || '0'), token0Decimals));
                       const fee1Amount = parseFloat(formatUnits(BigInt(feesForIncrease?.amount1 || '0'), token1Decimals));
@@ -1926,7 +1929,7 @@ export function AddLiquidityModal({
                                 let totalIncrease = increaseAmount;
 
                                 if (feesForIncrease) {
-                                  const decimals = getTokenSymbolByAddress(positionToModify.token0.address) ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(positionToModify.token0.address)!]?.decimals || 18 : 18;
+                                  const decimals = getTokenSymbolByAddress(positionToModify.token0.address) ? tokenDefinitions[getTokenSymbolByAddress(positionToModify.token0.address)!]?.decimals || 18 : 18;
                                   const feeAmount = parseFloat(formatUnits(BigInt(feesForIncrease.amount0 || '0'), decimals));
                                   totalIncrease += feeAmount;
                                 }
@@ -1949,7 +1952,7 @@ export function AddLiquidityModal({
                                 let totalIncrease = increaseAmount;
 
                                 if (feesForIncrease) {
-                                  const decimals = getTokenSymbolByAddress(positionToModify.token1.address) ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(positionToModify.token1.address)!]?.decimals || 18 : 18;
+                                  const decimals = getTokenSymbolByAddress(positionToModify.token1.address) ? tokenDefinitions[getTokenSymbolByAddress(positionToModify.token1.address)!]?.decimals || 18 : 18;
                                   const feeAmount = parseFloat(formatUnits(BigInt(feesForIncrease.amount1 || '0'), decimals));
                                   totalIncrease += feeAmount;
                                 }
@@ -2295,7 +2298,7 @@ export function AddLiquidityModal({
                       // Calculate amount with fees added
                       const currentIncrease = increaseAmount0 || "0";
                       if (!feesForIncrease) return currentIncrease;
-                      const decimals = getTokenSymbolByAddress(positionToModify?.token0.address || '') ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(positionToModify?.token0.address || '')!]?.decimals || 18 : 18;
+                      const decimals = getTokenSymbolByAddress(positionToModify?.token0.address || '') ? tokenDefinitions[getTokenSymbolByAddress(positionToModify?.token0.address || '')!]?.decimals || 18 : 18;
                       const feeAmount = formatUnits(BigInt(feesForIncrease.amount0 || '0'), decimals);
                       const totalAmount = parseFloat(currentIncrease) + parseFloat(feeAmount);
                       return totalAmount.toString();
@@ -2307,7 +2310,7 @@ export function AddLiquidityModal({
                       // Calculate USD value with fees added
                       const currentIncrease = increaseAmount0 || "0";
                       if (!feesForIncrease) return parseFloat(currentIncrease) * getUSDPriceForSymbol(positionToModify?.token0.symbol || '');
-                      const decimals = getTokenSymbolByAddress(positionToModify?.token0.address || '') ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(positionToModify?.token0.address || '')!]?.decimals || 18 : 18;
+                      const decimals = getTokenSymbolByAddress(positionToModify?.token0.address || '') ? tokenDefinitions[getTokenSymbolByAddress(positionToModify?.token0.address || '')!]?.decimals || 18 : 18;
                       const feeAmount = formatUnits(BigInt(feesForIncrease.amount0 || '0'), decimals);
                       const totalAmount = parseFloat(currentIncrease) + parseFloat(feeAmount);
                       return totalAmount * getUSDPriceForSymbol(positionToModify?.token0.symbol || '');
@@ -2325,7 +2328,7 @@ export function AddLiquidityModal({
                       // Calculate amount with fees added
                       const currentIncrease = increaseAmount1 || "0";
                       if (!feesForIncrease) return currentIncrease;
-                      const decimals = getTokenSymbolByAddress(positionToModify?.token1.address || '') ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(positionToModify?.token1.address || '')!]?.decimals || 18 : 18;
+                      const decimals = getTokenSymbolByAddress(positionToModify?.token1.address || '') ? tokenDefinitions[getTokenSymbolByAddress(positionToModify?.token1.address || '')!]?.decimals || 18 : 18;
                       const feeAmount = formatUnits(BigInt(feesForIncrease.amount1 || '0'), decimals);
                       const totalAmount = parseFloat(currentIncrease) + parseFloat(feeAmount);
                       return totalAmount.toString();
@@ -2337,7 +2340,7 @@ export function AddLiquidityModal({
                       // Calculate USD value with fees added
                       const currentIncrease = increaseAmount1 || "0";
                       if (!feesForIncrease) return parseFloat(currentIncrease) * getUSDPriceForSymbol(positionToModify?.token1.symbol || '');
-                      const decimals = getTokenSymbolByAddress(positionToModify?.token1.address || '') ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(positionToModify?.token1.address || '')!]?.decimals || 18 : 18;
+                      const decimals = getTokenSymbolByAddress(positionToModify?.token1.address || '') ? tokenDefinitions[getTokenSymbolByAddress(positionToModify?.token1.address || '')!]?.decimals || 18 : 18;
                       const feeAmount = formatUnits(BigInt(feesForIncrease.amount1 || '0'), decimals);
                       const totalAmount = parseFloat(currentIncrease) + parseFloat(feeAmount);
                       return totalAmount * getUSDPriceForSymbol(positionToModify?.token1.symbol || '');
@@ -2367,7 +2370,7 @@ export function AddLiquidityModal({
                     // Calculate amount with fees added for token0
                     const currentIncrease = increaseAmount0 || "0";
                     if (!feesForIncrease) return currentIncrease;
-                    const decimals = getTokenSymbolByAddress(positionToModify?.token0.address || '') ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(positionToModify?.token0.address || '')!]?.decimals || 18 : 18;
+                    const decimals = getTokenSymbolByAddress(positionToModify?.token0.address || '') ? tokenDefinitions[getTokenSymbolByAddress(positionToModify?.token0.address || '')!]?.decimals || 18 : 18;
                     const feeAmount = formatUnits(BigInt(feesForIncrease.amount0 || '0'), decimals);
                     const totalAmount = parseFloat(currentIncrease) + parseFloat(feeAmount);
                     return totalAmount.toString();
@@ -2375,7 +2378,7 @@ export function AddLiquidityModal({
                     // Calculate amount with fees added for token1
                     const currentIncrease = increaseAmount1 || "0";
                     if (!feesForIncrease) return currentIncrease;
-                    const decimals = getTokenSymbolByAddress(positionToModify?.token1.address || '') ? TOKEN_DEFINITIONS[getTokenSymbolByAddress(positionToModify?.token1.address || '')!]?.decimals || 18 : 18;
+                    const decimals = getTokenSymbolByAddress(positionToModify?.token1.address || '') ? tokenDefinitions[getTokenSymbolByAddress(positionToModify?.token1.address || '')!]?.decimals || 18 : 18;
                     const feeAmount = formatUnits(BigInt(feesForIncrease.amount1 || '0'), decimals);
                     const totalAmount = parseFloat(currentIncrease) + parseFloat(feeAmount);
                     return totalAmount.toString();
@@ -2389,7 +2392,7 @@ export function AddLiquidityModal({
             <Button
                 variant="link"
                 className="text-xs font-normal text-muted-foreground hover:text-muted-foreground/80"
-                onClick={() => window.open(txHash ? `https://sepolia.basescan.org/tx/${txHash}` : `https://sepolia.basescan.org/`, "_blank")}
+                onClick={() => window.open(txHash ? getExplorerTxUrl(txHash) : getExplorerUrl(), "_blank")}
               >
                 View on Explorer
             </Button>

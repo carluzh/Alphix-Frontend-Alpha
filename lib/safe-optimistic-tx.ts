@@ -11,6 +11,7 @@ import { invalidateAfterTx, type OptimisticUpdates } from './invalidation'
 interface SafeOptimisticTxParams {
   queryClient: QueryClient
   owner: string
+  chainId: number
   poolId?: string
   positionIds?: string[]
   optimisticUpdates: OptimisticUpdates
@@ -49,7 +50,7 @@ interface SafeOptimisticTxParams {
  * ```
  */
 export async function safeOptimisticTx(params: SafeOptimisticTxParams): Promise<void> {
-  const { queryClient, owner, poolId, positionIds, optimisticUpdates, txPromise, onSuccess, onError } = params
+  const { queryClient, owner, chainId, poolId, positionIds, optimisticUpdates, txPromise, onSuccess, onError } = params
 
   try {
     // Step 1: Wait for transaction to be submitted (get tx hash)
@@ -60,6 +61,7 @@ export async function safeOptimisticTx(params: SafeOptimisticTxParams): Promise<
     // Step 2: Apply optimistic updates ONLY after tx is submitted
     await invalidateAfterTx(queryClient, {
       owner,
+      chainId,
       poolId,
       positionIds,
       optimisticUpdates,
@@ -80,6 +82,7 @@ export async function safeOptimisticTx(params: SafeOptimisticTxParams): Promise<
     // Step 5: Success - replace optimistic with real data from chain/subgraph
     await invalidateAfterTx(queryClient, {
       owner,
+      chainId,
       poolId,
       positionIds,
       awaitSubgraphSync: true,
@@ -100,6 +103,7 @@ export async function safeOptimisticTx(params: SafeOptimisticTxParams): Promise<
     try {
       await invalidateAfterTx(queryClient, {
         owner,
+        chainId,
         poolId,
         positionIds,
         reloadPositions: true, // Force refetch, clears all optimistic flags
@@ -128,6 +132,7 @@ export async function safeOptimisticTx(params: SafeOptimisticTxParams): Promise<
 export async function rollbackOptimisticUpdates(
   queryClient: QueryClient,
   owner: string,
+  chainId: number,
   poolId?: string,
   positionIds?: string[]
 ): Promise<void> {
@@ -135,6 +140,7 @@ export async function rollbackOptimisticUpdates(
 
   await invalidateAfterTx(queryClient, {
     owner,
+    chainId,
     poolId,
     positionIds,
     reloadPositions: true,

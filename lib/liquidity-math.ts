@@ -3,9 +3,10 @@ import { Pool as V4Pool, Position as V4Position } from "@uniswap/v4-sdk";
 import { TickMath, nearestUsableTick } from '@uniswap/v3-sdk';
 import JSBI from 'jsbi';
 import { parseUnits, getAddress, parseAbi, type Hex } from "viem";
-import { publicClient } from "@/lib/viemClient";
+import { createNetworkClient } from "@/lib/viemClient";
 import { STATE_VIEW_ABI } from "@/lib/abis/state_view_abi";
 import { getToken, TokenSymbol, getStateViewAddress, getPoolByTokens } from "@/lib/pools-config";
+import { MAINNET_CHAIN_ID, type NetworkMode } from "@/lib/network-mode";
 
 const SDK_MIN_TICK = -887272;
 const SDK_MAX_TICK = 887272;
@@ -102,15 +103,19 @@ export async function calculateLiquidityParameters(
     chainId,
   } = params;
 
-  const token0Config = getToken(token0Symbol);
-  const token1Config = getToken(token1Symbol);
-  const inputTokenConfig = getToken(inputTokenSymbol);
+  // Derive network mode from chainId
+  const networkMode: NetworkMode = chainId === MAINNET_CHAIN_ID ? 'mainnet' : 'testnet';
+  const publicClient = createNetworkClient(networkMode);
+
+  const token0Config = getToken(token0Symbol, networkMode);
+  const token1Config = getToken(token1Symbol, networkMode);
+  const inputTokenConfig = getToken(inputTokenSymbol, networkMode);
 
   if (!token0Config || !token1Config || !inputTokenConfig) {
     throw new Error("Invalid token configuration");
   }
 
-  const poolConfig = getPoolByTokens(token0Symbol, token1Symbol);
+  const poolConfig = getPoolByTokens(token0Symbol, token1Symbol, networkMode);
   if (!poolConfig) {
     throw new Error(`No pool found for ${token0Symbol}/${token1Symbol}`);
   }
@@ -134,7 +139,7 @@ export async function calculateLiquidityParameters(
   );
 
   const stateViewAbiViem = parseAbi(STATE_VIEW_ABI);
-  const stateViewAddress = getStateViewAddress();
+  const stateViewAddress = getStateViewAddress(networkMode);
 
   const [slot0, liquidity] = await Promise.all([
     publicClient.readContract({

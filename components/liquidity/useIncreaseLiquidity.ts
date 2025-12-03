@@ -6,8 +6,8 @@ import { V4PositionPlanner, V4PositionManager, Pool as V4Pool, Position as V4Pos
 import { TickMath } from '@uniswap/v3-sdk';
 import { Token, Ether, CurrencyAmount, Percent } from '@uniswap/sdk-core';
 import { V4_POSITION_MANAGER_ADDRESS, EMPTY_BYTES, V4_POSITION_MANAGER_ABI, PERMIT2_ADDRESS, Permit2Abi_allowance } from '@/lib/swap-constants';
-import { getToken, TokenSymbol, getTokenSymbolByAddress, TOKEN_DEFINITIONS } from '@/lib/pools-config';
-import { baseSepolia } from '@/lib/wagmiConfig';
+import { getToken, TokenSymbol, getTokenSymbolByAddress } from '@/lib/pools-config';
+import { baseSepolia, getExplorerTxUrl } from '@/lib/wagmiConfig';
 import { getAddress, type Hex, BaseError, parseUnits, formatUnits, encodeAbiParameters, keccak256 } from 'viem';
 import { getPositionDetails, getPoolState, preparePermit2BatchForPosition } from '@/lib/liquidity-utils';
 import { publicClient } from '@/lib/viemClient';
@@ -161,7 +161,7 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
       const nftTokenId = await getTokenIdFromPosition(positionData);
 
       // Fetch on-chain position details and pool state
-      const details = await getPositionDetails(nftTokenId);
+      const details = await getPositionDetails(nftTokenId, chainId);
       // Build currencies strictly in poolKey order to avoid side mixups
       const symC0 = getTokenSymbolByAddress(getAddress(details.poolKey.currency0));
       const symC1 = getTokenSymbolByAddress(getAddress(details.poolKey.currency1));
@@ -189,7 +189,7 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
         ]}
       ], keyTuple as any);
       const poolId = keccak256(encoded) as Hex;
-      const state = await getPoolState(poolId);
+      const state = await getPoolState(poolId, chainId);
 
       const pool = new V4Pool(
         currency0 as any,
@@ -455,7 +455,7 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
         description: `Liquidity added to existing position successfully`,
         action: hash ? {
           label: "View Transaction",
-          onClick: () => window.open(`https://sepolia.basescan.org/tx/${hash}`, '_blank')
+          onClick: () => window.open(getExplorerTxUrl(hash), '_blank')
         } : undefined
       });
       
@@ -487,6 +487,7 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
           const { getPoolSubgraphId } = await import('@/lib/pools-config');
           await invalidateAfterTx(queryClient, {
             owner: accountAddress,
+            chainId: chainId!,
             poolId: getPoolSubgraphId(`${posData.token0Symbol}/${posData.token1Symbol}`) || undefined,
             positionIds: currentPositionIdRef.current ? [currentPositionIdRef.current] : undefined,
             blockNumber: receipt?.blockNumber,

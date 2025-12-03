@@ -5,14 +5,15 @@ export const revalidate = 0;
 
 import { NextResponse } from 'next/server';
 import { unstable_cache } from 'next/cache';
-import { getPoolSubgraphId, getAllPools, getTokenDecimals, getStateViewAddress } from '@/lib/pools-config';
+import { getPoolSubgraphId, getAllPools, getTokenDecimals, getStateViewAddress, getNetworkModeFromRequest } from '@/lib/pools-config';
 import { batchGetTokenPrices, calculateTotalUSD } from '@/lib/price-service';
 import { formatUnits, parseAbi } from 'viem';
-import { getSubgraphUrlForPool, isDaiPool } from '@/lib/subgraph-url-helper';
-import { publicClient } from '@/lib/viemClient';
+import { getUniswapV4SubgraphUrl, isDaiPool, isMainnetSubgraphMode } from '@/lib/subgraph-url-helper';
+import { createNetworkClient } from '@/lib/viemClient';
 import { STATE_VIEW_ABI } from '@/lib/abis/state_view_abi';
 import { cacheService } from '@/lib/cache/CacheService';
 import { poolKeys } from '@/lib/redis-keys';
+import type { NetworkMode } from '@/lib/network-mode';
 
 // Fetch 7 days of daily data for accurate APR calculation
 // Dynamic limit: poolCount * 10 (7 days + buffer per pool)
@@ -50,8 +51,9 @@ interface BatchPoolStatsMinimal {
   daysWithData?: number;
 }
 
-const getSubgraphUrl = () => process.env.SUBGRAPH_URL as string | undefined;
-const getDaiSubgraphUrl = () => process.env.SUBGRAPH_URL_DAI as string | undefined;
+// Get testnet subgraph URLs (used only on testnet)
+const getTestnetSubgraphUrl = () => process.env.SUBGRAPH_URL as string | undefined;
+const getTestnetDaiSubgraphUrl = () => process.env.SUBGRAPH_URL_DAI as string | undefined;
 
 // SIMPLIFIED: Direct fetch without rate limiting wrapper (Satsuma handles its own rate limits)
 async function fetchSubgraphDirect(
@@ -94,25 +96,33 @@ async function fetchSubgraphDirect(
   }
 }
 
-async function computePoolsBatch(): Promise<any> {
-  const SUBGRAPH_URL = getSubgraphUrl();
-  const SUBGRAPH_URL_DAI = getDaiSubgraphUrl();
+async function computePoolsBatch(networkMode: NetworkMode): Promise<any> {
+  const isMainnet = isMainnetSubgraphMode(networkMode);
 
-  if (!SUBGRAPH_URL) {
-    return { success: false, message: 'SUBGRAPH_URL env var is required' };
+  // Get the appropriate subgraph URL(s)
+  // Mainnet: Use Uniswap v4 subgraph for Pool/PoolDayData
+  // Testnet: Use our full subgraph (with DAI pool separation)
+  const POOL_SUBGRAPH_URL = isMainnet ? getUniswapV4SubgraphUrl(networkMode) : getTestnetSubgraphUrl();
+  const TESTNET_DAI_URL = !isMainnet ? getTestnetDaiSubgraphUrl() : undefined;
+
+  if (!POOL_SUBGRAPH_URL) {
+    return { success: false, message: isMainnet
+      ? 'UNISWAP_V4_SUBGRAPH_URL env var is required for mainnet'
+      : 'SUBGRAPH_URL env var is required' };
   }
 
-  const allPools = getAllPools();
-  const targetPoolIds = allPools.map((pool) => getPoolSubgraphId(pool.id) || pool.id);
+  const allPools = getAllPools(networkMode);
+  const targetPoolIds = allPools.map((pool) => getPoolSubgraphId(pool.id, networkMode) || pool.id);
 
-  // Separate pools into DAI and non-DAI pools
+  // Separate pools into DAI and non-DAI pools (testnet only)
+  // Mainnet: all pools go to single Uniswap v4 subgraph
   const daiPoolIds: string[] = [];
   const nonDaiPoolIds: string[] = [];
 
   for (const pool of allPools) {
     const poolId = pool.id;
-    const subgraphId = getPoolSubgraphId(poolId) || poolId;
-    if (isDaiPool(poolId)) {
+    const subgraphId = getPoolSubgraphId(poolId, networkMode) || poolId;
+    if (!isMainnet && isDaiPool(poolId, networkMode)) {
       daiPoolIds.push(subgraphId);
     } else {
       nonDaiPoolIds.push(subgraphId);
@@ -127,14 +137,14 @@ async function computePoolsBatch(): Promise<any> {
 
   const poolIdToConfig = new Map<string, { symbol0: string; symbol1: string; dec0: number; dec1: number }>();
   for (const p of allPools) {
-    const id = (getPoolSubgraphId(p.id) || p.id).toLowerCase();
+    const id = (getPoolSubgraphId(p.id, networkMode) || p.id).toLowerCase();
     const symbol0 = p.currency0.symbol;
     const symbol1 = p.currency1.symbol;
     poolIdToConfig.set(id, {
       symbol0,
       symbol1,
-      dec0: getTokenDecimals(symbol0) || 18,
-      dec1: getTokenDecimals(symbol1) || 18,
+      dec0: getTokenDecimals(symbol0, networkMode) || 18,
+      dec1: getTokenDecimals(symbol1, networkMode) || 18,
     });
   }
 
@@ -151,7 +161,8 @@ async function computePoolsBatch(): Promise<any> {
   const tvlById = new Map<string, { tvl0: any; tvl1: any }>();
   const dailyByPoolId = new Map<string, Array<any>>();
   const errors: string[] = [];
-  const stateViewAddress = getStateViewAddress();
+  const stateViewAddress = getStateViewAddress(networkMode);
+  const client = createNetworkClient(networkMode);
 
   // RUN EVERYTHING IN PARALLEL: Prices, fees, and subgraph queries have zero dependencies
   console.time('[PERF] All data fetches (parallel)');
@@ -168,7 +179,7 @@ async function computePoolsBatch(): Promise<any> {
           functionName: 'getSlot0',
           args: [poolId as `0x${string}`],
         }));
-        return await publicClient.multicall({
+        return await client.multicall({
           contracts: feeCalls,
           allowFailure: true,
         });
@@ -179,16 +190,19 @@ async function computePoolsBatch(): Promise<any> {
     })(),
 
     // 3. Main subgraph query (~5-6s) - dynamic limit based on pool count
+    // Mainnet: queries Uniswap v4 subgraph
+    // Testnet: queries our full subgraph (non-DAI pools)
     nonDaiPoolIds.length > 0
-      ? fetchSubgraphDirect(SUBGRAPH_URL, buildPoolsQuery(nonDaiPoolIds.length), {
+      ? fetchSubgraphDirect(POOL_SUBGRAPH_URL, buildPoolsQuery(nonDaiPoolIds.length), {
           poolIds: nonDaiPoolIds.map((id) => id.toLowerCase()),
           cutoffDays,
         })
       : Promise.resolve({ success: true, data: { data: { pools: [], poolDayDatas: [] } } }),
 
-    // 4. DAI subgraph query (~5-6s, runs parallel with #3) - dynamic limit based on pool count
-    daiPoolIds.length > 0 && SUBGRAPH_URL_DAI
-      ? fetchSubgraphDirect(SUBGRAPH_URL_DAI, buildPoolsQuery(daiPoolIds.length), {
+    // 4. DAI subgraph query (testnet only, runs parallel with #3)
+    // Mainnet: skip (no DAI pool separation)
+    daiPoolIds.length > 0 && TESTNET_DAI_URL
+      ? fetchSubgraphDirect(TESTNET_DAI_URL, buildPoolsQuery(daiPoolIds.length), {
           poolIds: daiPoolIds.map((id) => id.toLowerCase()),
           cutoffDays,
         })
@@ -255,7 +269,7 @@ async function computePoolsBatch(): Promise<any> {
   const poolsStats: BatchPoolStatsMinimal[] = [];
   for (const pool of allPools) {
     try {
-      const poolId = (getPoolSubgraphId(pool.id) || pool.id).toLowerCase();
+      const poolId = (getPoolSubgraphId(pool.id, networkMode) || pool.id).toLowerCase();
       const symbol0 = pool.currency0.symbol;
       const symbol1 = pool.currency1.symbol;
       const token0Price = tokenPrices[symbol0];
@@ -318,7 +332,6 @@ async function computePoolsBatch(): Promise<any> {
       if (tvlUSD > 0 && feesAvgDailyUSD > 0) {
         const annualFees = feesAvgDailyUSD * 365;
         apr7d = (annualFees / tvlUSD) * 100;
-        // Ensure finite and positive
         if (!isFinite(apr7d) || apr7d < 0) apr7d = 0;
       }
 
@@ -351,12 +364,20 @@ async function computePoolsBatch(): Promise<any> {
 
 export async function GET(request: Request) {
   try {
+    // Get network mode from cookies (App Router pattern)
+    const cookieHeader = request.headers.get('cookie') || '';
+    const networkMode = getNetworkModeFromRequest(cookieHeader);
+
+    console.log('[get-pools-batch] Network mode from cookies:', networkMode);
+
     // Use CacheService for clean stale-while-revalidate pattern
+    // Cache key includes network mode to separate mainnet and testnet data
+    const cacheKey = `${poolKeys.batch()}:${networkMode}`;
     const result = await cacheService.cachedApiCall(
-      poolKeys.batch(), // 'pools-batch:v1'
+      cacheKey,
       { fresh: 5 * 60, stale: 60 * 60 }, // 5min fresh, 1hr stale
       async () => {
-        const payload = await computePoolsBatch();
+        const payload = await computePoolsBatch(networkMode);
 
         // Only cache if successful and no errors
         const hasErrors = payload.errors && payload.errors.length > 0;

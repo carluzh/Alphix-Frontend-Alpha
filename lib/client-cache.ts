@@ -1,24 +1,11 @@
 /**
  * Client-Side Cache Utilities
  *
- * This module provides ONLY client-side caching and coordination utilities.
- * Server-side caching has been MIGRATED to Redis (lib/redis.ts) with Upstash.
- *
- * What's here (still used):
+ * Provides client-side caching and coordination:
  * - Request deduplication (prevents duplicate in-flight requests)
  * - Indexing barriers (coordinates fetches until subgraph syncs)
- * - User position IDs (localStorage-based, client-only, 24h TTL)
+ * - User position IDs (localStorage-based, 24h TTL)
  * - Subgraph sync waiter
- *
- * What's DEPRECATED (migrated to Redis):
- * - Pool data caching → Now: Redis + /api/liquidity/get-pools-batch
- * - Pool stats/state → Now: Redis (no longer cached - removed from invalidation)
- * - Fees caching → Now: Redis + /api/fees/get-batch
- * - Activity caching → Removed entirely (activity feed no longer displayed)
- * - Chart data → Now: Redis + /api/liquidity/pool-chart-data
- * - In-memory cache → Replaced with Upstash Redis (persistent, server-side)
- *
- * Migration Complete: All server-side caching now uses Redis with stale-while-revalidate pattern.
  */
 
 import { SafeStorage } from './safe-storage';
@@ -97,14 +84,23 @@ function getUserPositionIdsCacheKey(address: string): string {
   return `${prefix}:userPositionIds_${address.toLowerCase()}`;
 }
 
-/**
- * Invalidate user position IDs cache in localStorage
- */
+/** Invalidate user position IDs cache in localStorage */
 export function invalidateUserPositionIdsCache(ownerAddress: string): void {
-  const key = getUserPositionIdsCacheKey(ownerAddress);
+  try { SafeStorage.remove(getUserPositionIdsCacheKey(ownerAddress)); } catch {}
+}
+
+/** Get cached timestamps map for position APY calculation */
+export function getCachedPositionTimestamps(ownerAddress: string): Map<string, { createdAt: number; lastTimestamp: number }> {
+  const map = new Map<string, { createdAt: number; lastTimestamp: number }>();
+  if (!ownerAddress) return map;
   try {
-    SafeStorage.remove(key);
+    const raw = SafeStorage.get(getUserPositionIdsCacheKey(ownerAddress));
+    if (raw) {
+      const { items } = JSON.parse(raw) as { items?: Array<{ id: string; createdAt?: number; lastTimestamp?: number }> };
+      items?.forEach(it => it.id && map.set(it.id, { createdAt: it.createdAt || 0, lastTimestamp: it.lastTimestamp || 0 }));
+    }
   } catch {}
+  return map;
 }
 
 /**
@@ -356,13 +352,4 @@ export function clearDeprecatedCaches(): void {
   }
 }
 
-/**
- * Re-export on-chain data utilities
- * These are pure on-chain functions used for position data (not cached server-side)
- */
 export { derivePositionsFromIds, decodePositionInfo } from './on-chain-data';
-
-// All deprecated cache functions removed (2025-11-27 Phase 0 cleanup).
-// Server-side caching is handled by Redis via API endpoints.
-// For user positions: use derivePositionsFromIds (re-exported from on-chain-data.ts)
-// For fees: use /api/fees/get-batch

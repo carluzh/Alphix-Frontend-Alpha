@@ -3,7 +3,8 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { ResponsiveContainer, ComposedChart, XAxis, YAxis, Area, ReferenceLine, ReferenceArea, Tooltip as RechartsTooltip, Brush } from "recharts";
 import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Maximize } from "lucide-react";
-import { TOKEN_DEFINITIONS, TokenSymbol, getPoolSubgraphId, getPoolById } from "@/lib/pools-config";
+import { getTokenDefinitions, TokenSymbol, getPoolSubgraphId, getPoolById } from "@/lib/pools-config";
+import { useNetwork } from "@/lib/network-context";
 import { formatUnits as viemFormatUnits } from "viem";
 import { Token } from '@uniswap/sdk-core';
 import { Pool as V4PoolSDK, Position as V4PositionSDK } from "@uniswap/v4-sdk";
@@ -97,6 +98,8 @@ export function InteractiveRangeChart({
   forceDenominationBase,
   onReset,
 }: InteractiveRangeChartProps) {
+  const { networkMode } = useNetwork();
+  const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
   const containerRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState<'left' | 'right' | 'center' | null>(null);
   const [dragStart, setDragStart] = useState<{ x: number; tickLower: number; tickUpper: number } | null>(null);
@@ -324,8 +327,8 @@ export function InteractiveRangeChart({
     ) {
       const processed: ProcessedPositionDetail[] = [];
       
-      const token0Def = TOKEN_DEFINITIONS[token0Symbol];
-      const token1Def = TOKEN_DEFINITIONS[token1Symbol];
+      const token0Def = tokenDefinitions[token0Symbol];
+      const token1Def = tokenDefinitions[token1Symbol];
       
       if (!token0Def || !token1Def) {
         setProcessedPositions(null);

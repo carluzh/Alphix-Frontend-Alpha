@@ -25,10 +25,10 @@ import { Pool as V4Pool, Position as V4Position, V4PositionManager, PoolKey } fr
 import { TickMath } from '@uniswap/v3-sdk';
 import JSBI from 'jsbi'; // v3-sdk utilities often return JSBI
 
-import { publicClient } from './viemClient'; 
+import { createNetworkClient } from './viemClient';
 // Removed WETH_TOKEN, USDC_TOKEN from this import as they are not in swap-constants.ts
-import { CHAIN_ID as DEFAULT_CHAIN_ID } from './swap-constants';
 import { getPositionManagerAddress, getStateViewAddress, getToken as getTokenConfig, getTokenSymbolByAddress } from './pools-config';
+import { MAINNET_CHAIN_ID, type NetworkMode } from './network-mode';
 import { STATE_VIEW_ABI } from './abis/state_view_abi';
 import { parseAbi } from 'viem';
 import { position_manager_abi } from './abis/PositionManager_abi';
@@ -196,8 +196,10 @@ export interface PositionDetails {
     };
 }
 
-export async function getPositionDetails(tokenId: bigint): Promise<PositionDetails> {
-    const pmAddress = getPositionManagerAddress() as Address;
+export async function getPositionDetails(tokenId: bigint, chainId: number): Promise<PositionDetails> {
+    const networkMode: NetworkMode = chainId === MAINNET_CHAIN_ID ? 'mainnet' : 'testnet';
+    const publicClient = createNetworkClient(networkMode);
+    const pmAddress = getPositionManagerAddress(networkMode) as Address;
     const pmAbi: Abi = position_manager_abi as unknown as Abi;
 
     const [poolKey, infoValue] = (await publicClient.readContract({
@@ -240,8 +242,10 @@ export interface PoolState {
     liquidity: bigint;
 }
 
-export async function getPoolState(poolId: Hex): Promise<PoolState> {
-    const stateViewAddr = getStateViewAddress() as Address;
+export async function getPoolState(poolId: Hex, chainId: number): Promise<PoolState> {
+    const networkMode: NetworkMode = chainId === MAINNET_CHAIN_ID ? 'mainnet' : 'testnet';
+    const publicClient = createNetworkClient(networkMode);
+    const stateViewAddr = getStateViewAddress(networkMode) as Address;
     // Parse human-readable ABI into viem Abi
     const stateAbi: Abi = parseAbi(STATE_VIEW_ABI as unknown as readonly string[]);
 
@@ -272,20 +276,22 @@ export async function getPoolState(poolId: Hex): Promise<PoolState> {
 export interface BuildCollectFeesCallParams {
     tokenId: bigint;
     userAddress: Address;
+    chainId: number;
     poolIdHex?: Hex; // optional shortcut if already known (bytes32)
 }
 
-export async function buildCollectFeesCall({ tokenId, userAddress }: BuildCollectFeesCallParams): Promise<{ calldata: Hex; value: bigint; pool: V4Pool; position: V4Position }>{
+export async function buildCollectFeesCall({ tokenId, userAddress, chainId }: BuildCollectFeesCallParams): Promise<{ calldata: Hex; value: bigint; pool: V4Pool; position: V4Position }>{
+    const networkMode: NetworkMode = chainId === MAINNET_CHAIN_ID ? 'mainnet' : 'testnet';
     // Load position details and live pool state
-    const details = await getPositionDetails(tokenId);
+    const details = await getPositionDetails(tokenId, chainId);
     // Resolve token metadata (decimals) for building SDK Pool/Position
-    const sym0 = getTokenSymbolByAddress(details.poolKey.currency0) || 'T0';
-    const sym1 = getTokenSymbolByAddress(details.poolKey.currency1) || 'T1';
-    const cfg0 = getTokenConfig(sym0);
-    const cfg1 = getTokenConfig(sym1);
+    const sym0 = getTokenSymbolByAddress(details.poolKey.currency0, networkMode) || 'T0';
+    const sym1 = getTokenSymbolByAddress(details.poolKey.currency1, networkMode) || 'T1';
+    const cfg0 = getTokenConfig(sym0, networkMode);
+    const cfg1 = getTokenConfig(sym1, networkMode);
     if (!cfg0 || !cfg1) throw new Error('Token configs not found for collect');
-    const t0 = new Token(DEFAULT_CHAIN_ID, getAddress(details.poolKey.currency0), cfg0.decimals, sym0);
-    const t1 = new Token(DEFAULT_CHAIN_ID, getAddress(details.poolKey.currency1), cfg1.decimals, sym1);
+    const t0 = new Token(chainId, getAddress(details.poolKey.currency0), cfg0.decimals, sym0);
+    const t1 = new Token(chainId, getAddress(details.poolKey.currency1), cfg1.decimals, sym1);
 
     // Build pool from StateView
     const key: PoolKey = {
@@ -315,7 +321,7 @@ export async function buildCollectFeesCall({ tokenId, userAddress }: BuildCollec
 
     let poolState: PoolState;
     try {
-        poolState = await getPoolState(poolIdBytes32);
+        poolState = await getPoolState(poolIdBytes32, chainId);
     } catch {
         poolState = { sqrtPriceX96: 0n, tick: details.tickLower, liquidity: 0n };
     }
@@ -389,8 +395,10 @@ export async function preparePermit2BatchForPosition(
     amount0?: bigint,
     amount1?: bigint,
 ): Promise<PreparedPermit2Batch> {
-    const pm = getPositionManagerAddress() as Address;
-    const details = await getPositionDetails(tokenId);
+    const networkMode: NetworkMode = chainId === MAINNET_CHAIN_ID ? 'mainnet' : 'testnet';
+    const publicClient = createNetworkClient(networkMode);
+    const pm = getPositionManagerAddress(networkMode) as Address;
+    const details = await getPositionDetails(tokenId, chainId);
     const tokens: Address[] = [getAddress(details.poolKey.currency0), getAddress(details.poolKey.currency1)];
     const amounts = [amount0 || 0n, amount1 || 0n];
     const now = Math.floor(Date.now() / 1000);
@@ -448,9 +456,11 @@ export async function preparePermit2BatchForNewPosition(
     amount0?: bigint,
     amount1?: bigint,
 ): Promise<PreparedPermit2Batch> {
-    const pm = getPositionManagerAddress() as Address;
-    const token0Def = getToken(token0Symbol);
-    const token1Def = getToken(token1Symbol);
+    const networkMode: NetworkMode = chainId === MAINNET_CHAIN_ID ? 'mainnet' : 'testnet';
+    const publicClient = createNetworkClient(networkMode);
+    const pm = getPositionManagerAddress(networkMode) as Address;
+    const token0Def = getToken(token0Symbol, networkMode);
+    const token1Def = getToken(token1Symbol, networkMode);
 
     if (!token0Def || !token1Def) {
         throw new Error(`Token definitions not found for ${token0Symbol} or ${token1Symbol}`);

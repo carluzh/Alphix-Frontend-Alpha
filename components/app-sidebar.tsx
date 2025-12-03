@@ -2,6 +2,7 @@
 
 import type * as React from "react"
 import { useEffect, useState, useRef, useMemo } from "react"
+import Image from "next/image"
 import {
   HelpCircleIcon,
   ArrowRightLeftIcon,
@@ -11,7 +12,6 @@ import {
   BookTextIcon,
   SettingsIcon,
 } from "lucide-react"
-import { ReactSVG } from "react-svg"
 import { NavMain } from "./nav-main"
 import { AccountStatus } from "./AccountStatus"
 import { ConnectWalletButton } from "./ConnectWalletButton"
@@ -180,22 +180,9 @@ export function AppSidebar({ variant = "floating", onBetaClick, ...props }: AppS
               className="data-[slot=sidebar-menu-button]:!p-2 !pt-2.5 !px-0 hover:bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 data-[state=open]:bg-transparent active:bg-transparent overflow-visible"
             >
               <div className="flex items-center w-full justify-between">
-                <a 
-                  href="/" // Restore href
-                  className="flex items-center"
-                >
-                  <img 
-                    src="/Logo Type (white).svg"
-                    alt="Alphix Logo"
-                    className="h-6 w-28 text-sidebar-logo dark:block hidden"
-                    loading="eager"
-                  />
-                  <img 
-                    src="/Logo Type (black).svg"
-                    alt="Alphix Logo"
-                    className="h-6 w-28 text-sidebar-logo block dark:hidden"
-                    loading="eager"
-                  />
+                <a href="/" className="flex items-center">
+                  <Image src="/Logo Type (white).svg" alt="Alphix Logo" width={112} height={24} priority className="dark:block hidden" />
+                  <Image src="/Logo Type (black).svg" alt="Alphix Logo" width={112} height={24} priority className="block dark:hidden" />
                 </a>
                 <div>
                   {/* Show 'Beta' by default; on hover swap to version text without resizing */}
@@ -203,12 +190,7 @@ export function AppSidebar({ variant = "floating", onBetaClick, ...props }: AppS
                     role="button"
                     tabIndex={0}
                     onClick={handleBetaBadgeClick}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        handleBetaBadgeClick(event as any);
-                      }
-                    }}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleBetaBadgeClick(e as unknown as React.MouseEvent<HTMLDivElement>); } }}
                   >
                     <Badge
                       variant="outline"

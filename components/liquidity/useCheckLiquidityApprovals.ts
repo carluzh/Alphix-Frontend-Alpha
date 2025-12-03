@@ -1,10 +1,11 @@
 import { useMemo, useState, useEffect } from 'react';
 import { useReadContract } from 'wagmi';
-import { TokenSymbol, TOKEN_DEFINITIONS, NATIVE_TOKEN_ADDRESS, getPositionManagerAddress } from '@/lib/pools-config';
+import { TokenSymbol, getTokenDefinitions, NATIVE_TOKEN_ADDRESS, getPositionManagerAddress } from '@/lib/pools-config';
 import { PERMIT2_ADDRESS } from '@/lib/swap-constants';
 import { ERC20_ABI } from '@/lib/abis/erc20';
 import { iallowance_transfer_abi } from '@/lib/abis/IAllowanceTransfer_abi';
 import { parseUnits } from 'viem';
+import { useNetwork } from '@/lib/network-context';
 
 export interface CheckLiquidityApprovalsParams {
   userAddress?: string;
@@ -34,8 +35,10 @@ export function useCheckLiquidityApprovals(
     refetchInterval?: number | false;
   }
 ) {
-  const token0Config = params ? TOKEN_DEFINITIONS[params.token0Symbol] : undefined;
-  const token1Config = params ? TOKEN_DEFINITIONS[params.token1Symbol] : undefined;
+  const { networkMode } = useNetwork();
+  const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
+  const token0Config = params ? tokenDefinitions[params.token0Symbol] : undefined;
+  const token1Config = params ? tokenDefinitions[params.token1Symbol] : undefined;
 
   // Check if tokens are native (ETH) - native tokens don't need approval
   const isToken0Native = token0Config?.address === NATIVE_TOKEN_ADDRESS;
@@ -94,7 +97,7 @@ export function useCheckLiquidityApprovals(
     },
   });
 
-  const POSITION_MANAGER = getPositionManagerAddress();
+  const POSITION_MANAGER = getPositionManagerAddress(networkMode);
 
   const needsToken0ERC20Approval = !isToken0Native &&
     amount0Wei > 0n &&
@@ -169,35 +172,66 @@ export function useCheckLiquidityApprovals(
   }, [params?.token0Symbol, params?.token1Symbol, params?.userAddress]);
 
   useEffect(() => {
+    console.log('[useCheckLiquidityApprovals] Permit fetch effect check:', {
+      needsToken0Permit,
+      needsToken1Permit,
+      needsToken0ERC20Approval,
+      needsToken1ERC20Approval,
+      hasUserAddress: !!params?.userAddress,
+      token0PermitData,
+      token1PermitData,
+      existingPermitData: permitData
+    });
+
     if ((needsToken0Permit || needsToken1Permit) && !needsToken0ERC20Approval && !needsToken1ERC20Approval && params?.userAddress) {
+      console.log('[useCheckLiquidityApprovals] Fetching permit data from API...');
       setIsLoadingPermitData(true);
       const amount0Num = parseFloat(params.amount0 || '0');
       const amount1Num = parseFloat(params.amount1 || '0');
       const inputAmount = amount0Num > 0 ? params.amount0 : params.amount1;
       const inputTokenSymbol = amount0Num > 0 ? params.token0Symbol : params.token1Symbol;
 
+      const requestBody = {
+        userAddress: params.userAddress,
+        token0Symbol: params.token0Symbol,
+        token1Symbol: params.token1Symbol,
+        inputAmount,
+        inputTokenSymbol,
+        userTickLower: params.tickLower || 0,
+        userTickUpper: params.tickUpper || 0,
+        chainId: params.chainId,
+      };
+      console.log('[useCheckLiquidityApprovals] API request body:', requestBody);
+
       fetch('/api/liquidity/prepare-mint-tx', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userAddress: params.userAddress,
-          token0Symbol: params.token0Symbol,
-          token1Symbol: params.token1Symbol,
-          inputAmount,
-          inputTokenSymbol,
-          userTickLower: params.tickLower || 0,
-          userTickUpper: params.tickUpper || 0,
-          chainId: params.chainId,
-        }),
+        body: JSON.stringify(requestBody),
+        credentials: 'include', // Include cookies for network mode detection
       })
-        .then(res => res.ok ? res.json() : null)
+        .then(async res => {
+          console.log('[useCheckLiquidityApprovals] API response status:', res.status);
+          if (!res.ok) {
+            const errorData = await res.json().catch(() => ({}));
+            console.error('[useCheckLiquidityApprovals] API error:', errorData);
+            return null;
+          }
+          return res.json();
+        })
         .then(result => {
+          console.log('[useCheckLiquidityApprovals] API result:', result);
           if (result?.needsApproval && result.approvalType === 'PERMIT2_BATCH_SIGNATURE') {
+            console.log('[useCheckLiquidityApprovals] Setting permit data');
             setPermitData({ permitBatchData: result.permitBatchData, signatureDetails: result.signatureDetails });
+          } else {
+            console.log('[useCheckLiquidityApprovals] No permit data in response or wrong type:', {
+              needsApproval: result?.needsApproval,
+              approvalType: result?.approvalType
+            });
           }
           setIsLoadingPermitData(false);
         })
-        .catch(err => { console.error(err); setIsLoadingPermitData(false); });
+        .catch(err => { console.error('[useCheckLiquidityApprovals] Fetch error:', err); setIsLoadingPermitData(false); });
     }
   }, [needsToken0Permit, needsToken1Permit, needsToken0ERC20Approval, needsToken1ERC20Approval, params?.userAddress, params?.token0Symbol, params?.token1Symbol, params?.amount0, params?.amount1, params?.tickLower, params?.tickUpper, params?.chainId]);
 

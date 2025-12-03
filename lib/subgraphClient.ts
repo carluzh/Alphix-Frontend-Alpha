@@ -83,8 +83,8 @@ async function executeSubgraphQueryInternal<T>(req: GraphQLRequest, options: Exe
       },
       body: JSON.stringify({ query: req.query, variables: req.variables || {} }),
       signal: options.signal || controller.signal,
-      cache: 'no-store' as any,
-    } as any);
+      cache: 'no-store',
+    });
 
     clearTimeout(timeout);
     release();

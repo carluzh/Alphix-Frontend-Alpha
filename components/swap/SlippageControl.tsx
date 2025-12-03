@@ -34,7 +34,6 @@ export function SlippageControl({
 
   const { isCritical, showWarning, warningMessage } = useSlippageValidation(currentSlippage);
 
-  // Check if current slippage matches a preset
   const matchesPreset = (value: number) => {
     return PRESETS.some(preset => Math.abs(value - preset) < 0.001);
   };

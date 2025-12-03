@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { parseAbi, type Hex } from 'viem';
-import { getPoolSubgraphId, getAllPools, getStateViewAddress, getToken } from '@/lib/pools-config';
-import { publicClient } from '@/lib/viemClient';
+import { getPoolSubgraphId, getAllPools, getStateViewAddress, getToken, getNetworkModeFromRequest } from '@/lib/pools-config';
+import { createNetworkClient } from '@/lib/viemClient';
 import { PoolStateSchema, validateApiResponse } from '@/lib/validation';
 
 const stateViewAbi = parseAbi([
@@ -15,22 +15,26 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(405).json({ message: `Method ${req.method} Not Allowed` });
   }
 
+  // Get network mode from cookies
+  const networkMode = getNetworkModeFromRequest(req.headers.cookie);
+
   const raw = String(req.query.poolId || '');
   if (!raw) return res.status(400).json({ message: 'poolId is required' });
 
   // Accept either friendly route id or subgraph id
-  const all = getAllPools();
+  const all = getAllPools(networkMode);
   const maybe = all.find(p => String(p.id).toLowerCase() === raw.toLowerCase());
-  const subgraphId = (maybe?.subgraphId || getPoolSubgraphId(raw) || raw) as string;
+  const subgraphId = (maybe?.subgraphId || getPoolSubgraphId(raw, networkMode) || raw) as string;
 
   try {
     // No caching - pool state (sqrtPriceX96, tick, liquidity) must always be fresh for accurate quotes
     const poolIdHex = subgraphId as Hex;
-    const address = getStateViewAddress() as `0x${string}`;
+    const address = getStateViewAddress(networkMode) as `0x${string}`;
+    const client = createNetworkClient(networkMode);
 
     const [slot0, liquidity] = await Promise.all([
-      publicClient.readContract({ address, abi: stateViewAbi, functionName: 'getSlot0', args: [poolIdHex] }) as Promise<readonly [bigint, number, number, number]>,
-      publicClient.readContract({ address, abi: stateViewAbi, functionName: 'getLiquidity', args: [poolIdHex] }) as Promise<bigint>,
+      client.readContract({ address, abi: stateViewAbi, functionName: 'getSlot0', args: [poolIdHex] }) as Promise<readonly [bigint, number, number, number]>,
+      client.readContract({ address, abi: stateViewAbi, functionName: 'getLiquidity', args: [poolIdHex] }) as Promise<bigint>,
     ]);
 
     const [sqrtPriceX96, tick, protocolFee, lpFee] = slot0;
@@ -40,13 +44,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     let currentPrice = Number.isFinite(sqrtAsNumber) ? (sqrtAsNumber * sqrtAsNumber) : 0;
 
     try {
-      const allPools = getAllPools();
+      const allPools = getAllPools(networkMode);
       const lowerRaw = raw.toLowerCase();
       const poolCfg = allPools.find(p => String(p.subgraphId).toLowerCase() === String(subgraphId).toLowerCase())
         || allPools.find(p => String(p.id).toLowerCase() === lowerRaw);
       if (poolCfg) {
-        const token0Cfg = getToken(poolCfg.currency0.symbol);
-        const token1Cfg = getToken(poolCfg.currency1.symbol);
+        const token0Cfg = getToken(poolCfg.currency0.symbol, networkMode);
+        const token1Cfg = getToken(poolCfg.currency1.symbol, networkMode);
         if (token0Cfg && token1Cfg) {
           const addr0 = token0Cfg.address.toLowerCase();
           const addr1 = token1Cfg.address.toLowerCase();

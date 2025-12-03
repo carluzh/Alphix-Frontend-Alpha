@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { TokenStack } from "./TokenStack";
 import { formatUnits, parseUnits as viemParseUnits, erc20Abi } from "viem";
-import { TOKEN_DEFINITIONS, TokenSymbol, getToken, NATIVE_TOKEN_ADDRESS } from "@/lib/pools-config";
+import { getTokenDefinitions, TokenSymbol, getToken, NATIVE_TOKEN_ADDRESS } from "@/lib/pools-config";
+import { useNetwork } from "@/lib/network-context";
 import { cn } from "@/lib/utils";
 import { formatUSD } from "@/lib/format";
 import Image from "next/image";
@@ -182,6 +183,8 @@ export function PositionDetailsModal({
   const [approvalWiggleCount, setApprovalWiggleCount] = useState(0);
 
   const { address: accountAddress, chainId: walletChainId } = useAccount();
+  const { networkMode } = useNetwork();
+  const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
   const queryClient = useQueryClient();
   const { signTypedDataAsync } = useSignTypedData();
   const { writeContractAsync: approveERC20Async } = useWriteContract();
@@ -191,18 +194,18 @@ export function PositionDetailsModal({
   // Get user balances for tokens
   const { data: token0Balance } = useBalance({
     address: accountAddress,
-    token: TOKEN_DEFINITIONS[position?.token0?.symbol as TokenSymbol]?.address === "0x0000000000000000000000000000000000000000"
+    token: tokenDefinitions[position?.token0?.symbol as TokenSymbol]?.address === "0x0000000000000000000000000000000000000000"
       ? undefined
-      : TOKEN_DEFINITIONS[position?.token0?.symbol as TokenSymbol]?.address as `0x${string}` | undefined,
+      : tokenDefinitions[position?.token0?.symbol as TokenSymbol]?.address as `0x${string}` | undefined,
     chainId: walletChainId,
     query: { enabled: !!accountAddress && !!walletChainId && !!position },
   });
 
   const { data: token1Balance } = useBalance({
     address: accountAddress,
-    token: TOKEN_DEFINITIONS[position?.token1?.symbol as TokenSymbol]?.address === "0x0000000000000000000000000000000000000000"
+    token: tokenDefinitions[position?.token1?.symbol as TokenSymbol]?.address === "0x0000000000000000000000000000000000000000"
       ? undefined
-      : TOKEN_DEFINITIONS[position?.token1?.symbol as TokenSymbol]?.address as `0x${string}` | undefined,
+      : tokenDefinitions[position?.token1?.symbol as TokenSymbol]?.address as `0x${string}` | undefined,
     chainId: walletChainId,
     query: { enabled: !!accountAddress && !!walletChainId && !!position },
   });
@@ -297,7 +300,7 @@ export function PositionDetailsModal({
     for (const token of tokens) {
       if (!token.amount || parseFloat(token.amount) <= 0) continue;
 
-      const tokenDef = TOKEN_DEFINITIONS[token.symbol];
+      const tokenDef = tokenDefinitions[token.symbol];
       if (!tokenDef || tokenDef.address === "0x0000000000000000000000000000000000000000") continue;
 
       try {
@@ -322,7 +325,7 @@ export function PositionDetailsModal({
 
   // Handle ERC20 approval to Permit2 (matching AddLiquidityForm)
   const handleIncreaseApproveV2 = useCallback(async (tokenSymbol: TokenSymbol) => {
-    const tokenConfig = TOKEN_DEFINITIONS[tokenSymbol];
+    const tokenConfig = tokenDefinitions[tokenSymbol];
     if (!tokenConfig) throw new Error(`Token ${tokenSymbol} not found`);
 
     toast('Confirm in Wallet', {
@@ -411,8 +414,8 @@ export function PositionDetailsModal({
 
   const hasUncollectedFees = useCallback(() => {
     if (!position || position.isInRange) return false;
-    const fee0 = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), TOKEN_DEFINITIONS[position.token0.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
-    const fee1 = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), TOKEN_DEFINITIONS[position.token1.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
+    const fee0 = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), tokenDefinitions[position.token0.symbol as string]?.decimals || 18));
+    const fee1 = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), tokenDefinitions[position.token1.symbol as string]?.decimals || 18));
     return fee0 > 0 || fee1 > 0;
   }, [position, prefetchedRaw0, prefetchedRaw1]);
 
@@ -773,8 +776,8 @@ export function PositionDetailsModal({
       const raw0 = prefetchedRaw0 || '0';
       const raw1 = prefetchedRaw1 || '0';
 
-      const d0 = TOKEN_DEFINITIONS?.[position.token0.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals ?? 18;
-      const d1 = TOKEN_DEFINITIONS?.[position.token1.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals ?? 18;
+      const d0 = tokenDefinitions?.[position.token0.symbol as string]?.decimals ?? 18;
+      const d1 = tokenDefinitions?.[position.token1.symbol as string]?.decimals ?? 18;
 
       const fee0 = parseFloat(formatUnits(BigInt(raw0), d0));
       const fee1 = parseFloat(formatUnits(BigInt(raw1), d1));
@@ -1142,8 +1145,8 @@ export function PositionDetailsModal({
                       }).format(
                         (previewAddAmount0 > 0 || previewAddAmount1 > 0)
                           ? (() => {
-                              const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), TOKEN_DEFINITIONS[position.token0.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
-                              const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), TOKEN_DEFINITIONS[position.token1.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
+                              const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), tokenDefinitions[position.token0.symbol as string]?.decimals || 18));
+                              const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), tokenDefinitions[position.token1.symbol as string]?.decimals || 18));
                               return (Number.isFinite(valueUSD) ? valueUSD : 0) +
                                 ((previewAddAmount0 + fee0Amount) * getUsdPriceForSymbol(position.token0.symbol)) +
                                 ((previewAddAmount1 + fee1Amount) * getUsdPriceForSymbol(position.token1.symbol));
@@ -1230,7 +1233,7 @@ export function PositionDetailsModal({
                           }).format(
                             previewAddAmount0 > 0
                               ? (() => {
-                                  const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), TOKEN_DEFINITIONS[position.token0.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
+                                  const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), tokenDefinitions[position.token0.symbol as string]?.decimals || 18));
                                   return token0USD + ((previewAddAmount0 + fee0Amount) * getUsdPriceForSymbol(position.token0.symbol));
                                 })()
                               : previewRemoveAmount0 > 0
@@ -1246,7 +1249,7 @@ export function PositionDetailsModal({
                             <span className="text-green-500">+</span>
                             <span className="text-green-500 font-medium">
                               {(() => {
-                                const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), TOKEN_DEFINITIONS[position.token0.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
+                                const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), tokenDefinitions[position.token0.symbol as string]?.decimals || 18));
                                 const total = previewAddAmount0 + fee0Amount;
                                 return total > 0 && total < 0.0001 ? '< 0.0001' : total.toFixed(4);
                               })()}
@@ -1288,7 +1291,7 @@ export function PositionDetailsModal({
                           }).format(
                             previewAddAmount1 > 0
                               ? (() => {
-                                  const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), TOKEN_DEFINITIONS[position.token1.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
+                                  const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), tokenDefinitions[position.token1.symbol as string]?.decimals || 18));
                                   return token1USD + ((previewAddAmount1 + fee1Amount) * getUsdPriceForSymbol(position.token1.symbol));
                                 })()
                               : previewRemoveAmount1 > 0
@@ -1304,7 +1307,7 @@ export function PositionDetailsModal({
                             <span className="text-green-500">+</span>
                             <span className="text-green-500 font-medium">
                               {(() => {
-                                const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), TOKEN_DEFINITIONS[position.token1.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
+                                const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), tokenDefinitions[position.token1.symbol as string]?.decimals || 18));
                                 const total = previewAddAmount1 + fee1Amount;
                                 return total > 0 && total < 0.0001 ? '< 0.0001' : total.toFixed(4);
                               })()}
@@ -1526,8 +1529,8 @@ export function PositionDetailsModal({
                         }).format(
                           (previewAddAmount0 > 0 || previewAddAmount1 > 0)
                             ? (() => {
-                                const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), TOKEN_DEFINITIONS[position.token0.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
-                                const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), TOKEN_DEFINITIONS[position.token1.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
+                                const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), tokenDefinitions[position.token0.symbol as string]?.decimals || 18));
+                                const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), tokenDefinitions[position.token1.symbol as string]?.decimals || 18));
                                 return (Number.isFinite(valueUSD) ? valueUSD : 0) +
                                   ((previewAddAmount0 + fee0Amount) * getUsdPriceForSymbol(position.token0.symbol)) +
                                   ((previewAddAmount1 + fee1Amount) * getUsdPriceForSymbol(position.token1.symbol));
@@ -1614,7 +1617,7 @@ export function PositionDetailsModal({
                             }).format(
                               previewAddAmount0 > 0
                                 ? (() => {
-                                    const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), TOKEN_DEFINITIONS[position.token0.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
+                                    const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), tokenDefinitions[position.token0.symbol as string]?.decimals || 18));
                                     return token0USD + ((previewAddAmount0 + fee0Amount) * getUsdPriceForSymbol(position.token0.symbol));
                                   })()
                                 : previewRemoveAmount0 > 0
@@ -1630,7 +1633,7 @@ export function PositionDetailsModal({
                               <span className="text-green-500">+</span>
                               <span className="text-green-500 font-medium">
                                 {(() => {
-                                  const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), TOKEN_DEFINITIONS[position.token0.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
+                                  const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), tokenDefinitions[position.token0.symbol as string]?.decimals || 18));
                                   const total = previewAddAmount0 + fee0Amount;
                                   return total > 0 && total < 0.0001 ? '< 0.0001' : total.toFixed(4);
                                 })()}
@@ -1672,7 +1675,7 @@ export function PositionDetailsModal({
                             }).format(
                               previewAddAmount1 > 0
                                 ? (() => {
-                                    const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), TOKEN_DEFINITIONS[position.token1.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
+                                    const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), tokenDefinitions[position.token1.symbol as string]?.decimals || 18));
                                     return token1USD + ((previewAddAmount1 + fee1Amount) * getUsdPriceForSymbol(position.token1.symbol));
                                   })()
                                 : previewRemoveAmount1 > 0
@@ -1688,7 +1691,7 @@ export function PositionDetailsModal({
                               <span className="text-green-500">+</span>
                               <span className="text-green-500 font-medium">
                                 {(() => {
-                                  const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), TOKEN_DEFINITIONS[position.token1.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
+                                  const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), tokenDefinitions[position.token1.symbol as string]?.decimals || 18));
                                   const total = previewAddAmount1 + fee1Amount;
                                   return total > 0 && total < 0.0001 ? '< 0.0001' : total.toFixed(4);
                                 })()}
@@ -2072,7 +2075,7 @@ export function PositionDetailsModal({
                                   <div className="text-xl font-medium">
                                     {(() => {
                                       const baseAmount = previewAddAmount0 || previewRemoveAmount0 || 0;
-                                      const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), TOKEN_DEFINITIONS[position.token0.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
+                                      const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), tokenDefinitions[position.token0.symbol as string]?.decimals || 18));
                                       const displayAmount = baseAmount + fee0Amount;
                                       return formatTokenDisplayAmount(displayAmount.toString());
                                     })()}
@@ -2082,7 +2085,7 @@ export function PositionDetailsModal({
                                 <div className="text-xs text-muted-foreground">
                                   {(() => {
                                     const baseAmount = previewAddAmount0 || previewRemoveAmount0 || 0;
-                                    const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), TOKEN_DEFINITIONS[position.token0.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
+                                    const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), tokenDefinitions[position.token0.symbol as string]?.decimals || 18));
                                     const displayAmount = baseAmount + fee0Amount;
                                     return formatUSD(displayAmount * getUsdPriceForSymbol(position.token0.symbol));
                                   })()}
@@ -2104,7 +2107,7 @@ export function PositionDetailsModal({
                                   <div className="text-xl font-medium">
                                     {(() => {
                                       const baseAmount = previewAddAmount1 || previewRemoveAmount1 || 0;
-                                      const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), TOKEN_DEFINITIONS[position.token1.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
+                                      const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), tokenDefinitions[position.token1.symbol as string]?.decimals || 18));
                                       const displayAmount = baseAmount + fee1Amount;
                                       return formatTokenDisplayAmount(displayAmount.toString());
                                     })()}
@@ -2114,7 +2117,7 @@ export function PositionDetailsModal({
                                 <div className="text-xs text-muted-foreground">
                                   {(() => {
                                     const baseAmount = previewAddAmount1 || previewRemoveAmount1 || 0;
-                                    const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), TOKEN_DEFINITIONS[position.token1.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
+                                    const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), tokenDefinitions[position.token1.symbol as string]?.decimals || 18));
                                     const displayAmount = baseAmount + fee1Amount;
                                     return formatUSD(displayAmount * getUsdPriceForSymbol(position.token1.symbol));
                                   })()}
@@ -2133,8 +2136,8 @@ export function PositionDetailsModal({
 
                         {/* Includes uncollected fees section - Only show for Add/Remove when fees exist */}
                         {(currentView === 'add-liquidity' || currentView === 'remove-liquidity') && (() => {
-                          const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), TOKEN_DEFINITIONS[position.token0.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
-                          const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), TOKEN_DEFINITIONS[position.token1.symbol as keyof typeof TOKEN_DEFINITIONS]?.decimals || 18));
+                          const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), tokenDefinitions[position.token0.symbol as string]?.decimals || 18));
+                          const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), tokenDefinitions[position.token1.symbol as string]?.decimals || 18));
 
                           if (fee0Amount <= 0 && fee1Amount <= 0) return null;
 

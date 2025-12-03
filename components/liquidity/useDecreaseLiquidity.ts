@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import React from 'react';
 import { OctagonX, BadgeCheck } from 'lucide-react';
 import { useAccount, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
@@ -8,8 +8,9 @@ import { V4PositionPlanner, V4PositionManager, Pool as V4Pool, Position as V4Pos
 import { TickMath } from '@uniswap/v3-sdk';
 import { Token, Percent } from '@uniswap/sdk-core';
 import { V4_POSITION_MANAGER_ADDRESS, EMPTY_BYTES, V4_POSITION_MANAGER_ABI } from '@/lib/swap-constants';
-import { getToken, TokenSymbol, getTokenSymbolByAddress, TOKEN_DEFINITIONS } from '@/lib/pools-config';
-import { baseSepolia } from '@/lib/wagmiConfig';
+import { getToken, TokenSymbol, getTokenSymbolByAddress, getTokenDefinitions } from '@/lib/pools-config';
+import { useNetwork } from '@/lib/network-context';
+import { baseSepolia, getExplorerTxUrl } from '@/lib/wagmiConfig';
 import { getAddress, type Hex, BaseError, parseUnits, encodeAbiParameters, keccak256, formatUnits } from 'viem';
 import { getPositionDetails, getPoolState } from '@/lib/liquidity-utils';
 import { prefetchService } from '@/lib/prefetch-service';
@@ -64,6 +65,8 @@ type DecreaseOptions = { slippageBps?: number; deadlineSeconds?: number };
 export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: UseDecreaseLiquidityProps) {
   const queryClient = useQueryClient();
   const { address: accountAddress, chainId } = useAccount();
+  const { networkMode } = useNetwork();
+  const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
   const { data: hash, writeContract, isPending: isDecreaseSendPending, error: decreaseSendError, reset: resetWriteContract } = useWriteContract();
   const { isLoading: isDecreaseConfirming, isSuccess: isDecreaseConfirmed, error: decreaseConfirmError, status: waitForTxStatus } = useWaitForTransactionReceipt({ hash });
 
@@ -144,8 +147,8 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
       if (positionData.feesForWithdraw) {
         try {
           // Use the token symbols we already have from positionData
-          const token0Decimals = TOKEN_DEFINITIONS[positionData.token0Symbol]?.decimals || 18;
-          const token1Decimals = TOKEN_DEFINITIONS[positionData.token1Symbol]?.decimals || 18;
+          const token0Decimals = tokenDefinitions[positionData.token0Symbol]?.decimals || 18;
+          const token1Decimals = tokenDefinitions[positionData.token1Symbol]?.decimals || 18;
 
           // Convert fee amounts to display units (no rounding)
           const fee0Amount = formatUnits(BigInt(positionData.feesForWithdraw.amount0 || '0'), token0Decimals);
@@ -218,7 +221,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
       if (isPercentage && !userSpecifiedAmounts) {
         try {
           // 1) Load on-chain position details and resolve poolKey token metadata by ADDRESS (not UI order)
-          const details = await getPositionDetails(nftTokenId);
+          const details = await getPositionDetails(nftTokenId, chainId);
           const symC0 = getTokenSymbolByAddress(getAddress(details.poolKey.currency0));
           const symC1 = getTokenSymbolByAddress(getAddress(details.poolKey.currency1));
           if (!symC0 || !symC1) throw new Error('Token definitions not found for pool currencies');
@@ -246,7 +249,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
             ]}
           ], keyTuple as any);
           const poolId = keccak256(encoded) as Hex;
-          const state = await getPoolState(poolId);
+          const state = await getPoolState(poolId, chainId);
 
           // 3) Build Pool and Position
           // Build Pool and Position strictly per guide semantics
@@ -396,7 +399,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
         } else {
           // In-range: compute required liquidity from desired token amounts using current pool state; OOR: server calc
           try {
-            const details = await getPositionDetails(nftTokenId);
+            const details = await getPositionDetails(nftTokenId, chainId);
             const keyTuple = [{
               currency0: getAddress(details.poolKey.currency0),
               currency1: getAddress(details.poolKey.currency1),
@@ -414,7 +417,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
               ]}
             ], keyTuple as any);
             const poolId = keccak256(encoded) as Hex;
-            const state = await getPoolState(poolId);
+            const state = await getPoolState(poolId, chainId);
 
             const inRange = state.tick >= details.tickLower && state.tick <= details.tickUpper;
 
@@ -518,7 +521,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
         let outOfRangeAbove = false;
         let inRange = false;
         try {
-          const details = await getPositionDetails(nftTokenId);
+          const details = await getPositionDetails(nftTokenId, chainId);
           const keyTuple = [{
             currency0: getAddress(details.poolKey.currency0),
             currency1: getAddress(details.poolKey.currency1),
@@ -536,7 +539,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
             ]}
           ], keyTuple as any);
           const poolId = keccak256(encoded) as Hex;
-          const state = await getPoolState(poolId);
+          const state = await getPoolState(poolId, chainId);
           outOfRangeBelow = state.tick < details.tickLower;
           outOfRangeAbove = state.tick > details.tickUpper;
           inRange = !outOfRangeBelow && !outOfRangeAbove;
@@ -545,7 +548,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
         // Map user-entered desired amounts to poolKey token sides
         const userDesired0Raw = safeParseUnits(adjustedPositionData.decreaseAmount0 || '0', token0Def.decimals);
         const userDesired1Raw = safeParseUnits(adjustedPositionData.decreaseAmount1 || '0', token1Def.decimals);
-        const { poolKey } = await getPositionDetails(nftTokenId);
+        const { poolKey } = await getPositionDetails(nftTokenId, chainId);
         const poolC0 = getAddress(poolKey.currency0);
         const poolC1 = getAddress(poolKey.currency1);
         const uiT0Addr = getAddress(token0Def.address);
@@ -711,7 +714,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
           description: "Fees collected successfully",
           action: hash ? {
             label: "View Transaction",
-            onClick: () => window.open(`https://sepolia.basescan.org/tx/${hash}`, '_blank')
+            onClick: () => window.open(getExplorerTxUrl(hash), '_blank')
           } : undefined
         });
       } else if (lastIsFullBurn.current) {
@@ -720,7 +723,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
           description: "Position burned and liquidity withdrawn successfully",
           action: hash ? {
             label: "View Transaction",
-            onClick: () => window.open(`https://sepolia.basescan.org/tx/${hash}`, '_blank')
+            onClick: () => window.open(getExplorerTxUrl(hash), '_blank')
           } : undefined
         });
       } else {
@@ -729,7 +732,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
           description: "Liquidity removed from position successfully",
           action: hash ? {
             label: "View Transaction",
-            onClick: () => window.open(`https://sepolia.basescan.org/tx/${hash}`, '_blank')
+            onClick: () => window.open(getExplorerTxUrl(hash), '_blank')
           } : undefined
         });
       }
@@ -747,11 +750,12 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
         }
 
         try {
-          if (accountAddress) {
+          if (accountAddress && chainId) {
             const currentPositionId = lastDecreaseData.current?.tokenId;
             const poolId = lastDecreaseData.current?.poolId;
             invalidateAfterTx(queryClient, {
               owner: accountAddress,
+              chainId,
               poolId: poolId,
               positionIds: currentPositionId ? [String(currentPositionId)] : undefined,
               reason: lastWasCollectOnly.current ? 'collect' : 'decrease'
@@ -824,7 +828,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
           tickUpper: 0 as any,
         });
 
-        const details = await getPositionDetails(nftTokenId);
+        const details = await getPositionDetails(nftTokenId, chainId);
         const token0Sym = getTokenSymbolByAddress(getAddress(details.poolKey.currency0));
         const token1Sym = getTokenSymbolByAddress(getAddress(details.poolKey.currency1));
         if (!token0Sym || !token1Sym) throw new Error('Token symbols not found');

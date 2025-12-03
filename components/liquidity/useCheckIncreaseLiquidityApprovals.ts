@@ -1,10 +1,11 @@
 import { useMemo, useState, useEffect } from 'react';
 import { useReadContract } from 'wagmi';
-import { TokenSymbol, TOKEN_DEFINITIONS, NATIVE_TOKEN_ADDRESS, getPositionManagerAddress } from '@/lib/pools-config';
+import { TokenSymbol, getTokenDefinitions, NATIVE_TOKEN_ADDRESS, getPositionManagerAddress } from '@/lib/pools-config';
 import { PERMIT2_ADDRESS } from '@/lib/swap-constants';
 import { ERC20_ABI } from '@/lib/abis/erc20';
 import { iallowance_transfer_abi } from '@/lib/abis/IAllowanceTransfer_abi';
 import { parseUnits } from 'viem';
+import { useNetwork } from '@/lib/network-context';
 
 export interface CheckIncreaseLiquidityApprovalsParams {
   userAddress?: string;
@@ -35,8 +36,10 @@ export function useCheckIncreaseLiquidityApprovals(
     refetchInterval?: number | false;
   }
 ) {
-  const token0Config = params ? TOKEN_DEFINITIONS[params.token0Symbol] : undefined;
-  const token1Config = params ? TOKEN_DEFINITIONS[params.token1Symbol] : undefined;
+  const { networkMode } = useNetwork();
+  const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
+  const token0Config = params ? tokenDefinitions[params.token0Symbol] : undefined;
+  const token1Config = params ? tokenDefinitions[params.token1Symbol] : undefined;
 
   // Check if tokens are native (ETH) - native tokens don't need approval
   const isToken0Native = token0Config?.address === NATIVE_TOKEN_ADDRESS;
@@ -95,7 +98,7 @@ export function useCheckIncreaseLiquidityApprovals(
     },
   });
 
-  const POSITION_MANAGER = getPositionManagerAddress();
+  const POSITION_MANAGER = getPositionManagerAddress(networkMode);
 
   const needsToken0ERC20Approval = !isToken0Native &&
     amount0Wei > 0n &&
