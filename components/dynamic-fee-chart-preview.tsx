@@ -316,7 +316,8 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
 
     const hasData = Array.isArray(effectiveData) && effectiveData.length > 0;
     const dataPointsCount = hasData ? effectiveData.length : 0;
-    const hasMinimumData = hasData && dataPointsCount >= 1;
+    // Require at least 2 data points to draw a line chart (1 point shows only a dot)
+    const hasMinimumData = hasData && dataPointsCount >= 2;
 
   // Render different Card structures based on data availability
   if (alwaysShowSkeleton) {
@@ -420,7 +421,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
         </div>
         <div className="px-2 py-2 h-[120px] relative">
               <div className="w-full h-full flex items-center justify-center text-xs font-mono text-muted-foreground/50 animate-pulse">
-                Pool Initializing ({dataPointsCount}/1 updates)
+                Pool Initializing ({dataPointsCount}/2 updates)
               </div>
         </div>
         

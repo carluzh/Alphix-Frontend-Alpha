@@ -6,6 +6,7 @@
 
 import { NextApiRequest, NextApiResponse } from 'next';
 import { calculatePositionAPY } from '@/lib/lifetime-fees';
+import { getNetworkModeFromRequest } from '@/lib/pools-config';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
@@ -13,6 +14,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   const { owner, tickLower, tickUpper, poolId, uncollectedFeesUSD, positionValueUSD, positionCreationTimestamp, poolAPY } = req.body;
+
+  // Get network mode from cookies
+  const networkMode = getNetworkModeFromRequest(req.headers.cookie);
 
   // Validate required fields
   if (!owner || tickLower === undefined || tickUpper === undefined || !poolId ||
@@ -32,7 +36,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       uncollectedFeesUSD,
       positionValueUSD,
       positionCreationTimestamp,
-      poolAPY // Pass the pre-calculated pool APY
+      poolAPY, // Pass the pre-calculated pool APY
+      networkMode // Pass network mode for correct subgraph URL
     );
 
     return res.status(200).json({

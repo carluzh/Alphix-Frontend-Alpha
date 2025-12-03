@@ -17,12 +17,16 @@ import { BadgeCheck, AlertTriangle, Loader2 } from "lucide-react";
 import { Section, SectionDescription } from "@/components/settings/Section";
 import { SettingsGroup, SettingsGroupItem } from "@/components/settings/SettingsGroup";
 import { cn } from "@/lib/utils";
-import { useNetwork } from "@/lib/network-context";
+import { useNetwork, MAINNET_CHAIN_ID, TESTNET_CHAIN_ID } from "@/lib/network-context";
 import { useUserSettings, type ApprovalMode } from "@/hooks/useUserSettings";
+import { useAccount } from "wagmi";
+import { switchChain } from "@wagmi/core";
+import { config } from "@/lib/wagmiConfig";
 
 export default function SettingsPage() {
   // Network settings - connected to global context
   const { isTestnet, setNetworkMode } = useNetwork();
+  const { isConnected } = useAccount();
   const [testnetMode, setTestnetMode] = useState(isTestnet);
   const [isNetworkSwitching, setIsNetworkSwitching] = useState(false);
 
@@ -65,14 +69,25 @@ export default function SettingsPage() {
     setTestnetMode(isTestnet);
   }, [isTestnet]);
 
-  const handleNetworkToggle = (newTestnetMode: boolean) => {
+  const handleNetworkToggle = async (newTestnetMode: boolean) => {
     if (isNetworkSwitching) return;
     setTestnetMode(newTestnetMode);
     setIsNetworkSwitching(true);
+
+    const targetChainId = newTestnetMode ? TESTNET_CHAIN_ID : MAINNET_CHAIN_ID;
+
     toast.info("Switching network...", {
       icon: <Loader2 className="h-4 w-4 animate-spin" />,
     });
-    // Small delay for UX feedback before page reload
+
+    if (isConnected) {
+      try {
+        await switchChain(config, { chainId: targetChainId });
+      } catch (error: any) {
+        console.log('[Settings] Chain switch failed:', error?.message);
+      }
+    }
+
     setTimeout(() => {
       setNetworkMode(newTestnetMode ? 'testnet' : 'mainnet');
     }, 500);

@@ -219,7 +219,7 @@ export async function GET() {
   try {
     // Get network mode from cookies
     const cookieStore = await cookies();
-    const networkCookie = cookieStore.get('alphix_network');
+    const networkCookie = cookieStore.get('alphix-network-mode');
     const networkMode: NetworkMode = (networkCookie?.value === 'mainnet' || networkCookie?.value === 'testnet')
       ? networkCookie.value
       : 'testnet'; // Default to testnet

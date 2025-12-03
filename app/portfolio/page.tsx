@@ -1202,6 +1202,20 @@ export default function PortfolioPage() {
     return () => document.removeEventListener('pointerdown', onDocPointerDown);
   }, [openPositionMenuKey]);
 
+  // Sync selectedPosition with activePositions when positions change
+  useEffect(() => {
+    if (!selectedPosition || activePositions.length === 0) return;
+    const updatedPosition = activePositions.find(p => p.positionId === selectedPosition.positionId);
+    if (!updatedPosition) return;
+
+    const hasChanged =
+      updatedPosition.token0?.amount !== selectedPosition.token0?.amount ||
+      updatedPosition.token1?.amount !== selectedPosition.token1?.amount ||
+      updatedPosition.liquidityRaw !== selectedPosition.liquidityRaw;
+
+    if (hasChanged) setSelectedPosition(updatedPosition);
+  }, [activePositions, selectedPosition]);
+
   // Wallet balances (for Balances UI only; excluded from global portfolio worth)
   const [walletPriceMap, setWalletPriceMap] = useState<Record<string, number>>({});
   const [walletPriceChange24hPctMap, setWalletPriceChange24hPctMap] = useState<Record<string, number>>({});

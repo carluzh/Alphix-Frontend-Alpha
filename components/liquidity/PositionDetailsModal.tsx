@@ -14,6 +14,7 @@ import { formatUSD } from "@/lib/format";
 import Image from "next/image";
 import { PositionChartV2 } from "./PositionChartV2";
 import { getOptimalBaseToken } from "@/lib/denomination-utils";
+import { calculateClientAPY } from "@/lib/client-apy";
 import { AddLiquidityFormPanel } from "./AddLiquidityFormPanel";
 import { RemoveLiquidityFormPanel } from "./RemoveLiquidityFormPanel";
 import { CollectFeesFormPanel } from "./CollectFeesFormPanel";
@@ -806,6 +807,28 @@ export function PositionDetailsModal({
   const fee0USD = feeAmount0 * getUsdPriceForSymbol(position.token0.symbol);
   const fee1USD = feeAmount1 * getUsdPriceForSymbol(position.token1.symbol);
 
+  const { computedFormattedAPY, computedIsAPYFallback, computedIsLoadingAPY } = useMemo(() => {
+    if (prefetchedFormattedAPY !== undefined) {
+      return {
+        computedFormattedAPY: prefetchedFormattedAPY,
+        computedIsAPYFallback: prefetchedIsAPYFallback ?? false,
+        computedIsLoadingAPY: prefetchedIsLoadingAPY ?? false,
+      };
+    }
+    if (valueUSD <= 0) {
+      return { computedFormattedAPY: '—', computedIsAPYFallback: false, computedIsLoadingAPY: true };
+    }
+    if (!position.isInRange) {
+      return { computedFormattedAPY: '0.00%', computedIsAPYFallback: false, computedIsLoadingAPY: false };
+    }
+    const result = calculateClientAPY(feesUSD, valueUSD, position.blockTimestamp, apr ?? 0);
+    return {
+      computedFormattedAPY: result.formattedAPY,
+      computedIsAPYFallback: result.isFallback,
+      computedIsLoadingAPY: false,
+    };
+  }, [prefetchedFormattedAPY, prefetchedIsAPYFallback, prefetchedIsLoadingAPY, feesUSD, valueUSD, position.blockTimestamp, position.isInRange, apr]);
+
   // Calculate denomination if not provided by parent
   const calculatedDenominationBase = useMemo(() => {
     if (denominationBase) return denominationBase;
@@ -985,12 +1008,12 @@ export function PositionDetailsModal({
 
           {/* Content */}
           <div className="overflow-y-auto px-4 pt-4 pb-4 space-y-4 flex-1 min-h-0">
-            {/* Top Bar - Token Info with Status and Fee Tier */}
-            <div className="flex items-center justify-between gap-4">
+            {/* Pool Info */}
+            <div className="overflow-hidden rounded-lg bg-muted/30 border border-sidebar-border/60">
               <div
                 className={cn(
-                  "flex items-center gap-3",
-                  showViewPoolButton && onViewPool && "cursor-pointer hover:opacity-80 transition-opacity"
+                  "px-4 py-3 flex items-center gap-3",
+                  showViewPoolButton && onViewPool && "cursor-pointer hover:bg-muted/20 transition-colors"
                 )}
                 onClick={() => {
                   if (showViewPoolButton && onViewPool) {
@@ -1000,7 +1023,7 @@ export function PositionDetailsModal({
                 }}
               >
                 <TokenStack position={position as any} />
-                <div className="flex flex-col gap-1">
+                <div className="flex flex-col gap-1 flex-1 min-w-0">
                   <h3 className="text-base font-semibold flex items-center gap-1.5">
                     {position.token0.symbol} / {position.token1.symbol}
                     {showViewPoolButton && onViewPool && (
@@ -1024,13 +1047,13 @@ export function PositionDetailsModal({
                 </div>
               </div>
 
-              {/* Action Buttons - Always visible */}
-              <div className="flex items-center gap-2">
+              {/* Actions */}
+              <div className="px-4 pb-3 pt-1 flex items-center gap-2">
                 <Button
-                  onClick={handleAddLiquidityClick}
+                  onClick={(e) => { e.stopPropagation(); handleAddLiquidityClick(); }}
                   variant="outline"
                   className={cn(
-                    "h-10 px-4 text-sm bg-button border-sidebar-border hover:brightness-110",
+                    "flex-1 h-8 text-xs bg-button border-sidebar-border hover:brightness-110",
                     currentView === 'add-liquidity' && "ring-2 ring-sidebar-primary"
                   )}
                   style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: '200%', backgroundPosition: 'center' }}
@@ -1038,23 +1061,22 @@ export function PositionDetailsModal({
                   Add Liquidity
                 </Button>
                 <Button
-                  onClick={handleRemoveLiquidityClick}
+                  onClick={(e) => { e.stopPropagation(); handleRemoveLiquidityClick(); }}
                   variant="outline"
                   className={cn(
-                    "h-10 px-4 text-sm bg-button border-sidebar-border hover:brightness-110",
+                    "flex-1 h-8 text-xs bg-button border-sidebar-border hover:brightness-110",
                     currentView === 'remove-liquidity' && "ring-2 ring-sidebar-primary"
                   )}
                   style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: '200%', backgroundPosition: 'center' }}
                 >
                   Remove Liquidity
                 </Button>
-                <div className="h-8 w-px bg-border flex-shrink-0" />
                 <Button
-                  onClick={handleCollectFeesClick}
+                  onClick={(e) => { e.stopPropagation(); handleCollectFeesClick(); }}
                   disabled={hasZeroFees}
                   variant="outline"
                   className={cn(
-                    "h-10 px-4 text-sm bg-button border-sidebar-border hover:brightness-110 disabled:opacity-50",
+                    "flex-1 h-8 text-xs bg-button border-sidebar-border hover:brightness-110 disabled:opacity-50",
                     currentView === 'collect-fees' && "ring-2 ring-sidebar-primary"
                   )}
                   style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: '200%', backgroundPosition: 'center' }}
@@ -1109,22 +1131,18 @@ export function PositionDetailsModal({
                 <div className="flex flex-col gap-5">
                   {/* Label + Total USD */}
                   <div className="flex flex-col gap-2 relative">
-                    {/* APY floating in top-right */}
-                    {mounted && (
+                    {/* APY */}
+                    {mounted && !computedIsLoadingAPY && computedFormattedAPY && computedFormattedAPY !== '—' && (
                       <div className="absolute top-0 right-0 border border-dashed border-sidebar-border/60 rounded-lg p-2 flex items-center gap-1 group/apy cursor-help">
                         <div className="flex flex-col items-start gap-0">
-                          {prefetchedIsLoadingAPY ? (
-                            <div className="h-4 w-10 bg-muted/60 rounded animate-pulse" />
-                          ) : (
-                            <div className="text-sm font-normal leading-none">
-                              {prefetchedFormattedAPY || '—'}
-                            </div>
-                          )}
+                          <div className="text-sm font-normal leading-none">
+                            {computedFormattedAPY}
+                          </div>
                         </div>
 
                         {/* Tooltip */}
                         <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 px-3 py-2 bg-popover border border-sidebar-border rounded-md shadow-lg opacity-0 group-hover/apy:opacity-100 pointer-events-none transition-opacity duration-200 w-48 text-xs text-popover-foreground z-[100]">
-                          {prefetchedIsAPYFallback ? (
+                          {computedIsAPYFallback ? (
                             <p><span className="font-bold">APY:</span> Pool-wide estimate. Actual APY calculated from position fees.</p>
                           ) : (
                             <p><span className="font-bold">APY:</span> Calculated from your position's accumulated fees.</p>

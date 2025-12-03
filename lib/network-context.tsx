@@ -35,30 +35,23 @@ interface NetworkContextValue {
 const NetworkContext = createContext<NetworkContextValue | undefined>(undefined);
 
 export function NetworkProvider({ children }: { children: React.ReactNode }) {
-  // Default to testnet for safety
-  const [networkMode, setNetworkModeState] = useState<NetworkMode>('testnet');
-
-  // Load from localStorage on mount and sync to cookie
-  useEffect(() => {
+  const [networkMode, setNetworkModeState] = useState<NetworkMode>(() => {
+    if (typeof window === 'undefined') return 'testnet';
     try {
       const stored = localStorage.getItem(NETWORK_STORAGE_KEY);
-      if (stored === 'mainnet' || stored === 'testnet') {
-        setNetworkModeState(stored);
-        // Sync localStorage value to cookie for server-side access
-        document.cookie = `${NETWORK_COOKIE_NAME}=${stored}; path=/; max-age=31536000; SameSite=Lax`;
-      } else {
-        // No stored value - use env default or fallback to testnet
-        const defaultMode = process.env.NEXT_PUBLIC_DEFAULT_NETWORK === 'mainnet' ? 'mainnet' : 'testnet';
-        setNetworkModeState(defaultMode);
-        localStorage.setItem(NETWORK_STORAGE_KEY, defaultMode);
-        document.cookie = `${NETWORK_COOKIE_NAME}=${defaultMode}; path=/; max-age=31536000; SameSite=Lax`;
-      }
+      if (stored === 'mainnet' || stored === 'testnet') return stored;
+      return process.env.NEXT_PUBLIC_DEFAULT_NETWORK === 'mainnet' ? 'mainnet' : 'testnet';
     } catch {
-      // localStorage not available (SSR or error) - still set cookie with default
-      const defaultMode = process.env.NEXT_PUBLIC_DEFAULT_NETWORK === 'mainnet' ? 'mainnet' : 'testnet';
-      document.cookie = `${NETWORK_COOKIE_NAME}=${defaultMode}; path=/; max-age=31536000; SameSite=Lax`;
+      return 'testnet';
     }
-  }, []);
+  });
+
+  useEffect(() => {
+    document.cookie = `${NETWORK_COOKIE_NAME}=${networkMode}; path=/; max-age=31536000; SameSite=Lax`;
+    try {
+      localStorage.setItem(NETWORK_STORAGE_KEY, networkMode);
+    } catch {}
+  }, [networkMode]);
 
   const setNetworkMode = useCallback((mode: NetworkMode) => {
     setNetworkModeState(mode);

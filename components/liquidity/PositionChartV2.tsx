@@ -19,7 +19,7 @@ import {
 import { usePoolChartData } from '@/hooks/usePoolChartData';
 import { cn } from '@/lib/utils';
 import Image from 'next/image';
-import { ArrowLeftRight, Maximize } from 'lucide-react';
+import { ArrowLeftRight } from 'lucide-react';
 
 interface PositionChartV2Props {
   token0: string;
@@ -34,7 +34,6 @@ interface PositionChartV2Props {
   selectedPoolId: string;
   className?: string;
   chartKey?: number;
-  onReset?: () => void;
 }
 
 interface PriceDataPoint {
@@ -239,7 +238,6 @@ export function PositionChartV2({
   selectedPoolId,
   className,
   chartKey = 0,
-  onReset
 }: PositionChartV2Props) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -257,13 +255,6 @@ export function PositionChartV2({
   // API returns token1/token0; check if we need to invert based on denomination
   const apiNeedsInvert = inheritedDenominationBase === token1;
   const userFlipped = localDenominationBase !== inheritedDenominationBase;
-
-  // Reset chart view to fit all content
-  const resetChartView = useCallback(() => {
-    if (chartRef.current) {
-      chartRef.current.timeScale().fitContent();
-    }
-  }, []);
 
   // Fetch data with refetch capability
   const {
@@ -306,10 +297,11 @@ export function PositionChartV2({
 
     const container = chartContainerRef.current;
 
-    // Create chart
     const chart = createChart(container, {
-      width: container.clientWidth,
+      autoSize: true,
       height: CHART_HEIGHT,
+      handleScroll: false,
+      handleScale: false,
       layout: {
         background: { color: 'transparent' },
         textColor: '#a3a3a3',
@@ -503,19 +495,7 @@ export function PositionChartV2({
 
     chartRef.current = chart;
 
-    // Handle resize
-    const handleResize = () => {
-      if (container && chart) {
-        chart.applyOptions({
-          width: container.clientWidth,
-        });
-      }
-    };
-
-    window.addEventListener('resize', handleResize);
-
     return () => {
-      window.removeEventListener('resize', handleResize);
       chart.remove();
       chartRef.current = null;
       priceSeriesRef.current = null;
@@ -556,19 +536,8 @@ export function PositionChartV2({
 
   return (
     <div className={cn("relative h-full w-full", className)} style={{ height: CHART_HEIGHT }}>
-      {/* Top controls */}
-      <div className="absolute top-1 left-1 z-20 flex gap-1">
-        {/* Reset/Fit view button - always show */}
-        <button
-          type="button"
-          className="h-5 w-5 flex items-center justify-center rounded border border-sidebar-border bg-button opacity-80 hover:opacity-100 hover:brightness-110 hover:border-white/30 transition-opacity"
-          onClick={onReset || resetChartView}
-          aria-label="Fit chart to content"
-        >
-          <Maximize className="h-4 w-4" />
-        </button>
-
-        {/* Price denomination flip button */}
+      {/* Controls */}
+      <div className="absolute top-1 left-1 z-20">
         <button
           onClick={() => setLocalDenominationBase(localDenominationBase === token0 ? token1 : token0)}
           className="h-5 flex items-center gap-1 px-1.5 rounded border border-sidebar-border bg-button opacity-80 hover:opacity-100 hover:brightness-110 hover:border-white/30 text-xs transition-opacity"

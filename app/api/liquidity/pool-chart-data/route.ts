@@ -2,8 +2,9 @@ export const runtime = 'nodejs';
 export const preferredRegion = 'auto';
 
 import { NextResponse } from 'next/server';
-import { getPoolSubgraphId, getAllPools } from '@/lib/pools-config';
-import { getSubgraphUrlForPool } from '@/lib/subgraph-url-helper';
+import { cookies } from 'next/headers';
+import { getPoolSubgraphId, getAllPools, type NetworkMode } from '@/lib/pools-config';
+import { getUniswapV4SubgraphUrl } from '@/lib/subgraph-url-helper';
 import { setCachedData, getCachedDataWithStale } from '@/lib/redis';
 import { poolKeys } from '@/lib/redis-keys';
 import { batchGetTokenPrices } from '@/lib/price-service';
@@ -33,18 +34,21 @@ interface ChartDataResponse {
   isStale?: boolean;
 }
 
-async function computeChartData(poolId: string, days: number): Promise<ChartDataResponse> {
+async function computeChartData(poolId: string, days: number, networkMode: NetworkMode): Promise<ChartDataResponse> {
   try {
-    const subgraphId = (getPoolSubgraphId(poolId) || poolId).toLowerCase();
-    const subgraphUrl = getSubgraphUrlForPool(poolId);
+    const subgraphId = (getPoolSubgraphId(poolId, networkMode) || poolId).toLowerCase();
 
-    if (!subgraphUrl) {
-      throw new Error('Subgraph URL not found for pool');
+    // Use Uniswap V4 subgraph for Pool/PoolHourData queries (volume, TVL)
+    // Fee events are handled by the /api/liquidity/get-historical-dynamic-fees endpoint
+    const poolDataSubgraphUrl = getUniswapV4SubgraphUrl(networkMode);
+
+    if (!poolDataSubgraphUrl) {
+      throw new Error('Uniswap V4 subgraph URL not found for pool data');
     }
 
     // Get pool config for token symbols
-    const allPools = getAllPools();
-    const poolCfg = allPools.find(p => (getPoolSubgraphId(p.id) || p.id).toLowerCase() === subgraphId);
+    const allPools = getAllPools(networkMode);
+    const poolCfg = allPools.find(p => (getPoolSubgraphId(p.id, networkMode) || p.id).toLowerCase() === subgraphId);
     const sym0 = poolCfg?.currency0?.symbol || 'USDC';
     const sym1 = poolCfg?.currency1?.symbol || 'USDC';
 
@@ -95,14 +99,14 @@ async function computeChartData(poolId: string, days: number): Promise<ChartData
     // Fetch volume, blocks, and fee events in parallel
     const [hourlyResult, blocksResult, feeEventsResult] = await Promise.all([
       // Query 1: Hourly volume data
-      fetch(subgraphUrl, {
+      fetch(poolDataSubgraphUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query: hourlyQuery })
       }),
 
       // Query 2: Block numbers for TVL historical queries
-      blocksQuery ? fetch(subgraphUrl, {
+      blocksQuery ? fetch(poolDataSubgraphUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query: blocksQuery })
@@ -158,7 +162,7 @@ async function computeChartData(poolId: string, days: number): Promise<ChartData
 
       const poolsQuery = `query Pools {\n${poolAliases}\n}`;
 
-      const poolsResult = await fetch(subgraphUrl, {
+      const poolsResult = await fetch(poolDataSubgraphUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query: poolsQuery })
@@ -183,7 +187,7 @@ async function computeChartData(poolId: string, days: number): Promise<ChartData
 
     // Get current TVL for today
     const currentPoolQuery = `{ pools(where: { id: "${subgraphId}" }) { totalValueLockedToken0 totalValueLockedToken1 } }`;
-    const currentResult = await fetch(subgraphUrl, {
+    const currentResult = await fetch(poolDataSubgraphUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query: currentPoolQuery })
@@ -271,8 +275,15 @@ export async function GET(request: Request) {
       );
     }
 
-    // Use poolKeys helper for consistent cache key naming
-    const cacheKey = poolKeys.chart(poolId, days);
+    // Get network mode from cookies
+    const cookieStore = await cookies();
+    const networkCookie = cookieStore.get('alphix-network-mode');
+    const networkMode: NetworkMode = (networkCookie?.value === 'mainnet' || networkCookie?.value === 'testnet')
+      ? networkCookie.value
+      : 'testnet';
+
+    // Use poolKeys helper for consistent cache key naming (include network mode)
+    const cacheKey = `${poolKeys.chart(poolId, days)}:${networkMode}`;
 
     // Check Redis cache with staleness
     const { data: cachedData, isStale, isInvalidated } = await getCachedDataWithStale<ChartDataResponse>(
@@ -290,7 +301,7 @@ export async function GET(request: Request) {
     // Invalidated cache: blocking fetch (user just did an action)
     if (cachedData && isInvalidated) {
       console.log('[pool-chart-data] Redis cache INVALIDATED - performing blocking refresh');
-      const payload = await computeChartData(poolId, days);
+      const payload = await computeChartData(poolId, days, networkMode);
       await setCachedData(cacheKey, payload, 3600); // 1 hour TTL
       return NextResponse.json({ ...payload, isStale: false });
     }
@@ -300,7 +311,7 @@ export async function GET(request: Request) {
       console.log('[pool-chart-data] Redis cache HIT (stale) - returning stale data, triggering background refresh');
 
       // Trigger background revalidation (fire-and-forget)
-      void computeChartData(poolId, days)
+      void computeChartData(poolId, days, networkMode)
         .then((payload) => setCachedData(cacheKey, payload, 3600))
         .catch((error) => {
           console.error('[pool-chart-data] Background revalidation failed:', error);
@@ -312,7 +323,7 @@ export async function GET(request: Request) {
 
     // Cache miss: fetch fresh data
     console.log('[pool-chart-data] Redis cache MISS, fetching fresh data');
-    const payload = await computeChartData(poolId, days);
+    const payload = await computeChartData(poolId, days, networkMode);
 
     // Cache the result
     console.log('[pool-chart-data] Caching data (1-hour TTL)');

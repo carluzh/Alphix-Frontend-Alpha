@@ -1,11 +1,12 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getSubgraphUrlForPool, isDaiPool, isMainnetSubgraphMode } from '../../../lib/subgraph-url-helper';
 import { cacheService } from '../../../lib/cache/CacheService';
+import { getNetworkModeFromRequest, type NetworkMode } from '../../../lib/pools-config';
 
 // Subgraph URL selection (Satsuma default with env/query overrides)
 const LEGACY_SUBGRAPH_URL = process.env.SUBGRAPH_URL || "";
-function selectSubgraphUrl(poolId: string | undefined): string {
-  return getSubgraphUrlForPool(poolId) || LEGACY_SUBGRAPH_URL;
+function selectSubgraphUrl(poolId: string | undefined, networkMode?: NetworkMode): string {
+  return getSubgraphUrlForPool(poolId, networkMode) || LEGACY_SUBGRAPH_URL;
 }
 
 // Mainnet query: uses poolId filter (minimal subgraph stores poolId as String, not Pool relation)
@@ -75,11 +76,11 @@ type HookEvent = {
 type HookResp = { data?: { alphixHooks?: HookEvent[] }, errors?: any[] };
 
 // Select the appropriate query based on network mode and pool type
-function selectQuery(poolId: string): string {
-  if (isMainnetSubgraphMode()) {
+function selectQuery(poolId: string, networkMode?: NetworkMode): string {
+  if (isMainnetSubgraphMode(networkMode)) {
     return GET_LAST_HOOK_EVENTS_MAINNET;
   }
-  return isDaiPool(poolId) ? GET_LAST_HOOK_EVENTS_DAI : GET_LAST_HOOK_EVENTS_OLD;
+  return isDaiPool(poolId, networkMode) ? GET_LAST_HOOK_EVENTS_DAI : GET_LAST_HOOK_EVENTS_OLD;
 }
 
 export default async function handler(
@@ -96,7 +97,10 @@ export default async function handler(
     return res.status(400).json({ message: 'Valid poolId query parameter is required.' });
   }
 
-  const cacheKey = `dynamic-fees:${poolId.toLowerCase()}`;
+  // Get network mode from cookies
+  const networkMode = getNetworkModeFromRequest(req.headers.cookie);
+
+  const cacheKey = `dynamic-fees:${poolId.toLowerCase()}:${networkMode}`;
 
   // Support version-based cache busting
   const version = versionQuery || '';
@@ -108,8 +112,8 @@ export default async function handler(
       cacheKey,
       { fresh: 6 * 60 * 60, stale: 24 * 60 * 60 }, // 6h fresh, 24h stale
       async () => {
-        const SUBGRAPH_URL = selectSubgraphUrl(poolId);
-        const query = selectQuery(poolId);
+        const SUBGRAPH_URL = selectSubgraphUrl(poolId, networkMode);
+        const query = selectQuery(poolId, networkMode);
 
         const resp = await fetch(SUBGRAPH_URL, {
           method: 'POST',

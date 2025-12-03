@@ -14,8 +14,8 @@
  * pool-wide APY: (volume24h * feeRate * 365 / TVL) * 100
  */
 
-import { getSubgraphUrlForPool } from './subgraph-url-helper';
-import { getPoolSubgraphId } from './pools-config';
+import { getSubgraphUrlForPool, getUniswapV4SubgraphUrl, isMainnetSubgraphMode } from './subgraph-url-helper';
+import { getPoolSubgraphId, type NetworkMode } from './pools-config';
 
 export interface PositionAPYResult {
   apy: number | null;
@@ -40,8 +40,49 @@ interface ModifyLiquidityEvent {
  * @param positionValueUSD - Current position value in USD
  * @param positionCreationTimestamp - Position creation timestamp (fallback)
  * @param poolAPY - Pre-calculated pool APY to use as fallback (from get-pools-batch cache)
+ * @param networkMode - Network mode for correct subgraph URL selection
  * @returns APY result with duration info
  */
+// Mainnet query: uses poolId as String (Uniswap v4 subgraph structure)
+const MODIFY_LIQUIDITY_QUERY_MAINNET = `
+  query GetLastLiquidityModification($poolId: String!, $owner: Bytes!, $tickLower: BigInt!, $tickUpper: BigInt!) {
+    modifyLiquidities(
+      where: {
+        poolId: $poolId
+        origin: $owner
+        tickLower: $tickLower
+        tickUpper: $tickUpper
+      }
+      orderBy: timestamp
+      orderDirection: desc
+      first: 1
+    ) {
+      amount
+      timestamp
+    }
+  }
+`;
+
+// Testnet query: uses pool as Bytes (our full subgraph structure)
+const MODIFY_LIQUIDITY_QUERY_TESTNET = `
+  query GetLastLiquidityModification($pool: Bytes!, $owner: Bytes!, $tickLower: BigInt!, $tickUpper: BigInt!) {
+    modifyLiquidities(
+      where: {
+        pool: $pool
+        origin: $owner
+        tickLower: $tickLower
+        tickUpper: $tickUpper
+      }
+      orderBy: timestamp
+      orderDirection: desc
+      first: 1
+    ) {
+      amount
+      timestamp
+    }
+  }
+`;
+
 export async function calculatePositionAPY(
   owner: string,
   tickLower: number,
@@ -50,40 +91,35 @@ export async function calculatePositionAPY(
   uncollectedFeesUSD: number,
   positionValueUSD: number,
   positionCreationTimestamp: number,
-  poolAPY?: number | null
+  poolAPY?: number | null,
+  networkMode?: NetworkMode
 ): Promise<PositionAPYResult> {
   try {
-    // Get the appropriate subgraph URL for this pool
-    const subgraphUrl = getSubgraphUrlForPool(poolId);
+    const isMainnet = isMainnetSubgraphMode(networkMode);
+    // For mainnet, ModifyLiquidity events are in the Uniswap v4 subgraph
+    // For testnet, they're in our full Alphix subgraph
+    const subgraphUrl = isMainnet
+      ? getUniswapV4SubgraphUrl(networkMode)
+      : getSubgraphUrlForPool(poolId, networkMode);
     const subgraphPoolId = getPoolSubgraphId(poolId) || poolId;
 
-    // Query for the LAST ModifyLiquidity event (including fee collections with amount = 0)
-    // This ensures APY resets when user collects fees, since uncollected fees reset at that point
-    const query = `
-      query GetLastLiquidityModification($pool: Bytes!, $owner: Bytes!, $tickLower: BigInt!, $tickUpper: BigInt!) {
-        modifyLiquidities(
-          where: {
-            pool: $pool
-            origin: $owner
-            tickLower: $tickLower
-            tickUpper: $tickUpper
-          }
-          orderBy: timestamp
-          orderDirection: desc
-          first: 1
-        ) {
-          amount
-          timestamp
-        }
-      }
-    `;
+    // Select query based on network mode (different field types)
+    const query = isMainnet ? MODIFY_LIQUIDITY_QUERY_MAINNET : MODIFY_LIQUIDITY_QUERY_TESTNET;
 
-    const variables = {
-      pool: subgraphPoolId.toLowerCase(),
-      owner: owner.toLowerCase(),
-      tickLower: tickLower.toString(),
-      tickUpper: tickUpper.toString(),
-    };
+    // Build variables based on network (mainnet uses poolId, testnet uses pool)
+    const variables = isMainnet
+      ? {
+          poolId: subgraphPoolId.toLowerCase(),
+          owner: owner.toLowerCase(),
+          tickLower: tickLower.toString(),
+          tickUpper: tickUpper.toString(),
+        }
+      : {
+          pool: subgraphPoolId.toLowerCase(),
+          owner: owner.toLowerCase(),
+          tickLower: tickLower.toString(),
+          tickUpper: tickUpper.toString(),
+        };
 
     const response = await fetch(subgraphUrl, {
       method: 'POST',

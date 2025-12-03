@@ -2872,6 +2872,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 onAutoSlippageToggle={handleAutoSlippageToggle}
                 onCustomSlippageToggle={handleCustomSlippageToggle}
                 priceImpactWarning={priceImpactWarning}
+                onNetworkSwitch={handleNetworkSwitch}
               />
             )}
 

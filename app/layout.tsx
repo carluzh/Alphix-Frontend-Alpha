@@ -2,9 +2,6 @@ import type React from "react"
 import { Inter } from "next/font/google"
 import "./globals.css"
 import AppKitProvider from '@/components/AppKitProvider'
-import { config } from '@/lib/wagmiConfig'
-import { cookieToInitialState } from 'wagmi'
-import { headers } from 'next/headers'
 import { ThemeProvider } from "@/components/theme-provider"
 import { NetworkProvider } from "@/lib/network-context"
 import { Toaster } from "@/components/ui/sonner"
@@ -28,19 +25,12 @@ export const metadata: Metadata = {
   },
   description: 'Alphix: Unifying Liquidity on Base. Enhancing DeFi capital efficiency with our dynamic fee hook. Built on Uniswap V4 for security and optimal performance. Explore Unified Pools today!',
   icons: {
-    icon: '/favicon.png', 
+    icon: '/favicon.png',
     apple: '/favicon.png',
   },
 }
 
-// Make the layout component async to await headers
-export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  // Await the headers
-  const headerList = await headers()
-  const cookie = headerList.get("cookie")
-  // Pass cookie to initial state helper
-  const initialWagmiState = cookieToInitialState(config, cookie)
-
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${inter.variable}`} suppressHydrationWarning>
       <body>
@@ -51,7 +41,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           disableTransitionOnChange
         >
           <NetworkProvider>
-            <AppKitProvider cookies={cookie}>
+            <AppKitProvider cookies={null}>
               <ErrorBoundary>
                 <SidebarProvider>
                   {children}

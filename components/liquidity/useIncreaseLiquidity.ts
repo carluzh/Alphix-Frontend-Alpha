@@ -407,11 +407,7 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
         hasBatchPermit: Boolean((addOptions as any)?.batchPermit),
       });
 
-      // Inform user about increase transaction request
-      toast("Confirm Increase", {
-        icon: React.createElement(InfoIcon, { className: "h-4 w-4" })
-      });
-
+      // Toast removed - TransactionFlowPanel already shows "Confirm Transaction"
       resetWriteContract();
       writeContract({
         address: V4_POSITION_MANAGER_ADDRESS as Hex,

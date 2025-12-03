@@ -78,6 +78,7 @@ interface SwapInputViewProps {
     severity: 'medium' | 'high';
     message: string;
   } | null;
+  onNetworkSwitch?: () => void;
 }
 
 export function SwapInputView({
@@ -124,6 +125,7 @@ export function SwapInputView({
   showRoute = true,
   onRouteHoverChange,
   priceImpactWarning,
+  onNetworkSwitch,
 }: SwapInputViewProps) {
   const [hoveredRouteIndex, setHoveredRouteIndex] = React.useState<number | null>(null);
   const [clickedTokenIndex, setClickedTokenIndex] = React.useState<number | null>(0);
@@ -795,21 +797,30 @@ export function SwapInputView({
 
       <div className="mt-4 h-10">
         {!isMounted ? null : isConnected ? (
-          <Button
-            className={cn(
-              "w-full",
-              isSwapBaseDisabled
-                ? "relative border border-primary bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 !opacity-100 text-white/75"
-                : "text-sidebar-primary border border-sidebar-primary bg-button-primary hover-button-primary",
-              isSwapBaseDisabled ? (quoteLoading ? "cursor-wait" : "cursor-default") : null
-            )}
-            onClick={handleSwap}
-            disabled={isSwapDisabled}
-            aria-busy={quoteLoading}
-            style={isSwapBaseDisabled ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
-          >
-            {actionButtonText}
-          </Button>
+          currentChainId !== TARGET_CHAIN_ID && onNetworkSwitch ? (
+            <Button
+              className="w-full text-sidebar-primary border border-sidebar-primary bg-button-primary hover-button-primary"
+              onClick={onNetworkSwitch}
+            >
+              {actionButtonText}
+            </Button>
+          ) : (
+            <Button
+              className={cn(
+                "w-full",
+                isSwapBaseDisabled
+                  ? "relative border border-primary bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 !opacity-100 text-white/75"
+                  : "text-sidebar-primary border border-sidebar-primary bg-button-primary hover-button-primary",
+                isSwapBaseDisabled ? (quoteLoading ? "cursor-wait" : "cursor-default") : null
+              )}
+              onClick={handleSwap}
+              disabled={isSwapDisabled}
+              aria-busy={quoteLoading}
+              style={isSwapBaseDisabled ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
+            >
+              {actionButtonText}
+            </Button>
+          )
         ) : (
           <div
             className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md border border-primary bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30"

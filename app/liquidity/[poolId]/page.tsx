@@ -1312,7 +1312,8 @@ export default function PoolDetailPage() {
           while (ei < evAsc.length && Number(evAsc[ei]?.timestamp || 0) <= endTs) {
             const e = evAsc[ei];
             const bps = Number(e?.newFeeBps ?? 0);
-            curFeePct = Number.isFinite(bps) ? (bps / 10_000) : curFeePct;
+            // newFeeBps is in basis points (1 bps = 0.01%), so divide by 100 to get percentage
+            curFeePct = Number.isFinite(bps) ? (bps / 100) : curFeePct;
             curRatio = scaleRatio(e?.currentRatio); // Activity
             curEma = scaleRatio(e?.newTargetRatio); // Target
             ei++;
@@ -2872,7 +2873,7 @@ export default function PoolDetailPage() {
                                               <div className="flex flex-1 justify-between leading-none items-center">
                                                 <span className="text-muted-foreground">Fee</span>
                                                 <span className="font-mono font-medium tabular-nums text-foreground">
-                                                  {typeof dataPoint.dynamicFee === 'number' ? `${dataPoint.dynamicFee.toFixed(2)}%` : 'N/A'}
+                                                  {typeof dataPoint.dynamicFee === 'number' ? `${dataPoint.dynamicFee < 0.1 ? dataPoint.dynamicFee.toFixed(3) : dataPoint.dynamicFee.toFixed(2)}%` : 'N/A'}
                                                 </span>
                                               </div>
                                             </div>
@@ -3048,8 +3049,8 @@ export default function PoolDetailPage() {
                               };
                               const leftLabelA = (ratioDomain[0]).toFixed(2);
                               const leftLabelB = (ratioDomain[1]).toFixed(2);
-                              const rightLabelA = `${feeDomain[0].toFixed(2)}%`;
-                              const rightLabelB = `${feeDomain[1].toFixed(2)}%`;
+                              const rightLabelA = `${feeDomain[0] < 0.1 ? feeDomain[0].toFixed(3) : feeDomain[0].toFixed(2)}%`;
+                              const rightLabelB = `${feeDomain[1] < 0.1 ? feeDomain[1].toFixed(3) : feeDomain[1].toFixed(2)}%`;
                               const maxChars = Math.max(
                                 leftLabelA.length,
                                 leftLabelB.length,
@@ -3097,7 +3098,7 @@ export default function PoolDetailPage() {
                                     axisLine={false}
                                     tickMargin={0}
                                     width={axisWidth}
-                                    tickFormatter={(value) => `${value.toFixed(2)}%`}
+                                    tickFormatter={(value) => `${value < 0.1 ? value.toFixed(3) : value.toFixed(2)}%`}
                                     domain={feeDomain}
                                     stroke="hsl(var(--muted-foreground))"
                                     tick={{ fontSize: '0.75rem', textAnchor: 'start' }}
@@ -3154,7 +3155,7 @@ export default function PoolDetailPage() {
                                               <div className="flex flex-1 justify-between leading-none items-center">
                                                 <span className="text-muted-foreground">Fee</span>
                                                 <span className="font-mono font-medium tabular-nums text-foreground">
-                                                  {typeof dataPoint.dynamicFee === 'number' ? `${dataPoint.dynamicFee.toFixed(2)}%` : 'N/A'}
+                                                  {typeof dataPoint.dynamicFee === 'number' ? `${dataPoint.dynamicFee < 0.1 ? dataPoint.dynamicFee.toFixed(3) : dataPoint.dynamicFee.toFixed(2)}%` : 'N/A'}
                                                 </span>
                                               </div>
                                             </div>
