@@ -159,6 +159,7 @@ export function PositionDetailsModal({
   onLiquidityDecreased: onLiquidityDecreasedProp,
   onAfterLiquidityAdded,
   onAfterLiquidityRemoved,
+  apr,
 }: PositionDetailsModalProps) {
   const [mounted, setMounted] = useState(false);
   const [chartKey, setChartKey] = useState(0);
@@ -1024,11 +1025,8 @@ export function PositionDetailsModal({
               >
                 <TokenStack position={position as any} />
                 <div className="flex flex-col gap-1 flex-1 min-w-0">
-                  <h3 className="text-base font-semibold flex items-center gap-1.5">
+                  <h3 className="text-base font-semibold">
                     {position.token0.symbol} / {position.token1.symbol}
-                    {showViewPoolButton && onViewPool && (
-                      <ArrowUpRight className="h-3.5 w-3.5 text-muted-foreground" />
-                    )}
                   </h3>
                   <div className="flex items-center gap-2">
                     {feeTierDisplay && (
@@ -1045,44 +1043,43 @@ export function PositionDetailsModal({
                     </div>
                   </div>
                 </div>
-              </div>
 
-              {/* Actions */}
-              <div className="px-4 pb-3 pt-1 flex items-center gap-2">
-                <Button
-                  onClick={(e) => { e.stopPropagation(); handleAddLiquidityClick(); }}
-                  variant="outline"
-                  className={cn(
-                    "flex-1 h-8 text-xs bg-button border-sidebar-border hover:brightness-110",
-                    currentView === 'add-liquidity' && "ring-2 ring-sidebar-primary"
-                  )}
-                  style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: '200%', backgroundPosition: 'center' }}
-                >
-                  Add Liquidity
-                </Button>
-                <Button
-                  onClick={(e) => { e.stopPropagation(); handleRemoveLiquidityClick(); }}
-                  variant="outline"
-                  className={cn(
-                    "flex-1 h-8 text-xs bg-button border-sidebar-border hover:brightness-110",
-                    currentView === 'remove-liquidity' && "ring-2 ring-sidebar-primary"
-                  )}
-                  style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: '200%', backgroundPosition: 'center' }}
-                >
-                  Remove Liquidity
-                </Button>
-                <Button
-                  onClick={(e) => { e.stopPropagation(); handleCollectFeesClick(); }}
-                  disabled={hasZeroFees}
-                  variant="outline"
-                  className={cn(
-                    "flex-1 h-8 text-xs bg-button border-sidebar-border hover:brightness-110 disabled:opacity-50",
-                    currentView === 'collect-fees' && "ring-2 ring-sidebar-primary"
-                  )}
-                  style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: '200%', backgroundPosition: 'center' }}
-                >
-                  Collect Fees
-                </Button>
+                <div className="flex items-center gap-1 flex-shrink-0 ml-auto mt-[25px]">
+                  <Button
+                    onClick={(e) => { e.stopPropagation(); handleAddLiquidityClick(); }}
+                    variant="ghost"
+                    size="sm"
+                    className={cn(
+                      "h-7 px-2.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50",
+                      currentView === 'add-liquidity' && "bg-muted/50 text-foreground"
+                    )}
+                  >
+                    Add Liquidity
+                  </Button>
+                  <Button
+                    onClick={(e) => { e.stopPropagation(); handleRemoveLiquidityClick(); }}
+                    variant="ghost"
+                    size="sm"
+                    className={cn(
+                      "h-7 px-2.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50",
+                      currentView === 'remove-liquidity' && "bg-muted/50 text-foreground"
+                    )}
+                  >
+                    Remove Liquidity
+                  </Button>
+                  <Button
+                    onClick={(e) => { e.stopPropagation(); handleCollectFeesClick(); }}
+                    disabled={hasZeroFees}
+                    variant="ghost"
+                    size="sm"
+                    className={cn(
+                      "h-7 px-2.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 disabled:opacity-40",
+                      currentView === 'collect-fees' && "bg-muted/50 text-foreground"
+                    )}
+                  >
+                    Collect Fees
+                  </Button>
+                </div>
               </div>
             </div>
 
@@ -1131,8 +1128,8 @@ export function PositionDetailsModal({
                 <div className="flex flex-col gap-5">
                   {/* Label + Total USD */}
                   <div className="flex flex-col gap-2 relative">
-                    {/* APY */}
-                    {mounted && !computedIsLoadingAPY && computedFormattedAPY && computedFormattedAPY !== '—' && (
+                    {/* APY - only show if there are actual fees earned */}
+                    {mounted && !computedIsLoadingAPY && computedFormattedAPY && computedFormattedAPY !== '—' && computedFormattedAPY !== '0.00%' && feesUSD > 0 && (
                       <div className="absolute top-0 right-0 border border-dashed border-sidebar-border/60 rounded-lg p-2 flex items-center gap-1 group/apy cursor-help">
                         <div className="flex flex-col items-start gap-0">
                           <div className="text-sm font-normal leading-none">

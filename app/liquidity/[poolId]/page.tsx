@@ -24,6 +24,7 @@ import { formatUnits, type Hex } from "viem";
 import { Bar, BarChart, Line, LineChart, CartesianGrid, XAxis, YAxis, ResponsiveContainer, ComposedChart, Area, ReferenceLine, ReferenceArea } from "recharts";
 import { getPoolById, getPoolSubgraphId, getToken, getAllTokens } from "@/lib/pools-config";
 import { getExplorerTxUrl } from "@/lib/wagmiConfig";
+import { cn } from "@/lib/utils";
 import { usePoolState, useAllPrices, useUncollectedFeesBatch } from "@/components/data/hooks";
 import { SafeStorage } from "@/lib/safe-storage";
 import { RetryUtility } from "@/lib/retry-utility";
@@ -473,7 +474,7 @@ export default function PoolDetailPage() {
     createdAt: number,
     baselineIds?: string[]
   }>>([]);
-  const [isLoadingPositions, setIsLoadingPositions] = useState(false);
+  const [isLoadingPositions, setIsLoadingPositions] = useState(true);
   const [activeChart, setActiveChart] = useState<keyof Pick<typeof chartConfig, 'volume' | 'tvl' | 'volumeTvlRatio' | 'emaRatio' | 'dynamicFee'>>("volumeTvlRatio");
   const [isDynamicFeeModalOpen, setIsDynamicFeeModalOpen] = useState(false);
   const [hoveredFee, setHoveredFee] = useState<number | null>(null);
@@ -1884,13 +1885,54 @@ export default function PoolDetailPage() {
     }
   }, [pendingNewPositions]);
 
-  // Optimized: Single call per pool load
+  // Optimized: Single call per pool load (chart data only - positions handled separately)
   useEffect(() => {
     // Only fetch if we have poolId and no chart data yet
     if (poolId && apiChartData.length === 0) {
-      fetchPageData();
+      fetchPageData(false, true); // skipPositions=true - positions loaded in separate effect
     }
   }, [poolId]); // Only depend on poolId to avoid excessive calls
+
+  // Separate effect for position loading - triggers when wallet connects
+  // This fixes the issue where positions don't load on page reload (wallet not ready yet)
+  useEffect(() => {
+    if (!poolId || !isConnected || !accountAddress || !chainId) {
+      if (!isConnected) {
+        setUserPositions([]);
+        setIsLoadingPositions(false);
+      }
+      return;
+    }
+
+    const poolInfo = getPoolConfiguration(poolId);
+    if (!poolInfo) return;
+
+    const subgraphId = (poolInfo.subgraphId || '').toLowerCase();
+
+    (async () => {
+      setIsLoadingPositions(true);
+      try {
+        const ids = await loadUserPositionIds(accountAddress, {
+          onRefreshed: async (freshIds) => {
+            // Background refresh completed - update if positions changed
+            const timestamps = getCachedPositionTimestamps(accountAddress);
+            const allPositions = await derivePositionsFromIds(accountAddress, freshIds, chainId, timestamps);
+            const filtered = allPositions.filter(pos => String(pos.poolId || '').toLowerCase() === subgraphId);
+            setUserPositions(filtered);
+          }
+        });
+        const timestamps = getCachedPositionTimestamps(accountAddress);
+        const allPositions = await derivePositionsFromIds(accountAddress, ids, chainId, timestamps);
+        const filtered = allPositions.filter(pos => String(pos.poolId || '').toLowerCase() === subgraphId);
+        setUserPositions(filtered);
+      } catch (error) {
+        console.error('[Pool Detail] Failed to load positions:', error);
+        setUserPositions([]);
+      } finally {
+        setIsLoadingPositions(false);
+      }
+    })();
+  }, [poolId, isConnected, accountAddress, chainId]);
 
   // Syncs the chart's latest TVL with the header's TVL in real-time
   useEffect(() => {
@@ -2700,39 +2742,41 @@ export default function PoolDetailPage() {
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </div>
-                    {/* Buttons for larger screens >= 1500px - mimic category tabs styling */}
-                    <div className="hidden min-[1500px]:flex items-center gap-2">
-                        <button 
-                          className={`px-2 py-1 text-xs rounded-md transition-colors ${
-                            activeChart === 'volumeTvlRatio' 
-                              ? 'bg-muted text-foreground' 
-                              : 'bg-transparent text-muted-foreground hover:bg-muted/30'
-                          }`}
+                    {/* Buttons for larger screens >= 1500px - ghost tab styling */}
+                    <div className="hidden min-[1500px]:flex items-center gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className={cn(
+                            "h-7 px-2.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50",
+                            activeChart === 'volumeTvlRatio' && "bg-muted/50 text-foreground"
+                          )}
                           onClick={() => setActiveChart('volumeTvlRatio')}
                         >
                           Dynamic Fee
-                        </button>
-                        <div className="w-px h-4 bg-border mx-1" />
-                        <button 
-                          className={`px-2 py-1 text-xs rounded-md transition-colors ${
-                            activeChart === 'volume' 
-                              ? 'bg-muted text-foreground' 
-                              : 'bg-transparent text-muted-foreground hover:bg-muted/30'
-                          }`}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className={cn(
+                            "h-7 px-2.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50",
+                            activeChart === 'volume' && "bg-muted/50 text-foreground"
+                          )}
                           onClick={() => setActiveChart('volume')}
                         >
                           Volume
-                        </button>
-                        <button 
-                          className={`px-2 py-1 text-xs rounded-md transition-colors ${
-                            activeChart === 'tvl' 
-                              ? 'bg-muted text-foreground' 
-                              : 'bg-transparent text-muted-foreground hover:bg-muted/30'
-                          }`}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className={cn(
+                            "h-7 px-2.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50",
+                            activeChart === 'tvl' && "bg-muted/50 text-foreground"
+                          )}
                           onClick={() => setActiveChart('tvl')}
                         >
                           TVL
-                        </button>
+                        </Button>
                       </div>
                   </div>
                   <div className="p-0 flex-1 min-h-0">

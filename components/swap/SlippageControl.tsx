@@ -74,7 +74,6 @@ export function SlippageControl({
     if (isAuto) {
       onCustomToggle();
     }
-    // Focus input after a brief delay
     setTimeout(() => {
       inputRef.current?.focus();
     }, 50);
@@ -83,24 +82,20 @@ export function SlippageControl({
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
 
-    // Allow empty input
     if (value === '') {
       setInputValue('');
       return;
     }
 
-    // Allow decimal point
     if (value === '.') {
       setInputValue('0.');
       return;
     }
 
-    // Validate numeric input
     if (!/^\d*\.?\d*$/.test(value)) {
       return;
     }
 
-    // Limit to 2 decimal places
     const parts = value.split('.');
     if (parts[1] && parts[1].length > 2) {
       return;
@@ -108,7 +103,6 @@ export function SlippageControl({
 
     setInputValue(value);
 
-    // Parse and update if valid
     const parsed = parseFloat(value);
     if (!isNaN(parsed)) {
       const capped = Math.min(parsed, MAX_CUSTOM_SLIPPAGE_TOLERANCE);
@@ -170,13 +164,12 @@ export function SlippageControl({
             <button
               type="button"
               onClick={handleValueClick}
-              className="text-xs text-muted-foreground transition-colors hover:underline cursor-pointer"
+              className="text-xs text-muted-foreground transition-colors hover:text-foreground cursor-pointer"
             >
               {displayValue.toFixed(2)}%
             </button>
           ) : (
             <div className="flex items-center gap-1 h-5">
-              {/* Preset pills */}
               {PRESETS.map((preset) => {
                 const isActive = !isAuto && Math.abs(currentSlippage - preset) < 0.001;
                 return (
@@ -185,9 +178,9 @@ export function SlippageControl({
                     type="button"
                     onClick={() => handlePresetClick(preset)}
                     className={cn(
-                      "px-2.5 py-1 text-xs font-medium rounded-md transition-colors h-5 flex items-center",
+                      "h-7 px-2.5 text-xs rounded-md transition-colors",
                       isActive
-                        ? "bg-muted text-foreground"
+                        ? "bg-muted/50 text-foreground"
                         : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
                     )}
                   >
@@ -196,7 +189,6 @@ export function SlippageControl({
                 );
               })}
 
-              {/* Custom input or button */}
               {isCustomEditing ? (
                 <div className="flex items-center gap-0.5 h-5">
                   <input
@@ -207,21 +199,22 @@ export function SlippageControl({
                     onBlur={handleInputBlur}
                     onKeyDown={handleInputKeyDown}
                     className={cn(
-                      "w-14 px-2 py-1 text-xs text-center bg-background rounded-md outline-none border border-sidebar-border h-5",
-                      "focus:ring-1 focus:ring-sidebar-border transition-all",
+                      "w-14 h-7 px-2 text-xs text-center bg-transparent rounded-md outline-none border border-sidebar-border",
+                      "focus:border-muted-foreground transition-colors",
                       isCritical && "text-red-500 border-red-500/50"
                     )}
+                    placeholder="0.00"
                   />
-                  <span className="text-xs text-foreground/80">%</span>
+                  <span className="text-xs text-muted-foreground">%</span>
                 </div>
               ) : (
                 <button
                   type="button"
                   onClick={handleCustomClick}
                   className={cn(
-                    "px-2.5 py-1 text-xs font-medium rounded-md transition-colors h-5 flex items-center",
+                    "h-7 px-2.5 text-xs rounded-md transition-colors",
                     !isAuto && !matchesPreset(currentSlippage)
-                      ? "bg-muted text-foreground"
+                      ? "bg-muted/50 text-foreground"
                       : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
                   )}
                 >
@@ -233,7 +226,6 @@ export function SlippageControl({
         </div>
       </div>
 
-      {/* Warning Message */}
       <AnimatePresence>
         {showWarning && !isAuto && warningMessage && (
           <motion.div

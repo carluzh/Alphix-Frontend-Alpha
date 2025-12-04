@@ -36,9 +36,7 @@ import { loadUserPositionIds, derivePositionsFromIds, getCachedPositionTimestamp
 import { Pool } from "../../types";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ChevronUpIcon, ChevronDownIcon, ChevronsUpDownIcon, PlusIcon, BadgeCheck, OctagonX, Filter as FilterIcon, X as XIcon } from "lucide-react";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { cn } from "@/lib/utils";
+import { ChevronUpIcon, ChevronDownIcon, ChevronsUpDownIcon, PlusIcon, BadgeCheck, OctagonX } from "lucide-react";
 import { getTokenDefinitions, type TokenSymbol } from "@/lib/pools-config";
 import { useNetwork } from "@/lib/network-context";
 import { useIncreaseLiquidity, type IncreasePositionData } from "@/components/liquidity/useIncreaseLiquidity";
@@ -52,45 +50,35 @@ const SDK_MIN_TICK = -887272;
 const SDK_MAX_TICK = 887272;
 const DEFAULT_TICK_SPACING = 60;
 
-// Memoized pool generation - compute once and cache
-const generatePoolsFromConfig = (() => {
-  let cachedPools: Pool[] | null = null;
+// Generate pools from config - called reactively based on network mode
+const generatePoolsFromConfig = (): Pool[] => {
+  const enabledPools = getEnabledPools();
 
-  return (): Pool[] => {
-    if (cachedPools) return cachedPools;
+  return enabledPools.map(poolConfig => {
+    const token0 = getToken(poolConfig.currency0.symbol);
+    const token1 = getToken(poolConfig.currency1.symbol);
 
-    const enabledPools = getEnabledPools();
+    if (!token0 || !token1) {
+      console.warn(`Missing token configuration for pool ${poolConfig.id}`);
+      return null;
+    }
 
-    cachedPools = enabledPools.map(poolConfig => {
-      const token0 = getToken(poolConfig.currency0.symbol);
-      const token1 = getToken(poolConfig.currency1.symbol);
-
-      if (!token0 || !token1) {
-        console.warn(`Missing token configuration for pool ${poolConfig.id}`);
-        return null;
-      }
-
-      return {
-        id: poolConfig.id,
-        tokens: [
-          { symbol: token0.symbol, icon: token0.icon },
-          { symbol: token1.symbol, icon: token1.icon }
-        ],
-        pair: `${token0.symbol} / ${token1.symbol}`,
-        volume24h: "Loading...",
-        fees24h: "Loading...",
-        liquidity: "Loading...",
-        apr: "Loading...",
-        highlighted: poolConfig.featured,
-        type: poolConfig.type,
-      } as Pool;
-    }).filter(Boolean) as Pool[];
-
-    return cachedPools;
-  };
-})();
-
-const dynamicPools = generatePoolsFromConfig();
+    return {
+      id: poolConfig.id,
+      tokens: [
+        { symbol: token0.symbol, icon: token0.icon },
+        { symbol: token1.symbol, icon: token1.icon }
+      ],
+      pair: `${token0.symbol} / ${token1.symbol}`,
+      volume24h: "Loading...",
+      fees24h: "Loading...",
+      liquidity: "Loading...",
+      apr: "Loading...",
+      highlighted: poolConfig.featured,
+      type: poolConfig.type,
+    } as Pool;
+  }).filter(Boolean) as Pool[];
+};
 
 declare module '@tanstack/react-table' {
   interface ColumnMeta<TData extends RowData, TValue> {
@@ -120,7 +108,17 @@ export default function LiquidityPage() {
   const [userPositions, setUserPositions] = useState<ProcessedPosition[]>([]);
   const [sorting, setSorting] = React.useState<SortingState>([]);
   const [columnSizing, setColumnSizing] = useState<ColumnSizingState>({});
-  const [poolsData, setPoolsData] = useState<Pool[]>(dynamicPools);
+  const { networkMode } = useNetwork();
+
+  // Generate pools based on current network mode - regenerates when network changes
+  const initialPools = useMemo(() => generatePoolsFromConfig(), [networkMode]);
+  const [poolsData, setPoolsData] = useState<Pool[]>([]);
+
+  // Sync poolsData with network mode changes
+  useEffect(() => {
+    setPoolsData(initialPools);
+  }, [initialPools]);
+
   const isMobile = useIsMobile();
   const { address: accountAddress, isConnected, chainId } = useAccount();
   const [selectedPoolId, setSelectedPoolId] = useState<string>("");
@@ -128,7 +126,6 @@ export default function LiquidityPage() {
     typeof window !== 'undefined' ? window.innerWidth : 1200
   );
   const router = useRouter();
-  const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [poolDataByPoolId, setPoolDataByPoolId] = useState<Record<string, any>>({});
   const [priceMap, setPriceMap] = useState<Record<string, number>>({});
   const [isLoadingPoolStates, setIsLoadingPoolStates] = useState(true);
@@ -143,7 +140,7 @@ export default function LiquidityPage() {
         const batchData = await response.json();
         if (!batchData.success) throw new Error(`Batch API error: ${batchData.message}`);
 
-        const updatedPools = dynamicPools.map((pool) => {
+        const updatedPools = initialPools.map((pool) => {
           const apiPoolId = getPoolSubgraphId(pool.id) || pool.id;
           const batchPoolData = batchData.pools.find((p: any) => p.poolId.toLowerCase() === apiPoolId.toLowerCase());
 
@@ -184,7 +181,7 @@ export default function LiquidityPage() {
           }
         });
       }
-    }, []);
+    }, [initialPools]);
 
   useEffect(() => {
     fetchAllPoolStatsBatch();
@@ -256,11 +253,6 @@ export default function LiquidityPage() {
     },
   });
 
-  const categories = useMemo(() => {
-    const types = Array.from(new Set((poolsData || []).map(p => p.type).filter(Boolean))) as string[];
-    return ['All', ...types];
-  }, [poolsData]);
-
   useEffect(() => {
     const handleResize = () => {
       setWindowWidth(window.innerWidth);
@@ -322,9 +314,8 @@ export default function LiquidityPage() {
   }, [poolsData, userPositions]);
 
   const filteredPools = useMemo(() => {
-    if (selectedCategory === 'All') return poolsWithPositionCounts;
-    return poolsWithPositionCounts.filter(p => (p.type || '') === selectedCategory);
-  }, [poolsWithPositionCounts, selectedCategory]);
+    return poolsWithPositionCounts;
+  }, [poolsWithPositionCounts]);
 
   const handleAddLiquidity = useCallback((e: React.MouseEvent, poolId: string) => {
     e.stopPropagation();
@@ -642,61 +633,6 @@ export default function LiquidityPage() {
                         </div>
                       </div>
                     </div>
-                  </div>
-                </div>
-                <div className="hidden md:flex items-end">
-                  <div className="flex items-center gap-2">
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <button className="h-8 px-3 rounded-md border border-sidebar-border bg-container hover:bg-surface text-muted-foreground hover:text-foreground flex items-center gap-2 text-xs transition-colors">
-                          <FilterIcon className="h-3.5 w-3.5" />
-                          <span>Filter</span>
-                          {selectedCategory !== 'All' && (
-                            <span className="ml-1 flex h-4 w-4 items-center justify-center rounded-full bg-sidebar-primary text-[10px] font-medium text-background">
-                              1
-                            </span>
-                          )}
-                        </button>
-                      </PopoverTrigger>
-                      <PopoverContent className="w-64 p-0 bg-container border-sidebar-border" align="end">
-                        <div className="p-4">
-                          <div className="space-y-2">
-                            <label className="text-xs font-medium text-muted-foreground">Pool Type</label>
-                            <div className="space-y-1">
-                              {categories.map(cat => (
-                                <button
-                                  key={cat}
-                                  onClick={() => setSelectedCategory(cat)}
-                                  className={cn(
-                                    "w-full text-left px-2 py-1.5 rounded text-xs transition-colors",
-                                    selectedCategory === cat
-                                      ? "bg-button text-foreground font-medium"
-                                      : "text-muted-foreground hover:text-foreground hover:bg-surface/50"
-                                  )}
-                                  style={selectedCategory === cat ? {
-                                    backgroundImage: 'url(/pattern.svg)',
-                                    backgroundSize: 'cover',
-                                    backgroundPosition: 'center'
-                                  } : {}}
-                                >
-                                  {cat}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        </div>
-                      </PopoverContent>
-                    </Popover>
-
-                    {selectedCategory !== 'All' && (
-                      <button
-                        onClick={() => setSelectedCategory('All')}
-                        className="group flex items-center gap-1 px-2 py-1 rounded-md border border-sidebar-border/60 bg-muted/40 text-xs text-muted-foreground hover:bg-muted/50"
-                      >
-                        <XIcon className="h-3 w-3" />
-                        <span className="uppercase tracking-wider font-mono font-bold text-xs">{selectedCategory}</span>
-                      </button>
-                    )}
                   </div>
                 </div>
               </div>

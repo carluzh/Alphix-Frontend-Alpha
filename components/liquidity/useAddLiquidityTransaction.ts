@@ -26,9 +26,10 @@ import { useNetwork } from "@/lib/network-context";
 import { getExplorerTxUrl } from "@/lib/wagmiConfig";
 import { prefetchService } from "@/lib/prefetch-service";
 import { invalidateAfterTx } from '@/lib/invalidation';
-import { invalidateUserPositionIdsCache } from "@/lib/client-cache";
+import { invalidateUserPositionIdsCache, addPositionIdToCache } from "@/lib/client-cache";
 import { ERC20_ABI } from "@/lib/abis/erc20";
-import { type Hex, formatUnits, parseUnits, encodeFunctionData, parseAbi } from "viem";
+import { type Hex, formatUnits, parseUnits, encodeFunctionData, parseAbi, decodeEventLog } from "viem";
+import { position_manager_abi } from "@/lib/abis/PositionManager_abi";
 import { preparePermit2BatchForNewPosition, type PreparedPermit2Batch } from "@/lib/liquidity-utils";
 import { publicClient } from "@/lib/viemClient";
 import { PERMIT2_ADDRESS, V4_POSITION_MANAGER_ADDRESS } from "@/lib/swap-constants";
@@ -997,19 +998,43 @@ export function useAddLiquidityTransaction({
       // Delegate complex refresh logic to parent component (like other hooks do)
       (async () => {
         let blockNumber: bigint | undefined = undefined;
+        let newTokenId: string | undefined = undefined;
         try {
           const receipt = await publicClient.getTransactionReceipt({ hash: mintTxHash as `0x${string}` });
           blockNumber = receipt?.blockNumber;
+
+          // Extract tokenId from Transfer event (mint = from zero address)
+          for (const log of receipt.logs) {
+            try {
+              const decoded = decodeEventLog({
+                abi: position_manager_abi,
+                data: log.data,
+                topics: log.topics,
+              });
+              if (decoded.eventName === 'Transfer' && decoded.args) {
+                const args = decoded.args as unknown as { from: string; to: string; id: bigint };
+                if (args.from === '0x0000000000000000000000000000000000000000' &&
+                    args.to?.toLowerCase() === accountAddress?.toLowerCase()) {
+                  newTokenId = args.id?.toString();
+                  console.log(`[AddLiquidity] Extracted tokenId ${newTokenId} from Transfer event`);
+                  if (accountAddress && newTokenId) {
+                    addPositionIdToCache(accountAddress, newTokenId);
+                  }
+                  break;
+                }
+              }
+            } catch {}
+          }
         } catch {}
         if (mintTxHash) {
-          onLiquidityAdded(token0Symbol, token1Symbol, { 
-            txHash: mintTxHash as `0x${string}`, 
-            blockNumber 
+          onLiquidityAdded(token0Symbol, token1Symbol, {
+            txHash: mintTxHash as `0x${string}`,
+            blockNumber
           });
         } else {
           onLiquidityAdded(token0Symbol, token1Symbol);
         }
-        
+
         // Reset immediately after callback to prevent double loading states
         resetTransactionState();
       })();

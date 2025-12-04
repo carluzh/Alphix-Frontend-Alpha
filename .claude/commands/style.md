@@ -110,9 +110,46 @@ For Tailwind integration, use `border-sidebar-border` which references `--sideba
 - `/pattern.svg` - For square/small buttons
 - `/pattern_wide.svg` - For rectangular/wide buttons
 
-**Hover behavior**: 
+**Hover behavior**:
 - `brightness-110` - Slightly brighter
 - `border-white/30` - Border becomes semi-transparent white
+
+#### Ghost Tab Buttons (View Toggles)
+```tsx
+// Pattern: Clean, minimal toggle buttons for switching views
+// Uses shadcn/ui Button with ghost variant
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+
+<Button
+  variant="ghost"
+  size="sm"
+  className={cn(
+    "h-7 px-2.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50",
+    isActive && "bg-muted/50 text-foreground"
+  )}
+>
+  Tab Label
+</Button>
+
+// OR use utility classes (for native buttons)
+<button className={cn("ghost-tab", isActive && "ghost-tab-active")}>
+  Tab Label
+</button>
+```
+**Used in**: Chart tabs (Dynamic Fee/Volume/TVL), modal action buttons (Add/Remove/Collect), view toggles
+
+**Key classes (from globals.css)**:
+- `.ghost-tab` - Base styling: `h-7 px-2.5 text-xs rounded-md text-muted-foreground bg-transparent`
+- `.ghost-tab-active` - Active state: `bg-muted/50 text-foreground`
+- Hover: `hover:text-foreground hover:bg-muted/50`
+
+**Styling characteristics**:
+- Minimal, unobtrusive appearance
+- Text-only by default (muted grey)
+- Subtle background on hover/active
+- Compact size (h-7, text-xs)
+- No borders
 
 ### 2. Containers & Cards
 
@@ -523,6 +560,7 @@ Elevated card | `bg-container-secondary border-sidebar-border`
 Input field | `bg-surface border-transparent hover:border-sidebar-border`
 Primary button | `bg-button-primary border-sidebar-primary text-sidebar-primary hover-button-primary`
 Secondary button | `bg-button border-sidebar-border` + pattern overlay
+Ghost tab/toggle | `Button variant="ghost"` + `h-7 px-2.5 text-xs text-muted-foreground hover:bg-muted/50`
 Modal background | `bg-modal border-sidebar-border`
 Dropdown/selector | `bg-selector border-sidebar-border`
 Loading skeleton | `bg-muted/60 animate-pulse`

@@ -89,6 +89,44 @@ export function invalidateUserPositionIdsCache(ownerAddress: string): void {
   try { SafeStorage.remove(getUserPositionIdsCacheKey(ownerAddress)); } catch {}
 }
 
+/**
+ * Add a position ID directly to the cache (from transaction receipt)
+ * This bypasses subgraph and ensures the position is immediately visible
+ *
+ * @param ownerAddress - User wallet address
+ * @param tokenId - Position NFT token ID from Transfer event
+ * @param createdAt - Optional timestamp (defaults to now)
+ */
+export function addPositionIdToCache(ownerAddress: string, tokenId: string, createdAt?: number): void {
+  if (!ownerAddress || !tokenId) return;
+
+  const key = getUserPositionIdsCacheKey(ownerAddress);
+  const now = Date.now();
+  const timestamp = createdAt || Math.floor(now / 1000);
+
+  try {
+    const raw = SafeStorage.get(key);
+    let items: Array<{ id: string; createdAt?: number; lastTimestamp?: number }> = [];
+    let cacheTimestamp = now;
+
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      items = parsed.items || [];
+      cacheTimestamp = parsed.timestamp || now;
+    }
+
+    // Check if tokenId already exists
+    const exists = items.some(it => it.id === tokenId);
+    if (!exists) {
+      items.unshift({ id: tokenId, createdAt: timestamp, lastTimestamp: timestamp });
+      SafeStorage.set(key, JSON.stringify({ items, timestamp: cacheTimestamp }));
+      console.log(`[Cache] Added position ${tokenId} directly to cache for ${ownerAddress}`);
+    }
+  } catch (error) {
+    console.warn('[Cache] Failed to add position ID to cache:', error);
+  }
+}
+
 /** Get cached timestamps map for position APY calculation */
 export function getCachedPositionTimestamps(ownerAddress: string): Map<string, { createdAt: number; lastTimestamp: number }> {
   const map = new Map<string, { createdAt: number; lastTimestamp: number }>();
@@ -104,158 +142,193 @@ export function getCachedPositionTimestamps(ownerAddress: string): Map<string, {
 }
 
 /**
- * Load user position IDs from API with localStorage caching (client-side only)
+ * Options for loadUserPositionIds
+ */
+export interface LoadPositionIdsOptions {
+  /** Callback when background refresh completes with fresh data */
+  onRefreshed?: (ids: string[]) => void;
+  /** Skip background refresh (for internal use during barriers) */
+  skipBackgroundRefresh?: boolean;
+}
+
+/**
+ * Load user position IDs with stale-while-revalidate pattern
  *
- * Position IDs are stored in localStorage with 24h TTL.
- * This is client-side only because IDs don't change often and localStorage provides persistence.
+ * Returns cached data immediately (if available) and always refreshes in background.
+ * When fresh data arrives, the cache is updated and onRefreshed callback is called.
  *
  * @param ownerAddress - User wallet address
- * @returns Array of position token IDs
+ * @param options - Optional configuration
+ * @returns Array of position token IDs (from cache if available, otherwise waits for fetch)
  */
-export async function loadUserPositionIds(ownerAddress: string): Promise<string[]> {
+export async function loadUserPositionIds(
+  ownerAddress: string,
+  options?: LoadPositionIdsOptions
+): Promise<string[]> {
   if (!ownerAddress) return [];
 
   const key = getUserPositionIdsCacheKey(ownerAddress);
-  const IDS_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
-  // Check localStorage cache first
-  let stored: any = null;
+  // Check localStorage cache
+  let cachedIds: string[] = [];
   try {
     const raw = SafeStorage.get(key);
     if (raw) {
       const parsed = JSON.parse(raw) as any;
-      const age = Date.now() - (parsed?.timestamp || 0);
-      if (age < IDS_TTL_MS && Array.isArray(parsed?.items)) {
-        stored = parsed;
-        // Return cached IDs if fresh enough
-        const ids = parsed.items.map((it: any) => String(it?.id || '')).filter(Boolean);
-        return ids;
+      if (Array.isArray(parsed?.items)) {
+        cachedIds = parsed.items.map((it: any) => String(it?.id || '')).filter(Boolean);
       }
     }
   } catch {}
 
-  // Check for indexing barrier before fetching
-  const barrierEarly = getIndexingBarrier(ownerAddress);
-  if (barrierEarly) {
-    // If barrier exists, we may return stale cache until barrier clears
-    if (stored && stored.items) {
-      const ids = stored.items.map((it: any) => String(it?.id || '')).filter(Boolean);
-      return ids;
-    }
-  }
-
-  // Check for ongoing request (deduplication)
-  const barrierPresentForOngoing = getIndexingBarrier(ownerAddress);
-  if (!barrierPresentForOngoing) {
-    const ongoing = getOngoingRequest<string[]>(key);
-    if (ongoing) return ongoing;
-  } else {
-    // Drop any pre-existing ongoing promise for safety
-    try { ongoingRequests.delete(key); } catch {}
-  }
-
-  const promise = (async () => {
-    // Wait for indexing barrier if present
-    try {
-      const barrier = getIndexingBarrier(ownerAddress);
-      if (barrier) {
-        const ok = await barrier;
-        if (!ok) {
-          // Subgraph timed out - return cached fallback
-          if (stored && stored.items) {
-            const ids = stored.items.map((it: any) => String(it?.id || '')).filter(Boolean);
-            return ids;
-          }
-          return [];
-        }
+  // Check for indexing barrier - if present, return cached and wait for barrier before refresh
+  const barrier = getIndexingBarrier(ownerAddress);
+  if (barrier) {
+    barrier.then(async (ok) => {
+      if (ok && options?.onRefreshed) {
+        const freshIds = await fetchAndCachePositionIds(ownerAddress, key);
+        if (freshIds) options.onRefreshed(freshIds);
       }
-    } catch {}
+    }).catch(() => {});
+    return cachedIds;
+  }
 
-    // Fetch from API
-    const result = await RetryUtility.execute(
-      async () => {
-        const res = await fetch(
-          `/api/liquidity/get-positions?ownerAddress=${ownerAddress}&idsOnly=1&withCreatedAt=1`,
-          { cache: 'no-store' }
-        );
+  // SWR: If we have cached data, return it and refresh in background
+  if (cachedIds.length > 0) {
+    if (options?.onRefreshed) {
+      refreshPositionIdsInBackground(ownerAddress, key, cachedIds, options.onRefreshed);
+    }
+    return cachedIds;
+  }
 
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  // No cached data - must wait for fetch
+  const freshIds = await fetchAndCachePositionIds(ownerAddress, key);
+  return freshIds || [];
+}
 
-        const data = await res.json();
-        const ids: string[] = [];
-        const itemsPersist: Array<{ id: string; createdAt?: number; lastTimestamp?: number }> = [];
+/**
+ * Refresh position IDs in background (stale-while-revalidate)
+ */
+function refreshPositionIdsInBackground(
+  ownerAddress: string,
+  cacheKey: string,
+  currentIds: string[],
+  onRefreshed?: (ids: string[]) => void
+): void {
+  // Check for ongoing request to prevent duplicate fetches
+  const ongoing = getOngoingRequest<string[]>(cacheKey);
+  if (ongoing) {
+    // Attach to existing request
+    ongoing.then((ids) => {
+      if (onRefreshed && !arraysEqual(ids, currentIds)) {
+        onRefreshed(ids);
+      }
+    }).catch(() => {});
+    return;
+  }
 
-        if (Array.isArray(data)) {
-          for (const item of data) {
-            try {
-              if (!item) continue;
-              let idStr = '';
-              if (typeof item.id === 'string') {
-                idStr = item.id;
-              } else if (typeof item.id === 'number' || typeof item.id === 'bigint') {
-                idStr = item.id.toString();
-              } else if (item.id && typeof item.id === 'object' && 'toString' in item.id) {
-                idStr = item.id.toString();
-              } else {
-                idStr = String((item as any).id || '');
-              }
+  // Start background fetch
+  const promise = fetchAndCachePositionIds(ownerAddress, cacheKey).then((freshIds) => {
+    if (freshIds && onRefreshed && !arraysEqual(freshIds, currentIds)) {
+      console.log('[Cache] Background refresh found new position data');
+      onRefreshed(freshIds);
+    }
+    return freshIds || [];
+  });
 
-              if (idStr && idStr !== '0' && idStr !== 'undefined' && idStr !== 'null') {
-                ids.push(idStr);
-                itemsPersist.push({
-                  id: idStr,
-                  createdAt: Number((item as any)?.createdAt || 0),
-                  lastTimestamp: Number((item as any)?.lastTimestamp || 0)
-                });
-              }
-            } catch (error) {
-              console.warn('[Cache] Failed to process position item:', item, error);
+  setOngoingRequest(cacheKey, promise);
+}
+
+/**
+ * Fetch position IDs from API and cache them
+ */
+async function fetchAndCachePositionIds(
+  ownerAddress: string,
+  cacheKey: string
+): Promise<string[] | null> {
+  const result = await RetryUtility.execute(
+    async () => {
+      const res = await fetch(
+        `/api/liquidity/get-positions?ownerAddress=${ownerAddress}&idsOnly=1&withCreatedAt=1`,
+        { cache: 'no-store' }
+      );
+
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+      const data = await res.json();
+      const ids: string[] = [];
+      const itemsPersist: Array<{ id: string; createdAt?: number; lastTimestamp?: number }> = [];
+
+      if (Array.isArray(data)) {
+        for (const item of data) {
+          try {
+            if (!item) continue;
+            let idStr = '';
+            if (typeof item.id === 'string') {
+              idStr = item.id;
+            } else if (typeof item.id === 'number' || typeof item.id === 'bigint') {
+              idStr = item.id.toString();
+            } else if (item.id && typeof item.id === 'object' && 'toString' in item.id) {
+              idStr = item.id.toString();
+            } else {
+              idStr = String((item as any).id || '');
             }
+
+            if (idStr && idStr !== '0' && idStr !== 'undefined' && idStr !== 'null') {
+              ids.push(idStr);
+              itemsPersist.push({
+                id: idStr,
+                createdAt: Number((item as any)?.createdAt || 0),
+                lastTimestamp: Number((item as any)?.lastTimestamp || 0)
+              });
+            }
+          } catch (error) {
+            console.warn('[Cache] Failed to process position item:', item, error);
           }
         }
-
-        return { ids, itemsPersist };
-      },
-      {
-        attempts: 1,
-        backoffStrategy: 'fixed',
-        baseDelay: 500,
-        throwOnFailure: false
       }
-    );
 
-    let lastResult: string[] = [];
-    let itemsPersistForPersist: Array<{ id: string; createdAt?: number; lastTimestamp?: number }> = [];
-
-    if (result.success && result.data) {
-      lastResult = result.data.ids;
-      itemsPersistForPersist = result.data.itemsPersist;
+      return { ids, itemsPersist };
+    },
+    {
+      attempts: 1,
+      backoffStrategy: 'fixed',
+      baseDelay: 500,
+      throwOnFailure: false
     }
+  );
 
-    // Wait for final barrier check before caching
-    try {
-      const barrierFinal = getIndexingBarrier(ownerAddress);
-      if (barrierFinal) {
-        const ok = await barrierFinal;
-        if (!ok) {
-          // Don't cache potentially stale results
-          return lastResult;
-        }
-      }
-    } catch {}
+  if (!result.success || !result.data) {
+    return null;
+  }
 
-    // Cache to localStorage
-    try {
-      SafeStorage.set(key, JSON.stringify({
-        items: itemsPersistForPersist,
-        timestamp: Date.now()
-      }));
-    } catch {}
+  const { ids, itemsPersist } = result.data;
 
-    return lastResult;
-  })();
+  // Don't cache if there's an active barrier (data might be stale)
+  const barrierFinal = getIndexingBarrier(ownerAddress);
+  if (barrierFinal) {
+    return ids;
+  }
 
-  return setOngoingRequest(key, promise);
+  // Cache to localStorage
+  try {
+    SafeStorage.set(cacheKey, JSON.stringify({
+      items: itemsPersist,
+      timestamp: Date.now()
+    }));
+  } catch {}
+
+  return ids;
+}
+
+/**
+ * Helper to compare two string arrays
+ */
+function arraysEqual(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const sortedA = [...a].sort();
+  const sortedB = [...b].sort();
+  return sortedA.every((val, i) => val === sortedB[i]);
 }
 
 /**

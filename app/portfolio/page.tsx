@@ -2197,13 +2197,13 @@ export default function PortfolioPage() {
                                   </TooltipContent>
                                 </Tooltip>
                               </TooltipProvider>
-              </div>
-            </div>
+                            </div>
+                          </div>
                         );
                       })()}
-            </div>
+                    </div>
                   )}
-            </div>
+                </div>
               </div>
             </div>
 
@@ -2918,8 +2918,8 @@ export default function PortfolioPage() {
             </div>
           </div>
           </div>
-          {/* Right-side: Balances (desktop only) */}
-           {!isIntegrateBalances && !isMobile && (
+          {/* Right-side: Balances (desktop only, testnet only) */}
+           {showBalancesPanel && !isIntegrateBalances && !isMobile && (
              <aside className="lg:flex-none" style={{ width: viewportWidth >= 1024 ? '450px' : '100%' }}>
             <div className="mb-2 flex items-center gap-2 justify-between">
               <button

@@ -170,6 +170,25 @@
     background-color: var(--button-primary-bg-hover);
   }
 
+  /* === GHOST TAB BUTTON UTILITIES === */
+  /*
+   * Clean, minimal tab/toggle buttons for switching between views
+   * Used in: chart tabs, modal action buttons, view toggles
+   *
+   * Base: text-muted-foreground with transparent background
+   * Hover: text-foreground with subtle bg-muted/50 background
+   * Active: bg-muted/50 text-foreground (same as hover, persistent)
+   */
+  .ghost-tab {
+    @apply h-7 px-2.5 text-xs rounded-md transition-colors;
+    @apply text-muted-foreground bg-transparent;
+    @apply hover:text-foreground hover:bg-muted/50;
+  }
+
+  .ghost-tab-active {
+    @apply bg-muted/50 text-foreground;
+  }
+
   /* === BORDER UTILITIES === */
   .border-primary {
     border-color: var(--border-primary) !important;

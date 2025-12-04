@@ -429,7 +429,8 @@ export function PositionChartV2({
     refSeries.setData(priceData);
 
     // Attach range band primitive to the reference series (always spans full chart)
-    if (minPriceNum !== null && maxPriceNum !== null) {
+    // Skip for full range positions (no visible band needed, entire chart is "in range")
+    if (!isFullRange && minPriceNum !== null && maxPriceNum !== null && isFinite(minPriceNum) && isFinite(maxPriceNum)) {
       const rangeBand = new RangeBandPrimitive(
         minPriceNum,
         maxPriceNum,
@@ -468,8 +469,8 @@ export function PositionChartV2({
     // Use last in-range series for reference, or the transparent series if no in-range exists
     priceSeriesRef.current = lastInRangeSeries || refSeries;
 
-    // Add min/max price lines (dashed)
-    if (minPriceNum !== null && priceSeriesRef.current) {
+    // Add min/max price lines (dashed) - skip for full range positions
+    if (!isFullRange && minPriceNum !== null && isFinite(minPriceNum) && priceSeriesRef.current) {
       priceSeriesRef.current.createPriceLine({
         price: minPriceNum,
         color: 'rgba(34, 197, 94, 0.6)',
@@ -480,7 +481,7 @@ export function PositionChartV2({
       });
     }
 
-    if (maxPriceNum !== null && priceSeriesRef.current) {
+    if (!isFullRange && maxPriceNum !== null && isFinite(maxPriceNum) && priceSeriesRef.current) {
       priceSeriesRef.current.createPriceLine({
         price: maxPriceNum,
         color: 'rgba(34, 197, 94, 0.6)',
@@ -500,7 +501,7 @@ export function PositionChartV2({
       chartRef.current = null;
       priceSeriesRef.current = null;
     };
-  }, [priceData, minPriceNum, maxPriceNum, currentPriceNum, isInRange]);
+  }, [priceData, minPriceNum, maxPriceNum, currentPriceNum, isInRange, isFullRange]);
 
   const isLoading = isPriceLoading;
   const error = !!priceError;

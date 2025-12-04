@@ -9,8 +9,10 @@ import { TokenSymbol, NATIVE_TOKEN_ADDRESS, getToken } from '@/lib/pools-config'
 import { getExplorerTxUrl } from '@/lib/wagmiConfig';
 import { PERMIT2_ADDRESS, getPermit2Domain, PERMIT_TYPES } from '@/lib/swap-constants';
 import { ERC20_ABI } from '@/lib/abis/erc20';
-import { type Hex, maxUint256, formatUnits, formatUnits as viemFormatUnits, parseUnits as viemParseUnits } from 'viem';
+import { type Hex, maxUint256, formatUnits, formatUnits as viemFormatUnits, parseUnits as viemParseUnits, decodeEventLog } from 'viem';
 import { publicClient } from '@/lib/viemClient';
+import { addPositionIdToCache } from '@/lib/client-cache';
+import { position_manager_abi } from '@/lib/abis/PositionManager_abi';
 import { useCheckLiquidityApprovals } from './useCheckLiquidityApprovals';
 import { useCheckZapApprovals } from './useCheckZapApprovals';
 import { isInfiniteApprovalEnabled } from '@/hooks/useUserSettings';
@@ -830,6 +832,30 @@ export function useAddLiquidityTransactionV2({
         const receipt = await publicClient.getTransactionReceipt({ hash: depositTxHash as `0x${string}` });
         let tvlDelta = 0;
         let volumeDelta = 0;
+        let newTokenId: string | undefined = undefined;
+
+        // Extract tokenId from Transfer event (mint = from zero address)
+        for (const log of receipt.logs) {
+          try {
+            const decoded = decodeEventLog({
+              abi: position_manager_abi,
+              data: log.data,
+              topics: log.topics,
+            });
+            if (decoded.eventName === 'Transfer' && decoded.args) {
+              const args = decoded.args as unknown as { from: string; to: string; id: bigint };
+              if (args.from === '0x0000000000000000000000000000000000000000' &&
+                  args.to?.toLowerCase() === accountAddress?.toLowerCase()) {
+                newTokenId = args.id?.toString();
+                console.log(`[AddLiquidityV2] Extracted tokenId ${newTokenId} from Transfer event`);
+                if (accountAddress && newTokenId) {
+                  addPositionIdToCache(accountAddress, newTokenId);
+                }
+                break;
+              }
+            }
+          } catch {}
+        }
 
         if (calculatedData?.amount0 && calculatedData?.amount1) {
           const { getTokenPrice } = await import('@/lib/price-service');
