@@ -747,8 +747,7 @@ function WebGLCanvas({ rightMargin }: { rightMargin: number }) {
       return;
     }
 
-    // Match page background to avoid any white flash
-    canvas.style.backgroundColor = '#0a0908';
+    canvas.style.backgroundColor = '#0f0f0f';
 
     // Vertex shader source (from their code)
     const vertexShaderSource = `

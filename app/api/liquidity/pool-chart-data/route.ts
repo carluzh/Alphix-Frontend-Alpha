@@ -34,7 +34,7 @@ interface ChartDataResponse {
   isStale?: boolean;
 }
 
-async function computeChartData(poolId: string, days: number, networkMode: NetworkMode): Promise<ChartDataResponse> {
+async function computeChartData(poolId: string, days: number, networkMode: NetworkMode, baseUrl: string): Promise<ChartDataResponse> {
   try {
     const subgraphId = (getPoolSubgraphId(poolId, networkMode) || poolId).toLowerCase();
 
@@ -113,7 +113,7 @@ async function computeChartData(poolId: string, days: number, networkMode: Netwo
       }) : Promise.resolve(null),
 
       // Query 3: Fee events from unified endpoint
-      fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/liquidity/get-historical-dynamic-fees?poolId=${encodeURIComponent(subgraphId)}`)
+      fetch(`${baseUrl}/api/liquidity/get-historical-dynamic-fees?poolId=${encodeURIComponent(subgraphId)}`)
     ]);
 
     if (!hourlyResult.ok) {
@@ -256,7 +256,9 @@ async function computeChartData(poolId: string, days: number, networkMode: Netwo
 
 export async function GET(request: Request) {
   try {
-    const { searchParams } = new URL(request.url);
+    const requestUrl = new URL(request.url);
+    const baseUrl = requestUrl.origin;
+    const searchParams = requestUrl.searchParams;
     const poolId = searchParams.get('poolId');
     const daysParam = searchParams.get('days');
 
@@ -301,7 +303,7 @@ export async function GET(request: Request) {
     // Invalidated cache: blocking fetch (user just did an action)
     if (cachedData && isInvalidated) {
       console.log('[pool-chart-data] Redis cache INVALIDATED - performing blocking refresh');
-      const payload = await computeChartData(poolId, days, networkMode);
+      const payload = await computeChartData(poolId, days, networkMode, baseUrl);
       await setCachedData(cacheKey, payload, 3600); // 1 hour TTL
       return NextResponse.json({ ...payload, isStale: false });
     }
@@ -311,7 +313,7 @@ export async function GET(request: Request) {
       console.log('[pool-chart-data] Redis cache HIT (stale) - returning stale data, triggering background refresh');
 
       // Trigger background revalidation (fire-and-forget)
-      void computeChartData(poolId, days, networkMode)
+      void computeChartData(poolId, days, networkMode, baseUrl)
         .then((payload) => setCachedData(cacheKey, payload, 3600))
         .catch((error) => {
           console.error('[pool-chart-data] Background revalidation failed:', error);
@@ -323,7 +325,7 @@ export async function GET(request: Request) {
 
     // Cache miss: fetch fresh data
     console.log('[pool-chart-data] Redis cache MISS, fetching fresh data');
-    const payload = await computeChartData(poolId, days, networkMode);
+    const payload = await computeChartData(poolId, days, networkMode, baseUrl);
 
     // Cache the result
     console.log('[pool-chart-data] Caching data (1-hour TTL)');

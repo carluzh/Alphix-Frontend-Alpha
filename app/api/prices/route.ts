@@ -66,14 +66,11 @@ interface PriceResponse {
 /**
  * Get USD price for a token by quoting against stable token (USDC on mainnet, aUSDC on testnet)
  */
-async function getTokenUSDPriceViaQuote(tokenSymbol: string, networkMode: NetworkMode): Promise<number | null> {
+async function getTokenUSDPriceViaQuote(tokenSymbol: string, networkMode: NetworkMode, baseUrl: string): Promise<number | null> {
   const stableSymbol = getStableTokenSymbol(networkMode);
   if (tokenSymbol === stableSymbol) return 1;
 
   try {
-    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL ||
-                   (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
-
     const response = await fetch(`${baseUrl}/api/swap/get-quote`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -146,16 +143,16 @@ async function fetch24hPriceChanges(): Promise<Record<string, number>> {
 /**
  * Fetch all prices fresh (no cache)
  */
-async function fetchAllPricesFresh(networkMode: NetworkMode): Promise<TokenPriceData> {
+async function fetchAllPricesFresh(networkMode: NetworkMode, baseUrl: string): Promise<TokenPriceData> {
 
   // Fetch both quote prices and 24h changes in parallel
   // Use network-specific token symbols (BTC on mainnet, aBTC on testnet)
   const [quotePrices, priceChanges] = await Promise.all([
     Promise.all([
-      getTokenUSDPriceViaQuote(getTokenSymbol('BTC', networkMode), networkMode),
-      getTokenUSDPriceViaQuote(getTokenSymbol('ETH', networkMode), networkMode),
-      getTokenUSDPriceViaQuote(getTokenSymbol('USDT', networkMode), networkMode),
-      getTokenUSDPriceViaQuote(getTokenSymbol('DAI', networkMode), networkMode),
+      getTokenUSDPriceViaQuote(getTokenSymbol('BTC', networkMode), networkMode, baseUrl),
+      getTokenUSDPriceViaQuote(getTokenSymbol('ETH', networkMode), networkMode, baseUrl),
+      getTokenUSDPriceViaQuote(getTokenSymbol('USDT', networkMode), networkMode, baseUrl),
+      getTokenUSDPriceViaQuote(getTokenSymbol('DAI', networkMode), networkMode, baseUrl),
     ]),
     fetch24hPriceChanges()
   ]);
@@ -197,7 +194,7 @@ const ongoingFetchByNetwork: Map<NetworkMode, Promise<TokenPriceData>> = new Map
  * If multiple requests arrive simultaneously, they all wait for and share the same fetch
  * This prevents cache stampede and reduces RPC/Redis load
  */
-async function fetchAllPricesWithDedup(networkMode: NetworkMode): Promise<TokenPriceData> {
+async function fetchAllPricesWithDedup(networkMode: NetworkMode, baseUrl: string): Promise<TokenPriceData> {
   // If there's already an ongoing fetch for this network, wait for it
   const existingFetch = ongoingFetchByNetwork.get(networkMode);
   if (existingFetch) {
@@ -205,7 +202,7 @@ async function fetchAllPricesWithDedup(networkMode: NetworkMode): Promise<TokenP
   }
 
   // Start a new fetch for this network
-  const fetchPromise = fetchAllPricesFresh(networkMode)
+  const fetchPromise = fetchAllPricesFresh(networkMode, baseUrl)
     .finally(() => {
       // Clean up after fetch completes (success or failure)
       ongoingFetchByNetwork.delete(networkMode);
@@ -215,8 +212,10 @@ async function fetchAllPricesWithDedup(networkMode: NetworkMode): Promise<TokenP
   return await fetchPromise;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const baseUrl = new URL(request.url).origin;
+
     // Get network mode from cookies
     const cookieStore = await cookies();
     const networkCookie = cookieStore.get('alphix-network-mode');
@@ -238,7 +237,7 @@ export async function GET() {
       if (cachedData && !isInvalidated) {
         if (isStale) {
           // Background refresh
-          fetchAllPricesWithDedup(networkMode)
+          fetchAllPricesWithDedup(networkMode, baseUrl)
             .then(freshData => {
               redis!.setex(cacheKey, 60, JSON.stringify(freshData));
               memoryCacheByNetwork.set(networkMode, { data: freshData, timestamp: Date.now() });
@@ -287,7 +286,7 @@ export async function GET() {
     }
 
     // No cached data - fetch fresh (with deduplication)
-    const freshData = await fetchAllPricesWithDedup(networkMode);
+    const freshData = await fetchAllPricesWithDedup(networkMode, baseUrl);
 
     // Store in both Redis and memory cache
     if (redis) {

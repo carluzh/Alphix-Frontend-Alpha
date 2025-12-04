@@ -45,9 +45,8 @@ export async function getAllTokenPrices(params?: { signal?: AbortSignal }): Prom
     const isBrowser = typeof window !== 'undefined';
     const baseUrl = isBrowser
       ? ''
-      : (process.env.NEXT_PUBLIC_BASE_URL || process.env.VERCEL_URL
-          ? `https://${process.env.VERCEL_URL}`
-          : 'http://localhost:3000');
+      : (process.env.NEXT_PUBLIC_BASE_URL ||
+         (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000'));
 
     const url = `${baseUrl}/api/prices`;
     const response = await fetch(url, {

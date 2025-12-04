@@ -10,6 +10,7 @@ import { SpeedInsights } from '@vercel/speed-insights/next'
 import ErrorBoundary from '@/components/ErrorBoundary'
 import type { Metadata } from 'next'
 import { SidebarProvider } from "@/components/ui/sidebar"
+import { cookies } from "next/headers"
 
 // Load Inter font
 const inter = Inter({
@@ -30,18 +31,28 @@ export const metadata: Metadata = {
   },
 }
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const cookieStore = await cookies();
+  const wagmiCookie = cookieStore.getAll()
+    .map(c => `${c.name}=${c.value}`)
+    .join('; ');
+
+  const networkCookie = cookieStore.get('alphix-network-mode');
+  const initialNetworkMode = (networkCookie?.value === 'mainnet' || networkCookie?.value === 'testnet')
+    ? networkCookie.value as 'mainnet' | 'testnet'
+    : 'testnet';
+
   return (
-    <html lang="en" className={`${inter.variable}`} suppressHydrationWarning>
-      <body>
+    <html lang="en" className={`${inter.variable}`} suppressHydrationWarning style={{ backgroundColor: '#0f0f0f' }}>
+      <body style={{ backgroundColor: '#0f0f0f' }}>
         <ThemeProvider
           attribute="class"
           defaultTheme="dark"
           enableSystem
           disableTransitionOnChange
         >
-          <NetworkProvider>
-            <AppKitProvider cookies={null}>
+          <NetworkProvider initialNetworkMode={initialNetworkMode}>
+            <AppKitProvider cookies={wagmiCookie}>
               <ErrorBoundary>
                 <SidebarProvider>
                   {children}

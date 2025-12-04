@@ -79,6 +79,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     res.setHeader('Cache-Control', 'no-store');
     return res.status(200).json(validated);
   } catch (error: any) {
+    console.error('[get-pool-state] Error for poolId:', raw, 'networkMode:', networkMode, 'error:', error);
     return res.status(500).json({ message: 'Failed to read pool state', error: String(error?.message || error) });
   }
 } 

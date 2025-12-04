@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { AppLayout } from "@/components/app-layout";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { PlusIcon, RefreshCwIcon, Check, BadgeCheck, OctagonX, Clock3, ChevronsLeftRight, EllipsisVertical, Info, ChevronLeft } from "lucide-react";
@@ -52,8 +53,6 @@ import { invalidateAfterTx } from "@/lib/invalidation";
 
 import type { Pool } from "../../../types";
 import { AddLiquidityForm } from "../../../components/liquidity/AddLiquidityForm";
-import { AddLiquidityModal } from "../../../components/liquidity/AddLiquidityModal";
-import { WithdrawLiquidityModal } from "../../../components/liquidity/WithdrawLiquidityModal";
 import React from "react";
 import { useIncreaseLiquidity, type IncreasePositionData } from "@/components/liquidity/useIncreaseLiquidity";
 import { useDecreaseLiquidity, type DecreasePositionData } from "@/components/liquidity/useDecreaseLiquidity";
@@ -66,7 +65,19 @@ import { ChevronDownIcon } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { PositionSkeleton } from '@/components/liquidity/PositionSkeleton';
 import { PositionCardCompact } from '@/components/liquidity/PositionCardCompact';
-import { PositionDetailsModal } from '@/components/liquidity/PositionDetailsModal';
+
+const AddLiquidityModal = dynamic(
+  () => import("@/components/liquidity/AddLiquidityModal").then(m => m.AddLiquidityModal),
+  { ssr: false }
+);
+const WithdrawLiquidityModal = dynamic(
+  () => import("@/components/liquidity/WithdrawLiquidityModal").then(m => m.WithdrawLiquidityModal),
+  { ssr: false }
+);
+const PositionDetailsModal = dynamic(
+  () => import("@/components/liquidity/PositionDetailsModal").then(m => m.PositionDetailsModal),
+  { ssr: false }
+);
 
 
 interface ChartDataPoint {

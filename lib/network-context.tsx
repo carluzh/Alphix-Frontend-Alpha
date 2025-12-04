@@ -34,8 +34,14 @@ interface NetworkContextValue {
 
 const NetworkContext = createContext<NetworkContextValue | undefined>(undefined);
 
-export function NetworkProvider({ children }: { children: React.ReactNode }) {
+interface NetworkProviderProps {
+  children: React.ReactNode;
+  initialNetworkMode?: NetworkMode;
+}
+
+export function NetworkProvider({ children, initialNetworkMode }: NetworkProviderProps) {
   const [networkMode, setNetworkModeState] = useState<NetworkMode>(() => {
+    if (initialNetworkMode) return initialNetworkMode;
     if (typeof window === 'undefined') return 'testnet';
     try {
       const stored = localStorage.getItem(NETWORK_STORAGE_KEY);

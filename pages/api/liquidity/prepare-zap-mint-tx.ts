@@ -9,6 +9,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 
 import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from "@/lib/abis/state_view_abi";
 import { TokenSymbol, getToken, getPositionManagerAddress, getStateViewAddress, getQuoterAddress, getPoolByTokens, getUniversalRouterAddress, createPoolKeyFromConfig, getNetworkModeFromRequest } from "../../../lib/pools-config";
+import { validateChainId, checkTxRateLimit } from "../../../lib/tx-validation";
 
 import { createNetworkClient } from "../../../lib/viemClient";
 import {
@@ -707,6 +708,14 @@ export default async function handler(
         return res.status(405).json({ message: `Method ${req.method} Not Allowed` });
     }
 
+    // Rate limiting
+    const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0] || req.socket?.remoteAddress || 'unknown';
+    const rateCheck = checkTxRateLimit(clientIp);
+    if (!rateCheck.allowed) {
+        res.setHeader('Retry-After', String(rateCheck.retryAfter || 60));
+        return res.status(429).json({ message: 'Too many requests. Please try again later.' });
+    }
+
     // Get network mode from cookies and create network-specific resources
     const networkMode = getNetworkModeFromRequest(req.headers.cookie);
     console.log('[prepare-zap-mint-tx] Network mode from cookies:', networkMode);
@@ -730,6 +739,12 @@ export default async function handler(
             slippageTolerance = 50, // 0.5% default (50 basis points)
             deadlineSeconds = TX_DEADLINE_SECONDS, // Default to constant if not provided
         } = req.body;
+
+        // ChainId validation - CRITICAL security check
+        const chainIdError = validateChainId(chainId, networkMode);
+        if (chainIdError) {
+            return res.status(400).json({ message: chainIdError });
+        }
 
         // Validate inputs
         if (!isAddress(userAddress)) {

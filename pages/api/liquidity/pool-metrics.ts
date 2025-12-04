@@ -57,6 +57,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   console.log('[pool-metrics] Request:', { poolId, apiId: apiId.toLowerCase(), days: daysNum, isDAI, isMainnet, networkMode });
 
+  const protocol = req.headers['x-forwarded-proto'] || 'http';
+  const host = req.headers.host || 'localhost:3000';
+  const baseUrl = `${protocol}://${host}`;
+
   // Mainnet query: Uses Uniswap v4 subgraph schema
   const poolQueryMainnet = `
     query PoolMetrics($poolId: ID!, $days: Int!) {
@@ -173,7 +177,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             })
           }),
           // Use unified fee events endpoint instead of duplicate query
-          fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/liquidity/get-historical-dynamic-fees?poolId=${encodeURIComponent(poolId)}`)
+          fetch(`${baseUrl}/api/liquidity/get-historical-dynamic-fees?poolId=${encodeURIComponent(poolId)}`)
         ]);
 
         // Check response status first

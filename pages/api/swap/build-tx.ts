@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getAddress, parseUnits, encodeFunctionData, type Address, type Hex, type Abi, TransactionExecutionError } from 'viem';
+import { validateChainId, validateAddress, checkTxRateLimit } from '../../../lib/tx-validation';
 
 // Helper function to safely parse amounts and prevent scientific notation errors
 const safeParseUnits = (amount: string, decimals: number): bigint => {
@@ -530,6 +531,14 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
         return res.status(405).json({ ok: false, message: `Method ${req.method} Not Allowed` });
     }
 
+    // Rate limiting
+    const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0] || req.socket?.remoteAddress || 'unknown';
+    const rateCheck = checkTxRateLimit(clientIp);
+    if (!rateCheck.allowed) {
+        res.setHeader('Retry-After', String(rateCheck.retryAfter || 60));
+        return res.status(429).json({ ok: false, message: 'Too many requests. Please try again later.' });
+    }
+
     try {
         const {
             userAddress,
@@ -553,6 +562,22 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
         // Get network mode from cookies for proper chain-specific addresses
         const networkMode = getNetworkModeFromRequest(req.headers.cookie);
         console.log('[build-tx] Network mode from cookies:', networkMode);
+
+        // ChainId validation - CRITICAL security check
+        const chainIdError = validateChainId(chainId, networkMode);
+        if (chainIdError) {
+            return res.status(400).json({ ok: false, message: chainIdError });
+        }
+
+        // Address validation
+        const userAddrError = validateAddress(userAddress, 'userAddress');
+        if (userAddrError) {
+            return res.status(400).json({ ok: false, message: userAddrError });
+        }
+        const permitAddrError = fromTokenSymbol !== 'ETH' ? validateAddress(permitTokenAddress, 'permitTokenAddress') : null;
+        if (permitAddrError) {
+            return res.status(400).json({ ok: false, message: permitAddrError });
+        }
 
         // Create network-specific public client
         const publicClient = createNetworkClient(networkMode);

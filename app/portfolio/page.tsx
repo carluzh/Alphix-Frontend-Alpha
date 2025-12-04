@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { AppLayout } from "@/components/app-layout";
 import Image from "next/image";
@@ -28,10 +29,7 @@ import { getOptimalBaseToken } from "@/lib/denomination-utils";
 import { formatUnits as viemFormatUnits } from "viem";
 import { useIncreaseLiquidity } from "@/components/liquidity/useIncreaseLiquidity";
 import { useDecreaseLiquidity } from "@/components/liquidity/useDecreaseLiquidity";
-import { AddLiquidityModal } from "@/components/liquidity/AddLiquidityModal";
-import { WithdrawLiquidityModal } from "@/components/liquidity/WithdrawLiquidityModal";
 import { PositionCardCompact } from "@/components/liquidity/PositionCardCompact";
-import { PositionDetailsModal } from "@/components/liquidity/PositionDetailsModal";
 import { PositionSkeleton } from "@/components/liquidity/PositionSkeleton";
 import { batchGetTokenPrices } from '@/lib/price-service';
 import { calculateClientAPY } from '@/lib/client-apy';
@@ -40,6 +38,19 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Folder, Rows3, Filter as FilterIcon, X as XIcon } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import { useNetwork } from "@/lib/network-context";
+
+const AddLiquidityModal = dynamic(
+  () => import("@/components/liquidity/AddLiquidityModal").then(m => m.AddLiquidityModal),
+  { ssr: false }
+);
+const WithdrawLiquidityModal = dynamic(
+  () => import("@/components/liquidity/WithdrawLiquidityModal").then(m => m.WithdrawLiquidityModal),
+  { ssr: false }
+);
+const PositionDetailsModal = dynamic(
+  () => import("@/components/liquidity/PositionDetailsModal").then(m => m.PositionDetailsModal),
+  { ssr: false }
+);
 
 // Loading phases for skeleton system
 type LoadPhases = { phase: 0 | 1 | 2 | 3; startedAt: number };
@@ -2022,64 +2033,10 @@ export default function PortfolioPage() {
       <AppLayout>
         <div className="flex flex-1 flex-col p-3 sm:p-6 sm:px-10">
           <PortfolioHeaderSkeleton viewportWidth={viewportWidth} />
-          
-          <div className="mt-6 flex flex-col lg:flex-row" style={{ gap: `${getColumnGapPx(viewportWidth)}px` }}>
+
+          <div className="mt-6">
             <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-2 justify-between">
-              {sectionsList.map((section) => (
-                <button
-                  key={section}
-                  onClick={() => setSelectedSection(section)}
-                  className={`px-2 py-1 text-xs rounded-md transition-all duration-200 cursor-pointer ${
-                    selectedSection === section
-                      ? 'border border-sidebar-border bg-button text-foreground brightness-110'
-                      : 'text-muted-foreground hover:text-foreground'
-                  }`}
-                  style={selectedSection === section ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
-                >
-                  {section}
-                </button>
-              ))}
-                                        <div className="ml-auto flex items-center gap-2">
-              {activeTokenFilter && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActiveTokenFilter(null);
-                    setIsStickyHover(false);
-                    setIsRestCycling(false);
-                  }}
-                  className="group flex items-center gap-1 px-2 py-1 rounded-md border border-sidebar-border/60 bg-muted/40 text-xs text-muted-foreground hover:bg-muted/50 relative"
-                >
-                  {isRestCycling && (
-                    <div 
-                      className="absolute left-0 top-0 bottom-0 w-1 rounded-l-md"
-                      style={{ backgroundColor: 'hsl(var(--sidebar-primary))' }}
-                    />
-                  )}
-                  <X className="h-3 w-3 text-muted-foreground transition-colors group-hover:text-foreground" />
-                  <span className="uppercase tracking-wider text-muted-foreground font-mono font-bold text-xs">{activeTokenFilter}</span>
-                </button>
-              )}
-              
-              {/* Filter removed */}
-            </div>
-            </div>
-            {isIntegrateBalances && selectedSection === 'Balances' ? (
-              <div className={`rounded-lg bg-muted/30 border border-sidebar-border/60 ${showSkeletonFor.table ? 'animate-skeleton-pulse' : ''}`}>
-                <div className="flex items-center justify-between pl-6 pr-6 py-3 border-b border-sidebar-border/60 text-xs text-muted-foreground">
-                  <span className="tracking-wider font-mono font-bold">TOKEN</span>
-                  <div className="group inline-flex items-center">
-                    <span className="uppercase tracking-wider font-mono font-bold group-hover:text-foreground">VALUE</span>
-                    {renderSortIcon(balancesSortDir)}
-                  </div>
-                </div>
-                <div className="p-0">
-                  <BalancesListSkeleton />
-                </div>
-              </div>
-            ) : (
-              isMobile ? (
+              {isMobile ? (
                 <div className="flex flex-col gap-3">
                   {[...Array(3)].map((_, idx) => (
                     <div key={idx} className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-3">
@@ -2099,34 +2056,8 @@ export default function PortfolioPage() {
                 </div>
               ) : (
                 <ActivePositionsSkeleton />
-              )
-            )}
+              )}
             </div>
-            {showBalancesPanel && !isIntegrateBalances && (
-              <aside className="lg:flex-none" style={{ width: viewportWidth >= 1024 ? '450px' : '100%' }}>
-                <div className="mb-2 flex items-center gap-2 justify-between">
-                  <button
-                    type="button"
-                    className="px-2 py-1 text-xs rounded-md border border-sidebar-border bg-button text-foreground brightness-110"
-                    style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
-                  >
-                    Balances
-                  </button>
-                </div>
-                <div className={`rounded-lg bg-muted/30 border border-sidebar-border/60 ${showSkeletonFor.table ? 'animate-skeleton-pulse' : ''}`}>
-                  <div className="flex items-center justify-between pl-6 pr-6 py-3 border-b border-sidebar-border/60 text-xs text-muted-foreground">
-                    <span className="tracking-wider font-mono font-bold">TOKEN</span>
-                    <div className="group inline-flex items-center">
-                      <span className="uppercase tracking-wider font-mono font-bold group-hover:text-foreground">VALUE</span>
-                      {renderSortIcon(balancesSortDir)}
-                    </div>
-                  </div>
-                  <div className="p-0">
-                    <BalancesListSkeleton />
-                  </div>
-                </div>
-              </aside>
-            )}
           </div>
         </div>
       </AppLayout>

@@ -3,6 +3,7 @@
 import type * as React from "react"
 import { useEffect, useState, useRef, useMemo } from "react"
 import Image from "next/image"
+import Link from "next/link"
 import {
   HelpCircleIcon,
   ArrowRightLeftIcon,
@@ -180,10 +181,10 @@ export function AppSidebar({ variant = "floating", onBetaClick, ...props }: AppS
               className="data-[slot=sidebar-menu-button]:!p-2 !pt-2.5 !px-0 hover:bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 data-[state=open]:bg-transparent active:bg-transparent overflow-visible"
             >
               <div className="flex items-center w-full justify-between">
-                <a href="/" className="flex items-center">
+                <Link href="/" className="flex items-center">
                   <Image src="/Logo Type (white).svg" alt="Alphix Logo" width={112} height={24} priority className="dark:block hidden" />
                   <Image src="/Logo Type (black).svg" alt="Alphix Logo" width={112} height={24} priority className="block dark:hidden" />
-                </a>
+                </Link>
                 <div>
                   {/* Show 'Beta' by default; on hover swap to version text without resizing */}
                   <div

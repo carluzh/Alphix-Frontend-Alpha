@@ -27,10 +27,6 @@ export function shortenAddress(address: string, chars = 4): string {
   return `${parsed.substring(0, chars + 2)}...${parsed.substring(42 - chars)}`;
 }
 
-export function absoluteUrl(path: string) {
-  return `${process.env.NEXT_PUBLIC_APP_URL}${path}`;
-}
-
 // Token display utilities - Format to actual token decimals (up to 6 max)
 export const formatTokenDisplayAmount = (amount: string, tokenSymbol?: TokenSymbol, networkMode: NetworkMode = 'mainnet') => {
   const num = parseFloat(amount);

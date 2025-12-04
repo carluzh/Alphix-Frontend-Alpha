@@ -17,7 +17,6 @@ if (!projectId) {
 // --- RPC Configuration ---
 const customRpcUrl = process.env.NEXT_PUBLIC_RPC_URL;
 
-// Testnet RPC URLs (Base Sepolia)
 const testnetRpcUrls = [
   'https://sepolia.base.org',
   'https://base-sepolia.drpc.org',
@@ -25,7 +24,6 @@ const testnetRpcUrls = [
   'https://1rpc.io/base-sepolia'
 ];
 
-// Mainnet RPC URLs (Base Mainnet)
 const mainnetRpcUrls = [
   'https://mainnet.base.org',
   'https://base.drpc.org',
@@ -36,6 +34,12 @@ const mainnetRpcUrls = [
 // For E2E testing with Anvil fork using chain ID 1337
 const isE2EMode = customRpcUrl?.includes('127.0.0.1') || customRpcUrl?.includes('localhost');
 
+// Detect if custom RPC URL is for testnet or mainnet
+const isCustomUrlTestnet = customRpcUrl?.includes('sepolia') || customRpcUrl?.includes('testnet');
+const isCustomUrlMainnet = customRpcUrl?.includes('mainnet') ||
+                           customRpcUrl?.includes('base.g.alchemy') ||
+                           customRpcUrl?.includes('base-mainnet');
+
 // Get current network mode from localStorage (defaults to testnet)
 const networkMode = getStoredNetworkMode();
 const isMainnet = networkMode === 'mainnet';
@@ -44,17 +48,24 @@ const isMainnet = networkMode === 'mainnet';
 const rpcUrls = customRpcUrl ? [customRpcUrl] : (isMainnet ? mainnetRpcUrls : testnetRpcUrls);
 const chainId = isE2EMode ? 1337 : (isMainnet ? MAINNET_CHAIN_ID : TESTNET_CHAIN_ID);
 
-// Define Base Sepolia
+// Determine RPC URLs for each chain - only use custom URL if it matches the chain
+const testnetRpcUrlsFinal = isE2EMode
+  ? [customRpcUrl!]
+  : (isCustomUrlTestnet ? [customRpcUrl!, ...testnetRpcUrls] : testnetRpcUrls);
+const mainnetRpcUrlsFinal = isCustomUrlMainnet
+  ? [customRpcUrl!, ...mainnetRpcUrls]
+  : mainnetRpcUrls;
+
 export const baseSepolia = defineChain({
   id: isE2EMode ? 1337 : TESTNET_CHAIN_ID,
   name: isE2EMode ? 'Base Sepolia (local)' : 'Base Sepolia',
   nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
   rpcUrls: {
     default: {
-      http: customRpcUrl ? [customRpcUrl] : testnetRpcUrls
+      http: testnetRpcUrlsFinal
     },
     public: {
-      http: customRpcUrl ? [customRpcUrl] : testnetRpcUrls
+      http: testnetRpcUrlsFinal
     },
   },
   blockExplorers: {
@@ -68,17 +79,16 @@ export const baseSepolia = defineChain({
   },
 });
 
-// Define Base Mainnet
 export const baseMainnet = defineChain({
   id: MAINNET_CHAIN_ID,
   name: 'Base',
   nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
   rpcUrls: {
     default: {
-      http: mainnetRpcUrls
+      http: mainnetRpcUrlsFinal
     },
     public: {
-      http: mainnetRpcUrls
+      http: mainnetRpcUrlsFinal
     },
   },
   blockExplorers: {
@@ -92,7 +102,6 @@ export const baseMainnet = defineChain({
   },
 });
 
-// Get active chain based on network mode
 export const activeChain = isMainnet ? baseMainnet : baseSepolia;
 
 // Export all networks (both available for wallet switching)
@@ -103,17 +112,12 @@ export const networks = [baseSepolia, baseMainnet];
 export const wagmiAdapter = new WagmiAdapter({
   networks, // Both networks available
   projectId: projectId || '',
-  // ssr and storage might be handled internally or need different config
   storage: createStorage({ storage: cookieStorage }),
   ssr: true,
 })
 
-// Export the wagmi config property from the adapter instance
 export const config = wagmiAdapter.wagmiConfig
 
-// Removed AppKit initialization logic
-
-// --- Initialize Reown AppKit ---
 if (!projectId) {
   // Log error but don't throw here if already checked above
   console.error('[AppKit Init] NEXT_PUBLIC_PROJECT_ID is not set.')

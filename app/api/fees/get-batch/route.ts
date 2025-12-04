@@ -11,6 +11,8 @@ import { NextResponse } from 'next/server';
  */
 export async function POST(request: Request) {
   try {
+    const baseUrl = new URL(request.url).origin;
+
     const body = await request.json();
     const { positionIds } = body;
 
@@ -21,7 +23,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const fees = await fetchFeesFromExistingAPI(positionIds);
+    const fees = await fetchFeesFromExistingAPI(positionIds, baseUrl);
 
     return NextResponse.json({
       success: true,
@@ -37,9 +39,9 @@ export async function POST(request: Request) {
   }
 }
 
-async function fetchFeesFromExistingAPI(positionIds: string[]): Promise<any[]> {
+async function fetchFeesFromExistingAPI(positionIds: string[], baseUrl: string): Promise<any[]> {
   const response = await fetch(
-    `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/liquidity/get-uncollected-fees`,
+    `${baseUrl}/api/liquidity/get-uncollected-fees`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

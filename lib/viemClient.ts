@@ -14,11 +14,26 @@ const MAINNET_RPC_URLS = [
   "https://base.drpc.org",
 ];
 
-// Get RPC URLs for a specific network mode
 function getRpcUrlsForNetwork(networkMode: NetworkMode): string[] {
   const customRpcUrl = process.env.NEXT_PUBLIC_RPC_URL || process.env.RPC_URL;
   const networkUrls = networkMode === 'mainnet' ? MAINNET_RPC_URLS : TESTNET_RPC_URLS;
-  return [customRpcUrl, ...networkUrls].filter(Boolean) as string[];
+
+  // Only use custom URL if it matches the requested network
+  if (customRpcUrl) {
+    const isTestnetUrl = customRpcUrl.includes('sepolia') || customRpcUrl.includes('testnet');
+    const isMainnetUrl = customRpcUrl.includes('mainnet') ||
+                         customRpcUrl.includes('base.g.alchemy') ||
+                         customRpcUrl.includes('base-mainnet');
+    const isLocalUrl = customRpcUrl.includes('127.0.0.1') || customRpcUrl.includes('localhost');
+
+    if (isLocalUrl ||
+        (networkMode === 'testnet' && isTestnetUrl) ||
+        (networkMode === 'mainnet' && isMainnetUrl)) {
+      return [customRpcUrl, ...networkUrls];
+    }
+  }
+
+  return networkUrls;
 }
 
 // Multiple RPC endpoints for better reliability - use network-aware URLs (for default client)
@@ -34,7 +49,6 @@ if (RPC_URLS.length === 0) {
 // Custom rate-limited transport
 const rateLimitedTransport = custom({
   async request({ method, params }) {
-    // Try each RPC URL in order until one succeeds
     let lastError: Error | undefined;
 
     for (const rpcUrl of RPC_URLS) {
@@ -78,7 +92,6 @@ export const publicClient = createPublicClient({
     },
 });
 
-// Export the active chain object
 export { activeChain as targetChain };
 
 // Legacy export for backwards compatibility
@@ -126,7 +139,6 @@ export function getChainForNetwork(networkMode: NetworkMode): Chain {
 export function getRpcUrlForNetwork(networkMode: NetworkMode): string {
   const customRpcUrl = process.env.NEXT_PUBLIC_RPC_URL || process.env.RPC_URL;
 
-  // Check if custom URL is set and matches the requested network
   if (customRpcUrl) {
     const isMainnetUrl = customRpcUrl.includes('mainnet') ||
                          customRpcUrl.includes('base.g.alchemy') ||
@@ -134,7 +146,6 @@ export function getRpcUrlForNetwork(networkMode: NetworkMode): string {
     const isTestnetUrl = customRpcUrl.includes('sepolia') ||
                          customRpcUrl.includes('testnet');
 
-    // Use custom URL only if it matches the requested network
     if (networkMode === 'mainnet' && (isMainnetUrl || (!isMainnetUrl && !isTestnetUrl))) {
       return customRpcUrl;
     }
