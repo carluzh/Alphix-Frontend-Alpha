@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import React from 'react';
 import { OctagonX, BadgeCheck } from 'lucide-react';
-import { useAccount, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
+import { useAccount, useWriteContract, useWaitForTransactionReceipt, usePublicClient } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { V4PositionPlanner, V4PositionManager, Pool as V4Pool, Position as V4Position } from '@uniswap/v4-sdk';
@@ -14,9 +14,7 @@ import { baseSepolia, getExplorerTxUrl } from '@/lib/wagmiConfig';
 import { getAddress, type Hex, BaseError, parseUnits, encodeAbiParameters, keccak256, formatUnits } from 'viem';
 import { getPositionDetails, getPoolState } from '@/lib/liquidity-utils';
 import { prefetchService } from '@/lib/prefetch-service';
-import { invalidateUserPositionIdsCache } from '@/lib/client-cache';
 import { invalidateAfterTx } from '@/lib/invalidation';
-import { publicClient } from '@/lib/viemClient';
 
 // Helper function to safely parse amounts without precision loss
 const safeParseUnits = (amount: string, decimals: number): bigint => {
@@ -67,6 +65,8 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
   const { address: accountAddress, chainId } = useAccount();
   const { networkMode } = useNetwork();
   const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
+
+  const publicClient = usePublicClient();
   const { data: hash, writeContract, isPending: isDecreaseSendPending, error: decreaseSendError, reset: resetWriteContract } = useWriteContract();
   const { isLoading: isDecreaseConfirming, isSuccess: isDecreaseConfirmed, error: decreaseConfirmError, status: waitForTxStatus } = useWaitForTransactionReceipt({ hash });
 
@@ -222,8 +222,8 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
         try {
           // 1) Load on-chain position details and resolve poolKey token metadata by ADDRESS (not UI order)
           const details = await getPositionDetails(nftTokenId, chainId);
-          const symC0 = getTokenSymbolByAddress(getAddress(details.poolKey.currency0));
-          const symC1 = getTokenSymbolByAddress(getAddress(details.poolKey.currency1));
+          const symC0 = getTokenSymbolByAddress(getAddress(details.poolKey.currency0), networkMode);
+          const symC1 = getTokenSymbolByAddress(getAddress(details.poolKey.currency1), networkMode);
           if (!symC0 || !symC1) throw new Error('Token definitions not found for pool currencies');
           const defC0 = getToken(symC0);
           const defC1 = getToken(symC1);
@@ -739,10 +739,16 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
 
       (async () => {
         let blockNumber: bigint | undefined = undefined;
-        try {
-          const receipt = await publicClient.getTransactionReceipt({ hash: hash as `0x${string}` });
-          blockNumber = receipt?.blockNumber;
-        } catch {}
+        if (publicClient) {
+          for (let attempt = 0; attempt < 5; attempt++) {
+            try {
+              const receipt = await publicClient.getTransactionReceipt({ hash: hash as `0x${string}` });
+              if (receipt) { blockNumber = receipt.blockNumber; break; }
+            } catch {
+              if (attempt < 4) await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+            }
+          }
+        }
         if (lastWasCollectOnly.current && onFeesCollected) {
           onFeesCollected({ txHash: hash as `0x${string}`, blockNumber });
         } else if (onLiquidityDecreased) {
@@ -764,7 +770,6 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
         } catch {}
       })();
       try { if (accountAddress) prefetchService.notifyPositionsRefresh(accountAddress, lastWasCollectOnly.current ? 'collect' : 'decrease'); } catch {}
-      try { if (accountAddress) invalidateUserPositionIdsCache(accountAddress); } catch {}
       // Removed hook-level revalidate to avoid duplicates; page handles revalidation after subgraph sync
       setIsDecreasing(false);
     } else if (decreaseConfirmError) {
@@ -829,8 +834,8 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
         });
 
         const details = await getPositionDetails(nftTokenId, chainId);
-        const token0Sym = getTokenSymbolByAddress(getAddress(details.poolKey.currency0));
-        const token1Sym = getTokenSymbolByAddress(getAddress(details.poolKey.currency1));
+        const token0Sym = getTokenSymbolByAddress(getAddress(details.poolKey.currency0), networkMode);
+        const token1Sym = getTokenSymbolByAddress(getAddress(details.poolKey.currency1), networkMode);
         if (!token0Sym || !token1Sym) throw new Error('Token symbols not found');
         const token0Def = getToken(token0Sym);
         const token1Def = getToken(token1Sym);

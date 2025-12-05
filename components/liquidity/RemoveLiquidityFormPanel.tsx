@@ -164,8 +164,8 @@ export function RemoveLiquidityFormPanel({
         }
 
         // For in-range positions, use proper liquidity calculation API
-        const token0Symbol = getTokenSymbolByAddress(position.token0.address);
-        const token1Symbol = getTokenSymbolByAddress(position.token1.address);
+        const token0Symbol = getTokenSymbolByAddress(position.token0.address, networkMode);
+        const token1Symbol = getTokenSymbolByAddress(position.token1.address, networkMode);
 
         if (!token0Symbol || !token1Symbol) {
           // Fallback to simple ratio if token mapping fails
@@ -203,13 +203,13 @@ export function RemoveLiquidityFormPanel({
         if (version === withdrawCalcVersionRef.current) {
           if (inputSide === 'amount0') {
             // Convert from raw units to display units for token1 - keep full precision
-            const token1Symbol = getTokenSymbolByAddress(position.token1.address);
+            const token1Symbol = getTokenSymbolByAddress(position.token1.address, networkMode);
             const token1Decimals = token1Symbol ? tokenDefinitions[token1Symbol]?.decimals || 18 : 18;
             const amount1Display = formatUnits(BigInt(result.amount1 || '0'), token1Decimals);
             setWithdrawAmount1(formatCalculatedInput(amount1Display));
           } else {
             // Convert from raw units to display units for token0 - keep full precision
-            const token0Symbol = getTokenSymbolByAddress(position.token0.address);
+            const token0Symbol = getTokenSymbolByAddress(position.token0.address, networkMode);
             const token0Decimals = token0Symbol ? tokenDefinitions[token0Symbol]?.decimals || 18 : 18;
             const amount0Display = formatUnits(BigInt(result.amount0 || '0'), token0Decimals);
             setWithdrawAmount0(formatCalculatedInput(amount0Display));

@@ -89,6 +89,9 @@ export function invalidateUserPositionIdsCache(ownerAddress: string): void {
   try { SafeStorage.remove(getUserPositionIdsCacheKey(ownerAddress)); } catch {}
 }
 
+/** Time window (ms) to preserve optimistic entries that aren't in subgraph yet */
+const OPTIMISTIC_ENTRY_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
 /**
  * Add a position ID directly to the cache (from transaction receipt)
  * This bypasses subgraph and ensures the position is immediately visible
@@ -106,7 +109,7 @@ export function addPositionIdToCache(ownerAddress: string, tokenId: string, crea
 
   try {
     const raw = SafeStorage.get(key);
-    let items: Array<{ id: string; createdAt?: number; lastTimestamp?: number }> = [];
+    let items: Array<{ id: string; createdAt?: number; lastTimestamp?: number; optimisticAddedAt?: number }> = [];
     let cacheTimestamp = now;
 
     if (raw) {
@@ -115,16 +118,35 @@ export function addPositionIdToCache(ownerAddress: string, tokenId: string, crea
       cacheTimestamp = parsed.timestamp || now;
     }
 
-    // Check if tokenId already exists
-    const exists = items.some(it => it.id === tokenId);
-    if (!exists) {
-      items.unshift({ id: tokenId, createdAt: timestamp, lastTimestamp: timestamp });
+    const existingIdx = items.findIndex(it => it.id === tokenId);
+    if (existingIdx === -1) {
+      items.unshift({ id: tokenId, createdAt: timestamp, lastTimestamp: timestamp, optimisticAddedAt: now });
       SafeStorage.set(key, JSON.stringify({ items, timestamp: cacheTimestamp }));
-      console.log(`[Cache] Added position ${tokenId} directly to cache for ${ownerAddress}`);
+    } else if (!items[existingIdx].optimisticAddedAt) {
+      items[existingIdx].optimisticAddedAt = now;
+      SafeStorage.set(key, JSON.stringify({ items, timestamp: cacheTimestamp }));
     }
-  } catch (error) {
-    console.warn('[Cache] Failed to add position ID to cache:', error);
-  }
+  } catch {}
+}
+
+/** Remove a position ID from the cache (after full burn) */
+export function removePositionIdFromCache(ownerAddress: string, tokenId: string): void {
+  if (!ownerAddress || !tokenId) return;
+
+  const key = getUserPositionIdsCacheKey(ownerAddress);
+
+  try {
+    const raw = SafeStorage.get(key);
+    if (!raw) return;
+
+    const parsed = JSON.parse(raw);
+    const items = parsed.items || [];
+    const filtered = items.filter((it: any) => it.id !== tokenId);
+
+    if (filtered.length !== items.length) {
+      SafeStorage.set(key, JSON.stringify({ items: filtered, timestamp: parsed.timestamp || Date.now() }));
+    }
+  } catch {}
 }
 
 /** Get cached timestamps map for position APY calculation */
@@ -310,12 +332,30 @@ async function fetchAndCachePositionIds(
     return ids;
   }
 
-  // Cache to localStorage
+  // Preserve optimistic entries not yet indexed by subgraph
+  const now = Date.now();
+  let mergedItems = [...itemsPersist];
+  const apiIdSet = new Set(ids);
+
   try {
-    SafeStorage.set(cacheKey, JSON.stringify({
-      items: itemsPersist,
-      timestamp: Date.now()
-    }));
+    const existingRaw = SafeStorage.get(cacheKey);
+    if (existingRaw) {
+      const existingItems = JSON.parse(existingRaw).items || [];
+      for (const item of existingItems) {
+        if (
+          item.optimisticAddedAt &&
+          !apiIdSet.has(item.id) &&
+          (now - item.optimisticAddedAt) < OPTIMISTIC_ENTRY_TTL_MS
+        ) {
+          mergedItems.unshift(item);
+          ids.unshift(item.id);
+        }
+      }
+    }
+  } catch {}
+
+  try {
+    SafeStorage.set(cacheKey, JSON.stringify({ items: mergedItems, timestamp: now }));
   } catch {}
 
   return ids;

@@ -7,10 +7,9 @@ import { AppLayout } from "@/components/app-layout";
 import Image from "next/image";
 import { useMemo, useState, useEffect, useRef, useCallback, useLayoutEffect } from "react";
 import { formatUSD as formatUSDShared, formatUSDHeader as formatUSDHeaderShared, formatNumber, formatPercent } from "@/lib/format";
-import { publicClient } from "@/lib/viemClient";
 import { getAllPools, getToken, getAllTokens, NATIVE_TOKEN_ADDRESS } from "@/lib/pools-config";
 import { parseAbi, type Abi } from "viem";
-import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract } from "wagmi";
+import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract, usePublicClient } from "wagmi";
 import { baseSepolia, getExplorerTxUrl } from "@/lib/wagmiConfig";
 import { useUserPositions, useAllPrices, useUncollectedFeesBatch } from "@/components/data/hooks";
 import { prefetchService } from "@/lib/prefetch-service";
@@ -439,6 +438,9 @@ function usePortfolioData(refreshKey: number = 0, userPositionsData?: any[], pri
   return portfolioData;
 }
 
+// Track optimistically removed position IDs (module-level Set, cleared when confirmed by fresh data)
+const optimisticallyRemovedIds = new Set<string>();
+
 function usePortfolio(refreshKey: number = 0, userPositionsData?: any[], pricesData?: any, isLoadingHookPositions?: boolean) {
   const { address: accountAddress, isConnected, chainId: currentChainId } = useAccount();
 
@@ -452,7 +454,7 @@ function usePortfolio(refreshKey: number = 0, userPositionsData?: any[], pricesD
   // All loading states
   const [isLoadingPositions, setIsLoadingPositions] = useState<boolean>(true);
   const [isLoadingPoolStates, setIsLoadingPoolStates] = useState<boolean>(true);
-  
+
   // Process positions using centralized hooks
   useEffect(() => {
     setIsLoadingPositions(!!isLoadingHookPositions);
@@ -475,7 +477,21 @@ function usePortfolio(refreshKey: number = 0, userPositionsData?: any[], pricesD
         return pid && allowedIds.has(pid);
       });
     } catch {}
-    setActivePositions(positions);
+
+    // Filter out optimistically removed positions to prevent flash-back
+    if (optimisticallyRemovedIds.size > 0) {
+      const filteredPositions = positions.filter((pos: any) => !optimisticallyRemovedIds.has(pos.positionId));
+      // If fresh data confirms removal (position not in raw data), clear from tracking
+      const stillInData = new Set(positions.map((p: any) => p.positionId));
+      optimisticallyRemovedIds.forEach(id => {
+        if (!stillInData.has(id)) {
+          optimisticallyRemovedIds.delete(id);
+        }
+      });
+      setActivePositions(filteredPositions);
+    } else {
+      setActivePositions(positions);
+    }
   }, [isConnected, accountAddress, userPositionsData, isLoadingHookPositions]);
 
   useEffect(() => {
@@ -530,6 +546,7 @@ export default function PortfolioPage() {
   const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
   const [positionsRefresh, setPositionsRefresh] = useState(0);
   const { address: accountAddress, isConnected, chainId } = useAccount();
+  const publicClient = usePublicClient();
   const queryClient = useQueryClient();
 
   // Centralized hooks for positions (Category 2: user-action invalidated)
@@ -1005,7 +1022,8 @@ export default function PortfolioPage() {
     // IMMEDIATE OPTIMISTIC UPDATES (happen with toast)
     if (targetPositionId) {
       if (closing) {
-        // For full burns: immediately remove position from UI
+        // For full burns: immediately remove position from UI and track for flash prevention
+        optimisticallyRemovedIds.add(targetPositionId);
         setActivePositions(prev => prev.filter(p => p.positionId !== targetPositionId));
       } else {
         // For partial withdrawals: show loading state on the position
@@ -1084,9 +1102,19 @@ export default function PortfolioPage() {
       await waitForSubgraphBlock(Number(lastTxBlockRef.current));
       lastTxBlockRef.current = null;
     }
-    // Use targeted refresh instead of bumpPositionsRefresh to avoid folding
-    // bumpPositionsRefresh();
-  }, []);
+    // Invalidate fees cache so UI shows fees as zero
+    queryClient.invalidateQueries({ queryKey: ['user', 'uncollectedFeesBatch'] });
+  }, [queryClient]);
+
+  const handleModalFeesCollected = useCallback((positionId: string) => {
+    queryClient.setQueriesData<Array<{ positionId: string; amount0: string; amount1: string }>>(
+      { queryKey: ['user', 'uncollectedFeesBatch'] },
+      (oldData) => oldData?.map(fee =>
+        fee.positionId === positionId ? { ...fee, amount0: '0', amount1: '0' } : fee
+      )
+    );
+    queryClient.invalidateQueries({ queryKey: ['user', 'uncollectedFeesBatch'] });
+  }, [queryClient]);
   
   const { decreaseLiquidity, claimFees, isLoading: isDecreasingLiquidity, isSuccess: isDecreaseSuccess, hash: decreaseTxHash } = useDecreaseLiquidity({ 
     onLiquidityDecreased: onLiquidityDecreasedCallback, 
@@ -1233,7 +1261,7 @@ export default function PortfolioPage() {
 
   useEffect(() => {
     const run = async () => {
-      if (!isConnected || !accountAddress) {
+      if (!isConnected || !accountAddress || !publicClient) {
         setWalletBalances([]);
         setWalletPriceMap({});
         setWalletPriceChange24hPctMap({});
@@ -1342,7 +1370,7 @@ export default function PortfolioPage() {
       window.removeEventListener('walletBalancesRefresh', onRefresh as EventListener);
       window.removeEventListener('storage', onStorage);
     };
-  }, [isConnected, accountAddress, currentChainId && false]);
+  }, [isConnected, accountAddress, publicClient, currentChainId && false]);
 
   const navigateToPoolBySubgraphId = useCallback((poolSubgraphId?: string) => {
     if (!poolSubgraphId) return;
@@ -3001,7 +3029,7 @@ export default function PortfolioPage() {
                   modifiedPositionPoolInfoRef.current = { poolId: poolConfig.id, subgraphId: poolSubgraphId };
                 }
             }
-            publicClient.getBlockNumber().then(block => lastTxBlockRef.current = block);
+            publicClient?.getBlockNumber().then(block => lastTxBlockRef.current = block);
           }}
           positionToModify={positionToModify}
           feesForIncrease={feesForIncrease}
@@ -3035,7 +3063,7 @@ export default function PortfolioPage() {
                   modifiedPositionPoolInfoRef.current = { poolId: poolConfig.id, subgraphId: poolSubgraphId };
                 }
             }
-            publicClient.getBlockNumber().then(block => lastTxBlockRef.current = block);
+            publicClient?.getBlockNumber().then(block => lastTxBlockRef.current = block);
           }}
         />
 
@@ -3056,8 +3084,8 @@ export default function PortfolioPage() {
             const amt1 = parseFloat(selectedPosition.token1?.amount || '0');
             return amt0 * price0 + amt1 * price1;
           })()}
-          prefetchedRaw0={null}
-          prefetchedRaw1={null}
+          prefetchedRaw0={batchFeesData?.find(f => f.positionId === selectedPosition.positionId)?.amount0 ?? null}
+          prefetchedRaw1={batchFeesData?.find(f => f.positionId === selectedPosition.positionId)?.amount1 ?? null}
           formatTokenDisplayAmount={formatTokenDisplayAmount}
           getUsdPriceForSymbol={getUsdPriceForSymbol}
           onRefreshPosition={() => refreshSinglePosition(selectedPosition.positionId)}
@@ -3108,6 +3136,7 @@ export default function PortfolioPage() {
             return poolConfig ? getToken(poolConfig.currency1.symbol) : undefined;
           })()}
           showViewPoolButton={true}
+          onFeesCollected={handleModalFeesCollected}
           onViewPool={() => {
             const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === selectedPosition.poolId?.toLowerCase());
             if (poolConfig) {

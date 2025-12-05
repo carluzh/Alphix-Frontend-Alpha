@@ -25,7 +25,7 @@ import {
   BadgeCheck,
 } from "lucide-react"
 import Image from "next/image"
-import { useAccount, useBalance, useSignTypedData, useWriteContract, useWaitForTransactionReceipt } from "wagmi"
+import { useAccount, useBalance, useSignTypedData, useWriteContract, useWaitForTransactionReceipt, usePublicClient } from "wagmi"
 import { useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
 import React from "react"
@@ -33,7 +33,6 @@ import { switchChain } from '@wagmi/core'
 import { config, baseSepolia, activeChain, activeChainId, isMainnet, getExplorerTxUrl } from "../../lib/wagmiConfig";
 import { toast } from "sonner";
 import { getAddress, parseUnits, formatUnits, maxUint256, type Address, type Hex } from "viem"
-import { publicClient } from "../../lib/viemClient";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useSwapPercentageInput } from "@/hooks/usePercentageInput";
 import { useUserSlippageTolerance } from "@/hooks/useSlippage";
@@ -402,6 +401,9 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
 
   // Query client for cache invalidation
   const queryClient = useQueryClient();
+
+  const publicClient = usePublicClient();
+
   // Removed route-row hover logic; arrows only show on preview hover
   
   const [swapState, setSwapState] = useState<SwapState>("input");
@@ -1063,10 +1065,10 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
         
         // Handle specific error types with appropriate toasts
         const errorMsg = data.error || 'Failed to get quote';
-        if (errorMsg === 'Route not available for this amount') {
+        if (errorMsg === 'Amount exceeds available liquidity') {
           toast.error('Quote Error', {
             icon: <OctagonX className="h-4 w-4 text-red-500" />,
-            description: 'Route not available. Please refer to our documentation for supported tokens.',
+            description: 'Not enough liquidity. Try a smaller amount.',
             action: {
               label: "Open Ticket",
               onClick: () => window.open('https://discord.gg/alphix', '_blank')
@@ -1108,12 +1110,12 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
         const errorStr = error.message.toLowerCase();
         
         // Check for smart contract call exceptions (common in ExactOut multihop)
-        if (errorStr.includes('call_exception') || 
+        if (errorStr.includes('call_exception') ||
             errorStr.includes('call revert exception') ||
             (errorStr.includes('0x6190b2b0') || errorStr.includes('0x486aa307'))) {
           if (lastEditedSideRef.current === 'to') {
-            errorMsg = 'Route not available for this amount';
-            toastDescription = 'Route not available. Please refer to our documentation for supported tokens.';
+            errorMsg = 'Amount exceeds available liquidity';
+            toastDescription = 'Not enough liquidity. Try a smaller amount.';
           } else {
             errorMsg = 'Not enough liquidity';
             toastDescription = 'No Quote received. Input a smaller amount and try again.';
@@ -1390,9 +1392,9 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     const fromAmountNum = parseFloat(fromAmount || "0");
     const fromBalanceNum = parseFloat(fromToken.balance || "0"); // Use state balance
 
-    // 1. Pre-checks (connected, network, amount > 0, sufficient balance)
+    // 1. Pre-checks (connected, network, amount > 0, sufficient balance, publicClient available)
     const insufficientBalance = isNaN(fromBalanceNum) || fromBalanceNum < fromAmountNum;
-    if (!isConnected || currentChainId !== TARGET_CHAIN_ID || fromAmountNum <= 0) { // REMOVED insufficientBalance check here
+    if (!isConnected || currentChainId !== TARGET_CHAIN_ID || fromAmountNum <= 0 || !publicClient) { // REMOVED insufficientBalance check here
       return;
     }
 
@@ -1422,6 +1424,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
             toTokenSymbol: toToken.symbol,
             chainId: currentChainId,
             amountIn: parsedAmount.toString(),
+            approvalMode: isInfiniteApprovalEnabled() ? 'infinite' : 'exact',
           }),
         });
         const data = await response.json();
@@ -1537,7 +1540,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
 
   const handleConfirmSwap = async () => {
     // 1. Guard & Initial Setup
-    if (isSwapping) {
+    if (isSwapping || !publicClient) {
       return;
     }
 
@@ -1559,6 +1562,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                     toTokenSymbol: toToken.symbol,
                     chainId: currentChainId,
                     amountIn: parsedAmount.toString(),
+                    approvalMode: isInfiniteApprovalEnabled() ? 'infinite' : 'exact',
                 }),
             });
             const data = await response.json();
@@ -1920,10 +1924,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                   receipt.blockNumber
                 );
 
-                // Trigger balance refresh & show success view after confirmed
                 setSwapState("success");
-                if (accountAddress) localStorage.setItem(`walletBalancesRefreshAt_${accountAddress}`, String(Date.now()));
-                window.dispatchEvent(new Event('walletBalancesRefresh'));
                 return;
             }
 
@@ -2166,10 +2167,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
               receipt.blockNumber
             );
 
-            // Trigger balance refresh & show success view after confirmed
             setSwapState("success");
-            if (accountAddress) localStorage.setItem(`walletBalancesRefreshAt_${accountAddress}`, String(Date.now()));
-            window.dispatchEvent(new Event('walletBalancesRefresh'));
             return;
         }
 

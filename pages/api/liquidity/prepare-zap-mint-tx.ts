@@ -90,12 +90,14 @@ interface PrepareZapMintTxRequest extends NextApiRequest {
         chainId: number;
         slippageTolerance?: number; // in basis points (50 = 0.5%), max 500 (5%)
         deadlineSeconds?: number; // Transaction deadline in seconds (default: TX_DEADLINE_SECONDS)
+        approvalMode?: 'exact' | 'infinite';
 
         // Permit2 signature (if provided)
         permitSignature?: string;
         permitNonce?: number;
         permitExpiration?: number;
         permitSigDeadline?: string;
+        permitAmount?: string;
     };
 }
 
@@ -737,6 +739,7 @@ export default async function handler(
             chainId,
             slippageTolerance = 50, // 0.5% default (50 basis points)
             deadlineSeconds = TX_DEADLINE_SECONDS, // Default to constant if not provided
+            approvalMode = 'infinite',
         } = req.body;
 
         // ChainId validation - CRITICAL security check
@@ -786,7 +789,7 @@ export default async function handler(
         const parsedInputAmount = parseUnits(normalizedInput, inputTokenConfig.decimals);
 
         // Extract Permit2 params from request body
-        const { permitSignature, permitNonce, permitExpiration, permitSigDeadline } = req.body;
+        const { permitSignature, permitNonce, permitExpiration, permitSigDeadline, permitAmount } = req.body;
 
         // Check if input token is native ETH (no Permit2 needed)
         const isNativeInput = inputTokenConfig.address === ETHERS_ADDRESS_ZERO;
@@ -975,15 +978,17 @@ export default async function handler(
                 // Include zapQuote so price impact warning can be shown
                 const permitExpiration = now + PERMIT_EXPIRATION_DURATION_SECONDS;
                 const permitSigDeadline = now + PERMIT_SIG_DEADLINE_DURATION_SECONDS;
-                // Use MaxAllowanceTransferAmount (max uint160) to match regular swap behavior
                 const MaxAllowanceTransferAmount = BigInt('0xffffffffffffffffffffffffffffffffffffffff');
+                const permitAmount = approvalMode === 'exact'
+                    ? parsedInputAmount + 1n
+                    : MaxAllowanceTransferAmount;
 
                 return res.status(200).json({
                     needsApproval: true,
                     approvalType: 'PERMIT2_SIGNATURE',
                     permitData: {
                         token: getAddress(inputTokenConfig.address),
-                        amount: MaxAllowanceTransferAmount.toString(),
+                        amount: permitAmount.toString(),
                         nonce: Number(nonce),
                         expiration: permitExpiration,
                         sigDeadline: permitSigDeadline.toString(),
@@ -1007,13 +1012,13 @@ export default async function handler(
 
         // Add PERMIT2_PERMIT command for swap if we have a signature (and not native ETH)
         if (!isNativeInput && permitSignature && permitNonce !== undefined && permitExpiration && permitSigDeadline) {
-            // Use MaxAllowanceTransferAmount (max uint160) for permit amount to match regular swap behavior
             const MaxAllowanceTransferAmount = BigInt('0xffffffffffffffffffffffffffffffffffffffff');
+            const signedPermitAmount = permitAmount ? BigInt(permitAmount) : MaxAllowanceTransferAmount;
             swapRoutePlanner.addCommand(CommandType.PERMIT2_PERMIT, [
                 [
                     [
-                        getAddress(inputTokenConfig.address), // token
-                        MaxAllowanceTransferAmount,           // Use max allowance instead of exact amount
+                        getAddress(inputTokenConfig.address),
+                        signedPermitAmount,
                         permitExpiration,                      // expiration (number)
                         permitNonce                            // nonce (number)
                     ],

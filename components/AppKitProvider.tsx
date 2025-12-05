@@ -1,69 +1,57 @@
 'use client'
 
-// Import config, adapter, networks etc. needed for BOTH provider and init
 import { config, wagmiAdapter, projectId, isMainnet } from '@/lib/wagmiConfig'
 import { createAppKit } from '@reown/appkit'
-// Import AppKit networks for initialization
 import { base as appKitBase, baseSepolia as appKitBaseSepolia } from '@reown/appkit/networks'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import React, { type ReactNode, useEffect } from 'react'
-// Use WagmiProvider
+import React, { type ReactNode } from 'react'
 import { WagmiProvider } from 'wagmi'
-import { cookieToInitialState } from 'wagmi' 
+import { cookieToInitialState } from 'wagmi'
 
-// --- Removed AppKit Initialization from Module Level ---
+if (typeof window !== 'undefined' && projectId) {
+  createAppKit({
+    adapters: [wagmiAdapter],
+    projectId,
+    networks: [appKitBaseSepolia, appKitBase],
+    defaultNetwork: isMainnet ? appKitBase : appKitBaseSepolia,
+    metadata: {
+      name: 'Alphix',
+      description: 'Alphix AMM',
+      url: window.location.origin,
+      icons: ['/favicon.ico']
+    },
+    features: {
+      analytics: true,
+      email: false,
+      socials: [],
+    },
+    themeMode: 'dark',
+    themeVariables: {
+      '--w3m-font-family': '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+      '--w3m-accent': '#FFFFFF',
+      '--w3m-border-radius-master': '8px',
+    }
+  })
+}
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      retry: 0, // Disable retries to prevent duplicate calls
+      retry: 0,
       refetchOnWindowFocus: false,
-      refetchOnMount: true, // Refetch only if stale (respects staleTime)
-      refetchOnReconnect: false, // Disable refetch on reconnect
-      staleTime: 2 * 60 * 1000, // 2min client-side cache (critical hooks override with shorter values)
+      refetchOnMount: true,
+      refetchOnReconnect: false,
+      staleTime: 2 * 60 * 1000,
       gcTime: 10 * 60 * 1000,
       networkMode: 'online',
     },
   },
 })
 
-// Renamed component back to original
 function AppKitProvider({ children, cookies }: { children: ReactNode, cookies: string | null }) {
   const initialState = cookieToInitialState(config, cookies ?? '')
 
-  useEffect(() => {
-    if (!projectId) {
-      console.error('[AppKitProvider Init] NEXT_PUBLIC_PROJECT_ID is not set.')
-      return
-    }
-
-    const metadata = {
-      name: 'Alphix Example',
-      description: 'Alphix Frontend Example with WalletConnect',
-      url: 'http://localhost:3000',
-      icons: ['/favicon.ico']
-    }
-
-    createAppKit({
-      adapters: [wagmiAdapter],
-      projectId: projectId,
-      networks: [appKitBaseSepolia, appKitBase], // Both Base Sepolia and Base Mainnet
-      defaultNetwork: isMainnet ? appKitBase : appKitBaseSepolia, // Network based on stored preference
-      metadata,
-      features: {
-        analytics: true,
-        email: false,
-        socials: [],
-      },
-      themeMode: 'dark',
-      themeVariables: {
-        '--w3m-font-family': 'Inter, -apple-system, BlinkMacSystemFont, system-ui, sans-serif',
-      }
-    })
-  }, [])
-
   return (
-    // No extra AppKit provider needed here
     <WagmiProvider config={config} initialState={initialState}>
       <QueryClientProvider client={queryClient}>
         {children}
@@ -72,5 +60,4 @@ function AppKitProvider({ children, cookies }: { children: ReactNode, cookies: s
   )
 }
 
-// Export original name
-export default AppKitProvider; 
+export default AppKitProvider 

@@ -41,6 +41,7 @@ interface PreparePermitRequest extends NextApiRequest {
         toTokenSymbol: TokenSymbol;
         chainId: number;
         amountIn: string;
+        approvalMode?: 'exact' | 'infinite';
     };
 }
 
@@ -51,7 +52,7 @@ export default async function handler(req: PreparePermitRequest, res: NextApiRes
     }
 
     try {
-        const { userAddress, fromTokenSymbol, fromTokenAddress, chainId, amountIn } = req.body;
+        const { userAddress, fromTokenSymbol, fromTokenAddress, chainId, amountIn, approvalMode = 'infinite' } = req.body;
 
         // Get network mode from cookies for proper chain-specific addresses
         const networkMode = getNetworkModeFromRequest(req.headers.cookie);
@@ -122,8 +123,9 @@ export default async function handler(req: PreparePermitRequest, res: NextApiRes
 
         const expiration = now + PERMIT_EXPIRATION_DURATION_SECONDS;
         const sigDeadline = BigInt(now + PERMIT_SIG_DEADLINE_DURATION_SECONDS);
-        // Use max allowance instead of exact amount (allows permit reuse across multiple swaps)
-        const permitAmount = MaxAllowanceTransferAmount;
+        const permitAmount = approvalMode === 'exact'
+            ? requiredAmount + 1n
+            : MaxAllowanceTransferAmount;
 
         const permit: PermitSingleMessage = {
             details: {

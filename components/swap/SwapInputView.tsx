@@ -22,6 +22,7 @@ import { getToken } from '@/lib/pools-config';
 import { findBestRoute } from '@/lib/routing-engine';
 import { SlippageControl } from './SlippageControl';
 import { useTokenUSDPrice } from '@/hooks/useTokenUSDPrice';
+import { useSlippageValidation } from '@/hooks/useSlippage';
 
 interface SwapInputViewProps {
   displayFromToken: Token;
@@ -137,9 +138,9 @@ export function SwapInputView({
   const [isBuyInputFocused, setIsBuyInputFocused] = React.useState(false);
   const wiggleControls = useAnimation();
 
-  // Get current USD prices for accurate calculations (avoids stale prices after token swaps)
   const fromTokenPrice = useTokenUSDPrice(displayFromToken.symbol);
   const toTokenPrice = useTokenUSDPrice(displayToToken.symbol);
+  const { showWarning: showSlippageWarning, warningMessage: slippageWarningMessage, isCritical: isSlippageCritical } = useSlippageValidation(slippage);
 
   const formatPercentFromBps = React.useCallback((bps: number) => {
     const percent = bps / 100;
@@ -782,16 +783,29 @@ export function SwapInputView({
         )}
       </div>
 
-      {/* Price Impact Warning - banner style with smaller text */}
+      {/* Price Impact Warning */}
       {priceImpactWarning && (
         <div className={cn(
           "mt-3 flex items-center gap-2 rounded-md px-3 py-2 text-xs",
-          priceImpactWarning.severity === 'high' 
+          priceImpactWarning.severity === 'high'
             ? "bg-red-500/10 text-red-500 border border-red-500/20"
             : "bg-orange-500/10 text-orange-500 border border-orange-500/20"
         )}>
           <AlertTriangle className="h-3 w-3 shrink-0" />
           <span className="font-medium">{priceImpactWarning.message}</span>
+        </div>
+      )}
+
+      {/* Slippage Warning */}
+      {showSlippageWarning && !isAutoSlippage && slippageWarningMessage && (
+        <div className={cn(
+          "mt-3 flex items-center gap-2 rounded-md px-3 py-2 text-xs",
+          isSlippageCritical
+            ? "bg-red-500/10 text-red-500 border border-red-500/20"
+            : "bg-orange-500/10 text-orange-500 border border-orange-500/20"
+        )}>
+          <AlertTriangle className="h-3 w-3 shrink-0" />
+          <span className="font-medium">{slippageWarningMessage}</span>
         </div>
       )}
 

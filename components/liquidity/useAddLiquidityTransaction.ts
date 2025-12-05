@@ -4,7 +4,8 @@ import {
   useAccount,
   useWriteContract,
   useSendTransaction,
-  useWaitForTransactionReceipt
+  useWaitForTransactionReceipt,
+  usePublicClient
 } from "wagmi";
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from "sonner";
@@ -36,14 +37,14 @@ import { useNetwork } from "@/lib/network-context";
 import { getExplorerTxUrl } from "@/lib/wagmiConfig";
 import { prefetchService } from "@/lib/prefetch-service";
 import { invalidateAfterTx } from '@/lib/invalidation';
-import { invalidateUserPositionIdsCache, addPositionIdToCache } from "@/lib/client-cache";
+import { addPositionIdToCache } from "@/lib/client-cache";
 import { ERC20_ABI } from "@/lib/abis/erc20";
 import { type Hex, formatUnits, parseUnits, encodeFunctionData, parseAbi, decodeEventLog } from "viem";
 import { position_manager_abi } from "@/lib/abis/PositionManager_abi";
 import { preparePermit2BatchForNewPosition, type PreparedPermit2Batch } from "@/lib/liquidity-utils";
-import { publicClient } from "@/lib/viemClient";
 import { PERMIT2_ADDRESS, V4_POSITION_MANAGER_ADDRESS } from "@/lib/swap-constants";
 import { useEthersSigner } from "@/hooks/useEthersSigner";
+import { isInfiniteApprovalEnabled } from "@/hooks/useUserSettings";
 
 // Uniswap-compatible signTypedData function for permit signatures
 const signTypedDataSimple = async ({ signer, domain, types, value, primaryType }: any) => {
@@ -146,6 +147,9 @@ export function useAddLiquidityTransaction({
   const queryClient = useQueryClient();
   const { address: accountAddress, chainId } = useAccount();
   const { networkMode } = useNetwork();
+
+  const publicClient = usePublicClient();
+
   const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
 
   const [isWorking, setIsWorking] = useState(false);
@@ -178,7 +182,7 @@ export function useAddLiquidityTransaction({
 
   // Check what approvals are needed (ERC20 to Permit2)
   const checkApprovals = useCallback(async (): Promise<TokenSymbol[]> => {
-    if (!accountAddress || !chainId) return [];
+    if (!accountAddress || !chainId || !publicClient) return [];
 
     const needsApproval: TokenSymbol[] = [];
     const tokens = [
@@ -215,11 +219,11 @@ export function useAddLiquidityTransaction({
     }
 
     return needsApproval;
-  }, [accountAddress, chainId, token0Symbol, token1Symbol, amount0, amount1]);
+  }, [accountAddress, chainId, token0Symbol, token1Symbol, amount0, amount1, publicClient]);
 
   // Check existing ERC20 approvals to display correct counts
   const updateExistingApprovalCounts = useCallback(async () => {
-    if (!accountAddress || !chainId) {
+    if (!accountAddress || !chainId || !publicClient) {
       return;
     }
 
@@ -260,11 +264,11 @@ export function useAddLiquidityTransaction({
     // Always update the total required approvals to show proper counts
     setAllRequiredApprovals(totalRequired);
     setCompletedApprovals(alreadyApproved);
-  }, [accountAddress, chainId, token0Symbol, token1Symbol]);
+  }, [accountAddress, chainId, token0Symbol, token1Symbol, publicClient, tokenDefinitions]);
 
   // Check existing Permit2 allowances to display correct permit status
   const updateExistingPermitStatus = useCallback(async () => {
-    if (!accountAddress || !chainId) return;
+    if (!accountAddress || !chainId || !publicClient) return;
 
     const tokens = [token0Symbol, token1Symbol];
     let hasValidPermits = true;
@@ -299,7 +303,7 @@ export function useAddLiquidityTransaction({
       console.error('Error checking permit status:', error);
       setBatchPermitSigned(false);
     }
-  }, [accountAddress, chainId, token0Symbol, token1Symbol]);
+  }, [accountAddress, chainId, token0Symbol, token1Symbol, publicClient, tokenDefinitions]);
 
   // Update approval and permit status when component loads or tokens change
   useEffect(() => {
@@ -324,12 +328,24 @@ export function useAddLiquidityTransaction({
       if (needsApprovals.length > 0) {
         // Start with first approval
         setStep('approve');
+
+        const firstToken = needsApprovals[0];
+        const firstTokenDef = tokenDefinitions[firstToken];
+        const exactAmount = firstToken === token0Symbol ? amount0 : amount1;
+        let approvalAmountStr = "115792089237316195423570985008687907853269984665640564039457584007913129639935"; // max uint256
+
+        if (!isInfiniteApprovalEnabled() && exactAmount && firstTokenDef) {
+          try {
+            approvalAmountStr = (parseUnits(exactAmount, firstTokenDef.decimals) + 1n).toString();
+          } catch {}
+        }
+
         setPreparedTxData({
           needsApproval: true,
           approvalType: 'ERC20_TO_PERMIT2',
-          approvalTokenSymbol: needsApprovals[0],
-          approvalTokenAddress: tokenDefinitions[needsApprovals[0]]?.address,
-          approvalAmount: "115792089237316195423570985008687907853269984665640564039457584007913129639935", // max uint256
+          approvalTokenSymbol: firstToken,
+          approvalTokenAddress: firstTokenDef?.address,
+          approvalAmount: approvalAmountStr,
           approveToAddress: PERMIT2_ADDRESS,
         });
       } else {
@@ -781,13 +797,22 @@ export function useAddLiquidityTransaction({
           if (remainingApprovals.length > 0) {
             // Continue with next approval
             const nextToken = remainingApprovals[0];
-            
+            const nextTokenDef = tokenDefinitions[nextToken];
+            const nextExactAmount = nextToken === token0Symbol ? amount0 : amount1;
+            let nextApprovalAmountStr = "115792089237316195423570985008687907853269984665640564039457584007913129639935"; // max uint256
+
+            if (!isInfiniteApprovalEnabled() && nextExactAmount && nextTokenDef) {
+              try {
+                nextApprovalAmountStr = (parseUnits(nextExactAmount, nextTokenDef.decimals) + 1n).toString();
+              } catch {}
+            }
+
             setPreparedTxData({
               needsApproval: true,
               approvalType: 'ERC20_TO_PERMIT2',
               approvalTokenSymbol: nextToken,
-              approvalTokenAddress: tokenDefinitions[nextToken]?.address,
-              approvalAmount: "115792089237316195423570985008687907853269984665640564039457584007913129639935",
+              approvalTokenAddress: nextTokenDef?.address,
+              approvalAmount: nextApprovalAmountStr,
               approveToAddress: PERMIT2_ADDRESS,
             });
             setStep('approve');
@@ -922,17 +947,25 @@ export function useAddLiquidityTransaction({
           onClick: () => window.open(getExplorerTxUrl(mintTxHash), '_blank')
         } : undefined
       });
-      localStorage.setItem(`walletBalancesRefreshAt_${accountAddress}`, String(Date.now()));
-      window.dispatchEvent(new Event('walletBalancesRefresh'));
-      
-      // Delegate complex refresh logic to parent component (like other hooks do)
+
       (async () => {
+        if (!publicClient) return;
         let blockNumber: bigint | undefined = undefined;
         let newTokenId: string | undefined = undefined;
-        try {
-          const receipt = await publicClient.getTransactionReceipt({ hash: mintTxHash as `0x${string}` });
-          blockNumber = receipt?.blockNumber;
 
+        // Retry with backoff - RPC might be behind
+        let receipt: Awaited<ReturnType<typeof publicClient.getTransactionReceipt>> | null = null;
+        for (let attempt = 0; attempt < 5; attempt++) {
+          try {
+            receipt = await publicClient.getTransactionReceipt({ hash: mintTxHash as `0x${string}` });
+            if (receipt) break;
+          } catch {
+            if (attempt < 4) await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+          }
+        }
+
+        if (receipt) {
+          blockNumber = receipt.blockNumber;
           // Extract tokenId from Transfer event (mint = from zero address)
           for (const log of receipt.logs) {
             try {
@@ -954,7 +987,7 @@ export function useAddLiquidityTransaction({
               }
             } catch {}
           }
-        } catch {}
+        }
         if (mintTxHash) {
           onLiquidityAdded(token0Symbol, token1Symbol, {
             txHash: mintTxHash as `0x${string}`,
@@ -971,10 +1004,6 @@ export function useAddLiquidityTransaction({
       // Invalidate caches after successful mint
       try {
         if (accountAddress && chainId) {
-          // Invalidate localStorage position IDs
-          invalidateUserPositionIdsCache(accountAddress);
-
-          // Invalidate Redis + React Query caches (handles pools, positions, activity)
           const poolId = getPoolSubgraphId(`${token0Symbol}/${token1Symbol}`) || undefined;
           invalidateAfterTx(queryClient, {
             owner: accountAddress,

@@ -344,8 +344,8 @@ export function WithdrawLiquidityModal({
         }
 
         // For in-range positions, use proper liquidity calculation API
-        const token0Symbol = getTokenSymbolByAddress(position.token0.address);
-        const token1Symbol = getTokenSymbolByAddress(position.token1.address);
+        const token0Symbol = getTokenSymbolByAddress(position.token0.address, networkMode);
+        const token1Symbol = getTokenSymbolByAddress(position.token1.address, networkMode);
         
         if (!token0Symbol || !token1Symbol) {
           // Fallback to simple ratio if token mapping fails
@@ -383,13 +383,13 @@ export function WithdrawLiquidityModal({
         if (version === withdrawCalcVersionRef.current) {
           if (inputSide === 'amount0') {
             // Convert from raw units to display units for token1 - keep full precision
-            const token1Symbol = getTokenSymbolByAddress(position.token1.address);
+            const token1Symbol = getTokenSymbolByAddress(position.token1.address, networkMode);
             const token1Decimals = token1Symbol ? tokenDefinitions[token1Symbol]?.decimals || 18 : 18;
             const amount1Display = formatUnits(BigInt(result.amount1 || '0'), token1Decimals);
             setWithdrawAmount1(formatCalculatedInput(amount1Display));
           } else {
             // Convert from raw units to display units for token0 - keep full precision
-            const token0Symbol = getTokenSymbolByAddress(position.token0.address);
+            const token0Symbol = getTokenSymbolByAddress(position.token0.address, networkMode);
             const token0Decimals = token0Symbol ? tokenDefinitions[token0Symbol]?.decimals || 18 : 18;
             const amount0Display = formatUnits(BigInt(result.amount0 || '0'), token0Decimals);
             setWithdrawAmount0(formatCalculatedInput(amount0Display));
@@ -613,8 +613,8 @@ export function WithdrawLiquidityModal({
     
 
     // Map position token addresses to correct token symbols from our configuration
-    const token0Symbol = getTokenSymbolByAddress(position.token0.address);
-    const token1Symbol = getTokenSymbolByAddress(position.token1.address);
+    const token0Symbol = getTokenSymbolByAddress(position.token0.address, networkMode);
+    const token1Symbol = getTokenSymbolByAddress(position.token1.address, networkMode);
     
     if (!token0Symbol || !token1Symbol) {
       toast.error("Configuration Error", { 
@@ -800,7 +800,7 @@ export function WithdrawLiquidityModal({
                                         className="h-5 px-2 text-[10px] font-medium rounded-md border-sidebar-border bg-muted/20 hover:bg-muted/40 transition-colors"
                                         onClick={(e) => {
                                           e.stopPropagation();
-                                          const token0Decimals = tokenDefinitions[getTokenSymbolByAddress(position.token0.address) as TokenSymbol]?.decimals || 18;
+                                          const token0Decimals = tokenDefinitions[getTokenSymbolByAddress(position.token0.address, networkMode) as TokenSymbol]?.decimals || 18;
                                           const amount = calculatePercentageFromString(position.token0.amount, percentage, token0Decimals);
                                           const syntheticEvent = {
                                             target: { value: amount }
@@ -905,7 +905,7 @@ export function WithdrawLiquidityModal({
                                         className="h-5 px-2 text-[10px] font-medium rounded-md border-sidebar-border bg-muted/20 hover:bg-muted/40 transition-colors"
                                         onClick={(e) => {
                                           e.stopPropagation();
-                                          const token1Decimals = tokenDefinitions[getTokenSymbolByAddress(position.token1.address) as TokenSymbol]?.decimals || 18;
+                                          const token1Decimals = tokenDefinitions[getTokenSymbolByAddress(position.token1.address, networkMode) as TokenSymbol]?.decimals || 18;
                                           const amount = calculatePercentageFromString(position.token1.amount, percentage, token1Decimals);
                                           const syntheticEvent = {
                                             target: { value: amount }
@@ -1099,7 +1099,7 @@ export function WithdrawLiquidityModal({
                                     const baseAmount = parseFloat(withdrawAmount0 || "0");
                                     if (!feesForWithdraw) return formatTokenDisplayAmount(baseAmount.toString());
                                     
-                                    const decimals = getTokenSymbolByAddress(position.token0.address) ? tokenDefinitions[getTokenSymbolByAddress(position.token0.address)!]?.decimals || 18 : 18;
+                                    const decimals = getTokenSymbolByAddress(position.token0.address, networkMode) ? tokenDefinitions[getTokenSymbolByAddress(position.token0.address, networkMode)!]?.decimals || 18 : 18;
                                     const feeAmount = parseFloat(formatUnits(BigInt(feesForWithdraw.amount0 || '0'), decimals));
                                     const totalAmount = baseAmount + feeAmount;
                                     return formatTokenDisplayAmount(totalAmount.toString());
@@ -1112,7 +1112,7 @@ export function WithdrawLiquidityModal({
                                   const baseAmount = parseFloat(withdrawAmount0 || "0");
                                   if (!feesForWithdraw) return formatUSD(baseAmount * getUSDPriceForSymbol(position.token0.symbol));
                                   
-                                  const decimals = getTokenSymbolByAddress(position.token0.address) ? tokenDefinitions[getTokenSymbolByAddress(position.token0.address)!]?.decimals || 18 : 18;
+                                  const decimals = getTokenSymbolByAddress(position.token0.address, networkMode) ? tokenDefinitions[getTokenSymbolByAddress(position.token0.address, networkMode)!]?.decimals || 18 : 18;
                                   const feeAmount = parseFloat(formatUnits(BigInt(feesForWithdraw.amount0 || '0'), decimals));
                                   const totalAmount = baseAmount + feeAmount;
                                   return formatUSD(totalAmount * getUSDPriceForSymbol(position.token0.symbol));
@@ -1130,7 +1130,7 @@ export function WithdrawLiquidityModal({
                                     const baseAmount = parseFloat(withdrawAmount1 || "0");
                                     if (!feesForWithdraw) return formatTokenDisplayAmount(baseAmount.toString());
                                     
-                                    const decimals = getTokenSymbolByAddress(position.token1.address) ? tokenDefinitions[getTokenSymbolByAddress(position.token1.address)!]?.decimals || 18 : 18;
+                                    const decimals = getTokenSymbolByAddress(position.token1.address, networkMode) ? tokenDefinitions[getTokenSymbolByAddress(position.token1.address, networkMode)!]?.decimals || 18 : 18;
                                     const feeAmount = parseFloat(formatUnits(BigInt(feesForWithdraw.amount1 || '0'), decimals));
                                     const totalAmount = baseAmount + feeAmount;
                                     return formatTokenDisplayAmount(totalAmount.toString());
@@ -1143,7 +1143,7 @@ export function WithdrawLiquidityModal({
                                   const baseAmount = parseFloat(withdrawAmount1 || "0");
                                   if (!feesForWithdraw) return formatUSD(baseAmount * getUSDPriceForSymbol(position.token1.symbol));
                                   
-                                  const decimals = getTokenSymbolByAddress(position.token1.address) ? tokenDefinitions[getTokenSymbolByAddress(position.token1.address)!]?.decimals || 18 : 18;
+                                  const decimals = getTokenSymbolByAddress(position.token1.address, networkMode) ? tokenDefinitions[getTokenSymbolByAddress(position.token1.address, networkMode)!]?.decimals || 18 : 18;
                                   const feeAmount = parseFloat(formatUnits(BigInt(feesForWithdraw.amount1 || '0'), decimals));
                                   const totalAmount = baseAmount + feeAmount;
                                   return formatUSD(totalAmount * getUSDPriceForSymbol(position.token1.symbol));
@@ -1158,8 +1158,8 @@ export function WithdrawLiquidityModal({
                       {/* Fees Section with Striped Border - Only show if there are actual fees */}
                       {(() => {
                         // Check if there are any non-zero fees
-                        const token0Symbol = getTokenSymbolByAddress(position.token0.address);
-                        const token1Symbol = getTokenSymbolByAddress(position.token1.address);
+                        const token0Symbol = getTokenSymbolByAddress(position.token0.address, networkMode);
+                        const token1Symbol = getTokenSymbolByAddress(position.token1.address, networkMode);
                         const token0Decimals = token0Symbol ? tokenDefinitions[token0Symbol]?.decimals || 18 : 18;
                         const token1Decimals = token1Symbol ? tokenDefinitions[token1Symbol]?.decimals || 18 : 18;
 
@@ -1262,7 +1262,7 @@ export function WithdrawLiquidityModal({
                                 let totalWithdraw = withdrawAmount;
 
                                 if (feesForWithdraw) {
-                                  const decimals = getTokenSymbolByAddress(position.token0.address) ? tokenDefinitions[getTokenSymbolByAddress(position.token0.address)!]?.decimals || 18 : 18;
+                                  const decimals = getTokenSymbolByAddress(position.token0.address, networkMode) ? tokenDefinitions[getTokenSymbolByAddress(position.token0.address, networkMode)!]?.decimals || 18 : 18;
                                   const feeAmount = parseFloat(formatUnits(BigInt(feesForWithdraw.amount0 || '0'), decimals));
                                   totalWithdraw += feeAmount;
                                 }
@@ -1285,7 +1285,7 @@ export function WithdrawLiquidityModal({
                                 let totalWithdraw = withdrawAmount;
 
                                 if (feesForWithdraw) {
-                                  const decimals = getTokenSymbolByAddress(position.token1.address) ? tokenDefinitions[getTokenSymbolByAddress(position.token1.address)!]?.decimals || 18 : 18;
+                                  const decimals = getTokenSymbolByAddress(position.token1.address, networkMode) ? tokenDefinitions[getTokenSymbolByAddress(position.token1.address, networkMode)!]?.decimals || 18 : 18;
                                   const feeAmount = parseFloat(formatUnits(BigInt(feesForWithdraw.amount1 || '0'), decimals));
                                   totalWithdraw += feeAmount;
                                 }
@@ -1355,7 +1355,7 @@ export function WithdrawLiquidityModal({
                       // Calculate amount with fees added
                       const currentWithdraw = withdrawAmount0 || "0";
                       if (!feesForWithdraw) return currentWithdraw;
-                      const decimals = getTokenSymbolByAddress(position?.token0.address || '') ? tokenDefinitions[getTokenSymbolByAddress(position?.token0.address || '')!]?.decimals || 18 : 18;
+                      const decimals = getTokenSymbolByAddress(position?.token0.address || '', networkMode) ? tokenDefinitions[getTokenSymbolByAddress(position?.token0.address || '', networkMode)!]?.decimals || 18 : 18;
                       const feeAmount = formatUnits(BigInt(feesForWithdraw.amount0 || '0'), decimals);
                       const totalAmount = parseFloat(currentWithdraw) + parseFloat(feeAmount);
                       return totalAmount.toString();
@@ -1367,7 +1367,7 @@ export function WithdrawLiquidityModal({
                       // Calculate USD value with fees added
                       const currentWithdraw = withdrawAmount0 || "0";
                       if (!feesForWithdraw) return parseFloat(currentWithdraw) * getUSDPriceForSymbol(position?.token0.symbol || '');
-                      const decimals = getTokenSymbolByAddress(position?.token0.address || '') ? tokenDefinitions[getTokenSymbolByAddress(position?.token0.address || '')!]?.decimals || 18 : 18;
+                      const decimals = getTokenSymbolByAddress(position?.token0.address || '', networkMode) ? tokenDefinitions[getTokenSymbolByAddress(position?.token0.address || '', networkMode)!]?.decimals || 18 : 18;
                       const feeAmount = formatUnits(BigInt(feesForWithdraw.amount0 || '0'), decimals);
                       const totalAmount = parseFloat(currentWithdraw) + parseFloat(feeAmount);
                       return totalAmount * getUSDPriceForSymbol(position?.token0.symbol || '');
@@ -1385,7 +1385,7 @@ export function WithdrawLiquidityModal({
                       // Calculate amount with fees added
                       const currentWithdraw = withdrawAmount1 || "0";
                       if (!feesForWithdraw) return currentWithdraw;
-                      const decimals = getTokenSymbolByAddress(position?.token1.address || '') ? tokenDefinitions[getTokenSymbolByAddress(position?.token1.address || '')!]?.decimals || 18 : 18;
+                      const decimals = getTokenSymbolByAddress(position?.token1.address || '', networkMode) ? tokenDefinitions[getTokenSymbolByAddress(position?.token1.address || '', networkMode)!]?.decimals || 18 : 18;
                       const feeAmount = formatUnits(BigInt(feesForWithdraw.amount1 || '0'), decimals);
                       const totalAmount = parseFloat(currentWithdraw) + parseFloat(feeAmount);
                       return totalAmount.toString();
@@ -1397,7 +1397,7 @@ export function WithdrawLiquidityModal({
                       // Calculate USD value with fees added
                       const currentWithdraw = withdrawAmount1 || "0";
                       if (!feesForWithdraw) return parseFloat(currentWithdraw) * getUSDPriceForSymbol(position?.token1.symbol || '');
-                      const decimals = getTokenSymbolByAddress(position?.token1.address || '') ? tokenDefinitions[getTokenSymbolByAddress(position?.token1.address || '')!]?.decimals || 18 : 18;
+                      const decimals = getTokenSymbolByAddress(position?.token1.address || '', networkMode) ? tokenDefinitions[getTokenSymbolByAddress(position?.token1.address || '', networkMode)!]?.decimals || 18 : 18;
                       const feeAmount = formatUnits(BigInt(feesForWithdraw.amount1 || '0'), decimals);
                       const totalAmount = parseFloat(currentWithdraw) + parseFloat(feeAmount);
                       return totalAmount * getUSDPriceForSymbol(position?.token1.symbol || '');
@@ -1427,7 +1427,7 @@ export function WithdrawLiquidityModal({
                     // Calculate amount with fees added for token0
                     const currentWithdraw = withdrawAmount0 || "0";
                     if (!feesForWithdraw) return currentWithdraw;
-                    const decimals = getTokenSymbolByAddress(position?.token0.address || '') ? tokenDefinitions[getTokenSymbolByAddress(position?.token0.address || '')!]?.decimals || 18 : 18;
+                    const decimals = getTokenSymbolByAddress(position?.token0.address || '', networkMode) ? tokenDefinitions[getTokenSymbolByAddress(position?.token0.address || '', networkMode)!]?.decimals || 18 : 18;
                     const feeAmount = formatUnits(BigInt(feesForWithdraw.amount0 || '0'), decimals);
                     const totalAmount = parseFloat(currentWithdraw) + parseFloat(feeAmount);
                     return totalAmount.toString();
@@ -1435,7 +1435,7 @@ export function WithdrawLiquidityModal({
                     // Calculate amount with fees added for token1
                     const currentWithdraw = withdrawAmount1 || "0";
                     if (!feesForWithdraw) return currentWithdraw;
-                    const decimals = getTokenSymbolByAddress(position?.token1.address || '') ? tokenDefinitions[getTokenSymbolByAddress(position?.token1.address || '')!]?.decimals || 18 : 18;
+                    const decimals = getTokenSymbolByAddress(position?.token1.address || '', networkMode) ? tokenDefinitions[getTokenSymbolByAddress(position?.token1.address || '', networkMode)!]?.decimals || 18 : 18;
                     const feeAmount = formatUnits(BigInt(feesForWithdraw.amount1 || '0'), decimals);
                     const totalAmount = parseFloat(currentWithdraw) + parseFloat(feeAmount);
                     return totalAmount.toString();

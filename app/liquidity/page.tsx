@@ -42,7 +42,6 @@ import { useNetwork } from "@/lib/network-context";
 import { useIncreaseLiquidity, type IncreasePositionData } from "@/components/liquidity/useIncreaseLiquidity";
 import { useDecreaseLiquidity, type DecreasePositionData } from "@/components/liquidity/useDecreaseLiquidity";
 import { toast as sonnerToast } from "sonner";
-import { publicClient } from "@/lib/viemClient";
 import { waitForSubgraphBlock } from "../../lib/client-cache";
 
 

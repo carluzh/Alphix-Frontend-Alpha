@@ -1,7 +1,6 @@
 "use client";
 
 import React from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useSlippageValidation } from '@/hooks/useSlippage';
@@ -32,7 +31,7 @@ export function SlippageControl({
   const inputRef = React.useRef<HTMLInputElement>(null);
   const containerRef = React.useRef<HTMLDivElement>(null);
 
-  const { isCritical, showWarning, warningMessage } = useSlippageValidation(currentSlippage);
+  const { isCritical } = useSlippageValidation(currentSlippage);
 
   const matchesPreset = (value: number) => {
     return PRESETS.some(preset => Math.abs(value - preset) < 0.001);
@@ -225,22 +224,6 @@ export function SlippageControl({
           )}
         </div>
       </div>
-
-      <AnimatePresence>
-        {showWarning && !isAuto && warningMessage && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.15 }}
-            className="overflow-hidden"
-          >
-            <div className="text-xs text-red-500 mt-1">
-              {warningMessage}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </div>
   );
 }

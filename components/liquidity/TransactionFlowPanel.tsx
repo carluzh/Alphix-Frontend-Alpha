@@ -244,7 +244,6 @@ export function TransactionFlowPanel({
             await onExecuteZap();
             actions.completeStep('executing');
           } else {
-            toast('Confirm Transaction', { icon: React.createElement(Info, { className: 'h-4 w-4' }) });
             await onExecute(state.permitSignature);
           }
           break;

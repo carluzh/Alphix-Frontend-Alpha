@@ -210,17 +210,18 @@ export function generateStepperSteps(
 
     const zapCompleted = flowState.completedSteps.has('executing');
     const isExecuting = flowState.currentStep === 'executing';
+    const txSubmitted = isExecuting && flowState.isLocked;
 
     steps.push({
       id: 'swap',
       label: 'Swap Token',
-      status: zapCompleted ? 'completed' as const : isExecuting ? 'loading' as const : 'pending' as const,
+      status: zapCompleted ? 'completed' as const : txSubmitted ? 'completed' as const : isExecuting ? 'loading' as const : 'pending' as const,
     });
 
     steps.push({
       id: 'position',
       label: 'Create Position',
-      status: zapCompleted ? 'completed' as const : (isExecuting && flowState.isLocked) ? 'loading' as const : 'pending' as const,
+      status: zapCompleted ? 'completed' as const : txSubmitted ? 'loading' as const : 'pending' as const,
     });
 
     return steps;
@@ -249,7 +250,8 @@ export function generateStepperSteps(
   // Check if permit is actually needed (same logic as getNextStep)
   const hasPermitData = approvalData?.permitBatchData && approvalData?.signatureDetails;
   const needsPermit = approvalData?.needsToken0Permit || approvalData?.needsToken1Permit || hasPermitData;
-  const permitCompleted = !needsPermit || !!flowState.permitSignature || flowState.currentStep === 'executing' || flowState.completedSteps.has('executing');
+  const permitNotNeeded = approvalData && !needsPermit;
+  const permitCompleted = permitNotNeeded || !!flowState.permitSignature || flowState.currentStep === 'executing' || flowState.completedSteps.has('executing');
 
   steps.push({
     id: 'permit',

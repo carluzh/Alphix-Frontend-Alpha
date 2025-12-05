@@ -658,11 +658,11 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
       const errorStr = error.message.toLowerCase();
       
       // Check for smart contract call exceptions (common in ExactOut multihop)
-      if (errorStr.includes('call_exception') || 
+      if (errorStr.includes('call_exception') ||
           errorStr.includes('call revert exception') ||
           (errorStr.includes('0x6190b2b0') || errorStr.includes('0x486aa307'))) {
         if (req.body?.swapType === 'ExactOut') {
-          errorMessage = 'Route not available for this amount';
+          errorMessage = 'Amount exceeds available liquidity';
         } else {
           errorMessage = 'Not enough liquidity';
         }

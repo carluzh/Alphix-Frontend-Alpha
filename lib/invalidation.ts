@@ -162,23 +162,20 @@ export async function invalidateAfterTx(qc: QueryClient, params: Params) {
     if (params.awaitSubgraphSync) {
       try {
         const { publicClient } = await import('@/lib/viemClient')
-        const { waitForSubgraphBlock, setIndexingBarrier, invalidateUserPositionIdsCache } = await import('@/lib/client-cache')
-        const { SafeStorage } = await import('@/lib/safe-storage')
+        const { waitForSubgraphBlock, setIndexingBarrier } = await import('@/lib/client-cache')
 
         const targetBlock = params.blockNumber ?? await publicClient.getBlockNumber()
         const barrier = waitForSubgraphBlock(Number(targetBlock), {
-          timeoutMs: 45000,
-          minWaitMs: 3000,
-          maxIntervalMs: 3000
+          timeoutMs: 15000,
+          minWaitMs: 800,
+          maxIntervalMs: 1500
         })
         setIndexingBarrier(ownerLc, barrier)
         await barrier
-        await new Promise(resolve => setTimeout(resolve, 2000))
 
         if (params.refreshPoolData) {
           await params.refreshPoolData()
         }
-        invalidateUserPositionIdsCache(ownerLc)
       } catch (error) {
         console.error('[invalidateAfterTx] Subgraph sync failed:', error)
       }
@@ -273,6 +270,10 @@ export async function invalidateAfterTx(qc: QueryClient, params: Params) {
       prefetchService.notifyPositionsRefresh(ownerLc, params.reason || 'tx_confirmed')
     } catch {}
 
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(`walletBalancesRefreshAt_${ownerLc}`, String(Date.now()))
+      window.dispatchEvent(new Event('walletBalancesRefresh'))
+    }
 
   } catch (error) {
     console.error('[invalidateAfterTx] Top-level error:', error)

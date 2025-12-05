@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getPoolSubgraphId, getNetworkModeFromRequest } from '../../../lib/pools-config';
-import { getSubgraphUrlForPool } from '../../../lib/subgraph-url-helper';
+import { getUniswapV4SubgraphUrl, getSubgraphUrlForPool } from '../../../lib/subgraph-url-helper';
 import { cacheService } from '@/lib/cache/CacheService';
 import { poolKeys } from '@/lib/redis-keys';
 
@@ -37,7 +37,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       poolKeys.ticks(apiId),
       CACHE_TTL,
       async () => {
-        const subgraphUrl = getSubgraphUrlForPool(poolId, networkMode);
+        // Mainnet: ticks are in the Uniswap V4 subgraph
+        // Testnet: ticks are in our subgraph (with DAI pool separation)
+        const subgraphUrl = networkMode === 'mainnet'
+          ? getUniswapV4SubgraphUrl(networkMode)
+          : getSubgraphUrlForPool(poolId, networkMode);
         const query = `
           query GetTicks($pool: Bytes!, $first: Int!) {
             ticks(

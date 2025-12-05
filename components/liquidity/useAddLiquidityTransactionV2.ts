@@ -1,6 +1,6 @@
 // Refactored Add Liquidity Transaction Hook (Uniswap-style)
 import { useCallback, useState, useRef } from 'react';
-import { useAccount, useWriteContract, useWaitForTransactionReceipt, useSignTypedData, useBalance } from 'wagmi';
+import { useAccount, useWriteContract, useWaitForTransactionReceipt, useSignTypedData, useBalance, usePublicClient } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { BadgeCheck, OctagonX, InfoIcon } from 'lucide-react';
@@ -10,7 +10,6 @@ import { getExplorerTxUrl } from '@/lib/wagmiConfig';
 import { PERMIT2_ADDRESS, getPermit2Domain, PERMIT_TYPES } from '@/lib/swap-constants';
 import { ERC20_ABI } from '@/lib/abis/erc20';
 import { type Hex, maxUint256, formatUnits, formatUnits as viemFormatUnits, parseUnits as viemParseUnits, decodeEventLog } from 'viem';
-import { publicClient } from '@/lib/viemClient';
 import { addPositionIdToCache } from '@/lib/client-cache';
 import { position_manager_abi } from '@/lib/abis/PositionManager_abi';
 import { useCheckLiquidityApprovals } from './useCheckLiquidityApprovals';
@@ -52,6 +51,8 @@ export function useAddLiquidityTransactionV2({
 }: UseAddLiquidityTransactionV2Props) {
   const { address: accountAddress, chainId } = useAccount();
   const queryClient = useQueryClient();
+
+  const publicClient = usePublicClient();
 
   // Use balance hooks for refetching after swap (same pattern as swap-interface.tsx)
   const token0Config = getToken(token0Symbol);
@@ -180,6 +181,7 @@ export function useAddLiquidityTransactionV2({
   // Approves exact amount (+1 wei buffer) or infinite based on user setting
   const handleApprove = useCallback(
     async (tokenSymbol: TokenSymbol, exactAmount?: string) => {
+      if (!publicClient) throw new Error('Public client not available');
       const tokenConfig = getToken(tokenSymbol);
       if (!tokenConfig) throw new Error(`Token ${tokenSymbol} not found`);
 
@@ -228,6 +230,7 @@ export function useAddLiquidityTransactionV2({
   const handleZapSwapAndDeposit = useCallback(
     async (): Promise<void> => {
       if (!accountAddress || !chainId) throw new Error('Wallet not connected');
+      if (!publicClient) throw new Error('Public client not available');
       if (!zapApprovalData) throw new Error('Approval data not available');
 
       try {
@@ -281,6 +284,7 @@ export function useAddLiquidityTransactionV2({
           chainId,
           slippageTolerance: zapSlippageToleranceBps,
           deadlineSeconds,
+          approvalMode: isInfiniteApprovalEnabled() ? 'infinite' : 'exact',
         };
 
         // Include permit signature if it was required
@@ -289,6 +293,7 @@ export function useAddLiquidityTransactionV2({
           requestBody.permitNonce = zapApprovalData.swapPermitData.nonce;
           requestBody.permitExpiration = zapApprovalData.swapPermitData.expiration;
           requestBody.permitSigDeadline = zapApprovalData.swapPermitData.sigDeadline;
+          requestBody.permitAmount = zapApprovalData.swapPermitData.amount;
         }
 
         const response = await fetch('/api/liquidity/prepare-zap-mint-tx', {
@@ -829,10 +834,22 @@ export function useAddLiquidityTransactionV2({
       });
 
       (async () => {
-        const receipt = await publicClient.getTransactionReceipt({ hash: depositTxHash as `0x${string}` });
+        if (!publicClient) return;
         let tvlDelta = 0;
         let volumeDelta = 0;
         let newTokenId: string | undefined = undefined;
+
+        // Retry with backoff - RPC might be behind
+        let receipt: Awaited<ReturnType<typeof publicClient.getTransactionReceipt>> | null = null;
+        for (let attempt = 0; attempt < 5; attempt++) {
+          try {
+            receipt = await publicClient.getTransactionReceipt({ hash: depositTxHash as `0x${string}` });
+            if (receipt) break;
+          } catch {
+            if (attempt < 4) await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+          }
+        }
+        if (!receipt) return;
 
         // Extract tokenId from Transfer event (mint = from zero address)
         for (const log of receipt.logs) {

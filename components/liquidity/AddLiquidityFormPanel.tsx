@@ -163,8 +163,8 @@ export function AddLiquidityFormPanel({
         return;
       }
 
-      const token0Symbol = getTokenSymbolByAddress(position.token0.address);
-      const token1Symbol = getTokenSymbolByAddress(position.token1.address);
+      const token0Symbol = getTokenSymbolByAddress(position.token0.address, networkMode);
+      const token1Symbol = getTokenSymbolByAddress(position.token1.address, networkMode);
 
       if (!token0Symbol || !token1Symbol) {
         const amount = calculateCorrespondingAmount(inputAmount, inputSide, position);

@@ -5,6 +5,7 @@ import { useNetwork } from '@/lib/network-context';
 import { PERMIT2_ADDRESS } from '@/lib/swap-constants';
 import { ERC20_ABI } from '@/lib/abis/erc20';
 import { parseUnits } from 'viem';
+import { isInfiniteApprovalEnabled } from '@/hooks/useUserSettings';
 
 export interface CheckZapApprovalsParams {
   userAddress?: string;
@@ -160,6 +161,7 @@ export function useCheckZapApprovals(
           userTickUpper: params.tickUpper || 0,
           chainId: params.chainId,
           slippageTolerance: params.slippageToleranceBps ?? 50,
+          approvalMode: isInfiniteApprovalEnabled() ? 'infinite' : 'exact',
         }),
       })
         .then(res => {

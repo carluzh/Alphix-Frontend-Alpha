@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { useAccount, useWriteContract, useWaitForTransactionReceipt, useSignTypedData } from 'wagmi';
+import { useAccount, useWriteContract, useWaitForTransactionReceipt, useSignTypedData, usePublicClient } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { V4PositionPlanner, V4PositionManager, Pool as V4Pool, Position as V4Position } from '@uniswap/v4-sdk';
@@ -7,10 +7,10 @@ import { TickMath } from '@uniswap/v3-sdk';
 import { Token, Ether, CurrencyAmount, Percent } from '@uniswap/sdk-core';
 import { V4_POSITION_MANAGER_ADDRESS, EMPTY_BYTES, V4_POSITION_MANAGER_ABI, PERMIT2_ADDRESS, Permit2Abi_allowance } from '@/lib/swap-constants';
 import { getToken, TokenSymbol, getTokenSymbolByAddress } from '@/lib/pools-config';
+import { useNetwork } from '@/lib/network-context';
 import { baseSepolia, getExplorerTxUrl } from '@/lib/wagmiConfig';
 import { getAddress, type Hex, BaseError, parseUnits, formatUnits, encodeAbiParameters, keccak256 } from 'viem';
 import { getPositionDetails, getPoolState, preparePermit2BatchForPosition } from '@/lib/liquidity-utils';
-import { publicClient } from '@/lib/viemClient';
 import { invalidateAfterTx } from '@/lib/invalidation';
 import { OctagonX, InfoIcon, BadgeCheck } from 'lucide-react';
 
@@ -69,6 +69,10 @@ type IncreaseOptions = {
 export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquidityProps) {
   const queryClient = useQueryClient();
   const { address: accountAddress, chainId } = useAccount();
+  const { networkMode } = useNetwork();
+
+  const publicClient = usePublicClient();
+
   const { data: hash, writeContract, isPending: isIncreaseSendPending, error: increaseSendError, reset: resetWriteContract } = useWriteContract();
   const { isLoading: isIncreaseConfirming, isSuccess: isIncreaseConfirmed, error: increaseConfirmError, status: waitForTxStatus } = useWaitForTransactionReceipt({ hash });
   const { signTypedDataAsync } = useSignTypedData();
@@ -163,8 +167,8 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
       // Fetch on-chain position details and pool state
       const details = await getPositionDetails(nftTokenId, chainId);
       // Build currencies strictly in poolKey order to avoid side mixups
-      const symC0 = getTokenSymbolByAddress(getAddress(details.poolKey.currency0));
-      const symC1 = getTokenSymbolByAddress(getAddress(details.poolKey.currency1));
+      const symC0 = getTokenSymbolByAddress(getAddress(details.poolKey.currency0), networkMode);
+      const symC1 = getTokenSymbolByAddress(getAddress(details.poolKey.currency1), networkMode);
       if (!symC0 || !symC1) throw new Error('Token symbols not found for pool currencies');
       const defC0 = getToken(symC0)!;
       const defC1 = getToken(symC1)!;
@@ -306,6 +310,7 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
         });
       } else {
         try {
+          if (!publicClient) throw new Error('Public client not available');
           const now = Math.floor(Date.now() / 1000);
           let needPermit = false;
           // token0 ERC20 check
@@ -457,10 +462,16 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
       
       (async () => {
         let blockNumber: bigint | undefined = undefined;
-        try {
-          const receipt = await publicClient.getTransactionReceipt({ hash: hash as `0x${string}` });
-          blockNumber = receipt?.blockNumber;
-        } catch {}
+        if (publicClient) {
+          for (let attempt = 0; attempt < 5; attempt++) {
+            try {
+              const receipt = await publicClient.getTransactionReceipt({ hash: hash as `0x${string}` });
+              if (receipt) { blockNumber = receipt.blockNumber; break; }
+            } catch {
+              if (attempt < 4) await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+            }
+          }
+        }
         onLiquidityIncreased({
           txHash: hash as `0x${string}`,
           blockNumber,
@@ -479,7 +490,17 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
             const [p0, p1] = await Promise.all([getTokenPrice(posData.token0Symbol), getTokenPrice(posData.token1Symbol)]);
             tvlDelta = (p0 ? amt0 * p0 : 0) + (p1 ? amt1 * p1 : 0);
           }
-          const receipt = await publicClient.getTransactionReceipt({ hash: hash as `0x${string}` }).catch(() => null);
+          let receipt: { blockNumber: bigint } | null = null;
+          if (publicClient) {
+            for (let attempt = 0; attempt < 5; attempt++) {
+              try {
+                receipt = await publicClient.getTransactionReceipt({ hash: hash as `0x${string}` });
+                if (receipt) break;
+              } catch {
+                if (attempt < 4) await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+              }
+            }
+          }
           const { getPoolSubgraphId } = await import('@/lib/pools-config');
           await invalidateAfterTx(queryClient, {
             owner: accountAddress,

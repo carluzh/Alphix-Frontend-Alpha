@@ -48,7 +48,7 @@ import { useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { useQueryClient } from '@tanstack/react-query';
 import { getPositionManagerAddress } from '@/lib/pools-config';
 import { position_manager_abi } from '@/lib/abis/PositionManager_abi';
-import { loadUserPositionIds, derivePositionsFromIds, waitForSubgraphBlock, setIndexingBarrier, invalidateUserPositionIdsCache, getCachedPositionTimestamps } from "../../../lib/client-cache";
+import { loadUserPositionIds, derivePositionsFromIds, waitForSubgraphBlock, setIndexingBarrier, getCachedPositionTimestamps, removePositionIdFromCache } from "../../../lib/client-cache";
 import { invalidateAfterTx } from "@/lib/invalidation";
 
 import type { Pool } from "../../../types";
@@ -57,14 +57,13 @@ import React from "react";
 import { useIncreaseLiquidity, type IncreasePositionData } from "@/components/liquidity/useIncreaseLiquidity";
 import { useDecreaseLiquidity, type DecreasePositionData } from "@/components/liquidity/useDecreaseLiquidity";
 import { prefetchService } from "@/lib/prefetch-service";
-import { publicClient } from "@/lib/viemClient";
 
 
 import { ChevronDownIcon } from "lucide-react";
 
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { PositionSkeleton } from '@/components/liquidity/PositionSkeleton';
 import { PositionCardCompact } from '@/components/liquidity/PositionCardCompact';
+import { PositionSkeleton } from '@/components/liquidity/PositionSkeleton';
 
 const AddLiquidityModal = dynamic(
   () => import("@/components/liquidity/AddLiquidityModal").then(m => m.AddLiquidityModal),
@@ -477,15 +476,8 @@ export default function PoolDetailPage() {
   const poolId = params?.poolId || '';
   const queryClient = useQueryClient();
   const [userPositions, setUserPositions] = useState<ProcessedPosition[]>([]);
-
-  const [pendingNewPositions, setPendingNewPositions] = useState<Array<{
-    id: string,
-    token0Symbol: string,
-    token1Symbol: string,
-    createdAt: number,
-    baselineIds?: string[]
-  }>>([]);
   const [isLoadingPositions, setIsLoadingPositions] = useState(true);
+  const [isDerivingNewPosition, setIsDerivingNewPosition] = useState(false);
   const [activeChart, setActiveChart] = useState<keyof Pick<typeof chartConfig, 'volume' | 'tvl' | 'volumeTvlRatio' | 'emaRatio' | 'dynamicFee'>>("volumeTvlRatio");
   const [isDynamicFeeModalOpen, setIsDynamicFeeModalOpen] = useState(false);
   const [hoveredFee, setHoveredFee] = useState<number | null>(null);
@@ -1025,80 +1017,29 @@ export default function PoolDetailPage() {
   // Track compound intent so we can suppress page-level success toast
 
   // Silent backoff refresh for positions - only updates when new positions are detected
-  const silentBackoffRefreshPositions = useCallback(async (removeSkeletonsWhenFound = false) => {
+  const silentBackoffRefreshPositions = useCallback(async () => {
     try {
       if (!poolId || !isConnected || !accountAddress) return;
-      
-      // Prevent rapid silent position refreshes (cooldown: 5 seconds)
+
       const now = Date.now();
-      if (now - lastPositionRefreshRef.current < 5000) {
-        return;
-      }
+      if (now - lastPositionRefreshRef.current < 5000) return;
       lastPositionRefreshRef.current = now;
-      
+
       const baseInfo = getPoolConfiguration(poolId);
       const subId = (baseInfo?.subgraphId || '').toLowerCase();
       if (!subId) return;
 
-      const fingerprint = (arr: ProcessedPosition[]) => {
-        try {
-          return JSON.stringify(arr.map(p => ({ id: p.positionId, a0: p.token0.amount, a1: p.token1.amount, l: (p as any)?.liquidity, lo: p.tickLower, up: p.tickUpper })));
-        } catch { return ''; }
-      };
-      const baseline = userPositions || [];
-      const baselineFp = fingerprint(baseline);
-      const baselineIds = new Set(baseline.map(p => p.positionId));
+      const ids = await loadUserPositionIds(accountAddress);
+      const timestamps = getCachedPositionTimestamps(accountAddress);
+      const data = await derivePositionsFromIds(accountAddress, ids, chainId!, timestamps);
+      const filtered = data.filter((pos: any) => String(pos?.poolId || '').toLowerCase() === subId);
 
-      // DO NOT show loading state - this is silent
-      await RetryUtility.execute(
-        async () => {
-          if (!accountAddress) throw new Error('Missing account');
-          // Fetch from on-chain
-          const ids = await loadUserPositionIds(accountAddress);
-          const timestamps = getCachedPositionTimestamps(accountAddress);
-          const data = await derivePositionsFromIds(accountAddress, ids, chainId!, timestamps);
-          const filtered = data.filter((pos: any) => String(pos?.poolId || '').toLowerCase() === subId);
-          const nextFp = fingerprint(filtered);
-
-          // Check for new position IDs (more reliable than count comparison)
-          const newPositions = filtered.filter(p => !baselineIds.has(p.positionId));
-          const hasNewPositions = newPositions.length > 0;
-
-          // Only update if we detected new positions (or significant changes after some retries)
-          if (nextFp !== baselineFp && hasNewPositions) {
-            if (removeSkeletonsWhenFound && hasNewPositions) {
-              refreshTombstonesFromFetched(filtered as any);
-              setUserPositions(applyTombstones(filtered as any));
-            } else {
-              refreshTombstonesFromFetched(filtered as any);
-              setUserPositions(applyTombstones(filtered as any));
-            }
-            return filtered; // Success
-          }
-
-          throw new Error('No new positions detected');
-        },
-        {
-          attempts: 5,
-          backoffStrategy: 'custom',
-          baseDelay: 1000, // Not used with custom delays, but required by interface
-          customDelays: [0, 2000, 5000, 10000, 15000],
-          shouldRetry: (attempt, error) => {
-            // Continue retrying unless we have a fundamental error
-            return !error.message.includes('Invalid response format');
-          },
-          throwOnFailure: false // Silent failure is ok
-        }
-      );
-      
-      // After trying all delays, remove skeletons anyway to prevent infinite loading
-      if (removeSkeletonsWhenFound) {
-        setTimeout(() => setPendingNewPositions([]), 1000);
-      }
+      refreshTombstonesFromFetched(filtered as any);
+      setUserPositions(applyTombstones(filtered as any));
     } catch (error) {
       console.warn('Silent position refresh failed:', error);
     }
-  }, [poolId, isConnected, accountAddress, userPositions]);
+  }, [poolId, isConnected, accountAddress]);
 
   // Backoff refresh for positions after liquidity actions (independent of chart backoff)
   const backoffRefreshPositions = useCallback(async () => {
@@ -1424,147 +1365,77 @@ export default function PoolDetailPage() {
     if (refreshThrottleRef.current && timeSinceLastCall < 2000) return;
     refreshThrottleRef.current = now;
 
-    if (token0Symbol && token1Symbol) {
-      const skeletonId = `skeleton-${Date.now()}`;
-      const createdAt = Date.now();
-      const currentBaselineIds = userPositions.map(p => p.positionId);
-      setPendingNewPositions(prev => [...prev, { id: skeletonId, token0Symbol, token1Symbol, createdAt, baselineIds: currentBaselineIds }]);
-
-      // Optimistic UI updates for TVL and volume
-      if (txInfo?.tvlDelta && currentPoolData?.liquidity) {
-        const currentTvl = parseFloat(String(currentPoolData.liquidity).replace(/[$,]/g, ''));
-        if (Number.isFinite(currentTvl)) {
-          const optimisticTvl = Math.max(0, currentTvl + txInfo.tvlDelta);
-          setCurrentPoolData(prev => prev ? { ...prev, liquidity: formatUSD(optimisticTvl) } : prev);
-        }
+    // Optimistic UI updates for TVL and volume
+    if (txInfo?.tvlDelta && currentPoolData?.liquidity) {
+      const currentTvl = parseFloat(String(currentPoolData.liquidity).replace(/[$,]/g, ''));
+      if (Number.isFinite(currentTvl)) {
+        const optimisticTvl = Math.max(0, currentTvl + txInfo.tvlDelta);
+        setCurrentPoolData(prev => prev ? { ...prev, liquidity: formatUSD(optimisticTvl) } : prev);
       }
-
-      // Optimistic volume update for zap transactions
-      if (txInfo?.volumeDelta && currentPoolData?.volume24h) {
-        const currentVol = parseFloat(String(currentPoolData.volume24h).replace(/[$,]/g, ''));
-        if (Number.isFinite(currentVol)) {
-          const optimisticVol = Math.max(0, currentVol + txInfo.volumeDelta);
-          setCurrentPoolData(prev => prev ? { ...prev, volume24h: formatUSD(optimisticVol) } : prev);
-        }
+    }
+    if (txInfo?.volumeDelta && currentPoolData?.volume24h) {
+      const currentVol = parseFloat(String(currentPoolData.volume24h).replace(/[$,]/g, ''));
+      if (Number.isFinite(currentVol)) {
+        const optimisticVol = Math.max(0, currentVol + txInfo.volumeDelta);
+        setCurrentPoolData(prev => prev ? { ...prev, volume24h: formatUSD(optimisticVol) } : prev);
       }
     }
 
-    if (txInfo?.txHash && txInfo?.blockNumber && accountAddress && poolId && chainId) {
+    if (accountAddress && poolId && chainId) {
+      setIsDerivingNewPosition(true);
       try {
-        await invalidateAfterTx(queryClient, {
+        const ids = await loadUserPositionIds(accountAddress);
+        const timestamps = getCachedPositionTimestamps(accountAddress);
+        const allDerived = await derivePositionsFromIds(accountAddress, ids, chainId, timestamps);
+        const subId = (getPoolConfiguration(poolId)?.subgraphId || '').toLowerCase();
+        const filtered = allDerived.filter((pos: any) => String(pos.poolId || '').toLowerCase() === subId);
+
+        setUserPositions(prev => {
+          const existingIds = new Set(prev.map(p => p.positionId));
+          const newPositions = filtered.filter(p => !existingIds.has(p.positionId));
+          const updated = prev.map(p => {
+            const fresh = filtered.find(f => f.positionId === p.positionId);
+            return fresh ? { ...fresh, isOptimisticallyUpdating: undefined } : p;
+          });
+          return [...newPositions, ...updated];
+        });
+
+        invalidateAfterTx(queryClient, {
           owner: accountAddress,
           chainId,
           poolId,
           reason: 'liquidity-added',
-          awaitSubgraphSync: true,
-          blockNumber: txInfo.blockNumber,
-          reloadPositions: true,
-          refreshPoolData: silentRefreshTVL,
-          // Pass optimistic updates to ensure Redis cache invalidation
-          optimisticUpdates: {
-            tvlDelta: txInfo.tvlDelta,
-            volumeDelta: txInfo.volumeDelta, // Include volume delta for zap transactions
-          },
-          onPositionsReloaded: (allDerived) => {
-            const subId = (getPoolConfiguration(poolId)?.subgraphId || '').toLowerCase();
-            const filtered = allDerived.filter((pos: any) => String(pos.poolId || '').toLowerCase() === subId);
-            setUserPositions(prev => {
-              const existingIds = new Set(prev.map(p => p.positionId));
-              const newPositions = filtered.filter(p => !existingIds.has(p.positionId));
-              const updated = prev.map(p => {
-                const fresh = filtered.find(f => f.positionId === p.positionId);
-                return fresh ? { ...fresh, isOptimisticallyUpdating: undefined } : p;
-              });
-              // Put new positions at the beginning so they appear at the top
-              return [...newPositions, ...updated];
-            });
-            setPendingNewPositions([]);
-          },
-          clearOptimisticStates: () => {
-            setUserPositions(prev => prev.map(p => ({ ...p, isOptimisticallyUpdating: undefined })));
-            setOptimisticallyClearedFees(new Set());
-            setPendingNewPositions([]);
-          }
-        });
-      } catch (error) { console.error('[refreshAfterLiquidityAdded] Failed:', error); setPendingNewPositions([]); aggressivePositionRefresh(); }
-    } else { aggressivePositionRefresh(); }
-  }, [userPositions, accountAddress, poolId, queryClient, fetchPageData, currentPoolData]);
+          awaitSubgraphSync: false,
+          optimisticUpdates: { tvlDelta: txInfo?.tvlDelta, volumeDelta: txInfo?.volumeDelta },
+        }).catch(() => {});
 
-  // Aggressive position refresh with guaranteed cache invalidation and retries
+        silentRefreshTVL().catch(() => {});
+      } catch (error) {
+        console.error('[refreshAfterLiquidityAdded] Failed:', error);
+      } finally {
+        setIsDerivingNewPosition(false);
+      }
+    }
+  }, [accountAddress, poolId, chainId, queryClient, currentPoolData]);
+
+  // Position refresh - uses SWR pattern, no cache deletion
   const aggressivePositionRefresh = useCallback(async () => {
     if (!poolId || !isConnected || !accountAddress) return;
 
     const basePoolInfo = getPoolConfiguration(poolId);
     if (!basePoolInfo) return;
     const subId = (basePoolInfo.subgraphId || '').toLowerCase();
-    const baselineCount = userPositions.length;
 
     try {
-      // Immediate cache invalidation to prevent stale data
-      invalidateUserPositionIdsCache(accountAddress);
-      
-      // Poll with retries until we get NEW positions
-      let attempts = 0;
-      const maxAttempts = 10;
-      const pollInterval = 1500; // 1.5s between attempts
-      
-      const pollForNewPositions = async (): Promise<boolean> => {
-        attempts++;
-
-        try {
-          // Force fresh cache invalidation each attempt
-          invalidateUserPositionIdsCache(accountAddress);
-
-          // Load fresh position IDs
-          const ids = await loadUserPositionIds(accountAddress);
-          const timestamps = getCachedPositionTimestamps(accountAddress);
-
-          // Derive position data
-          const allDerived = await derivePositionsFromIds(accountAddress, ids, chainId!, timestamps);
-          const filtered = allDerived.filter((pos: any) => String(pos.poolId || '').toLowerCase() === subId);
-
-          // Success condition: we have MORE positions than baseline OR we have validated new position data
-          const hasNewPosition = filtered.length > baselineCount;
-          const hasValidatedNewPosition = filtered.some(p =>
-            !userPositions.some(existing => existing.positionId === p.positionId) &&
-            p.token0?.amount !== undefined &&
-            p.token1?.amount !== undefined &&
-            p.tickLower !== undefined &&
-            p.tickUpper !== undefined
-          );
-
-          if (hasNewPosition || hasValidatedNewPosition) {
-            setUserPositions(filtered);
-            setPendingNewPositions([]);
-            return true;
-          }
-
-          return false;
-        } catch (error) {
-          console.warn(`[AggressiveRefresh] Attempt ${attempts} failed:`, error);
-          return false;
-        }
-      };
-      
-      // Initial attempt
-      const success = await pollForNewPositions();
-      if (success) return;
-      
-      // Retry polling if initial attempt failed
-      for (let i = 1; i < maxAttempts; i++) {
-        await new Promise(resolve => setTimeout(resolve, pollInterval));
-        const success = await pollForNewPositions();
-        if (success) return;
-      }
-      
-      // Fallback: clear skeletons even if we didn't find new positions
-      setPendingNewPositions([]);
-
+      const ids = await loadUserPositionIds(accountAddress);
+      const timestamps = getCachedPositionTimestamps(accountAddress);
+      const allDerived = await derivePositionsFromIds(accountAddress, ids, chainId!, timestamps);
+      const filtered = allDerived.filter((pos: any) => String(pos.poolId || '').toLowerCase() === subId);
+      setUserPositions(filtered);
     } catch (error) {
-      console.error('[AggressiveRefresh] Complete failure:', error);
-      setPendingNewPositions([]);
+      console.error('[PositionRefresh] Failed:', error);
     }
-  }, [poolId, isConnected, accountAddress, userPositions]);
+  }, [poolId, isConnected, accountAddress]);
 
 
   // Post-mutation window to treat zero-like responses as transient
@@ -1816,11 +1687,11 @@ export default function PoolDetailPage() {
     // IMMEDIATE OPTIMISTIC UPDATES (happen with toast)
     if (targetPosition) {
       if (closing) {
-        // For full burns: immediately remove position from UI
-        const positionValue = calculatePositionUsd(targetPosition);
+        // Full burn: remove from UI and cache
         setUserPositions(prev => prev.filter(p => p.positionId !== targetPosition.positionId));
+        if (accountAddress) removePositionIdFromCache(accountAddress, targetPosition.positionId);
       } else {
-        // For partial withdrawals: show loading state and clear fees optimistically
+        // Partial withdrawal: show loading state
         setUserPositions(prev => prev.map(p =>
           p.positionId === targetPosition.positionId
             ? {
@@ -1878,23 +1749,6 @@ export default function PoolDetailPage() {
       resetIncreaseLiquidity();
     }
   }, [showIncreaseModal, resetIncreaseLiquidity]);
-
-  // Backup skeleton removal - only if aggressive refresh hasn't cleared them after 20 seconds
-  useEffect(() => {
-    if (pendingNewPositions.length === 0) return;
-
-    // Find the oldest pending skeleton
-    const oldestSkeleton = pendingNewPositions.reduce((oldest, current) =>
-      current.createdAt < oldest.createdAt ? current : oldest
-    );
-
-    // If oldest skeleton is more than 20 seconds old, clear all skeletons as backup
-    const age = Date.now() - oldestSkeleton.createdAt;
-    if (age > 20000) { // 20 seconds
-      console.warn('[SkeletonBackup] Clearing stale skeletons after 20s timeout');
-      setPendingNewPositions([]);
-    }
-  }, [pendingNewPositions]);
 
   // Optimized: Single call per pool load (chart data only - positions handled separately)
   useEffect(() => {
@@ -3421,21 +3275,11 @@ export default function PoolDetailPage() {
             </div>
             
             {isLoadingPositions ? (
-              /* Simple pulsing skeleton container */
-              <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4 h-20 animate-pulse">
-              </div>
-            ) : (userPositions.length > 0 || pendingNewPositions.length > 0) ? (
+              <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4 h-20 animate-pulse" />
+            ) : userPositions.length > 0 || isDerivingNewPosition ? (
               <div>
-                {/* Replace Table with individual position segments */}
                 <div className="grid gap-3 lg:gap-4 min-[1360px]:grid-cols-2 min-[1360px]:gap-4 responsive-grid">
-                  {/* Render pending position skeletons first */}
-                  {pendingNewPositions.map((pendingPos) => (
-                    <PositionSkeleton
-                      key={pendingPos.id}
-                      token0Symbol={pendingPos.token0Symbol}
-                      token1Symbol={pendingPos.token1Symbol}
-                    />
-                  ))}
+                  {isDerivingNewPosition && <PositionSkeleton key="deriving-skeleton" />}
                   {(() => {
                     const aprNum = parseFloat(currentPoolData?.apr?.replace(/[~%]/g, '') || '');
                     const poolAPY = isFinite(aprNum) ? aprNum : null;

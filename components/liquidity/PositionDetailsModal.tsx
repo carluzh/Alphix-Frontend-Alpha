@@ -29,6 +29,7 @@ import { useDecreaseLiquidity, type DecreasePositionData } from "./useDecreaseLi
 import { preparePermit2BatchForNewPosition } from '@/lib/liquidity-utils';
 import { useCheckIncreaseLiquidityApprovals } from "./useCheckIncreaseLiquidityApprovals";
 import { useEthersSigner } from "@/hooks/useEthersSigner";
+import { isInfiniteApprovalEnabled } from "@/hooks/useUserSettings";
 import { toast } from "sonner";
 import { motion, useAnimation } from "framer-motion";
 import { getTokenSymbolByAddress } from "@/lib/utils";
@@ -108,6 +109,7 @@ interface PositionDetailsModalProps {
   onLiquidityDecreased?: (info?: { txHash?: `0x${string}`; blockNumber?: bigint; isFullBurn?: boolean }) => void;
   onAfterLiquidityAdded?: (tvlDelta: number, info: { txHash: `0x${string}`; blockNumber: bigint }) => void;
   onAfterLiquidityRemoved?: (tvlDelta: number, info: { txHash: `0x${string}`; blockNumber: bigint }) => void;
+  onFeesCollected?: (positionId: string) => void;
 }
 
 // Helper to extract average color from token icon (fallback to hardcoded colors)
@@ -160,6 +162,7 @@ export function PositionDetailsModal({
   onLiquidityDecreased: onLiquidityDecreasedProp,
   onAfterLiquidityAdded,
   onAfterLiquidityRemoved,
+  onFeesCollected,
   apr,
 }: PositionDetailsModalProps) {
   const [mounted, setMounted] = useState(false);
@@ -337,18 +340,32 @@ export function PositionDetailsModal({
       icon: React.createElement(Info, { className: 'h-4 w-4' })
     });
 
+    const useInfinite = isInfiniteApprovalEnabled();
+    let approvalAmount: bigint = BigInt("115792089237316195423570985008687907853269984665640564039457584007913129639935");
+
+    if (!useInfinite) {
+      const exactAmount = tokenSymbol === position.token0.symbol ? increaseAmount0 : increaseAmount1;
+      if (exactAmount) {
+        try {
+          approvalAmount = viemParseUnits(exactAmount, tokenConfig.decimals) + 1n; // +1 wei buffer
+        } catch {
+          // Fall back to infinite on parse error
+        }
+      }
+    }
+
     const hash = await approveERC20Async({
       address: tokenConfig.address as `0x${string}`,
       abi: erc20Abi,
       functionName: 'approve',
-      args: ["0x000000000022D473030F116dDEE9F6B43aC78BA3" as `0x${string}`, BigInt("115792089237316195423570985008687907853269984665640564039457584007913129639935")],
+      args: ["0x000000000022D473030F116dDEE9F6B43aC78BA3" as `0x${string}`, approvalAmount],
     });
 
     toast.success(`${tokenSymbol} Approved`, {
       icon: React.createElement(BadgeCheck, { className: 'h-4 w-4 text-green-500' }),
-      description: `Approved infinite ${tokenSymbol} for liquidity`,
+      description: useInfinite ? `Approved infinite ${tokenSymbol} for liquidity` : `Approved exact ${tokenSymbol} for liquidity`,
     });
-  }, [approveERC20Async]);
+  }, [approveERC20Async, tokenDefinitions, position.token0.symbol, increaseAmount0, increaseAmount1]);
 
   const signPermitV2 = useCallback(async (): Promise<string | undefined> => {
     if (!increaseApprovalData?.permitBatchData || !increaseApprovalData?.signatureDetails) {
@@ -513,8 +530,8 @@ export function PositionDetailsModal({
 
 
     // Map position token addresses to correct token symbols
-    const token0Symbol = getTokenSymbolByAddress(position.token0.address);
-    const token1Symbol = getTokenSymbolByAddress(position.token1.address);
+    const token0Symbol = getTokenSymbolByAddress(position.token0.address, networkMode);
+    const token1Symbol = getTokenSymbolByAddress(position.token1.address, networkMode);
 
     if (!token0Symbol || !token1Symbol) {
       toast.error("Configuration Error", {
@@ -748,6 +765,8 @@ export function PositionDetailsModal({
     setPreviewCollectFee0(0);
     setPreviewCollectFee1(0);
 
+    onFeesCollected?.(position.positionId);
+
     // Clear the prefetched fees so they show as 0 immediately
     // This will be updated when parent refetches
     if (typeof window !== 'undefined') {
@@ -758,7 +777,7 @@ export function PositionDetailsModal({
     } else {
       onRefreshPosition();
     }
-  }, [onRefreshPosition]);
+  }, [onRefreshPosition, onFeesCollected, position.positionId]);
 
   // Handlers for preview updates
   const handleAddAmountsChange = useCallback((amount0: number, amount1: number) => {

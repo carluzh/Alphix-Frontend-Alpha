@@ -6,6 +6,7 @@ import { ERC20_ABI } from '@/lib/abis/erc20';
 import { iallowance_transfer_abi } from '@/lib/abis/IAllowanceTransfer_abi';
 import { parseUnits } from 'viem';
 import { useNetwork } from '@/lib/network-context';
+import { isInfiniteApprovalEnabled } from '@/hooks/useUserSettings';
 
 export interface CheckIncreaseLiquidityApprovalsParams {
   userAddress?: string;
@@ -179,14 +180,17 @@ export function useCheckIncreaseLiquidityApprovals(
         try {
           const sigDeadline = Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60;
           const MAX_PERMIT_AMOUNT = BigInt("1461501637330902918203684832716283019655932542875");
+          const useInfinite = isInfiniteApprovalEnabled();
+          const permit0Amount = needsToken0Permit ? (useInfinite ? MAX_PERMIT_AMOUNT : amount0Wei + 1n) : undefined;
+          const permit1Amount = needsToken1Permit ? (useInfinite ? MAX_PERMIT_AMOUNT : amount1Wei + 1n) : undefined;
 
           const batchData = await preparePermit2BatchForPosition(
             params.tokenId,
             params.userAddress as `0x${string}`,
             params.chainId!,
             sigDeadline,
-            needsToken0Permit ? MAX_PERMIT_AMOUNT : undefined,
-            needsToken1Permit ? MAX_PERMIT_AMOUNT : undefined
+            permit0Amount,
+            permit1Amount
           );
 
           if (batchData && batchData.message.details && batchData.message.details.length > 0) {
