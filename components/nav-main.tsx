@@ -40,23 +40,18 @@ export function NavMain({
   const router = useRouter()
   const [, startTransition] = useTransition()
 
-  // Clear optimistic state when navigation completes
   useEffect(() => {
     if (optimisticPath && pathname === optimisticPath) {
       setOptimisticPath(null)
     }
   }, [pathname, optimisticPath])
 
-  // Warm sidebar destinations so nav is instant
   useEffect(() => {
     items.forEach((item) => {
-      if (item.url) {
-        router.prefetch(item.url)
-      }
+      if (item.url) router.prefetch(item.url)
     })
   }, [items, router])
 
-  // Optimistic navigation handler
   const handleNavClick = useCallback((e: React.MouseEvent, url: string) => {
     e.preventDefault()
     setOptimisticPath(url)
@@ -375,7 +370,6 @@ export function NavMain({
       {items.map((item) => {
         const isActive = (() => {
           if (!item.url) return false
-          // Use optimistic path for instant feedback, fall back to actual pathname
           const activePath = optimisticPath || pathname || ""
           return activePath === item.url || activePath.startsWith(`${item.url}/`)
         })();

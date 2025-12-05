@@ -8,7 +8,7 @@ type TransitionLinkProps = ComponentProps<typeof Link>
 
 export function TransitionLink({ href, onClick, children, ...props }: TransitionLinkProps) {
   const router = useRouter()
-  const [isPending, startTransition] = useTransition()
+  const [, startTransition] = useTransition()
 
   const handleClick = useCallback(
     (e: React.MouseEvent<HTMLAnchorElement>) => {
@@ -17,7 +17,6 @@ export function TransitionLink({ href, onClick, children, ...props }: Transition
 
       const url = typeof href === "string" ? href : href.pathname || "/"
 
-      // Skip for external links, new tabs, or modifier keys
       if (
         url.startsWith("http") ||
         e.metaKey ||
@@ -30,17 +29,12 @@ export function TransitionLink({ href, onClick, children, ...props }: Transition
 
       e.preventDefault()
 
-      // Use View Transitions API if available
       if (document.startViewTransition) {
         document.startViewTransition(() => {
-          startTransition(() => {
-            router.push(url)
-          })
+          startTransition(() => router.push(url))
         })
       } else {
-        startTransition(() => {
-          router.push(url)
-        })
+        startTransition(() => router.push(url))
       }
     },
     [href, onClick, props.target, router]

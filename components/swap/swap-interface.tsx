@@ -750,8 +750,8 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     chainId: TARGET_CHAIN_ID,
     query: {
       enabled: !!accountAddress && !!fromToken.address,
-      staleTime: 30000, // 30s - balances update after swap/tx completion
-      refetchOnWindowFocus: false, // Disable aggressive refetching
+      staleTime: 30000,
+      refetchOnWindowFocus: false,
     }
   });
 
@@ -761,8 +761,8 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     chainId: TARGET_CHAIN_ID,
     query: {
       enabled: !!accountAddress && !!toToken.address,
-      staleTime: 30000, // 30s - balances update after swap/tx completion
-      refetchOnWindowFocus: false, // Disable aggressive refetching
+      staleTime: 30000,
+      refetchOnWindowFocus: false,
     }
   });
 
@@ -781,13 +781,11 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     if (!accountAddress) return;
 
     const onRefresh = () => {
-      // Immediate refetch for instant feedback
-      Promise.all([refetchFromTokenBalance?.(), refetchToTokenBalance?.()]);
-      // Delayed invalidation for subgraph sync (no need to call refetch again - invalidate triggers it)
+      Promise.all([refetchFromTokenBalance?.(), refetchToTokenBalance?.()])
       setTimeout(() => {
-        queryClient.invalidateQueries({ queryKey: ['balance'] });
-      }, 2000);
-    };
+        queryClient.invalidateQueries({ queryKey: ['balance'] })
+      }, 2000)
+    }
 
     const onStorage = (e: StorageEvent) => {
       if (!e.key || !accountAddress) return;

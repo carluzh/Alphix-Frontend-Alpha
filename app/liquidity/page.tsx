@@ -109,6 +109,7 @@ export default function LiquidityPage() {
   const [sorting, setSorting] = React.useState<SortingState>([]);
   const [columnSizing, setColumnSizing] = useState<ColumnSizingState>({});
   const { networkMode } = useNetwork();
+  const [optimisticPoolId, setOptimisticPoolId] = useState<string | null>(null);
 
   // Generate pools based on current network mode - regenerates when network changes
   const initialPools = useMemo(() => generatePoolsFromConfig(), [networkMode]);
@@ -129,6 +130,11 @@ export default function LiquidityPage() {
   const [poolDataByPoolId, setPoolDataByPoolId] = useState<Record<string, any>>({});
   const [priceMap, setPriceMap] = useState<Record<string, number>>({});
   const [isLoadingPoolStates, setIsLoadingPoolStates] = useState(true);
+
+  const navigateToPool = useCallback((poolId: string) => {
+    setOptimisticPoolId(poolId);
+    router.push(`/liquidity/${poolId}`);
+  }, [router]);
 
   const fetchAllPoolStatsBatch = useCallback(async () => {
       try {
@@ -316,6 +322,12 @@ export default function LiquidityPage() {
   const filteredPools = useMemo(() => {
     return poolsWithPositionCounts;
   }, [poolsWithPositionCounts]);
+
+  useEffect(() => {
+    poolsWithPositionCounts.forEach((pool) => {
+      router.prefetch(`/liquidity/${pool.id}`)
+    })
+  }, [poolsWithPositionCounts, router])
 
   const handleAddLiquidity = useCallback((e: React.MouseEvent, poolId: string) => {
     e.stopPropagation();
@@ -639,9 +651,9 @@ export default function LiquidityPage() {
             </div>
 
             {isMobile ? (
-              <MobileLiquidityList 
+              <MobileLiquidityList
                 pools={filteredPools}
-                onSelectPool={(poolId) => router.push(`/liquidity/${poolId}`)}
+                onSelectPool={navigateToPool}
               />
             ) : (
               <div className="overflow-x-auto isolate">
@@ -682,24 +694,29 @@ export default function LiquidityPage() {
                         const isExpanded = false;
 
                         return (
-                          <React.Fragment key={row.id}>
-                            <Link href={`/liquidity/${pool.id}`} className="contents">
-                              <TableRow className="group cursor-pointer transition-colors hover:bg-muted/30">
-                                {row.getVisibleCells().map((cell, index) => (
-                                  <TableCell 
-                                    key={cell.id}
-                                    className={`relative py-4 px-2 ${index === 0 ? 'pl-6' : ''} ${index === row.getVisibleCells().length - 1 ? 'pr-6' : ''}`}
-                                    style={{ width: `${cell.column.getSize()}px` }}
-                                  >
-                                    {flexRender(
-                                      cell.column.columnDef.cell,
-                                      cell.getContext()
-                                    )}
-                                  </TableCell>
-                                ))}
-                              </TableRow>
-                            </Link>
-                          </React.Fragment>
+                            <React.Fragment key={row.id}>
+                              <Link
+                                href={`/liquidity/${pool.id}`}
+                                className="contents"
+                                prefetch
+                                onClick={() => setOptimisticPoolId(pool.id)}
+                              >
+                                <TableRow className={`group cursor-pointer transition-colors hover:bg-muted/30 ${optimisticPoolId === pool.id ? 'bg-muted/40' : ''}`}>
+                                  {row.getVisibleCells().map((cell, index) => (
+                                    <TableCell 
+                                      key={cell.id}
+                                      className={`relative py-4 px-2 ${index === 0 ? 'pl-6' : ''} ${index === row.getVisibleCells().length - 1 ? 'pr-6' : ''}`}
+                                      style={{ width: `${cell.column.getSize()}px` }}
+                                    >
+                                      {flexRender(
+                                        cell.column.columnDef.cell,
+                                        cell.getContext()
+                                      )}
+                                    </TableCell>
+                                  ))}
+                                </TableRow>
+                              </Link>
+                            </React.Fragment>
                         );
                       })
                     ) : (
