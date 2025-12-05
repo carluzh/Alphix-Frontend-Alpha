@@ -64,7 +64,8 @@
       "Bash(for icon in PlusIcon RefreshCwIcon MinusIcon ActivityIcon CheckIcon ArrowLeftIcon)",
       "Bash(do echo -n \"$icon: \")",
       "Bash(grep:*)",
-      "Bash(xargs cat:*)"
+      "Bash(xargs cat:*)",
+      "Bash(git ls-tree:*)"
     ],
     "deny": [],
     "ask": []

@@ -42,13 +42,13 @@ interface NetworkProviderProps {
 export function NetworkProvider({ children, initialNetworkMode }: NetworkProviderProps) {
   const [networkMode, setNetworkModeState] = useState<NetworkMode>(() => {
     if (initialNetworkMode) return initialNetworkMode;
-    if (typeof window === 'undefined') return 'testnet';
+    if (typeof window === 'undefined') return 'mainnet';
     try {
       const stored = localStorage.getItem(NETWORK_STORAGE_KEY);
       if (stored === 'mainnet' || stored === 'testnet') return stored;
-      return process.env.NEXT_PUBLIC_DEFAULT_NETWORK === 'mainnet' ? 'mainnet' : 'testnet';
+      return 'mainnet';
     } catch {
-      return 'testnet';
+      return 'mainnet';
     }
   });
 
@@ -63,13 +63,8 @@ export function NetworkProvider({ children, initialNetworkMode }: NetworkProvide
     setNetworkModeState(mode);
     try {
       localStorage.setItem(NETWORK_STORAGE_KEY, mode);
-    } catch {
-      // localStorage not available
-    }
-    // Set cookie for server-side access (expires in 1 year)
+    } catch {}
     document.cookie = `${NETWORK_COOKIE_NAME}=${mode}; path=/; max-age=31536000; SameSite=Lax`;
-    // Trigger a page reload to reinitialize all clients with new network
-    // This ensures wagmi, viem, and all other configs pick up the change
     window.location.reload();
   }, []);
 
@@ -81,7 +76,6 @@ export function NetworkProvider({ children, initialNetworkMode }: NetworkProvide
     chainId: networkMode === 'testnet' ? TESTNET_CHAIN_ID : MAINNET_CHAIN_ID,
   };
 
-  // Always provide context - default to testnet during SSR/initial render
   return (
     <NetworkContext.Provider value={value}>
       {children}

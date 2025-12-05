@@ -11,6 +11,28 @@ export interface VersionEntry {
 
 export const VERSION_LOG: VersionEntry[] = [
   {
+    version: "1.5",
+    title: "Beta Update - v1.5 What's New",
+    tldr: [
+      "Mainnet Launch - Alphix is now live on Base mainnet with seamless testnet switching",
+      "User Settings - Customize slippage tolerance and network preferences",
+      "Caching Overhaul - Server-side caching for faster pool and price data loading"
+    ],
+    newFeatures: [
+      "Network Mode Support - Switch between mainnet and testnet environments with automatic wallet chain detection and dedicated pool configurations for each network",
+      "Redis Caching Layer - Server-side caching powered by Upstash Redis with intelligent cache invalidation, reducing load times for pool data, prices, and charts",
+      "Sentry Integration - Production error monitoring and performance tracking to catch issues before they impact users",
+      "User Settings - Persistent settings for slippage tolerance, network preferences, and transaction defaults that sync across sessions"
+    ],
+    improvements: [
+      "App Performance - Portfolio, liquidity, and pool pages rebuilt with optimistic navigation and data prefetching for near-instant page transitions",
+      "Price Service Overhaul - Redesigned price fetching architecture with batch APIs and more reliable USD quotes across all tokens",
+      "Swap Interface Polish - Refined slippage controls with better visual feedback, clearer quote breakdowns, and smoother transaction flow",
+      "APY Calculations - Simplified fee and APY logic for more accurate and consistent yield estimates across positions"
+    ],
+    releaseDate: "2025-12-05"
+  },
+  {
     version: "1.4",
     title: "Beta Update - v1.4 What's New",
     tldr: [
@@ -84,21 +106,16 @@ export const VERSION_LOG: VersionEntry[] = [
   }
 ];
 
-// Get the latest version
-export const getLatestVersion = (): VersionEntry => {
-  return VERSION_LOG[0]; // First entry is always the latest
-};
+export const getLatestVersion = (): VersionEntry => VERSION_LOG[0];
 
-// Get version by number
 export const getVersionByNumber = (versionNumber: string): VersionEntry | undefined => {
   return VERSION_LOG.find(entry => entry.version === versionNumber);
 };
 
-// Get a summary of the latest version changes
 export const getLatestVersionSummary = (): string => {
   const latest = getLatestVersion();
   const features = latest.newFeatures.join(', ');
-  const improvements = latest.improvements.slice(0, 2).join(' & '); // Take first 2 improvements
+  const improvements = latest.improvements.slice(0, 2).join(' & ');
 
   if (features && improvements) {
     return `${features} with improved ${improvements}`;
@@ -110,7 +127,6 @@ export const getLatestVersionSummary = (): string => {
   return 'Latest updates and improvements';
 };
 
-// Get time ago from release date
 export const getTimeAgo = (releaseDate: string): string => {
   const release = new Date(releaseDate);
   const now = new Date();

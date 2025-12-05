@@ -22,51 +22,26 @@ export function getNetworkModeFromCookies(cookieString: string | undefined | nul
   return null;
 }
 
-/**
- * Get current network mode without React context (for non-component code)
- * IMPORTANT: This function is safe to call from both client and server
- *
- * Server-side: Checks env variable, defaults to testnet
- * Client-side: Reads from localStorage
- *
- * For server-side API routes that need cookie-based network mode,
- * use getNetworkModeFromCookies() with the request cookie header.
- */
 export function getStoredNetworkMode(): NetworkMode {
-  // Server-side: check env variable
-  if (typeof window === 'undefined') {
-    const envNetwork = process.env.NEXT_PUBLIC_DEFAULT_NETWORK;
-    if (envNetwork === 'mainnet') return 'mainnet';
-    if (envNetwork === 'testnet') return 'testnet';
-    return 'testnet'; // Default for SSR
-  }
+  if (typeof window === 'undefined') return 'mainnet';
 
-  // Client-side: check localStorage
   try {
     const stored = localStorage.getItem(NETWORK_STORAGE_KEY);
-    return stored === 'mainnet' ? 'mainnet' : 'testnet';
+    if (stored === 'mainnet' || stored === 'testnet') return stored;
+    return 'mainnet';
   } catch {
-    return 'testnet';
+    return 'mainnet';
   }
 }
 
-/**
- * Get chain ID based on current network mode
- */
 export function getStoredChainId(): number {
   return getStoredNetworkMode() === 'mainnet' ? MAINNET_CHAIN_ID : TESTNET_CHAIN_ID;
 }
 
-/**
- * Check if currently in testnet mode
- */
 export function isTestnetMode(): boolean {
   return getStoredNetworkMode() === 'testnet';
 }
 
-/**
- * Check if currently in mainnet mode
- */
 export function isMainnetMode(): boolean {
   return getStoredNetworkMode() === 'mainnet';
 }
