@@ -57,6 +57,7 @@ function AppKitProvider({ children, cookies }: { children: ReactNode, cookies: s
       },
       themeMode: 'dark',
       themeVariables: {
+        '--w3m-font-family': 'Inter, -apple-system, BlinkMacSystemFont, system-ui, sans-serif',
       }
     })
   }, [])

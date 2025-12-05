@@ -1,18 +1,17 @@
 "use client"
 
-import { useState, useRef, useEffect } from "react"
-import { PlusCircleIcon, /* LockIcon, */ type LucideIcon, CoinsIcon, Trash2Icon, OctagonX } from "lucide-react"
+import { useState, useRef, useEffect, useCallback, useTransition } from "react"
+import { PlusCircleIcon, type LucideIcon, CoinsIcon, Trash2Icon, OctagonX } from "lucide-react"
 import { CustomLockIcon } from "./CustomLockIcon"
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation"
 import { toast } from "sonner"
 import { useAccount, useSignTypedData, useWriteContract, useWaitForTransactionReceipt, useReadContract } from "wagmi"
-import { config, baseSepolia } from "../lib/wagmiConfig";
+import { config, baseSepolia } from "../lib/wagmiConfig"
 import { getAddress, parseUnits, type Address, type Hex } from "viem"
-import { publicClient } from "../lib/viemClient";
-import { FAUCET_CONTRACT_ADDRESS, FAUCET_FUNCTION_SIGNATURE, faucetContractAbi } from "../pages/api/misc/faucet"; // Import constants
-import Link from "next/link";
+import { publicClient } from "../lib/viemClient"
+import { FAUCET_CONTRACT_ADDRESS, FAUCET_FUNCTION_SIGNATURE, faucetContractAbi } from "../pages/api/misc/faucet"
 import { parseAbi } from "viem"
-import { cn } from "@/lib/utils"; // Added import for cn
+import { cn } from "@/lib/utils"
 
 import {
   SidebarMenu,
@@ -35,8 +34,36 @@ export function NavMain({
   items: NavMainItem[]
 }) {
   const [lockedItem, setLockedItem] = useState<string | null>(null)
+  const [optimisticPath, setOptimisticPath] = useState<string | null>(null)
   const timeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const pathname = usePathname();
+  const pathname = usePathname()
+  const router = useRouter()
+  const [, startTransition] = useTransition()
+
+  // Clear optimistic state when navigation completes
+  useEffect(() => {
+    if (optimisticPath && pathname === optimisticPath) {
+      setOptimisticPath(null)
+    }
+  }, [pathname, optimisticPath])
+
+  // Warm sidebar destinations so nav is instant
+  useEffect(() => {
+    items.forEach((item) => {
+      if (item.url) {
+        router.prefetch(item.url)
+      }
+    })
+  }, [items, router])
+
+  // Optimistic navigation handler
+  const handleNavClick = useCallback((e: React.MouseEvent, url: string) => {
+    e.preventDefault()
+    setOptimisticPath(url)
+    startTransition(() => {
+      router.push(url)
+    })
+  }, [router, startTransition])
   
   // Faucet-related state and hooks
   const { address: userAddress, chainId: currentChainId, isConnected } = useAccount()
@@ -347,10 +374,10 @@ export function NavMain({
     <SidebarMenu className="flex flex-col gap-0.5 px-2">
       {items.map((item) => {
         const isActive = (() => {
-          if (!item.url) return false;
-          // Highlight parent section for sub-routes as well, e.g. /liquidity/*
-          const currentPath = pathname || "";
-          return currentPath === item.url || currentPath.startsWith(`${item.url}/`);
+          if (!item.url) return false
+          // Use optimistic path for instant feedback, fall back to actual pathname
+          const activePath = optimisticPath || pathname || ""
+          return activePath === item.url || activePath.startsWith(`${item.url}/`)
         })();
 
         return (
@@ -454,13 +481,13 @@ export function NavMain({
                     : "text-muted-foreground"
                 )}
               >
-                <Link href={item.url!} className="flex items-center w-full">
+                <a href={item.url!} onClick={(e) => handleNavClick(e, item.url!)} className="flex items-center w-full">
                   {item.icon && <item.icon className={cn(
                     "h-4 w-4 flex-shrink-0",
                     isActive ? "text-white" : ""
                   )} />}
                   <span className="flex-1 truncate ml-2 text-sm font-medium">{item.title}</span>
-                </Link>
+                </a>
               </SidebarMenuButton>
             ) : item.title === "Swap" ? (
               <SidebarMenuButton
@@ -473,7 +500,7 @@ export function NavMain({
                     : "text-muted-foreground"
                 )}
               >
-                <Link href={item.url!} className="flex items-center w-full">
+                <a href={item.url!} onClick={(e) => handleNavClick(e, item.url!)} className="flex items-center w-full">
                   {item.icon ? (
                     <item.icon className={cn(
                       "h-4 w-4 flex-shrink-0",
@@ -486,7 +513,7 @@ export function NavMain({
                     )} />
                   )}
                   <span className="flex-1 truncate ml-2 text-sm font-medium">Swap</span>
-                </Link>
+                </a>
               </SidebarMenuButton>
             ) : (
               <SidebarMenuButton
@@ -499,13 +526,13 @@ export function NavMain({
                     : "text-muted-foreground"
                 )}
               >
-                <Link href={item.url!} className="flex items-center w-full">
+                <a href={item.url!} onClick={(e) => handleNavClick(e, item.url!)} className="flex items-center w-full">
                   {item.icon && <item.icon className={cn(
                     "h-4 w-4 flex-shrink-0",
                     isActive ? "text-white" : ""
                   )} />}
                   <span className="flex-1 truncate ml-2 text-sm font-medium">{item.title}</span>
-                </Link>
+                </a>
               </SidebarMenuButton>
             )}
           </SidebarMenuItem>
