@@ -12,6 +12,7 @@ const ALLOWED_ORIGINS = [
   'http://127.0.0.1:3000',
 ];
 
+// CSP based on Uniswap's configuration with Alphix-specific additions
 const BASE_CSP: Record<string, string[]> = {
   'default-src': ["'self'"],
   'script-src': IS_PRODUCTION
@@ -19,21 +20,41 @@ const BASE_CSP: Record<string, string[]> = {
     : ["'self'", "'unsafe-inline'", "'unsafe-eval'", "'wasm-unsafe-eval'", "https://va.vercel-scripts.com", "https://vercel.live"],
   'style-src': ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com", "https://fonts.gstatic.com"],
   'font-src': ["'self'", "https://fonts.googleapis.com", "https://fonts.gstatic.com"],
-  'img-src': ["'self'", "data:", "blob:", "https:"],
+  'img-src': ["*", "blob:", "data:"],
+  'media-src': ["'self'", "*"],
   'frame-src': ["'self'", "https://verify.walletconnect.com", "https://verify.walletconnect.org"],
   'form-action': ["'none'"],
   'connect-src': [
     "'self'", "blob:", "data:",
-    "https://mainnet.base.org", "https://sepolia.base.org", "https://*.base.org",
-    "https://*.drpc.org", "https://*.publicnode.com", "https://1rpc.io",
-    "https://*.alchemy.com", "https://*.g.alchemy.com",
-    "https://*.satsuma-prod.com", "https://subgraph.satsuma-prod.com",
-    "https://*.walletconnect.com", "https://*.walletconnect.org", "https://api.web3modal.org",
+    // RPC providers (Uniswap + Alphix)
+    "https://*.alchemy.com", "https://*.infura.io", "https://*.drpc.org",
+    "https://*.publicnode.com", "https://*.quiknode.pro", "https://*.nodereal.io",
+    "https://1rpc.io", "https://rpc.ankr.com", "https://cloudflare-eth.com",
+    "https://*.base.org", "https://mainnet.base.org", "https://sepolia.base.org",
+    "https://*.arbitrum.io", "https://*.optimism.io",
+    "https://polygon-rpc.com", "https://rpc-mainnet.maticvigil.com",
+    "https://api.avax.network", "https://bsc-dataseed1.binance.org",
+    "https://rpc.blast.io", "https://rpc.zora.energy", "https://rpc.scroll.io",
+    "https://forno.celo.org", "https://mainnet.era.zksync.io",
+    // Wallet providers
+    "https://*.walletconnect.com", "https://*.walletconnect.org",
+    "https://api.web3modal.org", "https://*.coinbase.com",
+    "https://wallet.crypto.com", "https://trustwallet.com",
     "wss://relay.walletconnect.com", "wss://relay.walletconnect.org",
-    "https://*.supabase.co",
-    "https://vercel.com", "https://vercel.live", "https://va.vercel-scripts.com",
+    "wss://www.walletlink.org",
+    // Data & APIs
     "https://*.coingecko.com", "https://*.coinmarketcap.com",
+    "https://*.googleapis.com", "https://api.opensea.io",
+    "https://raw.githubusercontent.com",
+    // Alphix-specific
+    "https://*.satsuma-prod.com", "https://subgraph.satsuma-prod.com",
+    "https://*.supabase.co",
+    "https://*.ingest.de.sentry.io", "https://*.sentry.io",
+    // IPFS
     "https://ipfs.io", "https://gateway.ipfs.io", "https://cloudflare-ipfs.com",
+    // Vercel
+    "https://vercel.com", "https://vercel.live", "https://va.vercel-scripts.com",
+    // Dev only
     ...(IS_PRODUCTION ? [] : ["http://127.0.0.1:8545", "http://localhost:8545", "ws://localhost:3000"]),
   ],
   'worker-src': ["'self'", "blob:"],

@@ -1,5 +1,6 @@
 "use client"
 
+import * as Sentry from "@sentry/nextjs"
 import { useState, useRef, useEffect, useCallback, useMemo } from "react"
 import {
   ArrowDownIcon,
@@ -49,6 +50,7 @@ import {
   CHAIN_ID
 } from "@/lib/pools-config"
 import { useNetwork } from "@/lib/network-context"
+import { useChainMismatch } from "@/hooks/useChainMismatch"
 import {
   PERMIT2_ADDRESS,
   UniversalRouterAbi,
@@ -123,24 +125,13 @@ const invalidateSwapCache = async (
   swapVolumeUSD: number,
   blockNumber: bigint
 ) => {
-  console.log('[Swap] invalidateSwapCache called with:', {
-    accountAddress,
-    touchedPools,
-    swapVolumeUSD,
-    blockNumber: blockNumber.toString(),
-    queryClientExists: !!queryClient
-  });
-
   if (!touchedPools?.length) {
-    console.warn('[Swap] No touched pools to invalidate cache for');
     return;
   }
 
   const volumePerPool = swapVolumeUSD / touchedPools.length;
-  console.log(`[Swap] Invalidating cache for ${touchedPools.length} pools, volumePerPool: ${volumePerPool}`);
 
   for (const pool of touchedPools) {
-    console.log(`[Swap] Calling invalidateAfterTx for pool: ${pool.poolId}`);
     invalidateAfterTx(queryClient, {
       owner: accountAddress,
       chainId,
@@ -153,7 +144,6 @@ const invalidateSwapCache = async (
       console.error(`[Swap] Cache invalidation failed for pool ${pool.poolId}:`, err);
     });
   }
-  console.log('[Swap] All invalidateAfterTx calls dispatched');
 };
 
 // Helper function to create Token instances from pools config
@@ -419,9 +409,10 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   const [isSwapping, setIsSwapping] = useState(false);
   const [completedSteps, setCompletedSteps] = useState<SwapProgressState[]>([]);
   const [isAttemptingSwitch, setIsAttemptingSwitch] = useState(false);
-  const [isWrongNetworkToastActive, setIsWrongNetworkToastActive] = useState(false);
-  const wrongNetworkToastIdRef = useRef<string | number | undefined>(undefined);
   const swapTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Chain mismatch handling - hook manages the toast globally
+  const { isMismatched: isChainMismatched, switchToExpectedChain } = useChainMismatch();
 
   const [isSellInputFocused, setIsSellInputFocused] = useState(false);
   
@@ -539,7 +530,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       const routeResult = findBestRoute(fromTokenSymbol, toTokenSymbol);
       
       if (!routeResult.bestRoute) {
-        console.warn(`No route found for token pair ${fromTokenSymbol}/${toTokenSymbol}`);
         return null;
       }
 
@@ -734,27 +724,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     // Note: We're NOT clearing existingPermitData or re-fetching quotes
   };
 
-  // Effect for handling wrong network notification
-  useEffect(() => {
-    if (isMounted && isConnected && currentChainId !== TARGET_CHAIN_ID && !isAttemptingSwitch) {
-      const newToastId = toast.error("Network Error", {
-        description: isMainnet ? "Please switch to Base." : "Please switch to Base Sepolia.",
-        icon: <OctagonX className="h-4 w-4 text-red-500" />,
-        duration: 5000,
-        action: {
-          label: "Open Ticket",
-          onClick: () => window.open('https://discord.gg/alphix', '_blank')
-        }
-      });
-      wrongNetworkToastIdRef.current = newToastId; 
-      setIsWrongNetworkToastActive(true); 
-
-    } else {
-      if (wrongNetworkToastIdRef.current && isWrongNetworkToastActive) {
-        toast.dismiss(wrongNetworkToastIdRef.current);
-      }
-    };
-  }, [isMounted, isConnected, currentChainId, isAttemptingSwitch]);
+  // Chain mismatch toast is now handled by useChainMismatch hook globally
 
   // Effect for Success Notification
   useEffect(() => {
@@ -780,8 +750,8 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     chainId: TARGET_CHAIN_ID,
     query: {
       enabled: !!accountAddress && !!fromToken.address,
-      staleTime: 5000, // Consider data stale after 5 seconds
-      refetchOnWindowFocus: true, // Refetch when user returns to tab
+      staleTime: 30000, // 30s - balances update after swap/tx completion
+      refetchOnWindowFocus: false, // Disable aggressive refetching
     }
   });
 
@@ -791,8 +761,8 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     chainId: TARGET_CHAIN_ID,
     query: {
       enabled: !!accountAddress && !!toToken.address,
-      staleTime: 5000, // Consider data stale after 5 seconds
-      refetchOnWindowFocus: true, // Refetch when user returns to tab
+      staleTime: 30000, // 30s - balances update after swap/tx completion
+      refetchOnWindowFocus: false, // Disable aggressive refetching
     }
   });
 
@@ -810,11 +780,12 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   useEffect(() => {
     if (!accountAddress) return;
 
-    const onRefresh = async () => {
-      await Promise.all([refetchFromTokenBalance?.(), refetchToTokenBalance?.()]);
-      setTimeout(async () => {
+    const onRefresh = () => {
+      // Immediate refetch for instant feedback
+      Promise.all([refetchFromTokenBalance?.(), refetchToTokenBalance?.()]);
+      // Delayed invalidation for subgraph sync (no need to call refetch again - invalidate triggers it)
+      setTimeout(() => {
         queryClient.invalidateQueries({ queryKey: ['balance'] });
-        await Promise.all([refetchFromTokenBalance?.(), refetchToTokenBalance?.()]);
       }, 2000);
     };
 
@@ -1085,16 +1056,8 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
         if (data.priceImpact !== undefined) {
           const impactValue = parseFloat(data.priceImpact);
           setPriceImpact(impactValue);
-          console.log('[swap-interface] Price Impact Received:', {
-            priceImpact: `${impactValue.toFixed(2)}%`,
-            fromToken: fromToken?.symbol,
-            toToken: toToken?.symbol,
-            fromAmount,
-            toAmount: data.toAmount,
-          });
         } else {
           setPriceImpact(null);
-          console.log('[swap-interface] No price impact in quote response');
         }
         setQuoteError(null);
       } else {
@@ -1417,28 +1380,9 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
 
   const handleNetworkSwitch = async () => {
     setIsAttemptingSwitch(true);
-    if (wrongNetworkToastIdRef.current && isWrongNetworkToastActive) { 
-      toast.dismiss(wrongNetworkToastIdRef.current);
-      wrongNetworkToastIdRef.current = undefined;
-      setIsWrongNetworkToastActive(false);
-    }
     try {
-      await switchChain(config, { chainId: TARGET_CHAIN_ID });
-    } catch (error) {
-      if (currentChainId !== TARGET_CHAIN_ID) {
-        if (!isWrongNetworkToastActive) { 
-            wrongNetworkToastIdRef.current = toast.error("Network Error", {
-                description: "Failed to switch. Please try again.",
-                icon: <OctagonX className="h-4 w-4 text-red-500" />,
-                duration: Infinity,
-                action: {
-                  label: "Open Ticket",
-                  onClick: () => window.open('https://discord.gg/alphix', '_blank')
-                }
-            });
-            setIsWrongNetworkToastActive(true);
-        }
-      }
+      // Use the hook's switch function - it handles toast feedback
+      await switchToExpectedChain();
     } finally {
       setIsAttemptingSwitch(false);
     }
@@ -1461,7 +1405,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
 
     // Check if this is a native ETH swap
     if (fromToken.symbol === 'ETH') {
-      console.log("DEBUG: Taking ETH swap path for token:", fromToken.symbol);
       setCompletedSteps(["approval_complete", "signature_complete"]); // Mark both steps complete for ETH
       setSwapProgressState("ready_to_swap");
       setIsSwapping(false); // Ready for user action (Confirm)
@@ -1547,6 +1490,10 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     } catch (error: any) {
       // 6. Handle Errors during initial checks
       console.error("Error during initial swap checks:", error);
+      Sentry.captureException(error, {
+        tags: { operation: 'swap_checks' },
+        extra: { fromToken: fromToken?.symbol, toToken: toToken?.symbol, fromAmount }
+      });
       setIsSwapping(false); // Re-enable buttons
       setSwapProgressState("error"); // Set a general error state for checks
       const errorCode = error.message || "Could not verify token allowances.";
@@ -1777,7 +1724,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
 
             // For native ETH swaps, skip permit checks and use dummy permit data
             if (fromToken.symbol === 'ETH') {
-                console.log("DEBUG: Taking ETH swap path for token:", fromToken.symbol);
                 // --- Sanity Check for balance (can remain) ---
                 const currentBalanceBigInt = safeParseUnits(fromToken.balance || "0", fromToken.decimals);
                 const parsedAmountForSwap = safeParseUnits(fromAmount, fromToken.decimals);
@@ -1947,7 +1893,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 });
                 if (!txHash) throw new Error("Failed to send swap transaction (no hash received)");
 
-                console.log("ETH Swap - Transaction Hash received:", txHash);
                 setSwapTxInfo({
                     hash: txHash as string,
                     fromAmount: fromAmount,
@@ -1957,26 +1902,17 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                     explorerUrl: getExplorerTxUrl(txHash as string),
                     touchedPools: Array.isArray(buildTxApiData?.touchedPools) ? buildTxApiData.touchedPools : undefined
                 });
-                console.log("ETH Swap - setSwapTxInfo called with hash:", txHash);
 
                 setSwapProgressState("waiting_confirmation");
-                console.log("ETH Swap - Waiting for confirmation of hash:", txHash);
                 const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash as Hex });
 
                 if (!receipt || receipt.status !== 'success') throw new Error("Swap transaction failed on-chain");
 
-                console.log("ETH Swap - Transaction confirmed! Hash:", txHash, "Receipt:", receipt);
                 setSwapProgressState("complete");
                 setIsSwapping(false);
 
                 // Calculate swap volume in USD and invalidate cache for all touched pools
                 const swapVolumeUSD = parseFloat(fromAmount) * (fromTokenUSDPrice.price || 0);
-                console.log('[Swap] About to call invalidateSwapCache (native path)', {
-                  fromAmount,
-                  fromTokenUSDPrice: fromTokenUSDPrice.price,
-                  swapVolumeUSD,
-                  touchedPools: buildTxApiData.touchedPools
-                });
                 await invalidateSwapCache(
                   queryClient,
                   accountAddress!,
@@ -1985,7 +1921,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                   swapVolumeUSD,
                   receipt.blockNumber
                 );
-                console.log('[Swap] invalidateSwapCache completed (native path)');
 
                 // Trigger balance refresh & show success view after confirmed
                 setSwapState("success");
@@ -2172,20 +2107,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                  chainId: currentChainId,
             };
 
-            console.log("[DEBUG] bodyForSwapTx:", bodyForSwapTx);
-            console.log("[DEBUG] Slippage Protection Details:", {
-                swapType: isExactOut2 ? 'ExactOut' : 'ExactIn',
-                fromAmount,
-                toAmount,
-                currentSlippage: `${currentSlippage}%`,
-                minimumReceivedStr,
-                maximumInputStr,
-                limitAmountDecimalsStr: isExactOut2 ? maximumInputStr : minimumReceivedStr,
-                note: isExactOut2 
-                    ? 'ExactOut: Transaction will fail if actual input > maximumInputStr'
-                    : 'ExactIn: Transaction will fail if actual output < minimumReceivedStr',
-            });
-
             // --- Call Build TX API ---
             const buildTxApiResponse = await fetch('/api/swap/build-tx', {
                 method: 'POST',
@@ -2218,7 +2139,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
             });
             if (!txHash) throw new Error("Failed to send swap transaction (no hash received)");
 
-            console.log("ETH Swap - Transaction Hash received:", txHash);
             setSwapTxInfo({
                 hash: txHash as string,
                 fromAmount: fromAmount,
@@ -2228,26 +2148,17 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 explorerUrl: getExplorerTxUrl(txHash as string),
                 touchedPools: Array.isArray(buildTxApiData?.touchedPools) ? buildTxApiData.touchedPools : undefined
             });
-            console.log("Permit2 Swap - setSwapTxInfo called with hash:", txHash);
 
             setSwapProgressState("waiting_confirmation");
-            console.log("Permit2 Swap - Waiting for confirmation of hash:", txHash);
             const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash as Hex });
 
             if (!receipt || receipt.status !== 'success') throw new Error("Swap transaction failed on-chain");
 
-            console.log("Permit2 Swap - Transaction confirmed! Hash:", txHash, "Receipt:", receipt);
             setSwapProgressState("complete");
             setIsSwapping(false);
 
             // Calculate swap volume in USD and invalidate cache for all touched pools
             const swapVolumeUSD = parseFloat(fromAmount) * (fromTokenUSDPrice.price || 0);
-            console.log('[Swap] About to call invalidateSwapCache (permit2 path)', {
-              fromAmount,
-              fromTokenUSDPrice: fromTokenUSDPrice.price,
-              swapVolumeUSD,
-              touchedPools: buildTxApiData.touchedPools
-            });
             await invalidateSwapCache(
               queryClient,
               accountAddress!,
@@ -2256,7 +2167,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
               swapVolumeUSD,
               receipt.blockNumber
             );
-            console.log('[Swap] invalidateSwapCache completed (permit2 path)');
 
             // Trigger balance refresh & show success view after confirmed
             setSwapState("success");
@@ -2267,7 +2177,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
 
         // ACTION: Unexpected State (Safety net)
         else {
-            console.warn("[handleConfirmSwap] Called in unexpected state:", stateBeforeAction);
             setIsSwapping(false); // Ensure button is re-enabled
         }
 
@@ -2592,7 +2501,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
           }
         }
       } catch (error) {
-        console.warn('Failed to load cached fee history data:', error);
         sessionStorage.removeItem(cacheKey); // Clean up corrupted cache
       }
 
@@ -2619,7 +2527,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
               };
               sessionStorage.setItem(cacheKey, JSON.stringify(cacheData));
             } catch (error) {
-              console.warn('Failed to cache fee history data:', error);
             }
             
             setFeeHistoryData(data);

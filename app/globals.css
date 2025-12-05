@@ -103,6 +103,31 @@
 }
 
 @layer utilities {
+  /* === VIEW TRANSITIONS === */
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation-duration: 150ms;
+    animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  ::view-transition-old(root) {
+    animation-name: fade-out;
+  }
+
+  ::view-transition-new(root) {
+    animation-name: fade-in;
+  }
+
+  @keyframes fade-out {
+    from { opacity: 1; }
+    to { opacity: 0; }
+  }
+
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
   /* === ANIMATION UTILITIES === */
   .animate-scroll {
     animation: scroll 15s linear infinite;
@@ -114,14 +139,9 @@
     animation-play-state: paused;
   }
 
-  /* Synchronized skeleton pulse animation - all skeletons animate in sync */
   @keyframes skeleton-pulse {
-    0%, 100% {
-      opacity: 1;
-    }
-    50% {
-      opacity: 0.5;
-    }
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
   }
 
   .animate-skeleton-pulse {
@@ -168,6 +188,11 @@
 
   .hover-button-primary:hover {
     background-color: var(--button-primary-bg-hover);
+  }
+
+  .gpu-accelerated {
+    transform: translateZ(0);
+    backface-visibility: hidden;
   }
 
   /* === GHOST TAB BUTTON UTILITIES === */

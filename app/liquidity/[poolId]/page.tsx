@@ -2830,7 +2830,7 @@ export default function PoolDetailPage() {
                               ];
                               
                               const feeDomain = [
-                                feeMin - (feeRange * 0.1),
+                                Math.max(0, feeMin - (feeRange * 0.1)),
                                 feeMax + (feeRange * 0.1)
                               ];
                               
@@ -3087,7 +3087,7 @@ export default function PoolDetailPage() {
                                 ratioMax + ratioRange * paddingFactor,
                               ];
                               const feeDomain: [number, number] = [
-                                feeMin - feeRange * paddingFactor,
+                                Math.max(0, feeMin - feeRange * paddingFactor),
                                 feeMax + feeRange * paddingFactor,
                               ];
 

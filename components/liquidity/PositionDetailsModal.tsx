@@ -20,6 +20,7 @@ import { RemoveLiquidityFormPanel } from "./RemoveLiquidityFormPanel";
 import { CollectFeesFormPanel } from "./CollectFeesFormPanel";
 import { TransactionFlowPanel } from "./TransactionFlowPanel";
 import { useAccount, useSignTypedData, useWriteContract, useWaitForTransactionReceipt, useBalance } from "wagmi";
+import { useChainMismatch } from "@/hooks/useChainMismatch";
 import { readContract } from '@wagmi/core';
 import { config } from '@/lib/wagmiConfig';
 import { useIncreaseLiquidity, type IncreasePositionData } from "./useIncreaseLiquidity";
@@ -138,7 +139,7 @@ export function PositionDetailsModal({
   onRefreshPosition,
   feeTier,
   selectedPoolId,
-  chainId,
+  chainId: propChainId, // Renamed to avoid conflict with network context chainId
   currentPrice,
   currentPoolTick,
   currentPoolSqrtPriceX96,
@@ -184,8 +185,10 @@ export function PositionDetailsModal({
   const [increaseBatchPermitSigned, setIncreaseBatchPermitSigned] = useState(false);
   const [approvalWiggleCount, setApprovalWiggleCount] = useState(0);
 
-  const { address: accountAddress, chainId: walletChainId } = useAccount();
-  const { networkMode } = useNetwork();
+  const { address: accountAddress } = useAccount();
+  const { chainId, networkMode } = useNetwork();
+  // Always use network context chainId for queries (not wallet chainId)
+  const { isMismatched: isChainMismatched } = useChainMismatch();
   const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
   const queryClient = useQueryClient();
   const { signTypedDataAsync } = useSignTypedData();
@@ -199,8 +202,8 @@ export function PositionDetailsModal({
     token: tokenDefinitions[position?.token0?.symbol as TokenSymbol]?.address === "0x0000000000000000000000000000000000000000"
       ? undefined
       : tokenDefinitions[position?.token0?.symbol as TokenSymbol]?.address as `0x${string}` | undefined,
-    chainId: walletChainId,
-    query: { enabled: !!accountAddress && !!walletChainId && !!position },
+    chainId: chainId,
+    query: { enabled: !!accountAddress && !!chainId && !!position },
   });
 
   const { data: token1Balance } = useBalance({
@@ -208,8 +211,8 @@ export function PositionDetailsModal({
     token: tokenDefinitions[position?.token1?.symbol as TokenSymbol]?.address === "0x0000000000000000000000000000000000000000"
       ? undefined
       : tokenDefinitions[position?.token1?.symbol as TokenSymbol]?.address as `0x${string}` | undefined,
-    chainId: walletChainId,
-    query: { enabled: !!accountAddress && !!walletChainId && !!position },
+    chainId: chainId,
+    query: { enabled: !!accountAddress && !!chainId && !!position },
   });
 
   const [currentTransactionStep, setCurrentTransactionStep] = useState<'idle' | 'collecting_fees' | 'approving_token0' | 'approving_token1' | 'signing_permit' | 'depositing'>('idle');
@@ -221,7 +224,7 @@ export function PositionDetailsModal({
     isLoading: isCheckingIncreaseApprovals,
     refetch: refetchIncreaseApprovals,
   } = useCheckIncreaseLiquidityApprovals(
-    accountAddress && walletChainId && position?.positionId
+    accountAddress && chainId && position?.positionId
       ? {
           userAddress: accountAddress,
           tokenId: BigInt(position.positionId),
@@ -231,11 +234,11 @@ export function PositionDetailsModal({
           amount1: increaseAmount1,
           fee0: prefetchedRaw0 || undefined,
           fee1: prefetchedRaw1 || undefined,
-          chainId: walletChainId,
+          chainId: chainId,
         }
       : undefined,
     {
-      enabled: Boolean(accountAddress && walletChainId && position?.positionId && (parseFloat(increaseAmount0 || '0') > 0 || parseFloat(increaseAmount1 || '0') > 0)),
+      enabled: Boolean(accountAddress && chainId && position?.positionId && (parseFloat(increaseAmount0 || '0') > 0 || parseFloat(increaseAmount1 || '0') > 0)),
       staleTime: 5000,
     }
   );
@@ -291,7 +294,7 @@ export function PositionDetailsModal({
 
   // Check what ERC20 approvals are needed
   const checkIncreaseApprovals = useCallback(async (): Promise<TokenSymbol[]> => {
-    if (!accountAddress || !walletChainId) return [];
+    if (!accountAddress || !chainId) return [];
 
     const needsApproval: TokenSymbol[] = [];
     const tokens = [
@@ -323,7 +326,7 @@ export function PositionDetailsModal({
     }
 
     return needsApproval;
-  }, [accountAddress, walletChainId, position, increaseAmount0, increaseAmount1]);
+  }, [accountAddress, chainId, position, increaseAmount0, increaseAmount1]);
 
   // Handle ERC20 approval to Permit2 (matching AddLiquidityForm)
   const handleIncreaseApproveV2 = useCallback(async (tokenSymbol: TokenSymbol) => {

@@ -18,6 +18,7 @@ import Image from "next/image";
 import { useAccount, useBalance, useSignTypedData, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { toast } from "sonner";
 import { usePercentageInput } from "@/hooks/usePercentageInput";
+import { useChainMismatch } from "@/hooks/useChainMismatch";
 import { getTokenDefinitions, TokenSymbol, getToken, getAllTokens, getPoolById } from "@/lib/pools-config";
 import { useNetwork } from "@/lib/network-context";
 import { useAddLiquidityTransaction } from "./useAddLiquidityTransaction";
@@ -111,9 +112,11 @@ export function AddLiquidityModal({
   isIncreaseSuccess: parentIsIncreaseSuccess,
   increaseTxHash: parentIncreaseTxHash
 }: AddLiquidityModalProps) {
-  const { address: accountAddress, chainId: walletChainId, isConnected } = useAccount();
-  const { chainId: networkChainId, networkMode } = useNetwork();
-  const chainId = walletChainId || networkChainId;
+  const { address: accountAddress, isConnected } = useAccount();
+  const { chainId, networkMode } = useNetwork();
+  // Always use network context chainId for queries (not wallet chainId)
+  // This ensures we fetch data for the expected chain, not the wallet's connected chain
+  const { isMismatched: isChainMismatched } = useChainMismatch();
   const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
   const { signTypedDataAsync } = useSignTypedData();
   const { data: incApproveHash, writeContractAsync: approveERC20Async, reset: resetIncreaseApprove } = useWriteContract();
@@ -244,7 +247,6 @@ export function AddLiquidityModal({
   // Reset transaction state when modal opens
   useEffect(() => {
     if (isOpen) {
-      console.log('[DEBUG] Modal opened, resetting all states');
       setTxStarted(false);
       setWasIncreasingLiquidity(false);
       setHasToken0Allowance(null);
@@ -274,7 +276,6 @@ export function AddLiquidityModal({
       
       // Force reset of parent transaction states if using parent hook
       if (!shouldUseInternalHook) {
-        console.log('[DEBUG] Using parent hook, forcing parent state reset');
         // The parent should reset its transaction states when modal opens
         // This will be handled by the parent component
       }
@@ -397,7 +398,6 @@ export function AddLiquidityModal({
   
   const internalHookResult = useIncreaseLiquidity({
     onLiquidityIncreased: (info) => {
-      console.log('[DEBUG] Modal internal hook callback fired, shouldUseInternal:', shouldUseInternalHook, 'txHash:', info?.txHash?.slice(0, 10) + '...');
       // Don't set success view here - let the useEffect handle it based on confirmed state
       // This prevents premature success view before transaction confirmation
     },
@@ -551,7 +551,6 @@ export function AddLiquidityModal({
         // Wait a bit for the blockchain state to update
         await new Promise(resolve => setTimeout(resolve, 1000));
         
-        console.log(`[Modal Approval Check] Re-checking actual allowances after ${increasePreparedTxData.approvalTokenSymbol} approval`);
         
         // Check actual allowances vs required amounts for both tokens
         const stillNeedsApprovals: TokenSymbol[] = [];
@@ -586,7 +585,6 @@ export function AddLiquidityModal({
           }
         }
         
-        console.log(`[Modal Approval Check] Tokens still needing approval:`, stillNeedsApprovals);
         
         if (stillNeedsApprovals.length > 0) {
           // Still need approvals - trigger wiggle if this token still needs approval
@@ -625,7 +623,6 @@ export function AddLiquidityModal({
           setIncreaseStep('approve');
         } else {
           // All approvals done
-          console.log(`[Modal Approval Check] ✅ All approvals complete!`);
           toast.success(`${increasePreparedTxData.approvalTokenSymbol} Approved`, { 
             icon: React.createElement(BadgeCheck, { className: "h-4 w-4 text-green-500" })
           });
@@ -660,20 +657,12 @@ export function AddLiquidityModal({
       const compositeId = positionToModify.positionId?.toString?.() || '';
       let tokenIdHex = compositeId.includes('-') ? compositeId.split('-').pop() || '' : compositeId;
       if (!tokenIdHex) throw new Error('Unable to derive position tokenId');
-      
-      console.log('[modal] TokenId extraction:', {
-        compositeId,
-        tokenIdHex,
-        hasDash: compositeId.includes('-'),
-        parts: compositeId.split('-')
-      });
-      
+
       // Ensure proper hex prefix
       if (!tokenIdHex.startsWith('0x')) tokenIdHex = `0x${tokenIdHex}`;
       let nftTokenId: bigint;
       try {
         nftTokenId = BigInt(tokenIdHex);
-        console.log('[modal] Parsed tokenId:', nftTokenId.toString());
       } catch {
         throw new Error('Invalid position tokenId format');
       }
@@ -746,7 +735,6 @@ export function AddLiquidityModal({
   const handleExecuteTransaction = async () => {
     if (!positionToModify) return;
     
-    console.log('[DEBUG] Modal: handleExecuteTransaction called, step:', increaseStep, 'shouldUseInternalHook:', shouldUseInternalHook);
     
     if (increaseStep === 'input') {
       // Step 1: Prepare transaction
@@ -771,8 +759,6 @@ export function AddLiquidityModal({
         feesForIncrease: feesForIncrease,
       };
 
-      console.log('[modal] Executing increase with data:', data);
-      console.log('[modal] signedBatchPermit:', signedBatchPermit ? 'present' : 'none');
 
       // For internal hook usage, onLiquidityAdded will be called by the hook's callback
       // For parent hook usage, the parent page handles all the callbacks
@@ -872,29 +858,17 @@ export function AddLiquidityModal({
     if (!txHash && !isTransactionSuccess) {
       return; // Exit early if no transaction data
     }
-    
-    console.log('[DEBUG] Success effect triggered:', {
-      txHash: txHash?.slice(0, 10) + '...',
-      isTransactionSuccess,
-      showTransactionOverview,
-      txStarted,
-      currentSessionTxHash: currentSessionTxHash?.slice(0, 10) + '...',
-      hashesMatch: txHash === currentSessionTxHash
-    });
-    
+
     // Only show success if we have a confirmed transaction hash that matches our current session
     if (txHash && isTransactionSuccess && showTransactionOverview && txStarted && currentSessionTxHash === txHash) {
-      console.log('[DEBUG] Transaction confirmed with hash, showing success view. txHash:', txHash?.slice(0, 10) + '...');
       setShowSuccessView(true);
       
       // Call the success callback to notify parent component
       // Only call this when NOT using internal hook (i.e., for increase operations)
       // For new positions using internal hook, the useAddLiquidityTransaction handles the callback
       if (onLiquidityAdded && !shouldUseInternalHook) {
-        console.log('[DEBUG] Calling onLiquidityAdded callback for increase operation');
         onLiquidityAdded();
       } else if (shouldUseInternalHook) {
-        console.log('[DEBUG] Skipping modal onLiquidityAdded - internal hook will handle it');
       }
     }
   }, [txHash, isTransactionSuccess, showTransactionOverview, txStarted, currentSessionTxHash, onLiquidityAdded, shouldUseInternalHook]);
@@ -903,7 +877,6 @@ export function AddLiquidityModal({
   // BUT only if we don't have an active transaction in progress
   useEffect(() => {
     if (isOpen && !shouldUseInternalHook && parentIsIncreaseSuccess && !currentSessionTxHash) {
-      console.log('[DEBUG] Modal opened with parent success true, resetting by clearing state variables');
       // Reset the current session tracking to prevent immediate success view
       setCurrentSessionTxHash(null);
       setShowSuccessView(false);
@@ -1291,6 +1264,10 @@ export function AddLiquidityModal({
 
   // Determine button text for existing positions based on transaction state (like form)
   const getIncreaseButtonText = () => {
+    // Check for chain mismatch first
+    if (isChainMismatched) {
+      return 'Wrong Network';
+    }
     // Check for insufficient balance first (only when in input step)
     if (!showTransactionOverview && checkInsufficientBalanceIncrease()) {
       return 'Insufficient Balance';
@@ -1730,12 +1707,12 @@ export function AddLiquidityModal({
                     </Button>
 
                     <Button
-                      className={checkInsufficientBalanceIncrease() ?
+                      className={(isChainMismatched || checkInsufficientBalanceIncrease()) ?
                         "relative border border-sidebar-border bg-button px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75" :
                         "text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90"
                       }
                       onClick={handleConfirmIncrease}
-                      disabled={isIncreasingLiquidity || isIncreaseCalculating || (parseFloat(increaseAmount0 || "0") <= 0 && parseFloat(increaseAmount1 || "0") <= 0) || checkInsufficientBalanceIncrease()}
+                      disabled={isChainMismatched || isIncreasingLiquidity || isIncreaseCalculating || (parseFloat(increaseAmount0 || "0") <= 0 && parseFloat(increaseAmount1 || "0") <= 0) || checkInsufficientBalanceIncrease()}
                       style={checkInsufficientBalanceIncrease() ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
                     >
                       <span className={isIncreasingLiquidity ? "animate-pulse" : ""}>
@@ -2028,9 +2005,9 @@ export function AddLiquidityModal({
                       </Button>
 
                       <Button
-                        className="text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90"
+                        className={isChainMismatched ? "relative border border-sidebar-border bg-button px-3 text-sm font-medium text-white/75" : "text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90"}
                         onClick={showTransactionOverview ? handleExecuteTransaction : handleFinalConfirmIncrease}
-                        disabled={increaseIsWorking || isIncreasingLiquidity || isIncreaseCalculating}
+                        disabled={isChainMismatched || increaseIsWorking || isIncreasingLiquidity || isIncreaseCalculating}
                       >
                         <span className={increaseIsWorking || isIncreasingLiquidity || isIncreaseCalculating ? "animate-pulse" : ""}>
                           {getIncreaseButtonText()}

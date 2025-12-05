@@ -1,4 +1,4 @@
-// components/liquidity/useAddLiquidityTransaction.ts
+import * as Sentry from "@sentry/nextjs";
 import React, { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import {
   useAccount,
@@ -10,8 +10,18 @@ import { useQueryClient } from '@tanstack/react-query';
 import { toast } from "sonner";
 import { BadgeCheck, OctagonX, CircleCheck, InfoIcon } from "lucide-react";
 
-// Toast utility functions with consistent styling
-const showErrorToast = (title: string, description?: string) => {
+const showErrorToast = (title: string, description?: string, error?: unknown) => {
+  if (error) {
+    Sentry.captureException(error, {
+      tags: { operation: 'liquidity_add' },
+      extra: { title, description }
+    });
+  } else {
+    Sentry.captureMessage(`${title}: ${description || 'No description'}`, {
+      level: 'error',
+      tags: { operation: 'liquidity_add' }
+    });
+  }
   toast.error(title, {
     icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
     description: description,
@@ -151,14 +161,8 @@ export function useAddLiquidityTransaction({
   // Initialize batchPermitSigned based on existing signature
   useEffect(() => {
     const hasSignature = !!preparedTxData?.batchPermitOptions?.batchPermit?.signature;
-    console.log('[batchPermitSigned] State check:', {
-      hasSignature,
-      currentBatchPermitSigned: batchPermitSigned,
-      signatureValue: preparedTxData?.batchPermitOptions?.batchPermit?.signature?.substring(0, 10) + '...'
-    });
-    
+
     if (hasSignature && !batchPermitSigned) {
-      console.log('[batchPermitSigned] Found existing permit signature, setting batchPermitSigned to true');
       setBatchPermitSigned(true);
     }
   }, [preparedTxData?.batchPermitOptions?.batchPermit?.signature, batchPermitSigned]);
@@ -199,7 +203,6 @@ export function useAddLiquidityTransaction({
         // because the API will calculate required amounts for both tokens
         const maxAllowanceNeeded = parseUnits("1000000", tokenDef.decimals); // 1M tokens as threshold
         
-        console.log(`[Approval Check] ${token.symbol}: allowance=${allowance.toString()}, threshold=${maxAllowanceNeeded.toString()}`);
         
         if (allowance < maxAllowanceNeeded) {
           needsApproval.push(token.symbol);
@@ -216,9 +219,7 @@ export function useAddLiquidityTransaction({
 
   // Check existing ERC20 approvals to display correct counts
   const updateExistingApprovalCounts = useCallback(async () => {
-    console.log('[Debug] updateExistingApprovalCounts called with:', { accountAddress, chainId, token0Symbol, token1Symbol });
     if (!accountAddress || !chainId) {
-      console.log('[Debug] Early return - missing accountAddress or chainId');
       return;
     }
 
@@ -226,19 +227,15 @@ export function useAddLiquidityTransaction({
     const alreadyApproved: TokenSymbol[] = [];
     const totalRequired: TokenSymbol[] = [];
 
-    console.log('[Debug] Processing tokens:', tokens);
 
     for (const tokenSymbol of tokens) {
       const tokenDef = tokenDefinitions[tokenSymbol];
-      console.log('[Debug] Token definition for', tokenSymbol, ':', tokenDef);
       
       if (!tokenDef || tokenDef.address === "0x0000000000000000000000000000000000000000") {
-        console.log('[Debug] Skipping token', tokenSymbol, '- no definition or is native ETH');
         continue;
       }
 
       totalRequired.push(tokenSymbol);
-      console.log('[Debug] Added', tokenSymbol, 'to totalRequired. Total count:', totalRequired.length);
 
       try {
         // Check ERC20 allowance to Permit2
@@ -259,7 +256,6 @@ export function useAddLiquidityTransaction({
       }
     }
 
-    console.log(`[Existing Approvals] Total required: ${totalRequired.length}, Already approved: ${alreadyApproved.length}`);
     
     // Always update the total required approvals to show proper counts
     setAllRequiredApprovals(totalRequired);
@@ -292,21 +288,12 @@ export function useAddLiquidityTransaction({
         const requiredPermitAmount = parseUnits("1000000", tokenDef.decimals);
         const hasValidPermit = permitAmt >= requiredPermitAmount && (permitExp === 0 || permitExp > currentTime);
 
-        console.log(`[Permit Check] ${tokenSymbol}:`, {
-          permitAmount: permitAmt.toString(),
-          requiredAmount: requiredPermitAmount.toString(),
-          permitExpiration: permitExp,
-          currentTime,
-          hasValidPermit
-        });
-
         if (!hasValidPermit) {
           hasValidPermits = false;
           break;
         }
       }
 
-      console.log(`[Permit Status] All permits valid: ${hasValidPermits}`);
       setBatchPermitSigned(hasValidPermits);
     } catch (error) {
       console.error('Error checking permit status:', error);
@@ -316,13 +303,10 @@ export function useAddLiquidityTransaction({
 
   // Update approval and permit status when component loads or tokens change
   useEffect(() => {
-    console.log('[Debug] useEffect triggered with:', { accountAddress, chainId, token0Symbol, token1Symbol });
     if (accountAddress && chainId && token0Symbol && token1Symbol) {
-      console.log('[Debug] Calling status update functions');
       updateExistingApprovalCounts();
       updateExistingPermitStatus();
     } else {
-      console.log('[Debug] Not calling status functions - missing required values');
     }
   }, [accountAddress, chainId, token0Symbol, token1Symbol, updateExistingApprovalCounts, updateExistingPermitStatus]);
 
@@ -336,9 +320,6 @@ export function useAddLiquidityTransaction({
       const needsApprovals = await checkApprovals();
       setNeedsERC20Approvals(needsApprovals);
       
-      console.log('[Deterministic Flow] Needs approvals for transaction:', needsApprovals);
-      console.log('[Deterministic Flow] Current completed approvals:', completedApprovals);
-      console.log('[Deterministic Flow] Current all required approvals:', allRequiredApprovals);
       
       if (needsApprovals.length > 0) {
         // Start with first approval
@@ -378,7 +359,6 @@ export function useAddLiquidityTransaction({
 
           if (result.needsApproval) {
             if (result.approvalType === 'PERMIT2_BATCH_SIGNATURE') {
-              console.log('API returned batch permit signature needed');
               setStep('mint'); // Ready for signature + mint
               setPreparedTxData({
                 needsApproval: true,
@@ -388,7 +368,6 @@ export function useAddLiquidityTransaction({
               });
             } else if (result.approvalType === 'ERC20_TO_PERMIT2') {
               // Server says we need ERC20 approval
-              console.log('API returned ERC20_TO_PERMIT2 needed for', result.approvalTokenSymbol);
               const tokenSymbol = result.approvalTokenSymbol as TokenSymbol;
               setNeedsERC20Approvals([tokenSymbol]);
               setStep('approve');
@@ -402,11 +381,9 @@ export function useAddLiquidityTransaction({
               });
             } else {
               // Trust server but log unexpected type
-              console.warn('Unexpected approval type from server:', result.approvalType);
               showErrorToast('Preparation failed', 'Server requested unexpected approval type. Please try again.');
             }
           } else {
-            console.log('API returned transaction ready - no permits needed');
             setStep('mint');
             setPreparedTxData({ needsApproval: false, transaction: result.transaction });
             // API confirmed no permit needed (or existing permits are valid)
@@ -414,7 +391,7 @@ export function useAddLiquidityTransaction({
           }
         } catch (error) {
           console.error('Error preparing transaction:', error);
-          showErrorToast('Preparation failed', error instanceof Error ? error.message : 'Unknown error');
+          showErrorToast('Preparation failed', error instanceof Error ? error.message : 'Unknown error', error);
         }
       }
       
@@ -463,15 +440,7 @@ export function useAddLiquidityTransaction({
 
   // Clean mint function with batch permit (like useIncreaseLiquidity)
   const handleMint = useCallback(async () => {
-    console.log('handleMint called', {
-      batchPermitSigned,
-      hasPermitBatchData: !!preparedTxData?.permitBatchData,
-      hasBatchPermitOptions: !!preparedTxData?.batchPermitOptions,
-      approvalType: preparedTxData?.approvalType
-    });
-
     if (!sendTransactionAsync || !accountAddress || !chainId) {
-      console.log('Missing required dependencies for mint');
       return;
     }
 
@@ -481,13 +450,6 @@ export function useAddLiquidityTransaction({
       // Check if we have batch permit signature ready
       const hasExistingSignature = preparedTxData?.batchPermitOptions?.batchPermit?.signature;
       const needsNewSignature = preparedTxData?.permitBatchData && preparedTxData?.signatureDetails && !hasExistingSignature;
-      
-      console.log('Permit signature check:', {
-        batchPermitSigned,
-        hasExistingSignature: !!hasExistingSignature,
-        needsNewSignature,
-        hasPermitBatchData: !!preparedTxData?.permitBatchData
-      });
 
       if (!batchPermitSigned && !hasExistingSignature) {
         // If we have permit batch data from API preparation, get signature
@@ -497,18 +459,9 @@ export function useAddLiquidityTransaction({
               throw new Error('No signer available - wallet may not be connected');
             }
 
-            console.log('Requesting permit signature...');
             
             // Extract the values part for signing - prioritize raw SDK values (not stringified)
             const valuesToSign = (preparedTxData.permitBatchData as any).valuesRaw || preparedTxData.permitBatchData.values || preparedTxData.permitBatchData;
-            
-            console.log('Permit data structure check:', {
-              hasValues: !!preparedTxData.permitBatchData.values,
-              hasValuesRaw: !!(preparedTxData.permitBatchData as any).valuesRaw,
-              hasDetails: !!(valuesToSign?.details),
-              detailsLength: valuesToSign?.details?.length,
-              detailsPreview: valuesToSign?.details?.[0]
-            });
 
             // Inform user about batch signature request
             toast("Sign in Wallet", {
@@ -526,7 +479,6 @@ export function useAddLiquidityTransaction({
               primaryType: preparedTxData.signatureDetails!.primaryType
             });
             
-            console.log('Permit signature obtained, storing...');
             // Store batch permit signature
             const updatedTxData = {
               ...preparedTxData,
@@ -539,17 +491,10 @@ export function useAddLiquidityTransaction({
                 }
               }
             };
-            
-            console.log('[batchPermitSigned] Storing signature and setting state:', {
-              signatureLength: signature.length,
-              signaturePreview: signature.substring(0, 10) + '...',
-              aboutToSetBatchPermitSigned: true
-            });
-            
+
             setPreparedTxData(updatedTxData);
             setBatchPermitSigned(true);
             
-            console.log('[batchPermitSigned] Permit signature stored successfully. Click Deposit again to proceed.');
             
             // Show batch signature success toast with deadline duration (like swap)
             const currentTime = Math.floor(Date.now() / 1000);
@@ -586,7 +531,6 @@ export function useAddLiquidityTransaction({
             setIsWorking(false);
             return; // User needs to click Deposit again
           } catch (e) {
-            console.log('Batch permit signature failed:', e);
             setBatchPermitSigned(false);
             setIsWorking(false);
             if (e && typeof e === 'object' && 'message' in e && typeof e.message === 'string' && e.message.includes('User rejected')) {
@@ -600,7 +544,6 @@ export function useAddLiquidityTransaction({
           }
         } else {
           // No batch permit data - fetch fresh permit/tx from API
-          console.log('No batch permit data, fetching fresh permit/tx from API');
           
           let inputAmount, inputTokenSymbol;
           if (activeInputSide === 'amount0' && amount0 && parseFloat(amount0) > 0) {
@@ -643,7 +586,6 @@ export function useAddLiquidityTransaction({
           
           if (freshData.needsApproval && freshData.approvalType === 'PERMIT2_BATCH_SIGNATURE') {
             // Update state with fresh permit data and retry
-            console.log('Fresh API call returned permit batch needed, updating state');
             setPreparedTxData({
               needsApproval: true,
               approvalType: 'PERMIT2_BATCH_SIGNATURE',
@@ -655,7 +597,6 @@ export function useAddLiquidityTransaction({
             return; // User needs to click again
           } else if (!freshData.needsApproval) {
             // Use fresh transaction data
-            console.log('Fresh API call returned transaction ready');
             setPreparedTxData({ needsApproval: false, transaction: freshData.transaction });
             setBatchPermitSigned(true); // No permit needed, so consider it "signed"
             // Continue to transaction execution below
@@ -664,7 +605,6 @@ export function useAddLiquidityTransaction({
           }
         }
       } else if (hasExistingSignature) {
-        console.log('Using existing permit signature');
         setBatchPermitSigned(true); // Ensure state is consistent
       }
 
@@ -673,11 +613,9 @@ export function useAddLiquidityTransaction({
 
       if (preparedTxData?.transaction) {
         // Use existing transaction data
-        console.log('Using existing transaction data');
         txData = { transaction: preparedTxData.transaction };
       } else {
         // Need to prepare transaction with batch permit
-        console.log('Preparing new transaction with batch permit');
 
         let inputAmount, inputTokenSymbol;
         if (activeInputSide === 'amount0' && amount0 && parseFloat(amount0) > 0) {
@@ -721,7 +659,6 @@ export function useAddLiquidityTransaction({
         }
 
         txData = await response.json();
-        console.log('API Response:', txData);
       }
       
       // Check if we have transaction data
@@ -810,7 +747,6 @@ export function useAddLiquidityTransaction({
           setIsWorking(true);
           
           const approvedToken = preparedTxData.approvalTokenSymbol!;
-          console.log(`[Deterministic Flow] ${approvedToken} approved with tx ${approveTxHash}`);
           
           // Show approval success toast with transaction link (like swap)
           const approvalAmount = BigInt(preparedTxData.approvalAmount || "0");
@@ -841,12 +777,10 @@ export function useAddLiquidityTransaction({
             !updatedCompletedApprovals.includes(token)
           );
           
-          console.log(`[Deterministic Flow] Remaining approvals:`, remainingApprovals);
           
           if (remainingApprovals.length > 0) {
             // Continue with next approval
             const nextToken = remainingApprovals[0];
-            console.log(`[Deterministic Flow] Next approval needed: ${nextToken}`);
             
             setPreparedTxData({
               needsApproval: true,
@@ -863,7 +797,6 @@ export function useAddLiquidityTransaction({
           }
           
           // All approvals complete, proceed to permit/transaction preparation
-          console.log(`[Deterministic Flow] All approvals complete, checking permit requirements`);
 
           // Determine input amount/token
           let inputAmount: string | undefined, inputTokenSymbol: TokenSymbol | undefined;
@@ -907,7 +840,6 @@ export function useAddLiquidityTransaction({
           
           if (result.needsApproval && result.approvalType === 'PERMIT2_BATCH_SIGNATURE') {
             // Server says we need PermitBatch signature
-            console.log('[Approval Success] Server returned PERMIT2_BATCH_SIGNATURE needed');
             setPreparedTxData({
               needsApproval: true,
               approvalType: 'PERMIT2_BATCH_SIGNATURE',
@@ -919,7 +851,6 @@ export function useAddLiquidityTransaction({
             setIsWorking(false);
           } else if (result.needsApproval && result.approvalType === 'ERC20_TO_PERMIT2') {
             // Server says we need another ERC20 approval
-            console.log('[Approval Success] Server returned ERC20_TO_PERMIT2 needed for', result.approvalTokenSymbol);
             const nextTokenSymbol = result.approvalTokenSymbol as TokenSymbol;
             setNeedsERC20Approvals([nextTokenSymbol]);
             setPreparedTxData({
@@ -934,7 +865,6 @@ export function useAddLiquidityTransaction({
             setIsWorking(false);
           } else if (!result.needsApproval) {
             // Server says transaction is ready
-            console.log('[Approval Success] Server returned transaction ready');
             setPreparedTxData({ needsApproval: false, transaction: result.transaction });
             setNeedsERC20Approvals([]);
             setStep('mint');
@@ -1016,7 +946,6 @@ export function useAddLiquidityTransaction({
                 if (args.from === '0x0000000000000000000000000000000000000000' &&
                     args.to?.toLowerCase() === accountAddress?.toLowerCase()) {
                   newTokenId = args.id?.toString();
-                  console.log(`[AddLiquidity] Extracted tokenId ${newTokenId} from Transfer event`);
                   if (accountAddress && newTokenId) {
                     addPositionIdToCache(accountAddress, newTokenId);
                   }

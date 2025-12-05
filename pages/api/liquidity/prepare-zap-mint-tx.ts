@@ -718,7 +718,6 @@ export default async function handler(
 
     // Get network mode from cookies and create network-specific resources
     const networkMode = getNetworkModeFromRequest(req.headers.cookie);
-    console.log('[prepare-zap-mint-tx] Network mode from cookies:', networkMode);
     const publicClient = createNetworkClient(networkMode);
     const POSITION_MANAGER_ADDRESS = getPositionManagerAddress(networkMode);
     const STATE_VIEW_ADDRESS = getStateViewAddress(networkMode);
@@ -875,7 +874,6 @@ export default async function handler(
         );
 
         // Calculate optimal swap amount
-        console.log("Calculating optimal swap amount for zap...");
         const { optimalSwapAmount, resultingPosition, priceImpact, error } = await calculateOptimalSwapAmount(
             sdkInputToken,
             sdkOtherToken,
@@ -887,19 +885,6 @@ export default async function handler(
             publicClient,
             QUOTER_ADDRESS
         );
-        
-        console.log('[prepare-zap-mint-tx] Swap calculation result:', {
-            optimalSwapAmount: optimalSwapAmount.toString(),
-            parsedInputAmount: parsedInputAmount.toString(),
-            priceImpact: priceImpact,
-            error: error || null,
-            resultingPositionAmount0: resultingPosition.mintAmounts.amount0.toString(),
-            resultingPositionAmount1: resultingPosition.mintAmounts.amount1.toString(),
-            resultingPositionLiquidity: resultingPosition.liquidity.toString(),
-            currentTickAtOptimization: currentTick,
-            tickRange: `[${tickLower}, ${tickUpper}]`,
-            isCurrentlyOutOfRange: currentTick < tickLower || currentTick > tickUpper,
-        });
 
         // Check if there was an error (e.g., price impact too high)
         if (error) {
@@ -1067,24 +1052,6 @@ export default async function handler(
         const expectedSlippageBps = slippageTolerance;
         const slippageDiff = Math.abs(actualSlippageBps - expectedSlippageBps);
 
-        if (slippageDiff > 0.1) {
-            console.warn(`[prepare-zap-mint-tx] Slippage mismatch: expected ${expectedSlippageBps} bps, got ${actualSlippageBps.toFixed(2)} bps`);
-        }
-
-        console.log('[prepare-zap-mint-tx] Building swap transaction:', {
-            optimalSwapAmount: optimalSwapAmount.toString(),
-            isInputToken0,
-            zeroForOne,
-            swapQuoteOutput: swapQuoteOutput.toString(),
-            slippageToleranceBps: slippageTolerance,
-            minSwapOutputWithSlippage: minSwapOutputWithSlippage.toString(),
-            actualSlippageAppliedBps: actualSlippageBps.toFixed(2),
-            expectedSlippageBps: expectedSlippageBps,
-            slippageMatch: slippageDiff < 0.1 ? '✓' : '✗',
-            finalAmount0: finalAmount0.toString(),
-            finalAmount1: finalAmount1.toString(),
-        });
-
         // Skip swap if optimalSwapAmount is 0 (no swap needed)
         if (optimalSwapAmount > 0n) {
             // Add SWAP_EXACT_IN_SINGLE action
@@ -1118,22 +1085,12 @@ export default async function handler(
             // Finalize swap planner and add to Universal Router
             const swapEncodedActions = swapPlanner.finalize() as Hex;
             swapRoutePlanner.addCommand(CommandType.V4_SWAP, [swapEncodedActions]);
-        } else {
-            console.log('[prepare-zap-mint-tx] Skipping swap - optimalSwapAmount is 0');
         }
 
         // Finalize swap transaction
         const currentTimestamp = BigInt(Math.floor(Date.now() / 1000));
         const swapTxDeadline = currentTimestamp + BigInt(deadlineSeconds);
         const swapTxValue = isNativeInput ? optimalSwapAmount.toString() : '0';
-
-        console.log('[prepare-zap-mint-tx] Finalizing swap transaction:', {
-            optimalSwapAmount: optimalSwapAmount.toString(),
-            swapTxValue,
-            hasSwapCommand: swapRoutePlanner.commands.length > 0,
-            commandsCount: swapRoutePlanner.commands.length,
-            inputsCount: swapRoutePlanner.inputs.length,
-        });
 
         // ========== TRANSACTION 2: MINT POSITION via PositionManager ==========
         // Calculate remaining input amount after swap

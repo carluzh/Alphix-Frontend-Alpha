@@ -1068,9 +1068,8 @@ export function InteractiveRangeChart({
           </ComposedChart>
         </ResponsiveContainer>
 
-        {/* Static drag handles - hidden during loading */}
         {!readOnly && !isChartDataLoading && (
-          <div className="absolute inset-0 pointer-events-none">
+          <div className="absolute inset-0 pointer-events-none gpu-accelerated">
             {/* Invisible center area - drag to move entire range */}
             <div
               className="absolute top-0 bottom-0 pointer-events-auto cursor-move"
@@ -1131,7 +1130,7 @@ export function InteractiveRangeChart({
 
         {/* Hover-only zoom controls */}
         {!readOnly && (
-          <div className={`absolute top-1 right-1 flex gap-1 pointer-events-auto transition-opacity duration-200 ${isHovering ? 'opacity-100' : 'opacity-0'}`}>
+          <div className={`absolute top-1 right-1 flex gap-1 pointer-events-auto transition-opacity duration-200 gpu-accelerated ${isHovering ? 'opacity-100' : 'opacity-0'}`}>
           <button
             type="button"
             className="h-5 w-5 flex items-center justify-center rounded border border-sidebar-border bg-button hover:brightness-110 hover:border-white/30"

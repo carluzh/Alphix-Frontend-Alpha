@@ -54,17 +54,6 @@ type Params = {
 export async function invalidateAfterTx(qc: QueryClient, params: Params) {
   const ownerLc = (params.owner || '').toLowerCase()
 
-  console.log('[invalidateAfterTx] Called with params:', {
-    owner: ownerLc,
-    poolId: params.poolId,
-    positionIds: params.positionIds,
-    reason: params.reason,
-    awaitSubgraphSync: params.awaitSubgraphSync,
-    blockNumber: params.blockNumber?.toString(),
-    hasOptimisticUpdates: !!params.optimisticUpdates,
-    optimisticUpdates: params.optimisticUpdates
-  });
-
   try {
     const hasOptimisticUpdates = !!params.optimisticUpdates;
 
@@ -196,7 +185,6 @@ export async function invalidateAfterTx(qc: QueryClient, params: Params) {
     }
 
     // Invalidate React Query caches (client-side)
-    console.log('[invalidateAfterTx] Invalidating React Query caches');
     qc.invalidateQueries({ queryKey: qk.userPositions(ownerLc) })
 
     if (params.positionIds && params.positionIds.length > 0) {
@@ -208,7 +196,6 @@ export async function invalidateAfterTx(qc: QueryClient, params: Params) {
     }
 
     if (params.poolId) {
-      console.log(`[invalidateAfterTx] Invalidating pool queries for poolId: ${params.poolId}`);
       qc.invalidateQueries({ queryKey: qk.poolStats(params.poolId) })
       qc.invalidateQueries({ queryKey: qk.poolState(params.poolId) })
       qc.invalidateQueries({ queryKey: qk.dynamicFeeNow(params.poolId) })
@@ -219,7 +206,6 @@ export async function invalidateAfterTx(qc: QueryClient, params: Params) {
     // Note: Activity feed removed - no longer invalidating qk.activity()
 
     // Invalidate Redis caches (server-side) via API call
-    console.log('[invalidateAfterTx] Calling Redis cache invalidation API');
     try {
       const requestBody = {
         ownerAddress: ownerLc,
@@ -227,7 +213,6 @@ export async function invalidateAfterTx(qc: QueryClient, params: Params) {
         positionIds: params.positionIds,
         reason: params.reason || 'tx_confirmed'
       };
-      console.log('[invalidateAfterTx] Redis invalidation request:', requestBody);
 
       const response = await fetch('/api/cache/invalidate', {
         method: 'POST',
@@ -235,13 +220,11 @@ export async function invalidateAfterTx(qc: QueryClient, params: Params) {
         body: JSON.stringify(requestBody)
       });
 
-      console.log('[invalidateAfterTx] Redis invalidation response status:', response.status);
       if (!response.ok) {
         const errorText = await response.text();
         console.error('[invalidateAfterTx] Redis invalidation failed with status:', response.status, errorText);
       } else {
         const result = await response.json();
-        console.log('[invalidateAfterTx] Redis invalidation succeeded:', result);
       }
     } catch (error) {
       console.error('[invalidateAfterTx] Redis cache invalidation failed:', error)
@@ -290,7 +273,6 @@ export async function invalidateAfterTx(qc: QueryClient, params: Params) {
       prefetchService.notifyPositionsRefresh(ownerLc, params.reason || 'tx_confirmed')
     } catch {}
 
-    console.log('[invalidateAfterTx] Completed successfully');
 
   } catch (error) {
     console.error('[invalidateAfterTx] Top-level error:', error)

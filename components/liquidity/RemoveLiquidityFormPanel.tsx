@@ -48,9 +48,9 @@ export function RemoveLiquidityFormPanel({
   externalTxHash,
   onLiquidityDecreased: onLiquidityDecreasedProp
 }: RemoveLiquidityFormPanelProps) {
-  const { address: accountAddress, chainId: walletChainId } = useAccount();
-  const { chainId: networkChainId, networkMode } = useNetwork();
-  const chainId = walletChainId || networkChainId;
+  const { address: accountAddress } = useAccount();
+  const { chainId, networkMode } = useNetwork();
+  // Always use network context chainId for queries (not wallet chainId)
   const tokenDefinitions = React.useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
   const { data: allPrices } = useAllPrices();
 

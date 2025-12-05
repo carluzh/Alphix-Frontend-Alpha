@@ -45,7 +45,6 @@ export async function calculatePositionAPY(
 
     // If price is outside range, position earns no fees
     if (currentTick < tickLower || currentTick >= tickUpper) {
-      console.warn('[calculatePositionAPY] Price outside range:', { currentTick, tickLower, tickUpper });
       return 0;
     }
 
@@ -80,7 +79,6 @@ export async function calculatePositionAPY(
 
       // If neither token has a USD price, we can't calculate APY meaningfully
       if (token0PriceUSD === 0 && token1PriceUSD === 0) {
-        console.warn('[calculatePositionAPY] No USD prices available for either token');
         return 0;
       }
 
@@ -90,17 +88,14 @@ export async function calculatePositionAPY(
         // Use token1 price and pool ratio to estimate token0 price
         const token0InToken1Terms = parseFloat(pool.token0Price.toSignificant(18));
         token0PriceUSD = token1PriceUSD * token0InToken1Terms;
-        console.log(`[calculatePositionAPY] Derived ${token0Symbol} price from ${token1Symbol}: $${token0PriceUSD.toFixed(6)}`);
       } else if (token1PriceUSD === 0 && token0PriceUSD > 0) {
         // Use token0 price and pool ratio to estimate token1 price
         const token1InToken0Terms = parseFloat(pool.token1Price.toSignificant(18));
         token1PriceUSD = token0PriceUSD * token1InToken0Terms;
-        console.log(`[calculatePositionAPY] Derived ${token1Symbol} price from ${token0Symbol}: $${token1PriceUSD.toFixed(6)}`);
       }
 
       // Sanity check final prices
       if (token0PriceUSD === 0 || token1PriceUSD === 0 || !isFinite(token0PriceUSD) || !isFinite(token1PriceUSD)) {
-        console.warn('[calculatePositionAPY] Invalid derived prices, cannot calculate APY');
         return 0;
       }
     } catch (error) {

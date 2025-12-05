@@ -26,7 +26,6 @@ interface SlippageToleranceResponse {
 export async function fetchAutoSlippage(params: SlippageToleranceRequest): Promise<number | null> {
   // If no API URL configured, return null to use fallback calculation
   if (!SLIPPAGE_API_BASE_URL) {
-    console.log('[fetchAutoSlippage] No API URL configured, using fallback');
     return null;
   }
 
@@ -58,7 +57,6 @@ export async function fetchAutoSlippage(params: SlippageToleranceRequest): Promi
     const data: SlippageToleranceResponse = await response.json();
 
     if (typeof data.slippageBps !== 'number' || data.slippageBps === null) {
-      console.log('[fetchAutoSlippage] No slippage data returned');
       return null;
     }
 
@@ -67,16 +65,13 @@ export async function fetchAutoSlippage(params: SlippageToleranceRequest): Promi
 
     // Validate against bounds
     if (slippagePercent < MIN_AUTO_SLIPPAGE_TOLERANCE) {
-      console.warn('[fetchAutoSlippage] Returned slippage too low:', slippagePercent);
       return null;
     }
 
     if (slippagePercent > MAX_AUTO_SLIPPAGE_TOLERANCE) {
-      console.warn('[fetchAutoSlippage] Returned slippage too high:', slippagePercent);
       return null;
     }
 
-    console.log('[fetchAutoSlippage] Got auto-slippage:', slippagePercent + '%');
     return slippagePercent;
 
   } catch (error) {
@@ -190,7 +185,6 @@ export async function getAutoSlippage(params: {
   }
 
   // Fallback to calculation
-  console.log('[getAutoSlippage] Using fallback calculation');
   return calculateFallbackSlippage({
     fromAmount,
     toAmount,

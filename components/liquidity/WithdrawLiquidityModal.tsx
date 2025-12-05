@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "sonner";
 import { useAccount } from "wagmi";
+import { useChainMismatch } from "@/hooks/useChainMismatch";
 import { formatUnits } from "viem";
 import Image from "next/image";
 import { motion, useAnimation, AnimatePresence } from "framer-motion";
@@ -77,9 +78,10 @@ export function WithdrawLiquidityModal({
   isDecreaseSuccess: parentIsDecreaseSuccess,
   decreaseTxHash: parentDecreaseTxHash
 }: WithdrawLiquidityModalProps) {
-  const { address: accountAddress, chainId: walletChainId } = useAccount();
-  const { chainId: networkChainId, networkMode } = useNetwork();
-  const chainId = walletChainId || networkChainId;
+  const { address: accountAddress } = useAccount();
+  const { chainId, networkMode } = useNetwork();
+  // Always use network context chainId for queries (not wallet chainId)
+  const { isMismatched: isChainMismatched } = useChainMismatch();
   const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
   const { data: allPrices } = useAllPrices();
 
@@ -200,7 +202,6 @@ export function WithdrawLiquidityModal({
   
   const internalHookResult = useDecreaseLiquidity({
     onLiquidityDecreased: () => {
-      console.log('[DEBUG] Modal internal hook callback fired, shouldUseInternal:', shouldUseInternalHook);
       // Don't set success view here - let the useEffect handle it based on confirmed state
       // This prevents premature success view before transaction confirmation
     }
@@ -235,7 +236,6 @@ export function WithdrawLiquidityModal({
   // Reset transaction state when modal opens
   useEffect(() => {
     if (isOpen) {
-      console.log('[DEBUG] Modal opened, resetting all states');
       setTxStarted(false);
       setWasDecreasingLiquidity(false);
       setCurrentSessionTxHash(null);
@@ -251,7 +251,6 @@ export function WithdrawLiquidityModal({
       
       // Force reset of parent transaction states if using parent hook
       if (!shouldUseInternalHook) {
-        console.log('[DEBUG] Using parent hook, forcing parent state reset');
         // The parent should reset its transaction states when modal opens
         // This will be handled by the parent component
       }
@@ -303,25 +302,14 @@ export function WithdrawLiquidityModal({
     if (!txHash && !isTransactionSuccess) {
       return; // Exit early if no transaction data
     }
-    
-    console.log('[DEBUG] Success effect triggered:', {
-      txHash: txHash?.slice(0, 10) + '...',
-      isTransactionSuccess,
-      showTransactionOverview,
-      txStarted,
-      currentSessionTxHash: currentSessionTxHash?.slice(0, 10) + '...',
-      hashesMatch: txHash === currentSessionTxHash
-    });
-    
+
     // Only show success if we have a confirmed transaction hash that matches our current session
     if (txHash && isTransactionSuccess && showTransactionOverview && txStarted && currentSessionTxHash === txHash) {
-      console.log('[DEBUG] Transaction confirmed with hash, showing success view. txHash:', txHash?.slice(0, 10) + '...');
       setShowSuccessView(true);
       
       // Call the success callback to notify parent component (but don't let it close the modal)
       // The parent should handle data refresh but not close the modal
       if (onLiquidityWithdrawn) {
-        console.log('[DEBUG] Calling onLiquidityWithdrawn callback');
         onLiquidityWithdrawn();
       }
     }
@@ -558,6 +546,10 @@ export function WithdrawLiquidityModal({
 
   // Get button text based on state
   const getWithdrawButtonText = useCallback(() => {
+    // Check for chain mismatch first
+    if (isChainMismatched) {
+      return 'Wrong Network';
+    }
     // Show Withdraw All only if both sides are >= 99% of position amounts (in-range)
     if (position?.isInRange) {
       const max0 = parseFloat(position.token0.amount || '0');
@@ -576,7 +568,7 @@ export function WithdrawLiquidityModal({
     const near0 = max0 > 0 ? in0 >= max0 * 0.99 : false;
     const near1 = max1 > 0 ? in1 >= max1 * 0.99 : false;
     return (near0 || near1) ? 'Withdraw All' : 'Withdraw';
-  }, [position, withdrawAmount0, withdrawAmount1]);
+  }, [position, withdrawAmount0, withdrawAmount1, isChainMismatched]);
 
   // Handle confirm withdraw - show "You Will Receive" first
   const handleConfirmWithdraw = useCallback(() => {
@@ -619,7 +611,6 @@ export function WithdrawLiquidityModal({
   const handleExecuteTransaction = useCallback(() => {
     if (!position) return;
     
-    console.log('[DEBUG] Modal: handleExecuteTransaction called, shouldUseInternalHook:', shouldUseInternalHook);
 
     // Map position token addresses to correct token symbols from our configuration
     const token0Symbol = getTokenSymbolByAddress(position.token0.address);
@@ -1072,12 +1063,12 @@ export function WithdrawLiquidityModal({
           </Button>
 
           <Button
-            className={checkInsufficientBalanceWithdraw() ?
+            className={(isChainMismatched || checkInsufficientBalanceWithdraw()) ?
               "relative border border-sidebar-border bg-button px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75" :
               "text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90"
             }
             onClick={handleConfirmWithdraw}
-            disabled={isWorking || !hasValidAmount || checkInsufficientBalanceWithdraw()}
+            disabled={isChainMismatched || isWorking || !hasValidAmount || checkInsufficientBalanceWithdraw()}
             style={checkInsufficientBalanceWithdraw() ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
           >
             <span className={isWorking ? "animate-pulse" : ""}>
@@ -1328,12 +1319,12 @@ export function WithdrawLiquidityModal({
                         </Button>
 
                         <Button
-                          className="text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90"
+                          className={isChainMismatched ? "relative border border-sidebar-border bg-button px-3 text-sm font-medium text-white/75" : "text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90"}
                           onClick={showTransactionOverview ? handleExecuteTransaction : handleFinalConfirmWithdraw}
-                          disabled={isWorking || isWithdrawCalculating}
+                          disabled={isChainMismatched || isWorking || isWithdrawCalculating}
                         >
                           <span className={isWorking ? "animate-pulse" : ""}>
-                            Confirm
+                            {isChainMismatched ? 'Wrong Network' : 'Confirm'}
                           </span>
                         </Button>
                       </div>

@@ -245,7 +245,6 @@ async function prepareV4ExactOutSwapData(
     if (limitPrice && limitPrice !== "" && parseFloat(limitPrice) > 0) {
         const zeroForOne = getAddress(inputToken.address!) === v4PoolKey.currency0;
         sqrtPriceLimitX96 = calculatePriceLimitX96(limitPrice, inputToken, outputToken, zeroForOne);
-        console.log(`[prepareV4ExactOutSwapData] Applied price limit: ${limitPrice}, calculated sqrtPriceLimitX96: ${sqrtPriceLimitX96.toString()}`);
     }
 
     v4Planner.addAction(Actions.SWAP_EXACT_OUT_SINGLE, [
@@ -290,54 +289,16 @@ async function prepareV4MultiHopExactInSwapData(
         throw new Error(`Failed to create token instances for multi-hop route`);
     }
 
-    // Build PoolKeys for each hop from config, and PathKey[] per guide
-    console.log(`[ExactIn Debug] Building pool keys for route: ${routeToString(route)}`);
-    console.log(`[ExactIn Debug] Route path:`, route.path);
-    console.log(`[ExactIn Debug] Route pools:`, route.pools.map(p => ({
-        poolId: p.poolId,
-        poolName: p.poolName,
-        token0: p.token0,
-        token1: p.token1,
-        fee: p.fee,
-        tickSpacing: p.tickSpacing,
-        subgraphId: p.subgraphId
-    })));
-
+    // Build PoolKeys for each hop from config
     const poolKeys: PoolKey[] = [];
     for (let i = 0; i < route.pools.length; i++) {
         const hop = route.pools[i];
-        console.log(`[ExactIn Debug] Hop ${i}: ${hop.token0} -> ${hop.token1} (${hop.poolName})`);
         const poolCfg = getPoolConfigForTokens(hop.token0, hop.token1, networkMode);
         if (!poolCfg) throw new Error(`Pool config not found for hop ${i}: ${hop.poolName}`);
         const poolKey = createPoolKeyFromConfig(poolCfg.pool);
-        console.log(`[ExactIn Debug] Pool key ${i}:`, {
-            currency0: poolKey.currency0,
-            currency1: poolKey.currency1,
-            fee: poolKey.fee,
-            tickSpacing: poolKey.tickSpacing,
-            hooks: poolKey.hooks
-        });
-        
-        // Calculate and log pool ID for debugging
-        const poolId = ethers.utils.solidityKeccak256(
-            ['address','address','uint24','int24','address'],
-            [poolKey.currency0, poolKey.currency1, poolKey.fee, poolKey.tickSpacing, poolKey.hooks]
-        );
-        console.log(`[ExactIn Debug] Pool ID for hop ${i}: ${poolId}`);
-        console.log(`[ExactIn Debug] Expected subgraphId for hop ${i}: ${hop.subgraphId}`);
-        
         poolKeys.push(poolKey);
     }
-    // Use the guide helper to encode PathKey[] from PoolKey[]
-    console.log(`[ExactIn Debug] Encoding path with inputToken: ${inputToken.address}`);
     const pathKeys = encodeMultihopExactInPath(poolKeys, inputToken.address);
-    console.log(`[ExactIn Debug] Generated pathKeys:`, pathKeys.map((pk, i) => ({
-        hop: i,
-        intermediateCurrency: pk.intermediateCurrency,
-        fee: pk.fee,
-        tickSpacing: pk.tickSpacing,
-        hooks: pk.hooks
-    })));
 
     const v4Planner = new V4Planner();
 
@@ -396,17 +357,6 @@ async function prepareV4MultiHopExactOutSwapData(
         throw new Error(`Failed to create token instances for multi-hop route`);
     }
 
-    console.log(`[ExactOut Debug] Building pool keys for route: ${routeToString(route)}`);
-    console.log(`[ExactOut Debug] Route path:`, route.path);
-    console.log(`[ExactOut Debug] Route pools:`, route.pools.map(p => ({
-        poolId: p.poolId,
-        poolName: p.poolName,
-        token0: p.token0,
-        token1: p.token1,
-        fee: p.fee,
-        tickSpacing: p.tickSpacing
-    })));
-
     const poolKeys: PoolKey[] = [];
     for (let i = 0; i < route.pools.length; i++) {
         const hop = route.pools[i];
@@ -418,16 +368,7 @@ async function prepareV4MultiHopExactOutSwapData(
         poolKeys.push(poolKey);
     }
 
-    console.log(`[ExactOut Debug] Encoding path with outputToken: ${outputToken.address}`);
     const pathKeys = encodeMultihopExactOutPath(poolKeys, outputToken.address);
-    console.log(`[ExactOut Debug] Generated pathKeys:`, pathKeys.map((pk, i) => ({
-        hop: i,
-        intermediateCurrency: pk.intermediateCurrency,
-        fee: pk.fee,
-        tickSpacing: pk.tickSpacing,
-        hooks: pk.hooks,
-        hookData: pk.hookData
-    })));
 
     const v4Planner = new V4Planner();
 
@@ -557,11 +498,8 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
             chainId
         } = req.body;
 
-        console.log("[DEBUG] build-tx received body:", JSON.stringify(req.body, null, 2));
-
         // Get network mode from cookies for proper chain-specific addresses
         const networkMode = getNetworkModeFromRequest(req.headers.cookie);
-        console.log('[build-tx] Network mode from cookies:', networkMode);
 
         // ChainId validation - CRITICAL security check
         const chainIdError = validateChainId(chainId, networkMode);
@@ -585,21 +523,6 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
         // Validate required fields (basic check)
         const requiredFields = [userAddress, fromTokenSymbol, toTokenSymbol, swapType, amountDecimalsStr, limitAmountDecimalsStr, permitSignature, permitTokenAddress, permitAmount, permitNonce, permitExpiration, permitSigDeadline, chainId];
         if (requiredFields.some(field => field === undefined || field === null)) {
-            console.log("[DEBUG] Missing fields check:", {
-                userAddress: userAddress !== undefined && userAddress !== null,
-                fromTokenSymbol: fromTokenSymbol !== undefined && fromTokenSymbol !== null,
-                toTokenSymbol: toTokenSymbol !== undefined && toTokenSymbol !== null,
-                swapType: swapType !== undefined && swapType !== null,
-                amountDecimalsStr: amountDecimalsStr !== undefined && amountDecimalsStr !== null,
-                limitAmountDecimalsStr: limitAmountDecimalsStr !== undefined && limitAmountDecimalsStr !== null,
-                permitSignature: permitSignature !== undefined && permitSignature !== null,
-                permitTokenAddress: permitTokenAddress !== undefined && permitTokenAddress !== null,
-                permitAmount: permitAmount !== undefined && permitAmount !== null,
-                permitNonce: permitNonce !== undefined && permitNonce !== null,
-                permitExpiration: permitExpiration !== undefined && permitExpiration !== null,
-                permitSigDeadline: permitSigDeadline !== undefined && permitSigDeadline !== null,
-                chainId: chainId !== undefined && chainId !== null,
-            });
             return res.status(400).json({ ok: false, message: 'Missing one or more required fields in request body.' });
         }
         if (fromTokenSymbol === toTokenSymbol) {
@@ -618,8 +541,7 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
         }
 
         const route = routeResult.bestRoute;
-        console.log(`[Build-Tx] Using route: ${routeToString(route)}`);
-        
+
         // For single-hop, we still need the pool config for backward compatibility
         let poolConfig: any = null;
         if (route.isDirectRoute) {
@@ -671,31 +593,10 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
         if (swapType === 'ExactIn') {
             actualSwapAmount = safeParseUnits(amountDecimalsStr, INPUT_TOKEN.decimals);
             actualLimitAmount = safeParseUnits(limitAmountDecimalsStr, OUTPUT_TOKEN.decimals);
-            
-            // Verification: Log slippage protection details for ExactIn swaps
-            console.log('[build-tx] ExactIn Swap Slippage Verification:', {
-                inputAmount: amountDecimalsStr,
-                frontendMinOutput: limitAmountDecimalsStr,
-                actualLimitAmountSmallestUnits: actualLimitAmount.toString(),
-                inputToken: INPUT_TOKEN.symbol,
-                outputToken: OUTPUT_TOKEN.symbol,
-                slippageProtectionActive: actualLimitAmount > 0n ? '✓' : '✗',
-                note: 'Transaction will fail if actual output < actualLimitAmountSmallestUnits',
-            });
         } else {
             // ExactOut: amount is in OUTPUT token units; limit is max INPUT
             actualSwapAmount = safeParseUnits(amountDecimalsStr, OUTPUT_TOKEN.decimals);
             actualLimitAmount = safeParseUnits(limitAmountDecimalsStr, INPUT_TOKEN.decimals);
-            
-            // Verification: Log slippage protection details for ExactOut swaps
-            console.log('[build-tx] ExactOut Swap Slippage Verification:', {
-                outputAmount: amountDecimalsStr,
-                frontendMaxInput: limitAmountDecimalsStr,
-                actualLimitAmountSmallestUnits: actualLimitAmount.toString(),
-                inputToken: INPUT_TOKEN.symbol,
-                outputToken: OUTPUT_TOKEN.symbol,
-                slippageProtectionActive: actualLimitAmount > 0n ? '✓' : '✗',
-            });
         }
 
         // Determine the value to send with the transaction (ETH input only)

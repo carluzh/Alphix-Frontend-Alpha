@@ -54,9 +54,7 @@ export async function safeOptimisticTx(params: SafeOptimisticTxParams): Promise<
 
   try {
     // Step 1: Wait for transaction to be submitted (get tx hash)
-    console.log('[SafeOptimisticTx] Waiting for transaction submission...')
     const tx = await txPromise
-    console.log('[SafeOptimisticTx] Transaction submitted, applying optimistic updates')
 
     // Step 2: Apply optimistic updates ONLY after tx is submitted
     await invalidateAfterTx(queryClient, {
@@ -69,7 +67,6 @@ export async function safeOptimisticTx(params: SafeOptimisticTxParams): Promise<
     })
 
     // Step 3: Wait for transaction confirmation
-    console.log('[SafeOptimisticTx] Waiting for transaction confirmation...')
     const receipt = await tx.wait()
 
     // Step 4: Check if transaction actually succeeded
@@ -77,7 +74,6 @@ export async function safeOptimisticTx(params: SafeOptimisticTxParams): Promise<
       throw new Error('Transaction reverted on-chain')
     }
 
-    console.log('[SafeOptimisticTx] Transaction confirmed, replacing optimistic with real data')
 
     // Step 5: Success - replace optimistic with real data from chain/subgraph
     await invalidateAfterTx(queryClient, {
@@ -90,7 +86,6 @@ export async function safeOptimisticTx(params: SafeOptimisticTxParams): Promise<
       reloadPositions: true, // This removes isPending/isRemoving and fetches real data
     })
 
-    console.log('[SafeOptimisticTx] Success - optimistic updates replaced with real data')
 
     if (onSuccess) {
       await onSuccess()
@@ -108,7 +103,6 @@ export async function safeOptimisticTx(params: SafeOptimisticTxParams): Promise<
         positionIds,
         reloadPositions: true, // Force refetch, clears all optimistic flags
       })
-      console.log('[SafeOptimisticTx] Rollback complete')
     } catch (rollbackError) {
       console.error('[SafeOptimisticTx] Rollback failed:', rollbackError)
       // Last resort: invalidate everything to force UI refresh
@@ -136,7 +130,6 @@ export async function rollbackOptimisticUpdates(
   poolId?: string,
   positionIds?: string[]
 ): Promise<void> {
-  console.log('[RollbackOptimistic] Manually rolling back optimistic updates')
 
   await invalidateAfterTx(queryClient, {
     owner,

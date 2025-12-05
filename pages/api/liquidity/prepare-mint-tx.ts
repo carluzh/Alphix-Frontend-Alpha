@@ -160,7 +160,6 @@ export default async function handler(
 
     // Get network mode from cookies for proper chain-specific addresses
     const networkMode = getNetworkModeFromRequest(req.headers.cookie);
-    console.log('[prepare-mint-tx] Network mode from cookies:', networkMode);
 
     // Create network-specific public client
     const publicClient = createNetworkClient(networkMode);
