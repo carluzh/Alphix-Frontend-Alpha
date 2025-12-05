@@ -38,9 +38,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     .join('; ');
 
   const networkCookie = cookieStore.get('alphix-network-mode');
+  // Use env var default for new users without a cookie preference
+  const envDefault = process.env.NEXT_PUBLIC_DEFAULT_NETWORK === 'mainnet' ? 'mainnet' : 'testnet';
   const initialNetworkMode = (networkCookie?.value === 'mainnet' || networkCookie?.value === 'testnet')
     ? networkCookie.value as 'mainnet' | 'testnet'
-    : 'testnet';
+    : envDefault;
 
   return (
     <html lang="en" className={`${inter.variable}`} suppressHydrationWarning style={{ backgroundColor: '#0f0f0f' }}>

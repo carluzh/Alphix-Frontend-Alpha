@@ -1265,8 +1265,8 @@ export default function PoolDetailPage() {
           while (ei < evAsc.length && Number(evAsc[ei]?.timestamp || 0) <= endTs) {
             const e = evAsc[ei];
             const bps = Number(e?.newFeeBps ?? 0);
-            // newFeeBps is in basis points (1 bps = 0.01%), so divide by 100 to get percentage
-            curFeePct = Number.isFinite(bps) ? (bps / 100) : curFeePct;
+            // newFeeBps value needs to be divided by 10000 to get percentage
+            curFeePct = Number.isFinite(bps) ? (bps / 10000) : curFeePct;
             curRatio = scaleRatio(e?.currentRatio); // Activity
             curEma = scaleRatio(e?.newTargetRatio); // Target
             ei++;

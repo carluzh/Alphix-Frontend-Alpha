@@ -4,7 +4,7 @@ export const preferredRegion = 'auto';
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { getPoolSubgraphId, getAllPools, type NetworkMode } from '@/lib/pools-config';
-import { getUniswapV4SubgraphUrl } from '@/lib/subgraph-url-helper';
+import { getUniswapV4SubgraphUrl, isDaiPool, getDaiSubgraphUrl } from '@/lib/subgraph-url-helper';
 import { setCachedData, getCachedDataWithStale } from '@/lib/redis';
 import { poolKeys } from '@/lib/redis-keys';
 import { batchGetTokenPrices } from '@/lib/price-service';
@@ -40,7 +40,10 @@ async function computeChartData(poolId: string, days: number, networkMode: Netwo
 
     // Use Uniswap V4 subgraph for Pool/PoolHourData queries (volume, TVL)
     // Fee events are handled by the /api/liquidity/get-historical-dynamic-fees endpoint
-    const poolDataSubgraphUrl = getUniswapV4SubgraphUrl(networkMode);
+    // DAI pools on testnet use a separate subgraph
+    const poolDataSubgraphUrl = isDaiPool(subgraphId, networkMode)
+      ? getDaiSubgraphUrl(networkMode)
+      : getUniswapV4SubgraphUrl(networkMode);
 
     if (!poolDataSubgraphUrl) {
       throw new Error('Uniswap V4 subgraph URL not found for pool data');
@@ -112,8 +115,8 @@ async function computeChartData(poolId: string, days: number, networkMode: Netwo
         body: JSON.stringify({ query: blocksQuery })
       }) : Promise.resolve(null),
 
-      // Query 3: Fee events from unified endpoint
-      fetch(`${baseUrl}/api/liquidity/get-historical-dynamic-fees?poolId=${encodeURIComponent(subgraphId)}`)
+      // Query 3: Fee events from unified endpoint (pass networkMode since server-to-server calls don't forward cookies)
+      fetch(`${baseUrl}/api/liquidity/get-historical-dynamic-fees?poolId=${encodeURIComponent(subgraphId)}&network=${networkMode}`)
     ]);
 
     if (!hourlyResult.ok) {
@@ -277,12 +280,13 @@ export async function GET(request: Request) {
       );
     }
 
-    // Get network mode from cookies
+    // Get network mode from cookies (defaults to env var for new users)
     const cookieStore = await cookies();
     const networkCookie = cookieStore.get('alphix-network-mode');
+    const envDefault = process.env.NEXT_PUBLIC_DEFAULT_NETWORK === 'mainnet' ? 'mainnet' : 'testnet';
     const networkMode: NetworkMode = (networkCookie?.value === 'mainnet' || networkCookie?.value === 'testnet')
       ? networkCookie.value
-      : 'testnet';
+      : envDefault;
 
     // Use poolKeys helper for consistent cache key naming (include network mode)
     const cacheKey = `${poolKeys.chart(poolId, days)}:${networkMode}`;

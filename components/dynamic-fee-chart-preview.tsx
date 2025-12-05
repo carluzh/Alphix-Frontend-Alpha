@@ -76,7 +76,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
         const cfg = getPoolByTokens(poolInfo.token0Symbol, poolInfo.token1Symbol);
         const subgraphId = (cfg as any)?.subgraphId || (cfg as any)?.id;
         if (!subgraphId) return;
-        
+
         // Check local cache with 60s TTL
         const cacheKey = `dynamicFeeChart_${subgraphId}_30days`;
         try {
@@ -84,7 +84,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
           if (cachedItem) {
             const cached = JSON.parse(cachedItem);
             const now = Date.now();
-            
+
             // Cache expires after 60 seconds (60,000 ms)
             if (cached.timestamp && (now - cached.timestamp) < 60000 && cached.data) {
               setAutoData(cached.data);
@@ -97,10 +97,10 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
           console.warn('Failed to load cached dynamic fee chart data:', error);
           sessionStorage.removeItem(cacheKey); // Clean up corrupted cache
         }
-        
+
         setIsChartDataLoading(true);
         setShowLoadingSkeleton(true);
-        
+
         const resp = await fetch(`/api/liquidity/get-historical-dynamic-fees?poolId=${encodeURIComponent(String(subgraphId))}&days=30`);
         if (!resp.ok) return;
         const events = await resp.json();

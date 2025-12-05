@@ -124,7 +124,7 @@ export function MiniPoolChart({
 
   if (isLoading) {
     return (
-      <div className={cn("flex items-center justify-center", className)}>
+      <div className={cn("flex items-center justify-center cursor-pointer", className)}>
         <div className="h-full w-full bg-muted/20 rounded-lg animate-pulse" />
       </div>
     );
@@ -132,7 +132,7 @@ export function MiniPoolChart({
 
   if (error || data.length === 0) {
     return (
-      <div className={cn("flex items-center justify-center", className)}>
+      <div className={cn("flex items-center justify-center cursor-pointer", className)}>
         <div className="h-full w-full bg-muted/10 rounded-lg flex items-center justify-center">
           <span className="text-xs text-muted-foreground">No data</span>
         </div>
@@ -144,8 +144,9 @@ export function MiniPoolChart({
   const showMaxLine = maxPriceNum !== null && maxPriceNum >= chartMinPrice && maxPriceNum <= chartMaxPrice;
 
   return (
-    <div className={cn("relative", className)}>
-      <ResponsiveContainer width="100%" height="100%">
+    <div className={cn("relative cursor-pointer", className)}>
+      <div className="absolute inset-0 pointer-events-none">
+        <ResponsiveContainer width="100%" height="100%">
         <LineChart
           data={dataWithRange}
           margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
@@ -212,7 +213,8 @@ export function MiniPoolChart({
             isAnimationActive={false}
           />
         </LineChart>
-      </ResponsiveContainer>
+        </ResponsiveContainer>
+      </div>
     </div>
   );
 }

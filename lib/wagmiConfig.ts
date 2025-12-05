@@ -40,8 +40,13 @@ const isCustomUrlMainnet = customRpcUrl?.includes('mainnet') ||
                            customRpcUrl?.includes('base.g.alchemy') ||
                            customRpcUrl?.includes('base-mainnet');
 
-// Get current network mode from localStorage (defaults to testnet)
-const networkMode = getStoredNetworkMode();
+// Get current network mode - for wagmi config, use env var for default
+// This is different from API routes which use cookies
+// On server: use env var default (mainnet for production)
+// On client: check localStorage, then env var
+const networkMode = typeof window === 'undefined'
+  ? (process.env.NEXT_PUBLIC_DEFAULT_NETWORK === 'mainnet' ? 'mainnet' : 'testnet')
+  : getStoredNetworkMode();
 const isMainnet = networkMode === 'mainnet';
 
 // Use custom RPC URL if set (for E2E testing), otherwise use network-specific URLs
@@ -105,7 +110,8 @@ export const baseMainnet = defineChain({
 export const activeChain = isMainnet ? baseMainnet : baseSepolia;
 
 // Export all networks (both available for wallet switching)
-export const networks = [baseSepolia, baseMainnet];
+// Put the default network first in the array
+export const networks = isMainnet ? [baseMainnet, baseSepolia] : [baseSepolia, baseMainnet];
 
 // Create the Wagmi adapter instance.
 // The adapter internally creates a wagmi config.

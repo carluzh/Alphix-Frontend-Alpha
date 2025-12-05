@@ -2,8 +2,12 @@ import { getAddress, parseAbi, type Address, type Hex, type Chain, type Abi } fr
 import { position_manager_abi } from './abis/PositionManager_abi';
 import { getStoredNetworkMode, MAINNET_CHAIN_ID, TESTNET_CHAIN_ID } from './network-mode';
 
-// Get current network mode
-const networkMode = getStoredNetworkMode();
+// Get current network mode - use env var for server-side default
+// On server: use env var default (mainnet for production)
+// On client: check localStorage, then env var
+const networkMode = typeof window === 'undefined'
+  ? (process.env.NEXT_PUBLIC_DEFAULT_NETWORK === 'mainnet' ? 'mainnet' : 'testnet')
+  : getStoredNetworkMode();
 const isMainnet = networkMode === 'mainnet';
 
 // --- Blockchain & Network Configuration ---

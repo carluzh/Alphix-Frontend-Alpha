@@ -31,6 +31,21 @@ interface PoolsConfigFile {
 }
 
 /**
+ * Get the default network mode for module-level initialization.
+ * On server: use env var default (mainnet for production)
+ * On client: check localStorage, then env var
+ */
+function getDefaultNetworkMode(): NetworkMode {
+  if (typeof window === 'undefined') {
+    // Server-side: use env var default
+    const envDefault = process.env.NEXT_PUBLIC_DEFAULT_NETWORK;
+    return envDefault === 'mainnet' ? 'mainnet' : 'testnet';
+  }
+  // Client-side: use full logic with localStorage
+  return getStoredNetworkMode();
+}
+
+/**
  * Get the pools config for a specific network mode.
  * This is called dynamically rather than at module load time to support
  * runtime network switching via cookies/localStorage.
@@ -38,7 +53,7 @@ interface PoolsConfigFile {
  * @param networkModeOverride - Optional override for network mode (useful for API routes with cookies)
  */
 function getPoolsConfig(networkModeOverride?: NetworkMode): PoolsConfigFile {
-  const networkMode = networkModeOverride ?? getStoredNetworkMode();
+  const networkMode = networkModeOverride ?? getDefaultNetworkMode();
   return networkMode === 'mainnet'
     ? (mainnetPoolsConfig as PoolsConfigFile)
     : (testnetPoolsConfig as PoolsConfigFile);
@@ -47,9 +62,14 @@ function getPoolsConfig(networkModeOverride?: NetworkMode): PoolsConfigFile {
 /**
  * Get network mode from request cookies (for API routes).
  * Pass the cookie header value from the request.
+ * Falls back to env var default for new users without cookies.
  */
 export function getNetworkModeFromRequest(cookieHeader: string | undefined | null): NetworkMode {
-  return getNetworkModeFromCookies(cookieHeader) ?? getStoredNetworkMode();
+  const fromCookies = getNetworkModeFromCookies(cookieHeader);
+  if (fromCookies) return fromCookies;
+  // Fall back to env var default for new users (server-side)
+  const envDefault = process.env.NEXT_PUBLIC_DEFAULT_NETWORK;
+  return envDefault === 'mainnet' ? 'mainnet' : 'testnet';
 }
 
 // Types based on pools.json structure

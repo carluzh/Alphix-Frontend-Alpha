@@ -12,7 +12,8 @@ if (typeof window !== 'undefined' && projectId) {
   createAppKit({
     adapters: [wagmiAdapter],
     projectId,
-    networks: [appKitBaseSepolia, appKitBase],
+    // Put default network first in the array
+    networks: isMainnet ? [appKitBase, appKitBaseSepolia] : [appKitBaseSepolia, appKitBase],
     defaultNetwork: isMainnet ? appKitBase : appKitBaseSepolia,
     metadata: {
       name: 'Alphix',

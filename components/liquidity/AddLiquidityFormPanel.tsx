@@ -76,7 +76,7 @@ export function AddLiquidityFormPanel({
   const calcVersionRef = useRef(0);
 
   // Balance data
-  const { data: token0BalanceData } = useBalance({
+  const { data: token0BalanceData, refetch: refetchToken0Balance } = useBalance({
     address: accountAddress,
     token: tokenDefinitions[position.token0.symbol as TokenSymbol]?.address === "0x0000000000000000000000000000000000000000"
       ? undefined
@@ -85,7 +85,7 @@ export function AddLiquidityFormPanel({
     query: { enabled: !!accountAddress && !!chainId },
   });
 
-  const { data: token1BalanceData } = useBalance({
+  const { data: token1BalanceData, refetch: refetchToken1Balance } = useBalance({
     address: accountAddress,
     token: tokenDefinitions[position.token1.symbol as TokenSymbol]?.address === "0x0000000000000000000000000000000000000000"
       ? undefined
@@ -93,6 +93,16 @@ export function AddLiquidityFormPanel({
     chainId,
     query: { enabled: !!accountAddress && !!chainId },
   });
+
+  // Listen for wallet balance refresh events (e.g., after fee collection)
+  useEffect(() => {
+    const handleBalanceRefresh = () => {
+      refetchToken0Balance();
+      refetchToken1Balance();
+    };
+    window.addEventListener('walletBalancesRefresh', handleBalanceRefresh);
+    return () => window.removeEventListener('walletBalancesRefresh', handleBalanceRefresh);
+  }, [refetchToken0Balance, refetchToken1Balance]);
 
   const handleToken0Percentage = usePercentageInput(
     token0BalanceData,
@@ -108,6 +118,9 @@ export function AddLiquidityFormPanel({
 
   const { increaseLiquidity, isLoading: isIncreasingLiquidity, isSuccess: isIncreaseSuccess, hash: increaseTxHash } = useIncreaseLiquidity({
     onLiquidityIncreased: (info) => {
+      // Refetch balances after successful transaction
+      refetchToken0Balance();
+      refetchToken1Balance();
       // Only set success view - don't call onSuccess() yet
       // onSuccess() will be called when user clicks "Done" button in success view
       setShowSuccessView(true);
@@ -677,7 +690,12 @@ export function AddLiquidityFormPanel({
               <button
                 type="button"
                 className="text-xs text-muted-foreground hover:text-white transition-colors cursor-pointer"
-                onClick={() => handleToken0Percentage(100)}
+                onClick={() => {
+                  const calculatedValue = handleToken0Percentage(100);
+                  if (calculatedValue && parseFloat(calculatedValue) > 0) {
+                    calculateIncreaseAmount(calculatedValue, 'amount0');
+                  }
+                }}
               >
   {token0BalanceData?.formatted || "0"} {position.token0.symbol}
               </button>
@@ -771,7 +789,12 @@ export function AddLiquidityFormPanel({
               <button
                 type="button"
                 className="text-xs text-muted-foreground hover:text-white transition-colors cursor-pointer"
-                onClick={() => handleToken1Percentage(100)}
+                onClick={() => {
+                  const calculatedValue = handleToken1Percentage(100);
+                  if (calculatedValue && parseFloat(calculatedValue) > 0) {
+                    calculateIncreaseAmount(calculatedValue, 'amount1');
+                  }
+                }}
               >
   {token1BalanceData?.formatted || "0"} {position.token1.symbol}
               </button>
@@ -848,20 +871,22 @@ export function AddLiquidityFormPanel({
       <Button
         id={hideContinueButton ? "formpanel-hidden-continue" : undefined}
         onClick={handleContinue}
-        disabled={(parseFloat(increaseAmount0 || "0") <= 0 && parseFloat(increaseAmount1 || "0") <= 0) || isAmount0OverBalance || isAmount1OverBalance}
+        disabled={(parseFloat(increaseAmount0 || "0") <= 0 && parseFloat(increaseAmount1 || "0") <= 0) || isAmount0OverBalance || isAmount1OverBalance || isCalculating}
         className={cn(
           "w-full",
-          (parseFloat(increaseAmount0 || "0") <= 0 && parseFloat(increaseAmount1 || "0") <= 0) || isAmount0OverBalance || isAmount1OverBalance ?
+          (parseFloat(increaseAmount0 || "0") <= 0 && parseFloat(increaseAmount1 || "0") <= 0) || isAmount0OverBalance || isAmount1OverBalance || isCalculating ?
             "relative border border-sidebar-border bg-button px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75" :
             "text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90",
           hideContinueButton && "hidden"
         )}
-        style={(parseFloat(increaseAmount0 || "0") <= 0 && parseFloat(increaseAmount1 || "0") <= 0) || isAmount0OverBalance || isAmount1OverBalance ?
+        style={(parseFloat(increaseAmount0 || "0") <= 0 && parseFloat(increaseAmount1 || "0") <= 0) || isAmount0OverBalance || isAmount1OverBalance || isCalculating ?
           { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } :
           undefined
         }
       >
-        Continue
+        <span className={isCalculating ? "animate-pulse" : ""}>
+          {isCalculating ? "Calculating..." : isAmount0OverBalance || isAmount1OverBalance ? "Insufficient Balance" : "Continue"}
+        </span>
       </Button>
     </div>
   );

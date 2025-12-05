@@ -17,7 +17,6 @@ import { getOptimalBaseToken } from "@/lib/denomination-utils";
 import { calculateClientAPY } from "@/lib/client-apy";
 import { AddLiquidityFormPanel } from "./AddLiquidityFormPanel";
 import { RemoveLiquidityFormPanel } from "./RemoveLiquidityFormPanel";
-import { CollectFeesFormPanel } from "./CollectFeesFormPanel";
 import { TransactionFlowPanel } from "./TransactionFlowPanel";
 import { useAccount, useSignTypedData, useWriteContract, useWaitForTransactionReceipt, useBalance } from "wagmi";
 import { useChainMismatch } from "@/hooks/useChainMismatch";
@@ -37,7 +36,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { invalidateAfterTx } from "@/lib/invalidation";
 
 // Define modal view types
-type ModalView = 'default' | 'add-liquidity' | 'remove-liquidity' | 'collect-fees';
+type ModalView = 'default' | 'add-liquidity' | 'remove-liquidity';
 
 // Status indicator component
 function StatusIndicatorCircle({ className }: { className?: string }) {
@@ -164,6 +163,7 @@ export function PositionDetailsModal({
   onAfterLiquidityRemoved,
   onFeesCollected,
   apr,
+  convertTickToPrice,
 }: PositionDetailsModalProps) {
   const [mounted, setMounted] = useState(false);
   const [chartKey, setChartKey] = useState(0);
@@ -174,8 +174,6 @@ export function PositionDetailsModal({
   const [previewAddAmount1, setPreviewAddAmount1] = useState<number>(0);
   const [previewRemoveAmount0, setPreviewRemoveAmount0] = useState<number>(0);
   const [previewRemoveAmount1, setPreviewRemoveAmount1] = useState<number>(0);
-  const [previewCollectFee0, setPreviewCollectFee0] = useState<number>(0);
-  const [previewCollectFee1, setPreviewCollectFee1] = useState<number>(0);
 
   // Interim confirmation views (like the standalone modals)
   const [showInterimConfirmation, setShowInterimConfirmation] = useState(false);
@@ -186,7 +184,6 @@ export function PositionDetailsModal({
   const [increaseAmount1, setIncreaseAmount1] = useState<string>("");
   const [increaseStep, setIncreaseStep] = useState<'input' | 'approve' | 'permit' | 'deposit'>('input');
   const [increaseBatchPermitSigned, setIncreaseBatchPermitSigned] = useState(false);
-  const [approvalWiggleCount, setApprovalWiggleCount] = useState(0);
 
   const { address: accountAddress } = useAccount();
   const { chainId, networkMode } = useNetwork();
@@ -219,7 +216,6 @@ export function PositionDetailsModal({
   });
 
   const [currentTransactionStep, setCurrentTransactionStep] = useState<'idle' | 'collecting_fees' | 'approving_token0' | 'approving_token1' | 'signing_permit' | 'depositing'>('idle');
-  const [permitSignature, setPermitSignature] = useState<string>();
 
   // Check approvals for increase liquidity (matching AddLiquidityForm pattern)
   const {
@@ -285,13 +281,15 @@ export function PositionDetailsModal({
       if (info?.txHash && info?.blockNumber) {
         lastDecreaseTxInfoRef.current = { txHash: info.txHash, blockNumber: info.blockNumber, isFullBurn: info.isFullBurn };
       }
-      // Forward the callback to parent (portfolio page) with isFullBurn info
       if (onLiquidityDecreasedProp) {
         onLiquidityDecreasedProp(info);
       } else {
-        // Fallback: just refresh the position if no callback provided
         onRefreshPosition?.();
       }
+    },
+    onFeesCollected: () => {
+      onFeesCollected?.(position.positionId);
+      onRefreshPosition?.();
     },
   });
 
@@ -387,7 +385,6 @@ export function PositionDetailsModal({
         increaseApprovalData.signatureDetails.types,
         valuesToSign
       );
-      setPermitSignature(signature);
 
       const payload = {
         owner: accountAddress as `0x${string}`,
@@ -626,8 +623,6 @@ export function PositionDetailsModal({
       setPreviewAddAmount1(0);
       setPreviewRemoveAmount0(0);
       setPreviewRemoveAmount1(0);
-      setPreviewCollectFee0(0);
-      setPreviewCollectFee1(0);
       setShowInterimConfirmation(false);
     }
   }, [isOpen, position.positionId]);
@@ -635,53 +630,40 @@ export function PositionDetailsModal({
   // Handlers for switching views
   const handleAddLiquidityClick = () => {
     setCurrentView('add-liquidity');
-    // Reset preview states when switching views
     setPreviewAddAmount0(0);
     setPreviewAddAmount1(0);
     setPreviewRemoveAmount0(0);
     setPreviewRemoveAmount1(0);
-    setPreviewCollectFee0(0);
-    setPreviewCollectFee1(0);
     setShowInterimConfirmation(false);
     setIncreaseStep('input');
     setIncreaseBatchPermitSigned(false);
     setCurrentTransactionStep('idle');
-    setPermitSignature(undefined);
   };
 
   const handleRemoveLiquidityClick = () => {
     setCurrentView('remove-liquidity');
-    // Reset preview states when switching views
     setPreviewAddAmount0(0);
     setPreviewAddAmount1(0);
     setPreviewRemoveAmount0(0);
     setPreviewRemoveAmount1(0);
-    setPreviewCollectFee0(0);
-    setPreviewCollectFee1(0);
     setShowInterimConfirmation(false);
   };
 
-  const handleCollectFeesClick = () => {
-    setCurrentView('collect-fees');
-    // Reset preview states when switching views
-    setPreviewAddAmount0(0);
-    setPreviewAddAmount1(0);
-    setPreviewRemoveAmount0(0);
-    setPreviewRemoveAmount1(0);
-    setPreviewCollectFee0(0);
-    setPreviewCollectFee1(0);
-    setShowInterimConfirmation(false);
+  const handleCollectFeesClick = async () => {
+    if (hasZeroFees || isDecreasingLiquidity) return;
+    try {
+      await claimFees(position.positionId);
+    } catch (e) {
+      console.error('[PositionDetailsModal] claimFees failed:', e);
+    }
   };
 
   const handleBackToDefault = () => {
     setCurrentView('default');
-    // Reset preview states
     setPreviewAddAmount0(0);
     setPreviewAddAmount1(0);
     setPreviewRemoveAmount0(0);
     setPreviewRemoveAmount1(0);
-    setPreviewCollectFee0(0);
-    setPreviewCollectFee1(0);
     setShowInterimConfirmation(false);
   };
 
@@ -755,29 +737,6 @@ export function PositionDetailsModal({
       }, 1500);
     }
   }, [onRefreshPosition, queryClient, accountAddress, selectedPoolId, position.positionId, resetDecrease, isWithdrawBurn, onClose, onAfterLiquidityRemoved, withdrawAmount0, withdrawAmount1, position.token0.symbol, position.token1.symbol, getUsdPriceForSymbol]);
-
-  const handleCollectFeesSuccess = useCallback(async () => {
-    // Note: Cache invalidation is handled by useDecreaseLiquidity hook (reason: 'collect')
-    // This callback only handles UI state reset and parent refresh
-
-    setCurrentView('default');
-    setShowInterimConfirmation(false);
-    setPreviewCollectFee0(0);
-    setPreviewCollectFee1(0);
-
-    onFeesCollected?.(position.positionId);
-
-    // Clear the prefetched fees so they show as 0 immediately
-    // This will be updated when parent refetches
-    if (typeof window !== 'undefined') {
-      // Force a small delay to allow the parent to refetch fees from blockchain
-      setTimeout(() => {
-        onRefreshPosition();
-      }, 3000);
-    } else {
-      onRefreshPosition();
-    }
-  }, [onRefreshPosition, onFeesCollected, position.positionId]);
 
   // Handlers for preview updates
   const handleAddAmountsChange = useCallback((amount0: number, amount1: number) => {
@@ -870,6 +829,41 @@ export function PositionDetailsModal({
 
     const shouldInvert = calculatedDenominationBase === position.token0.symbol;
 
+    // Use convertTickToPrice if provided (handles decimals properly)
+    if (convertTickToPrice) {
+      const lowerPriceStr = convertTickToPrice(
+        position.tickLower,
+        currentPoolTick ?? null,
+        currentPrice ?? null,
+        calculatedDenominationBase,
+        position.token0.symbol,
+        position.token1.symbol
+      );
+      const upperPriceStr = convertTickToPrice(
+        position.tickUpper,
+        currentPoolTick ?? null,
+        currentPrice ?? null,
+        calculatedDenominationBase,
+        position.token0.symbol,
+        position.token1.symbol
+      );
+
+      let displayedCurrentPrice: string | null = null;
+      if (currentPrice) {
+        const priceNum = parseFloat(currentPrice);
+        if (isFinite(priceNum)) {
+          displayedCurrentPrice = (shouldInvert ? (1 / priceNum) : priceNum).toString();
+        }
+      }
+
+      return {
+        calculatedMinPrice: shouldInvert ? upperPriceStr : lowerPriceStr,
+        calculatedMaxPrice: shouldInvert ? lowerPriceStr : upperPriceStr,
+        calculatedCurrentPrice: displayedCurrentPrice
+      };
+    }
+
+    // Fallback: raw calculation (may not handle decimals correctly)
     let minPoolPrice: number;
     let maxPoolPrice: number;
 
@@ -903,7 +897,7 @@ export function PositionDetailsModal({
       calculatedMaxPrice: isFinite(maxDisplay) ? maxDisplay.toString() : '∞',
       calculatedCurrentPrice: displayedCurrentPrice
     };
-  }, [initialMinPrice, initialMaxPrice, initialCurrentPrice, calculatedDenominationBase, position, currentPrice, currentPoolTick]);
+  }, [initialMinPrice, initialMaxPrice, initialCurrentPrice, calculatedDenominationBase, position, currentPrice, currentPoolTick, convertTickToPrice]);
 
   // Use calculated or inherited values
   const minPriceActual = calculatedMinPrice;
@@ -963,7 +957,6 @@ export function PositionDetailsModal({
 
   const isAddingLiquidity = previewAddAmount0 > 0 || previewAddAmount1 > 0;
   const isRemovingLiquidity = previewRemoveAmount0 > 0 || previewRemoveAmount1 > 0;
-  const isCollectingFees = currentView === 'collect-fees';
 
   const hasZeroToken0 = parseFloat(position.token0.amount) === 0;
   const hasZeroToken1 = parseFloat(position.token1.amount) === 0;
@@ -1091,12 +1084,12 @@ export function PositionDetailsModal({
                   </Button>
                   <Button
                     onClick={(e) => { e.stopPropagation(); handleCollectFeesClick(); }}
-                    disabled={hasZeroFees}
+                    disabled={hasZeroFees || isDecreasingLiquidity}
                     variant="ghost"
                     size="sm"
                     className={cn(
                       "h-7 px-2.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 disabled:opacity-40",
-                      currentView === 'collect-fees' && "bg-muted/50 text-foreground"
+                      isDecreasingLiquidity && currentView === 'default' && "animate-pulse"
                     )}
                   >
                     Collect Fees
@@ -1406,16 +1399,6 @@ export function PositionDetailsModal({
                       </div>
                     </div>
                   )}
-                  {isCollectingFees && !hasZeroFees && (
-                    <div className="absolute top-5 right-5 group">
-                      <div className="flex items-center justify-center w-6 h-6 rounded bg-red-500/20 text-red-500">
-                        <Minus className="h-3.5 w-3.5" strokeWidth={2.5} />
-                      </div>
-                      <div className="absolute bottom-full right-0 mb-2 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100 w-max px-2 py-1 text-xs bg-container border border-sidebar-border rounded shadow-lg z-10 pointer-events-none">
-                        Fees are withdrawn
-                      </div>
-                    </div>
-                  )}
 
                   {/* Label + Total Fees */}
                   <div className="flex flex-col gap-2">
@@ -1423,7 +1406,7 @@ export function PositionDetailsModal({
                     <div className={cn("text-xl font-semibold",
                       isAddingLiquidity && !hasZeroFees && !hasUncollectedFees() && "text-green-500",
                       isAddingLiquidity && !hasZeroFees && hasUncollectedFees() && "text-red-500",
-                      (isRemovingLiquidity || isCollectingFees) && !hasZeroFees && "text-red-500"
+                      isRemovingLiquidity && !hasZeroFees && "text-red-500"
                     )}>
                       {new Intl.NumberFormat('en-US', {
                         style: 'currency',
@@ -1790,16 +1773,6 @@ export function PositionDetailsModal({
                         </div>
                       </div>
                     )}
-                    {isCollectingFees && !hasZeroFees && (
-                      <div className="absolute top-5 right-5 group">
-                        <div className="flex items-center justify-center w-6 h-6 rounded bg-red-500/20 text-red-500">
-                          <Minus className="h-3.5 w-3.5" strokeWidth={2.5} />
-                        </div>
-                        <div className="absolute bottom-full right-0 mb-2 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100 w-max px-2 py-1 text-xs bg-container border border-sidebar-border rounded shadow-lg z-10 pointer-events-none">
-                          Fees are withdrawn
-                        </div>
-                      </div>
-                    )}
 
                     {/* Label + Total Fees */}
                     <div className="flex flex-col gap-2">
@@ -1807,7 +1780,7 @@ export function PositionDetailsModal({
                       <div className={cn("text-xl font-semibold",
                         isAddingLiquidity && !hasZeroFees && !hasUncollectedFees() && "text-green-500",
                         isAddingLiquidity && !hasZeroFees && hasUncollectedFees() && "text-red-500",
-                        (isRemovingLiquidity || isCollectingFees) && !hasZeroFees && "text-red-500"
+                        isRemovingLiquidity && !hasZeroFees && "text-red-500"
                       )}>
                         {new Intl.NumberFormat('en-US', {
                           style: 'currency',
@@ -2074,22 +2047,11 @@ export function PositionDetailsModal({
                     )}
 
 
-                    {currentView === 'collect-fees' && (
-                      <CollectFeesFormPanel
-                        position={position as any}
-                        prefetchedRaw0={prefetchedRaw0}
-                        prefetchedRaw1={prefetchedRaw1}
-                        onSuccess={handleCollectFeesSuccess}
-                        getUsdPriceForSymbol={getUsdPriceForSymbol}
-                      />
-                    )}
                   </div>
 
                   {showInterimConfirmation && (
                     <>
-                      {/* Interim Confirmation View - "You Will Add/Remove/Collect" */}
                       <div className="space-y-4">
-                        {/* Header with back arrow */}
                         <div className="flex items-center gap-2">
                           <ChevronLeft
                             className="h-4 w-4 text-muted-foreground cursor-pointer hover:text-white transition-colors"
@@ -2098,7 +2060,6 @@ export function PositionDetailsModal({
                           <span className="text-sm font-medium">
                             {currentView === 'add-liquidity' && 'You Will Add'}
                             {currentView === 'remove-liquidity' && 'You Will Receive'}
-                            {currentView === 'collect-fees' && 'You Will Collect'}
                           </span>
                         </div>
 
@@ -2234,7 +2195,6 @@ export function PositionDetailsModal({
                             }}
                             onReset={() => {
                               resetIncrease();
-                              setPermitSignature(undefined);
                             }}
                             executeButtonLabel="Add Liquidity"
                             showBackButton={false}

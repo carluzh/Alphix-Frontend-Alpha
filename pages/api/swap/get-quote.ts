@@ -52,6 +52,7 @@ interface GetQuoteRequest extends NextApiRequest {
     swapType?: 'ExactIn' | 'ExactOut';
     chainId: number;
     debug?: boolean;
+    network?: 'mainnet' | 'testnet';
   };
 }
 
@@ -480,10 +481,11 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
   }
 
   try {
-    const { fromTokenSymbol, toTokenSymbol, amountDecimalsStr, swapType = 'ExactIn' } = req.body;
+    const { fromTokenSymbol, toTokenSymbol, amountDecimalsStr, swapType = 'ExactIn', network: networkParam } = req.body;
 
-    // Get network mode from cookie for proper config selection
-    const networkMode = getNetworkModeFromRequest(req.headers.cookie);
+    const networkMode: NetworkMode = (networkParam === 'mainnet' || networkParam === 'testnet')
+      ? networkParam
+      : getNetworkModeFromRequest(req.headers.cookie);
     console.log(`[V4 Quoter] Using network mode: ${networkMode}`);
 
     // Validate required fields

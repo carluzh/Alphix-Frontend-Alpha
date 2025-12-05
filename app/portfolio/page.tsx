@@ -1269,8 +1269,8 @@ export default function PortfolioPage() {
       }
       setIsLoadingWalletBalances(true);
       try {
-        // Collect configured tokens
-        const tokenMapOrArray = getAllTokens?.() as any;
+        // Collect configured tokens (pass networkMode to get correct token addresses)
+        const tokenMapOrArray = getAllTokens?.(networkMode) as any;
         const tokens = Array.isArray(tokenMapOrArray) ? tokenMapOrArray : Object.values(tokenMapOrArray || {});
         // Fetch raw balances
         const balances: Record<string, number> = {};
@@ -1370,7 +1370,7 @@ export default function PortfolioPage() {
       window.removeEventListener('walletBalancesRefresh', onRefresh as EventListener);
       window.removeEventListener('storage', onStorage);
     };
-  }, [isConnected, accountAddress, publicClient, currentChainId && false]);
+  }, [isConnected, accountAddress, publicClient, networkMode, currentChainId && false]);
 
   const navigateToPoolBySubgraphId = useCallback((poolSubgraphId?: string) => {
     if (!poolSubgraphId) return;
@@ -2730,7 +2730,7 @@ export default function PortfolioPage() {
                                               return groupApy !== null && groupApy > 0 ? (
                                                 <span className="h-5 px-2 flex items-center justify-center text-[10px] rounded bg-green-500/20 text-green-500 font-medium">{formatAprShort(groupApy)}</span>
                                               ) : (
-                                                <span className="text-xs text-muted-foreground">—</span>
+                                                <span className="h-5 px-2 flex items-center justify-center text-[10px] rounded bg-muted/30 text-muted-foreground font-medium">0%</span>
                                               );
                                             })()}
                                           </div>
@@ -3121,6 +3121,7 @@ export default function PortfolioPage() {
           }}
           currentPrice={poolDataByPoolId[selectedPosition.poolId?.toLowerCase()]?.price?.toString() || null}
           currentPoolTick={poolDataByPoolId[selectedPosition.poolId?.toLowerCase()]?.tick || null}
+          convertTickToPrice={convertTickToPrice}
           selectedPoolId={(() => {
             const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === selectedPosition.poolId?.toLowerCase());
             return poolConfig?.id;

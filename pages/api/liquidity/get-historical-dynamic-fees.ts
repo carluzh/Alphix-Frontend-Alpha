@@ -92,13 +92,15 @@ export default async function handler(
     return res.status(405).json({ message: `Method ${req.method} Not Allowed` });
   }
 
-  const { poolId, v: versionQuery } = req.query as { poolId?: string; v?: string };
+  const { poolId, v: versionQuery, network: networkQuery } = req.query as { poolId?: string; v?: string; network?: string };
   if (!poolId || typeof poolId !== 'string') {
     return res.status(400).json({ message: 'Valid poolId query parameter is required.' });
   }
 
-  // Get network mode from cookies
-  const networkMode = getNetworkModeFromRequest(req.headers.cookie);
+  // Get network mode from query param (for server-to-server calls) or cookies (for browser calls)
+  const networkMode: NetworkMode = (networkQuery === 'mainnet' || networkQuery === 'testnet')
+    ? networkQuery
+    : getNetworkModeFromRequest(req.headers.cookie);
 
   const cacheKey = `dynamic-fees:${poolId.toLowerCase()}:${networkMode}`;
 

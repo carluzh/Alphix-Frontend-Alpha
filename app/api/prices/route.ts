@@ -80,6 +80,7 @@ async function getTokenUSDPriceViaQuote(tokenSymbol: string, networkMode: Networ
         amountDecimalsStr: QUOTE_AMOUNT_USDC.toString(),
         swapType: 'ExactIn',
         chainId: getTargetChainId(networkMode),
+        network: networkMode,
         debug: false,
       }),
     });
@@ -216,12 +217,13 @@ export async function GET(request: Request) {
   try {
     const baseUrl = new URL(request.url).origin;
 
-    // Get network mode from cookies
+    // Get network mode from cookies (defaults to env var for new users)
     const cookieStore = await cookies();
     const networkCookie = cookieStore.get('alphix-network-mode');
+    const envDefault = process.env.NEXT_PUBLIC_DEFAULT_NETWORK === 'mainnet' ? 'mainnet' : 'testnet';
     const networkMode: NetworkMode = (networkCookie?.value === 'mainnet' || networkCookie?.value === 'testnet')
       ? networkCookie.value
-      : 'testnet'; // Default to testnet
+      : envDefault;
 
     // Use network-specific cache key
     const cacheKey = `${priceKeys.batch()}:${networkMode}`;

@@ -138,10 +138,11 @@ export async function invalidateAfterTx(qc: QueryClient, params: Params) {
           })
         }
 
-        // Handle fee claim
+        // Handle fee claim - update both individual and batch queries
         if (params.optimisticUpdates!.clearFees) {
           const positionId = params.optimisticUpdates!.clearFees.positionId
-          // Invalidate fee queries immediately
+
+          // Update individual fee query
           qc.setQueryData(qk.uncollectedFees(positionId), () => ({
             token0Fees: '0',
             token1Fees: '0',
@@ -149,6 +150,22 @@ export async function invalidateAfterTx(qc: QueryClient, params: Params) {
             token1FeesUSD: 0,
             totalFeesUSD: 0,
           }))
+
+          // Update all batch queries that contain this position
+          const queryCache = qc.getQueryCache()
+          const batchQueries = queryCache.findAll({
+            queryKey: ['user', 'uncollectedFeesBatch'],
+          })
+          for (const query of batchQueries) {
+            qc.setQueryData(query.queryKey, (old: any) => {
+              if (!Array.isArray(old)) return old
+              return old.map((item: any) =>
+                String(item.positionId) === String(positionId)
+                  ? { ...item, amount0: '0', amount1: '0' }
+                  : item
+              )
+            })
+          }
         }
       } catch (error) {
         console.error('[invalidateAfterTx] Optimistic update failed:', error)
@@ -161,9 +178,12 @@ export async function invalidateAfterTx(qc: QueryClient, params: Params) {
 
     if (params.awaitSubgraphSync) {
       try {
-        const { publicClient } = await import('@/lib/viemClient')
+        const { createNetworkClient } = await import('@/lib/viemClient')
+        const { MAINNET_CHAIN_ID } = await import('@/lib/network-mode')
         const { waitForSubgraphBlock, setIndexingBarrier } = await import('@/lib/client-cache')
 
+        const networkMode = params.chainId === MAINNET_CHAIN_ID ? 'mainnet' : 'testnet'
+        const publicClient = createNetworkClient(networkMode)
         const targetBlock = params.blockNumber ?? await publicClient.getBlockNumber()
         const barrier = waitForSubgraphBlock(Number(targetBlock), {
           timeoutMs: 15000,

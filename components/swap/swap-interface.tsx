@@ -1924,6 +1924,12 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                   receipt.blockNumber
                 );
 
+                // Refetch balances after successful swap (with delay for blockchain state propagation)
+                setTimeout(async () => {
+                  await refetchFromTokenBalance();
+                  await refetchToTokenBalance();
+                }, 1500);
+
                 setSwapState("success");
                 return;
             }
@@ -2166,6 +2172,12 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
               swapVolumeUSD,
               receipt.blockNumber
             );
+
+            // Refetch balances after successful swap (with delay for blockchain state propagation)
+            setTimeout(async () => {
+              await refetchFromTokenBalance();
+              await refetchToTokenBalance();
+            }, 1500);
 
             setSwapState("success");
             return;

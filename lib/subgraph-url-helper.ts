@@ -6,6 +6,21 @@
 
 import { getStoredNetworkMode, type NetworkMode } from './network-mode';
 
+/**
+ * Get the default network mode for this module.
+ * On server: use env var default (mainnet for production)
+ * On client: check localStorage, then env var
+ */
+function getDefaultNetworkMode(): NetworkMode {
+  if (typeof window === 'undefined') {
+    // Server-side: use env var default
+    const envDefault = process.env.NEXT_PUBLIC_DEFAULT_NETWORK;
+    return envDefault === 'mainnet' ? 'mainnet' : 'testnet';
+  }
+  // Client-side: use full logic with localStorage
+  return getStoredNetworkMode();
+}
+
 // DAI pools on testnet (not applicable to mainnet)
 const DAI_POOL_IDS = [
   'ausdc-adai',
@@ -20,7 +35,7 @@ const DAI_POOL_IDS = [
  * - Mainnet: Uses SUBGRAPH_URL_MAINNET_ALPHIX (minimal subgraph)
  */
 export function getAlphixSubgraphUrl(networkModeOverride?: NetworkMode): string {
-  const networkMode = networkModeOverride ?? getStoredNetworkMode();
+  const networkMode = networkModeOverride ?? getDefaultNetworkMode();
   if (networkMode === 'mainnet') {
     return process.env.SUBGRAPH_URL_MAINNET_ALPHIX || '';
   }
@@ -33,7 +48,7 @@ export function getAlphixSubgraphUrl(networkModeOverride?: NetworkMode): string 
  * - Mainnet: Uses UNISWAP_V4_SUBGRAPH_URL (public Uniswap subgraph)
  */
 export function getUniswapV4SubgraphUrl(networkModeOverride?: NetworkMode): string {
-  const networkMode = networkModeOverride ?? getStoredNetworkMode();
+  const networkMode = networkModeOverride ?? getDefaultNetworkMode();
   if (networkMode === 'mainnet') {
     return process.env.UNISWAP_V4_SUBGRAPH_URL || '';
   }
@@ -46,7 +61,7 @@ export function getUniswapV4SubgraphUrl(networkModeOverride?: NetworkMode): stri
  * @deprecated Use getAlphixSubgraphUrl() or getUniswapV4SubgraphUrl() for clarity
  */
 export function getBaseSubgraphUrl(networkModeOverride?: NetworkMode): string {
-  const networkMode = networkModeOverride ?? getStoredNetworkMode();
+  const networkMode = networkModeOverride ?? getDefaultNetworkMode();
   if (networkMode === 'mainnet') {
     return process.env.SUBGRAPH_URL_MAINNET_ALPHIX || process.env.SUBGRAPH_URL || '';
   }
@@ -58,7 +73,7 @@ export function getBaseSubgraphUrl(networkModeOverride?: NetworkMode): string {
  * Only applicable to testnet - mainnet doesn't have separate DAI pools.
  */
 export function getDaiSubgraphUrl(networkModeOverride?: NetworkMode): string {
-  const networkMode = networkModeOverride ?? getStoredNetworkMode();
+  const networkMode = networkModeOverride ?? getDefaultNetworkMode();
   if (networkMode === 'mainnet') {
     // Mainnet uses single Alphix subgraph for all Alphix entities
     return process.env.SUBGRAPH_URL_MAINNET_ALPHIX || '';
@@ -71,7 +86,7 @@ export function getDaiSubgraphUrl(networkModeOverride?: NetworkMode): string {
  * Network-aware: handles DAI pool separation on testnet.
  */
 export function getSubgraphUrlForPool(poolId: string | undefined, networkModeOverride?: NetworkMode): string {
-  const networkMode = networkModeOverride ?? getStoredNetworkMode();
+  const networkMode = networkModeOverride ?? getDefaultNetworkMode();
 
   // Mainnet: all Alphix entities go to the minimal subgraph
   if (networkMode === 'mainnet') {
@@ -96,7 +111,7 @@ export function getSubgraphUrlForPool(poolId: string | undefined, networkModeOve
 export function isDaiPool(poolId: string | undefined, networkModeOverride?: NetworkMode): boolean {
   if (!poolId) return false;
   // DAI pool separation only exists on testnet
-  const networkMode = networkModeOverride ?? getStoredNetworkMode();
+  const networkMode = networkModeOverride ?? getDefaultNetworkMode();
   if (networkMode === 'mainnet') return false;
   const normalizedPoolId = poolId.toLowerCase();
   return DAI_POOL_IDS.some(id => normalizedPoolId === id.toLowerCase());
@@ -106,6 +121,6 @@ export function isDaiPool(poolId: string | undefined, networkModeOverride?: Netw
  * Check if we're in mainnet mode (for conditional query logic)
  */
 export function isMainnetSubgraphMode(networkModeOverride?: NetworkMode): boolean {
-  const networkMode = networkModeOverride ?? getStoredNetworkMode();
+  const networkMode = networkModeOverride ?? getDefaultNetworkMode();
   return networkMode === 'mainnet';
 }

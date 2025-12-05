@@ -77,6 +77,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
   const lastWasCollectOnly = useRef(false);
   const lastIsFullBurn = useRef(false);
   const lastDecreaseData = useRef<DecreasePositionData | null>(null);
+  const lastCollectPositionId = useRef<string | null>(null);
   const processedTransactions = useRef(new Set<string>());
 
   // Helper function to get the NFT token ID from position parameters
@@ -757,14 +758,16 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
 
         try {
           if (accountAddress && chainId) {
-            const currentPositionId = lastDecreaseData.current?.tokenId;
+            const isCollect = lastWasCollectOnly.current;
+            const positionId = isCollect ? lastCollectPositionId.current : lastDecreaseData.current?.tokenId;
             const poolId = lastDecreaseData.current?.poolId;
             invalidateAfterTx(queryClient, {
               owner: accountAddress,
               chainId,
               poolId: poolId,
-              positionIds: currentPositionId ? [String(currentPositionId)] : undefined,
-              reason: lastWasCollectOnly.current ? 'collect' : 'decrease'
+              positionIds: positionId ? [String(positionId)] : undefined,
+              reason: isCollect ? 'collect' : 'decrease',
+              optimisticUpdates: isCollect && positionId ? { clearFees: { positionId: String(positionId) } } : undefined,
             }).catch(() => {});
           }
         } catch {}
@@ -819,12 +822,13 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
 
       setIsDecreasing(true);
       lastWasCollectOnly.current = true;
+      lastCollectPositionId.current = String(tokenIdLike);
 
       try {
         const nftTokenId = await getTokenIdFromPosition({
           tokenId: tokenIdLike,
-          token0Symbol: 'aUSDC' as any, // unused
-          token1Symbol: 'aUSDT' as any, // unused
+          token0Symbol: 'aUSDC' as any,
+          token1Symbol: 'aUSDT' as any,
           decreaseAmount0: '0',
           decreaseAmount1: '0',
           isFullBurn: false,
@@ -832,6 +836,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
           tickLower: 0 as any,
           tickUpper: 0 as any,
         });
+        lastCollectPositionId.current = nftTokenId.toString();
 
         const details = await getPositionDetails(nftTokenId, chainId);
         const token0Sym = getTokenSymbolByAddress(getAddress(details.poolKey.currency0), networkMode);
@@ -912,19 +917,4 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
     hash,
     reset: resetWriteContract,
   };
-} 
-
-// Local util to format raw wei to human-readable string
-function formatRawToHuman(raw: string, decimals: number): string {
-  try {
-    const big = BigInt(raw || '0');
-    if (big === 0n) return '0';
-    // Simple decimal conversion without importing formatUnits here to avoid extra deps
-    const s = big.toString().padStart(decimals + 1, '0');
-    const i = s.slice(0, -decimals);
-    const f = s.slice(-decimals).replace(/0+$/, '');
-    return f ? `${i}.${f}` : i;
-  } catch {
-    return '0';
-  }
 }

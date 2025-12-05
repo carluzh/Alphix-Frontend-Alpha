@@ -176,8 +176,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               variables: { poolId: apiId.toLowerCase(), days: daysNum }
             })
           }),
-          // Use unified fee events endpoint instead of duplicate query
-          fetch(`${baseUrl}/api/liquidity/get-historical-dynamic-fees?poolId=${encodeURIComponent(poolId)}`)
+          fetch(`${baseUrl}/api/liquidity/get-historical-dynamic-fees?poolId=${encodeURIComponent(poolId)}&network=${networkMode}`)
         ]);
 
         // Check response status first
