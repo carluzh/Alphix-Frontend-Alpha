@@ -17,6 +17,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarMenuBadge,
+  useSidebar,
 } from "@/components/ui/sidebar"
 
 interface NavMainItem {
@@ -38,6 +39,7 @@ export function NavMain({
   const pathname = usePathname()
   const router = useRouter()
   const [, startTransition] = useTransition()
+  const { setOpenMobile, isMobile } = useSidebar()
 
   useEffect(() => {
     if (optimisticPath && pathname === optimisticPath) {
@@ -53,11 +55,15 @@ export function NavMain({
 
   const handleNavClick = useCallback((e: React.MouseEvent, url: string) => {
     e.preventDefault()
+    // Close mobile sidebar before navigating
+    if (isMobile) {
+      setOpenMobile(false)
+    }
     setOptimisticPath(url)
     startTransition(() => {
       router.push(url)
     })
-  }, [router, startTransition])
+  }, [router, startTransition, isMobile, setOpenMobile])
   
   // Faucet-related state and hooks
   const { address: userAddress, chainId: currentChainId, isConnected } = useAccount()

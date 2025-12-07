@@ -14,14 +14,12 @@ function getUnderlyingAsset(tokenSymbol: string): keyof AllPricesData | null {
   if (tokenSymbol === 'USDC') return 'USDC';
   if (tokenSymbol === 'ETH') return 'ETH';
   if (tokenSymbol === 'USDT') return 'USDT';
-  if (tokenSymbol === 'DAI') return 'DAI';
 
   // Infer from token names in pools.json
   if (tokenSymbol.includes('BTC')) return 'BTC';
   if (tokenSymbol.includes('USDC')) return 'USDC';
   if (tokenSymbol.includes('ETH')) return 'ETH';
   if (tokenSymbol.includes('USDT')) return 'USDT';
-  if (tokenSymbol.includes('DAI')) return 'DAI';
 
   return null;
 }
@@ -32,7 +30,6 @@ export interface AllPricesData {
   USDC: { usd: number; usd_24h_change?: number };
   ETH: { usd: number; usd_24h_change?: number };
   USDT: { usd: number; usd_24h_change?: number };
-  DAI: { usd: number; usd_24h_change?: number };
   lastUpdated: number;
 }
 
@@ -71,7 +68,6 @@ export async function getAllTokenPrices(params?: { signal?: AbortSignal }): Prom
       USDC: result.data.USDC,
       ETH: result.data.ETH,
       USDT: result.data.USDT,
-      DAI: result.data.DAI,
       lastUpdated: result.data.lastUpdated,
     };
   } catch (error) {

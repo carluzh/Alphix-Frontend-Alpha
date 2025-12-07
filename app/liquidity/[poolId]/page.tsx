@@ -3,11 +3,8 @@
 import dynamic from "next/dynamic";
 import { AppLayout } from "@/components/app-layout";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { PlusIcon, RefreshCwIcon, Check, BadgeCheck, OctagonX, Clock3, ChevronsLeftRight, EllipsisVertical, Info, ChevronLeft } from "lucide-react";
+import { PlusIcon, RefreshCwIcon, Check, BadgeCheck, OctagonX, ChevronLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardFooter } from "@/components/ui/card";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import Image from "next/image";
@@ -21,9 +18,8 @@ import { getTokenDefinitions, TokenSymbol } from "@/lib/pools-config";
 import { useNetwork } from "@/lib/network-context";
 import { Tooltip as UITooltip, TooltipContent as UITooltipContent, TooltipProvider as UITooltipProvider, TooltipTrigger as UITooltipTrigger } from "@/components/ui/tooltip";
 import { motion, AnimatePresence } from "framer-motion";
-import { formatUnits, type Hex } from "viem";
-import { Bar, BarChart, Line, LineChart, CartesianGrid, XAxis, YAxis, ResponsiveContainer, ComposedChart, Area, ReferenceLine, ReferenceArea } from "recharts";
-import { getPoolById, getPoolSubgraphId, getToken, getAllTokens } from "@/lib/pools-config";
+import { Bar, BarChart, Line, LineChart, CartesianGrid, XAxis, YAxis, ResponsiveContainer } from "recharts";
+import { getPoolById, getToken } from "@/lib/pools-config";
 import { getExplorerTxUrl } from "@/lib/wagmiConfig";
 import { cn } from "@/lib/utils";
 import { usePoolState, useAllPrices, useUncollectedFeesBatch } from "@/components/data/hooks";
@@ -48,20 +44,18 @@ import { useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { useQueryClient } from '@tanstack/react-query';
 import { getPositionManagerAddress } from '@/lib/pools-config';
 import { position_manager_abi } from '@/lib/abis/PositionManager_abi';
-import { loadUserPositionIds, derivePositionsFromIds, waitForSubgraphBlock, setIndexingBarrier, getCachedPositionTimestamps, removePositionIdFromCache } from "../../../lib/client-cache";
+import { loadUserPositionIds, derivePositionsFromIds, getCachedPositionTimestamps, removePositionIdFromCache } from "../../../lib/client-cache";
 import { invalidateAfterTx } from "@/lib/invalidation";
 
 import type { Pool } from "../../../types";
 import { AddLiquidityForm } from "../../../components/liquidity/AddLiquidityForm";
 import React from "react";
-import { useIncreaseLiquidity, type IncreasePositionData } from "@/components/liquidity/useIncreaseLiquidity";
+import { useIncreaseLiquidity } from "@/components/liquidity/useIncreaseLiquidity";
 import { useDecreaseLiquidity, type DecreasePositionData } from "@/components/liquidity/useDecreaseLiquidity";
-import { prefetchService } from "@/lib/prefetch-service";
 
 
 import { ChevronDownIcon } from "lucide-react";
 
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { PositionCardCompact } from '@/components/liquidity/PositionCardCompact';
 import { PositionSkeleton } from '@/components/liquidity/PositionSkeleton';
 
@@ -98,17 +92,6 @@ const formatTokenDisplayAmount = (amount: string) => {
   if (num === 0) return "0";
   if (num > 0 && num < 0.000001) return "< 0.000001";
   return num.toFixed(6);
-};
-
-const getTokenIcon = (symbol?: string) => {
-  if (!symbol) return "/placeholder-logo.svg";
-  
-  const tokenConfig = getToken(symbol as TokenSymbol);
-  if (tokenConfig?.icon) {
-    return tokenConfig.icon;
-  }
-  
-  return "/placeholder-logo.svg";
 };
 
 // Format USD value (centralized)
@@ -221,255 +204,6 @@ const convertTickToPrice = (tick: number, currentPoolTick: number | null, curren
 
 const AddLiquidityFormMemo = React.memo(AddLiquidityForm);
 
-  // Helper function to determine base token for price display (same logic as AddLiquidityForm.tsx)
-  const determineBaseTokenForPriceDisplay = (token0: string, token1: string): string => {
-    if (!token0 || !token1) return token0;
-
-    // Priority order for quote tokens (these should be the base for price display)
-    const quotePriority: Record<string, number> = {
-      'aUSDC': 10,
-      'aUSDT': 9,
-      'USDC': 8,
-      'USDT': 7,
-      'aETH': 6,
-      'ETH': 5,
-      'YUSD': 4,
-      'mUSDT': 3,
-    };
-
-    const token0Priority = quotePriority[token0] || 0;
-    const token1Priority = quotePriority[token1] || 0;
-
-    // Return the token with higher priority (better quote currency)
-    // If priorities are equal, default to token0
-    return token1Priority > token0Priority ? token1 : token0;
-  };
-
-// Token stack component with independent hover state
-function TokenStack({ position, currentPoolData, getToken }: { position: ProcessedPosition, currentPoolData: any, getToken: any }) {
-  // Early return if position is undefined
-  if (!position) {
-    return <div className="w-8 h-8 bg-muted rounded-full" />;
-  }
-
-  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
-
-  const getTokenIcon = (positionToken: { symbol?: string; address?: string }) => {
-    if (!positionToken?.symbol && !positionToken?.address) return "/placeholder-logo.svg";
-
-    // First try to match with currentPoolData.tokens (same as title icons)
-    if (currentPoolData?.tokens) {
-      // Try to match by symbol
-      if (positionToken.symbol) {
-        const matchedToken = currentPoolData.tokens.find(token =>
-          token.symbol?.toLowerCase() === positionToken.symbol?.toLowerCase()
-        );
-        if (matchedToken?.icon) {
-          return matchedToken.icon;
-        }
-      }
-
-      // Try to match by address
-      if (positionToken.address) {
-        const matchedToken = currentPoolData.tokens.find(token =>
-          token.address?.toLowerCase() === positionToken.address?.toLowerCase()
-        );
-        if (matchedToken?.icon) {
-          return matchedToken.icon;
-        }
-      }
-    }
-
-    // Fallback to the original getToken method
-    if (positionToken.symbol) {
-      const tokenConfig = getToken(positionToken.symbol);
-      if (tokenConfig?.icon) {
-        return tokenConfig.icon;
-      }
-    }
-
-    return "/placeholder-logo.svg";
-  };
-
-  // Match SwapInputView defaults exactly, but 20% bigger
-  const iconSize = 24;
-  const overlap = 0.3 * iconSize;
-  const step = iconSize - overlap;
-  const hoverMargin = 0; // Disable lateral movement on hover
-  const tokens = [
-    { symbol: position.token0?.symbol || 'Token 0', icon: getTokenIcon(position.token0) },
-    { symbol: position.token1?.symbol || 'Token 1', icon: getTokenIcon(position.token1) },
-  ].filter(token => token.symbol && token.symbol !== 'Token 0' && token.symbol !== 'Token 1');
-
-  const baseWidth = iconSize + step;
-
-  // Ensure we have tokens before proceeding
-  if (tokens.length === 0) {
-    return <div className="w-8 h-8 bg-muted rounded-full" />;
-  }
-
-  // Compute boundary gaps (between token i and i+1)
-  const gaps: number[] = Array(Math.max(0, tokens.length - 1)).fill(0);
-
-  // Hover margins: symmetrical (left and right) except at edges
-  // No horizontal gap changes on hover (only scale on hover)
-
-  // Prefix sums to get per-token x offsets
-  const offsets: number[] = new Array(tokens.length).fill(0);
-  for (let i = 1; i < tokens.length; i++) {
-    offsets[i] = offsets[i - 1] + (gaps[i - 1] || 0);
-  }
-
-  const totalExtraWidth = gaps.reduce((a, b) => a + b, 0);
-  const animatedWidth = baseWidth + totalExtraWidth;
-
-  return (
-    <motion.div
-      initial={false}
-      className="relative flex-shrink-0"
-      style={{ height: iconSize }}
-      animate={{ width: animatedWidth }}
-      transition={{ type: "spring", stiffness: 300, damping: 30 }}
-    >
-      {tokens.map((token, index) => {
-        const leftPos = index * step;
-        const xOffset = offsets[index];
-
-        return (
-          <motion.div
-            initial={false}
-            key={token.symbol}
-            className="absolute top-0"
-            style={{
-              zIndex: index + 1,
-              left: `${leftPos}px`
-            }}
-            animate={{ x: xOffset }}
-            transition={{ type: "spring", stiffness: 300, damping: 30 }}
-            onHoverStart={() => setHoveredIndex(index)}
-            onHoverEnd={() => setHoveredIndex(null)}
-          >
-            <TooltipProvider delayDuration={0}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <motion.div
-                    className="relative cursor-pointer"
-                    whileHover={{ scale: 1.08 }}
-                    style={{
-                      padding: `${iconSize * 0.1}px`,
-                      margin: `-${iconSize * 0.1}px`
-                    }}
-                    transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                  >
-                    <Image
-                      src={token.icon}
-                      alt={token.symbol}
-                      width={iconSize}
-                      height={iconSize}
-                      className="rounded-full bg-background"
-                    />
-                  </motion.div>
-                </TooltipTrigger>
-                <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
-                  {token.symbol}
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          </motion.div>
-        );
-      })}
-    </motion.div>
-  );
-}
-
-// Fees cell with batch data (precise uncollected fees)
-function FeesCell({
-  positionId,
-  sym0,
-  sym1,
-  price0,
-  price1,
-  batchFeesData,
-  tokenDefinitions
-}: {
-  positionId: string;
-  sym0: string;
-  sym1: string;
-  price0: number;
-  price1: number;
-  batchFeesData?: any[];
-  tokenDefinitions: Record<string, { address: string; decimals: number; symbol: string }>;
-}) {
-  // Find fees for this position from batch data
-  const fees = React.useMemo(() => {
-    if (!batchFeesData || !positionId) return null;
-    return batchFeesData.find(fee => fee.positionId === positionId) || null;
-  }, [batchFeesData, positionId]);
-
-  const isLoading = !batchFeesData;
-
-  const fmtUsd = (n: number) => {
-    if (!Number.isFinite(n) || n <= 0) return '$0';
-    if (n < 0.01) return '< $0.01';
-    return `$${n.toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}`;
-  };
-
-  const formatTokenAmount = (amount: number) => {
-    if (!Number.isFinite(amount) || amount <= 0) return '0';
-    if (amount < 0.001) return '< 0.001';
-    return amount.toLocaleString('en-US', { maximumFractionDigits: 6, minimumFractionDigits: 0 });
-  };
-
-  if (isLoading) return (
-    <span className="inline-block h-3 w-12 rounded bg-muted/40 animate-pulse align-middle" />
-  );
-  if (!fees) return <span className="text-muted-foreground">—</span>;
-
-  const d0 = tokenDefinitions?.[sym0 as string]?.decimals ?? 18;
-  const d1 = tokenDefinitions?.[sym1 as string]?.decimals ?? 18;
-  let amt0 = 0;
-  let amt1 = 0;
-  try { amt0 = parseFloat(formatUnits(BigInt(fees.amount0), d0)); } catch {}
-  try { amt1 = parseFloat(formatUnits(BigInt(fees.amount1), d1)); } catch {}
-  const usd = (amt0 * (price0 || 0)) + (amt1 * (price1 || 0));
-  // Match portfolio PositionCard's FeesCell: show values down to $0.01, otherwise show "< $0.01"
-  if (!Number.isFinite(usd)) {
-    return <span className="whitespace-nowrap text-muted-foreground">—</span>;
-  }
-  
-  if (amt0 <= 0 && amt1 <= 0) {
-    return <span className="whitespace-nowrap text-muted-foreground">{fmtUsd(usd)}</span>;
-  }
-
-  return (
-    <TooltipProvider delayDuration={0}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span className="whitespace-nowrap cursor-default hover:text-foreground transition-colors">
-            {fmtUsd(usd)}
-          </span>
-        </TooltipTrigger>
-        <TooltipContent side="top" align="center" sideOffset={8} className="px-2 py-1 text-xs w-48">
-          <div className="grid gap-1">
-            <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">{sym0}</span>
-              <span className="font-mono tabular-nums">
-                {formatTokenAmount(amt0)}
-              </span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">{sym1}</span>
-              <span className="font-mono tabular-nums">
-                {formatTokenAmount(amt1)}
-              </span>
-            </div>
-          </div>
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
-  );
-}
-
 export default function PoolDetailPage() {
   const router = useRouter();
   const params = useParams<{ poolId: string }>();
@@ -501,7 +235,7 @@ export default function PoolDetailPage() {
   const { writeContract } = useWriteContract();
   const [collectHash, setCollectHash] = useState<`0x${string}` | undefined>(undefined);
   const [lastCollectPositionId, setLastCollectPositionId] = useState<string | null>(null);
-  const { isLoading: isCollectConfirming, isSuccess: isCollectConfirmed } = useWaitForTransactionReceipt({ hash: collectHash });
+  const { isSuccess: isCollectConfirmed } = useWaitForTransactionReceipt({ hash: collectHash });
   
   // Handle collect success
   useEffect(() => {
@@ -526,75 +260,6 @@ export default function PoolDetailPage() {
   }, [isCollectConfirmed, collectHash, lastCollectPositionId, queryClient]);
   // Guard to prevent duplicate toasts and unintended modal closes across re-renders
   const pendingActionRef = useRef<null | { type: 'increase' | 'decrease' | 'withdraw' | 'burn' | 'collect' | 'compound' }>(null);
-  const lastRevalidationRef = useRef<number>(0);
-  const lastPositionRefreshRef = useRef<number>(0);
-  const handledCollectHashRef = useRef<string | null>(null);
-  // Tombstone store to prevent reappearance of fully withdrawn positions during subgraph lag
-  const tombstonedPositionIdsRef = useRef<Record<string, number>>({});
-  const TOMBSTONE_TTL_MS = 60_000; // 60s
-
-  const addPositionTombstone = useCallback((positionId: string) => {
-    if (!positionId) return;
-    tombstonedPositionIdsRef.current[positionId] = Date.now();
-  }, []);
-
-  const isPositionTombstoned = useCallback((positionId: string) => {
-    const ts = tombstonedPositionIdsRef.current[positionId];
-    if (!ts) return false;
-    if (Date.now() - ts > TOMBSTONE_TTL_MS) {
-      delete tombstonedPositionIdsRef.current[positionId];
-      return false;
-    }
-    return true;
-  }, []);
-
-  const refreshTombstonesFromFetched = useCallback((positions: ProcessedPosition[]) => {
-    try {
-      const present = new Set((positions || []).map(p => p.positionId));
-      for (const id of Object.keys(tombstonedPositionIdsRef.current)) {
-        if (!present.has(id)) delete tombstonedPositionIdsRef.current[id];
-      }
-    } catch {}
-  }, []);
-
-  const applyTombstones = useCallback((positions: ProcessedPosition[]) => {
-    return (positions || []).filter(p => !isPositionTombstoned(p.positionId));
-  }, [isPositionTombstoned]);
-  
-  // Balance hooks for tokens
-  const { data: token0BalanceData, isLoading: isLoadingToken0Balance } = useBalance({
-    address: accountAddress,
-    token: tokenDefinitions['aUSDC']?.address === "0x0000000000000000000000000000000000000000" 
-      ? undefined 
-      : tokenDefinitions['aUSDC']?.address as `0x${string}` | undefined,
-    chainId,
-    query: { enabled: !!accountAddress && !!chainId && !!tokenDefinitions['aUSDC'] },
-  });
-
-  const { data: token1BalanceData, isLoading: isLoadingToken1Balance } = useBalance({
-    address: accountAddress,
-    token: tokenDefinitions['aUSDT']?.address === "0x0000000000000000000000000000000000000000" 
-      ? undefined 
-      : tokenDefinitions['aUSDT']?.address as `0x${string}` | undefined,
-    chainId,
-    query: { enabled: !!accountAddress && !!chainId && !!tokenDefinitions['aUSDT'] },
-  });
-
-  // Helper function to get formatted display balance
-  const getFormattedDisplayBalance = (numericBalance: number | undefined, tokenSymbolForDecimals: TokenSymbol): string => {
-    if (numericBalance === undefined || isNaN(numericBalance)) {
-      numericBalance = 0;
-    }
-    if (numericBalance === 0) {
-      return "0.000";
-    } else if (numericBalance > 0 && numericBalance < 0.001) {
-      return "< 0.001";
-    } else {
-      const displayDecimals = 6;
-      return numericBalance.toFixed(displayDecimals);
-    }
-  };
-
 
   // Get base pool info first (synchronous, no loading needed)
   const basePoolInfo = getPoolConfiguration(poolId);
@@ -642,16 +307,6 @@ export default function PoolDetailPage() {
     if (['BTC', 'ABTC'].includes(symbol)) return extractUsd(allPrices?.BTC as any, 0);
     return 0;
   }, [allPrices]);
-
-  // Determine if denomination should be flipped (same logic as InteractiveRangeChart)
-  const shouldFlipDenomination = useMemo(() => {
-    if (!currentPrice) return false;
-    const currentPriceNum = parseFloat(currentPrice);
-    if (!isFinite(currentPriceNum) || currentPriceNum <= 0) return false;
-    const inversePrice = 1 / currentPriceNum;
-    return inversePrice > currentPriceNum;
-  }, [currentPrice]);
-
 
   const calculatePositionUsd = useCallback((position: ProcessedPosition): number => {
     if (!position) return 0;
@@ -723,30 +378,6 @@ export default function PoolDetailPage() {
   const feesForIncrease = getFeesForPosition(positionToModify?.positionId || '');
 
 
-  // Token symbols for the current pool (defined after positionToModify)
-  const token0Symbol = positionToModify?.token0.symbol as TokenSymbol || 'aUSDC';
-  const token1Symbol = positionToModify?.token1.symbol as TokenSymbol || 'aUSDT';
-
-  // Dynamic balances for the modal tokens (handles native vs ERC20)
-  const modalToken0IsNative = !!positionToModify?.token0.address && positionToModify.token0.address.toLowerCase() === '0x0000000000000000000000000000000000000000';
-  const modalToken1IsNative = !!positionToModify?.token1.address && positionToModify.token1.address.toLowerCase() === '0x0000000000000000000000000000000000000000';
-
-  const { data: modalToken0BalanceData } = useBalance({
-    address: accountAddress,
-    token: modalToken0IsNative ? undefined : (positionToModify?.token0.address as `0x${string}` | undefined),
-    chainId,
-    query: { enabled: !!accountAddress && !!chainId && !!positionToModify?.token0.address },
-  });
-  const { data: modalToken1BalanceData } = useBalance({
-    address: accountAddress,
-    token: modalToken1IsNative ? undefined : (positionToModify?.token1.address as `0x${string}` | undefined),
-    chainId,
-    query: { enabled: !!accountAddress && !!chainId && !!positionToModify?.token1.address },
-  });
-
-  const displayModalToken0Balance = modalToken0BalanceData ? getFormattedDisplayBalance(parseFloat(modalToken0BalanceData.formatted), token0Symbol) : "~";
-  const displayModalToken1Balance = modalToken1BalanceData ? getFormattedDisplayBalance(parseFloat(modalToken1BalanceData.formatted), token1Symbol) : "~";
-
   // Modal input states
   const [decreaseAmount0, setDecreaseAmount0] = useState<string>("");
   const [decreaseAmount1, setDecreaseAmount1] = useState<string>("");
@@ -768,9 +399,6 @@ export default function PoolDetailPage() {
   const [selectedPositionForDetails, setSelectedPositionForDetails] = useState<ProcessedPosition | null>(null);
   const [isPositionDetailsModalOpen, setIsPositionDetailsModalOpen] = useState(false);
 
-  // Debounce versioning to avoid stale API results applying to current inputs
-  const increaseCalcVersionRef = React.useRef(0);
-  const withdrawCalcVersionRef = React.useRef(0);
   const refreshThrottleRef = useRef(0);
 
   useEffect(() => {
@@ -858,258 +486,6 @@ export default function PoolDetailPage() {
 
 
 
-  // Memoized callback functions to prevent infinite re-renders
-  const positionsWriteLockRef = useRef<number>(0);
-
-  const refetchPositionsOnly = useCallback(async () => {
-    try {
-      if (Date.now() < positionsWriteLockRef.current) return null;
-      if (!poolId || !isConnected || !accountAddress) return null;
-      const basePoolInfo = getPoolConfiguration(poolId);
-      if (!basePoolInfo) return null;
-      const ids = await loadUserPositionIds(accountAddress);
-      const timestamps = getCachedPositionTimestamps(accountAddress);
-      const data = await derivePositionsFromIds(accountAddress, ids, chainId!, timestamps);
-      if (!Array.isArray(data)) return null;
-      const subgraphId = (basePoolInfo.subgraphId || '').toLowerCase();
-      const [poolToken0Raw, poolToken1Raw] = basePoolInfo.pair.split(' / ');
-      const poolToken0 = poolToken0Raw?.trim().toUpperCase();
-      const poolToken1 = poolToken1Raw?.trim().toUpperCase();
-      const filtered = data.filter((pos: any) => {
-        const poolMatch = subgraphId && String(pos.poolId || '').toLowerCase() === subgraphId;
-        return poolMatch;
-      });
-      refreshTombstonesFromFetched(filtered as any);
-      const updatedPositions = applyTombstones(filtered as any);
-      setUserPositions(updatedPositions);
-      return updatedPositions;
-    } catch (e) {
-      console.warn('Refetch positions failed', e);
-      return null;
-    }
-  }, [poolId, isConnected, accountAddress, chainId]);
-
-  // Backoff refresh for a single position after transaction
-  const backoffRefreshSinglePosition = useCallback(async (positionId: string) => {
-    try {
-      if (!poolId || !isConnected || !accountAddress) return;
-
-      // Prevent rapid position refreshes (cooldown: 5 seconds)
-      const now = Date.now();
-      if (now - lastPositionRefreshRef.current < 5000) {
-        return;
-      }
-      lastPositionRefreshRef.current = now;
-
-      const baseInfo = getPoolConfiguration(poolId);
-      const subId = (baseInfo?.subgraphId || '').toLowerCase();
-      if (!subId) return;
-
-      // Fingerprint function to detect actual changes
-      const fingerprint = (pos: ProcessedPosition) => {
-        try {
-          return JSON.stringify({
-            id: pos.positionId,
-            a0: pos.token0.amount,
-            a1: pos.token1.amount,
-            l: (pos as any)?.liquidity || (pos as any)?.liquidityRaw,
-            lo: pos.tickLower,
-            up: pos.tickUpper
-          });
-        } catch { return ''; }
-      };
-
-      const baseline = userPositions.find(p => p.positionId === positionId);
-      const baselineFp = baseline ? fingerprint(baseline) : '';
-
-      // Set optimistic updating flag
-      setUserPositions(prev => prev.map(p =>
-        p.positionId === positionId
-          ? { ...p, isOptimisticallyUpdating: true }
-          : p
-      ));
-
-      // Retry with backoff: 0ms, 2s, 5s, 10s, 15s
-      const result = await RetryUtility.execute(
-        async () => {
-          if (!accountAddress) throw new Error('Missing account');
-
-          // Fetch from on-chain
-          const ids = await loadUserPositionIds(accountAddress);
-          const timestamps = getCachedPositionTimestamps(accountAddress);
-          const data = await derivePositionsFromIds(accountAddress, ids, chainId!, timestamps);
-          const filtered = data.filter((pos: any) =>
-            String(pos?.poolId || '').toLowerCase() === subId
-          );
-
-          const updated = filtered.find(p => p.positionId === positionId);
-          if (!updated) throw new Error('Position not found');
-
-          const nextFp = fingerprint(updated);
-
-          // Only update if data actually changed
-          if (nextFp !== baselineFp) {
-            refreshTombstonesFromFetched(filtered as any);
-            const updatedPositions = applyTombstones(filtered as any);
-            setUserPositions(updatedPositions);
-
-            // Update the modal's selected position if it's open
-            setSelectedPositionForDetails(prev =>
-              prev?.positionId === positionId ? updated : prev
-            );
-
-            return updated; // Success
-          }
-
-          throw new Error('No changes detected yet');
-        },
-        {
-          attempts: 5,
-          backoffStrategy: 'custom',
-          baseDelay: 1000,
-          customDelays: [0, 2000, 5000, 10000, 15000],
-          shouldRetry: (attempt, error) => {
-            return !error.message.includes('Invalid response format');
-          },
-          throwOnFailure: false // Silent failure is ok
-        }
-      );
-
-      // After all attempts, remove optimistic updating flag
-      setUserPositions(prev => prev.map(p =>
-        p.positionId === positionId
-          ? { ...p, isOptimisticallyUpdating: undefined }
-          : p
-      ));
-
-    } catch (error) {
-      console.warn('Backoff refresh failed for position:', positionId, error);
-      // Always clear optimistic flag
-      setUserPositions(prev => prev.map(p =>
-        p.positionId === positionId
-          ? { ...p, isOptimisticallyUpdating: undefined }
-          : p
-      ));
-    }
-  }, [poolId, isConnected, accountAddress, userPositions]);
-
-  const onLiquidityBurnedCallback = useCallback(() => {
-    if (pendingActionRef.current?.type !== 'burn') return; // ignore stale callback
-    toast.success("Position Closed", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
-    setShowBurnConfirmDialog(false);
-    setPositionToBurn(null);
-    pendingActionRef.current = null;
-    (async () => {
-      try {
-        if (accountAddress && chainId) {
-          const ids = await loadUserPositionIds(accountAddress);
-          const timestamps = getCachedPositionTimestamps(accountAddress);
-          await derivePositionsFromIds(accountAddress, ids, chainId, timestamps);
-        }
-      } catch {}
-    })();
-  }, [accountAddress, chainId]);
-
-
-
-  // Note: Hook initializations moved after callback definitions
-
-  // Track compound intent so we can suppress page-level success toast
-
-  // Silent backoff refresh for positions - only updates when new positions are detected
-  const silentBackoffRefreshPositions = useCallback(async () => {
-    try {
-      if (!poolId || !isConnected || !accountAddress) return;
-
-      const now = Date.now();
-      if (now - lastPositionRefreshRef.current < 5000) return;
-      lastPositionRefreshRef.current = now;
-
-      const baseInfo = getPoolConfiguration(poolId);
-      const subId = (baseInfo?.subgraphId || '').toLowerCase();
-      if (!subId) return;
-
-      const ids = await loadUserPositionIds(accountAddress);
-      const timestamps = getCachedPositionTimestamps(accountAddress);
-      const data = await derivePositionsFromIds(accountAddress, ids, chainId!, timestamps);
-      const filtered = data.filter((pos: any) => String(pos?.poolId || '').toLowerCase() === subId);
-
-      refreshTombstonesFromFetched(filtered as any);
-      setUserPositions(applyTombstones(filtered as any));
-    } catch (error) {
-      console.warn('Silent position refresh failed:', error);
-    }
-  }, [poolId, isConnected, accountAddress]);
-
-  // Backoff refresh for positions after liquidity actions (independent of chart backoff)
-  const backoffRefreshPositions = useCallback(async () => {
-    try {
-      if (!poolId || !isConnected || !accountAddress) return;
-      
-      // Prevent rapid position refreshes (cooldown: 10 seconds)
-      const now = Date.now();
-      if (now - lastPositionRefreshRef.current < 10000) {
-        return;
-      }
-      lastPositionRefreshRef.current = now;
-      
-      const baseInfo = getPoolConfiguration(poolId);
-      const subId = (baseInfo?.subgraphId || '').toLowerCase();
-      if (!subId) return;
-
-      const fingerprint = (arr: ProcessedPosition[]) => {
-        try {
-          return JSON.stringify(arr.map(p => ({ id: p.positionId, a0: p.token0.amount, a1: p.token1.amount, l: (p as any)?.liquidity, lo: p.tickLower, up: p.tickUpper })));
-        } catch { return ''; }
-      };
-      const baseline = userPositions || [];
-      const baselineFp = fingerprint(baseline);
-
-      setIsLoadingPositions(true);
-      // prevent immediate refetch overwrite for ~1.5s after an authoritative update
-      positionsWriteLockRef.current = Date.now() + 1500;
-
-      const result = await RetryUtility.execute(
-        async () => {
-          if (!accountAddress) throw new Error('Missing account');
-          // Fetch from on-chain
-          const ids = await loadUserPositionIds(accountAddress);
-          const timestamps = getCachedPositionTimestamps(accountAddress);
-          const data = await derivePositionsFromIds(accountAddress, ids, chainId!, timestamps);
-          const filtered = data.filter((pos: any) => String(pos?.poolId || '').toLowerCase() === subId);
-          const nextFp = fingerprint(filtered);
-          if (nextFp !== baselineFp) {
-            setUserPositions(filtered);
-            return filtered; // Success
-          }
-          throw new Error('No position changes detected');
-        },
-        {
-          attempts: 4,
-          backoffStrategy: 'custom',
-          baseDelay: 1000, // Not used with custom delays, but required by interface
-          customDelays: [0, 2000, 5000, 10000],
-          shouldRetry: (attempt, error) => {
-            // Continue retrying unless we have a fundamental error
-            return !error.message.includes('Invalid response format');
-          },
-          throwOnFailure: false // Don't throw, just finish
-        }
-      );
-
-      // Handle successful result
-      if (result.success && result.data) {
-        setUserPositions(result.data);
-      }
-    } finally {
-      setIsLoadingPositions(false);
-    }
-  }, [poolId, isConnected, accountAddress, userPositions]);
-
-  // Note: useEffect moved after hook initialization
-
-
-
   // Fetch user positions for this pool and pool stats
   const fetchPageData = useCallback(async (force?: boolean, skipPositions?: boolean, keepLoading?: boolean) => {
     if (!poolId) return;
@@ -1149,8 +525,6 @@ export default function PoolDetailPage() {
         const targetDays = 60;
 
         const todayKeyLocal = new Date().toISOString().split('T')[0];
-
-        console.log('[Pool Detail] Starting parallel data fetch (positions + chart + pool stats)...');
 
         // PARALLEL DATA FETCH: All 3 data sources load simultaneously
         const [chartResult, poolStatsResult, positionsResult] = await Promise.all([
@@ -1215,12 +589,6 @@ export default function PoolDetailPage() {
             return [];
           })()
         ]);
-
-        console.log('[Pool Detail] Parallel fetch completed:', {
-          chartData: !!chartResult.data,
-          poolStats: !!poolStatsResult,
-          positions: positionsResult?.length || 0
-        });
 
         // Process positions result
         if (!skipPositions) {
@@ -1341,7 +709,6 @@ export default function PoolDetailPage() {
           setCurrentPoolData(combinedPoolData);
         }
 
-        console.log('[Pool Detail] All data processed successfully');
         if (!keepLoading) setIsLoadingChartData(false);
       } catch (error: any) {
         console.error('Failed to fetch chart data:', error);
@@ -1418,33 +785,6 @@ export default function PoolDetailPage() {
     }
   }, [accountAddress, poolId, chainId, queryClient, currentPoolData]);
 
-  // Position refresh - uses SWR pattern, no cache deletion
-  const aggressivePositionRefresh = useCallback(async () => {
-    if (!poolId || !isConnected || !accountAddress) return;
-
-    const basePoolInfo = getPoolConfiguration(poolId);
-    if (!basePoolInfo) return;
-    const subId = (basePoolInfo.subgraphId || '').toLowerCase();
-
-    try {
-      const ids = await loadUserPositionIds(accountAddress);
-      const timestamps = getCachedPositionTimestamps(accountAddress);
-      const allDerived = await derivePositionsFromIds(accountAddress, ids, chainId!, timestamps);
-      const filtered = allDerived.filter((pos: any) => String(pos.poolId || '').toLowerCase() === subId);
-      setUserPositions(filtered);
-    } catch (error) {
-      console.error('[PositionRefresh] Failed:', error);
-    }
-  }, [poolId, isConnected, accountAddress]);
-
-
-  // Post-mutation window to treat zero-like responses as transient
-  const lastMutationAtRef = useRef<number>(0);
-  const baselineTvlBeforeMutationRef = useRef<number | null>(null);
-  const lastGoodStatsRef = useRef<{ tvlUSD: number; volume24hUSD: number } | null>(null);
-  const setPostMutationWindow = () => { lastMutationAtRef.current = Date.now(); };
-  const isInPostMutationWindow = () => Date.now() - lastMutationAtRef.current < 60_000; // 60s window
-
   const silentRefreshTVL = useCallback(async () => {
     if (!poolId) return;
     const poolInfo = getPoolConfiguration(poolId);
@@ -1477,11 +817,6 @@ export default function PoolDetailPage() {
       }
     } catch (error) { console.error('[silentRefreshTVL] Failed:', error); }
   }, [poolId]);
-
-  // Simple fetch wrapper - no more complex backoff logic
-  const fetchWithBackoffIfNeeded = async (force?: boolean, skipPositions?: boolean) => {
-    await fetchPageData(true, skipPositions);
-  };
 
   const refreshAfterMutation = useCallback(async (info?: { txHash?: `0x${string}`; blockNumber?: bigint; tvlDelta?: number }) => {
     if (!poolId || !isConnected || !accountAddress || !chainId) return;
@@ -1525,42 +860,6 @@ export default function PoolDetailPage() {
     });
   }, [poolId, isConnected, accountAddress, silentRefreshTVL, queryClient]);
 
-  // Refresh only a single position without affecting other positions
-  const refreshSinglePosition = useCallback(async (positionId: string) => {
-    if (!accountAddress) return;
-
-    try {
-      // Fetch updated data for just this position
-      const timestamps = getCachedPositionTimestamps(accountAddress);
-      const updatedPositions = await derivePositionsFromIds(accountAddress, [positionId], chainId!, timestamps);
-      const updatedPosition = updatedPositions[0];
-      
-      if (updatedPosition) {
-        // Update only this position in the array, keeping others untouched
-        setUserPositions(prev => prev.map(p => 
-          p.positionId === positionId 
-            ? { ...updatedPosition, isOptimisticallyUpdating: undefined }
-            : p
-        ));
-      } else {
-        // If position not found, just clear loading state
-        setUserPositions(prev => prev.map(p => 
-          p.positionId === positionId
-            ? { ...p, isOptimisticallyUpdating: undefined }
-            : p
-        ));
-      }
-    } catch (error) {
-      console.error('[refreshSinglePosition] failed:', error);
-      // Clear loading state on error
-      setUserPositions(prev => prev.map(p => 
-        p.positionId === positionId
-          ? { ...p, isOptimisticallyUpdating: undefined }
-          : p
-      ));
-    }
-  }, [accountAddress]);
-
   // Refresh for position increases
   const refreshAfterIncrease = useCallback(async (info?: { txHash?: `0x${string}`; blockNumber?: bigint }) => {
     if (!poolId || !isConnected || !accountAddress || !chainId) return;
@@ -1574,7 +873,7 @@ export default function PoolDetailPage() {
       blockNumber: info?.blockNumber,
       reloadPositions: true,
       refreshPoolData: async () => {
-        await fetchWithBackoffIfNeeded(true, false);
+        await fetchPageData(true, false);
       },
       onPositionsReloaded: (allDerived) => {
         const subId = poolId.toLowerCase();
@@ -1591,7 +890,7 @@ export default function PoolDetailPage() {
         setOptimisticallyClearedFees(new Set());
       }
     });
-  }, [poolId, isConnected, accountAddress, fetchWithBackoffIfNeeded, queryClient]);
+  }, [poolId, isConnected, accountAddress, fetchPageData, queryClient]);
 
   const handledIncreaseHashRef = useRef<string | null>(null);
   const onLiquidityIncreasedCallback = useCallback((info?: { txHash?: `0x${string}`; blockNumber?: bigint, increaseAmounts?: { amount0: string; amount1: string } }) => {
@@ -1735,15 +1034,12 @@ export default function PoolDetailPage() {
     },
   });
 
-  // Reset transaction states when withdraw modal opens to prevent stale state
   useEffect(() => {
     if (showBurnConfirmDialog) {
-      console.log('[DEBUG] Withdraw modal opened, resetting transaction states');
       resetDecreaseLiquidity();
     }
   }, [showBurnConfirmDialog, resetDecreaseLiquidity]);
 
-  // Reset transaction states when increase modal opens to prevent stale state
   useEffect(() => {
     if (showIncreaseModal) {
       resetIncreaseLiquidity();
@@ -1831,193 +1127,6 @@ export default function PoolDetailPage() {
       return prevChartData;
     });
   }, [currentPoolData]);
-
-  // Calculate total liquidity value
-  const totalLiquidity = userPositions.reduce((sum, pos) => sum + calculatePositionUsd(pos), 0);
-
-  // Handle withdraw position
-  const handleBurnPosition = (position: ProcessedPosition) => {
-    if (!position.positionId || !position.token0.symbol || !position.token1.symbol) {
-      toast.error("Invalid Position", { 
-        icon: <OctagonX className="h-4 w-4 text-red-500" />, 
-        description: "Missing critical position data (ID or token symbols).",
-        action: {
-          label: "Open Ticket",
-          onClick: () => window.open('https://discord.gg/alphix', '_blank')
-        }
-      });
-      return;
-    }
-    setPositionToBurn(position);
-    pendingActionRef.current = { type: 'withdraw' };
-    setShowBurnConfirmDialog(true);
-  };
-
-
-  // Handle increase position
-  const handleIncreasePosition = (position: ProcessedPosition, onModalClose?: () => void) => {
-    if (!position.positionId || !position.token0.symbol || !position.token1.symbol) {
-      toast.error("Invalid Position", { 
-        icon: <OctagonX className="h-4 w-4 text-red-500" />, 
-        description: "Missing critical position data (ID or token symbols).",
-        action: {
-          label: "Open Ticket",
-          onClick: () => window.open('https://discord.gg/alphix', '_blank')
-        }
-      });
-      return;
-    }
-    setPositionToModify(position);
-    setShowIncreaseModal(true);
-  };
-
-  // Handle decrease position
-  const handleDecreasePosition = (position: ProcessedPosition) => {
-    if (!position.positionId || !position.token0.symbol || !position.token1.symbol) {
-      toast.error("Invalid Position", { 
-        icon: <OctagonX className="h-4 w-4 text-red-500" />, 
-        description: "Missing critical position data (ID or token symbols).",
-        action: {
-          label: "Open Ticket",
-          onClick: () => window.open('https://discord.gg/alphix', '_blank')
-        }
-      });
-      return;
-    }
-    setPositionToModify(position);
-    // Reset decrease state
-    setDecreaseAmount0("");
-    setDecreaseAmount1("");
-    setDecreaseActiveInputSide(null);
-    setIsFullBurn(false);
-    setShowDecreaseModal(true);
-  };
-
-  // PositionCard helper functions
-  const formatAgeShort = (seconds: number | undefined): string => {
-    if (!seconds || seconds < 60) return '<1m';
-    if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
-    if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
-
-    const days = Math.floor(seconds / 86400);
-    const hours = Math.floor((seconds % 86400) / 3600);
-
-    if (seconds < 2592000) { // Less than 30 days
-      return hours > 0 ? `${days}d ${hours}h` : `${days}d`;
-    }
-
-    const months = Math.floor(seconds / 2592000);
-    const remainingDays = Math.floor((seconds % 2592000) / 86400);
-
-    if (seconds < 31536000) { // Less than 1 year
-      return remainingDays > 0 ? `${months}mo ${remainingDays}d` : `${months}mo`;
-    }
-
-    const years = Math.floor(seconds / 31536000);
-    const remainingMonths = Math.floor((seconds % 31536000) / 2592000);
-    const remainingDaysForYears = Math.floor((seconds % 2592000) / 86400);
-
-    if (remainingMonths > 0 && remainingDaysForYears > 0) {
-      return `${years}y ${remainingMonths}mo ${remainingDaysForYears}d`;
-    } else if (remainingMonths > 0) {
-      return `${years}y ${remainingMonths}mo`;
-    } else {
-      return `${years}y`;
-    }
-  };
-
-  const poolDataByPoolId = React.useMemo(() => {
-    if (!currentPoolData) return {};
-    return { [poolId]: currentPoolData };
-  }, [currentPoolData, poolId]);
-
-  const claimFees = React.useCallback(async (positionId: string) => {
-    try {
-      // Build and submit collect calldata via v4 SDK
-      const idRaw = String(positionId || '');
-      const tokenIdStr = idRaw.includes('-') ? (idRaw.split('-').pop() as string) : idRaw;
-      let tokenId: bigint;
-      try {
-        tokenId = BigInt(tokenIdStr);
-      } catch {
-        toast.error('Invalid Token ID', {
-          icon: <OctagonX className="h-4 w-4 text-red-500" />,
-          description: 'The position token ID is invalid.',
-          action: {
-            label: "Open Ticket",
-            onClick: () => window.open('https://discord.gg/alphix', '_blank')
-          }
-        });
-        return;
-      }
-      const { buildCollectFeesCall } = await import('@/lib/liquidity-utils');
-      const { calldata, value } = await buildCollectFeesCall({ tokenId, userAddress: accountAddress as `0x${string}`, chainId: chainId! });
-      pendingActionRef.current = { type: 'collect' };
-      setLastCollectPositionId(positionId);
-
-      // Set loading state
-      setUserPositions(prev => prev.map(p =>
-        p.positionId === positionId
-          ? { ...p, isOptimisticallyUpdating: true }
-          : p
-      ));
-
-      writeContract({
-        address: getPositionManagerAddress(networkMode) as `0x${string}`,
-        abi: position_manager_abi as any,
-        functionName: 'multicall',
-        args: [[calldata]],
-        value,
-        chainId,
-      } as any, {
-        onSuccess: (hash) => setCollectHash(hash as `0x${string}`),
-        onError: (error: any) => {
-          // Extract user-friendly error message (use shortMessage if available, or extract first line)
-          let errorMessage = 'Transaction rejected';
-          if (error?.shortMessage) {
-            errorMessage = error.shortMessage;
-          } else if (error?.message) {
-            // Extract just the first meaningful line before "Request Arguments:" or "Details:"
-            const match = error.message.match(/^([^\.]+\.)(?:\s|Request|Details|Contract|Docs)/);
-            errorMessage = match ? match[1].trim() : error.message.split('\n')[0];
-          }
-
-          toast.error('Collect Failed', {
-            icon: <OctagonX className="h-4 w-4 text-red-500" />,
-            description: errorMessage,
-            action: {
-              label: "Copy Error",
-              onClick: () => navigator.clipboard.writeText(error?.message || errorMessage)
-            }
-          });
-
-          // Clear loading state on error
-          setUserPositions(prev => prev.map(p =>
-            p.positionId === positionId
-              ? { ...p, isOptimisticallyUpdating: undefined }
-              : p
-          ));
-        }
-      } as any);
-    } catch (err: any) {
-      const errorMessage = err?.message || 'Failed to collect fees';
-      toast.error('Collect Failed', {
-        icon: <OctagonX className="h-4 w-4 text-red-500" />,
-        description: errorMessage,
-        action: {
-          label: "Copy Error",
-          onClick: () => navigator.clipboard.writeText(errorMessage)
-        }
-      });
-
-      // Clear loading state on error
-      setUserPositions(prev => prev.map(p =>
-        p.positionId === positionId
-          ? { ...p, isOptimisticallyUpdating: undefined }
-          : p
-      ));
-    }
-  }, [accountAddress, chainId, writeContract, toast]);
 
   // Helper function for debounced calculations (simplified version)
   const debounce = (func: Function, waitFor: number) => {
@@ -2230,13 +1339,13 @@ export default function PoolDetailPage() {
 
           
           {/* Main content area with two columns (row layout only at >=1500px) */}
-          <div className="flex flex-col min-[1500px]:flex-row gap-6 min-w-0 max-w-full overflow-hidden">
+          <div className="flex flex-col min-[1400px]:flex-row gap-6 min-w-0 max-w-full overflow-hidden">
             {/* Left Column: Header + Graph (flexible, takes remaining space) */}
             <div className="flex-1 min-w-0 flex flex-col space-y-3">
           {/* Header: Token info container + Stats in dotted container */}
-          <div className="mt-3 sm:mt-0">
+          <div>
             {/* Mobile layout < 768px */}
-            <div className="md:hidden space-y-3 overflow-x-hidden mb-2">
+            <div className="min-[900px]:hidden space-y-3 overflow-x-hidden mb-2">
                 {/* Identification above for mobile */}
                 <Link href="/liquidity" className="rounded-lg bg-muted/30 border border-sidebar-border/60 cursor-pointer block">
                   <div className="px-4 py-3 flex items-center w-full">
@@ -2365,10 +1474,10 @@ export default function PoolDetailPage() {
                   </div>
                 </div>
               </div>
-            {/* Desktop layout >= 768px */}
-            <div className="hidden md:block">
+            {/* Desktop layout >= 900px - zoom down below 1700px viewport */}
+            <div className="hidden min-[900px]:block min-[1700px]:[zoom:1] max-[1699px]:[zoom:0.92]">
                   <div className="rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 p-4 mb-3 w-full">
-                    <div className="flex items-stretch gap-3 min-w-0">
+                    <div className="flex items-stretch gap-3">
                       {/* Back arrow square */}
                       <Link
                         href="/liquidity"
@@ -2378,8 +1487,8 @@ export default function PoolDetailPage() {
                         <ChevronLeft className="h-5 w-5 text-muted-foreground" />
                       </Link>
 
-                      {/* Token info container inside dotted container */}
-                      <div className="min-w-0 basis-0 flex-1 overflow-hidden rounded-lg bg-muted/30 border border-sidebar-border/60">
+                      {/* Token info container - FIXED width below 2075px, flexible above */}
+                      <div className="w-[280px] min-w-[280px] flex-shrink-0 min-[2075px]:flex-1 overflow-hidden rounded-lg bg-muted/30 border border-sidebar-border/60">
                         <div className="px-4 py-3 flex items-center w-full min-w-0">
                           <div className="flex items-center gap-1 min-w-0 flex-1">
                             <div className="relative w-16 h-8 mr-0.5 flex-shrink-0">
@@ -2450,9 +1559,9 @@ export default function PoolDetailPage() {
                   {/* Vertical divider */}
                       <div className="w-0 border-l border-dashed border-sidebar-border/60 self-stretch mx-1 flex-shrink-0" />
 
-                  {/* Volume - Show at: >= 1100px when no AddLiqForm, >= 1700px when AddLiqForm visible */}
+                  {/* Volume - Show at: 1100-1399px (no form) OR >= 1550px (form + wide screen) */}
                   <div
-                    className="w-[160px] flex-shrink-0 rounded-lg bg-muted/30 border border-sidebar-border/60 hover:border-white/30 transition-colors cursor-pointer hidden min-[1100px]:max-[1499px]:block min-[1700px]:block"
+                    className="flex-1 min-w-[100px] max-w-[200px] rounded-lg bg-muted/30 border border-sidebar-border/60 hover:border-white/30 transition-colors cursor-pointer hidden min-[1100px]:max-[1399px]:flex min-[1550px]:flex flex-col"
                     onClick={() => setActiveChart('volume')}
                     role="button"
                     tabIndex={0}
@@ -2472,8 +1581,8 @@ export default function PoolDetailPage() {
                     </div>
                   </div>
 
-                  {/* Fees - Show only on very large screens >= 2000px */}
-                  <div className="w-[160px] flex-shrink-0 rounded-lg bg-muted/30 border border-sidebar-border/60 hidden min-[2000px]:block">
+                  {/* Fees - Show at: 1300-1399px (no form) OR >= 1850px (form + wide screen) */}
+                  <div className="flex-1 min-w-[100px] max-w-[200px] rounded-lg bg-muted/30 border border-sidebar-border/60 hidden min-[1300px]:max-[1399px]:flex min-[1850px]:flex flex-col">
                     <div className="flex items-center justify-between px-3 h-9">
                       <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">FEES (24H)</h2>
                     </div>
@@ -2488,9 +1597,9 @@ export default function PoolDetailPage() {
                     </div>
                   </div>
 
-                  {/* TVL - Show at: >= 768px when no AddLiqForm, >= 1500px when AddLiqForm visible */}
+                  {/* TVL - Show at: >= 900px (always visible on desktop) */}
                   <div
-                    className="w-[160px] flex-shrink-0 rounded-lg bg-muted/30 border border-sidebar-border/60 hover:border-white/30 transition-colors cursor-pointer hidden sm:max-[1499px]:block min-[1500px]:block"
+                    className="flex-1 min-w-[100px] max-w-[200px] rounded-lg bg-muted/30 border border-sidebar-border/60 hover:border-white/30 transition-colors cursor-pointer flex flex-col"
                     onClick={() => setActiveChart('tvl')}
                     role="button"
                     tabIndex={0}
@@ -2514,7 +1623,7 @@ export default function PoolDetailPage() {
                       <UITooltipProvider delayDuration={0}>
                         <UITooltip>
                           <UITooltipTrigger asChild>
-                            <div className={`w-[160px] flex-shrink-0 rounded-lg bg-muted/30 cursor-default ${
+                            <div className={`flex-1 min-w-[100px] max-w-[200px] rounded-lg bg-muted/30 cursor-default flex flex-col ${
                               formRangeInfo?.hasUserInteracted && formRangeInfo.estimatedApy !== "0.00" && formRangeInfo.estimatedApy !== "—"
                                 ? 'border-2 border-sidebar-primary'
                                 : 'border border-sidebar-border/60'
@@ -2563,8 +1672,8 @@ export default function PoolDetailPage() {
                 >
                   <div className="flex items-center justify-between px-4 py-2 border-b border-sidebar-border/60">
                     <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">POOL ACTIVITY</h2>
-                    {/* Dropdown for smaller screens < 1500px */}
-                    <div className="min-[1500px]:hidden">
+                    {/* Dropdown for smaller screens < 1400px */}
+                    <div className="min-[1400px]:hidden">
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button
@@ -3221,9 +2330,10 @@ export default function PoolDetailPage() {
               </div>
             </div>
 
-            {/* Right Column: Add Liquidity Form (fixed width at >=1500px, hidden below) */}
+            {/* Right Column: Add Liquidity Form (fixed width at >=1400px, hidden below) */}
             {/* Key trick: Fixed width prevents layout shift from form content loading */}
-            <div className="hidden min-[1500px]:block w-[450px] flex-shrink-0">
+            {/* Zoom matches the pool stats bar - 92% below 1700px */}
+            <div className="hidden min-[1400px]:block w-[450px] flex-shrink-0 min-[1700px]:[zoom:1] max-[1699px]:[zoom:0.92]">
               {poolId && currentPoolData && (
                 <div className="w-full rounded-lg bg-muted/30 border border-sidebar-border/60 transition-colors relative">
                   {/* Container header to match novel layout */}
@@ -3256,7 +2366,7 @@ export default function PoolDetailPage() {
           </div>
           
           {/* Your Positions Section (Full width below the columns) */}
-          <div className="space-y-3 lg:space-y-4 mt-2 mb-3 lg:mt-6 lg:mb-0"> {/* Mobile: top margin double bottom; desktop unchanged */}
+          <div className="space-y-3 lg:space-y-4 mt-3 lg:mt-6"> {/* Consistent spacing */}
             {/* Static title - always visible */}
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-medium">Your Positions</h3>
@@ -3266,7 +2376,7 @@ export default function PoolDetailPage() {
                   e.stopPropagation();
                   setAddLiquidityFormOpen(true);
                 }}
-                className="flex h-9 cursor-pointer items-center justify-center gap-2 rounded-md border border-sidebar-border bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 min-[1500px]:hidden"
+                className="flex h-9 cursor-pointer items-center justify-center gap-2 rounded-md border border-sidebar-border bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 min-[1400px]:hidden"
                 style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
               >
                 <PlusIcon className="h-4 w-4 relative z-0" />
@@ -3737,8 +2847,7 @@ export default function PoolDetailPage() {
           formatTokenDisplayAmount={formatTokenDisplayAmount}
           getUsdPriceForSymbol={getUsdPriceForSymbol}
           onRefreshPosition={async () => {
-            // Use backoff refresh for proper retry logic with cache invalidation
-            await backoffRefreshSinglePosition(selectedPositionForDetails.positionId);
+            await fetchPageData(true, false);
           }}
           onLiquidityDecreased={onLiquidityDecreasedCallback}
           onAfterLiquidityAdded={(tvlDelta, info) => {

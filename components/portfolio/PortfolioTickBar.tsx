@@ -72,9 +72,8 @@ export function PortfolioTickBar({ composition, onHover, hoveredSegment, contain
         const containerRect = containerRef.current.getBoundingClientRect();
         const netApyRect = netApyRef.current.getBoundingClientRect();
         const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
-        const paddingBlock = viewportWidth <= 1500 ? 32 : 44; // safe padding for block layout only
-        
-        // Prefer measuring the component's parent width directly for inline layout
+        const paddingBlock = viewportWidth <= 1500 ? 32 : 44;
+
         let availableInline = 0;
         if (layout !== "block") {
           const parentWidth = rootRef.current?.parentElement?.getBoundingClientRect().width || 0;
@@ -82,56 +81,51 @@ export function PortfolioTickBar({ composition, onHover, hoveredSegment, contain
             availableInline = Math.max(0, parentWidth);
           }
         }
-        // Fallback to previous cross-column measurement
         if (availableInline === 0) {
           if (layout === "block" || containerRef.current === netApyRef.current) {
-            // block layout: keep a small safety padding
             availableInline = Math.max(0, containerRect.width - paddingBlock);
           } else {
-            // inline layout: no extra padding so we fill full available space
             availableInline = Math.max(0, (containerRect.right - netApyRect.right));
           }
         }
 
         const calcForAvailable = (avail: number) => {
-          // FIXED sizing - never change these values
           const px = 2;
           const gap = 4;
           const perTick = px + gap;
           let ticks = Math.floor(avail / perTick);
-          
-          // For mobile block layout, use a reasonable number
           if (layout === "block") {
-            ticks = Math.min(60, Math.max(40, ticks)); // Between 40-60 ticks for mobile
+            ticks = Math.min(60, Math.max(40, ticks));
           }
-          
-          const clampedTicks = Math.max(12, Math.min(300, ticks)); // Increased to better show small percentages
+          const clampedTicks = Math.max(12, Math.min(300, ticks));
           const rowWidth = clampedTicks * px + Math.max(0, (clampedTicks - 1)) * gap;
           return { px, gap, perTick, ticks: clampedTicks, rowWidth };
         };
 
         const result = calcForAvailable(availableInline);
-
         setTickPixelWidth(result.px);
         setTickGapWidth(result.gap);
         setMaxTicks(result.ticks);
         setAvailablePixels(availableInline);
-
         lastPerTickRef.current = result.perTick;
         lastTicksRef.current = result.ticks;
       }
     };
 
-    // Multiple calculations to ensure proper initial sizing
+    const onResize = () => {
+      // Use rAF to measure after DOM has updated
+      requestAnimationFrame(() => {
+        calculateMaxTicks();
+      });
+    };
+
     calculateMaxTicks();
-    const timeoutId1 = setTimeout(calculateMaxTicks, 10);
-    const timeoutId2 = setTimeout(calculateMaxTicks, 100);
-    
-    window.addEventListener('resize', calculateMaxTicks);
+    const timeoutId = setTimeout(calculateMaxTicks, 50);
+
+    window.addEventListener('resize', onResize);
     return () => {
-      clearTimeout(timeoutId1);
-      clearTimeout(timeoutId2);
-      window.removeEventListener('resize', calculateMaxTicks);
+      clearTimeout(timeoutId);
+      window.removeEventListener('resize', onResize);
     };
   }, [containerRef, netApyRef, layout]);
 

@@ -1,6 +1,8 @@
 # Remove AI code slop
 
-Check the diff against main, and remove all AI generated slop introduced in this branch. Additionally this command can be used together with specific files, if that is the case you should scan the page and remove all AI generated slop it holds.
+Two modes:
+1. **Branch mode** (no file specified): Check the diff against main and remove slop introduced in this branch.
+2. **File mode** (file specified): Read the entire file and scan for slop. Do NOT use git diff - just read and analyze the complete file.
 
 This includes:
 - Extra comments that a human wouldn't add or is inconsistent with the rest of the file

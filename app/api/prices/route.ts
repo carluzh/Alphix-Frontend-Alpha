@@ -5,6 +5,10 @@
  * - Server-side: price-service.ts calls this
  * - Client-side: useTokenUSDPrice hook calls this
  * - All prices cached in Redis with 5min fresh / 15min stale window
+ *
+ * Price Strategy:
+ * - Mainnet: Uses CoinGecko API for reliable market prices (no liquidity depth issues)
+ * - Testnet: Uses quote-based prices against aUSDC (test tokens don't have CoinGecko prices)
  */
 
 import { NextResponse } from 'next/server';
@@ -13,7 +17,7 @@ import { redis, getCachedDataWithStale } from '@/lib/redis';
 import { priceKeys } from '@/lib/redis-keys';
 import { MAINNET_CHAIN_ID, TESTNET_CHAIN_ID, type NetworkMode } from '@/lib/network-mode';
 
-const QUOTE_AMOUNT_USDC = 100;
+const QUOTE_AMOUNT_USDC = 1;
 
 // Get chain ID based on network mode
 function getTargetChainId(networkMode: NetworkMode): number {
@@ -29,10 +33,10 @@ function getStableTokenSymbol(networkMode: NetworkMode): string {
 function getTokenSymbol(baseSymbol: string, networkMode: NetworkMode): string {
   // Mainnet uses standard symbols, testnet uses 'a' prefixed symbols
   if (networkMode === 'mainnet') {
-    return baseSymbol; // BTC, ETH, USDT, DAI, USDC
+    return baseSymbol; // BTC, ETH, USDT, USDC
   }
   // Testnet uses 'a' prefix
-  return `a${baseSymbol}`; // aBTC, aETH, aUSDT, aDAI, aUSDC
+  return `a${baseSymbol}`; // aBTC, aETH, aUSDT, aUSDC
 }
 
 // In-memory cache fallback when Redis is unavailable (development)
@@ -45,19 +49,17 @@ interface TokenPriceData {
   USDC: { usd: number; usd_24h_change?: number };
   ETH: { usd: number; usd_24h_change?: number };
   USDT: { usd: number; usd_24h_change?: number };
-  DAI: { usd: number; usd_24h_change?: number };
   lastUpdated: number;
 }
 
 interface PriceResponse {
   success: boolean;
   data?: TokenPriceData & {
-    // Aliases for UI compatibility
+    // Aliases for UI compatibility (testnet tokens)
     aBTC: { usd: number };
     aUSDC: { usd: number };
     aETH: { usd: number };
     aUSDT: { usd: number };
-    aDAI: { usd: number };
   };
   isStale?: boolean;
   error?: string;
@@ -99,20 +101,26 @@ async function getTokenUSDPriceViaQuote(tokenSymbol: string, networkMode: Networ
   }
 }
 
-/**
- * Fetch 24h price change data from CoinGecko
- */
-async function fetch24hPriceChanges(): Promise<Record<string, number>> {
-  try {
-    const coinGeckoIds = {
-      BTC: 'bitcoin',
-      ETH: 'ethereum',
-      USDC: 'usd-coin',
-      USDT: 'tether',
-      DAI: 'dai'
-    };
+// CoinGecko ID mapping for supported tokens
+const COINGECKO_IDS: Record<string, string> = {
+  BTC: 'bitcoin',
+  ETH: 'ethereum',
+  USDC: 'usd-coin',
+  USDT: 'tether',
+};
 
-    const ids = Object.values(coinGeckoIds).join(',');
+interface CoinGeckoPriceData {
+  usd: number;
+  usd_24h_change?: number;
+}
+
+/**
+ * Fetch prices and 24h changes from CoinGecko
+ * Used for mainnet to get reliable market prices without liquidity depth issues
+ */
+async function fetchCoinGeckoPrices(): Promise<Record<string, CoinGeckoPriceData>> {
+  try {
+    const ids = Object.values(COINGECKO_IDS).join(',');
     const url = `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true`;
 
     const response = await fetch(url, {
@@ -125,66 +133,87 @@ async function fetch24hPriceChanges(): Promise<Record<string, number>> {
     }
 
     const data = await response.json();
-    const changes: Record<string, number> = {};
+    const prices: Record<string, CoinGeckoPriceData> = {};
 
-    for (const [symbol, geckoId] of Object.entries(coinGeckoIds)) {
+    for (const [symbol, geckoId] of Object.entries(COINGECKO_IDS)) {
       const priceData = data[geckoId];
-      if (priceData && typeof priceData.usd_24h_change === 'number') {
-        changes[symbol] = priceData.usd_24h_change;
+      if (priceData && typeof priceData.usd === 'number') {
+        prices[symbol] = {
+          usd: priceData.usd,
+          usd_24h_change: priceData.usd_24h_change,
+        };
       }
     }
 
-    return changes;
+    return prices;
   } catch (error) {
-    console.error('[Prices API] Error fetching 24h changes from CoinGecko:', error);
+    console.error('[Prices API] Error fetching from CoinGecko:', error);
     return {};
   }
 }
 
+// Stablecoins should be ~$1; reject quote prices with >5% deviation (low liquidity pools)
+function sanitizeStablecoinPrice(quotePrice: number | null): number {
+  if (!quotePrice || quotePrice < 0.95 || quotePrice > 1.05) return 1;
+  return quotePrice;
+}
+
 /**
  * Fetch all prices fresh (no cache)
+ *
+ * Strategy:
+ * - Mainnet: Use CoinGecko API directly for reliable market prices
+ *   (avoids liquidity depth issues when quoting against pools)
+ * - Testnet: Use quote-based approach (test tokens don't have CoinGecko prices)
  */
 async function fetchAllPricesFresh(networkMode: NetworkMode, baseUrl: string): Promise<TokenPriceData> {
 
-  // Fetch both quote prices and 24h changes in parallel
-  // Use network-specific token symbols (BTC on mainnet, aBTC on testnet)
-  const [quotePrices, priceChanges] = await Promise.all([
+  if (networkMode === 'mainnet') {
+    // MAINNET: Use CoinGecko for reliable market prices
+    // This avoids issues with low liquidity pools affecting price quotes
+    const coinGeckoPrices = await fetchCoinGeckoPrices();
+
+    return {
+      BTC: coinGeckoPrices.BTC || { usd: 0 },
+      USDC: coinGeckoPrices.USDC || { usd: 1, usd_24h_change: 0 },
+      ETH: coinGeckoPrices.ETH || { usd: 0 },
+      USDT: coinGeckoPrices.USDT || { usd: 1, usd_24h_change: 0 },
+      lastUpdated: Date.now(),
+    };
+  }
+
+  // TESTNET: Use quote-based prices (test tokens don't have CoinGecko prices)
+  // Fetch both quote prices and 24h changes (for display purposes) in parallel
+  const [quotePrices, coinGeckoPrices] = await Promise.all([
     Promise.all([
       getTokenUSDPriceViaQuote(getTokenSymbol('BTC', networkMode), networkMode, baseUrl),
       getTokenUSDPriceViaQuote(getTokenSymbol('ETH', networkMode), networkMode, baseUrl),
       getTokenUSDPriceViaQuote(getTokenSymbol('USDT', networkMode), networkMode, baseUrl),
-      getTokenUSDPriceViaQuote(getTokenSymbol('DAI', networkMode), networkMode, baseUrl),
     ]),
-    fetch24hPriceChanges()
+    fetchCoinGeckoPrices() // Still fetch for 24h change display
   ]);
 
-  const [btcPrice, ethPrice, usdtPrice, daiPrice] = quotePrices;
+  const [btcPrice, ethPrice, usdtPrice] = quotePrices;
 
-  const prices: TokenPriceData = {
+  return {
     BTC: {
       usd: btcPrice || 0,
-      usd_24h_change: priceChanges.BTC
+      usd_24h_change: coinGeckoPrices.BTC?.usd_24h_change,
     },
     USDC: {
       usd: 1,
-      usd_24h_change: priceChanges.USDC || 0
+      usd_24h_change: coinGeckoPrices.USDC?.usd_24h_change || 0,
     },
     ETH: {
       usd: ethPrice || 0,
-      usd_24h_change: priceChanges.ETH
+      usd_24h_change: coinGeckoPrices.ETH?.usd_24h_change,
     },
     USDT: {
-      usd: usdtPrice || 1,
-      usd_24h_change: priceChanges.USDT || 0
+      usd: sanitizeStablecoinPrice(usdtPrice),
+      usd_24h_change: coinGeckoPrices.USDT?.usd_24h_change || 0,
     },
-    DAI: {
-      usd: daiPrice || 1,
-      usd_24h_change: priceChanges.DAI || 0
-    },
-    lastUpdated: Date.now()
+    lastUpdated: Date.now(),
   };
-
-  return prices;
 }
 
 // Per-network deduplication to prevent cache stampede
@@ -253,7 +282,6 @@ export async function GET(request: Request) {
           aUSDC: cachedData.USDC,
           aETH: cachedData.ETH,
           aUSDT: cachedData.USDT,
-          aDAI: cachedData.DAI,
         };
 
         return NextResponse.json({
@@ -275,7 +303,6 @@ export async function GET(request: Request) {
         aUSDC: memoryCache.data.USDC,
         aETH: memoryCache.data.ETH,
         aUSDT: memoryCache.data.USDT,
-        aDAI: memoryCache.data.DAI,
       };
 
       return NextResponse.json({
@@ -302,7 +329,6 @@ export async function GET(request: Request) {
       aUSDC: freshData.USDC,
       aETH: freshData.ETH,
       aUSDT: freshData.USDT,
-      aDAI: freshData.DAI,
     };
 
     return NextResponse.json({

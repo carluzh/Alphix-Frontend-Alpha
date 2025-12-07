@@ -182,10 +182,10 @@ export default function SettingsPage() {
   return (
     <AppLayout>
       <div className="flex flex-1 flex-col font-sans">
-        <div className="relative flex min-w-0 flex-1 flex-col items-center px-4 md:px-8">
+        <div className="relative flex min-w-0 flex-1 flex-col items-center p-3 sm:p-6">
           <div className="flex h-full w-full max-w-xl flex-col">
             {/* Settings Sections */}
-            <div className="flex flex-col gap-y-8 py-8">
+            <div className="flex flex-col gap-y-8">
               {/* Network Settings */}
               <Section id="network">
                 <SectionDescription title="Network" />

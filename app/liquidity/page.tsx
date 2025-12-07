@@ -603,7 +603,7 @@ export default function LiquidityPage() {
   return (
     <AppLayout>
       <div className="flex flex-1 flex-col">
-        <div className="flex flex-1 flex-col p-6 px-10">
+        <div className="flex flex-1 flex-col p-3 sm:p-6 overflow-x-hidden">
             <div className="mb-2">
               <div className="flex items-stretch justify-between gap-4">
                 <div className="flex flex-col">
@@ -611,8 +611,8 @@ export default function LiquidityPage() {
                   <p className="text-sm text-muted-foreground">Explore and manage your liquidity positions.</p>
                   <div className="mt-4">
                     <div className="rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 p-2 md:p-4">
-                      <div className="flex items-stretch gap-1.5 md:gap-3">
-                        <div className="w-[140px] md:w-[180px] rounded-lg bg-muted/30 border border-sidebar-border/60">
+                      <div className="flex flex-wrap items-stretch gap-1.5 md:gap-3">
+                        <div className="flex-1 min-w-[100px] max-w-[180px] rounded-lg bg-muted/30 border border-sidebar-border/60">
                           <div className="px-3 md:px-4 h-7 md:h-9 flex items-center">
                             <h2 className="text-[10px] md:text-xs tracking-wider text-muted-foreground font-mono font-bold">TVL</h2>
                           </div>
@@ -622,7 +622,7 @@ export default function LiquidityPage() {
                             </div>
                           </div>
                         </div>
-                        <div className="w-[140px] md:w-[180px] rounded-lg bg-muted/30 border border-sidebar-border/60">
+                        <div className="flex-1 min-w-[100px] max-w-[180px] rounded-lg bg-muted/30 border border-sidebar-border/60">
                           <div className="px-3 md:px-4 h-7 md:h-9 flex items-center">
                             <h2 className="text-[10px] md:text-xs tracking-wider text-muted-foreground font-mono font-bold">VOLUME (24H)</h2>
                           </div>
@@ -632,7 +632,7 @@ export default function LiquidityPage() {
                             </div>
                           </div>
                         </div>
-                        <div className="w-[140px] md:w-[180px] rounded-lg bg-muted/30 border border-sidebar-border/60">
+                        <div className="flex-1 min-w-[100px] max-w-[180px] rounded-lg bg-muted/30 border border-sidebar-border/60">
                           <div className="px-3 md:px-4 h-7 md:h-9 flex items-center">
                             <h2 className="text-[10px] md:text-xs tracking-wider text-muted-foreground font-mono font-bold">FEES (24H)</h2>
                           </div>

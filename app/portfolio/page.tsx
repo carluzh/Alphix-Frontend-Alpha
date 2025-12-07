@@ -13,18 +13,16 @@ import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadCont
 import { baseSepolia, getExplorerTxUrl } from "@/lib/wagmiConfig";
 import { useUserPositions, useAllPrices, useUncollectedFeesBatch } from "@/components/data/hooks";
 import { prefetchService } from "@/lib/prefetch-service";
-import { setIndexingBarrier, invalidateUserPositionIdsCache } from "@/lib/client-cache";
 import { invalidateAfterTx } from "@/lib/invalidation";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { FAUCET_CONTRACT_ADDRESS, faucetContractAbi } from "@/pages/api/misc/faucet";
 import poolsConfig from "@/config/pools.json";
-import { ChevronUpIcon, ChevronDownIcon, ChevronsUpDownIcon, OctagonX, BadgeCheck, ArrowUpRight, ArrowDownRight, X } from "lucide-react";
+import { ChevronUpIcon, ChevronDownIcon, ChevronsUpDownIcon, OctagonX, BadgeCheck, ArrowUpRight, ArrowDownRight, X, Folder, Rows3, Filter as FilterIcon } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { PortfolioTickBar } from "@/components/portfolio/PortfolioTickBar";
 import { ConnectWalletButton } from "@/components/ConnectWalletButton";
-import { getTokenDefinitions, type TokenSymbol, getToken as getTokenCfg } from "@/lib/pools-config";
-import { getOptimalBaseToken } from "@/lib/denomination-utils";
+import { getTokenDefinitions, type TokenSymbol } from "@/lib/pools-config";
 import { formatUnits as viemFormatUnits } from "viem";
 import { useIncreaseLiquidity } from "@/components/liquidity/useIncreaseLiquidity";
 import { useDecreaseLiquidity } from "@/components/liquidity/useDecreaseLiquidity";
@@ -34,8 +32,6 @@ import { batchGetTokenPrices } from '@/lib/price-service';
 import { calculateClientAPY } from '@/lib/client-apy';
 import { cn } from '@/lib/utils';
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Folder, Rows3, Filter as FilterIcon, X as XIcon } from "lucide-react";
-import { Separator } from "@/components/ui/separator";
 import { useNetwork } from "@/lib/network-context";
 
 const AddLiquidityModal = dynamic(
@@ -86,8 +82,6 @@ function useLoadPhases(readiness: Readiness) {
     if (readiness.core || readiness.prices) {
       targetPhase = Math.max(targetPhase, 1) as 0 | 1 | 2 | 3; // at least show layout
     }
-    
-
 
     // Only advance phases, never regress
     if (targetPhase > phases.phase) {
@@ -95,34 +89,22 @@ function useLoadPhases(readiness: Readiness) {
     }
 
     // Control skeleton visibility with staggered timing for smooth transitions
-    // Header skeleton stays until positions are loaded and APRs are available
     const headerReady = targetPhase >= 3;
-    // Table skeleton stays until positions are fully loaded
     const tableReady = targetPhase >= 2;
 
-    if (elapsed >= minShowTime) {
+    if (elapsed >= minShowTime || targetPhase >= 3) {
       setShowSkeletonFor({
         header: !headerReady,
         table: !tableReady,
-        charts: targetPhase < 4,
+        charts: false,
         actions: false,
       });
-    } else if (elapsed >= initialDelay) { // initial delay to avoid flicker
+    } else if (elapsed >= initialDelay) {
       setShowSkeletonFor({
         header: targetPhase < 2,
         table: targetPhase < 2,
-        charts: targetPhase < 4,
-        actions: targetPhase < 2,
-      });
-    }
-    
-    // Always clear all skeletons immediately when phase 4 is reached, regardless of timing
-    if (targetPhase >= 4) {
-      setShowSkeletonFor({
-        header: false,
-        table: false,
         charts: false,
-        actions: false,
+        actions: targetPhase < 2,
       });
     }
   }, [readiness, phases.phase, phases.startedAt]);
@@ -138,12 +120,9 @@ const SkeletonLine = ({ className = "", ...props }: React.HTMLAttributes<HTMLDiv
   <div className={`bg-muted/60 rounded h-4 w-20 ${className}`} {...props} />
 );
 
-// Token pair logo skeleton (single circle, matching bar style)
-const TokenPairLogoSkeleton = ({ size = 28, offset = 16, className = "" }: { size?: number; offset?: number; className?: string }) => {
-  return (
-    <div className={`rounded-full bg-muted/60 ${className}`} style={{ width: `${size}px`, height: `${size}px` }} />
-  );
-};
+const TokenPairLogoSkeleton = ({ size = 28, className = "" }: { size?: number; className?: string }) => (
+  <div className={`rounded-full bg-muted/60 ${className}`} style={{ width: `${size}px`, height: `${size}px` }} />
+);
 
 // New Portfolio Header Skeleton that matches the responsive 3/2/1 card layout
 const PortfolioHeaderSkeleton = ({ viewportWidth = 1440 }: { viewportWidth?: number }) => {
@@ -266,7 +245,7 @@ interface PortfolioData {
   priceChange24hPctMap: Record<string, number>;
 }
 
-import { loadUserPositionIds, derivePositionsFromIds, waitForSubgraphBlock, getCachedPositionTimestamps } from '@/lib/client-cache';
+import { derivePositionsFromIds, waitForSubgraphBlock, getCachedPositionTimestamps } from '@/lib/client-cache';
 
 function formatUSD(num: number) {
   return formatUSDShared(num);
@@ -275,6 +254,277 @@ function formatUSD(num: number) {
 function formatUSDHeader(num: number) {
   return formatUSDHeaderShared(num);
 }
+
+// =============================================================================
+// EXTRACTED COMPONENTS: BalancesPanel, FaucetButton, BalancesList
+// =============================================================================
+
+interface FaucetButtonProps {
+  faucetLastClaimTs: number;
+  faucetLastCalledOnchain: bigint | undefined;
+  isConnected: boolean;
+  currentChainId: number | undefined;
+  walletBalancesLength: number;
+  isLoadingWalletBalances: boolean;
+  isFaucetBusy: boolean;
+  isFaucetConfirming: boolean;
+  accountAddress: `0x${string}` | undefined;
+  setIsFaucetBusy: (busy: boolean) => void;
+  setFaucetHash: (hash: `0x${string}`) => void;
+  writeContract: any;
+  faucetAbi: any;
+  refetchFaucetOnchain?: () => void;
+}
+
+const FaucetButton = ({
+  faucetLastClaimTs,
+  faucetLastCalledOnchain,
+  isConnected,
+  currentChainId,
+  walletBalancesLength,
+  isLoadingWalletBalances,
+  isFaucetBusy,
+  isFaucetConfirming,
+  accountAddress,
+  setIsFaucetBusy,
+  setFaucetHash,
+  writeContract,
+  faucetAbi,
+  refetchFaucetOnchain,
+}: FaucetButtonProps) => {
+  const last = faucetLastClaimTs < 0 ? -1 : Number(faucetLastClaimTs || 0);
+  const now = Math.floor(Date.now() / 1000);
+  const onchainLast = faucetLastCalledOnchain ? Number(faucetLastCalledOnchain) : null;
+  const effectiveLast = onchainLast && onchainLast > 0 ? onchainLast : (last >= 0 ? last : -1);
+  const canClaim = isConnected && currentChainId === baseSepolia.id && effectiveLast >= 0 && (effectiveLast === 0 || now - effectiveLast >= 24 * 60 * 60);
+  const isPortfolioEmpty = walletBalancesLength === 0 && !isLoadingWalletBalances;
+
+  if (isPortfolioEmpty) return null;
+
+  const handleClick = async () => {
+    if (!canClaim) {
+      toast.error('Can only claim once per day', { icon: <OctagonX className="h-4 w-4 text-red-500" /> });
+      return;
+    }
+    try {
+      setIsFaucetBusy(true);
+      const res = await fetch('/api/misc/faucet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userAddress: accountAddress, chainId: baseSepolia.id })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        const msg = (data?.errorDetails || data?.message || '').toLowerCase();
+        if (msg.includes('once per day')) {
+          toast.error('Can only claim once per day', { icon: <OctagonX className="h-4 w-4 text-red-500" /> });
+        } else {
+          toast.error(data?.errorDetails || data?.message || 'API Error', { icon: <OctagonX className="h-4 w-4 text-red-500" /> });
+        }
+        setIsFaucetBusy(false);
+        return;
+      }
+      toast.info('Sending faucet transaction to wallet...');
+      writeContract({
+        address: data.to as `0x${string}`,
+        abi: faucetAbi,
+        functionName: 'faucet',
+        args: [],
+        chainId: data.chainId,
+      }, {
+        onSuccess: (hash: `0x${string}`) => {
+          setFaucetHash(hash);
+          if (refetchFaucetOnchain) {
+            setTimeout(() => { try { refetchFaucetOnchain(); } catch {} }, 1000);
+          }
+        }
+      });
+    } catch (e: any) {
+      toast.error(`Error during faucet action: ${e?.message || 'Unknown error'}`, { icon: <OctagonX className="h-4 w-4 text-red-500" /> });
+      setIsFaucetBusy(false);
+    }
+  };
+
+  const disabled = Boolean(isFaucetBusy || isFaucetConfirming);
+  const className = canClaim
+    ? `px-2 py-1 text-xs rounded-md border border-sidebar-primary bg-button-primary text-sidebar-primary transition-colors ${disabled ? 'opacity-70 cursor-not-allowed' : 'hover-button-primary'}`
+    : `px-2 py-1 text-xs rounded-md border border-sidebar-border bg-button text-muted-foreground transition-colors ${disabled || last < 0 ? 'opacity-70 cursor-not-allowed' : 'hover:bg-muted/60'}`;
+  const style = canClaim ? undefined : { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } as React.CSSProperties;
+
+  return (
+    <button type="button" onClick={handleClick} className={className} style={style} disabled={disabled || last < 0}>
+      {disabled ? 'Processing…' : (last < 0 ? '—' : 'Claim Faucet')}
+    </button>
+  );
+};
+
+interface BalancesListProps {
+  walletBalances: TokenBalance[];
+  isLoadingWalletBalances: boolean;
+  isConnected: boolean;
+  balancesSortDir: 'asc' | 'desc';
+  setBalancesSortDir: (fn: (d: 'asc' | 'desc') => 'asc' | 'desc') => void;
+  renderSortIcon: (state: 'asc' | 'desc' | null) => React.ReactNode;
+  showSkeleton?: boolean;
+  variant?: 'card' | 'inline'; // card has border, inline doesn't when empty
+}
+
+const BalancesList = ({
+  walletBalances,
+  isLoadingWalletBalances,
+  isConnected,
+  balancesSortDir,
+  setBalancesSortDir,
+  renderSortIcon,
+  showSkeleton = false,
+  variant = 'card',
+}: BalancesListProps) => {
+  const isEmpty = walletBalances.length === 0 && !isLoadingWalletBalances;
+  const wrapperClass = variant === 'card'
+    ? `${isEmpty ? "" : "rounded-lg bg-muted/30 border border-sidebar-border/60"} ${isLoadingWalletBalances ? 'animate-pulse' : ''}`
+    : `rounded-lg bg-muted/30 border border-sidebar-border/60 ${showSkeleton ? 'animate-skeleton-pulse' : ''}`;
+
+  if (showSkeleton) {
+    return (
+      <div className={wrapperClass}>
+        <BalancesListSkeleton />
+      </div>
+    );
+  }
+
+  if (!isConnected) {
+    return (
+      <div className="border border-dashed rounded-lg bg-muted/10 p-8 w-full flex items-center justify-center">
+        <div className="w-48">
+          <ConnectWalletButton />
+        </div>
+      </div>
+    );
+  }
+
+  if (isEmpty) {
+    return (
+      <div className="border border-dashed rounded-lg bg-muted/10 p-8 w-full flex items-center justify-center">
+        <div className="text-sm text-white/75">No Balances</div>
+      </div>
+    );
+  }
+
+  const sorted = [...walletBalances].sort((a, b) =>
+    balancesSortDir === 'asc' ? a.usdValue - b.usdValue : b.usdValue - a.usdValue
+  );
+
+  return (
+    <div className={wrapperClass}>
+      <div className={isEmpty ? "hidden" : "flex items-center justify-between pl-6 pr-6 py-3 border-b border-sidebar-border/60 text-xs text-muted-foreground"}>
+        <span className="tracking-wider font-mono font-bold">TOKEN</span>
+        <button type="button" className="group inline-flex items-center" onClick={() => setBalancesSortDir((d) => d === 'desc' ? 'asc' : 'desc')}>
+          <span className="uppercase tracking-wider font-mono font-bold group-hover:text-foreground">VALUE</span>
+          {renderSortIcon(balancesSortDir)}
+        </button>
+      </div>
+      <div className="p-0">
+        {isLoadingWalletBalances ? (
+          <BalancesListSkeleton />
+        ) : (
+          <div className="flex flex-col divide-y divide-sidebar-border/60">
+            {sorted.map((tb) => {
+              const tokenInfo = getToken(tb.symbol) as any;
+              const iconSrc = tokenInfo?.icon || '/placeholder.svg';
+              return (
+                <div key={tb.symbol} className="flex items-center justify-between h-[64px] pl-6 pr-6 group">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="w-6 h-6 rounded-full overflow-hidden bg-background flex-shrink-0">
+                      <Image src={iconSrc} alt={tb.symbol} width={24} height={24} className="w-full h-full object-cover" />
+                    </div>
+                    <div className="flex flex-col min-w-0">
+                      <span className="text-sm font-medium truncate max-w-[140px]">{tb.symbol}</span>
+                    </div>
+                  </div>
+                  <div className="flex flex-col items-end whitespace-nowrap pl-2 gap-1">
+                    <span className="text-sm text-foreground font-medium leading-none">{formatUSD(tb.usdValue)}</span>
+                    <span className="text-xs text-muted-foreground" style={{ marginTop: 2 }}>
+                      {formatNumber(tb.balance, { min: 6, max: 6 })}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+interface BalancesPanelProps {
+  walletBalances: TokenBalance[];
+  isLoadingWalletBalances: boolean;
+  isConnected: boolean;
+  balancesSortDir: 'asc' | 'desc';
+  setBalancesSortDir: (fn: (d: 'asc' | 'desc') => 'asc' | 'desc') => void;
+  renderSortIcon: (state: 'asc' | 'desc' | null) => React.ReactNode;
+  showSkeleton?: boolean;
+  // Faucet props
+  faucetLastClaimTs: number;
+  faucetLastCalledOnchain: bigint | undefined;
+  currentChainId: number | undefined;
+  isFaucetBusy: boolean;
+  isFaucetConfirming: boolean;
+  accountAddress: `0x${string}` | undefined;
+  setIsFaucetBusy: (busy: boolean) => void;
+  setFaucetHash: (hash: `0x${string}`) => void;
+  writeContract: any;
+  faucetAbi: any;
+  refetchFaucetOnchain?: () => void;
+  // Layout
+  width?: string | number;
+}
+
+const BalancesPanel = (props: BalancesPanelProps) => {
+  const { width, showSkeleton, ...rest } = props;
+
+  return (
+    <aside className="lg:flex-none" style={{ width: width || '100%' }}>
+      <div className="mb-2 flex items-center gap-2 justify-between">
+        <button
+          type="button"
+          className="px-2 py-1 text-xs rounded-md border border-sidebar-border bg-button text-foreground brightness-110"
+          style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+        >
+          Balances
+        </button>
+        <FaucetButton
+          faucetLastClaimTs={rest.faucetLastClaimTs}
+          faucetLastCalledOnchain={rest.faucetLastCalledOnchain}
+          isConnected={rest.isConnected}
+          currentChainId={rest.currentChainId}
+          walletBalancesLength={rest.walletBalances.length}
+          isLoadingWalletBalances={rest.isLoadingWalletBalances}
+          isFaucetBusy={rest.isFaucetBusy}
+          isFaucetConfirming={rest.isFaucetConfirming}
+          accountAddress={rest.accountAddress}
+          setIsFaucetBusy={rest.setIsFaucetBusy}
+          setFaucetHash={rest.setFaucetHash}
+          writeContract={rest.writeContract}
+          faucetAbi={rest.faucetAbi}
+          refetchFaucetOnchain={rest.refetchFaucetOnchain}
+        />
+      </div>
+      <BalancesList
+        walletBalances={rest.walletBalances}
+        isLoadingWalletBalances={rest.isLoadingWalletBalances}
+        isConnected={rest.isConnected}
+        balancesSortDir={rest.balancesSortDir}
+        setBalancesSortDir={rest.setBalancesSortDir}
+        renderSortIcon={rest.renderSortIcon}
+        showSkeleton={showSkeleton}
+      />
+    </aside>
+  );
+};
+
+// =============================================================================
 function usePortfolioData(refreshKey: number = 0, userPositionsData?: any[], pricesData?: any): PortfolioData {
   const { address: accountAddress, isConnected, chainId: currentChainId } = useAccount();
   const [portfolioData, setPortfolioData] = useState<PortfolioData>({
@@ -450,7 +700,6 @@ function usePortfolio(refreshKey: number = 0, userPositionsData?: any[], pricesD
   // All other data states
   const [activePositions, setActivePositions] = useState<any[]>([]);
   const [aprByPoolId, setAprByPoolId] = useState<Record<string, string>>({});
-  const [poolDataByPoolId, setPoolDataByPoolId] = useState<Record<string, any>>({});
   // All loading states
   const [isLoadingPositions, setIsLoadingPositions] = useState<boolean>(true);
   const [isLoadingPoolStates, setIsLoadingPoolStates] = useState<boolean>(true);
@@ -530,7 +779,6 @@ function usePortfolio(refreshKey: number = 0, userPositionsData?: any[], pricesD
     portfolioData,
     activePositions,
     aprByPoolId,
-    poolDataByPoolId,
     readiness,
     isLoadingPositions,
     isLoadingPoolStates,
@@ -560,7 +808,6 @@ export default function PortfolioPage() {
     portfolioData,
     activePositions,
     aprByPoolId,
-    poolDataByPoolId,
     isLoadingPositions,
     readiness,
     isLoadingPoolStates,
@@ -581,24 +828,21 @@ export default function PortfolioPage() {
   const [hoveredSegment, setHoveredSegment] = useState<number | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const netApyRef = useRef<HTMLDivElement>(null);
-  const [inlineLeftOffset, setInlineLeftOffset] = useState<number>(0);
-  const [inlineAvailableWidth, setInlineAvailableWidth] = useState<number>(0);
-  const [isCompactVis, setIsCompactVis] = useState<boolean>(false);
-  const [isHiddenVis, setIsHiddenVis] = useState<boolean>(false);
   const [isMobileVisOpen, setIsMobileVisOpen] = useState<boolean>(false);
   const [collapseMaxHeight, setCollapseMaxHeight] = useState<number>(0);
-  const [isVerySmallScreen, setIsVerySmallScreen] = useState<boolean>(false);
   const [isMobileVisReady, setIsMobileVisReady] = useState<boolean>(false);
   const blockVisContainerRef = useRef<HTMLDivElement>(null);
-  const [viewportWidth, setViewportWidth] = useState<number>(typeof window !== 'undefined' ? window.innerWidth : 1440);
-  useLayoutEffect(() => {
+  const [viewportWidth, setViewportWidth] = useState(1440);
+  useEffect(() => {
     const onResize = () => setViewportWidth(window.innerWidth);
-    if (typeof window !== 'undefined') {
-      onResize();
-      window.addEventListener('resize', onResize);
-      return () => window.removeEventListener('resize', onResize);
-    }
+    onResize();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
   }, []);
+
+  // Derive responsive flags from viewportWidth so they update on resize
+  const isHiddenVis = viewportWidth <= 1000;
+  const isVerySmallScreen = viewportWidth < 695;
   const poolConfigBySubgraphId = useMemo(() => {
     try {
       const map = new Map<string, any>();
@@ -612,9 +856,6 @@ export default function PortfolioPage() {
   // SDK tick bounds for full-range detection (match pool detail page)
   const SDK_MIN_TICK = -887272;
   const SDK_MAX_TICK = 887272;
-
-  const determineBaseTokenForPriceDisplay = useCallback((token0: string, token1: string): string =>
-    getOptimalBaseToken(token0, token1), []);
 
   const convertTickToPrice = useCallback((tick: number, currentPoolTick: number | null, currentPrice: string | null, baseTokenForPriceDisplay: string, token0Symbol: string, token1Symbol: string): string => {
     if (tick === SDK_MAX_TICK) return '∞';
@@ -676,29 +917,10 @@ export default function PortfolioPage() {
     return 12; // small gap as window shrinks
   }, []);
 
-  const getBalancesWidthPx = useCallback((vw: number) => {
-    // Clamp balances panel between 320–520px, scale around ~28% of viewport
-    const ideal = Math.round(vw * 0.28);
-    return Math.max(320, Math.min(520, ideal));
-  }, []);
-
-  // Table-responsive flags and column widths
-  const isStackThreshold = viewportWidth <= 1800; // stack amounts & remove dot
-  const isIconOnlyRangeThreshold = viewportWidth <= 1500; // replace range chart with icons
-  const colWidths = useMemo(() => {
-    if (viewportWidth <= 1500) {
-      // user's preferred narrow layout
-      return { pool: 26, amounts: 22, apr: 14, range: 22, value: 10 };
-    }
-    if (viewportWidth <= 1800) {
-      // start stacking amounts at 1800, keep columns similar to narrow to avoid crowding
-      return { pool: 26, amounts: 22, apr: 14, range: 22, value: 10 };
-    }
-    return { pool: 22, amounts: 22, apr: 12, range: 17, value: 27 };
-  }, [viewportWidth]);
-  
-  // NEW: local state for positions
-  const { address: userAddress, isConnected: userIsConnected, chainId: currentChainId } = useAccount();
+  // Aliases for faucet logic (uses accountAddress, isConnected, chainId from above)
+  const userAddress = accountAddress;
+  const userIsConnected = isConnected;
+  const currentChainId = chainId;
   const { writeContract } = useWriteContract();
   const faucetAbi = parseAbi(['function faucet() external']);
   const [faucetHash, setFaucetHash] = useState<`0x${string}` | undefined>(undefined);
@@ -706,7 +928,7 @@ export default function PortfolioPage() {
   // -1 means unknown (prevents showing active state before cache check like sidebar)
   const [faucetLastClaimTs, setFaucetLastClaimTs] = useState<number>(-1);
   const [isFaucetBusy, setIsFaucetBusy] = useState<boolean>(false);
-  const { data: faucetLastCalledOnchain, isLoading: isLoadingFaucetOnchain, refetch: refetchFaucetOnchain } = useReadContract({
+  const { data: faucetLastCalledOnchain, refetch: refetchFaucetOnchain } = useReadContract({
     address: FAUCET_CONTRACT_ADDRESS,
     abi: faucetContractAbi,
     functionName: 'lastCalled',
@@ -771,26 +993,12 @@ export default function PortfolioPage() {
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
   }, [userAddress, faucetLastCalledOnchain]);
-  const allowedPoolIds = useMemo(() => {
-    try {
-      return new Set((poolsConfig?.pools || []).map((p: any) => String(p.subgraphId || "").toLowerCase()));
-    } catch {
-      return new Set<string>();
-    }
-  }, []);
-  const [positionsError, setPositionsError] = useState<string | undefined>(undefined);
 
-
-  
   // NEW: selector state for switching between sections
   const [selectedSection, setSelectedSection] = useState<string>('Active Positions');
   const isMobile = viewportWidth <= 768;
   const isIntegrateBalances = isTestnet && viewportWidth < 1400 && !isMobile;
   const showBalancesPanel = isTestnet;
-  const sectionsList = useMemo(() => {
-    const base = ['Active Positions'];
-    return isIntegrateBalances ? [...base, 'Balances'] : base;
-  }, [isIntegrateBalances]);
   useEffect(() => {
     if (!isIntegrateBalances && selectedSection === 'Balances') {
       setSelectedSection('Active Positions');
@@ -827,16 +1035,10 @@ export default function PortfolioPage() {
   // Extract fees for specific use cases
   const feesForIncrease = getFeesForPosition(positionToModify?.positionId || '');
   const feesForWithdraw = getFeesForPosition(positionToWithdraw?.positionId || '');
-  // Withdraw state variables (kept for future use)
-  const [withdrawAmount0, setWithdrawAmount0] = useState<string>("");
-  const [withdrawAmount1, setWithdrawAmount1] = useState<string>("");
-  const [withdrawPercentage, setWithdrawPercentage] = useState<number>(0);
-  const [isFullWithdraw, setIsFullWithdraw] = useState(false);
   const lastDecreaseWasFullRef = useRef<boolean>(false);
   const lastTxBlockRef = useRef<bigint | null>(null);
   const [walletBalances, setWalletBalances] = useState<Array<{ symbol: string; balance: number; usdValue: number; color: string }>>([]);
   const [isLoadingWalletBalances, setIsLoadingWalletBalances] = useState<boolean>(false);
-
 
   // Helpers
   const formatTokenDisplayAmount = (amount: string) => {
@@ -846,12 +1048,6 @@ export default function PortfolioPage() {
     if (num > 0 && num < 0.000001) return "< 0.000001";
     return num.toFixed(6);
   };
-
-  const getTokenIconSrc = (symbol?: string) => {
-    if (!symbol) return '/placeholder-logo.svg';
-    return getTokenCfg(symbol)?.icon || '/placeholder-logo.svg';
-  };
-
 
   // Enhanced refetching functions (based on pool page logic)
   const refreshSinglePosition = useCallback(async (positionId: string) => {
@@ -1121,20 +1317,6 @@ export default function PortfolioPage() {
     onFeesCollected 
   });
 
-  // Enhanced claimFees with optimistic updates
-  const enhancedClaimFees = useCallback(async (positionId: string) => {
-    pendingActionRef.current = { type: 'collect' };
-
-    // Show optimistic loading state
-    setActivePositions(prev => prev.map(p =>
-      p.positionId === positionId
-        ? { ...p, isOptimisticallyUpdating: true }
-        : p
-    ));
-
-    await claimFees(positionId);
-  }, [claimFees]);
-
   // Clear optimistic loading state when hook finishes (success or error)
   useEffect(() => {
     if (!isDecreasingLiquidity && pendingActionRef.current?.type === 'collect') {
@@ -1142,11 +1324,6 @@ export default function PortfolioPage() {
       pendingActionRef.current = null;
     }
   }, [isDecreasingLiquidity]);
-
-  const isCompoundInProgressRef = useRef(false);
-
-  
-  // Provided by top-level const above
 
   // Token filter state controlled by clicking portfolio composition segments
   const [activeTokenFilter, setActiveTokenFilter] = useState<string | null>(null);
@@ -1197,49 +1374,14 @@ export default function PortfolioPage() {
     }
   }, [activeTokenFilter]);
 
-  // Sorting state for Active Positions
-  const [activeSort, setActiveSort] = useState<{ column: 'amounts' | 'value' | 'apr' | null; direction: 'asc' | 'desc' | null }>({ column: null, direction: null });
   const [hoveredTokenLabel, setHoveredTokenLabel] = useState<string | null>(null);
   const [positionStatusFilter, setPositionStatusFilter] = useState<'all' | 'in-range' | 'out-of-range'>('all');
-  // const [positionSortBy, setPositionSortBy] = useState<'value' | 'fees' | 'apr'>('value');
   const [viewMode, setViewMode] = useState<'folder' | 'list'>('folder');
 
-
-
-
   const [expandedPools, setExpandedPools] = useState<Record<string, boolean>>({});
-  const [openMenuKey, setOpenMenuKey] = useState<string | null>(null);
-  const [positionMenuOpenUp, setPositionMenuOpenUp] = useState(false);
   const [balancesSortDir, setBalancesSortDir] = useState<'asc' | 'desc'>('desc');
-  const [openPositionMenuKey, setOpenPositionMenuKey] = useState<string | null>(null);
   const [selectedPosition, setSelectedPosition] = useState<any | null>(null);
   const [isPositionModalOpen, setIsPositionModalOpen] = useState(false);
-
-  // Close the group-row action menu when clicking anywhere outside it
-  useEffect(() => {
-    if (!openMenuKey) return;
-    const onDocPointerDown = (e: MouseEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (!target) return;
-      // Keep open if the click is on the trigger or inside the menu content
-      if (target.closest('.position-menu-trigger') || target.closest('.position-menu-content')) return;
-      setOpenMenuKey(null);
-    };
-    document.addEventListener('pointerdown', onDocPointerDown);
-    return () => document.removeEventListener('pointerdown', onDocPointerDown);
-  }, [openMenuKey]);
-
-  useEffect(() => {
-    if (!openPositionMenuKey) return;
-    const onDocPointerDown = (e: MouseEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (!target) return;
-      if (target.closest('.position-card-menu-trigger') || target.closest('.position-card-menu-content')) return;
-      setOpenPositionMenuKey(null);
-    };
-    document.addEventListener('pointerdown', onDocPointerDown);
-    return () => document.removeEventListener('pointerdown', onDocPointerDown);
-  }, [openPositionMenuKey]);
 
   // Sync selectedPosition with activePositions when positions change
   useEffect(() => {
@@ -1256,15 +1398,10 @@ export default function PortfolioPage() {
   }, [activePositions, selectedPosition]);
 
   // Wallet balances (for Balances UI only; excluded from global portfolio worth)
-  const [walletPriceMap, setWalletPriceMap] = useState<Record<string, number>>({});
-  const [walletPriceChange24hPctMap, setWalletPriceChange24hPctMap] = useState<Record<string, number>>({});
-
   useEffect(() => {
     const run = async () => {
       if (!isConnected || !accountAddress || !publicClient) {
         setWalletBalances([]);
-        setWalletPriceMap({});
-        setWalletPriceChange24hPctMap({});
         return;
       }
       setIsLoadingWalletBalances(true);
@@ -1309,18 +1446,13 @@ export default function PortfolioPage() {
             if (prices[symbol]) priceMap.set(symbol, prices[symbol]);
           });
 
-          // Note: batchGetTokenPrices uses quote API and does not return 24h change data.
-          // 24h change is not available from on-chain quotes.
         } catch (error) {
           console.warn('Failed to fetch prices from quote API:', error);
         }
-        const priceChangeMap: Record<string, number> = {};
-        // Note: 24h change data is not available from quote API
         symbols.forEach((symbol) => {
           const px = priceData[symbol];
           if (px) priceMap.set(symbol, px);
           else if (symbol.includes('USDC') || symbol.includes('USDT')) priceMap.set(symbol, 1.0);
-          // priceChangeMap remains empty as 24h change is not available
         });
 
         // Construct balances array (filter out zeros), assign colors
@@ -1343,8 +1475,6 @@ export default function PortfolioPage() {
         entries.forEach((e, i) => { e.color = colors[i % colors.length]; });
 
         setWalletBalances(entries);
-        setWalletPriceMap(Object.fromEntries(priceMap.entries()));
-        setWalletPriceChange24hPctMap(priceChangeMap);
       } finally {
         setIsLoadingWalletBalances(false);
       }
@@ -1370,18 +1500,8 @@ export default function PortfolioPage() {
       window.removeEventListener('walletBalancesRefresh', onRefresh as EventListener);
       window.removeEventListener('storage', onStorage);
     };
-  }, [isConnected, accountAddress, publicClient, networkMode, currentChainId && false]);
+  }, [isConnected, accountAddress, publicClient, networkMode]);
 
-  const navigateToPoolBySubgraphId = useCallback((poolSubgraphId?: string) => {
-    if (!poolSubgraphId) return;
-    try {
-      const pools = getAllPools();
-      const match = pools.find(p => String(p.subgraphId || '').toLowerCase() === String(poolSubgraphId).toLowerCase());
-      const routeId = match?.id;
-      if (routeId) router.push(`/liquidity/${routeId}`);
-    } catch {}
-  }, [router]);
-  
   // Auto-expand pools with <= 2 positions by default
   useEffect(() => {
     // Count positions per pool
@@ -1401,14 +1521,6 @@ export default function PortfolioPage() {
       return newExpanded;
     });
   }, [activePositions]);
-
-  const handleActiveSortCycle = (columnId: 'amounts' | 'value' | 'apr') => {
-    setActiveSort((prev) => {
-      if (prev.column !== columnId) return { column: columnId, direction: 'asc' };
-      if (prev.direction === 'asc') return { column: columnId, direction: 'desc' };
-      return { column: null, direction: null };
-    });
-  };
 
   const renderSortIcon = (state: 'asc' | 'desc' | null) => {
     if (state === 'asc') return <ChevronUpIcon className="ml-1 h-4 w-4 text-muted-foreground group-hover:text-foreground" />;
@@ -1472,8 +1584,6 @@ export default function PortfolioPage() {
     return [...positions].sort((a, b) => getValueKey(b) - getValueKey(a));
   }, [filteredPositions, positionStatusFilter, portfolioData.priceMap]);
 
-
-
   const getUsdPriceForSymbol = useCallback((symbolRaw?: string): number => {
     if (!symbolRaw) return 0;
     // Match FeesCell's price lookup logic including stable coin fallback
@@ -1483,13 +1593,9 @@ export default function PortfolioPage() {
     return price || (stable(symbolU) ? 1 : 0);
   }, [portfolioData.priceMap]);
 
-
-
-
   const togglePoolExpanded = (poolId: string) => {
     setExpandedPools(prev => ({ ...prev, [poolId]: !prev[poolId] }));
   };
-
 
   // Enhanced menu actions with pending action tracking
   const openAddLiquidity = useCallback((pos: any, onModalClose?: () => void) => {
@@ -1508,39 +1614,8 @@ export default function PortfolioPage() {
     if (onModalClose) onModalClose();
   }, []);
 
-  // Debounce helper
-  const debounce = (func: Function, waitFor: number) => {
-    let timeout: ReturnType<typeof setTimeout>;
-    return (...args: any[]) => {
-      clearTimeout(timeout);
-      timeout = setTimeout(() => func(...args), waitFor);
-    };
-  };
-
-  const formatAgeShort = (seconds: number | undefined) => {
-    if (!seconds || !isFinite(seconds)) return '';
-    const d = Math.floor(seconds / 86400);
-    if (d >= 1) return `${d}d`;
-    const h = Math.floor(seconds / 3600);
-    if (h >= 1) return `${h}h`;
-    const m = Math.floor(seconds / 60);
-    return `${m}m`;
-  };
-
-  // Set initial responsive states before paint to avoid layout flicker
-  useLayoutEffect(() => {
-    const setInitialStates = () => {
-      const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
-      setIsCompactVis(viewportWidth <= 1000);
-      setIsHiddenVis(viewportWidth <= 1000);
-      setIsVerySmallScreen(viewportWidth < 695);
-    };
-    
-    setInitialStates();
-  }, []);
-
-  // Wide composition - always group into Rest if there are more than 4 assets overall (even if some are <1%)
-  const wideComposition = useMemo(() => {
+  // Portfolio composition - group into Rest if there are more than 4 assets
+  const composition = useMemo(() => {
     const total = portfolioData.totalValue;
     const allItems = portfolioData.tokenBalances
       .map(token => ({
@@ -1556,88 +1631,15 @@ export default function PortfolioPage() {
       const restPct = rest.reduce((sum, item) => sum + item.pct, 0);
       return [
         ...topThree,
-        {
-          label: 'Rest',
-          pct: restPct,
-          color: 'hsl(0 0% 70%)',
-          restTokens: rest,
-        } as any,
+        { label: 'Rest', pct: restPct, color: 'hsl(0 0% 70%)', restTokens: rest } as any,
       ];
     }
-    // If 4 or fewer, show them; keep tiny ones but they may have hidden names
     if (allItems.length === 0) {
       return [{ label: 'All', pct: 100, color: 'hsl(0 0% 30%)' }];
     }
     return allItems;
   }, [portfolioData.tokenBalances, portfolioData.totalValue]);
-  // Compact composition - aggregate items beyond first 3 into Rest if more than 4 total (same counting as wide)
-  const compactComposition = useMemo(() => {
-    const total = portfolioData.totalValue;
-    const tokenItems = portfolioData.tokenBalances
-      .map(token => ({
-        label: token.symbol,
-        pct: total > 0 ? (token.usdValue / total) * 100 : 0,
-        color: token.color,
-      }))
-      .sort((a, b) => b.pct - a.pct); // Sort by percentage descending
-
-    // If more than 4 items, aggregate items beyond first 3 into Rest
-    if (tokenItems.length > 4) {
-      const topThree = tokenItems.slice(0, 3);
-      const rest = tokenItems.slice(3);
-      const restPct = rest.reduce((sum, item) => sum + item.pct, 0);
-      
-      return [
-        ...topThree,
-        {
-          label: 'Rest',
-          pct: restPct,
-          color: 'hsl(0 0% 70%)', // Distinct lighter color for rest, brighter than first segment (30%)
-          restTokens: rest, // Store the aggregated tokens for later use
-        }
-      ];
-    }
-    
-    if (tokenItems.length === 0) {
-      return [{ label: 'All', pct: 100, color: 'hsl(0 0% 30%)' }];
-    }
-    return tokenItems;
-  }, [portfolioData.tokenBalances, portfolioData.totalValue]);
-
-  // Use appropriate composition based on view
-  const composition = isCompactVis ? compactComposition : wideComposition;
   const isPlaceholderComposition = composition.length === 1 && composition[0]?.label === 'All' && Math.round((composition[0]?.pct || 0)) === 100;
-  // Decide placement purely by measured available inline width
-  useLayoutEffect(() => {
-    const updateLayoutAndOffset = () => {
-      if (!containerRef.current || !netApyRef.current) return;
-      const containerRect = containerRef.current.getBoundingClientRect();
-      const netApyRect = netApyRef.current.getBoundingClientRect();
-      // Compute left offset so inline visualization starts closer to NET APY at smaller viewports
-      const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
-      setIsCompactVis(viewportWidth <= 1000);
-      setIsHiddenVis(viewportWidth <= 1000);
-      setIsVerySmallScreen(viewportWidth < 695);
-      // Aggressively shrink the LEFT margin at/below 1500px
-      const desiredGapPx = viewportWidth <= 1500 ? -18 : 18;
-      // Use padding-left to shift start while letting the bar fill the remaining width
-      const leftOffset = Math.max(0, netApyRect.right - containerRect.left + desiredGapPx);
-      setInlineLeftOffset(leftOffset);
-      const available = Math.max(0, Math.round(containerRect.width - leftOffset));
-      setInlineAvailableWidth(available);
-    };
-    
-    // Run immediately and after a short delay to ensure DOM is ready
-    updateLayoutAndOffset();
-    const timeoutId = setTimeout(updateLayoutAndOffset, 50);
-    
-    window.addEventListener('resize', updateLayoutAndOffset);
-    return () => {
-      clearTimeout(timeoutId);
-      window.removeEventListener('resize', updateLayoutAndOffset);
-    };
-  }, []);
-
   // Keep collapse height in sync when opened and when layout/data change
   useLayoutEffect(() => {
     if (!isHiddenVis) {
@@ -1710,71 +1712,6 @@ export default function PortfolioPage() {
     return null;
   })();
 
-  // Sorted active positions with hover preview support
-  const sortedActivePositions = useMemo(() => {
-    const base = filteredPositions;
-    // Hover preview: if no committed sort, preview token-priority based on hovered segment
-    const effectiveSort = ((typeof activeTokenFilter === 'string' && activeTokenFilter) || (currentFilter && currentFilter !== 'Rest'))
-      ? { column: 'token' as const, direction: 'desc' as const }
-      : (activeSort.column && activeSort.direction ? activeSort : { column: null, direction: null });
-    if (!effectiveSort.column || !effectiveSort.direction) return base;
-
-    const getAmountsKey = (p: any) => {
-      const amt0 = Number.parseFloat(p?.token0?.amount || '0');
-      const amt1 = Number.parseFloat(p?.token1?.amount || '0');
-      return (isFinite(amt0) ? amt0 : 0) + (isFinite(amt1) ? amt1 : 0);
-    };
-    const getValueKey = (p: any) => {
-      const sym0 = p?.token0?.symbol as string | undefined;
-      const sym1 = p?.token1?.symbol as string | undefined;
-      const amt0 = Number.parseFloat(p?.token0?.amount || '0');
-      const amt1 = Number.parseFloat(p?.token1?.amount || '0');
-      const px0 = (sym0 && portfolioData.priceMap[sym0]) || 0;
-      const px1 = (sym1 && portfolioData.priceMap[sym1]) || 0;
-      return (isFinite(amt0) ? amt0 : 0) * px0 + (isFinite(amt1) ? amt1 : 0) * px1;
-    };
-    const getAprKey = (p: any) => {
-      const aprStr = aprByPoolId[String(p?.poolId || '').toLowerCase()] || '';
-      const num = typeof aprStr === 'string' && aprStr.endsWith('%') ? parseFloat(aprStr.replace('%', '')) : 0;
-      return isFinite(num) ? num : 0;
-    };
-    // Token-hover preview: strictly filter to hovered token, otherwise use committed filter normal flow
-    if (currentFilter && currentFilter !== 'Rest') {
-      const token = String(currentFilter).toUpperCase();
-      const onlyHovered = base.filter((p) => (
-        p?.token0?.symbol?.toUpperCase?.() === token || p?.token1?.symbol?.toUpperCase?.() === token
-      ));
-      return onlyHovered.sort((a, b) => getValueKey(b) - getValueKey(a));
-    }
-    // Handle Rest segment: show only positions with tokens NOT in top 3
-    if (currentFilter === 'Rest') {
-      const total = portfolioData.totalValue;
-      const topThreeTokens = portfolioData.tokenBalances
-        .map(tb => ({
-          symbol: tb.symbol,
-          pct: total > 0 ? (tb.usdValue / total) * 100 : 0,
-        }))
-        .sort((a, b) => b.pct - a.pct)
-        .slice(0, 3)
-        .map(item => item.symbol.toUpperCase());
-
-      const restPositions = base.filter(p => {
-        const sym0 = p?.token0?.symbol?.toUpperCase();
-        const sym1 = p?.token1?.symbol?.toUpperCase();
-        return (sym0 && !topThreeTokens.includes(sym0)) || (sym1 && !topThreeTokens.includes(sym1));
-      });
-      return restPositions.sort((a, b) => getValueKey(b) - getValueKey(a));
-    }
-    const keyFn = effectiveSort.column === 'amounts' ? getAmountsKey : effectiveSort.column === 'value' ? getValueKey : getAprKey;
-    const sign = effectiveSort.direction === 'asc' ? 1 : -1;
-    return [...base].sort((a, b) => {
-      const ka = keyFn(a);
-      const kb = keyFn(b);
-      if (ka === kb) return 0;
-      return ka < kb ? -1 * sign : 1 * sign;
-    });
-  }, [filteredPositions, activeSort, activeTokenFilter, currentFilter, portfolioData.priceMap, aprByPoolId]);
-
   // Group positions by pool with sorting support
   const groupedByPool = useMemo(() => {
     const positionsToUse = statusAndSortFilteredPositions;
@@ -1804,7 +1741,7 @@ export default function PortfolioPage() {
     // Sort groups by total value desc by default; if previewing sort (hover) or explicit sort exists, honor it
     const effectiveSort = ((typeof activeTokenFilter === 'string' && activeTokenFilter) || (currentFilter && currentFilter !== 'Rest'))
       ? { column: 'token' as const, direction: 'desc' as const }
-      : (activeSort.column && activeSort.direction ? activeSort : { column: null, direction: null });
+      : { column: null, direction: null };
 
     // Handle Rest segment: filter to show only groups with tokens NOT in top 3
     if (currentFilter === 'Rest') {
@@ -1845,14 +1782,10 @@ export default function PortfolioPage() {
         return groups.filter((g) => g.items.some((p) => p?.token0?.symbol?.toUpperCase?.() === token || p?.token1?.symbol?.toUpperCase?.() === token));
       }
     }
-    if (effectiveSort.column === 'value' && effectiveSort.direction) {
-      const sign = effectiveSort.direction === 'asc' ? 1 : -1;
-      groups.sort((a, b) => (a.totalUSD - b.totalUSD) * sign);
-    } else {
-      groups.sort((a, b) => b.totalUSD - a.totalUSD);
-    }
+    // Default: sort groups by total value descending
+    groups.sort((a, b) => b.totalUSD - a.totalUSD);
     return groups;
-  }, [statusAndSortFilteredPositions, viewMode, portfolioData.priceMap, activeSort, activeTokenFilter, currentFilter]);
+  }, [statusAndSortFilteredPositions, viewMode, portfolioData.priceMap, activeTokenFilter, currentFilter]);
 
   const hasFolders = useMemo(() => {
     const map = new Map<string, number>();
@@ -2059,7 +1992,7 @@ export default function PortfolioPage() {
   if (showSkeletonFor.header || showSkeletonFor.table) {
     return (
       <AppLayout>
-        <div className="flex flex-1 flex-col p-3 sm:p-6 sm:px-10">
+        <div className="flex flex-1 flex-col p-3 sm:p-6 overflow-x-hidden">
           <PortfolioHeaderSkeleton viewportWidth={viewportWidth} />
 
           <div className="mt-6">
@@ -2069,7 +2002,7 @@ export default function PortfolioPage() {
                   {[...Array(3)].map((_, idx) => (
                     <div key={idx} className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-3">
                       <div className="flex items-center gap-3 min-w-0">
-                        <TokenPairLogoSkeleton size={24} offset={14} />
+                        <TokenPairLogoSkeleton size={24} />
                         <div className="flex-1 space-y-2 min-w-0">
                           <SkeletonLine className="h-4 w-24 sm:w-32" />
                           <SkeletonLine className="h-3 w-32 sm:w-40" />
@@ -2095,7 +2028,7 @@ export default function PortfolioPage() {
   return (
     <PortfolioFilterContext.Provider value={{ activeTokenFilter, setActiveTokenFilter, isStickyHover, setIsStickyHover, hoverTokenLabel: effectiveTokenLabel }}>
       <AppLayout>
-      <div className="flex flex-1 flex-col p-3 sm:p-6 sm:px-10">
+      <div className="flex flex-1 flex-col p-3 sm:p-6 overflow-x-hidden">
         {/* Portfolio header with skeleton gate */}
         {showSkeletonFor.header ? (
           <PortfolioHeaderSkeleton viewportWidth={viewportWidth} />
@@ -2104,11 +2037,13 @@ export default function PortfolioPage() {
             {viewportWidth > 1000 ? (
             <div
               ref={containerRef}
-                className={`grid items-start relative`}
+              className="grid items-start relative w-full"
               style={{
-                  gridTemplateColumns: viewportWidth > 1400
-                    ? "minmax(240px, max-content) minmax(240px, max-content) 1fr"
-                    : "minmax(240px, max-content) 1fr",
+                gridTemplateColumns: viewportWidth > 1800
+                  ? "280px 280px 1fr"
+                  : viewportWidth > 1400
+                    ? "minmax(200px, 1fr) minmax(200px, 1fr) 2fr"
+                    : "minmax(200px, 1fr) 2fr",
                 gridTemplateRows: "auto auto",
                 columnGap: "1rem",
               }}
@@ -2360,142 +2295,27 @@ export default function PortfolioPage() {
         <div className="mt-6 flex flex-col lg:flex-row" style={{ gap: `${getColumnGapPx(viewportWidth)}px` }}>
           {/* Mobile: Show Balances first (only on testnet) */}
           {showBalancesPanel && isMobile && !isIntegrateBalances && (
-            <aside className="lg:flex-none" style={{ width: viewportWidth >= 1024 ? '450px' : '100%' }}>
-              <div className="mb-2 flex items-center gap-2 justify-between">
-                <button
-                  type="button"
-                  className="px-2 py-1 text-xs rounded-md border border-sidebar-border bg-button text-foreground brightness-110"
-                  style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
-                >
-                  Balances
-                </button>
-                {/* Claim Faucet button aligned to the right, styled like selector (hidden when no balances) */}
-                {(() => {
-                  // Use synced cached last claim ts to mirror sidebar behavior
-                  // -1 (unknown) should render a neutral disabled state (no active claim button)
-                  const last = faucetLastClaimTs < 0 ? -1 : Number(faucetLastClaimTs || 0);
-                  const now = Math.floor(Date.now() / 1000);
-                  // If we have onchain timestamp, prefer it for gating
-                  const onchainLast = faucetLastCalledOnchain ? Number(faucetLastCalledOnchain) : null;
-                  const effectiveLast = onchainLast && onchainLast > 0 ? onchainLast : (last >= 0 ? last : -1);
-                  const canClaim = isConnected && currentChainId === baseSepolia.id && effectiveLast >= 0 && (effectiveLast === 0 || now - effectiveLast >= 24 * 60 * 60);
-                  const isPortfolioEmpty = (walletBalances.length || 0) === 0 && !isLoadingWalletBalances;
-                  if (isPortfolioEmpty) return null;
-                  const handleClick = async () => {
-                    if (!canClaim) {
-                      toast.error('Can only claim once per day', { icon: <OctagonX className="h-4 w-4 text-red-500" /> });
-                      return;
-                    }
-                    try {
-                      setIsFaucetBusy(true);
-                      const res = await fetch('/api/misc/faucet', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userAddress: accountAddress, chainId: baseSepolia.id }) });
-                      const data = await res.json();
-                      if (!res.ok) {
-                        const msg = (data?.errorDetails || data?.message || '').toLowerCase();
-                        if (msg.includes('once per day')) {
-                          toast.error('Can only claim once per day', { icon: <OctagonX className="h-4 w-4 text-red-500" /> });
-                        } else {
-                          toast.error(data?.errorDetails || data?.message || 'API Error', { icon: <OctagonX className="h-4 w-4 text-red-500" /> });
-                        }
-                        setIsFaucetBusy(false);
-                        return;
-                      }
-                      toast.info('Sending faucet transaction to wallet...');
-                      // Prompt wallet just like sidebar
-                      writeContract({
-                        address: data.to as `0x${string}`,
-                        abi: faucetAbi,
-                        functionName: 'faucet',
-                        args: [],
-                      });
-                    } catch (err: any) {
-                      console.error('[Portfolio] Faucet error:', err);
-                      toast.error(err?.message || 'Transaction failed', { icon: <OctagonX className="h-4 w-4 text-red-500" /> });
-                      setIsFaucetBusy(false);
-                    }
-                  };
-                  // Disable only when processing/confirming, like sidebar
-                  const disabled = Boolean(isFaucetBusy || isFaucetConfirming);
-                  const className = canClaim
-                    ? `px-2 py-1 text-xs rounded-md border border-sidebar-primary bg-button-primary text-sidebar-primary transition-colors ${disabled ? 'opacity-70 cursor-not-allowed' : 'hover-button-primary'}`
-                    : `px-2 py-1 text-xs rounded-md border border-sidebar-border bg-button text-muted-foreground transition-colors ${disabled || last < 0 ? 'opacity-70 cursor-not-allowed' : 'hover:bg-muted/60'}`;
-                  const style = canClaim ? undefined : { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } as React.CSSProperties;
-                  return (
-                    <button type="button" onClick={handleClick} className={className} style={style} disabled={disabled || last < 0}>
-                      {disabled ? 'Processing…' : (last < 0 ? '—' : 'Claim Faucet')}
-                    </button>
-                  );
-                })()}
-              </div>
-              <div className={`rounded-lg bg-muted/30 border border-sidebar-border/60 ${showSkeletonFor.table ? 'animate-skeleton-pulse' : ''}`}>
-                {showSkeletonFor.table ? (
-                  <BalancesListSkeleton />
-                ) : (!isConnected) ? (
-                  <div className="border border-dashed rounded-lg bg-muted/10 p-8 w-full flex items-center justify-center">
-                    <div className="w-48">
-                      <ConnectWalletButton />
-                    </div>
-                  </div>
-                ) : (walletBalances.length === 0 && !isLoadingWalletBalances) ? (
-                  <div className="border border-dashed rounded-lg bg-muted/10 p-8 w-full flex items-center justify-center">
-                    <div className="text-sm text-white/75">No Balances</div>
-                  </div>
-                ) : (
-                  <div className="overflow-hidden">
-                    <div className="flex items-center justify-between pl-6 pr-6 py-3 border-b border-sidebar-border/60 text-xs text-muted-foreground">
-                      <span className="tracking-wider font-mono font-bold">TOKEN</span>
-                      <button type="button" className="group inline-flex items-center" onClick={() => setBalancesSortDir((d) => d === 'desc' ? 'asc' : 'desc')}>
-                        <span className="uppercase tracking-wider font-mono font-bold group-hover:text-foreground">VALUE</span>
-                        {renderSortIcon(balancesSortDir)}
-                      </button>
-                    </div>
-                    <div className="p-0">
-                  <div className="flex flex-col divide-y divide-sidebar-border/60">
-                    {(() => {
-                      const sorted = [...walletBalances].sort((a, b) => balancesSortDir === 'asc' ? a.usdValue - b.usdValue : b.usdValue - a.usdValue);
-                      return sorted;
-                    })().map((tb) => {
-                      const tokenInfo = getToken(tb.symbol) as any;
-                      const iconSrc = tokenInfo?.icon || '/placeholder.svg';
-                      const ch = walletPriceChange24hPctMap?.[tb.symbol] ?? 0;
-                      const deltaUsd = (() => {
-                        const c = tb.usdValue || 0;
-                        const denom = 1 + (isFinite(ch) ? ch : 0) / 100;
-                        if (denom === 0) return 0;
-                        return c - c / denom;
-                      })();
-                      const isUp = deltaUsd >= 0;
-                      const amountDisplayDecimals = 6;
-                      return (
-                        <div key={tb.symbol} className="flex items-center justify-between h-[64px] pl-6 pr-6 group">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <div className="w-6 h-6 rounded-full overflow-hidden bg-background flex-shrink-0">
-                              <Image src={iconSrc} alt={tb.symbol} width={24} height={24} className="w-full h-full object-cover" />
-                            </div>
-                            <div className="flex flex-col min-w-0">
-                              <div className="flex items-center gap-2">
-                                <span className="text-sm font-medium truncate max-w-[140px]">{tb.symbol}</span>
-                              </div>
-                            </div>
-                          </div>
-                          <div className="flex flex-col items-end whitespace-nowrap pl-2 gap-1">
-                            {/* Top line: current USD (always visible) */}
-                            <span className="text-sm text-foreground font-medium leading-none">{formatUSD(tb.usdValue)}</span>
-                            <div className="flex items-center gap-2 leading-none" style={{ marginTop: 2 }}>
-                              <span className="text-xs text-muted-foreground">
-                                {formatNumber(tb.balance, { min: amountDisplayDecimals, max: amountDisplayDecimals })}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </aside>
+            <BalancesPanel
+              width={viewportWidth >= 1024 ? '450px' : '100%'}
+              walletBalances={walletBalances}
+              isLoadingWalletBalances={isLoadingWalletBalances}
+              isConnected={isConnected}
+              balancesSortDir={balancesSortDir}
+              setBalancesSortDir={setBalancesSortDir}
+              renderSortIcon={renderSortIcon}
+              showSkeleton={showSkeletonFor.table}
+              faucetLastClaimTs={faucetLastClaimTs}
+              faucetLastCalledOnchain={faucetLastCalledOnchain}
+              currentChainId={currentChainId}
+              isFaucetBusy={isFaucetBusy}
+              isFaucetConfirming={isFaucetConfirming}
+              accountAddress={accountAddress}
+              setIsFaucetBusy={setIsFaucetBusy}
+              setFaucetHash={setFaucetHash}
+              writeContract={writeContract}
+              faucetAbi={faucetAbi}
+              refetchFaucetOnchain={refetchFaucetOnchain}
+            />
           )}
 
           <div className="flex-1 min-w-0">
@@ -2772,8 +2592,8 @@ export default function PortfolioPage() {
                                         getUsdPriceForSymbol={getUsdPriceForSymbol}
                                         convertTickToPrice={convertTickToPrice}
                                         poolContext={{
-                                          currentPrice: poolDataByPoolId[poolKey]?.price ? String(poolDataByPoolId[poolKey].price) : null,
-                                          currentPoolTick: typeof poolDataByPoolId[poolKey]?.tick === 'number' ? poolDataByPoolId[poolKey].tick : null,
+                                          currentPrice: null,
+                                          currentPoolTick: null,
                                           poolAPY: (() => {
                                             const aprStr = aprByPoolId[poolKey];
                                             if (!aprStr || aprStr === 'N/A' || aprStr === 'Loading...') return 0;
@@ -2811,208 +2631,42 @@ export default function PortfolioPage() {
 
               {/* Balances as a tab when integrated (desktop/tablet only) */}
               {isIntegrateBalances && selectedSection === 'Balances' && (
-                <div>
-                  <div className={`${isIntegrateBalances && selectedSection === 'Balances' && (walletBalances.length || 0) === 0 && !isLoadingWalletBalances ? "" : "rounded-lg bg-muted/30 border border-sidebar-border/60"} ${isLoadingWalletBalances ? 'animate-pulse' : ''}`}>
-                    <div className={(walletBalances.length || 0) === 0 && !isLoadingWalletBalances ? "hidden" : "flex items-center justify-between pl-6 pr-6 py-3 border-b border-sidebar-border/60 text-xs text-muted-foreground"}>
-                      <span className="tracking-wider font-mono font-bold">TOKEN</span>
-                      <button type="button" className="group inline-flex items-center" onClick={() => setBalancesSortDir((d) => d === 'desc' ? 'asc' : 'desc')}>
-                        <span className="uppercase tracking-wider font-mono font-bold group-hover:text-foreground">VALUE</span>
-                        {renderSortIcon(balancesSortDir)}
-                      </button>
-                    </div>
-                    <div className="p-0">
-                      {isLoadingWalletBalances ? (
-                        <BalancesListSkeleton />
-                      ) : (walletBalances.length || 0) === 0 ? (
-                        <div className="border border-dashed rounded-lg bg-muted/10 p-8 w-full flex items-center justify-center">
-                          <div className="text-sm text-white/75">{!isConnected ? 'No Wallet Connected' : 'No Balances'}</div>
-                        </div>
-                      ) : (
-                        <div className="flex flex-col divide-y divide-sidebar-border/60">
-                          {(() => {
-                            const sorted = [...walletBalances].sort((a, b) => balancesSortDir === 'asc' ? a.usdValue - b.usdValue : b.usdValue - a.usdValue);
-                            return sorted;
-                          })().map((tb) => {
-                            const tokenInfo = getToken(tb.symbol) as any;
-                            const iconSrc = tokenInfo?.icon || '/placeholder.svg';
-                            const ch = walletPriceChange24hPctMap?.[tb.symbol] ?? 0;
-                            const deltaUsd = (() => {
-                              const c = tb.usdValue || 0;
-                              const denom = 1 + (isFinite(ch) ? ch : 0) / 100;
-                              if (denom === 0) return 0;
-                              return c - c / denom;
-                            })();
-                            const isUp = deltaUsd >= 0;
-                            const amountDisplayDecimals = 6;
-                            return (
-                              <div key={tb.symbol} className="flex items-center justify-between h-[64px] pl-6 pr-6 group">
-                                <div className="flex items-center gap-2 min-w-0">
-                                  <div className="w-6 h-6 rounded-full overflow-hidden bg-background flex-shrink-0">
-                                    <Image src={iconSrc} alt={tb.symbol} width={24} height={24} className="w-full h-full object-cover" />
-                                  </div>
-                                  <div className="flex flex-col min-w-0">
-                                    <div className="flex items-center gap-2">
-                                      <span className="text-sm font-medium truncate max-w-[140px]">{tb.symbol}</span>
-                                    </div>
-                                  </div>
-                                </div>
-                                <div className="flex flex-col items-end whitespace-nowrap pl-2 gap-1">
-                                  <span className="text-sm text-foreground font-medium leading-none">{formatUSD(tb.usdValue)}</span>
-                                  <div className="flex items-center gap-2 leading-none" style={{ marginTop: 2 }}>
-                                    <span className="text-xs text-muted-foreground">
-                                      {formatNumber(tb.balance, { min: amountDisplayDecimals, max: amountDisplayDecimals })}
-                                    </span>
-                                  </div>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
+                <BalancesList
+                  walletBalances={walletBalances}
+                  isLoadingWalletBalances={isLoadingWalletBalances}
+                  isConnected={isConnected}
+                  balancesSortDir={balancesSortDir}
+                  setBalancesSortDir={setBalancesSortDir}
+                  renderSortIcon={renderSortIcon}
+                  variant="card"
+                />
               )}
 
             </div>
           </div>
           </div>
           {/* Right-side: Balances (desktop only, testnet only) */}
-           {showBalancesPanel && !isIntegrateBalances && !isMobile && (
-             <aside className="lg:flex-none" style={{ width: viewportWidth >= 1024 ? '450px' : '100%' }}>
-            <div className="mb-2 flex items-center gap-2 justify-between">
-              <button
-                type="button"
-                className="px-2 py-1 text-xs rounded-md border border-sidebar-border bg-button text-foreground brightness-110"
-                style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
-              >
-                Balances
-              </button>
-              {/* Claim Faucet button aligned to the right, styled like selector (hidden when no balances) */}
-              {(() => {
-                // Use synced cached last claim ts to mirror sidebar behavior
-                // -1 (unknown) should render a neutral disabled state (no active claim button)
-                const last = faucetLastClaimTs < 0 ? -1 : Number(faucetLastClaimTs || 0);
-                const now = Math.floor(Date.now() / 1000);
-                // If we have onchain timestamp, prefer it for gating
-                const onchainLast = faucetLastCalledOnchain ? Number(faucetLastCalledOnchain) : null;
-                const effectiveLast = onchainLast && onchainLast > 0 ? onchainLast : (last >= 0 ? last : -1);
-                const canClaim = isConnected && currentChainId === baseSepolia.id && effectiveLast >= 0 && (effectiveLast === 0 || now - effectiveLast >= 24 * 60 * 60);
-                const isPortfolioEmpty = (walletBalances.length || 0) === 0 && !isLoadingWalletBalances;
-                if (isPortfolioEmpty) return null;
-                const handleClick = async () => {
-                  if (!canClaim) {
-                    toast.error('Can only claim once per day', { icon: <OctagonX className="h-4 w-4 text-red-500" /> });
-                    return;
-                  }
-                  try {
-                    setIsFaucetBusy(true);
-                    const res = await fetch('/api/misc/faucet', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userAddress: accountAddress, chainId: baseSepolia.id }) });
-                    const data = await res.json();
-                    if (!res.ok) {
-                      const msg = (data?.errorDetails || data?.message || '').toLowerCase();
-                      if (msg.includes('once per day')) {
-                        toast.error('Can only claim once per day', { icon: <OctagonX className="h-4 w-4 text-red-500" /> });
-                      } else {
-                        toast.error(data?.errorDetails || data?.message || 'API Error', { icon: <OctagonX className="h-4 w-4 text-red-500" /> });
-                      }
-                      setIsFaucetBusy(false);
-                      return;
-                    }
-                    toast.info('Sending faucet transaction to wallet...');
-                    // Prompt wallet just like sidebar
-                    writeContract({
-                      address: data.to as `0x${string}`,
-                      abi: faucetAbi,
-                      functionName: 'faucet',
-                      args: [],
-                      chainId: data.chainId,
-                    }, {
-                      onSuccess: (hash) => {
-                        setFaucetHash(hash);
-                        // Refresh onchain timestamp after sending
-                        setTimeout(() => { try { refetchFaucetOnchain?.(); } catch {} }, 1000);
-                      }
-                    } as any);
-                  } catch (e: any) {
-                    toast.error(`Error during faucet action: ${e?.message || 'Unknown error'}`, { icon: <OctagonX className="h-4 w-4 text-red-500" /> });
-                    setIsFaucetBusy(false);
-                  }
-                };
-                // Disable only when processing/confirming, like sidebar
-                const disabled = Boolean(isFaucetBusy || isFaucetConfirming);
-                const className = canClaim
-                  ? `px-2 py-1 text-xs rounded-md border border-sidebar-primary bg-button-primary text-sidebar-primary transition-colors ${disabled ? 'opacity-70 cursor-not-allowed' : 'hover-button-primary'}`
-                  : `px-2 py-1 text-xs rounded-md border border-sidebar-border bg-button text-muted-foreground transition-colors ${disabled || last < 0 ? 'opacity-70 cursor-not-allowed' : 'hover:bg-muted/60'}`;
-                const style = canClaim ? undefined : { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } as React.CSSProperties;
-                return (
-                  <button type="button" onClick={handleClick} className={className} style={style} disabled={disabled || last < 0}>
-                    {disabled ? 'Processing…' : (last < 0 ? '—' : 'Claim Faucet')}
-                  </button>
-                );
-              })()}
-            </div>
-            <div className={`${(walletBalances.length || 0) === 0 && !isLoadingWalletBalances ? "" : "rounded-lg bg-muted/30 border border-sidebar-border/60"} ${isLoadingWalletBalances ? 'animate-pulse' : ''}`}>
-              <div className={(walletBalances.length || 0) === 0 && !isLoadingWalletBalances ? "hidden" : "flex items-center justify-between pl-6 pr-6 py-3 border-b border-sidebar-border/60 text-xs text-muted-foreground"}>
-                <span className="tracking-wider font-mono font-bold">TOKEN</span>
-                <button type="button" className="group inline-flex items-center" onClick={() => setBalancesSortDir((d) => d === 'desc' ? 'asc' : 'desc')}>
-                  <span className="uppercase tracking-wider font-mono font-bold group-hover:text-foreground">VALUE</span>
-                  {renderSortIcon(balancesSortDir)}
-                </button>
-              </div>
-               <div className="p-0">
-                 {isLoadingWalletBalances ? (
-                   <BalancesListSkeleton />
-                 ) : (walletBalances.length || 0) === 0 ? (
-                   <div className="border border-dashed rounded-lg bg-muted/10 p-8 w-full flex items-center justify-center">
-                     <div className="text-sm text-white/75">{!isConnected ? 'No Wallet Connected' : 'No Balances'}</div>
-                   </div>
-                 ) : (
-                  <div className="flex flex-col divide-y divide-sidebar-border/60">
-                    {(() => {
-                      const sorted = [...walletBalances].sort((a, b) => balancesSortDir === 'asc' ? a.usdValue - b.usdValue : b.usdValue - a.usdValue);
-                      return sorted;
-                    })().map((tb) => {
-                      const tokenInfo = getToken(tb.symbol) as any;
-                      const iconSrc = tokenInfo?.icon || '/placeholder.svg';
-                      const ch = walletPriceChange24hPctMap?.[tb.symbol] ?? 0;
-                      const deltaUsd = (() => {
-                        const c = tb.usdValue || 0;
-                        const denom = 1 + (isFinite(ch) ? ch : 0) / 100;
-                        if (denom === 0) return 0;
-                        return c - c / denom;
-                      })();
-                      const isUp = deltaUsd >= 0;
-                      const amountDisplayDecimals = 6;
-                      return (
-                        <div key={tb.symbol} className="flex items-center justify-between h-[64px] pl-6 pr-6 group">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <div className="w-6 h-6 rounded-full overflow-hidden bg-background flex-shrink-0">
-                              <Image src={iconSrc} alt={tb.symbol} width={24} height={24} className="w-full h-full object-cover" />
-                            </div>
-                            <div className="flex flex-col min-w-0">
-                              <div className="flex items-center gap-2">
-                                <span className="text-sm font-medium truncate max-w-[140px]">{tb.symbol}</span>
-                              </div>
-                            </div>
-                          </div>
-                          <div className="flex flex-col items-end whitespace-nowrap pl-2 gap-1">
-                            {/* Top line: current USD (always visible) */}
-                            <span className="text-sm text-foreground font-medium leading-none">{formatUSD(tb.usdValue)}</span>
-                            <div className="flex items-center gap-2 leading-none" style={{ marginTop: 2 }}>
-                              <span className="text-xs text-muted-foreground">
-                                {formatNumber(tb.balance, { min: amountDisplayDecimals, max: amountDisplayDecimals })}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </div>
-          </aside>
+          {showBalancesPanel && !isIntegrateBalances && !isMobile && (
+            <BalancesPanel
+              width={viewportWidth >= 1024 ? '450px' : '100%'}
+              walletBalances={walletBalances}
+              isLoadingWalletBalances={isLoadingWalletBalances}
+              isConnected={isConnected}
+              balancesSortDir={balancesSortDir}
+              setBalancesSortDir={setBalancesSortDir}
+              renderSortIcon={renderSortIcon}
+              faucetLastClaimTs={faucetLastClaimTs}
+              faucetLastCalledOnchain={faucetLastCalledOnchain}
+              currentChainId={currentChainId}
+              isFaucetBusy={isFaucetBusy}
+              isFaucetConfirming={isFaucetConfirming}
+              accountAddress={accountAddress}
+              setIsFaucetBusy={setIsFaucetBusy}
+              setFaucetHash={setFaucetHash}
+              writeContract={writeContract}
+              faucetAbi={faucetAbi}
+              refetchFaucetOnchain={refetchFaucetOnchain}
+            />
           )}
         </div>
         {/* no third state below 1100px */}
@@ -3119,15 +2773,15 @@ export default function PortfolioPage() {
               }).catch(console.error);
             }
           }}
-          currentPrice={poolDataByPoolId[selectedPosition.poolId?.toLowerCase()]?.price?.toString() || null}
-          currentPoolTick={poolDataByPoolId[selectedPosition.poolId?.toLowerCase()]?.tick || null}
+          currentPrice={null}
+          currentPoolTick={null}
           convertTickToPrice={convertTickToPrice}
           selectedPoolId={(() => {
             const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === selectedPosition.poolId?.toLowerCase());
             return poolConfig?.id;
           })()}
           chainId={targetChainId}
-          currentPoolSqrtPriceX96={poolDataByPoolId[selectedPosition.poolId?.toLowerCase()]?.sqrtPriceX96?.toString() || null}
+          currentPoolSqrtPriceX96={null}
           poolToken0={(() => {
             const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === selectedPosition.poolId?.toLowerCase());
             return poolConfig ? getToken(poolConfig.currency0.symbol) : undefined;
@@ -3151,362 +2805,3 @@ export default function PortfolioPage() {
     </PortfolioFilterContext.Provider>
   );
 }
-
-interface CompactCompositionBarProps {
-  composition: Array<{ label: string; pct: number; color: string }>;
-  onHover: (segment: number | null) => void;
-  hoveredSegment: number | null;
-  handleRestClick: (segment: any, segmentIndex?: number) => void;
-  setIsRestCycling: (value: boolean) => void;
-  isRestCycling: boolean;
-  restCycleIndex: number;
-  initialWidth?: number; // width computed by parent for first paint
-  forceHideLabels?: boolean;
-  onApplySort?: () => void;
-  onHoverToken?: (label: string | null) => void;
-}
-function CompactCompositionBar({ composition, onHover, hoveredSegment, handleRestClick, setIsRestCycling, isRestCycling, restCycleIndex, initialWidth, forceHideLabels, onApplySort, onHoverToken }: CompactCompositionBarProps) {
-  //
-  const SMALL_SEGMENT_THRESHOLD = 10; // tweakable (e.g., 5)
-  const { activeTokenFilter, setActiveTokenFilter } = React.useContext(PortfolioFilterContext);
-  const selectedIdx = activeTokenFilter
-    ? (() => {
-        const idx = composition.findIndex(c => c.label?.toUpperCase?.() === activeTokenFilter.toUpperCase());
-        return idx >= 0 ? idx : null;
-      })()
-    : null;
-  const hoverIdx = hoveredSegment;
-  const hideAllInlineLabels = React.useMemo(() => {
-    if (forceHideLabels) return true;
-    return composition.length === 1 && (composition[0] as any)?.label === 'All' && Math.round((composition[0] as any)?.pct || 0) === 100;
-  }, [composition, forceHideLabels]);
-  const hoverColor = '#f45502';
-  const selectedColor = hoverColor;
-  
-  // Check if Rest segment should be highlighted when cycling
-  const isRestSegmentHighlighted = (segmentIdx: number) => {
-    if (!isRestCycling) return false;
-    const segment = composition[segmentIdx];
-    return segment?.label === 'Rest';
-  };
-  const normalized = React.useMemo(() => {
-    const totalPct = composition.reduce((a, b) => a + b.pct, 0) || 1;
-    return composition.map((c) => ({ ...c, pct: (c.pct / totalPct) * 100 }));
-  }, [composition]);
-
-  // Refs and measured width must be declared before any memo that reads them
-  const barContainerRef = React.useRef<HTMLDivElement>(null);
-  const [availableWidth, setAvailableWidth] = React.useState<number>(Math.max(0, Math.round(initialWidth ?? 300))); // seed from parent if provided
-
-  // Force immediate render for compact view
-  const [forceRender, setForceRender] = React.useState(false);
-  React.useEffect(() => {
-    setForceRender(true);
-  }, []);
-
-  // Compute pixel-perfect column widths that sum exactly to the container width.
-  // This avoids cumulative percentage rounding drift.
-  const segmentPixelWidths = React.useMemo(() => {
-    const totalWidth = Math.max(0, Math.round(availableWidth));
-    if (!isFinite(totalWidth) || totalWidth <= 0 || normalized.length === 0) return [] as number[];
-    const raw = normalized.map(s => (s.pct / 100) * totalWidth);
-    const floors = raw.map(x => Math.floor(x));
-    let used = floors.reduce((a, b) => a + b, 0);
-    let remainder = totalWidth - used;
-    if (remainder > 0) {
-      // Distribute remaining pixels to entries with largest fractional parts
-      const fracIndices = raw
-        .map((x, i) => ({ i, frac: x - Math.floor(x) }))
-        .sort((a, b) => b.frac - a.frac)
-        .map(o => o.i);
-      for (let k = 0; k < remainder && k < fracIndices.length; k += 1) {
-        floors[fracIndices[k]] += 1;
-      }
-      used = floors.reduce((a, b) => a + b, 0);
-    }
-    // As a final guard, if rounding anomalies occur, adjust last cell
-    if (used !== totalWidth && floors.length > 0) {
-      floors[floors.length - 1] += (totalWidth - used);
-    }
-    return floors;
-  }, [normalized, availableWidth]);
-
-  const gridTemplateColumns = React.useMemo(
-    () => segmentPixelWidths.map((w) => `${w}px`).join(' '),
-    [segmentPixelWidths]
-  );
-
-  const segmentLeftOffsets = React.useMemo(() => {
-    const offsets: number[] = [];
-    let acc = 0;
-    for (let i = 0; i < segmentPixelWidths.length; i += 1) {
-      offsets.push(acc);
-      acc += segmentPixelWidths[i];
-    }
-    return offsets;
-  }, [segmentPixelWidths]);
-
-  const DEBUG_TICKS = false;
-
-  // Placeholder flag: single 100% segment labeled 'All', or explicitly forced by parent
-  const hideAllLabels = React.useMemo(() => {
-    if (forceHideLabels) return true;
-    return composition.length === 1 && (composition[0] as any)?.label === 'All' && Math.round((composition[0] as any)?.pct || 0) === 100;
-  }, [composition, forceHideLabels]);
-
-  // duplicate removed
-
-  const calculateAvailableWidth = React.useCallback(() => {
-    const container = barContainerRef.current;
-    if (!container) return;
-    // Measure the immediate wrapper that has the left padding applied
-    const wrapper = container.parentElement;
-    if (!wrapper) return;
-    const wrapperRect = wrapper.getBoundingClientRect();
-    const computed = window.getComputedStyle(wrapper);
-    const paddingLeft = parseFloat(computed.paddingLeft || '0') || 0;
-    const paddingRight = parseFloat(computed.paddingRight || '0') || 0;
-    const innerWidth = Math.max(0, Math.round(wrapperRect.width - paddingLeft - paddingRight));
-    if (innerWidth > 0) setAvailableWidth(innerWidth);
-  }, []);
-
-  // Measure on mount and resize. Also react if parent supplies a different initialWidth later
-  React.useEffect(() => {
-    calculateAvailableWidth();
-    const onResize = () => calculateAvailableWidth();
-    window.addEventListener('resize', onResize);
-    return () => {
-      window.removeEventListener('resize', onResize);
-    };
-  }, [calculateAvailableWidth]);
-
-  React.useEffect(() => {
-    if (typeof initialWidth === 'number' && initialWidth > 0) {
-      setAvailableWidth(Math.max(0, Math.round(initialWidth)));
-    }
-  }, [initialWidth]);
-
-  return (
-    <TooltipProvider>
-    <div ref={barContainerRef} className="relative flex-none box-border" style={{ width: `${availableWidth}px` }} onMouseLeave={() => (!hideAllLabels) && onHover(null)}>
-      {/* Bar row */}
-      <div className="h-2 w-full flex overflow-hidden rounded-full" style={{ gap: 0 }}>
-        {normalized.map((s, i) => (
-          <div
-            key={`bar-${i}`}
-            style={{ 
-              width: `${segmentPixelWidths[i] || 0}px`, 
-              backgroundColor: hideAllLabels ? s.color : (hoverIdx === i ? hoverColor : (selectedIdx === i ? selectedColor : (isRestSegmentHighlighted(i) ? selectedColor : s.color))), 
-              opacity: 0.95 
-            }}
-            onMouseEnter={() => { if (!hideAllLabels) { onHover(i); try { onHoverToken?.((s as any)?.label === 'Rest' ? null : (s as any)?.label); } catch {} } }}
-            onMouseLeave={() => { if (!hideAllLabels) { onHover(null); try { onHoverToken?.(null); } catch {} } }}
-            onClick={() => {
-              if (s.label === 'Rest') {
-                handleRestClick(s, i);
-              } else {
-                setActiveTokenFilter((activeToken) => (activeToken?.toUpperCase?.() === s.label?.toUpperCase?.() ? null : s.label));
-                setIsRestCycling(false);
-                try { onApplySort?.(); } catch {}
-              }
-            }}
-          />
-        ))}
-      </div>
-      {/* Hover zones spanning bar + label area */}
-      <div className="absolute left-0 top-[-8px] z-10" style={{ width: '100%', height: '40px' }}>
-        {normalized.map((s, i) => {
-          const pctRounded = Math.round(s.pct);
-          const showTip = (() => {
-            if (hideAllLabels) return false;
-            if (s.pct < SMALL_SEGMENT_THRESHOLD) return true;
-            // also show hover label if name would be hidden
-            const segWidth = (segmentPixelWidths[i] || 0);
-            const estChar = 7;
-            const name = String(s.label || '');
-            const estNameWidth = name.length * estChar;
-            const estPctWidth = (`${pctRounded}%`).length * estChar;
-            const minGap = 6;
-            const required = estPctWidth + minGap + estNameWidth;
-            return segWidth < required;
-          })();
-          const isRest = s.label === 'Rest';
-          
-          const content = hideAllLabels ? '' : isRest ? (
-            <div className="space-y-1">
-              {(s as any).restTokens?.map((token: any, idx: number) => (
-                <div key={idx} className="flex justify-between items-center gap-2">
-                  <span className="flex items-center gap-1 uppercase">
-                    {/* primary marker for current highlighted token */}
-                    {isRestCycling && (s as any).restTokens?.[restCycleIndex]?.label === token.label ? (
-                      <span className="inline-block w-1 h-3 rounded-sm" style={{ backgroundColor: hoverColor }} />
-                    ) : (
-                      <span className="inline-block w-1 h-3 rounded-sm" style={{ backgroundColor: 'hsl(var(--muted-foreground))' }} />
-                    )}
-                    {token.label}
-                  </span>
-                  <span>{Math.round(token.pct)}%</span>
-                </div>
-              ))}
-            </div>
-          ) : `${pctRounded}% ${s.label}`;
-          
-          const zone = (
-            <div
-              key={`hover-zone-${i}`}
-              className="absolute h-full"
-              style={{ left: `${segmentLeftOffsets[i] || 0}px`, width: `${segmentPixelWidths[i] || 0}px`, cursor: 'pointer' }}
-              onMouseEnter={() => { if (!hideAllLabels) { onHover(i); try { onHoverToken?.((s as any)?.label === 'Rest' ? null : (s as any)?.label); } catch {} } }}
-              onMouseLeave={() => { if (!hideAllLabels) { onHover(null); try { onHoverToken?.(null); } catch {} } }}
-              onClick={() => {
-                if (s.label === 'Rest') {
-                  handleRestClick(s, i);
-                } else {
-                  setActiveTokenFilter((activeToken) => (activeToken?.toUpperCase?.() === s.label?.toUpperCase?.() ? null : s.label));
-                  setIsRestCycling(false);
-                  try { onApplySort?.(); } catch {}
-                }
-              }}
-            />
-          );
-          // Re-add popup only for cases where label isn't shown (small or hidden)
-          return (showTip || (isRest && !hideAllLabels)) ? (
-            <Tooltip key={`hover-zone-wrap-${i}`} open={hoverIdx === i}>
-              <TooltipTrigger asChild>{zone}</TooltipTrigger>
-              <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs" style={{ pointerEvents: 'none' }}>{content}</TooltipContent>
-            </Tooltip>
-          ) : zone;
-        })}
-
-        {DEBUG_TICKS && (
-          <div className="pointer-events-none absolute inset-0 z-10">
-            {segmentLeftOffsets.map((x, i) => (
-              <div key={`guide-${i}`} className="absolute top-0 bottom-0" style={{ left: `${x}px`, width: 1, background: 'rgba(255,0,0,0.4)' }} />
-            ))}
-          </div>
-        )}
-      </div>
-      {/* Labels row with overflow rules (inline bar) */}
-      <div className="relative mt-0 text-xs" style={{ height: '14px', width: `${Math.max(0, Math.round(availableWidth))}px`, overflow: 'visible' }}>
-        {(() => {
-          let hideNamesFromIndex: number | null = null;
-          // Disable cascade-right behavior; do not hide following percentages
-          const hoveredNeedsCascade = false;
-          const nodes: React.ReactNode[] = [];
-          for (let i = 0; i < normalized.length; i += 1) {
-            const s = normalized[i];
-            const restToken = (s as any)?.restTokens?.[restCycleIndex];
-            const isRestHighlighted = isRestSegmentHighlighted(i);
-            const pctRounded = Math.round(isRestHighlighted && restToken ? restToken.pct : s.pct);
-            const isHovered = hoverIdx === i;
-            const isSelected = selectedIdx === i;
-            // Available width inside this segment for text
-            const segWidth = (segmentPixelWidths[i] || 0);
-            const left = (segmentLeftOffsets[i] || 0);
-            const leftPad = 0; // keep flush in inline
-            const availableLabelWidth = Math.max(0, segWidth - leftPad);
-            // Build REST-aware labels
-            const isRest = (s as any).label === 'Rest';
-            const isCycling = isRest && !!isRestCycling && isRestHighlighted;
-            const restCount = ((s as any)?.restTokens?.length || 0) as number;
-            const nameLabel = isRest ? (isCycling ? ((restToken as any)?.label || 'Assets') : 'Assets') : ((s as any).label as string);
-            const percentText = hideAllLabels ? '' : (isRest ? (isCycling ? `${pctRounded}%` : `+${restCount}`) : `${pctRounded}%`);
-            const estChar = 7; // px per char at this size
-            const estNameWidth = (nameLabel?.length || 0) * estChar;
-            const estPctWidth = (percentText?.length || 0) * estChar;
-            const minGap = 6;
-            // Decide if we can show name here
-            const barSafetyEarly = 4; // hide a touch earlier to avoid visible overlap
-            let showName = !hideAllLabels;
-            const fits = availableLabelWidth >= estPctWidth + minGap + estNameWidth + barSafetyEarly;
-
-            // NEW: determine if a tooltip will be shown for this segment
-            const tooltipWillShow = s.pct < SMALL_SEGMENT_THRESHOLD || !fits;
-
-            if (!fits && !isHovered) {
-              // mark overflow start but still allow name on hover via overflow visible
-              if (hideNamesFromIndex === null) hideNamesFromIndex = i;
-              showName = false;
-            }
-
-            // If hovered and a tooltip is showing, hide the inline name
-            if (isHovered && tooltipWillShow) {
-              showName = false;
-            }
-
-            // No cascade-right; never hide following percentages
-            const hideFollowingPct = false;
-            // If hovered and the name cannot fit, hide the inline percent for subsequent segments and do NOT force show the name for the hovered segment
-            // This preserves a clear single hover focus without crowding
-            const nameLeftPadPx = isRest ? (estPctWidth + minGap) : 0;
-            nodes.push(
-              <div
-                key={`lbl-${i}`}
-                className="absolute cursor-pointer"
-                style={{ 
-                  left: `${left}px`, 
-                  width: `${segWidth}px`, 
-                  overflow: ((s as any).label === 'Rest' || isHovered) ? 'visible' : 'hidden', 
-                  zIndex: ((s as any).label === 'Rest' || isHovered) ? 20 : undefined 
-                }}
-                onMouseEnter={() => onHover(i)}
-                onMouseLeave={() => onHover(null)}
-                onClick={() => {
-                  if (s.label === 'Rest') {
-                    handleRestClick(s, i);
-                  } else {
-                    setActiveTokenFilter((activeToken) => (activeToken?.toUpperCase?.() === (s as any).label?.toUpperCase?.() ? null : ((s as any).label as string)));
-                    setIsRestCycling(false);
-                  }
-                }}
-              >
-                <div className="flex items-baseline gap-1" style={{ position: 'relative' }}>
-                  {(() => {
-                    // Always show percent/+N for REST, respect hideFollowingPct for others
-                    const shouldShow = isRest || !hideFollowingPct;
-                    if (!shouldShow) return null;
-                    const color = isHovered ? hoverColor : ((isSelected || isRestHighlighted) ? selectedColor : s.color);
-                    return (
-                      <span 
-                        className="font-medium"
-                        style={{ 
-                          color,
-                          position: isRest ? 'absolute' : 'static',
-                          left: isRest ? 0 : undefined,
-                          whiteSpace: 'nowrap'
-                        }}
-                      >
-                        {percentText}
-                      </span>
-                    );
-                  })()}
-                  {showName && (
-                    <span 
-                      className="uppercase tracking-wider text-muted-foreground whitespace-nowrap" 
-                      style={{ 
-                        fontSize: 10,
-                        maxWidth: isHovered ? undefined : `${Math.max(0, availableLabelWidth - estPctWidth - minGap)}px`,
-                        overflow: isHovered ? 'visible' : 'hidden',
-                        textOverflow: isHovered ? 'clip' : 'ellipsis',
-                        textTransform: isRest && !isCycling ? 'none' : undefined,
-                        color: 'hsl(var(--muted-foreground))',
-                        paddingLeft: nameLeftPadPx
-                      }}
-                    >
-                      {nameLabel}
-                    </span>
-                  )}
-                </div>
-              </div>
-            );
-          }
-          return nodes;
-        })()}
-      </div>
-    </div>
-    </TooltipProvider>
-  );
-}
-
-// Moved to components/portfolio/PortfolioTickBar
-// Moved to components/portfolio/PortfolioTickBar

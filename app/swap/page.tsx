@@ -31,8 +31,8 @@ export default function Page() {
   return (
     <AppLayout>
       <div className="flex flex-1 flex-col">
-        <div className="flex flex-1 justify-center py-10 md:py-16">
-          <div className="w-full max-w-2xl">
+        <div className="flex flex-1 justify-center p-3 sm:p-6">
+          <div className="w-full max-w-lg">
             <SwapInterface
               currentRoute={currentRoute}
               setCurrentRoute={setCurrentRoute}
