@@ -1,5 +1,7 @@
-import { PropsWithChildren } from 'react'
+'use client'
+
 import { cn } from '@/lib/utils'
+import { PropsWithChildren } from 'react'
 
 export type SectionProps = PropsWithChildren<{
   id?: string
@@ -23,7 +25,7 @@ export const Section = ({
     >
       <div
         className={cn(
-          'flex w-full flex-col py-12 md:max-w-3xl md:px-0 md:py-16 xl:max-w-6xl 2xl:max-w-screen-xl',
+          'flex w-full flex-col py-12 md:max-w-3xl md:px-0 md:py-16 xl:max-w-6xl',
           className,
         )}
       >

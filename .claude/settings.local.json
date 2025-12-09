@@ -67,7 +67,8 @@
       "Bash(xargs cat:*)",
       "Bash(git ls-tree:*)",
       "Bash(for term in \"getAllTokens\" \"NATIVE_TOKEN_ADDRESS\" \"getExplorerTxUrl\" \"FAUCET_CONTRACT_ADDRESS\" \"faucetContractAbi\" \"prefetchService\" \"useQueryClient\" \"BadgeCheck\")",
-      "Bash(do echo -n \"$term: \")"
+      "Bash(do echo -n \"$term: \")",
+      "Bash(printf:*)"
     ],
     "deny": [],
     "ask": []

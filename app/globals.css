@@ -148,6 +148,24 @@
     animation: skeleton-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   }
 
+  /* === SONIC BOOM ANIMATIONS === */
+  @keyframes sonic-flow {
+    from { stroke-dashoffset: 0; }
+    to { stroke-dashoffset: -40; }
+  }
+
+  .animate-sonic-flow-1 {
+    animation: sonic-flow 15s linear infinite;
+  }
+
+  .animate-sonic-flow-2 {
+    animation: sonic-flow 18s linear infinite;
+  }
+
+  .animate-sonic-flow-3 {
+    animation: sonic-flow 20s linear infinite;
+  }
+
   /* === LAYOUT UTILITIES === */
   .content-container {
     @apply w-full max-w-5xl 2xl:max-w-screen-xl mx-auto px-4 sm:px-6 md:px-8;
