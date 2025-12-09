@@ -1,11 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getPoolSubgraphId } from '../../../lib/pools-config';
-
-// Server-only subgraph URL (original, unswizzled)
-const SUBGRAPH_ORIGINAL_URL = process.env.SUBGRAPH_ORIGINAL_URL as string;
-if (!SUBGRAPH_ORIGINAL_URL) {
-  throw new Error('SUBGRAPH_ORIGINAL_URL env var is required');
-}
+import { getSubgraphUrlForPool } from '../../../lib/subgraph-url-helper';
 
 // In-memory cache (up to 24h), with incremental refresh window at 1h
 const TTL_MS = 24 * 60 * 60 * 1000; // 24h hard cap
@@ -56,6 +51,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const forceRevalidate = String(req.headers['x-internal-revalidate'] || '').trim() === '1' || String((req.query as any)?.revalidate || '').trim() === '1';
     const cached = memCache.get(key);
 
+    // Get the appropriate subgraph URL for this pool
+    const subgraphUrl = getSubgraphUrlForPool(apiId);
+
     // Helper: incremental merge fetcher
     const fetchPageWithOrder = async (skip: number, pageFirst: number, orderByField: string) => {
       // Only query hookPositions; filter to active liquidity
@@ -68,7 +66,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           ) { id pool tickLower tickUpper liquidity }
         }
       `;
-      const resp = await fetch(SUBGRAPH_ORIGINAL_URL, {
+      const resp = await fetch(subgraphUrl, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query: qHook, variables: { pool: apiId.toLowerCase(), first: pageFirst, skip } }),
       });

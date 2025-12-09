@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 // import { cookies } from 'next/headers'; // Not used in Middleware for reading cookies
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   // Bypass auth for E2E tests (check for query parameter)
   if (request.nextUrl.searchParams.get('e2e') === 'true') {
     console.log('[MIDDLEWARE] E2E test detected - bypassing auth checks');

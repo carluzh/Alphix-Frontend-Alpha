@@ -7,7 +7,7 @@ function selectSubgraphUrl(poolId: string | undefined): string {
   return getSubgraphUrlForPool(poolId) || LEGACY_SUBGRAPH_URL;
 }
 
-// DAI subgraph uses currentRatio (Activity), old subgraph uses currentTargetRatio
+// All TheGraph Studio subgraphs use currentRatio field
 const GET_LAST_HOOK_EVENTS_DAI = `
   query GetLastHookEvents($poolId: Bytes!) {
     alphixHooks(
@@ -35,7 +35,7 @@ const GET_LAST_HOOK_EVENTS_OLD = `
     ) {
       timestamp
       newFeeBps
-      currentTargetRatio
+      currentRatio
       newTargetRatio
       oldTargetRatio
     }
@@ -46,8 +46,7 @@ type HookEvent = {
   timestamp: string;
   newFeeBps?: string;
   newFeeRateBps?: string;
-  currentRatio?: string; // DAI subgraph uses this (Activity)
-  currentTargetRatio?: string; // Old subgraph uses this
+  currentRatio?: string;
   newTargetRatio?: string;
   oldTargetRatio?: string;
 };
@@ -106,14 +105,7 @@ export default async function handler(
     if (json.errors) {
       throw new Error(`Subgraph errors: ${JSON.stringify(json.errors)}`);
     }
-    let events = Array.isArray(json.data?.alphixHooks) ? json.data!.alphixHooks! : [];
-
-    // Normalize: DAI pools have currentRatio, old pools have currentTargetRatio
-    // Make sure both have currentRatio for consistent frontend usage
-    events = events.map(e => ({
-      ...e,
-      currentRatio: e.currentRatio || e.currentTargetRatio
-    }));
+    const events = Array.isArray(json.data?.alphixHooks) ? json.data!.alphixHooks! : [];
 
     // On success, update cache
     serverCache.set(cacheKey, { data: events, ts: Date.now() });

@@ -2,18 +2,6 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { getPoolSubgraphId } from '../../../lib/pools-config';
 import { getSubgraphUrlForPool, isDaiPool } from '../../../lib/subgraph-url-helper';
 
-// Server-only subgraph URL (original, unswizzled) - for pool data
-const SUBGRAPH_ORIGINAL_URL = process.env.SUBGRAPH_ORIGINAL_URL as string;
-if (!SUBGRAPH_ORIGINAL_URL) {
-  throw new Error('SUBGRAPH_ORIGINAL_URL env var is required');
-}
-
-// Default subgraph URL
-const SUBGRAPH_URL = process.env.NEXT_PUBLIC_SUBGRAPH_URL || process.env.SUBGRAPH_URL as string;
-if (!SUBGRAPH_URL) {
-  throw new Error('SUBGRAPH_URL env var is required');
-}
-
 interface PoolDayData {
   date: number;
   volumeWFeeToken0: string;
@@ -41,16 +29,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   console.log('[pool-metrics] Request:', { poolId, apiId: apiId.toLowerCase(), days, isDAI });
 
-  // Use different query based on whether it's a DAI pool (Satsuma schema) or not (Original schema)
+  // All TheGraph Studio subgraphs use the same Uniswap V4 schema
   const poolQueryOriginal = `
-    query PoolMetrics($poolId: Bytes!, $days: Int!) {
-      trackedPool(id: $poolId) {
+    query PoolMetrics($poolId: ID!, $days: Int!) {
+      pool(id: $poolId) {
         id
-        tvlToken0
-        tvlToken1
         totalValueLockedToken0
         totalValueLockedToken1
-        currentFeeRateBps
+        feeTier
         txCount
       }
 
@@ -61,13 +47,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         orderDirection: desc
       ) {
         date
-        volumeWFeeToken0
-        volumeWFeeToken1
         volumeToken0
         volumeToken1
-        tvlToken0
-        tvlToken1
-        currentFeeRateBps
+        tvlUSD
       }
     }
   `;
@@ -99,7 +81,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const poolQuery = isDAI ? poolQuerySatsuma : poolQueryOriginal;
 
-  // DAI subgraph uses currentRatio (Activity), old subgraph uses currentTargetRatio
+  // All TheGraph Studio subgraphs use currentRatio field
   const feeEventsQueryDai = `
     query GetFeeEvents($poolId: Bytes!) {
       alphixHooks(
@@ -126,7 +108,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       ) {
         timestamp
         newFeeBps
-        currentTargetRatio
+        currentRatio
         newTargetRatio
       }
     }
@@ -136,14 +118,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   try {
     // Determine the appropriate subgraph URL for this pool
-    const subgraphUrlForPool = getSubgraphUrlForPool(poolId);
-
-    // For DAI pools, use pool-specific Satsuma subgraph for both pool data and fee events
-    // For non-DAI pools, use ORIGINAL subgraph for pool data and Satsuma for fee events
-    const poolDataUrl = isDAI ? subgraphUrlForPool : SUBGRAPH_ORIGINAL_URL;
+    // All pools now use the unified TheGraph Studio subgraph
+    const subgraphUrlForPoolData = getSubgraphUrlForPool(poolId);
 
     const [poolResponse, feeResponse] = await Promise.all([
-      fetch(poolDataUrl, {
+      fetch(subgraphUrlForPoolData, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -151,7 +130,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           variables: { poolId: apiId.toLowerCase(), days }
         })
       }),
-      fetch(subgraphUrlForPool, {
+      fetch(subgraphUrlForPoolData, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -234,8 +213,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const { data } = poolResult;
     const feeEvents = feeResult?.data?.alphixHooks || [];
 
-    // Handle both schema types
-    const pool = isDAI ? data?.pool : data?.trackedPool;
+    // All TheGraph Studio subgraphs now use the same schema with 'pool'
+    const pool = data?.pool;
 
     if (!data?.poolDayDatas || data.poolDayDatas.length === 0) {
       console.log('[pool-metrics] No poolDayDatas found for pool. Pool may not be in subgraph yet.');
