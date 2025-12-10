@@ -166,6 +166,85 @@
     animation: sonic-flow 20s linear infinite;
   }
 
+  /* Horizontal sonic flow animations */
+  @keyframes sonic-flow-horizontal {
+    from { stroke-dashoffset: 0; }
+    to { stroke-dashoffset: 100; }
+  }
+
+  .animate-sonic-flow-horizontal-1 {
+    animation: sonic-flow-horizontal 8s linear infinite;
+  }
+
+  .animate-sonic-flow-horizontal-2 {
+    animation: sonic-flow-horizontal 10s linear infinite reverse;
+  }
+
+  .animate-sonic-flow-horizontal-3 {
+    animation: sonic-flow-horizontal 12s linear infinite;
+  }
+
+  /* Marquee animation for icon carousel - seamless loop (large 72px squares) */
+  @keyframes marquee-smooth-lg {
+    0% { transform: translateX(0); }
+    100% { transform: translateX(calc(-80px * 11)); } /* 11 icons × (72px + 8px margin) = 880px */
+  }
+
+  .animate-marquee-smooth-lg {
+    animation: marquee-smooth-lg 31s linear infinite;
+    will-change: transform;
+  }
+
+  /* === CENSOR/PIXELATION ICON EFFECT === */
+
+  .censor-icon-wrapper {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .censor-icon {
+    filter: var(--filter-id);
+    opacity: 0.4;
+    animation: censor-jitter 1.2s step-end infinite;
+  }
+
+  @keyframes censor-jitter {
+    0% { transform: translate(0, 0); }
+    12% { transform: translate(-0.5px, 0.3px); }
+    25% { transform: translate(0.3px, -0.5px); }
+    37% { transform: translate(-0.3px, -0.3px); }
+    50% { transform: translate(0.5px, 0); }
+    62% { transform: translate(0, 0.5px); }
+    75% { transform: translate(-0.5px, 0); }
+    87% { transform: translate(0.3px, 0.3px); }
+    100% { transform: translate(0, 0); }
+  }
+
+  /* Staggered timing for different icons */
+  .censor-timing-1 .censor-icon { animation-delay: 0s; animation-duration: 1.0s; }
+  .censor-timing-2 .censor-icon { animation-delay: -0.15s; animation-duration: 1.3s; }
+  .censor-timing-3 .censor-icon { animation-delay: -0.3s; animation-duration: 0.9s; }
+  .censor-timing-4 .censor-icon { animation-delay: -0.45s; animation-duration: 1.2s; }
+  .censor-timing-5 .censor-icon { animation-delay: -0.6s; animation-duration: 1.1s; }
+  .censor-timing-6 .censor-icon { animation-delay: -0.75s; animation-duration: 0.95s; }
+  .censor-timing-7 .censor-icon { animation-delay: -0.9s; animation-duration: 1.15s; }
+  .censor-timing-8 .censor-icon { animation-delay: -1.05s; animation-duration: 1.25s; }
+
+  .censor-marquee-container:hover .animate-marquee-smooth-lg {
+    animation-play-state: paused;
+  }
+
+  /* Revealed feature icons - brand orange with glow */
+  .feature-icon-revealed,
+  .feature-icon-revealed-lg {
+    opacity: 0.85;
+    filter: brightness(0) saturate(100%) invert(35%) sepia(98%) saturate(2000%) hue-rotate(11deg) brightness(100%) contrast(105%) drop-shadow(0 0 4px rgba(244, 85, 2, 0.25));
+  }
+  .feature-icon-revealed { transform: scale(1.05); }
+  .feature-icon-revealed-lg { transform: scale(1.3); }
+
   /* === LAYOUT UTILITIES === */
   .content-container {
     @apply w-full max-w-5xl 2xl:max-w-screen-xl mx-auto px-4 sm:px-6 md:px-8;

@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getSubgraphUrlForPool, isDaiPool, isMainnetSubgraphMode } from '../../../lib/subgraph-url-helper';
+import { getSubgraphUrlForPool, isMainnetSubgraphMode } from '../../../lib/subgraph-url-helper';
 import { cacheService } from '../../../lib/cache/CacheService';
 import { getNetworkModeFromRequest, type NetworkMode } from '../../../lib/pools-config';
 
@@ -27,9 +27,9 @@ const GET_LAST_HOOK_EVENTS_MAINNET = `
   }
 `;
 
-// DAI subgraph uses currentRatio (Activity), old subgraph uses currentTargetRatio
-// Fetch up to 500 events to cover 60+ days of data (some pools have multiple events per day)
-const GET_LAST_HOOK_EVENTS_DAI = `
+// Testnet query: uses pool filter (Bytes type)
+// Fetch up to 500 events to cover 60+ days of data
+const GET_LAST_HOOK_EVENTS_TESTNET = `
   query GetLastHookEvents($poolId: Bytes!) {
     alphixHooks(
       where: { pool: $poolId }
@@ -46,41 +46,22 @@ const GET_LAST_HOOK_EVENTS_DAI = `
   }
 `;
 
-const GET_LAST_HOOK_EVENTS_OLD = `
-  query GetLastHookEvents($poolId: Bytes!) {
-    alphixHooks(
-      where: { pool: $poolId }
-      orderBy: timestamp
-      orderDirection: desc
-      first: 500
-    ) {
-      timestamp
-      newFeeBps
-      currentTargetRatio
-      newTargetRatio
-      oldTargetRatio
-    }
-  }
-`;
-
 type HookEvent = {
   timestamp: string;
   newFeeBps?: string;
-  newFeeRateBps?: string;
-  currentRatio?: string; // DAI subgraph uses this (Activity)
-  currentTargetRatio?: string; // Old subgraph uses this
+  currentRatio?: string;
   newTargetRatio?: string;
   oldTargetRatio?: string;
 };
 
 type HookResp = { data?: { alphixHooks?: HookEvent[] }, errors?: any[] };
 
-// Select the appropriate query based on network mode and pool type
-function selectQuery(poolId: string, networkMode?: NetworkMode): string {
+// Select the appropriate query based on network mode
+function selectQuery(networkMode?: NetworkMode): string {
   if (isMainnetSubgraphMode(networkMode)) {
     return GET_LAST_HOOK_EVENTS_MAINNET;
   }
-  return isDaiPool(poolId, networkMode) ? GET_LAST_HOOK_EVENTS_DAI : GET_LAST_HOOK_EVENTS_OLD;
+  return GET_LAST_HOOK_EVENTS_TESTNET;
 }
 
 export default async function handler(
@@ -115,7 +96,7 @@ export default async function handler(
       { fresh: 6 * 60 * 60, stale: 24 * 60 * 60 }, // 6h fresh, 24h stale
       async () => {
         const SUBGRAPH_URL = selectSubgraphUrl(poolId, networkMode);
-        const query = selectQuery(poolId, networkMode);
+        const query = selectQuery(networkMode);
 
         const resp = await fetch(SUBGRAPH_URL, {
           method: 'POST',
@@ -130,16 +111,7 @@ export default async function handler(
         if (json.errors) {
           throw new Error(`Subgraph errors: ${JSON.stringify(json.errors)}`);
         }
-        let events = Array.isArray(json.data?.alphixHooks) ? json.data!.alphixHooks! : [];
-
-        // Normalize: DAI pools have currentRatio, old pools have currentTargetRatio
-        // Make sure both have currentRatio for consistent frontend usage
-        events = events.map(e => ({
-          ...e,
-          currentRatio: e.currentRatio || e.currentTargetRatio
-        }));
-
-        return events;
+        return Array.isArray(json.data?.alphixHooks) ? json.data!.alphixHooks! : [];
       },
       { skipCache: shouldBypassCache }
     );

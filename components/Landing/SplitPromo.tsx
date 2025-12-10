@@ -13,6 +13,10 @@ interface SplitPromoProps {
   cta2?: React.ReactNode
   image: string
   reverse?: boolean
+  badge?: {
+    text: string
+    variant?: 'default' | 'muted'
+  }
 }
 
 const containerVariants = {
@@ -39,24 +43,40 @@ export const SplitPromo: React.FC<SplitPromoProps> = ({
   cta2,
   image,
   reverse = false,
+  badge,
 }) => {
   return (
     <motion.div
-      className={`flex w-full flex-col overflow-hidden rounded-2xl md:flex-row md:rounded-[2rem] ${reverse ? 'md:flex-row-reverse' : ''} bg-white dark:bg-[#141413] md:items-stretch`}
+      className={`flex w-full flex-col gap-y-6 overflow-hidden rounded-lg border border-sidebar-border/60 bg-white dark:bg-[#131313] p-2 xl:flex-row ${reverse ? 'xl:flex-row-reverse' : ''}`}
       variants={containerVariants}
       initial="hidden"
       whileInView="visible"
       viewport={{ once: true }}
     >
-      <div className="flex flex-1 flex-col justify-center gap-y-8 p-8 md:aspect-square md:p-16">
-        <motion.h2
-          className="text-2xl leading-normal md:text-3xl"
-          variants={itemVariants}
-        >
-          {title}
-        </motion.h2>
+      {/* Text Content */}
+      <div className="flex w-full flex-1 flex-col gap-y-8 p-6 md:p-12">
+        <div className="flex flex-col gap-y-4">
+          {badge && (
+            <motion.span
+              className={`w-fit rounded-md px-2.5 py-1 text-xs font-medium ${
+                badge.variant === 'muted'
+                  ? 'bg-gray-100 dark:bg-[#1a1a1a] text-muted-foreground'
+                  : 'bg-green-950/70 text-green-500'
+              }`}
+              variants={itemVariants}
+            >
+              {badge.text}
+            </motion.span>
+          )}
+          <motion.h2
+            className="text-3xl font-semibold leading-tight text-balance md:text-4xl"
+            variants={itemVariants}
+          >
+            {title}
+          </motion.h2>
+        </div>
         <motion.p
-          className="text-lg leading-relaxed text-pretty text-gray-500 dark:text-gray-400"
+          className="text-lg leading-relaxed text-pretty text-muted-foreground"
           variants={itemVariants}
         >
           {description}
@@ -69,8 +89,8 @@ export const SplitPromo: React.FC<SplitPromoProps> = ({
                 className="flex flex-row items-center gap-x-2"
                 variants={itemVariants}
               >
-                <Check className="h-4 w-4 text-emerald-500" />
-                <p className="leading-relaxed text-pretty">{bullet}</p>
+                <Check className="h-4 w-4 text-green-500 shrink-0" />
+                <p className="leading-relaxed text-pretty text-foreground">{bullet}</p>
               </motion.li>
             ))}
           </ul>
@@ -83,22 +103,25 @@ export const SplitPromo: React.FC<SplitPromoProps> = ({
           {cta2}
         </motion.div>
       </div>
-      <motion.div
-        className="relative flex aspect-square flex-1 p-8 md:p-16"
-        variants={containerVariants}
-        initial="hidden"
-        whileInView="visible"
-        viewport={{ once: true }}
-      >
-        <Image
-          className="absolute inset-0 h-full w-full object-cover"
-          src={image}
-          fill
-          sizes="(max-width: 768px) 100vw, (max-width: 1280px) 100vw, 1280px"
-          loading="lazy"
-          alt={title}
-        />
-      </motion.div>
+      {/* Image Container - nested rounded box like DynamicFeeSection */}
+      <div className="flex w-full flex-1 flex-col rounded-lg bg-gray-50 dark:bg-[#161616] overflow-hidden">
+        <motion.div
+          className="relative flex aspect-square w-full h-full"
+          variants={containerVariants}
+          initial="hidden"
+          whileInView="visible"
+          viewport={{ once: true }}
+        >
+          <Image
+            className="absolute inset-0 h-full w-full object-cover"
+            src={image}
+            fill
+            sizes="(max-width: 768px) 100vw, (max-width: 1280px) 100vw, 1280px"
+            loading="lazy"
+            alt={title}
+          />
+        </motion.div>
+      </div>
     </motion.div>
   )
 }
