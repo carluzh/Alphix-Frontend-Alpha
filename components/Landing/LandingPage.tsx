@@ -103,7 +103,7 @@ export const PageContent = () => {
             'Leading protocol integrations to maximize security',
             'Seamless LP experience',
           ]}
-          image="/landing/Rehypothecation.png"
+          image="/landing/example.png"
           reverse
           badge={{ text: 'In Development', variant: 'muted' }}
           cta1={

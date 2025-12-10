@@ -9,6 +9,17 @@ import { MobileHeader } from "./MobileHeader"; // Import MobileHeader
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Button } from "@/components/ui/button";
 
+function VersionBadge() {
+  const version = process.env.NEXT_PUBLIC_APP_VERSION || '0.0.0';
+  const commit = process.env.NEXT_PUBLIC_GIT_COMMIT || 'dev';
+
+  return (
+    <div className="fixed bottom-4 right-5 z-40 text-xs text-muted-foreground/50 font-mono select-none pointer-events-none">
+      v{version}<span className="opacity-60">+{commit}</span>
+    </div>
+  );
+}
+
 interface AppLayoutProps {
   children: React.ReactNode;
 }
@@ -36,6 +47,7 @@ export function AppLayout({ children }: AppLayoutProps) {
         </div>
       </SidebarInset>
       <UpdatesNotification open={showUpdatesNotification} onClose={() => setShowUpdatesNotification(false)} />
+      <VersionBadge />
     </>
   );
 } 

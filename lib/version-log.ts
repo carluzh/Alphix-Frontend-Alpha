@@ -11,8 +11,8 @@ export interface VersionEntry {
 
 export const VERSION_LOG: VersionEntry[] = [
   {
-    version: "1.5",
-    title: "Beta Update - v1.5 What's New",
+    version: "1.5.0",
+    title: "Beta Update - v1.5.0 What's New",
     tldr: [
       "Mainnet Launch - Alphix is now live on Base mainnet with seamless testnet switching",
       "User Settings - Customize slippage tolerance and network preferences",

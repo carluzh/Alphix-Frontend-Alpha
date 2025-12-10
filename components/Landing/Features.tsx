@@ -127,9 +127,7 @@ const BaseChainCard = () => {
           }}
         />
         <div className="flex h-full flex-col gap-y-6 relative z-10">
-          {/* Header with Base lockup - two layers for smooth color transition */}
           <div className="flex items-center relative">
-            {/* Blue version (default) */}
             <Image
               src="/base-lockup-white.svg"
               alt="Base"
@@ -141,7 +139,6 @@ const BaseChainCard = () => {
                 transition: 'opacity 0.3s ease'
               }}
             />
-            {/* White version (hover) */}
             <Image
               src="/base-lockup-white.svg"
               alt=""
@@ -155,7 +152,6 @@ const BaseChainCard = () => {
             />
           </div>
 
-          {/* Title and description */}
           <div className="flex h-full flex-col gap-y-2">
             <h3
               className="text-2xl font-semibold md:text-[28px] md:leading-tight"
@@ -177,7 +173,6 @@ const BaseChainCard = () => {
             </p>
           </div>
 
-          {/* CTA button */}
           <div
             className="flex items-center justify-center gap-2 rounded-3xl px-4 py-3 w-fit mt-2"
             style={{ backgroundColor: 'rgba(0, 0, 0, 0.25)' }}
