@@ -6,7 +6,7 @@ import { motion } from 'framer-motion'
 import Link from 'next/link'
 import Image from 'next/image'
 import { usePathname } from 'next/navigation'
-import { ComponentProps, PropsWithChildren, useState } from 'react'
+import { ComponentProps, PropsWithChildren, useState, useEffect } from 'react'
 import { Menu, X } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -197,20 +197,6 @@ const LandingPageDesktopNavigation = () => {
           >
             Security
           </button>
-          <Link
-            href="https://docs.uniswap.org/contracts/v4/concepts/hooks"
-            target="_blank"
-            className="text-sm font-semibold text-muted-foreground transition-colors hover:text-white"
-          >
-            Uniswap
-          </Link>
-          <Link
-            href="https://x.com/AlphixFi/status/1947334206528307690"
-            target="_blank"
-            className="text-sm font-semibold text-muted-foreground transition-colors hover:text-white"
-          >
-            Base
-          </Link>
         </div>
         <Link href="/swap">
           <Button
@@ -252,9 +238,29 @@ const LandingPageTopbar = ({
   )
 }
 
+const MEDIUM_BREAKPOINT = 2000
+const NARROW_BREAKPOINT = 1700
+
 const LandingPageFooter = () => {
-  // Match PaperShaderFrame dimensions: Section max-w-6xl (72rem) + 16rem on each side = 104rem
-  const FOOTER_MAX_WIDTH = 'calc(72rem + 32rem)' // 104rem = 1664px
+  const [breakpoint, setBreakpoint] = useState<'full' | 'medium' | 'narrow'>('full')
+
+  useEffect(() => {
+    const checkWidth = () => {
+      const width = window.innerWidth
+      if (width < NARROW_BREAKPOINT) setBreakpoint('narrow')
+      else if (width < MEDIUM_BREAKPOINT) setBreakpoint('medium')
+      else setBreakpoint('full')
+    }
+    checkWidth()
+    window.addEventListener('resize', checkWidth)
+    return () => window.removeEventListener('resize', checkWidth)
+  }, [])
+
+  // Match PaperShaderFrame dimensions: Section max-w-6xl (72rem) + extension on each side
+  // Full: 16rem each side = 32rem extra → 104rem total
+  // Medium: 12rem each side = 24rem extra → 96rem total
+  // Narrow: 5rem each side = 10rem extra → 82rem total
+  const FOOTER_MAX_WIDTH = breakpoint === 'narrow' ? 'calc(72rem + 10rem)' : breakpoint === 'medium' ? 'calc(72rem + 24rem)' : 'calc(72rem + 32rem)'
 
   return (
     <motion.div

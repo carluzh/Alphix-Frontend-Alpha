@@ -2,14 +2,33 @@
 
 import { GrainGradient } from '@paper-design/shaders-react'
 import { motion } from 'framer-motion'
-import { useMemo } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 
 const FRAME_THICKNESS = 10
 const OUTER_RADIUS = 18
 const INNER_RADIUS = OUTER_RADIUS - FRAME_THICKNESS
 const PAGE_BG = '#0d0d0c'
 
+const MEDIUM_BREAKPOINT = 2000
+const NARROW_BREAKPOINT = 1700
+
 export const PaperShaderFrame = () => {
+  const [breakpoint, setBreakpoint] = useState<'full' | 'medium' | 'narrow'>('full')
+
+  useEffect(() => {
+    const checkWidth = () => {
+      const width = window.innerWidth
+      if (width < NARROW_BREAKPOINT) setBreakpoint('narrow')
+      else if (width < MEDIUM_BREAKPOINT) setBreakpoint('medium')
+      else setBreakpoint('full')
+    }
+    checkWidth()
+    window.addEventListener('resize', checkWidth)
+    return () => window.removeEventListener('resize', checkWidth)
+  }, [])
+
+  const horizontalExtension = breakpoint === 'narrow' ? '-5rem' : breakpoint === 'medium' ? '-12rem' : '-16rem'
+
   const shaderFrame = useMemo(() => {
     if (typeof window === 'undefined' || typeof performance === 'undefined') return 0
     const w = window as unknown as { __shaderStartMs?: number }
@@ -34,8 +53,8 @@ export const PaperShaderFrame = () => {
     <motion.div
       className="absolute pointer-events-none overflow-hidden z-0"
       style={{
-        left: '-16rem',
-        right: '-16rem',
+        left: horizontalExtension,
+        right: horizontalExtension,
         top: 'calc(-12rem + 5px)',
         bottom: 'calc(-3rem - 5px)',
         borderBottomLeftRadius: OUTER_RADIUS,

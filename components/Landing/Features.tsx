@@ -25,7 +25,7 @@ const UniswapFoundationCard = () => {
       className="flex flex-1 flex-col gap-y-6"
     >
       <Link
-        href="https://docs.uniswap.org/contracts/v4/overview"
+        href="https://docs.uniswap.org/contracts/v4/concepts/hooks"
         target="_blank"
         className="relative flex h-full flex-col justify-between gap-x-6 gap-y-6 rounded-lg p-6 transition-transform hover:translate-y-[-4px] md:p-10 xl:gap-y-0 overflow-hidden"
         style={{
@@ -109,7 +109,7 @@ const BaseChainCard = () => {
       className="flex flex-1 flex-col gap-y-6"
     >
       <Link
-        href="https://base.org"
+        href="https://x.com/AlphixFi/status/1947334206528307690"
         target="_blank"
         className="relative flex h-full flex-col justify-between gap-x-6 gap-y-6 rounded-lg p-6 transition-transform hover:translate-y-[-4px] md:p-10 xl:gap-y-0 overflow-hidden"
         style={{ backgroundColor: 'rgba(60, 138, 255, 0.12)' }}
