@@ -37,7 +37,7 @@ const GrainOverlay = () => (
 
 export default function Layout({ children }: PropsWithChildren) {
   return (
-    <div className="relative flex flex-col bg-gray-50 dark:bg-[#0d0d0c] px-0 md:w-full md:flex-1 md:items-center md:px-4">
+    <div className="relative flex flex-col bg-gray-50 dark:bg-[#0d0d0c] px-0 md:w-full md:flex-1 md:items-center md:px-4 overflow-x-clip">
       <GrainOverlay />
       <div className="flex flex-col gap-y-2 md:w-full">
         <LandingPageNavigation />

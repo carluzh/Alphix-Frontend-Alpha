@@ -4,14 +4,9 @@ import { useEffect, useRef, useState } from 'react'
 
 export const SonicBoom = () => {
   const [isVisible, setIsVisible] = useState(false)
-  const [isMobile, setIsMobile] = useState(false)
   const svgRef = useRef<SVGSVGElement>(null)
 
   useEffect(() => {
-    // Check if mobile
-    const checkMobile = () => setIsMobile(window.innerWidth < 768)
-    checkMobile()
-
     // Check for reduced motion preference
     const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     if (prefersReducedMotion) return
@@ -31,13 +26,10 @@ export const SonicBoom = () => {
     return () => observer.disconnect()
   }, [])
 
-  // Don't render on mobile for performance
-  if (isMobile) return null
-
   return (
     <svg
       ref={svgRef}
-      className="pointer-events-none absolute inset-x-0 -top-[600px] h-[1000px] w-full overflow-visible"
+      className="pointer-events-none absolute inset-x-0 -top-[300px] md:-top-[600px] h-[500px] md:h-[1000px] w-full overflow-visible"
       viewBox="0 0 100 100"
       preserveAspectRatio="none"
       fill="none"

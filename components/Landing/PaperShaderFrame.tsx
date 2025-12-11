@@ -33,10 +33,6 @@ export const PaperShaderFrame = () => {
     return () => window.removeEventListener('resize', checkWidth)
   }, [])
 
-  if (!mounted) return null
-
-  const horizontalExtension = breakpoint === 'narrow' ? '-5rem' : breakpoint === 'medium' ? '-12rem' : '-16rem'
-
   const shaderFrame = useMemo(() => {
     if (typeof window === 'undefined' || typeof performance === 'undefined') return 0
     const w = window as unknown as { __shaderStartMs?: number }
@@ -45,6 +41,8 @@ export const PaperShaderFrame = () => {
     }
     return performance.now() - w.__shaderStartMs
   }, [])
+
+  const horizontalExtension = breakpoint === 'narrow' ? '-5rem' : breakpoint === 'medium' ? '-12rem' : '-16rem'
 
   const shaderProps = {
     colors: ['#f94706', '#ff7919'] as [string, string],
@@ -70,27 +68,31 @@ export const PaperShaderFrame = () => {
         borderBottomRightRadius: OUTER_RADIUS,
       }}
     >
-      <GrainGradient
-        style={{
-          position: 'absolute',
-          inset: 0,
-          width: '100%',
-          height: '100%',
-        }}
-        {...shaderProps}
-      />
-      <div
-        style={{
-          position: 'absolute',
-          top: 0,
-          left: FRAME_THICKNESS,
-          right: FRAME_THICKNESS,
-          bottom: FRAME_THICKNESS,
-          backgroundColor: PAGE_BG,
-          borderBottomLeftRadius: INNER_RADIUS,
-          borderBottomRightRadius: INNER_RADIUS,
-        }}
-      />
+      {mounted && (
+        <>
+          <GrainGradient
+            style={{
+              position: 'absolute',
+              inset: 0,
+              width: '100%',
+              height: '100%',
+            }}
+            {...shaderProps}
+          />
+          <div
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: FRAME_THICKNESS,
+              right: FRAME_THICKNESS,
+              bottom: FRAME_THICKNESS,
+              backgroundColor: PAGE_BG,
+              borderBottomLeftRadius: INNER_RADIUS,
+              borderBottomRightRadius: INNER_RADIUS,
+            }}
+          />
+        </>
+      )}
     </div>
   )
 }

@@ -17,12 +17,12 @@ const UniswapFoundationCard = () => {
   return (
     <div
       ref={ref}
-      className={`animate-on-scroll flex flex-1 flex-col gap-y-4 md:gap-y-6 ${inView ? 'in-view' : ''}`}
+      className={`animate-on-scroll flex flex-1 flex-col gap-y-6 ${inView ? 'in-view' : ''}`}
     >
       <Link
         href="https://docs.uniswap.org/contracts/v4/concepts/hooks"
         target="_blank"
-        className="relative flex h-full flex-col justify-between gap-x-4 gap-y-4 rounded-lg p-5 transition-transform hover:translate-y-[-4px] md:gap-x-6 md:gap-y-6 md:p-10 lg:gap-y-0 overflow-hidden"
+        className="relative flex h-full flex-col justify-between gap-x-4 gap-y-4 rounded-lg p-6 transition-transform hover:translate-y-[-4px] md:gap-x-6 md:gap-y-6 md:p-10 xl:gap-y-0 overflow-hidden"
         style={{
           backgroundColor: isHovered ? 'rgba(252, 114, 255, 0.20)' : 'rgba(252, 114, 255, 0.12)',
           transition: 'background-color 0.3s ease'
@@ -36,7 +36,6 @@ const UniswapFoundationCard = () => {
           alt=""
           width={280}
           height={280}
-          className="w-[180px] h-[180px] md:w-[280px] md:h-[280px]"
           style={{ opacity: 0.25 }}
         />
       </div>
@@ -73,7 +72,7 @@ const UniswapFoundationCard = () => {
         </div>
 
         <div
-          className="flex items-center justify-center gap-2 rounded-3xl px-4 py-3 w-fit mt-2"
+          className="hidden md:flex items-center justify-center gap-2 rounded-3xl px-4 py-3 w-fit mt-2"
           style={{ backgroundColor: 'rgba(0, 0, 0, 0.25)' }}
         >
           <span className="text-sm font-semibold" style={{ color: UNISWAP_PINK }}>
@@ -97,12 +96,12 @@ const BaseChainCard = () => {
   return (
     <div
       ref={ref}
-      className={`animate-on-scroll flex flex-1 flex-col gap-y-4 md:gap-y-6 delay-1 ${inView ? 'in-view' : ''}`}
+      className={`animate-on-scroll flex flex-1 flex-col gap-y-6 delay-1 ${inView ? 'in-view' : ''}`}
     >
       <Link
         href="https://x.com/AlphixFi/status/1947334206528307690"
         target="_blank"
-        className="relative flex h-full flex-col justify-between gap-x-4 gap-y-4 rounded-lg p-5 transition-transform hover:translate-y-[-4px] md:gap-x-6 md:gap-y-6 md:p-10 lg:gap-y-0 overflow-hidden"
+        className="relative flex h-full flex-col justify-between gap-x-4 gap-y-4 rounded-lg p-6 transition-transform hover:translate-y-[-4px] md:gap-x-6 md:gap-y-6 md:p-10 xl:gap-y-0 overflow-hidden"
         style={{ backgroundColor: 'rgba(60, 138, 255, 0.12)' }}
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
@@ -165,7 +164,7 @@ const BaseChainCard = () => {
           </div>
 
           <div
-            className="flex items-center justify-center gap-2 rounded-3xl px-4 py-3 w-fit mt-2"
+            className="hidden md:flex items-center justify-center gap-2 rounded-3xl px-4 py-3 w-fit mt-2"
             style={{ backgroundColor: 'rgba(0, 0, 0, 0.25)' }}
           >
             <span
@@ -197,7 +196,7 @@ type FeaturesProps = {
 
 const Features = ({ className }: FeaturesProps) => (
   <section className={cn('w-full', className)}>
-    <div className="flex w-full flex-col gap-4 md:gap-6 lg:flex-row">
+    <div className="flex w-full flex-col gap-4 md:gap-6 xl:flex-row">
       <UniswapFoundationCard />
       <BaseChainCard />
     </div>

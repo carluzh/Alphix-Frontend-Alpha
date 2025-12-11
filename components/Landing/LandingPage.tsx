@@ -5,6 +5,7 @@ import { Hero } from '@/components/Landing/Hero/Hero'
 import { Button } from '@/components/ui/button'
 import Link from 'next/link'
 import Features from './Features'
+import { FAQSection } from './FAQSection'
 import { Section } from './Section'
 import LandingLayout from './LandingLayout'
 import { FeatureCards } from './FeatureCards'
@@ -80,14 +81,63 @@ const heroFeatures = [
 const ModularityCard = () => {
   const { ref, inView } = useInView<HTMLDivElement>({ once: true, threshold: 0.1 })
 
+  const MarqueeContent = ({ iconSize, boxSize }: { iconSize: string; boxSize: string }) => (
+    <>
+      {modularityIcons.map((config, index) => (
+        <div
+          key={index}
+          className={`flex ${boxSize} shrink-0 items-center justify-center rounded-lg mx-1 bg-gray-50 dark:bg-[#1a1a1a] ${config.type === 'revealed' ? 'border border-sidebar-border/60' : ''}`}
+        >
+          {config.type === 'censored' ? (
+            <GlitchIcon icon={config.icon} className={`${iconSize} text-muted-foreground`} glitchIndex={(index % 8) + 1} pixelScale={0.75} />
+          ) : (
+            <Image src={config.image} alt={config.alt} width={18} height={18} className={config.size === 'lg' ? 'feature-icon-revealed-lg' : 'feature-icon-revealed'} />
+          )}
+        </div>
+      ))}
+      {modularityIcons.map((config, index) => (
+        <div
+          key={`dup-${index}`}
+          className={`flex ${boxSize} shrink-0 items-center justify-center rounded-lg mx-1 bg-gray-50 dark:bg-[#1a1a1a] ${config.type === 'revealed' ? 'border border-sidebar-border/60' : ''}`}
+        >
+          {config.type === 'censored' ? (
+            <GlitchIcon icon={config.icon} className={`${iconSize} text-muted-foreground`} glitchIndex={(index % 8) + 1} pixelScale={0.75} />
+          ) : (
+            <Image src={config.image} alt={config.alt} width={18} height={18} className={config.size === 'lg' ? 'feature-icon-revealed-lg' : 'feature-icon-revealed'} />
+          )}
+        </div>
+      ))}
+    </>
+  )
+
   return (
     <div
       ref={ref}
       className={`animate-on-scroll w-full overflow-hidden rounded-lg border border-sidebar-border/60 bg-white dark:bg-[#131313] p-2 ${inView ? 'in-view' : ''}`}
     >
-      <div className="flex flex-row items-center">
-        <div className="shrink-0 pl-2 pr-4 py-2 max-w-[200px] md:max-w-[280px]">
-          <p className="text-xs md:text-sm text-muted-foreground leading-relaxed">
+      <div className="flex flex-col md:hidden">
+        <div className="px-4 py-3">
+          <p className="text-sm text-muted-foreground leading-relaxed">
+            <span className="text-foreground font-medium">Modular by design.</span>
+            {' '}Unified Pools enable seamless feature expansion as we scale.
+          </p>
+        </div>
+        <div
+          className="relative w-full overflow-hidden censor-marquee-container"
+          style={{
+            maskImage: 'linear-gradient(to right, transparent 0%, black 8%, black 92%, transparent 100%)',
+            WebkitMaskImage: 'linear-gradient(to right, transparent 0%, black 8%, black 92%, transparent 100%)',
+          }}
+        >
+          <div className="flex animate-marquee-smooth-lg">
+            <MarqueeContent iconSize="h-[16px] w-[16px]" boxSize="h-[60px] w-[60px]" />
+          </div>
+        </div>
+      </div>
+
+      <div className="hidden md:flex flex-row items-center">
+        <div className="shrink-0 pl-2 pr-4 py-2 max-w-[280px]">
+          <p className="text-sm text-muted-foreground leading-relaxed">
             <span className="text-foreground font-medium">Modular by design.</span>
             <br />
             Unified Pools enable seamless feature expansion as we scale.
@@ -102,30 +152,7 @@ const ModularityCard = () => {
           }}
         >
           <div className="flex animate-marquee-smooth-lg">
-            {modularityIcons.map((config, index) => (
-              <div
-                key={index}
-                className={`flex h-[72px] w-[72px] shrink-0 items-center justify-center rounded-lg mx-1 bg-gray-50 dark:bg-[#1a1a1a] ${config.type === 'revealed' ? 'border border-sidebar-border/60' : ''}`}
-              >
-                {config.type === 'censored' ? (
-                  <GlitchIcon icon={config.icon} className="h-[18px] w-[18px] text-muted-foreground" glitchIndex={(index % 8) + 1} pixelScale={0.75} />
-                ) : (
-                  <Image src={config.image} alt={config.alt} width={18} height={18} className={config.size === 'lg' ? 'feature-icon-revealed-lg' : 'feature-icon-revealed'} />
-                )}
-              </div>
-            ))}
-            {modularityIcons.map((config, index) => (
-              <div
-                key={`dup-${index}`}
-                className={`flex h-[72px] w-[72px] shrink-0 items-center justify-center rounded-lg mx-1 bg-gray-50 dark:bg-[#1a1a1a] ${config.type === 'revealed' ? 'border border-sidebar-border/60' : ''}`}
-              >
-                {config.type === 'censored' ? (
-                  <GlitchIcon icon={config.icon} className="h-[18px] w-[18px] text-muted-foreground" glitchIndex={(index % 8) + 1} pixelScale={0.75} />
-                ) : (
-                  <Image src={config.image} alt={config.alt} width={18} height={18} className={config.size === 'lg' ? 'feature-icon-revealed-lg' : 'feature-icon-revealed'} />
-                )}
-              </div>
-            ))}
+            <MarqueeContent iconSize="h-[18px] w-[18px]" boxSize="h-[72px] w-[72px]" />
           </div>
         </div>
       </div>
@@ -136,7 +163,7 @@ const ModularityCard = () => {
 export const PageContent = () => {
   return (
     <>
-      <Section className="relative flex flex-col gap-y-16 py-0 md:py-0">
+      <Section className="relative flex flex-col gap-y-10 md:gap-y-16 py-0 md:py-0">
         <PaperShaderFrame />
         <Hero
           title="Building smarter onchain markets."
@@ -161,7 +188,7 @@ export const PageContent = () => {
         <FeatureCards features={heroFeatures} />
       </Section>
 
-      <Section className="flex flex-col gap-y-12 mt-8">
+      <Section className="flex flex-col gap-y-8 md:gap-y-12 mt-6 md:mt-8">
         <DynamicFeeSection />
 
         <SplitPromo
@@ -189,6 +216,8 @@ export const PageContent = () => {
         <ModularityCard />
 
         <Features />
+
+        <FAQSection />
       </Section>
 
     </>
