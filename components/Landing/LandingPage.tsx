@@ -1,7 +1,5 @@
 'use client'
 
-import { useEffect } from 'react'
-import { useRouter } from 'next/navigation'
 import { Hero } from '@/components/Landing/Hero/Hero'
 import { Button } from '@/components/ui/button'
 import Link from 'next/link'
@@ -37,15 +35,6 @@ const modularityIcons: IconConfig[] = [
 ]
 
 export default function LandingPage() {
-  const router = useRouter()
-
-  // Redirect mobile users to /swap (mobile landing page not ready)
-  useEffect(() => {
-    const isMobile = window.innerWidth < 768
-    if (isMobile) {
-      router.replace('/swap')
-    }
-  }, [router])
 
   return (
     <LandingLayout>

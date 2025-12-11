@@ -70,7 +70,8 @@
       "Bash(do echo -n \"$term: \")",
       "Bash(printf:*)",
       "Bash(copy:*)",
-      "Bash(cp:*)"
+      "Bash(cp:*)",
+      "Bash(dir:*)"
     ],
     "deny": [],
     "ask": []
