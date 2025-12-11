@@ -26,14 +26,14 @@ import {
 } from "@tanstack/react-table";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { MobileLiquidityList } from "@/components/MobileLiquidityList";
-import type { ProcessedPosition } from "../../pages/api/liquidity/get-positions";
+import type { ProcessedPosition } from "@/pages/api/liquidity/get-positions";
 import {
     useAccount,
 } from "wagmi";
 import { toast } from "sonner";
-import { getEnabledPools, getToken, getPoolSubgraphId } from "../../lib/pools-config";
-import { loadUserPositionIds, derivePositionsFromIds, getCachedPositionTimestamps } from "../../lib/client-cache";
-import { Pool } from "../../types";
+import { getEnabledPools, getToken, getPoolSubgraphId } from "@/lib/pools-config";
+import { loadUserPositionIds, derivePositionsFromIds, getCachedPositionTimestamps } from "@/lib/client-cache";
+import { Pool } from "@/types";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ChevronUpIcon, ChevronDownIcon, ChevronsUpDownIcon, PlusIcon, BadgeCheck, OctagonX } from "lucide-react";
@@ -42,7 +42,7 @@ import { useNetwork } from "@/lib/network-context";
 import { useIncreaseLiquidity, type IncreasePositionData } from "@/components/liquidity/useIncreaseLiquidity";
 import { useDecreaseLiquidity, type DecreasePositionData } from "@/components/liquidity/useDecreaseLiquidity";
 import { toast as sonnerToast } from "sonner";
-import { waitForSubgraphBlock } from "../../lib/client-cache";
+import { waitForSubgraphBlock } from "@/lib/client-cache";
 
 
 const SDK_MIN_TICK = -887272;

@@ -4,10 +4,16 @@ import * as React from "react"
 import { Slot } from "@radix-ui/react-slot"
 import { VariantProps, cva } from "class-variance-authority"
 import { PanelLeft } from "lucide-react"
-import { GrainGradient } from "@paper-design/shaders-react"
+import dynamic from "next/dynamic"
 import { usePathname } from "next/navigation"
 
 import { useIsMobile } from "@/hooks/use-mobile"
+
+// Lazy load WebGL shader to avoid loading on pages that don't need it
+const GrainGradient = dynamic(
+  () => import("@paper-design/shaders-react").then(mod => mod.GrainGradient),
+  { ssr: false }
+)
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
