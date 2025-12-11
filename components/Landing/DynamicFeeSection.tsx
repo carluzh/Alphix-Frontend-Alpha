@@ -105,7 +105,7 @@ const generateFeeUpdates = (history: FeeHistoryPoint[]): FeeUpdateItem[] => {
 // Fee Update Indicator component
 const FeeUpdateIndicator = ({ type }: { type: 'up' | 'down' | 'neutral' }) => {
   const colors = {
-    up: 'bg-emerald-50 dark:bg-emerald-950 text-emerald-500 dark:text-emerald-500',
+    up: 'bg-green-50 dark:bg-green-950 text-green-500 dark:text-green-500',
     down: 'bg-red-50 dark:bg-red-950 text-red-500 dark:text-red-500',
     neutral: 'bg-sidebar-accent text-muted-foreground',
   }
@@ -547,7 +547,8 @@ export const DynamicFeeSection = () => {
 
   return (
     <motion.div
-        className="flex w-full flex-col gap-y-6 overflow-hidden rounded-lg border border-sidebar-border/60 bg-white dark:bg-[#131313] p-2 xl:flex-row"
+      id="dynamic-fees-section"
+      className="flex w-full flex-col gap-y-6 overflow-hidden rounded-lg border border-sidebar-border/60 bg-white dark:bg-[#131313] p-2 xl:flex-row"
       variants={containerVariants}
       initial="hidden"
       whileInView="visible"
@@ -728,7 +729,7 @@ export const DynamicFeeSection = () => {
                         <span
                           className={cn(
                             "text-[11px]",
-                            update.feeChange === 'up' ? "text-emerald-500" : update.feeChange === 'down' ? "text-red-500" : "text-muted-foreground"
+                            update.feeChange === 'up' ? "text-green-500" : update.feeChange === 'down' ? "text-red-500" : "text-muted-foreground"
                           )}
                           style={{ fontFamily: 'Consolas, monospace' }}
                         >

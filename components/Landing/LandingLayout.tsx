@@ -8,6 +8,7 @@ import Image from 'next/image'
 import { usePathname } from 'next/navigation'
 import { ComponentProps, PropsWithChildren, useState } from 'react'
 import { Menu, X } from 'lucide-react'
+import { toast } from 'sonner'
 
 const GithubIcon = ({ size = 20 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
@@ -175,12 +176,14 @@ const LandingPageDesktopNavigation = () => {
           />
         </Link>
         <div className="flex items-center gap-6">
-          <Link
-            href="/swap"
+          <button
+            onClick={() => {
+              document.getElementById('dynamic-fees-section')?.scrollIntoView({ behavior: 'smooth' })
+            }}
             className="text-sm font-semibold text-muted-foreground transition-colors hover:text-white"
           >
             Products
-          </Link>
+          </button>
           <Link
             href="https://alphix.gitbook.io/docs/"
             target="_blank"
@@ -188,12 +191,25 @@ const LandingPageDesktopNavigation = () => {
           >
             Docs
           </Link>
-          <Link
-            href="https://alphix.gitbook.io/docs/"
-            target="_blank"
+          <button
+            onClick={() => toast.info('Coming Soon')}
             className="text-sm font-semibold text-muted-foreground transition-colors hover:text-white"
           >
             Security
+          </button>
+          <Link
+            href="https://docs.uniswap.org/contracts/v4/concepts/hooks"
+            target="_blank"
+            className="text-sm font-semibold text-muted-foreground transition-colors hover:text-white"
+          >
+            Uniswap
+          </Link>
+          <Link
+            href="https://x.com/AlphixFi/status/1947334206528307690"
+            target="_blank"
+            className="text-sm font-semibold text-muted-foreground transition-colors hover:text-white"
+          >
+            Base
           </Link>
         </div>
         <Link href="/swap">
@@ -323,12 +339,11 @@ const LandingPageFooter = () => {
                     >
                       Smart Contracts
                     </a>
-                    <Link
-                      href="/brand"
-                      className="block text-sm text-muted-foreground hover:text-foreground transition-colors"
+                    <span
+                      className="block text-sm text-muted-foreground/50 cursor-not-allowed"
                     >
                       Brand Kit
-                    </Link>
+                    </span>
                   </div>
                 </div>
               </div>

@@ -12,6 +12,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { BadgeCheck, AlertTriangle, Loader2 } from "lucide-react";
 import { Section, SectionDescription } from "@/components/settings/Section";
@@ -29,6 +37,10 @@ export default function SettingsPage() {
   const { isConnected } = useAccount();
   const [testnetMode, setTestnetMode] = useState(isTestnet);
   const [isNetworkSwitching, setIsNetworkSwitching] = useState(false);
+
+  // Password protection for mainnet
+  const [showPasswordDialog, setShowPasswordDialog] = useState(false);
+  const [mainnetPassword, setMainnetPassword] = useState("");
 
   // User settings hook with persistence
   const {
@@ -71,6 +83,17 @@ export default function SettingsPage() {
 
   const handleNetworkToggle = async (newTestnetMode: boolean) => {
     if (isNetworkSwitching) return;
+
+    // If switching to mainnet (unchecking testnet), require password
+    if (!newTestnetMode && testnetMode) {
+      setShowPasswordDialog(true);
+      return;
+    }
+
+    await performNetworkSwitch(newTestnetMode);
+  };
+
+  const performNetworkSwitch = async (newTestnetMode: boolean) => {
     setTestnetMode(newTestnetMode);
     setIsNetworkSwitching(true);
 
@@ -90,7 +113,32 @@ export default function SettingsPage() {
 
     setTimeout(() => {
       setNetworkMode(newTestnetMode ? 'testnet' : 'mainnet');
+      setIsNetworkSwitching(false);
     }, 500);
+  };
+
+  const handlePasswordSubmit = async () => {
+    try {
+      const response = await fetch('/api/auth/verify-admin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: mainnetPassword }),
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        setShowPasswordDialog(false);
+        setMainnetPassword("");
+        await performNetworkSwitch(false);
+      } else {
+        toast.error("Incorrect password");
+        setMainnetPassword("");
+      }
+    } catch {
+      toast.error("Failed to verify password");
+      setMainnetPassword("");
+    }
   };
 
   // Refs for measuring button positions
@@ -181,6 +229,47 @@ export default function SettingsPage() {
 
   return (
     <AppLayout>
+      {/* Password Dialog for Mainnet Access */}
+      <Dialog open={showPasswordDialog} onOpenChange={setShowPasswordDialog}>
+        <DialogContent className="sm:max-w-md bg-surface border-sidebar-border">
+          <DialogHeader>
+            <DialogTitle>Enter Password</DialogTitle>
+            <DialogDescription>
+              Mainnet access is restricted. Enter the password to switch to mainnet.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-4 py-4">
+            <Input
+              type="password"
+              placeholder="Password"
+              value={mainnetPassword}
+              onChange={(e) => setMainnetPassword(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handlePasswordSubmit()}
+              className="bg-surface border-sidebar-border"
+              autoFocus
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowPasswordDialog(false);
+                setMainnetPassword("");
+              }}
+              className="border-sidebar-border"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handlePasswordSubmit}
+              className="bg-button-primary border border-sidebar-primary text-sidebar-primary hover-button-primary"
+            >
+              Confirm
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <div className="flex flex-1 flex-col font-sans">
         <div className="relative flex min-w-0 flex-1 flex-col items-center p-3 sm:p-6">
           <div className="flex h-full w-full max-w-xl flex-col">

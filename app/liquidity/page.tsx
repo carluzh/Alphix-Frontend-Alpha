@@ -612,9 +612,9 @@ export default function LiquidityPage() {
                   <div className="mt-4">
                     <div className="rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 p-2 md:p-4">
                       <div className="flex flex-wrap items-stretch gap-1.5 md:gap-3">
-                        <div className="flex-1 min-w-[100px] max-w-[180px] rounded-lg bg-muted/30 border border-sidebar-border/60">
+                        <div className="flex-1 min-w-[120px] max-w-[180px] rounded-lg bg-muted/30 border border-sidebar-border/60">
                           <div className="px-3 md:px-4 h-7 md:h-9 flex items-center">
-                            <h2 className="text-[10px] md:text-xs tracking-wider text-muted-foreground font-mono font-bold">TVL</h2>
+                            <h2 className="text-[10px] md:text-xs tracking-wider text-muted-foreground font-mono font-bold whitespace-nowrap">TVL</h2>
                           </div>
                           <div className="px-3 md:px-4 py-1">
                             <div className="text-base md:text-lg font-medium">
@@ -622,9 +622,9 @@ export default function LiquidityPage() {
                             </div>
                           </div>
                         </div>
-                        <div className="flex-1 min-w-[100px] max-w-[180px] rounded-lg bg-muted/30 border border-sidebar-border/60">
+                        <div className="flex-1 min-w-[120px] max-w-[180px] rounded-lg bg-muted/30 border border-sidebar-border/60">
                           <div className="px-3 md:px-4 h-7 md:h-9 flex items-center">
-                            <h2 className="text-[10px] md:text-xs tracking-wider text-muted-foreground font-mono font-bold">VOLUME (24H)</h2>
+                            <h2 className="text-[10px] md:text-xs tracking-wider text-muted-foreground font-mono font-bold whitespace-nowrap">VOLUME (24H)</h2>
                           </div>
                           <div className="px-3 md:px-4 py-1">
                             <div className="text-base md:text-lg font-medium">
@@ -632,9 +632,9 @@ export default function LiquidityPage() {
                             </div>
                           </div>
                         </div>
-                        <div className="flex-1 min-w-[100px] max-w-[180px] rounded-lg bg-muted/30 border border-sidebar-border/60">
+                        <div className="flex-1 min-w-[120px] max-w-[180px] rounded-lg bg-muted/30 border border-sidebar-border/60">
                           <div className="px-3 md:px-4 h-7 md:h-9 flex items-center">
-                            <h2 className="text-[10px] md:text-xs tracking-wider text-muted-foreground font-mono font-bold">FEES (24H)</h2>
+                            <h2 className="text-[10px] md:text-xs tracking-wider text-muted-foreground font-mono font-bold whitespace-nowrap">FEES (24H)</h2>
                           </div>
                           <div className="px-3 md:px-4 py-1">
                             <div className="text-base md:text-lg font-medium">
