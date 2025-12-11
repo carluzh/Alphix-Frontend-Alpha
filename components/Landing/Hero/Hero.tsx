@@ -71,6 +71,7 @@ export const Hero = ({
           width={80}
           height={80}
           className="dark:block"
+          priority
         />
       </motion.div>
       <motion.h1

@@ -52,7 +52,10 @@ export const FeatureCards = ({ features }: FeatureCardsProps) => {
                 src={feature.image}
                 alt={feature.title}
                 fill
+                sizes="(max-width: 768px) 66vw, 22vw"
                 className={cn("object-cover transition-transform duration-300 ease-out group-hover:scale-110", feature.imageClassName)}
+                // First card is likely LCP - prioritize it
+                priority={index === 0}
               />
             </div>
           </div>

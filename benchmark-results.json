@@ -46,5 +46,37 @@
       "cumulative-layout-shift": 0,
       "interactive": 2599.38132
     }
+  },
+  {
+    "timestamp": "2025-12-11T11:20:29.004Z",
+    "url": "https://alphix-frontend-alpha-opg8brc40-shuis-projects-7c5308be.vercel.app/",
+    "device": "desktop",
+    "runs": 3,
+    "performanceScore": 82,
+    "metrics": {
+      "first-contentful-paint": 356.91550000000007,
+      "largest-contentful-paint": 2634.4774,
+      "server-response-time": 21.192666666666664,
+      "speed-index": 1375.1443677163077,
+      "total-blocking-time": 90.16666666666667,
+      "cumulative-layout-shift": 0,
+      "interactive": 2656.0917833333338
+    }
+  },
+  {
+    "timestamp": "2025-12-11T11:21:19.094Z",
+    "url": "https://alphix-frontend-alpha-opg8brc40-shuis-projects-7c5308be.vercel.app/",
+    "device": "mobile",
+    "runs": 3,
+    "performanceScore": 53,
+    "metrics": {
+      "first-contentful-paint": 937.0313,
+      "largest-contentful-paint": 14878.937866666667,
+      "server-response-time": 19.386333333333333,
+      "speed-index": 4421.706102528741,
+      "total-blocking-time": 890.4999999999997,
+      "cumulative-layout-shift": 0,
+      "interactive": 15345.018933333335
+    }
   }
 ]
