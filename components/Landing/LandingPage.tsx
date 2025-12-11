@@ -1,5 +1,6 @@
 'use client'
 
+import dynamic from 'next/dynamic'
 import { Hero } from '@/components/Landing/Hero/Hero'
 import { Button } from '@/components/ui/button'
 import Link from 'next/link'
@@ -8,12 +9,23 @@ import { Section } from './Section'
 import LandingLayout from './LandingLayout'
 import { FeatureCards } from './FeatureCards'
 import { SplitPromo } from './SplitPromo'
-import { DynamicFeeSection } from './DynamicFeeSection'
-import { PaperShaderFrame } from './PaperShaderFrame'
 import { ArrowUpRight, Layers, Lock, SlidersVertical, Handshake, Repeat, BetweenVerticalStart, FileStack, ScanEye, ToyBrick, LucideIcon } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { GlitchIcon } from './GlitchIcon'
 import Image from 'next/image'
+
+// Lazy load heavy components to reduce initial bundle
+// DynamicFeeSection: ~45KB (recharts + animation logic)
+const DynamicFeeSection = dynamic(
+  () => import('./DynamicFeeSection').then(mod => mod.DynamicFeeSection),
+  { ssr: false }
+)
+
+// PaperShaderFrame: ~25KB (WebGL shader)
+const PaperShaderFrame = dynamic(
+  () => import('./PaperShaderFrame').then(mod => mod.PaperShaderFrame),
+  { ssr: false }
+)
 
 // Icon configuration: either a Lucide icon (censored) or a revealed feature image
 type IconConfig =

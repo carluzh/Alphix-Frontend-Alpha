@@ -78,5 +78,37 @@
       "cumulative-layout-shift": 0,
       "interactive": 15345.018933333335
     }
+  },
+  {
+    "timestamp": "2025-12-11T11:33:31.080Z",
+    "url": "https://alphix-frontend-alpha-rn4zkt2l9-shuis-projects-7c5308be.vercel.app",
+    "device": "desktop",
+    "runs": 3,
+    "performanceScore": 87,
+    "metrics": {
+      "first-contentful-paint": 354.15950000000004,
+      "largest-contentful-paint": 2071.3115333333335,
+      "server-response-time": 21.535666666666668,
+      "speed-index": 1263.3788373174887,
+      "total-blocking-time": 81.99999999999993,
+      "cumulative-layout-shift": 0.000001427049587018066,
+      "interactive": 2072.3616366666665
+    }
+  },
+  {
+    "timestamp": "2025-12-11T11:34:18.908Z",
+    "url": "https://alphix-frontend-alpha-rn4zkt2l9-shuis-projects-7c5308be.vercel.app",
+    "device": "mobile",
+    "runs": 3,
+    "performanceScore": 56,
+    "metrics": {
+      "first-contentful-paint": 962.5872999999998,
+      "largest-contentful-paint": 10549.537166666667,
+      "server-response-time": 22.712666666666667,
+      "speed-index": 3225.36597951306,
+      "total-blocking-time": 754.8333333333334,
+      "cumulative-layout-shift": 0,
+      "interactive": 10568.840883333334
+    }
   }
 ]
