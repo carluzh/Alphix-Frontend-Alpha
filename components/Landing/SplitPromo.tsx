@@ -34,14 +34,14 @@ export const SplitPromo: React.FC<SplitPromoProps> = ({
   return (
     <div
       ref={ref}
-      className={`animate-on-scroll flex w-full flex-col gap-y-6 overflow-hidden rounded-lg border border-sidebar-border/60 bg-white dark:bg-[#131313] p-2 xl:flex-row ${reverse ? 'xl:flex-row-reverse' : ''} ${inView ? 'in-view' : ''}`}
+      className={`animate-on-scroll flex w-full flex-col gap-y-4 md:gap-y-6 overflow-hidden rounded-lg border border-sidebar-border/60 bg-white dark:bg-[#131313] p-2 xl:flex-row ${reverse ? 'xl:flex-row-reverse' : ''} ${inView ? 'in-view' : ''}`}
     >
       {/* Text Content */}
-      <div className="flex w-full flex-1 flex-col gap-y-8 p-6 md:p-12">
-        <div className="flex flex-col gap-y-4">
+      <div className="flex w-full flex-1 flex-col gap-y-4 md:gap-y-8 p-4 md:p-6 lg:p-12">
+        <div className="flex flex-col gap-y-2 md:gap-y-4">
           {badge && (
             <span
-              className={`w-fit rounded-md px-2.5 py-1 text-xs font-medium ${
+              className={`w-fit rounded-md px-2 md:px-2.5 py-1 text-xs font-medium ${
                 badge.variant === 'muted'
                   ? 'bg-gray-100 dark:bg-[#1a1a1a] text-muted-foreground'
                   : 'bg-green-950/70 text-green-500'
@@ -50,11 +50,11 @@ export const SplitPromo: React.FC<SplitPromoProps> = ({
               {badge.text}
             </span>
           )}
-          <h2 className="text-3xl font-semibold leading-tight text-balance md:text-4xl">
+          <h2 className="text-2xl md:text-3xl lg:text-4xl font-semibold leading-tight text-balance">
             {title}
           </h2>
         </div>
-        <p className="text-lg leading-relaxed text-pretty text-muted-foreground">
+        <p className="text-base md:text-lg leading-relaxed text-pretty text-muted-foreground">
           {description}
         </p>
         {bullets && bullets.length > 0 && (
@@ -62,27 +62,27 @@ export const SplitPromo: React.FC<SplitPromoProps> = ({
             {bullets.map((bullet, index) => (
               <li
                 key={index}
-                className="flex flex-row items-center gap-x-2"
+                className="flex flex-row items-start md:items-center gap-x-2"
               >
-                <Check className="h-4 w-4 text-green-500 shrink-0" />
-                <p className="leading-relaxed text-pretty text-foreground">{bullet}</p>
+                <Check className="h-4 w-4 text-green-500 shrink-0 mt-0.5 md:mt-0" />
+                <p className="text-sm md:text-base leading-relaxed text-pretty text-foreground">{bullet}</p>
               </li>
             ))}
           </ul>
         )}
-        <div className="flex flex-row items-center gap-x-6">
+        <div className="flex flex-row items-center gap-x-4 md:gap-x-6">
           {cta1}
           {cta2}
         </div>
       </div>
       {/* Image Container - nested rounded box like DynamicFeeSection */}
       <div className="flex w-full flex-1 flex-col rounded-lg bg-gray-50 dark:bg-[#161616] overflow-hidden">
-        <div className="relative flex w-full h-full min-h-[300px]">
+        <div className="relative flex w-full h-full min-h-[200px] md:min-h-[300px]">
           <Image
             className="absolute inset-0 h-full w-full object-cover object-center"
             src={image}
             fill
-            sizes="(max-width: 768px) 100vw, (max-width: 1280px) 100vw, 1280px"
+            sizes="(max-width: 768px) 100vw, 50vw"
             loading="lazy"
             alt={title}
           />

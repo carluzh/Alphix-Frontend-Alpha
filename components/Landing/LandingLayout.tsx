@@ -1,13 +1,10 @@
 'use client'
 
-import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { useInView } from '@/hooks/useInView'
 import Link from 'next/link'
 import Image from 'next/image'
-import { usePathname } from 'next/navigation'
-import { ComponentProps, PropsWithChildren, useState, useEffect } from 'react'
-import { Menu, X } from 'lucide-react'
+import { PropsWithChildren, useState, useEffect } from 'react'
 import { toast } from 'sonner'
 
 const GithubIcon = ({ size = 20 }: { size?: number }) => (
@@ -28,7 +25,6 @@ const DiscordIcon = ({ size = 20 }: { size?: number }) => (
   </svg>
 )
 
-// Noise/grain texture overlay (from Uniswap - covers entire page)
 const GrainOverlay = () => (
   <div
     className="pointer-events-none absolute inset-0 z-[100]"
@@ -40,23 +36,13 @@ const GrainOverlay = () => (
 )
 
 export default function Layout({ children }: PropsWithChildren) {
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
-
   return (
     <div className="relative flex flex-col bg-gray-50 dark:bg-[#0d0d0c] px-0 md:w-full md:flex-1 md:items-center md:px-4">
       <GrainOverlay />
       <div className="flex flex-col gap-y-2 md:w-full">
-        <LandingPageDesktopNavigation />
-        <LandingPageTopbar
-          isMobileMenuOpen={isMobileMenuOpen}
-          setIsMobileMenuOpen={setIsMobileMenuOpen}
-        />
-        <LandingPageMobileNavigation
-          isOpen={isMobileMenuOpen}
-          onClose={() => setIsMobileMenuOpen(false)}
-        />
+        <LandingPageNavigation />
 
-        <div className="relative flex flex-col px-4 pt-32 md:w-full md:px-0 md:pt-8">
+        <div className="relative flex flex-col px-4 pt-8 md:w-full md:px-0">
           {children}
         </div>
         <LandingPageFooter />
@@ -65,107 +51,10 @@ export default function Layout({ children }: PropsWithChildren) {
   )
 }
 
-const NavLink = ({
-  href,
-  className,
-  children,
-  isActive: _isActive,
-  target,
-  ...props
-}: ComponentProps<typeof Link> & {
-  isActive?: (pathname: string) => boolean
-}) => {
-  const pathname = usePathname() ?? ''
-  const isActive = _isActive
-    ? _isActive(pathname)
-    : pathname.startsWith(href.toString())
-  const isExternal = href.toString().startsWith('http')
-
+const LandingPageNavigation = () => {
   return (
-    <Link
-      href={href}
-      target={isExternal ? '_blank' : target}
-      prefetch
-      className={cn(
-        'text-gray-500 dark:text-gray-400 -m-1 flex items-center gap-x-2 p-1 transition-colors hover:text-black dark:hover:text-white',
-        isActive && 'text-black dark:text-white',
-        className,
-      )}
-      {...props}
-    >
-      {children}
-    </Link>
-  )
-}
-
-interface NavigationItem {
-  title: string
-  href: string
-  isActive?: (pathname: string) => boolean
-  target?: '_blank'
-}
-
-const mobileNavigationItems: NavigationItem[] = [
-  {
-    title: 'Overview',
-    href: '/',
-    isActive: (pathname) => pathname === '/',
-  },
-  {
-    title: 'Swap',
-    href: '/swap',
-  },
-  {
-    title: 'Liquidity',
-    href: '/liquidity',
-  },
-  {
-    title: 'Documentation',
-    href: 'https://alphix.gitbook.io/docs/',
-    target: '_blank',
-  },
-  {
-    title: 'GitHub',
-    href: 'https://github.com/alphixfi',
-    target: '_blank',
-  },
-]
-
-const LandingPageMobileNavigation = ({
-  isOpen,
-  onClose
-}: {
-  isOpen: boolean
-  onClose: () => void
-}) => {
-  if (!isOpen) return null
-
-  return (
-    <div className="md:hidden fixed inset-0 z-40 bg-gray-50 dark:bg-[#0d0d0c] pt-20">
-      <div className="flex flex-col gap-y-6 px-6 py-2">
-        <div className="flex flex-col gap-y-1">
-          {mobileNavigationItems.map((item) => (
-            <NavLink
-              key={item.title}
-              className="text-xl tracking-tight"
-              isActive={item.isActive}
-              target={item.target}
-              href={item.href}
-              onClick={onClose}
-            >
-              {item.title}
-            </NavLink>
-          ))}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-const LandingPageDesktopNavigation = () => {
-  return (
-    <div className="sticky top-0 z-50 hidden w-full flex-col items-center py-6 md:flex">
-      <nav className="flex items-center gap-6 rounded-lg bg-surface border border-sidebar-border/60 px-2 py-2">
+    <div className="sticky top-0 z-50 flex w-full flex-col items-center py-4 md:py-6 px-4 md:px-0">
+      <nav className="flex items-center gap-3 md:gap-6 rounded-lg bg-surface border border-sidebar-border/60 px-2 py-2">
         <Link href="/" className="flex items-center justify-center ml-1">
           <Image
             src="/LogoIconWhite.svg"
@@ -210,44 +99,18 @@ const LandingPageDesktopNavigation = () => {
   )
 }
 
-const LandingPageTopbar = ({
-  isMobileMenuOpen,
-  setIsMobileMenuOpen
-}: {
-  isMobileMenuOpen: boolean
-  setIsMobileMenuOpen: (open: boolean) => void
-}) => {
-  return (
-    <div className="z-50 flex w-full flex-row items-center justify-between px-6 py-6 md:hidden fixed top-0 left-0 right-0 bg-gray-50 dark:bg-[#0d0d0c]">
-      <Link href="/">
-        <Image
-          src="/Logo Type (white).svg"
-          alt="Alphix"
-          width={100}
-          height={24}
-          className="h-6 w-auto"
-        />
-      </Link>
-      <button
-        className="flex items-center justify-center w-10 h-10"
-        onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-      >
-        {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
-      </button>
-    </div>
-  )
-}
-
 const MEDIUM_BREAKPOINT = 2000
 const NARROW_BREAKPOINT = 1700
 
 const LandingPageFooter = () => {
   const [breakpoint, setBreakpoint] = useState<'full' | 'medium' | 'narrow'>('full')
+  const [isMobile, setIsMobile] = useState(false)
   const { ref, inView } = useInView<HTMLDivElement>({ once: true, threshold: 0.1 })
 
   useEffect(() => {
     const checkWidth = () => {
       const width = window.innerWidth
+      setIsMobile(width < 768)
       if (width < NARROW_BREAKPOINT) setBreakpoint('narrow')
       else if (width < MEDIUM_BREAKPOINT) setBreakpoint('medium')
       else setBreakpoint('full')
@@ -257,10 +120,7 @@ const LandingPageFooter = () => {
     return () => window.removeEventListener('resize', checkWidth)
   }, [])
 
-  // Match PaperShaderFrame dimensions: Section max-w-6xl (72rem) + extension on each side
-  // Full: 16rem each side = 32rem extra → 104rem total
-  // Medium: 12rem each side = 24rem extra → 96rem total
-  // Narrow: 5rem each side = 10rem extra → 82rem total
+  // Match PaperShaderFrame horizontal extension at each breakpoint
   const FOOTER_MAX_WIDTH = breakpoint === 'narrow' ? 'calc(72rem + 10rem)' : breakpoint === 'medium' ? 'calc(72rem + 24rem)' : 'calc(72rem + 32rem)'
 
   return (
@@ -268,17 +128,13 @@ const LandingPageFooter = () => {
       ref={ref}
       className={`animate-on-scroll relative flex flex-col items-center mt-12 md:mt-16 ${inView ? 'in-view' : ''}`}
     >
-      {/* Clipping container */}
       <div
-        className="relative w-full h-[280px] md:h-[320px] overflow-hidden px-4"
-        style={{ maxWidth: FOOTER_MAX_WIDTH }}
+        className="relative w-full h-[280px] md:h-[320px] overflow-hidden px-0 md:px-4"
+        style={{ maxWidth: isMobile ? 'none' : FOOTER_MAX_WIDTH }}
       >
-        {/* The card itself - extends below the visible area */}
-        <footer className="w-full rounded-t-lg border border-b-0 border-sidebar-border/60 bg-white dark:bg-[#131313] h-[400px] md:h-[480px]">
-          <div className="flex flex-col justify-between h-[280px] md:h-[320px] py-10 px-6 md:px-12">
-            {/* Top row */}
+        <footer className="w-full md:rounded-t-lg border border-b-0 border-x-0 md:border-x border-sidebar-border/60 bg-white dark:bg-[#131313] h-[400px] md:h-[480px]">
+          <div className="flex flex-col justify-between h-[280px] md:h-[320px] py-8 md:py-10 px-4 md:px-12">
             <div className="flex flex-row justify-between items-start">
-              {/* Top left: Logo */}
               <Image
                 src="/LogoIconWhite.svg"
                 alt="Alphix Logo"
@@ -286,8 +142,6 @@ const LandingPageFooter = () => {
                 height={32}
                 className="h-8 w-8"
               />
-
-              {/* Top right: Link columns */}
               <div className="flex flex-row gap-8 md:gap-16">
                 <div>
                   <h3 className="text-sm font-semibold mb-4 text-foreground">
@@ -352,9 +206,7 @@ const LandingPageFooter = () => {
               </div>
             </div>
 
-            {/* Bottom row */}
             <div className="flex flex-row justify-between items-center">
-              {/* Bottom left: Social icons */}
               <div className="flex items-center gap-4">
                 <a
                   href="https://x.com/AlphixFi"
@@ -381,9 +233,7 @@ const LandingPageFooter = () => {
                   <GithubIcon size={20} />
                 </a>
               </div>
-
-              {/* Bottom right: Copyright + Version */}
-              <p className="text-sm text-muted-foreground">
+              <p className="text-[10px] md:text-sm text-muted-foreground">
                 © 2025 Alphix v{process.env.NEXT_PUBLIC_APP_VERSION}<span className="opacity-50">+{process.env.NEXT_PUBLIC_GIT_COMMIT}</span>
               </p>
             </div>

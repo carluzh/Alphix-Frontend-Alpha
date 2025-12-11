@@ -27,22 +27,22 @@ export const FeatureCards = ({ features }: FeatureCardsProps) => {
         {features.map((feature, index) => (
           <div
             key={index}
-            className="group relative flex items-center p-5 overflow-hidden"
+            className="group relative flex items-center p-4 md:p-5 min-h-[100px] md:min-h-0 overflow-hidden"
           >
-            <div className="relative z-10 flex flex-col gap-1.5 w-3/5 pr-2">
-              <h3 className="text-sm font-semibold text-foreground">
+            <div className="relative z-10 flex flex-col gap-1 md:gap-1.5 w-1/2 md:w-3/5 pr-2">
+              <h3 className="text-sm md:text-sm font-semibold text-foreground">
                 {feature.title}
               </h3>
-              <p className="text-sm text-muted-foreground leading-relaxed">
+              <p className="text-xs md:text-sm text-muted-foreground leading-relaxed">
                 {feature.description}
               </p>
             </div>
-            <div className="absolute right-0 top-0 bottom-0 w-2/3">
+            <div className="absolute right-0 top-0 bottom-0 w-1/2 md:w-2/3">
               <Image
                 src={feature.image}
                 alt={feature.title}
                 fill
-                sizes="(max-width: 768px) 66vw, 22vw"
+                sizes="(max-width: 768px) 50vw, 22vw"
                 className={cn("object-cover transition-transform duration-300 ease-out group-hover:scale-110", feature.imageClassName)}
                 priority={index === 0}
               />

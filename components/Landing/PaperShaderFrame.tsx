@@ -14,9 +14,14 @@ const NARROW_BREAKPOINT = 1700
 
 export const PaperShaderFrame = () => {
   const [breakpoint, setBreakpoint] = useState<'full' | 'medium' | 'narrow'>('full')
+  const [mounted, setMounted] = useState(false)
   const { ref, inView } = useInView<HTMLDivElement>({ once: true, threshold: 0.1 })
 
   useEffect(() => {
+    if (window.innerWidth < 768) return // Skip heavy WebGL on mobile
+
+    setMounted(true)
+
     const checkWidth = () => {
       const width = window.innerWidth
       if (width < NARROW_BREAKPOINT) setBreakpoint('narrow')
@@ -27,6 +32,8 @@ export const PaperShaderFrame = () => {
     window.addEventListener('resize', checkWidth)
     return () => window.removeEventListener('resize', checkWidth)
   }, [])
+
+  if (!mounted) return null
 
   const horizontalExtension = breakpoint === 'narrow' ? '-5rem' : breakpoint === 'medium' ? '-12rem' : '-16rem'
 

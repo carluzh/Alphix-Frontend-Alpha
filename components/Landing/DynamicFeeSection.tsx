@@ -417,27 +417,27 @@ export const DynamicFeeSection = () => {
     <div
       ref={ref}
       id="dynamic-fees-section"
-      className={`animate-on-scroll flex w-full flex-col gap-y-6 overflow-hidden rounded-lg border border-sidebar-border/60 bg-white dark:bg-[#131313] p-2 xl:flex-row ${inView ? 'in-view' : ''}`}
+      className={`animate-on-scroll flex w-full flex-col gap-y-4 md:gap-y-6 overflow-hidden rounded-lg border border-sidebar-border/60 bg-white dark:bg-[#131313] p-2 xl:flex-row ${inView ? 'in-view' : ''}`}
     >
       {/* Left Side - Text Content */}
-      <div className="flex w-full flex-1 flex-col gap-y-8 p-6 md:p-12">
-        <span className="w-fit rounded-md bg-green-950/70 px-2.5 py-1 text-xs font-medium text-green-500 transition-colors hover:bg-green-950/50">
+      <div className="flex w-full flex-1 flex-col gap-y-4 md:gap-y-8 p-4 md:p-6 lg:p-12">
+        <span className="w-fit rounded-md bg-green-950/70 px-2 md:px-2.5 py-1 text-xs font-medium text-green-500 transition-colors hover:bg-green-950/50">
           Live Now
         </span>
-        <h3 className="text-3xl font-semibold leading-tight text-balance md:text-4xl">
+        <h3 className="text-2xl md:text-3xl lg:text-4xl font-semibold leading-tight text-balance">
           Pricing Fees Correctly
         </h3>
-        <p className="text-lg text-muted-foreground">
+        <p className="text-base md:text-lg text-muted-foreground">
           Our Dynamic Fee algorithm responds to market conditions in real time to optimize returns for liquidity providers.
         </p>
         <ul className="flex flex-col gap-y-1">
           {bullets.map((bullet, index) => (
             <li
               key={index}
-              className="flex flex-row items-center gap-x-2"
+              className="flex flex-row items-start md:items-center gap-x-2"
             >
-              <Check className="h-4 w-4 text-green-500 shrink-0" />
-              <p className="leading-relaxed text-pretty text-foreground">
+              <Check className="h-4 w-4 text-green-500 shrink-0 mt-0.5 md:mt-0" />
+              <p className="text-sm md:text-base leading-relaxed text-pretty text-foreground">
                 {bullet}
               </p>
             </li>
@@ -445,7 +445,7 @@ export const DynamicFeeSection = () => {
         </ul>
         <div>
           <Link href="https://alphix.gitbook.io/docs/products/dynamic-fee" target="_blank">
-            <button className="group relative flex flex-row items-center gap-x-2 rounded-md border border-sidebar-border bg-button px-8 py-2.5 text-sm font-semibold text-foreground hover:bg-accent hover:brightness-110 hover:border-white/30 transition-all overflow-hidden">
+            <button className="group relative flex flex-row items-center gap-x-2 rounded-md border border-sidebar-border bg-button px-6 md:px-8 py-2 md:py-2.5 text-sm font-semibold text-foreground hover:bg-accent hover:brightness-110 hover:border-white/30 transition-all overflow-hidden">
               <span
                 className="absolute inset-0 transition-opacity duration-200 group-hover:opacity-0"
                 style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
@@ -458,12 +458,12 @@ export const DynamicFeeSection = () => {
       </div>
 
       {/* Right Side - Chart & Fee Updates */}
-      <div className="flex w-full flex-1 flex-col rounded-lg bg-gray-50 dark:bg-[#161616] p-4 md:p-6">
-        <div className="flex flex-row items-center justify-between gap-x-4 mb-4">
-          <h3>Fee Algorithm</h3>
-          <div className="flex flex-row items-center gap-x-4">
-            <div className="flex flex-row items-center gap-x-4 text-xs font-sans">
-              <span>Dynamic Fee</span>
+      <div className="flex w-full flex-1 flex-col rounded-lg bg-gray-50 dark:bg-[#161616] p-3 md:p-4 lg:p-6">
+        <div className="flex flex-row items-center justify-between gap-x-2 md:gap-x-4 mb-3 md:mb-4">
+          <h3 className="text-sm md:text-base">Fee Algorithm</h3>
+          <div className="flex flex-row items-center gap-x-2 md:gap-x-4">
+            <div className="flex flex-row items-center gap-x-2 md:gap-x-4 text-xs font-sans">
+              <span className="hidden md:inline">Dynamic Fee</span>
               <span className="text-muted-foreground">
                 {currentFee.toFixed(2)}%
               </span>
@@ -471,7 +471,7 @@ export const DynamicFeeSection = () => {
           </div>
         </div>
 
-        <div className="h-[220px] w-full pointer-events-none select-none">
+        <div className="h-[160px] md:h-[220px] w-full pointer-events-none select-none">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart
               data={chartData}
