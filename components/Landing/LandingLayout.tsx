@@ -2,7 +2,7 @@
 
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
-import { motion } from 'framer-motion'
+import { useInView } from '@/hooks/useInView'
 import Link from 'next/link'
 import Image from 'next/image'
 import { usePathname } from 'next/navigation'
@@ -243,6 +243,7 @@ const NARROW_BREAKPOINT = 1700
 
 const LandingPageFooter = () => {
   const [breakpoint, setBreakpoint] = useState<'full' | 'medium' | 'narrow'>('full')
+  const { ref, inView } = useInView<HTMLDivElement>({ once: true, threshold: 0.1 })
 
   useEffect(() => {
     const checkWidth = () => {
@@ -263,13 +264,9 @@ const LandingPageFooter = () => {
   const FOOTER_MAX_WIDTH = breakpoint === 'narrow' ? 'calc(72rem + 10rem)' : breakpoint === 'medium' ? 'calc(72rem + 24rem)' : 'calc(72rem + 32rem)'
 
   return (
-    <motion.div
-      initial="initial"
-      className="relative flex flex-col items-center mt-12 md:mt-16"
-      variants={{ initial: { opacity: 0, y: 20 }, animate: { opacity: 1, y: 0 } }}
-      transition={{ duration: 0.8, ease: 'easeOut' }}
-      whileInView="animate"
-      viewport={{ once: true }}
+    <div
+      ref={ref}
+      className={`animate-on-scroll relative flex flex-col items-center mt-12 md:mt-16 ${inView ? 'in-view' : ''}`}
     >
       {/* Clipping container */}
       <div
@@ -393,6 +390,6 @@ const LandingPageFooter = () => {
           </div>
         </footer>
       </div>
-    </motion.div>
+    </div>
   )
 }

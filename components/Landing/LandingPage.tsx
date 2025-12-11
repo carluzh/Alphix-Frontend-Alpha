@@ -10,7 +10,7 @@ import LandingLayout from './LandingLayout'
 import { FeatureCards } from './FeatureCards'
 import { SplitPromo } from './SplitPromo'
 import { ArrowUpRight, Layers, Lock, SlidersVertical, Handshake, Repeat, BetweenVerticalStart, FileStack, ScanEye, ToyBrick, LucideIcon } from 'lucide-react'
-import { motion } from 'framer-motion'
+import { useInView } from '@/hooks/useInView'
 import { GlitchIcon } from './GlitchIcon'
 import Image from 'next/image'
 
@@ -77,6 +77,62 @@ const heroFeatures = [
   },
 ]
 
+const ModularityCard = () => {
+  const { ref, inView } = useInView<HTMLDivElement>({ once: true, threshold: 0.1 })
+
+  return (
+    <div
+      ref={ref}
+      className={`animate-on-scroll w-full overflow-hidden rounded-lg border border-sidebar-border/60 bg-white dark:bg-[#131313] p-2 ${inView ? 'in-view' : ''}`}
+    >
+      <div className="flex flex-row items-center">
+        <div className="shrink-0 pl-2 pr-4 py-2 max-w-[200px] md:max-w-[280px]">
+          <p className="text-xs md:text-sm text-muted-foreground leading-relaxed">
+            <span className="text-foreground font-medium">Modular by design.</span>
+            <br />
+            Unified Pools enable seamless feature expansion as we scale.
+          </p>
+        </div>
+
+        <div
+          className="relative flex-1 overflow-hidden censor-marquee-container"
+          style={{
+            maskImage: 'linear-gradient(to right, transparent 0%, black 8%, black 92%, transparent 100%)',
+            WebkitMaskImage: 'linear-gradient(to right, transparent 0%, black 8%, black 92%, transparent 100%)',
+          }}
+        >
+          <div className="flex animate-marquee-smooth-lg">
+            {modularityIcons.map((config, index) => (
+              <div
+                key={index}
+                className={`flex h-[72px] w-[72px] shrink-0 items-center justify-center rounded-lg mx-1 bg-gray-50 dark:bg-[#1a1a1a] ${config.type === 'revealed' ? 'border border-sidebar-border/60' : ''}`}
+              >
+                {config.type === 'censored' ? (
+                  <GlitchIcon icon={config.icon} className="h-[18px] w-[18px] text-muted-foreground" glitchIndex={(index % 8) + 1} pixelScale={0.75} />
+                ) : (
+                  <Image src={config.image} alt={config.alt} width={18} height={18} className={config.size === 'lg' ? 'feature-icon-revealed-lg' : 'feature-icon-revealed'} />
+                )}
+              </div>
+            ))}
+            {modularityIcons.map((config, index) => (
+              <div
+                key={`dup-${index}`}
+                className={`flex h-[72px] w-[72px] shrink-0 items-center justify-center rounded-lg mx-1 bg-gray-50 dark:bg-[#1a1a1a] ${config.type === 'revealed' ? 'border border-sidebar-border/60' : ''}`}
+              >
+                {config.type === 'censored' ? (
+                  <GlitchIcon icon={config.icon} className="h-[18px] w-[18px] text-muted-foreground" glitchIndex={(index % 8) + 1} pixelScale={0.75} />
+                ) : (
+                  <Image src={config.image} alt={config.alt} width={18} height={18} className={config.size === 'lg' ? 'feature-icon-revealed-lg' : 'feature-icon-revealed'} />
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export const PageContent = () => {
   return (
     <>
@@ -130,59 +186,7 @@ export const PageContent = () => {
           }
         />
 
-        {/* Modularity Card */}
-        <motion.div
-          className="w-full overflow-hidden rounded-lg border border-sidebar-border/60 bg-white dark:bg-[#131313] p-2"
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
-          transition={{ duration: 0.8 }}
-        >
-          <div className="flex flex-row items-center">
-            <div className="shrink-0 pl-2 pr-4 py-2 max-w-[200px] md:max-w-[280px]">
-              <p className="text-xs md:text-sm text-muted-foreground leading-relaxed">
-                <span className="text-foreground font-medium">Modular by design.</span>
-                <br />
-                Unified Pools enable seamless feature expansion as we scale.
-              </p>
-            </div>
-
-            <div
-              className="relative flex-1 overflow-hidden censor-marquee-container"
-              style={{
-                maskImage: 'linear-gradient(to right, transparent 0%, black 8%, black 92%, transparent 100%)',
-                WebkitMaskImage: 'linear-gradient(to right, transparent 0%, black 8%, black 92%, transparent 100%)',
-              }}
-            >
-              <div className="flex animate-marquee-smooth-lg">
-                {modularityIcons.map((config, index) => (
-                  <div
-                    key={index}
-                    className={`flex h-[72px] w-[72px] shrink-0 items-center justify-center rounded-lg mx-1 bg-gray-50 dark:bg-[#1a1a1a] ${config.type === 'revealed' ? 'border border-sidebar-border/60' : ''}`}
-                  >
-                    {config.type === 'censored' ? (
-                      <GlitchIcon icon={config.icon} className="h-[18px] w-[18px] text-muted-foreground" glitchIndex={(index % 8) + 1} pixelScale={0.75} />
-                    ) : (
-                      <Image src={config.image} alt={config.alt} width={18} height={18} className={config.size === 'lg' ? 'feature-icon-revealed-lg' : 'feature-icon-revealed'} />
-                    )}
-                  </div>
-                ))}
-                {modularityIcons.map((config, index) => (
-                  <div
-                    key={`dup-${index}`}
-                    className={`flex h-[72px] w-[72px] shrink-0 items-center justify-center rounded-lg mx-1 bg-gray-50 dark:bg-[#1a1a1a] ${config.type === 'revealed' ? 'border border-sidebar-border/60' : ''}`}
-                  >
-                    {config.type === 'censored' ? (
-                      <GlitchIcon icon={config.icon} className="h-[18px] w-[18px] text-muted-foreground" glitchIndex={(index % 8) + 1} pixelScale={0.75} />
-                    ) : (
-                      <Image src={config.image} alt={config.alt} width={18} height={18} className={config.size === 'lg' ? 'feature-icon-revealed-lg' : 'feature-icon-revealed'} />
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </motion.div>
+        <ModularityCard />
 
         <Features />
       </Section>

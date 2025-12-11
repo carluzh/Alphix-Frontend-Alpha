@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { cn } from '@/lib/utils'
-import { motion } from 'framer-motion'
+import { useInView } from '@/hooks/useInView'
 import Link from 'next/link'
 import Image from 'next/image'
 import { ArrowRight } from 'lucide-react'
@@ -12,17 +12,12 @@ const UNISWAP_LOGO_FILTER = 'brightness(0) saturate(100%) invert(47%) sepia(95%)
 
 const UniswapFoundationCard = () => {
   const [isHovered, setIsHovered] = useState(false)
+  const { ref, inView } = useInView<HTMLDivElement>({ once: true, threshold: 0.1 })
 
   return (
-    <motion.div
-      variants={{
-        hidden: { opacity: 0, y: 20 },
-        visible: { opacity: 1, y: 0, transition: { duration: 0.8 } },
-      }}
-      initial="hidden"
-      whileInView="visible"
-      viewport={{ once: true }}
-      className="flex flex-1 flex-col gap-y-6"
+    <div
+      ref={ref}
+      className={`animate-on-scroll flex flex-1 flex-col gap-y-6 ${inView ? 'in-view' : ''}`}
     >
       <Link
         href="https://docs.uniswap.org/contracts/v4/concepts/hooks"
@@ -87,7 +82,7 @@ const UniswapFoundationCard = () => {
         </div>
       </div>
     </Link>
-  </motion.div>
+  </div>
   )
 }
 
@@ -96,17 +91,12 @@ const BASE_LOGO_FILTER = 'brightness(0) saturate(100%) invert(55%) sepia(57%) sa
 
 const BaseChainCard = () => {
   const [isHovered, setIsHovered] = useState(false)
+  const { ref, inView } = useInView<HTMLDivElement>({ once: true, threshold: 0.1 })
 
   return (
-    <motion.div
-      variants={{
-        hidden: { opacity: 0, y: 20 },
-        visible: { opacity: 1, y: 0, transition: { duration: 0.8 } },
-      }}
-      initial="hidden"
-      whileInView="visible"
-      viewport={{ once: true }}
-      className="flex flex-1 flex-col gap-y-6"
+    <div
+      ref={ref}
+      className={`animate-on-scroll flex flex-1 flex-col gap-y-6 delay-1 ${inView ? 'in-view' : ''}`}
     >
       <Link
         href="https://x.com/AlphixFi/status/1947334206528307690"
@@ -196,7 +186,7 @@ const BaseChainCard = () => {
           </div>
         </div>
       </Link>
-    </motion.div>
+    </div>
   )
 }
 

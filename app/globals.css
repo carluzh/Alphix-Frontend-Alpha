@@ -585,3 +585,102 @@ input[type=number] {
   animation: border-pulse 2s ease-in-out infinite;
 }
 
+/* === SCROLL-TRIGGERED ANIMATIONS === */
+/* Lightweight CSS alternative to framer-motion for landing page */
+
+/* Base fade-up animation keyframes */
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-in-only {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Initial state - hidden until triggered */
+.animate-on-scroll {
+  opacity: 0;
+  transform: translateY(20px);
+}
+
+/* When in view - animate */
+.animate-on-scroll.in-view {
+  animation: fade-up 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+/* Staggered delays for child elements */
+.animate-on-scroll.in-view.delay-1 { animation-delay: 0.1s; }
+.animate-on-scroll.in-view.delay-2 { animation-delay: 0.2s; }
+.animate-on-scroll.in-view.delay-3 { animation-delay: 0.3s; }
+.animate-on-scroll.in-view.delay-4 { animation-delay: 0.4s; }
+.animate-on-scroll.in-view.delay-5 { animation-delay: 0.5s; }
+
+/* Hero-specific animations with stagger */
+.hero-animate {
+  opacity: 0;
+  transform: translateY(16px);
+}
+
+.hero-animate.in-view {
+  animation: fade-up 0.7s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.hero-animate.in-view.hero-logo { animation-delay: 0s; }
+.hero-animate.in-view.hero-title { animation-delay: 0.15s; }
+.hero-animate.in-view.hero-desc { animation-delay: 0.25s; }
+.hero-animate.in-view.hero-cta { animation-delay: 0.35s; }
+.hero-animate.in-view.hero-lines { animation-delay: 0s; }
+
+/* Fade-in only (no Y transform) for subtle elements */
+.animate-fade-only {
+  opacity: 0;
+}
+
+.animate-fade-only.in-view {
+  animation: fade-in-only 0.8s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+/* Activity feed item transitions (replacement for AnimatePresence) */
+.activity-item {
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 0.3s ease-out, transform 0.3s ease-out;
+}
+
+.activity-item-enter {
+  opacity: 0;
+  transform: translateY(-8px);
+}
+
+.activity-item-exit {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  .animate-on-scroll,
+  .hero-animate,
+  .animate-fade-only {
+    opacity: 1;
+    transform: none;
+    animation: none;
+  }
+
+  .animate-on-scroll.in-view,
+  .hero-animate.in-view,
+  .animate-fade-only.in-view {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}
+

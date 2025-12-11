@@ -1,7 +1,7 @@
 'use client'
 
 import { GrainGradient } from '@paper-design/shaders-react'
-import { motion } from 'framer-motion'
+import { useInView } from '@/hooks/useInView'
 import { useMemo, useState, useEffect } from 'react'
 
 const FRAME_THICKNESS = 10
@@ -14,6 +14,7 @@ const NARROW_BREAKPOINT = 1700
 
 export const PaperShaderFrame = () => {
   const [breakpoint, setBreakpoint] = useState<'full' | 'medium' | 'narrow'>('full')
+  const { ref, inView } = useInView<HTMLDivElement>({ once: true, threshold: 0.1 })
 
   useEffect(() => {
     const checkWidth = () => {
@@ -50,8 +51,9 @@ export const PaperShaderFrame = () => {
   }
 
   return (
-    <motion.div
-      className="absolute pointer-events-none overflow-hidden z-0"
+    <div
+      ref={ref}
+      className={`animate-fade-only absolute pointer-events-none overflow-hidden z-0 ${inView ? 'in-view' : ''}`}
       style={{
         left: horizontalExtension,
         right: horizontalExtension,
@@ -60,10 +62,6 @@ export const PaperShaderFrame = () => {
         borderBottomLeftRadius: OUTER_RADIUS,
         borderBottomRightRadius: OUTER_RADIUS,
       }}
-      initial={{ opacity: 0 }}
-      whileInView={{ opacity: 1 }}
-      viewport={{ once: true }}
-      transition={{ duration: 0.5 }}
     >
       <GrainGradient
         style={{
@@ -86,6 +84,6 @@ export const PaperShaderFrame = () => {
           borderBottomRightRadius: INNER_RADIUS,
         }}
       />
-    </motion.div>
+    </div>
   )
 }

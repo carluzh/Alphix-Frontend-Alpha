@@ -1,10 +1,12 @@
 'use client'
 
 import { GrainGradient } from '@paper-design/shaders-react'
-import { motion } from 'framer-motion'
+import { useInView } from '@/hooks/useInView'
 import { useMemo } from 'react'
 
 export const PaperShaderBar = () => {
+  const { ref, inView } = useInView<HTMLDivElement>({ once: true, threshold: 0.1 })
+
   const shaderFrame = useMemo(() => {
     if (typeof window === 'undefined' || typeof performance === 'undefined') return 0
     const w = window as unknown as { __shaderStartMs?: number }
@@ -15,12 +17,9 @@ export const PaperShaderBar = () => {
   }, [])
 
   return (
-    <motion.div
-      className="w-[calc(100%+8rem)] -mx-16 h-2.5 rounded-lg overflow-hidden"
-      initial={{ opacity: 0 }}
-      whileInView={{ opacity: 1 }}
-      viewport={{ once: true }}
-      transition={{ duration: 0.5 }}
+    <div
+      ref={ref}
+      className={`animate-fade-only w-[calc(100%+8rem)] -mx-16 h-2.5 rounded-lg overflow-hidden ${inView ? 'in-view' : ''}`}
     >
       <GrainGradient
         style={{ height: '100%', width: '100%' }}
@@ -35,6 +34,6 @@ export const PaperShaderBar = () => {
         rotation={32}
         frame={shaderFrame}
       />
-    </motion.div>
+    </div>
   )
 }

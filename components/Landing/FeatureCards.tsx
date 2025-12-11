@@ -1,6 +1,6 @@
 'use client'
 
-import { motion } from 'framer-motion'
+import { useInView } from '@/hooks/useInView'
 import Image from 'next/image'
 import { cn } from '@/lib/utils'
 
@@ -15,23 +15,13 @@ interface FeatureCardsProps {
   features: FeatureCardProps[]
 }
 
-const containerVariants = {
-  hidden: { opacity: 0, y: 20 },
-  visible: {
-    opacity: 1,
-    y: 0,
-    transition: { duration: 0.5 }
-  },
-}
-
 export const FeatureCards = ({ features }: FeatureCardsProps) => {
+  const { ref, inView } = useInView<HTMLDivElement>({ once: true, threshold: 0.1 })
+
   return (
-    <motion.div
-      className="relative z-10 w-full rounded-lg border border-sidebar-border/60 bg-white dark:bg-[#131313] overflow-hidden"
-      variants={containerVariants}
-      initial="hidden"
-      whileInView="visible"
-      viewport={{ once: true }}
+    <div
+      ref={ref}
+      className={`animate-on-scroll relative z-10 w-full rounded-lg border border-sidebar-border/60 bg-white dark:bg-[#131313] overflow-hidden ${inView ? 'in-view' : ''}`}
     >
       <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-sidebar-border/60">
         {features.map((feature, index) => (
@@ -54,13 +44,12 @@ export const FeatureCards = ({ features }: FeatureCardsProps) => {
                 fill
                 sizes="(max-width: 768px) 66vw, 22vw"
                 className={cn("object-cover transition-transform duration-300 ease-out group-hover:scale-110", feature.imageClassName)}
-                // First card is likely LCP - prioritize it
                 priority={index === 0}
               />
             </div>
           </div>
         ))}
       </div>
-    </motion.div>
+    </div>
   )
 }
