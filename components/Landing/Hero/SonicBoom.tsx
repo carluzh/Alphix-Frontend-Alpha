@@ -1,8 +1,42 @@
 'use client'
 
+import { useEffect, useRef, useState } from 'react'
+
 export const SonicBoom = () => {
+  const [isVisible, setIsVisible] = useState(false)
+  const [isMobile, setIsMobile] = useState(false)
+  const svgRef = useRef<SVGSVGElement>(null)
+
+  useEffect(() => {
+    // Check if mobile
+    const checkMobile = () => setIsMobile(window.innerWidth < 768)
+    checkMobile()
+
+    // Check for reduced motion preference
+    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    if (prefersReducedMotion) return
+
+    // Intersection Observer for visibility-based animation
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        setIsVisible(entry.isIntersecting)
+      },
+      { threshold: 0.1 }
+    )
+
+    if (svgRef.current) {
+      observer.observe(svgRef.current)
+    }
+
+    return () => observer.disconnect()
+  }, [])
+
+  // Don't render on mobile for performance
+  if (isMobile) return null
+
   return (
     <svg
+      ref={svgRef}
       className="pointer-events-none absolute inset-x-0 -top-[600px] h-[1000px] w-full overflow-visible"
       viewBox="0 0 100 100"
       preserveAspectRatio="none"
@@ -50,6 +84,7 @@ export const SonicBoom = () => {
         fill="none"
         mask="url(#fadeMask1)"
         className="animate-sonic-flow-1"
+        style={{ animationPlayState: isVisible ? 'running' : 'paused' }}
       />
       <path
         d="M -20 100 Q 50 13 120 100"
@@ -59,6 +94,7 @@ export const SonicBoom = () => {
         fill="none"
         mask="url(#fadeMask2)"
         className="animate-sonic-flow-2"
+        style={{ animationPlayState: isVisible ? 'running' : 'paused' }}
       />
       <path
         d="M -40 100 Q 50 5 140 100"
@@ -68,6 +104,7 @@ export const SonicBoom = () => {
         fill="none"
         mask="url(#fadeMask3)"
         className="animate-sonic-flow-3"
+        style={{ animationPlayState: isVisible ? 'running' : 'paused' }}
       />
     </svg>
   )

@@ -119,7 +119,7 @@ const BaseChainCard = () => {
         <div
           className="absolute inset-0 pointer-events-none"
           style={{
-            backgroundImage: 'url(/base_back.png)',
+            backgroundImage: 'url(/base_back.webp)',
             backgroundSize: 'cover',
             backgroundPosition: 'center',
             opacity: isHovered ? 0.6 : 0.15,

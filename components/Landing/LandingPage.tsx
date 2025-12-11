@@ -61,18 +61,18 @@ const heroFeatures = [
   {
     title: 'Unified Pools',
     description: 'Consolidated features in a single pool. Efficient, not fragmented.',
-    image: '/landing/Unified-Pool.png',
+    image: '/landing/Unified-Pool.webp',
     imageClassName: 'translate-x-[5%]',
   },
   {
     title: 'Dynamic Fees',
     description: 'Fees that adapt in real-time to market conditions and competition.',
-    image: '/landing/Dynamic-Fees.png',
+    image: '/landing/Dynamic-Fees.webp',
   },
   {
     title: 'Rehypothecation',
     description: 'Idle liquidity put to work across external partner protocols.',
-    image: '/landing/Rehypothecation.png',
+    image: '/landing/Rehypothecation.webp',
     imageClassName: 'translate-x-[5%]',
   },
 ]
@@ -116,7 +116,7 @@ export const PageContent = () => {
             'Leading protocol integrations to maximize security',
             'Seamless LP experience',
           ]}
-          image="/landing/example.png"
+          image="/landing/example.webp"
           reverse
           badge={{ text: 'In Development', variant: 'muted' }}
           cta1={

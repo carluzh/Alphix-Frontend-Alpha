@@ -209,6 +209,15 @@ const generateNextDataPoint = (
 }
 
 export const DynamicFeeSection = () => {
+  // Check if mobile for performance optimization
+  const [isMobile, setIsMobile] = useState(false)
+
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth < 768)
+    checkMobile()
+    // No need to add resize listener - initial check is enough for landing page
+  }, [])
+
   // Pre-generate 30 days of initial history
   const initialHistory = useMemo(() => generateMockFeeHistory(30), [])
 
@@ -254,9 +263,9 @@ export const DynamicFeeSection = () => {
   const [isInView, setIsInView] = useState(false)
 
   // Constants for smooth scrolling (optimized for performance)
-  // 20 micro-steps gives smooth animation without killing weak devices
-  const MICRO_STEPS_PER_MAJOR = 20 // 20 micro-steps per major data point
-  const TOTAL_POINTS = 30 * MICRO_STEPS_PER_MAJOR // 600 points to show 30 "steps"
+  // Reduce micro-steps on mobile for better performance
+  const MICRO_STEPS_PER_MAJOR = isMobile ? 5 : 15 // Reduced from 20
+  const TOTAL_POINTS = 30 * MICRO_STEPS_PER_MAJOR // 450 desktop, 150 mobile
 
   // Catmull-Rom spline interpolation for smooth curves through points
   const catmullRom = (p0: number, p1: number, p2: number, p3: number, t: number): number => {
@@ -376,10 +385,11 @@ export const DynamicFeeSection = () => {
   }, [expandedInitialHistory])
 
   // Smooth scrolling animation with Catmull-Rom look-ahead
+  // Skip animation on mobile for performance - just show static chart
   useEffect(() => {
-    if (!isInView) return
+    if (!isInView || isMobile) return
 
-    const FRAME_INTERVAL_MS = 100 // ~10fps (smooth enough for chart, easy on CPU)
+    const FRAME_INTERVAL_MS = 120 // ~8fps (slightly slower, easier on CPU)
     let lastFrameTime = performance.now()
 
     const animate = (currentTime: number) => {
@@ -515,7 +525,7 @@ export const DynamicFeeSection = () => {
     return () => {
       if (animationRef.current) cancelAnimationFrame(animationRef.current)
     }
-  }, [isInView])
+  }, [isInView, isMobile])
 
   const currentFee = useMemo(
     () => (chartData.length > 0 ? chartData[chartData.length - 1].dynamicFee : 0.3),
