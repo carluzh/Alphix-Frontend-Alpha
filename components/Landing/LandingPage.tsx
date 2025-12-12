@@ -78,6 +78,39 @@ const heroFeatures = [
   },
 ]
 
+// Revealed icon component with mobile-compatible coloring
+const RevealedIcon = ({ src, alt, size }: { src: string; alt: string; size?: 'default' | 'lg' }) => {
+  const sizeClass = size === 'lg' ? 'w-[23px] h-[23px]' : 'w-[19px] h-[19px]'
+  return (
+    <>
+      {/* Desktop: use Image with CSS filter */}
+      <Image
+        src={src}
+        alt={alt}
+        width={18}
+        height={18}
+        className={`hidden md:block ${size === 'lg' ? 'feature-icon-revealed-lg' : 'feature-icon-revealed'}`}
+      />
+      {/* Mobile: use mask-image with background color (more reliable) */}
+      <div
+        className={`md:hidden ${sizeClass}`}
+        style={{
+          backgroundColor: '#F45502',
+          maskImage: `url(${src})`,
+          WebkitMaskImage: `url(${src})`,
+          maskSize: 'contain',
+          WebkitMaskSize: 'contain',
+          maskRepeat: 'no-repeat',
+          WebkitMaskRepeat: 'no-repeat',
+          maskPosition: 'center',
+          WebkitMaskPosition: 'center',
+          filter: 'drop-shadow(0 0 4px rgba(244, 85, 2, 0.25))',
+        }}
+      />
+    </>
+  )
+}
+
 const ModularityCard = () => {
   const { ref, inView } = useInView<HTMLDivElement>({ once: true, threshold: 0.1 })
 
@@ -91,7 +124,7 @@ const ModularityCard = () => {
           {config.type === 'censored' ? (
             <GlitchIcon icon={config.icon} className={`${iconSize} text-muted-foreground`} glitchIndex={(index % 8) + 1} pixelScale={0.75} />
           ) : (
-            <Image src={config.image} alt={config.alt} width={18} height={18} className={config.size === 'lg' ? 'feature-icon-revealed-lg' : 'feature-icon-revealed'} />
+            <RevealedIcon src={config.image} alt={config.alt} size={config.size} />
           )}
         </div>
       ))}
@@ -103,7 +136,7 @@ const ModularityCard = () => {
           {config.type === 'censored' ? (
             <GlitchIcon icon={config.icon} className={`${iconSize} text-muted-foreground`} glitchIndex={(index % 8) + 1} pixelScale={0.75} />
           ) : (
-            <Image src={config.image} alt={config.alt} width={18} height={18} className={config.size === 'lg' ? 'feature-icon-revealed-lg' : 'feature-icon-revealed'} />
+            <RevealedIcon src={config.image} alt={config.alt} size={config.size} />
           )}
         </div>
       ))}

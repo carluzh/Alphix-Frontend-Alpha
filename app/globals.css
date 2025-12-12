@@ -236,11 +236,20 @@
     animation-play-state: paused;
   }
 
-  /* Revealed feature icons - brand orange with glow */
+  /* Revealed feature icons - brand orange with glow (desktop only, mobile uses mask-image in component) */
   .feature-icon-revealed,
   .feature-icon-revealed-lg {
     opacity: 0.85;
-    filter: brightness(0) saturate(100%) invert(35%) sepia(98%) saturate(2000%) hue-rotate(11deg) brightness(100%) contrast(105%) drop-shadow(0 0 4px rgba(244, 85, 2, 0.25));
+    filter:
+      brightness(0)
+      saturate(100%)
+      invert(35%)
+      sepia(98%)
+      saturate(2000%)
+      hue-rotate(11deg)
+      brightness(100%)
+      contrast(105%)
+      drop-shadow(0 0 4px rgba(244, 85, 2, 0.25));
   }
   .feature-icon-revealed { transform: scale(1.05); }
   .feature-icon-revealed-lg { transform: scale(1.3); }
