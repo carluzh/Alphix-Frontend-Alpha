@@ -217,7 +217,7 @@ const LandingPageFooter = () => {
                   <XIcon size={18} />
                 </a>
                 <a
-                  href="https://discord.gg/alphix"
+                  href="https://discord.com/invite/NTXRarFbTr"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-muted-foreground hover:text-foreground transition-colors"

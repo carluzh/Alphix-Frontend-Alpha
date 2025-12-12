@@ -120,11 +120,11 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
 
   const increaseLiquidity = useCallback(async (positionData: IncreasePositionData, opts?: IncreaseOptions) => {
     if (!accountAddress || !chainId) {
-      toast.error("Wallet Not Connected", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Please connect your wallet and try again.", action: { label: "Open Ticket", onClick: () => window.open('https://discord.gg/alphix', '_blank') } });
+      toast.error("Wallet Not Connected", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Please connect your wallet and try again.", action: { label: "Open Ticket", onClick: () => window.open('https://discord.com/invite/NTXRarFbTr', '_blank') } });
       return;
     }
     if (!V4_POSITION_MANAGER_ADDRESS) {
-      toast.error("Configuration Error", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Position Manager address not set.", action: { label: "Open Ticket", onClick: () => window.open('https://discord.gg/alphix', '_blank') } });
+      toast.error("Configuration Error", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Position Manager address not set.", action: { label: "Open Ticket", onClick: () => window.open('https://discord.com/invite/NTXRarFbTr', '_blank') } });
       return;
     }
     
@@ -427,7 +427,7 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
       console.error("Error preparing increase transaction:", error);
       const msg = (error?.message || '').toString();
       if ((error as any)?.__zero || msg.includes('ZERO_LIQUIDITY')) {
-        toast.error("Try a larger Amount", { icon: React.createElement(OctagonX, { className: 'h-4 w-4 text-red-500' }), action: { label: "Open Ticket", onClick: () => window.open('https://discord.gg/alphix', '_blank') } });
+        toast.error("Try a larger Amount", { icon: React.createElement(OctagonX, { className: 'h-4 w-4 text-red-500' }), action: { label: "Open Ticket", onClick: () => window.open('https://discord.com/invite/NTXRarFbTr', '_blank') } });
       } else {
         toast.error("Increase Failed", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: msg || "Could not prepare the transaction.", action: { label: "Copy Error", onClick: () => navigator.clipboard.writeText(msg || '') } });
       }

@@ -28,7 +28,7 @@ const showErrorToast = (title: string, description?: string, error?: unknown) =>
     description: description,
     action: {
       label: "Open Ticket",
-      onClick: () => window.open('https://discord.gg/alphix', '_blank')
+      onClick: () => window.open('https://discord.com/invite/NTXRarFbTr', '_blank')
     }
   });
 };
@@ -446,7 +446,7 @@ export function useAddLiquidityTransaction({
         description: error.shortMessage || error.message || "Failed to approve token.",
         action: {
           label: "Open Ticket",
-          onClick: () => window.open('https://discord.gg/alphix', '_blank')
+          onClick: () => window.open('https://discord.com/invite/NTXRarFbTr', '_blank')
         }
       });
       setIsWorking(false);
@@ -917,7 +917,7 @@ export function useAddLiquidityTransaction({
         description: "Token approval transaction failed.",
         action: {
           label: "Open Ticket",
-          onClick: () => window.open('https://discord.gg/alphix', '_blank')
+          onClick: () => window.open('https://discord.com/invite/NTXRarFbTr', '_blank')
         }
       });
       setStep('input');
@@ -1023,7 +1023,7 @@ export function useAddLiquidityTransaction({
         description: "Mint transaction failed.",
         action: {
           label: "Open Ticket",
-          onClick: () => window.open('https://discord.gg/alphix', '_blank')
+          onClick: () => window.open('https://discord.com/invite/NTXRarFbTr', '_blank')
         }
       });
       setStep('input');

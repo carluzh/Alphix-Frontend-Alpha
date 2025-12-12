@@ -303,7 +303,7 @@ export function NavMain({
         description: "Could not retrieve wallet address.",
         action: {
           label: "Open Ticket",
-          onClick: () => window.open('https://discord.gg/alphix', '_blank')
+          onClick: () => window.open('https://discord.com/invite/NTXRarFbTr', '_blank')
         }
       });
       return

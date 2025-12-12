@@ -114,7 +114,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
         description: "Please connect your wallet and try again.",
         action: {
           label: "Open Ticket",
-          onClick: () => window.open('https://discord.gg/alphix', '_blank')
+          onClick: () => window.open('https://discord.com/invite/NTXRarFbTr', '_blank')
         }
       });
       return;
@@ -125,7 +125,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
         description: "Position Manager address not set.",
         action: {
           label: "Open Ticket",
-          onClick: () => window.open('https://discord.gg/alphix', '_blank')
+          onClick: () => window.open('https://discord.com/invite/NTXRarFbTr', '_blank')
         }
       });
       return;
@@ -803,7 +803,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
           description: "Please connect your wallet and try again.",
           action: {
             label: "Open Ticket",
-            onClick: () => window.open('https://discord.gg/alphix', '_blank')
+            onClick: () => window.open('https://discord.com/invite/NTXRarFbTr', '_blank')
           }
         });
         return;
@@ -814,7 +814,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
           description: "Position Manager address not set.",
           action: {
             label: "Open Ticket",
-            onClick: () => window.open('https://discord.gg/alphix', '_blank')
+            onClick: () => window.open('https://discord.com/invite/NTXRarFbTr', '_blank')
           }
         });
         return;

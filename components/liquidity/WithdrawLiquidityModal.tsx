@@ -622,7 +622,7 @@ export function WithdrawLiquidityModal({
         description: "Token configuration is invalid.",
         action: {
           label: "Open Ticket",
-          onClick: () => window.open('https://discord.gg/alphix', '_blank')
+          onClick: () => window.open('https://discord.com/invite/NTXRarFbTr', '_blank')
         }
       });
       return;

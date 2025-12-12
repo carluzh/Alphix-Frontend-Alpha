@@ -1071,7 +1071,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
             description: 'Not enough liquidity. Try a smaller amount.',
             action: {
               label: "Open Ticket",
-              onClick: () => window.open('https://discord.gg/alphix', '_blank')
+              onClick: () => window.open('https://discord.com/invite/NTXRarFbTr', '_blank')
             }
           });
         } else if (errorMsg === 'Cannot fulfill exact output amount') {
@@ -1080,7 +1080,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
             description: 'Exact Output failed. Reduce the amount or use exact input instead.',
             action: {
               label: "Open Ticket",
-              onClick: () => window.open('https://discord.gg/alphix', '_blank')
+              onClick: () => window.open('https://discord.com/invite/NTXRarFbTr', '_blank')
             }
           });
         } else {
@@ -1089,7 +1089,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
             description: 'No Quote received. Input a smaller amount and try again.',
             action: {
               label: "Open Ticket",
-              onClick: () => window.open('https://discord.gg/alphix', '_blank')
+              onClick: () => window.open('https://discord.com/invite/NTXRarFbTr', '_blank')
             }
           });
         }
@@ -1138,7 +1138,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
         description: toastDescription,
         action: {
           label: "Open Ticket",
-          onClick: () => window.open('https://discord.gg/alphix', '_blank')
+          onClick: () => window.open('https://discord.com/invite/NTXRarFbTr', '_blank')
         }
       });
       setQuoteError(errorMsg);
@@ -1800,7 +1800,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                       description: "Could not fetch swap fee. Please try again.",
                       action: {
                         label: "Open Ticket",
-                        onClick: () => window.open('https://discord.gg/alphix', '_blank')
+                        onClick: () => window.open('https://discord.com/invite/NTXRarFbTr', '_blank')
                       }
                     });
                     setIsSwapping(false);
@@ -2035,7 +2035,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                   description: "Could not fetch swap fee. Please try again.",
                   action: {
                     label: "Open Ticket",
-                    onClick: () => window.open('https://discord.gg/alphix', '_blank')
+                    onClick: () => window.open('https://discord.com/invite/NTXRarFbTr', '_blank')
                   }
                 });
                 setIsSwapping(false);
@@ -2212,7 +2212,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 description: "Reduce your amount or increase slippage, then try again.",
                 action: {
                   label: "Open Ticket",
-                  onClick: () => window.open('https://discord.gg/alphix', '_blank')
+                  onClick: () => window.open('https://discord.com/invite/NTXRarFbTr', '_blank')
                 }
             });
             setSwapProgressState("error");

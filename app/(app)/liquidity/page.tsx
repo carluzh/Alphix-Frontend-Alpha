@@ -182,7 +182,7 @@ export default function LiquidityPage() {
           icon: <OctagonX className="h-4 w-4 text-red-500" />,
           action: {
             label: "Open Ticket",
-            onClick: () => window.open('https://discord.gg/alphix', '_blank')
+            onClick: () => window.open('https://discord.com/invite/NTXRarFbTr', '_blank')
           }
         });
       }
