@@ -2,7 +2,7 @@
 
 import { GrainGradient } from '@paper-design/shaders-react'
 import { useInView } from '@/hooks/useInView'
-import { useMemo, useState, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 
 const FRAME_THICKNESS = 10
 const OUTER_RADIUS = 18
@@ -33,17 +33,20 @@ export const PaperShaderFrame = () => {
     return () => window.removeEventListener('resize', checkWidth)
   }, [])
 
-  const shaderFrame = useMemo(() => {
-    if (typeof window === 'undefined' || typeof performance === 'undefined') return 0
-    const w = window as unknown as { __shaderStartMs?: number }
-    if (w.__shaderStartMs == null) {
-      w.__shaderStartMs = performance.now()
-    }
-    return performance.now() - w.__shaderStartMs
-  }, [])
+  // Temporarily disabled for TEST 4 - static shader test
+  // const shaderFrame = useMemo(() => {
+  //   if (typeof window === 'undefined' || typeof performance === 'undefined') return 0
+  //   const w = window as unknown as { __shaderStartMs?: number }
+  //   if (w.__shaderStartMs == null) {
+  //     w.__shaderStartMs = performance.now()
+  //   }
+  //   return performance.now() - w.__shaderStartMs
+  // }, [])
 
   const horizontalExtension = breakpoint === 'narrow' ? '-5rem' : breakpoint === 'medium' ? '-12rem' : '-16rem'
 
+  // TEST 4: Static shader (no continuous RAF loop)
+  // If this fixes scroll lag, the issue is RAF conflicting with scroll compositor
   const shaderProps = {
     colors: ['#f94706', '#ff7919'] as [string, string],
     colorBack: '#060606',
@@ -51,8 +54,8 @@ export const PaperShaderFrame = () => {
     intensity: 0.4,
     noise: 0,
     shape: 'corners' as const,
-    speed: 0.3,
-    frame: shaderFrame,
+    speed: 0, // Static - no animation loop
+    frame: 1000, // Fixed frame for consistent look
   }
 
   return (
@@ -70,12 +73,15 @@ export const PaperShaderFrame = () => {
     >
       {mounted && (
         <>
+          {/* Test: Force GPU layer isolation to prevent scroll compositor conflicts */}
           <GrainGradient
             style={{
               position: 'absolute',
               inset: 0,
               width: '100%',
               height: '100%',
+              transform: 'translateZ(0)',
+              willChange: 'transform',
             }}
             {...shaderProps}
           />
