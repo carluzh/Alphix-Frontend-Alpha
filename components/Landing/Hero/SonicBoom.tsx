@@ -3,9 +3,6 @@
 import { useEffect, useRef, useState } from 'react'
 
 export const SonicBoom = () => {
-  // TEST 2: Disabled SonicBoom to isolate scroll lag cause
-  return null
-
   const [isVisible, setIsVisible] = useState(false)
   const svgRef = useRef<SVGSVGElement>(null)
 

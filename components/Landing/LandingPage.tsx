@@ -162,7 +162,8 @@ const ModularityCard = () => {
             WebkitMaskImage: 'linear-gradient(to right, transparent 0%, black 8%, black 92%, transparent 100%)',
           }}
         >
-          <div className="flex animate-marquee-smooth-lg">
+          {/* TEST 3: Disabled marquee animation */}
+          <div className="flex">
             <MarqueeContent iconSize="h-[16px] w-[16px]" boxSize="h-[60px] w-[60px]" />
           </div>
         </div>
@@ -184,7 +185,8 @@ const ModularityCard = () => {
             WebkitMaskImage: 'linear-gradient(to right, transparent 0%, black 8%, black 92%, transparent 100%)',
           }}
         >
-          <div className="flex animate-marquee-smooth-lg">
+          {/* TEST 3: Disabled marquee animation */}
+          <div className="flex">
             <MarqueeContent iconSize="h-[18px] w-[18px]" boxSize="h-[72px] w-[72px]" />
           </div>
         </div>

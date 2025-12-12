@@ -268,6 +268,9 @@ export const DynamicFeeSection = () => {
   }, [expandedInitialHistory])
 
   useEffect(() => {
+    // TEST 3: Disabled chart animation to isolate scroll lag cause
+    return
+
     if (!isInView || isMobile) return
 
     const FRAME_INTERVAL_MS = 120
