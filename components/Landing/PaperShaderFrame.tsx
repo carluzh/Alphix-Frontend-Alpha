@@ -70,7 +70,8 @@ export const PaperShaderFrame = () => {
     >
       {mounted && (
         <>
-          <GrainGradient
+          {/* TEST 1: Disabled GrainGradient to isolate scroll lag cause */}
+          {/* <GrainGradient
             style={{
               position: 'absolute',
               inset: 0,
@@ -78,7 +79,7 @@ export const PaperShaderFrame = () => {
               height: '100%',
             }}
             {...shaderProps}
-          />
+          /> */}
           <div
             style={{
               position: 'absolute',
