@@ -33,20 +33,8 @@ export const PaperShaderFrame = () => {
     return () => window.removeEventListener('resize', checkWidth)
   }, [])
 
-  // Temporarily disabled for TEST 4 - static shader test
-  // const shaderFrame = useMemo(() => {
-  //   if (typeof window === 'undefined' || typeof performance === 'undefined') return 0
-  //   const w = window as unknown as { __shaderStartMs?: number }
-  //   if (w.__shaderStartMs == null) {
-  //     w.__shaderStartMs = performance.now()
-  //   }
-  //   return performance.now() - w.__shaderStartMs
-  // }, [])
-
   const horizontalExtension = breakpoint === 'narrow' ? '-5rem' : breakpoint === 'medium' ? '-12rem' : '-16rem'
 
-  // TEST 4: Static shader (no continuous RAF loop)
-  // If this fixes scroll lag, the issue is RAF conflicting with scroll compositor
   const shaderProps = {
     colors: ['#f94706', '#ff7919'] as [string, string],
     colorBack: '#060606',
@@ -54,8 +42,8 @@ export const PaperShaderFrame = () => {
     intensity: 0.4,
     noise: 0,
     shape: 'corners' as const,
-    speed: 0, // Static - no animation loop
-    frame: 1000, // Fixed frame for consistent look
+    speed: 0,
+    frame: 1000,
   }
 
   return (
@@ -73,7 +61,6 @@ export const PaperShaderFrame = () => {
     >
       {mounted && (
         <>
-          {/* Test: Force GPU layer isolation to prevent scroll compositor conflicts */}
           <GrainGradient
             style={{
               position: 'absolute',
