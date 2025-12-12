@@ -37,12 +37,11 @@ const GrainOverlay = () => (
 
 export default function Layout({ children }: PropsWithChildren) {
   return (
-    <div className="relative flex flex-col bg-gray-50 dark:bg-[#0d0d0c] px-0 md:w-full md:flex-1 md:items-center md:px-4 overflow-x-clip">
+    <div className="relative flex flex-col bg-gray-50 dark:bg-[#0d0d0c] px-0 md:w-full md:flex-1 md:items-center md:px-4">
       <GrainOverlay />
-      <div className="flex flex-col gap-y-2 md:w-full">
-        <LandingPageNavigation />
-
-        <div className="relative flex flex-col px-4 pt-8 md:w-full md:px-0">
+      <LandingPageNavigation />
+      <div className="flex flex-col gap-y-2 md:w-full overflow-x-clip">
+        <div className="relative flex flex-col px-4 pt-12 md:pt-16 md:w-full md:px-0">
           {children}
         </div>
         <LandingPageFooter />
@@ -53,7 +52,7 @@ export default function Layout({ children }: PropsWithChildren) {
 
 const LandingPageNavigation = () => {
   return (
-    <div className="sticky top-0 z-50 flex w-full flex-col items-center py-4 md:py-6 px-4 md:px-0">
+    <div className="sticky top-0 z-50 flex w-full flex-col items-center py-4 md:py-6 px-4 md:px-0" style={{ willChange: 'transform' }}>
       <nav className="flex items-center gap-3 md:gap-6 rounded-lg bg-surface border border-sidebar-border/60 px-2 py-2">
         <Link href="/" className="flex items-center justify-center ml-1">
           <Image
