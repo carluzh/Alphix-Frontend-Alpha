@@ -2,7 +2,6 @@
 
 import { useState } from 'react'
 import { Plus, Minus } from 'lucide-react'
-import { useInView } from '@/hooks/useInView'
 
 const FAQItem = ({
   question,
@@ -96,7 +95,6 @@ const faqItems = [
 ]
 
 export const FAQSection = () => {
-  const { ref, inView } = useInView<HTMLDivElement>({ once: true, threshold: 0.1 })
   const [openIndex, setOpenIndex] = useState<string | null>(null)
 
   const handleToggle = (number: string) => {
@@ -105,8 +103,7 @@ export const FAQSection = () => {
 
   return (
     <div
-      ref={ref}
-      className={`animate-on-scroll w-full ${inView ? 'in-view' : ''}`}
+      className="animate-on-scroll w-full"
     >
       {/* Section Title */}
       <h2 className="text-lg md:text-xl font-medium text-foreground mb-6">

@@ -1,8 +1,4 @@
-'use client'
-
-import { useState } from 'react'
 import { cn } from '@/lib/utils'
-import { useInView } from '@/hooks/useInView'
 import Link from 'next/link'
 import Image from 'next/image'
 import { ArrowRight } from 'lucide-react'
@@ -11,24 +7,14 @@ const UNISWAP_PINK = '#ff37c7'
 const UNISWAP_LOGO_FILTER = 'brightness(0) saturate(100%) invert(47%) sepia(95%) saturate(2158%) hue-rotate(301deg) brightness(101%) contrast(101%)'
 
 const UniswapFoundationCard = () => {
-  const [isHovered, setIsHovered] = useState(false)
-  const { ref, inView } = useInView<HTMLDivElement>({ once: true, threshold: 0.1 })
-
   return (
     <div
-      ref={ref}
-      className={`animate-on-scroll flex flex-1 flex-col gap-y-6 ${inView ? 'in-view' : ''}`}
+      className="animate-on-scroll flex flex-1 flex-col gap-y-6"
     >
       <Link
         href="https://docs.uniswap.org/contracts/v4/concepts/hooks"
         target="_blank"
-        className="relative flex h-full flex-col justify-between gap-x-4 gap-y-4 rounded-lg p-6 transition-transform hover:translate-y-[-4px] md:gap-x-6 md:gap-y-6 md:p-10 xl:gap-y-0 overflow-hidden"
-        style={{
-          backgroundColor: isHovered ? 'rgba(252, 114, 255, 0.20)' : 'rgba(252, 114, 255, 0.12)',
-          transition: 'background-color 0.3s ease'
-        }}
-        onMouseEnter={() => setIsHovered(true)}
-        onMouseLeave={() => setIsHovered(false)}
+        className="relative flex h-full flex-col justify-between gap-x-4 gap-y-4 rounded-lg p-6 transition-transform hover:translate-y-[-4px] md:gap-x-6 md:gap-y-6 md:p-10 xl:gap-y-0 overflow-hidden bg-[rgba(252,114,255,0.12)] hover:bg-[rgba(252,114,255,0.20)] transition-colors duration-300 ease-out"
       >
       <div className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/4 pointer-events-none">
         <Image
@@ -90,32 +76,29 @@ const BASE_BLUE = '#3c8aff'
 const BASE_LOGO_FILTER = 'brightness(0) saturate(100%) invert(55%) sepia(57%) saturate(2159%) hue-rotate(199deg) brightness(101%) contrast(101%)'
 
 const BaseChainCard = () => {
-  const [isHovered, setIsHovered] = useState(false)
-  const { ref, inView } = useInView<HTMLDivElement>({ once: true, threshold: 0.1 })
-
   return (
     <div
-      ref={ref}
-      className={`animate-on-scroll flex flex-1 flex-col gap-y-6 delay-1 ${inView ? 'in-view' : ''}`}
+      className="animate-on-scroll flex flex-1 flex-col gap-y-6 delay-1"
     >
       <Link
         href="https://x.com/AlphixFi/status/1947334206528307690"
         target="_blank"
-        className="relative flex h-full flex-col justify-between gap-x-4 gap-y-4 rounded-lg p-6 transition-transform hover:translate-y-[-4px] md:gap-x-6 md:gap-y-6 md:p-10 xl:gap-y-0 overflow-hidden"
-        style={{ backgroundColor: 'rgba(60, 138, 255, 0.12)' }}
-        onMouseEnter={() => setIsHovered(true)}
-        onMouseLeave={() => setIsHovered(false)}
+        className="group relative flex h-full flex-col justify-between gap-x-4 gap-y-4 rounded-lg p-6 transition-transform hover:translate-y-[-4px] md:gap-x-6 md:gap-y-6 md:p-10 xl:gap-y-0 overflow-hidden bg-[rgba(60,138,255,0.12)]"
       >
         <div
-          className="absolute inset-0 pointer-events-none"
+          className="base-bg-hover absolute inset-0 pointer-events-none"
           style={{
             backgroundImage: 'url(/base_back.webp)',
             backgroundSize: 'cover',
             backgroundPosition: 'center',
-            opacity: isHovered ? 0.6 : 0.15,
-            transition: 'opacity 0.3s ease'
+            opacity: 0.15,
+            transition: 'opacity 0.3s ease',
           }}
+          // Tailwind doesn't support group-hover on arbitrary inline opacity well here, so use a tiny CSS rule.
         />
+        <style>{`
+          .group:hover .base-bg-hover { opacity: 0.6 !important; }
+        `}</style>
         <div className="flex h-full flex-col gap-y-6 relative z-10">
           <div className="flex items-center relative">
             <Image
@@ -125,9 +108,10 @@ const BaseChainCard = () => {
               height={22}
               style={{
                 filter: BASE_LOGO_FILTER,
-                opacity: isHovered ? 0 : 1,
-                transition: 'opacity 0.3s ease'
+                opacity: 1,
+                transition: 'opacity 0.3s ease',
               }}
+              className="group-hover:opacity-0"
             />
             <Image
               src="/base-lockup-white.svg"
@@ -136,9 +120,10 @@ const BaseChainCard = () => {
               height={22}
               className="absolute left-0 top-0"
               style={{
-                opacity: isHovered ? 1 : 0,
-                transition: 'opacity 0.3s ease'
+                opacity: 0,
+                transition: 'opacity 0.3s ease',
               }}
+              className="group-hover:opacity-100"
             />
           </div>
 
@@ -146,18 +131,20 @@ const BaseChainCard = () => {
             <h3
               className="text-2xl font-semibold md:text-[28px] md:leading-tight"
               style={{
-                color: isHovered ? '#ffffff' : BASE_BLUE,
-                transition: 'color 0.3s ease'
+                color: BASE_BLUE,
+                transition: 'color 0.3s ease',
               }}
+              className="group-hover:text-white"
             >
               Launching on Base
             </h3>
             <p
               className="w-full grow text-lg font-medium leading-6 md:max-w-96"
               style={{
-                color: isHovered ? '#ffffff' : BASE_BLUE,
-                transition: 'color 0.3s ease'
+                color: BASE_BLUE,
+                transition: 'color 0.3s ease',
               }}
+              className="group-hover:text-white"
             >
               Fast execution, deep liquidity, and real competition to prove our edge.
             </p>
@@ -170,18 +157,20 @@ const BaseChainCard = () => {
             <span
               className="text-sm font-semibold"
               style={{
-                color: isHovered ? '#ffffff' : BASE_BLUE,
-                transition: 'color 0.3s ease'
+                color: BASE_BLUE,
+                transition: 'color 0.3s ease',
               }}
+              className="group-hover:text-white"
             >
               Learn More
             </span>
             <ArrowRight
               className="h-5 w-5"
               style={{
-                color: isHovered ? '#ffffff' : BASE_BLUE,
-                transition: 'color 0.3s ease'
+                color: BASE_BLUE,
+                transition: 'color 0.3s ease',
               }}
+              className="group-hover:text-white"
             />
           </div>
         </div>

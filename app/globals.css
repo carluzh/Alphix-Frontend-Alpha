@@ -691,5 +691,11 @@ input[type=number] {
     opacity: 1;
     transform: none;
   }
+
+  .animate-sonic-flow-1,
+  .animate-sonic-flow-2,
+  .animate-sonic-flow-3 {
+    animation: none !important;
+  }
 }
 

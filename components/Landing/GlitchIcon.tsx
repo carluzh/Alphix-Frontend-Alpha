@@ -1,17 +1,43 @@
 'use client'
 
-import { LucideIcon } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
+import {
+  BetweenVerticalStart,
+  FileStack,
+  Handshake,
+  Layers,
+  Lock,
+  Repeat,
+  ScanEye,
+  SlidersVertical,
+  ToyBrick,
+} from 'lucide-react'
 import { useId } from 'react'
 
+const ICONS = {
+  SlidersVertical,
+  Handshake,
+  Repeat,
+  BetweenVerticalStart,
+  FileStack,
+  ScanEye,
+  ToyBrick,
+  Layers,
+  Lock,
+} satisfies Record<string, LucideIcon>
+
+export type GlitchIconName = keyof typeof ICONS
+
 interface GlitchIconProps {
-  icon: LucideIcon
+  iconName: GlitchIconName
   className?: string
   glitchIndex?: number
   /** Scale factor for pixelation blocks. 1 = default (8px blocks), 0.5 = 4px blocks, etc. */
   pixelScale?: number
 }
 
-export const GlitchIcon = ({ icon: Icon, className = '', glitchIndex = 1, pixelScale = 1 }: GlitchIconProps) => {
+export const GlitchIcon = ({ iconName, className = '', glitchIndex = 1, pixelScale = 1 }: GlitchIconProps) => {
+  const Icon = ICONS[iconName]
   const filterId = useId()
   const baseSize = 8 * pixelScale
   const halfSize = 4 * pixelScale

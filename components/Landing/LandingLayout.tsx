@@ -1,11 +1,7 @@
-'use client'
-
 import { Button } from '@/components/ui/button'
-import { useInView } from '@/hooks/useInView'
 import Link from 'next/link'
 import Image from 'next/image'
-import { PropsWithChildren, useState, useEffect } from 'react'
-import { toast } from 'sonner'
+import { PropsWithChildren } from 'react'
 
 const GithubIcon = ({ size = 20 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
@@ -64,14 +60,12 @@ const LandingPageNavigation = () => {
           />
         </Link>
         <div className="flex items-center gap-6">
-          <button
-            onClick={() => {
-              document.getElementById('dynamic-fees-section')?.scrollIntoView({ behavior: 'smooth' })
-            }}
+          <a
+            href="#dynamic-fees-section"
             className="text-sm font-semibold text-muted-foreground transition-colors hover:text-white"
           >
             Products
-          </button>
+          </a>
           <Link
             href="https://alphix.gitbook.io/docs/"
             target="_blank"
@@ -79,12 +73,9 @@ const LandingPageNavigation = () => {
           >
             Docs
           </Link>
-          <button
-            onClick={() => toast.info('Coming Soon')}
-            className="text-sm font-semibold text-muted-foreground transition-colors hover:text-white"
-          >
+          <span className="text-sm font-semibold text-muted-foreground/60 cursor-not-allowed">
             Security
-          </button>
+          </span>
         </div>
         <Link href="/swap">
           <Button
@@ -98,38 +89,14 @@ const LandingPageNavigation = () => {
   )
 }
 
-const MEDIUM_BREAKPOINT = 2000
-const NARROW_BREAKPOINT = 1700
-
 const LandingPageFooter = () => {
-  const [breakpoint, setBreakpoint] = useState<'full' | 'medium' | 'narrow'>('full')
-  const [isMobile, setIsMobile] = useState(false)
-  const { ref, inView } = useInView<HTMLDivElement>({ once: true, threshold: 0.1 })
-
-  useEffect(() => {
-    const checkWidth = () => {
-      const width = window.innerWidth
-      setIsMobile(width < 768)
-      if (width < NARROW_BREAKPOINT) setBreakpoint('narrow')
-      else if (width < MEDIUM_BREAKPOINT) setBreakpoint('medium')
-      else setBreakpoint('full')
-    }
-    checkWidth()
-    window.addEventListener('resize', checkWidth)
-    return () => window.removeEventListener('resize', checkWidth)
-  }, [])
-
-  // Match PaperShaderFrame horizontal extension at each breakpoint
-  const FOOTER_MAX_WIDTH = breakpoint === 'narrow' ? 'calc(72rem + 10rem)' : breakpoint === 'medium' ? 'calc(72rem + 24rem)' : 'calc(72rem + 32rem)'
-
   return (
     <div
-      ref={ref}
-      className={`animate-on-scroll relative flex flex-col items-center mt-12 md:mt-16 ${inView ? 'in-view' : ''}`}
+      className="animate-on-scroll relative flex flex-col items-center mt-12 md:mt-16"
     >
       <div
         className="relative w-full h-[280px] md:h-[320px] overflow-hidden px-0 md:px-4"
-        style={{ maxWidth: isMobile ? 'none' : FOOTER_MAX_WIDTH }}
+        style={{ maxWidth: 'calc(72rem + 32rem)' }}
       >
         <footer className="w-full md:rounded-t-lg border border-b-0 border-x-0 md:border-x border-sidebar-border/60 bg-white dark:bg-[#131313] h-[400px] md:h-[480px]">
           <div className="flex flex-col justify-between h-[280px] md:h-[320px] py-8 md:py-10 px-4 md:px-12">

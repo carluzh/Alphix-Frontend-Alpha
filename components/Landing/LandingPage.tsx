@@ -1,6 +1,3 @@
-'use client'
-
-import dynamic from 'next/dynamic'
 import { Hero } from '@/components/Landing/Hero/Hero'
 import { Button } from '@/components/ui/button'
 import Link from 'next/link'
@@ -10,47 +7,35 @@ import { Section } from './Section'
 import LandingLayout from './LandingLayout'
 import { FeatureCards } from './FeatureCards'
 import { SplitPromo } from './SplitPromo'
-import { ArrowUpRight, Layers, Lock, SlidersVertical, Handshake, Repeat, BetweenVerticalStart, FileStack, ScanEye, ToyBrick, LucideIcon } from 'lucide-react'
-import { useInView } from '@/hooks/useInView'
-import { GlitchIcon } from './GlitchIcon'
+import { ArrowUpRight } from 'lucide-react'
+import { GlitchIcon, type GlitchIconName } from './GlitchIcon'
 import Image from 'next/image'
-
-// Lazy load heavy components to reduce initial bundle
-// DynamicFeeSection: ~45KB (recharts + animation logic)
-const DynamicFeeSection = dynamic(
-  () => import('./DynamicFeeSection').then(mod => mod.DynamicFeeSection),
-  { ssr: false }
-)
-
-// PaperShaderFrame: ~25KB (WebGL shader)
-const PaperShaderFrame = dynamic(
-  () => import('./PaperShaderFrame').then(mod => mod.PaperShaderFrame),
-  { ssr: false }
-)
+import { DynamicFeeSectionLazy, LandingInViewInit, PaperShaderFrameLazy } from './LandingClient'
 
 // Icon configuration: either a Lucide icon (censored) or a revealed feature image
 type IconConfig =
-  | { type: 'censored'; icon: LucideIcon }
+  | { type: 'censored'; iconName: GlitchIconName }
   | { type: 'revealed'; image: string; alt: string; size?: 'default' | 'lg' }
 
 const modularityIcons: IconConfig[] = [
-  { type: 'censored', icon: SlidersVertical },
-  { type: 'censored', icon: Handshake },
+  { type: 'censored', iconName: 'SlidersVertical' },
+  { type: 'censored', iconName: 'Handshake' },
   { type: 'revealed', image: '/landing/FeatureIcons/dynamic.png', alt: 'Dynamic', size: 'lg' },
   { type: 'revealed', image: '/landing/FeatureIcons/refresh.png', alt: 'Refresh' },
-  { type: 'censored', icon: Repeat },
-  { type: 'censored', icon: BetweenVerticalStart },
-  { type: 'censored', icon: FileStack },
-  { type: 'censored', icon: ScanEye },
-  { type: 'censored', icon: ToyBrick },
-  { type: 'censored', icon: Layers },
-  { type: 'censored', icon: Lock },
+  { type: 'censored', iconName: 'Repeat' },
+  { type: 'censored', iconName: 'BetweenVerticalStart' },
+  { type: 'censored', iconName: 'FileStack' },
+  { type: 'censored', iconName: 'ScanEye' },
+  { type: 'censored', iconName: 'ToyBrick' },
+  { type: 'censored', iconName: 'Layers' },
+  { type: 'censored', iconName: 'Lock' },
 ]
 
 export default function LandingPage() {
 
   return (
     <LandingLayout>
+      <LandingInViewInit />
       <div className="flex flex-col">
         <PageContent />
       </div>
@@ -112,8 +97,6 @@ const RevealedIcon = ({ src, alt, size }: { src: string; alt: string; size?: 'de
 }
 
 const ModularityCard = () => {
-  const { ref, inView } = useInView<HTMLDivElement>({ once: true, threshold: 0.1 })
-
   const MarqueeContent = ({ iconSize, boxSize }: { iconSize: string; boxSize: string }) => (
     <>
       {modularityIcons.map((config, index) => (
@@ -122,7 +105,7 @@ const ModularityCard = () => {
           className={`flex ${boxSize} shrink-0 items-center justify-center rounded-lg mx-1 bg-gray-50 dark:bg-[#1a1a1a] ${config.type === 'revealed' ? 'border border-sidebar-border/60' : ''}`}
         >
           {config.type === 'censored' ? (
-            <GlitchIcon icon={config.icon} className={`${iconSize} text-muted-foreground`} glitchIndex={(index % 8) + 1} pixelScale={0.75} />
+            <GlitchIcon iconName={config.iconName} className={`${iconSize} text-muted-foreground`} glitchIndex={(index % 8) + 1} pixelScale={0.75} />
           ) : (
             <RevealedIcon src={config.image} alt={config.alt} size={config.size} />
           )}
@@ -134,7 +117,7 @@ const ModularityCard = () => {
           className={`flex ${boxSize} shrink-0 items-center justify-center rounded-lg mx-1 bg-gray-50 dark:bg-[#1a1a1a] ${config.type === 'revealed' ? 'border border-sidebar-border/60' : ''}`}
         >
           {config.type === 'censored' ? (
-            <GlitchIcon icon={config.icon} className={`${iconSize} text-muted-foreground`} glitchIndex={(index % 8) + 1} pixelScale={0.75} />
+            <GlitchIcon iconName={config.iconName} className={`${iconSize} text-muted-foreground`} glitchIndex={(index % 8) + 1} pixelScale={0.75} />
           ) : (
             <RevealedIcon src={config.image} alt={config.alt} size={config.size} />
           )}
@@ -145,8 +128,7 @@ const ModularityCard = () => {
 
   return (
     <div
-      ref={ref}
-      className={`animate-on-scroll w-full overflow-hidden rounded-lg border border-sidebar-border/60 bg-white dark:bg-[#131313] p-2 ${inView ? 'in-view' : ''}`}
+      className="animate-on-scroll w-full overflow-hidden rounded-lg border border-sidebar-border/60 bg-white dark:bg-[#131313] p-2"
     >
       <div className="flex flex-col md:hidden">
         <div className="px-4 py-3">
@@ -197,7 +179,7 @@ export const PageContent = () => {
   return (
     <>
       <Section className="relative flex flex-col gap-y-10 md:gap-y-16 py-0 md:py-0">
-        <PaperShaderFrame />
+        <PaperShaderFrameLazy />
         <Hero
           title="Building smarter onchain markets."
           description="Our Unified Pools compound innovation into one secure pool. Empowering liquidity instead of fragmenting it."
@@ -222,7 +204,7 @@ export const PageContent = () => {
       </Section>
 
       <Section className="flex flex-col gap-y-8 md:gap-y-12 mt-6 md:mt-8">
-        <DynamicFeeSection />
+        <DynamicFeeSectionLazy />
 
         <SplitPromo
           title="More Yield for Everyone"

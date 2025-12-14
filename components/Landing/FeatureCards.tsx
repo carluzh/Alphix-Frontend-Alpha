@@ -1,6 +1,3 @@
-'use client'
-
-import { useInView } from '@/hooks/useInView'
 import Image from 'next/image'
 import { cn } from '@/lib/utils'
 
@@ -16,12 +13,9 @@ interface FeatureCardsProps {
 }
 
 export const FeatureCards = ({ features }: FeatureCardsProps) => {
-  const { ref, inView } = useInView<HTMLDivElement>({ once: true, threshold: 0.1 })
-
   return (
     <div
-      ref={ref}
-      className={`animate-on-scroll relative z-10 w-full rounded-lg border border-sidebar-border/60 bg-white dark:bg-[#131313] overflow-hidden ${inView ? 'in-view' : ''}`}
+      className="animate-on-scroll in-view relative z-10 w-full rounded-lg border border-sidebar-border/60 bg-white dark:bg-[#131313] overflow-hidden"
     >
       <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-sidebar-border/60">
         {features.map((feature, index) => (
