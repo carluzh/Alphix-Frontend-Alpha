@@ -542,9 +542,7 @@ export default function PoolDetailPage() {
           // 2. Pool stats (from batch API)
           (async () => {
             try {
-              const versionResponse = await fetch('/api/cache-version', { cache: 'no-store' });
-              const versionData = await versionResponse.json();
-              const resp = await fetch(versionData.cacheUrl);
+              const resp = await fetch(`/api/liquidity/get-pools-batch?network=${networkMode}`);
 
               if (resp.ok) {
                 const data = await resp.json();
@@ -790,9 +788,7 @@ export default function PoolDetailPage() {
     const poolInfo = getPoolConfiguration(poolId);
     if (!poolInfo?.subgraphId) return;
     try {
-      const versionResponse = await fetch('/api/cache-version', { cache: 'no-store' });
-      const versionData = await versionResponse.json();
-      const resp = await fetch(versionData.cacheUrl);
+      const resp = await fetch(`/api/liquidity/get-pools-batch?network=${networkMode}&v=${Date.now()}`);
       if (resp.ok) {
         const data = await resp.json();
         const poolIdLc = String(poolInfo.subgraphId).toLowerCase();
@@ -816,7 +812,7 @@ export default function PoolDetailPage() {
         }
       }
     } catch (error) { console.error('[silentRefreshTVL] Failed:', error); }
-  }, [poolId]);
+  }, [poolId, networkMode]);
 
   const refreshAfterMutation = useCallback(async (info?: { txHash?: `0x${string}`; blockNumber?: bigint; tvlDelta?: number }) => {
     if (!poolId || !isConnected || !accountAddress || !chainId) return;

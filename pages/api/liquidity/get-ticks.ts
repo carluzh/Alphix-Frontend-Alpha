@@ -34,7 +34,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // Use CacheService for tick data with stale-while-revalidate
     const result = await cacheService.cachedApiCall(
-      poolKeys.ticks(apiId),
+      poolKeys.ticks(apiId, networkMode),
       CACHE_TTL,
       async () => {
         // Mainnet: ticks are in the Uniswap V4 subgraph

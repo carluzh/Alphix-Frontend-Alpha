@@ -141,15 +141,7 @@ const SidebarProvider = React.forwardRef<
       [state, open, setOpen, isMobile, openMobile, setOpenMobile, toggleSidebar]
     )
 
-    // Keep shader animation continuous across page navigations by seeding frame from a global start time.
-    const shaderFrame = React.useMemo(() => {
-      if (typeof window === "undefined" || typeof performance === "undefined") return 0
-      const w = window as unknown as { __shaderStartMs?: number }
-      if (w.__shaderStartMs == null) {
-        w.__shaderStartMs = performance.now()
-      }
-      return performance.now() - w.__shaderStartMs
-    }, [])
+    const shaderFrame = 1000
 
     return (
       <SidebarContext.Provider value={contextValue}>
@@ -182,7 +174,7 @@ const SidebarProvider = React.forwardRef<
                     intensity={0.4}
                     noise={0}
                     shape="corners"
-                    speed={0.3}
+                    speed={0}
                     frame={shaderFrame}
                   />
                 </div>
@@ -196,7 +188,7 @@ const SidebarProvider = React.forwardRef<
                     intensity={0.20}
                     noise={0.00}
                     shape="wave"
-                    speed={0.26}
+                    speed={0}
                     scale={1.04}
                     rotation={32}
                     offsetX={-0.06}

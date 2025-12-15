@@ -1,7 +1,6 @@
 'use client'
 
 import type React from "react"
-import { useMemo } from "react"
 import AppKitProvider from '@/components/AppKitProvider'
 import { ThemeProvider } from "@/components/theme-provider"
 import { NetworkProvider, type NetworkMode } from "@/lib/network-context"
@@ -20,9 +19,6 @@ export default function AppProviders({
   cookieString: string
   initialNetworkMode: NetworkMode
 }) {
-  // Avoid re-computing the cookie string prop through renders (client-side navigations)
-  const cookies = useMemo(() => cookieString, [cookieString])
-
   return (
     <ThemeProvider
       attribute="class"
@@ -31,7 +27,7 @@ export default function AppProviders({
       disableTransitionOnChange
     >
       <NetworkProvider initialNetworkMode={initialNetworkMode}>
-        <AppKitProvider cookies={cookies}>
+        <AppKitProvider cookies={cookieString}>
           <ErrorBoundary>
             <SidebarProvider>
               {children}
@@ -45,5 +41,3 @@ export default function AppProviders({
     </ThemeProvider>
   )
 }
-
-

@@ -259,7 +259,7 @@ export function SwapInputView({
             availableTokens={availableTokens as TokenSelectorToken[]}
             onTokenSelect={onFromTokenSelect}
             excludeToken={displayToToken as TokenSelectorToken}
-            disabled={!isConnected || isAttemptingSwitch}
+            disabled={isAttemptingSwitch}
             swapContainerRect={swapContainerRect}
           />
           <div className="flex-1">
@@ -273,7 +273,7 @@ export function SwapInputView({
                 { "opacity-50": quoteLoading && activelyEditedSide === 'to' }
               )}
               placeholder="0"
-              disabled={!isConnected || isAttemptingSwitch}
+              disabled={isAttemptingSwitch}
             />
             <div className="relative text-right text-xs min-h-5">
               {/* USD Value - hide on hover */}
@@ -394,9 +394,9 @@ export function SwapInputView({
           className={cn(
             "arrow-loading-wrapper",
             quoteLoading && "loading",
-            (!isConnected || isAttemptingSwitch) && "cursor-not-allowed"
+            isAttemptingSwitch && "cursor-not-allowed"
           )}
-          onClick={!isConnected || isAttemptingSwitch || quoteLoading ? undefined : handleSwapTokens}
+          onClick={isAttemptingSwitch || quoteLoading ? undefined : handleSwapTokens}
         >
           <div className="arrow-loading-inner">
             <ArrowDownIcon className="h-4 w-4" />
@@ -431,7 +431,7 @@ export function SwapInputView({
             availableTokens={availableTokens as TokenSelectorToken[]}
             onTokenSelect={onToTokenSelect}
             excludeToken={displayFromToken as TokenSelectorToken}
-            disabled={!isConnected || isAttemptingSwitch}
+            disabled={isAttemptingSwitch}
             swapContainerRect={swapContainerRect}
           />
           <div className="flex-1">
@@ -440,7 +440,7 @@ export function SwapInputView({
               onChange={onToAmountChange}
               onFocus={() => setIsBuyInputFocused(true)}
               onBlur={() => setIsBuyInputFocused(false)}
-              disabled={!isConnected || isAttemptingSwitch}
+              disabled={isAttemptingSwitch}
               className={cn(
                 "text-right text-xl md:text-xl font-medium h-auto p-0 focus-visible:ring-0 focus-visible:ring-offset-0 border-0 bg-transparent",
                 { "opacity-50": quoteLoading && activelyEditedSide === 'from' }
@@ -496,7 +496,7 @@ export function SwapInputView({
 
       {/* Route, Fee, and Slippage Information */}
       <div className="mt-4 space-y-1.5">
-        {showRoute && isConnected && currentChainId === TARGET_CHAIN_ID && (
+        {showRoute && !!routeInfo && (
           <>
             <div
               className="flex items-center justify-between text-xs text-muted-foreground"
@@ -838,7 +838,7 @@ export function SwapInputView({
         ) : (
           <div
             className="relative flex h-10 w-full cursor-pointer items-center justify-center rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:bg-accent hover:brightness-110 hover:border-white/30 text-white"
-            style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+            style={{ backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
           >
             {/* @ts-expect-error custom element provided by wallet kit */}
             <appkit-button className="absolute inset-0 z-10 block h-full w-full cursor-pointer p-0 opacity-0" />

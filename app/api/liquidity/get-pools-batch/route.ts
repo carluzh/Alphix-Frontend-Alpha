@@ -262,7 +262,6 @@ async function computePoolsBatch(networkMode: NetworkMode): Promise<any> {
   // PERF OPTIMIZATION: Skip previous-day TVL query (saves ~1.4s)
   // Trade-off: TVL change % will be unavailable, but load time is critical
   const prevTvlByPoolId = new Map<string, { tvl0: number; tvl1: number }>();
-  console.log('[Batch] Skipping previous-day TVL query for performance (TVL change % unavailable)');
 
   // NOTE: Fee multicall now runs in parallel with first batch (moved above)
   console.time('[PERF] Calculate pool stats');
@@ -364,37 +363,66 @@ async function computePoolsBatch(networkMode: NetworkMode): Promise<any> {
 
 export async function GET(request: Request) {
   try {
+    const requestUrl = new URL(request.url)
+    const forceRefresh = requestUrl.searchParams.has('v')
+    const networkParam = requestUrl.searchParams.get('network')
+    const networkFromQuery = networkParam === 'mainnet' || networkParam === 'testnet' ? networkParam : null
+
     // Get network mode from cookies (App Router pattern)
     const cookieHeader = request.headers.get('cookie') || '';
-    const networkMode = getNetworkModeFromRequest(cookieHeader);
+    const networkMode = (networkFromQuery ?? getNetworkModeFromRequest(cookieHeader)) as NetworkMode;
 
-    console.log('[get-pools-batch] Network mode from cookies:', networkMode);
+    // Network mode now selected via ?network= or cookies (for legacy callers)
 
-    // Use CacheService for clean stale-while-revalidate pattern
     // Cache key includes network mode to separate mainnet and testnet data
-    const cacheKey = `${poolKeys.batch()}:${networkMode}`;
-    const result = await cacheService.cachedApiCall(
-      cacheKey,
-      { fresh: 5 * 60, stale: 60 * 60 }, // 5min fresh, 1hr stale
-      async () => {
-        const payload = await computePoolsBatch(networkMode);
+    const cacheKey = poolKeys.batch('v1', networkMode);
+    const ttl = { fresh: 5 * 60, stale: 60 * 60 } // 5min fresh, 1hr stale
 
-        // Only cache if successful and no errors
-        const hasErrors = payload.errors && payload.errors.length > 0;
-        if (!payload.success || hasErrors) {
-          console.warn('[Batch] Skipping cache - errors:', payload.errors);
-          // For error cases, remove errors field before returning
-          return { ...payload, errors: undefined };
-        }
+    const shouldCache = (payload: any): boolean => {
+      const hasErrors = payload?.errors && payload.errors.length > 0
+      if (!payload?.success || hasErrors) return false
 
-        return payload;
+      // Guard against caching obviously bogus "all zeros" snapshots
+      const pools = payload?.pools
+      if (!Array.isArray(pools) || pools.length === 0) return false
+      const looksAllZero = pools.every((p: any) =>
+        Number(p?.tvlUSD ?? 0) === 0 &&
+        Number(p?.volume7dUSD ?? 0) === 0 &&
+        Number(p?.fees7dUSD ?? 0) === 0
+      )
+      return !looksAllZero
+    }
+
+    let result: { data: any; isStale: boolean }
+    if (forceRefresh) {
+      const payload = await computePoolsBatch(networkMode)
+      const cacheable = shouldCache(payload)
+      if (!cacheable) {
+        console.warn('[Batch] Forced refresh: skipping cache write (invalid payload)')
+      } else {
+        await cacheService.set(cacheKey, { ...payload, errors: undefined }, ttl.stale)
       }
-    );
+      result = { data: { ...payload, errors: undefined }, isStale: false }
+    } else {
+      const cached = await cacheService.cachedApiCall(
+        cacheKey,
+        ttl,
+        async () => {
+          const payload = await computePoolsBatch(networkMode)
+          return { ...payload, errors: undefined }
+        },
+        { shouldCache }
+      )
+      result = cached
+    }
 
     // Set cache headers for consistency with other endpoints
-    const headers: HeadersInit = {
-      'Cache-Control': 'no-store', // Let Redis handle caching, not CDN
-    };
+    const headers: HeadersInit = {}
+    const isCdnCacheable = !!networkFromQuery && !forceRefresh
+    headers['Cache-Control'] = isCdnCacheable
+      ? 'public, s-maxage=30, stale-while-revalidate=300'
+      : 'no-store' // prevent cookie-variant caching; forceRefresh should never be cached
+    headers['X-Network-Mode'] = networkMode
     if (result.isStale) {
       headers['X-Cache-Status'] = 'stale';
     }

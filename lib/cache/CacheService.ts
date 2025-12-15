@@ -107,7 +107,6 @@ export class CacheService {
     // REQUEST DEDUPLICATION: Check for ongoing request
     const ongoing = this.ongoingRequests.get(key)
     if (ongoing) {
-      console.log('[CacheService] Deduplicating request:', key)
       return ongoing
     }
 
@@ -127,23 +126,33 @@ export class CacheService {
           const freshData = await fetchFn()
           const isInCooldown = noCacheUntil && Date.now() < noCacheUntil
           if (isInCooldown) {
-            console.log(`[CacheService] Cooldown active for ${key}, skipping cache write (${Math.round((noCacheUntil - Date.now()) / 1000)}s remaining)`)
           } else {
-            await this.set(key, freshData, ttl.stale)
+            if (options?.shouldCache && !options.shouldCache(freshData)) {
+            } else {
+              await this.set(key, freshData, ttl.stale)
+            }
           }
           return { data: freshData, isStale: false }
         }
 
         if (cachedData && isStale) {
           fetchFn()
-            .then(freshData => this.set(key, freshData, ttl.stale))
+            .then(freshData => {
+              if (options?.shouldCache && !options.shouldCache(freshData)) {
+                return
+              }
+              return this.set(key, freshData, ttl.stale)
+            })
             .catch(err => console.error('[CacheService] Background refresh failed:', err))
 
           return { data: cachedData, isStale: true }
         }
 
         const freshData = await fetchFn()
-        await this.set(key, freshData, ttl.stale)
+        if (options?.shouldCache && !options.shouldCache(freshData)) {
+        } else {
+          await this.set(key, freshData, ttl.stale)
+        }
         return { data: freshData, isStale: false }
       } finally {
         this.ongoingRequests.delete(key)

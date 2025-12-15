@@ -691,7 +691,7 @@ function usePortfolioData(refreshKey: number = 0, userPositionsData?: any[], pri
 // Track optimistically removed position IDs (module-level Set, cleared when confirmed by fresh data)
 const optimisticallyRemovedIds = new Set<string>();
 
-function usePortfolio(refreshKey: number = 0, userPositionsData?: any[], pricesData?: any, isLoadingHookPositions?: boolean) {
+function usePortfolio(networkMode: 'mainnet' | 'testnet', refreshKey: number = 0, userPositionsData?: any[], pricesData?: any, isLoadingHookPositions?: boolean) {
   const { address: accountAddress, isConnected, chainId: currentChainId } = useAccount();
 
   // Use the portfolio data hook with passed parameters
@@ -746,7 +746,7 @@ function usePortfolio(refreshKey: number = 0, userPositionsData?: any[], pricesD
   useEffect(() => {
     const fetchApr = async () => {
       try {
-        const response = await fetch('/api/liquidity/get-pools-batch', { cache: 'no-store' });
+        const response = await fetch(`/api/liquidity/get-pools-batch?network=${networkMode}`);
         if (!response.ok) return;
         const data = await response.json();
         if (!data?.success || !Array.isArray(data.pools)) return;
@@ -759,7 +759,7 @@ function usePortfolio(refreshKey: number = 0, userPositionsData?: any[], pricesD
       } catch {}
     };
     fetchApr();
-  }, []);
+  }, [networkMode]);
 
   useEffect(() => {
     setIsLoadingPoolStates(false);
@@ -814,7 +814,7 @@ export default function PortfolioPage() {
     setActivePositions,
     setIsLoadingPositions,
     setAprByPoolId,
-  } = usePortfolio(positionsRefresh, userPositionsData, pricesData, isLoadingUserPositions);
+  } = usePortfolio(networkMode, positionsRefresh, userPositionsData, pricesData, isLoadingUserPositions);
 
   const modifiedPositionPoolInfoRef = useRef<{ poolId: string; subgraphId: string } | null>(null);
   const pendingActionRef = useRef<null | { type: 'increase' | 'decrease' | 'withdraw' | 'collect' }>(null);

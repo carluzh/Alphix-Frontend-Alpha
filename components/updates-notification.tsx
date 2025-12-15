@@ -1,9 +1,10 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { X } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
-import { getLatestVersion } from "@/lib/version-log";
+import { VERSION_LOG } from "@/lib/version-log";
 import {
   Accordion,
   AccordionContent,
@@ -12,8 +13,15 @@ import {
 } from "@/components/ui/accordion";
 
 export function UpdatesNotification({ open = false, onClose }: { open?: boolean; onClose?: () => void }) {
-  // Get latest version info
-  const latestVersion = getLatestVersion();
+  const [activeIndex, setActiveIndex] = useState(0);
+
+  useEffect(() => {
+    if (open) setActiveIndex(0);
+  }, [open]);
+
+  const current = VERSION_LOG[activeIndex];
+  const hasPrevious = Boolean(VERSION_LOG[activeIndex + 1]);
+  const isPatch = (current?.title || '').toLowerCase().startsWith('patch');
 
   return (
     <AnimatePresence>
@@ -23,7 +31,7 @@ export function UpdatesNotification({ open = false, onClose }: { open?: boolean;
           animate={{ y: 0, opacity: 1 }}
           exit={{ y: 24, opacity: 0 }}
           transition={{ type: 'spring', stiffness: 380, damping: 28 }}
-          className="fixed bottom-4 right-4 z-40 max-w-md w-full"
+          className="fixed bottom-14 right-4 z-40 max-w-md w-full"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="rounded-lg border border-[#2a2a2a] overflow-hidden bg-[var(--modal-background)] max-h-[85vh] flex flex-col">
@@ -43,95 +51,118 @@ export function UpdatesNotification({ open = false, onClose }: { open?: boolean;
                     </g>
                   </g>
                 </svg>
-                <span className="text-xs tracking-wider font-mono font-bold text-sidebar-primary">Beta Update {latestVersion.version}</span>
-                <span className="text-xs tracking-wider font-mono font-bold text-muted-foreground">- What's New</span>
+                <span
+                  className={`text-xs tracking-wider font-mono font-bold ${isPatch ? 'text-white' : 'text-sidebar-primary'}`}
+                >
+                  {current?.title}
+                </span>
               </div>
-              <Button
-                variant="ghost"
-                className="group -my-1 -me-1 size-8 p-0 hover:bg-transparent"
-                aria-label="Close notification"
-                onClick={() => onClose?.()}
+              <div className="flex items-center gap-2">
+                {hasPrevious && (
+                  <Button
+                    variant="ghost"
+                    className="h-8 px-2 text-xs font-mono font-semibold text-muted-foreground hover:bg-transparent hover:text-white"
+                    onClick={() => setActiveIndex((i) => Math.min(i + 1, VERSION_LOG.length - 1))}
+                  >
+                    See Previous
+                  </Button>
+                )}
+                <Button
+                  variant="ghost"
+                  className="group -my-1 -me-1 size-8 p-0 hover:bg-transparent"
+                  aria-label="Close notification"
+                  onClick={() => onClose?.()}
+                >
+                  <X size={16} strokeWidth={2} className="opacity-100" />
+                </Button>
+              </div>
+            </div>
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={current?.version ?? activeIndex}
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+                transition={{ duration: 0.14 }}
+                className="overflow-y-auto flex-1 p-3 text-foreground scrollbar-thin scrollbar-thumb-[#2a2a2a] scrollbar-track-transparent"
               >
-                <X size={16} strokeWidth={2} className="opacity-100" />
-              </Button>
-            </div>
-            <div className="overflow-y-auto flex-1 p-3 text-foreground scrollbar-thin scrollbar-thumb-[#2a2a2a] scrollbar-track-transparent">
-              {/* TLDR Section - Always Visible */}
-              {latestVersion.tldr && latestVersion.tldr.length > 0 && (
-                <div className="mb-4 pb-3 border-b border-sidebar-border">
-                  <h4 className="text-xs font-semibold text-white mb-2.5 font-mono">TLDR</h4>
-                  <ul className="flex flex-col gap-2">
-                    {latestVersion.tldr.map((item, index) => {
-                      const [title, ...descParts] = item.split(' - ');
-                      const description = descParts.join(' - ');
-                      return (
-                        <li key={index} className="flex items-start text-xs">
-                          <span className="text-sidebar-primary mr-2 mt-0.5">•</span>
-                          <span className="text-white">
-                            <strong>{title}</strong>
-                            {description && <span className="text-muted-foreground"> - {description}</span>}
-                          </span>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
-              )}
-
-              <Accordion type="multiple" className="w-full space-y-0" defaultValue={[]}>
-                {/* New Features */}
-                {latestVersion.newFeatures.length > 0 && (
-                  <AccordionItem value="features" className="border-sidebar-border">
-                    <AccordionTrigger className="text-white hover:no-underline text-xs font-semibold py-2 font-mono">
-                      New Features ({latestVersion.newFeatures.length})
-                    </AccordionTrigger>
-                    <AccordionContent className="text-muted-foreground text-xs pt-1 pb-3">
-                      <ul className="flex flex-col gap-2">
-                        {latestVersion.newFeatures.map((feature, index) => {
-                          const [title, ...descParts] = feature.split(' - ');
-                          const description = descParts.join(' - ');
-                          return (
-                            <li key={index} className="flex items-start">
-                              <span className="text-sidebar-primary mr-2">•</span>
-                              <span>
-                                <strong className="text-white">{title}</strong>
-                                {description && <span className="text-muted-foreground"> - {description}</span>}
-                              </span>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    </AccordionContent>
-                  </AccordionItem>
+                {/* TLDR */}
+                {current?.tldr && current.tldr.length > 0 && (
+                  <div className="mb-4 pb-3 border-b border-sidebar-border">
+                    <h4 className="text-xs font-semibold text-white mb-2.5 font-mono">TLDR</h4>
+                    <ul className="flex flex-col gap-2">
+                      {current.tldr.map((item, index) => {
+                        const [title, ...descParts] = item.split(' - ');
+                        const description = descParts.join(' - ');
+                        return (
+                          <li key={index} className="flex items-start text-xs">
+                            <span className="text-sidebar-primary mr-2 mt-0.5">•</span>
+                            <span className="text-white">
+                              <strong>{title}</strong>
+                              {description && <span className="text-muted-foreground"> - {description}</span>}
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
                 )}
 
-                {/* Improvements */}
-                {latestVersion.improvements.length > 0 && (
-                  <AccordionItem value="improvements" className="border-sidebar-border">
-                    <AccordionTrigger className="text-white hover:no-underline text-xs font-semibold py-2 font-mono">
-                      Improvements ({latestVersion.improvements.length})
-                    </AccordionTrigger>
-                    <AccordionContent className="text-muted-foreground text-xs pt-1 pb-3">
-                      <ul className="flex flex-col gap-2">
-                        {latestVersion.improvements.map((improvement, index) => {
-                          const [title, ...descParts] = improvement.split(' - ');
-                          const description = descParts.join(' - ');
-                          return (
-                            <li key={index} className="flex items-start">
-                              <span className="text-sidebar-primary mr-2">•</span>
-                              <span>
-                                <strong className="text-white">{title}</strong>
-                                {description && <span className="text-muted-foreground"> - {description}</span>}
-                              </span>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    </AccordionContent>
-                  </AccordionItem>
-                )}
-              </Accordion>
-            </div>
+                <Accordion type="multiple" className="w-full space-y-0" defaultValue={[]}>
+                  {/* New Features */}
+                  {current?.newFeatures?.length > 0 && (
+                    <AccordionItem value="features" className="border-sidebar-border">
+                      <AccordionTrigger className="text-white hover:no-underline text-xs font-semibold py-2 font-mono">
+                        New Features ({current.newFeatures.length})
+                      </AccordionTrigger>
+                      <AccordionContent className="text-muted-foreground text-xs pt-1 pb-3">
+                        <ul className="flex flex-col gap-2">
+                          {current.newFeatures.map((feature, index) => {
+                            const [title, ...descParts] = feature.split(' - ');
+                            const description = descParts.join(' - ');
+                            return (
+                              <li key={index} className="flex items-start">
+                                <span className="text-sidebar-primary mr-2">•</span>
+                                <span>
+                                  <strong className="text-white">{title}</strong>
+                                  {description && <span className="text-muted-foreground"> - {description}</span>}
+                                </span>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </AccordionContent>
+                    </AccordionItem>
+                  )}
+
+                  {/* Improvements */}
+                  {current?.improvements?.length > 0 && (
+                    <AccordionItem value="improvements" className="border-sidebar-border">
+                      <AccordionTrigger className="text-white hover:no-underline text-xs font-semibold py-2 font-mono">
+                        Improvements ({current.improvements.length})
+                      </AccordionTrigger>
+                      <AccordionContent className="text-muted-foreground text-xs pt-1 pb-3">
+                        <ul className="flex flex-col gap-2">
+                          {current.improvements.map((improvement, index) => {
+                            const [title, ...descParts] = improvement.split(' - ');
+                            const description = descParts.join(' - ');
+                            return (
+                              <li key={index} className="flex items-start">
+                                <span className="text-sidebar-primary mr-2">•</span>
+                                <span>
+                                  <strong className="text-white">{title}</strong>
+                                  {description && <span className="text-muted-foreground"> - {description}</span>}
+                                </span>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </AccordionContent>
+                    </AccordionItem>
+                  )}
+                </Accordion>
+              </motion.div>
+            </AnimatePresence>
           </div>
         </motion.div>
       )}

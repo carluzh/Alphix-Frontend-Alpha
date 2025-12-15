@@ -79,6 +79,7 @@ export const SplitPromo: React.FC<SplitPromoProps> = ({
             sizes="(max-width: 768px) 100vw, 50vw"
             loading="lazy"
             alt={title}
+            unoptimized
           />
         </div>
       </div>

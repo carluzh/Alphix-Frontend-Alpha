@@ -43,6 +43,7 @@ import { useIncreaseLiquidity, type IncreasePositionData } from "@/components/li
 import { useDecreaseLiquidity, type DecreasePositionData } from "@/components/liquidity/useDecreaseLiquidity";
 import { toast as sonnerToast } from "sonner";
 import { waitForSubgraphBlock } from "@/lib/client-cache";
+import { prefetchService } from "@/lib/prefetch-service";
 
 
 const SDK_MIN_TICK = -887272;
@@ -109,6 +110,7 @@ export default function LiquidityPage() {
   const [columnSizing, setColumnSizing] = useState<ColumnSizingState>({});
   const { networkMode } = useNetwork();
   const [optimisticPoolId, setOptimisticPoolId] = useState<string | null>(null);
+  const warnedAllZeroBatchRef = React.useRef(false);
 
   // Generate pools based on current network mode - regenerates when network changes
   const initialPools = useMemo(() => generatePoolsFromConfig(), [networkMode]);
@@ -138,9 +140,7 @@ export default function LiquidityPage() {
   const fetchAllPoolStatsBatch = useCallback(async () => {
       try {
         // Fetch from API - Redis cache handles caching on server side
-        console.log('[LiquidityPage] Fetching batch from server (Redis-cached)...');
-        const response = await fetch('/api/liquidity/get-pools-batch');
-        console.log('[LiquidityPage] Batch fetch status:', response.status);
+        const response = await fetch(`/api/liquidity/get-pools-batch?network=${networkMode}`);
         if (!response.ok) throw new Error(`Batch API failed: ${response.status}`);
         const batchData = await response.json();
         if (!batchData.success) throw new Error(`Batch API error: ${batchData.message}`);
@@ -172,11 +172,29 @@ export default function LiquidityPage() {
           return pool;
         });
 
+        const numericPools = updatedPools.filter((p: any) => typeof p?.tvlUSD === 'number');
+        const looksAllZero =
+          numericPools.length > 0 &&
+          numericPools.every((p: any) => p.tvlUSD === 0 && p.volume7dUSD === 0 && p.fees7dUSD === 0);
+
+        if (looksAllZero) {
+          throw new Error('All-zero pool stats response');
+        }
+
         setPoolsData(updatedPools as Pool[]);
-        console.log('[LiquidityPage] Batch fetch successful. Pools:', updatedPools.length);
 
       } catch (error) {
         console.error("[LiquidityPage] Batch fetch failed:", error);
+        const msg = (error instanceof Error ? error.message : String(error)) || '';
+        if (!warnedAllZeroBatchRef.current && msg.includes('All-zero pool stats')) {
+          warnedAllZeroBatchRef.current = true;
+          toast.error("Pool data temporarily unavailable", {
+            description: "Refresh in a moment — we kept the last good values.",
+            icon: <OctagonX className="h-4 w-4 text-red-500" />,
+          });
+          return;
+        }
+
         toast.error("Could not load pool data", {
           description: "Failed to fetch data from the server.",
           icon: <OctagonX className="h-4 w-4 text-red-500" />,
@@ -186,11 +204,58 @@ export default function LiquidityPage() {
           }
         });
       }
-    }, [initialPools]);
+    }, [initialPools, networkMode]);
+
+  const forceRefreshAllPoolStatsBatch = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/liquidity/get-pools-batch?network=${networkMode}&v=${Date.now()}`);
+      if (!response.ok) return;
+      const batchData = await response.json();
+      if (!batchData?.success || !Array.isArray(batchData?.pools)) return;
+
+      const updatedPools = initialPools.map((pool) => {
+        const apiPoolId = getPoolSubgraphId(pool.id) || pool.id;
+        const batchPoolData = batchData.pools.find((p: any) => p.poolId.toLowerCase() === apiPoolId.toLowerCase());
+
+        if (batchPoolData) {
+          const { tvlUSD, volume7dUSD, fees7dUSD, apr7d, volumeAvgDailyUSD, feesAvgDailyUSD } = batchPoolData;
+          let aprStr = 'Loading...';
+          if (typeof apr7d === 'number') {
+            aprStr = apr7d > 0 ? formatAPR(apr7d) : '0.00%';
+          }
+          return {
+            ...pool,
+            tvlUSD,
+            volume7dUSD,
+            fees7dUSD,
+            volume24hUSD: volumeAvgDailyUSD,
+            fees24hUSD: feesAvgDailyUSD,
+            apr: aprStr,
+          };
+        }
+        return pool;
+      });
+
+      const numericPools = updatedPools.filter((p: any) => typeof p?.tvlUSD === 'number');
+      const looksAllZero =
+        numericPools.length > 0 &&
+        numericPools.every((p: any) => p.tvlUSD === 0 && p.volume7dUSD === 0 && p.fees7dUSD === 0);
+      if (looksAllZero) return;
+
+      setPoolsData(updatedPools as Pool[]);
+    } catch {}
+  }, [initialPools, networkMode]);
 
   useEffect(() => {
     fetchAllPoolStatsBatch();
   }, [fetchAllPoolStatsBatch]);
+
+  useEffect(() => {
+    if (!isConnected || !accountAddress) return;
+    return prefetchService.addPositionsListener(accountAddress, () => {
+      void forceRefreshAllPoolStatsBatch();
+    });
+  }, [isConnected, accountAddress, forceRefreshAllPoolStatsBatch]);
 
   const determineBaseTokenForPriceDisplay = useMemo(() => (token0: string, token1: string): string => {
     if (!token0 || !token1) return token0;
@@ -321,12 +386,6 @@ export default function LiquidityPage() {
   const filteredPools = useMemo(() => {
     return poolsWithPositionCounts;
   }, [poolsWithPositionCounts]);
-
-  useEffect(() => {
-    poolsWithPositionCounts.forEach((pool) => {
-      router.prefetch(`/liquidity/${pool.id}`)
-    })
-  }, [poolsWithPositionCounts, router])
 
   const handleAddLiquidity = useCallback((e: React.MouseEvent, poolId: string) => {
     e.stopPropagation();

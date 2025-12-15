@@ -1,4 +1,5 @@
 import { getAllPools } from './pools-config';
+import { getStoredNetworkMode } from './network-mode';
 
 /**
  * Simplified prefetch service for liquidity pools
@@ -18,12 +19,8 @@ class SimplePrefetchService {
    */
   static async prefetchPoolData(poolId: string): Promise<void> {
     try {
-      // Get cache version for fresh data
-      const versionResponse = await fetch('/api/cache-version', { cache: 'no-store' });
-      if (!versionResponse.ok) return;
-
-      const versionData = await versionResponse.json();
-      const response = await fetch(versionData.cacheUrl); // Allow browser caching
+      const networkMode = getStoredNetworkMode();
+      const response = await fetch(`/api/liquidity/get-pools-batch?network=${networkMode}`);
 
       if (response.ok) {
         await response.json(); // Just fetch, let API handle caching

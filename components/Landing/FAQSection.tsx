@@ -22,7 +22,6 @@ const FAQItem = ({
         onClick={onToggle}
         className="group flex w-full cursor-pointer items-center gap-3 md:gap-4 py-3 text-left"
       >
-        {/* Number badge - rounded square with bg only */}
         <div className="hidden lg:flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-accent/50 font-mono text-xs text-muted-foreground">
           {number}
         </div>
@@ -105,7 +104,6 @@ export const FAQSection = () => {
     <div
       className="animate-on-scroll w-full"
     >
-      {/* Section Title */}
       <h2 className="text-lg md:text-xl font-medium text-foreground mb-6">
         FAQ
       </h2>

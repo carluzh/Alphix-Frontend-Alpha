@@ -14,6 +14,11 @@ export interface TTLConfig {
 export interface CacheOptions {
   ttl?: TTLConfig
   skipCache?: boolean
+  /**
+   * Optional guard to prevent caching obviously invalid payloads.
+   * Return false to skip cache writes (response still returned to caller).
+   */
+  shouldCache?: (data: unknown) => boolean
 }
 
 export interface CacheResult<T> {

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { invalidateCachedData } from '@/lib/redis';
-import { getPoolCacheKeys, getPoolTicksCacheKey } from '@/lib/redis-keys';
+import { getPoolCacheKeysByNetwork, getPoolTicksCacheKeyByNetwork } from '@/lib/redis-keys';
+import { getNetworkModeFromRequest } from '@/lib/pools-config';
 
 /**
  * Cache Invalidation API
@@ -34,6 +35,9 @@ export async function POST(request: Request) {
     const body = await request.json().catch(() => ({}));
     const { ownerAddress, reason, poolId, positionIds } = body;
 
+    const cookieHeader = request.headers.get('cookie') || '';
+    const networkMode = getNetworkModeFromRequest(cookieHeader);
+
     if (!ownerAddress && !poolId && (!positionIds || positionIds.length === 0)) {
       return NextResponse.json(
         { success: false, message: 'Either key, ownerAddress, poolId, or positionIds is required' },
@@ -53,12 +57,12 @@ export async function POST(request: Request) {
     const isPoolAffecting = poolId || isSwap || isMint || isDecrease || isCollect;
     if (isPoolAffecting) {
       // Always invalidate pools-batch for any pool-affecting transaction
-      keysToInvalidate.push(...getPoolCacheKeys(poolId));
+      keysToInvalidate.push(...getPoolCacheKeysByNetwork(poolId, networkMode));
 
       // For LP operations (not swap, not collect), also invalidate tick data
       const isLpOperation = isMint || isDecrease;
       if (isLpOperation && poolId) {
-        keysToInvalidate.push(getPoolTicksCacheKey(poolId));
+        keysToInvalidate.push(...getPoolTicksCacheKeyByNetwork(poolId, networkMode));
       }
     }
 
@@ -73,13 +77,6 @@ export async function POST(request: Request) {
         .filter(key => !key.includes('*')) // Skip patterns for now
         .map(key => invalidateCachedData(key))
     );
-
-    console.log(`[Cache] Invalidated ${uniqueKeys.length} keys for ${reason || 'manual invalidation'}`, {
-      ownerAddress,
-      poolId,
-      positionIds,
-      keys: uniqueKeys
-    });
 
     return NextResponse.json({
       success: true,

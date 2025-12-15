@@ -23,6 +23,7 @@ const UniswapFoundationCard = () => {
           width={280}
           height={280}
           style={{ opacity: 0.25 }}
+          unoptimized
         />
       </div>
 
@@ -36,6 +37,7 @@ const UniswapFoundationCard = () => {
             style={{
               filter: UNISWAP_LOGO_FILTER
             }}
+            unoptimized
           />
           <span className="text-lg font-semibold" style={{ color: UNISWAP_PINK }}>
             Uniswap
@@ -86,19 +88,13 @@ const BaseChainCard = () => {
         className="group relative flex h-full flex-col justify-between gap-x-4 gap-y-4 rounded-lg p-6 transition-transform hover:translate-y-[-4px] md:gap-x-6 md:gap-y-6 md:p-10 xl:gap-y-0 overflow-hidden bg-[rgba(60,138,255,0.12)]"
       >
         <div
-          className="base-bg-hover absolute inset-0 pointer-events-none"
+          className="absolute inset-0 pointer-events-none opacity-[0.15] transition-opacity duration-300 group-hover:opacity-[0.6]"
           style={{
             backgroundImage: 'url(/base_back.webp)',
             backgroundSize: 'cover',
             backgroundPosition: 'center',
-            opacity: 0.15,
-            transition: 'opacity 0.3s ease',
           }}
-          // Tailwind doesn't support group-hover on arbitrary inline opacity well here, so use a tiny CSS rule.
         />
-        <style>{`
-          .group:hover .base-bg-hover { opacity: 0.6 !important; }
-        `}</style>
         <div className="flex h-full flex-col gap-y-6 relative z-10">
           <div className="flex items-center relative">
             <Image
@@ -112,6 +108,7 @@ const BaseChainCard = () => {
                 transition: 'opacity 0.3s ease',
               }}
               className="group-hover:opacity-0"
+              unoptimized
             />
             <Image
               src="/base-lockup-white.svg"
@@ -124,6 +121,7 @@ const BaseChainCard = () => {
                 transition: 'opacity 0.3s ease',
               }}
               className="group-hover:opacity-100"
+              unoptimized
             />
           </div>
 

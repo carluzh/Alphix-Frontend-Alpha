@@ -33,6 +33,7 @@ export const Hero = ({
           height={80}
           className="dark:block h-12 w-12 md:h-20 md:w-20"
           priority
+          unoptimized
         />
       </div>
       <h1

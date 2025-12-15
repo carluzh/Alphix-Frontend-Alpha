@@ -523,10 +523,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
 
   // New function for route calculation that can be called independently
   const calculateRoute = useCallback(async (fromTokenSymbol: string, toTokenSymbol: string) => {
-    if (!isConnected || currentChainId !== TARGET_CHAIN_ID) {
-      return null;
-    }
-
     try {
       // Find the best route for this token pair
       const routeResult = findBestRoute(fromTokenSymbol, toTokenSymbol);
@@ -557,7 +553,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       console.error("[calculateRoute] Error calculating route:", error);
       return null;
     }
-  }, [isConnected, currentChainId, setCurrentRoute, setSelectedPoolIndexForChart]);
+  }, [currentRoute, setCurrentRoute, setSelectedPoolIndexForChart]);
 
   // Fetch route fees; returns the computed fees and updates state
   const fetchRouteFees = useCallback(async (route: SwapRoute): Promise<Array<{ poolName: string; fee: number }>> => {
@@ -609,8 +605,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   // Effect to fetch dynamic fee for display (updated to handle multi-hop)
   const fetchFee = useCallback(async () => {
     if (
-      !isConnected ||
-      currentChainId !== TARGET_CHAIN_ID ||
       !fromToken ||
       !toToken
     ) {
@@ -675,7 +669,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     } finally {
       isFetchingDynamicFeeRef.current = false;
     }
-  }, [isConnected, currentChainId, fromToken?.address, toToken?.address, TARGET_CHAIN_ID, calculateRoute, fetchRouteFees]);
+  }, [fromToken?.address, toToken?.address, calculateRoute, fetchRouteFees, setCurrentRoute]);
 
   useEffect(() => {
     fetchFee(); // Fetch once on mount / relevant dep change
@@ -999,7 +993,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
 
   // NEW: Function to fetch quote
   const fetchQuote = useCallback(async (amountStr: string) => {
-    if (!fromToken || !toToken || !isConnected || currentChainId !== TARGET_CHAIN_ID) {
+    if (!fromToken || !toToken) {
       setToAmount("");
       setQuoteLoading(false);
       setQuoteError(null);
@@ -1027,7 +1021,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
           toTokenSymbol: toToken.symbol,
           amountDecimalsStr: amountStr,
           swapType: lastEditedSideRef.current === 'to' ? 'ExactOut' : 'ExactIn',
-          chainId: currentChainId,
+          chainId: TARGET_CHAIN_ID,
           debug: true
         }),
       });
@@ -1147,7 +1141,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     } finally {
       setQuoteLoading(false);
     }
-  }, [fromToken?.symbol, toToken?.symbol, currentChainId, isConnected, fromToken?.usdPrice, toToken?.usdPrice, fromToken?.decimals, toToken?.decimals, TARGET_CHAIN_ID]);
+  }, [fromToken?.symbol, toToken?.symbol, fromToken?.usdPrice, toToken?.usdPrice, fromToken?.decimals, toToken?.decimals, TARGET_CHAIN_ID]);
 
   // Debounced auto-quote for Sell edits (ExactIn)
   const lastEditedSideRef = useRef<'from' | 'to'>('from');
@@ -1163,7 +1157,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       fetchQuote(fromAmount);
     }, 300);
     return () => clearTimeout(handler);
-  }, [fromAmount, fromToken, toToken, isConnected, currentChainId, fetchQuote]);
+  }, [fromAmount, fromToken, toToken, fetchQuote]);
 
   // Debounced auto-quote for Buy edits (ExactOut)
   useEffect(() => {
@@ -1177,7 +1171,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       fetchQuote(toAmount);
     }, 300);
     return () => clearTimeout(handler);
-  }, [toAmount, fromToken, toToken, isConnected, currentChainId, fetchQuote]);
+  }, [toAmount, fromToken, toToken, fetchQuote]);
 
   // Update calculatedValues for UI display
   useEffect(() => {
@@ -1202,8 +1196,10 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       return;
     }
 
+    const canQuoteOnTargetChain = currentChainId === TARGET_CHAIN_ID || !isConnected;
+
     // Multi-hop Fee Display
-    if (isConnected && currentChainId === TARGET_CHAIN_ID) {
+    if (canQuoteOnTargetChain) {
       if (routeFeesLoading || dynamicFeeLoading) {
         if (routeFees.length > 0) {
           // If loading but we have previous fees, show them statically
@@ -1253,7 +1249,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     }
 
     // Fee Value (USD) - calculate total fee for multi-hop routes
-    if (fromValueNum > 0 && isConnected && currentChainId === TARGET_CHAIN_ID && routeFees.length > 0 && !routeFeesLoading && !dynamicFeeError) {
+    if (fromValueNum > 0 && canQuoteOnTargetChain && routeFees.length > 0 && !routeFeesLoading && !dynamicFeeError) {
       // Calculate total fee percentage for multi-hop
       const totalFeeRate = routeFees.reduce((total, routeFee) => total + (routeFee.fee / 10000), 0);
       const totalFeeInUsd = (fromValueNum * fromTokenUsdPrice) * (totalFeeRate / 100);

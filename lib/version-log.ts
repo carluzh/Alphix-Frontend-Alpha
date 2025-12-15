@@ -1,9 +1,9 @@
 export interface VersionEntry {
   version: string;
   title: string;
-  tldr?: string[];
-  newFeatures: string[];
-  improvements: string[];
+  tldr: string[];
+  newFeatures?: string[];
+  improvements?: string[];
   bugFixes?: string[];
   breaking?: string[];
   releaseDate: string;
@@ -11,8 +11,18 @@ export interface VersionEntry {
 
 export const VERSION_LOG: VersionEntry[] = [
   {
+    version: "1.5.1",
+    title: "Patch - v1.5.1",
+    tldr: [
+      "Swap quoting without wallet connection",
+      "Liquidity: guard against intermittent all-zero cached pool stats",
+      "Wide Connect Wallet button background uses pattern_wide.svg"
+    ],
+    releaseDate: "2025-12-15"
+  },
+  {
     version: "1.5.0",
-    title: "Beta Update - v1.5.0 What's New",
+    title: "Beta Update - v1.5.0",
     tldr: [
       "Mainnet Launch - Alphix is now live on Base mainnet with seamless testnet switching",
       "User Settings - Customize slippage tolerance and network preferences",
@@ -34,7 +44,7 @@ export const VERSION_LOG: VersionEntry[] = [
   },
   {
     version: "1.4",
-    title: "Beta Update - v1.4 What's New",
+    title: "Beta Update - v1.4.0",
     tldr: [
       "Zap Liquidity - Add liquidity with a single token, automatically swapping to optimal ratio",
       "Advanced Slippage Controls - Auto and custom slippage protection with price impact warnings"
@@ -53,7 +63,12 @@ export const VERSION_LOG: VersionEntry[] = [
   },
   {
     version: "1.3",
-    title: "Beta Update - v1.3 What's New",
+    title: "Beta Update - v1.3.0",
+    tldr: [
+      "All-in-one position management modal",
+      "Live APY/APR calculator and improved analytics",
+      "Mobile responsiveness improvements across the app"
+    ],
     newFeatures: [
       "Complete Position Management System - All-in-one modal for add/remove liquidity and fee collection",
       "Real-time APY/APR Calculator - Live calculations based on pool volume and fees",
@@ -82,7 +97,12 @@ export const VERSION_LOG: VersionEntry[] = [
   },
   {
     version: "1.1",
-    title: "Beta Update - v1.1 What's New",
+    title: "Beta Update - v1.1.0",
+    tldr: [
+      "Mobile support",
+      "Portfolio layout improvements",
+      "Faster data fetching and range selection"
+    ],
     newFeatures: [
       "Mobile Support"
     ],
@@ -95,13 +115,17 @@ export const VERSION_LOG: VersionEntry[] = [
   },
   {
     version: "1.0",
-    title: "New Update - 1.0 ",
+    title: "New Update - 1.0",
+    tldr: [
+      "Core swap",
+      "Liquidity provision",
+      "Portfolio tracking"
+    ],
     newFeatures: [
       "Core Swap Functionality",
       "Liquidity Provision",
       "Portfolio Tracking"
     ],
-    improvements: [],
     releaseDate: "2025-01-01"
   }
 ];
@@ -114,8 +138,8 @@ export const getVersionByNumber = (versionNumber: string): VersionEntry | undefi
 
 export const getLatestVersionSummary = (): string => {
   const latest = getLatestVersion();
-  const features = latest.newFeatures.join(', ');
-  const improvements = latest.improvements.slice(0, 2).join(' & ');
+  const features = latest.newFeatures?.join(', ') || '';
+  const improvements = latest.improvements?.slice(0, 2).join(' & ') || '';
 
   if (features && improvements) {
     return `${features} with improved ${improvements}`;
@@ -124,7 +148,7 @@ export const getLatestVersionSummary = (): string => {
   } else if (improvements) {
     return `Improved ${improvements}`;
   }
-  return 'Latest updates and improvements';
+  return latest.tldr?.[0] || 'Latest updates and improvements';
 };
 
 export const getTimeAgo = (releaseDate: string): string => {

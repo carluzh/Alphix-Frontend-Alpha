@@ -13,7 +13,7 @@
 
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { redis, getCachedDataWithStale } from '@/lib/redis';
+import { redis, getCachedDataWithStale, setCachedData } from '@/lib/redis';
 import { priceKeys } from '@/lib/redis-keys';
 import { MAINNET_CHAIN_ID, TESTNET_CHAIN_ID, type NetworkMode } from '@/lib/network-mode';
 
@@ -255,7 +255,7 @@ export async function GET(request: Request) {
       : envDefault;
 
     // Use network-specific cache key
-    const cacheKey = `${priceKeys.batch()}:${networkMode}`;
+    const cacheKey = priceKeys.batch(networkMode);
 
     // Try Redis first (production)
     if (redis) {
@@ -270,7 +270,7 @@ export async function GET(request: Request) {
           // Background refresh
           fetchAllPricesWithDedup(networkMode, baseUrl)
             .then(freshData => {
-              redis!.setex(cacheKey, 60, JSON.stringify(freshData));
+              setCachedData(cacheKey, freshData, 60);
               memoryCacheByNetwork.set(networkMode, { data: freshData, timestamp: Date.now() });
             })
             .catch(err => console.error('[Prices API] Background refresh failed:', err));
@@ -319,7 +319,7 @@ export async function GET(request: Request) {
 
     // Store in both Redis and memory cache
     if (redis) {
-      await redis.setex(cacheKey, 60, JSON.stringify(freshData));
+      await setCachedData(cacheKey, freshData, 60);
     }
     memoryCacheByNetwork.set(networkMode, { data: freshData, timestamp: Date.now() });
 

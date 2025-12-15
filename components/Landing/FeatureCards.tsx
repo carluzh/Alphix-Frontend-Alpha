@@ -39,6 +39,9 @@ export const FeatureCards = ({ features }: FeatureCardsProps) => {
                 sizes="(max-width: 768px) 50vw, 22vw"
                 className={cn("object-cover transition-transform duration-300 ease-out group-hover:scale-110", feature.imageClassName)}
                 priority={index === 0}
+                unoptimized
+                loading={index === 0 ? "eager" : undefined}
+                fetchPriority={index === 0 ? "high" : undefined}
               />
             </div>
           </div>

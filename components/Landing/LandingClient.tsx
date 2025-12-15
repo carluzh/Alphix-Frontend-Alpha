@@ -17,5 +17,3 @@ export const PaperShaderFrameLazy = dynamic(
   () => import('./PaperShaderFrame').then((mod) => mod.PaperShaderFrame),
   { ssr: false }
 )
-
-

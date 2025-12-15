@@ -57,6 +57,7 @@ const LandingPageNavigation = () => {
             width={28}
             height={28}
             className="h-6 w-7"
+            unoptimized
           />
         </Link>
         <div className="flex items-center gap-6">
@@ -107,6 +108,7 @@ const LandingPageFooter = () => {
                 width={32}
                 height={32}
                 className="h-8 w-8"
+                unoptimized
               />
               <div className="flex flex-row gap-8 md:gap-16">
                 <div>

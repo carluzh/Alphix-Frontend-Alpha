@@ -11,8 +11,6 @@ import { ArrowUpRight } from 'lucide-react'
 import { GlitchIcon, type GlitchIconName } from './GlitchIcon'
 import Image from 'next/image'
 import { DynamicFeeSectionLazy, LandingInViewInit, PaperShaderFrameLazy } from './LandingClient'
-
-// Icon configuration: either a Lucide icon (censored) or a revealed feature image
 type IconConfig =
   | { type: 'censored'; iconName: GlitchIconName }
   | { type: 'revealed'; image: string; alt: string; size?: 'default' | 'lg' }
@@ -63,7 +61,6 @@ const heroFeatures = [
   },
 ]
 
-// Revealed icon component with mobile-compatible coloring
 const RevealedIcon = ({ src, alt, size }: { src: string; alt: string; size?: 'default' | 'lg' }) => {
   const sizeClass = size === 'lg' ? 'w-[23px] h-[23px]' : 'w-[19px] h-[19px]'
   return (
@@ -75,6 +72,7 @@ const RevealedIcon = ({ src, alt, size }: { src: string; alt: string; size?: 'de
         width={18}
         height={18}
         className={`hidden md:block ${size === 'lg' ? 'feature-icon-revealed-lg' : 'feature-icon-revealed'}`}
+        unoptimized
       />
       {/* Mobile: use mask-image with background color (more reliable) */}
       <div

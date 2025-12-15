@@ -6,6 +6,7 @@ import { useSidebar } from "@/components/ui/sidebar";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { ReactSVG } from "react-svg";
 import { useTheme } from "next-themes";
+import Link from "next/link";
 
 const HEADER_HEIGHT = "h-14";
 
@@ -35,16 +36,18 @@ export function MobileHeader() {
       </div>
 
       <div className="flex-1 flex justify-center">
-        <ReactSVG
-          src="/LogoIconWhite.svg"
-          className="h-6 w-6"
-          beforeInjection={(svg) => {
-            const paths = svg.querySelectorAll('path');
-            paths.forEach(path => {
-              path.setAttribute('fill', resolvedTheme === 'dark' ? 'white' : 'black');
-            });
-          }}
-        />
+        <Link href="/" aria-label="Go to home page">
+          <ReactSVG
+            src="/LogoIconWhite.svg"
+            className="h-6 w-6"
+            beforeInjection={(svg) => {
+              const paths = svg.querySelectorAll('path');
+              paths.forEach(path => {
+                path.setAttribute('fill', resolvedTheme === 'dark' ? 'white' : 'black');
+              });
+            }}
+          />
+        </Link>
       </div>
 
       <div className="flex-1"></div>

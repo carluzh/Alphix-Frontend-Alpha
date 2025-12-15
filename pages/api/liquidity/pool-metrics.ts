@@ -148,7 +148,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     // Use CacheService for pool metrics with stale-while-revalidate
     const result = await cacheService.cachedApiCall(
-      poolKeys.metrics(apiId, daysNum),
+      poolKeys.metrics(apiId, daysNum, networkMode),
       CACHE_TTL,
       async () => {
         // Determine the appropriate subgraph URL for this pool

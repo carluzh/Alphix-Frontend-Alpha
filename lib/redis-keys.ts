@@ -8,18 +8,24 @@
 /**
  * Pool-related cache keys
  */
+import type { NetworkMode } from '@/lib/network-mode'
+
+function networkSuffix(networkMode?: NetworkMode): string {
+  return networkMode ? `:${networkMode}` : ''
+}
+
 export const poolKeys = {
   /**
    * Batch data for all pools
    * TTL: 5min fresh, 15min stale
    */
-  batch: (version: string = 'v1') => `pools-batch:${version}`,
+  batch: (version: string = 'v1', networkMode?: NetworkMode) => `pools-batch:${version}${networkSuffix(networkMode)}`,
 
   /**
    * Pool chart data (volume/TVL over time)
    * TTL: 1h
    */
-  chart: (poolId: string, days: number) => `pool:chart:${poolId.toLowerCase()}:${days}d`,
+  chart: (poolId: string, days: number, networkMode?: NetworkMode) => `pool:chart:${poolId.toLowerCase()}:${days}d${networkSuffix(networkMode)}`,
 
   /**
    * @deprecated Individual pool stats - NOT USED, all data comes from pools-batch
@@ -38,13 +44,13 @@ export const poolKeys = {
    * Pool tick data (liquidityGross, liquidityNet per tick)
    * TTL: 5min fresh, 1hr stale
    */
-  ticks: (poolId: string) => `pool:ticks:${poolId.toLowerCase()}`,
+  ticks: (poolId: string, networkMode?: NetworkMode) => `pool:ticks:${poolId.toLowerCase()}${networkSuffix(networkMode)}`,
 
   /**
    * Pool metrics (APY calculations, TVL, volume)
    * TTL: 5min fresh, 1hr stale
    */
-  metrics: (poolId: string, days: number) => `pool:metrics:${poolId.toLowerCase()}:${days}d`,
+  metrics: (poolId: string, days: number, networkMode?: NetworkMode) => `pool:metrics:${poolId.toLowerCase()}:${days}d${networkSuffix(networkMode)}`,
 } as const;
 
 /**
@@ -55,13 +61,13 @@ export const priceKeys = {
    * All token prices (batch)
    * TTL: 5min
    */
-  batch: () => `prices:all`,
+  batch: (networkMode?: NetworkMode) => `prices:all${networkSuffix(networkMode)}`,
 
   /**
    * Individual token price
    * TTL: 5min
    */
-  token: (symbol: string) => `price:${symbol.toUpperCase()}`,
+  token: (symbol: string, networkMode?: NetworkMode) => `price:${symbol.toUpperCase()}${networkSuffix(networkMode)}`,
 } as const;
 
 /**
@@ -79,17 +85,24 @@ export const priceKeys = {
  * - dynamic-fees: Historical fee events - only changes on hook triggers
  */
 export function getPoolCacheKeys(poolId?: string): string[] {
-  const keys = [poolKeys.batch()];
+  return getPoolCacheKeysByNetwork(poolId)
+}
 
-  // If specific pool, also invalidate its metrics (all time ranges)
-  if (poolId) {
-    keys.push(poolKeys.metrics(poolId, 1));
-    keys.push(poolKeys.metrics(poolId, 7));
-    keys.push(poolKeys.metrics(poolId, 30));
-    keys.push(poolKeys.metrics(poolId, 60));
+export function getPoolCacheKeysByNetwork(poolId?: string, networkMode?: NetworkMode): string[] {
+  const modes: NetworkMode[] = networkMode ? [networkMode] : ['mainnet', 'testnet']
+  const keys: string[] = []
+
+  for (const mode of modes) {
+    keys.push(poolKeys.batch('v1', mode))
+    if (poolId) {
+      keys.push(poolKeys.metrics(poolId, 1, mode))
+      keys.push(poolKeys.metrics(poolId, 7, mode))
+      keys.push(poolKeys.metrics(poolId, 30, mode))
+      keys.push(poolKeys.metrics(poolId, 60, mode))
+    }
   }
 
-  return keys;
+  return keys
 }
 
 /**
@@ -98,6 +111,11 @@ export function getPoolCacheKeys(poolId?: string): string[] {
  */
 export function getPoolTicksCacheKey(poolId: string): string {
   return poolKeys.ticks(poolId);
+}
+
+export function getPoolTicksCacheKeyByNetwork(poolId: string, networkMode?: NetworkMode): string[] {
+  const modes: NetworkMode[] = networkMode ? [networkMode] : ['mainnet', 'testnet']
+  return modes.map(mode => poolKeys.ticks(poolId, mode))
 }
 
 /**
