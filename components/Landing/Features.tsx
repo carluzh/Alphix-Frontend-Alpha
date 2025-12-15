@@ -102,12 +102,8 @@ const BaseChainCard = () => {
               alt="Base"
               width={85}
               height={22}
-              style={{
-                filter: BASE_LOGO_FILTER,
-                opacity: 1,
-                transition: 'opacity 0.3s ease',
-              }}
-              className="group-hover:opacity-0"
+                style={{ filter: BASE_LOGO_FILTER }}
+                className="opacity-100 transition-opacity duration-300 group-hover:opacity-0"
               unoptimized
             />
             <Image
@@ -115,34 +111,19 @@ const BaseChainCard = () => {
               alt=""
               width={85}
               height={22}
-              className="absolute left-0 top-0"
-              style={{
-                opacity: 0,
-                transition: 'opacity 0.3s ease',
-              }}
-              className="group-hover:opacity-100"
+                className="absolute left-0 top-0 opacity-0 transition-opacity duration-300 group-hover:opacity-100"
               unoptimized
             />
           </div>
 
           <div className="flex h-full flex-col gap-y-2">
             <h3
-              className="text-2xl font-semibold md:text-[28px] md:leading-tight"
-              style={{
-                color: BASE_BLUE,
-                transition: 'color 0.3s ease',
-              }}
-              className="group-hover:text-white"
+              className="text-2xl font-semibold md:text-[28px] md:leading-tight text-[#3c8aff] transition-colors duration-300 group-hover:text-white"
             >
               Launching on Base
             </h3>
             <p
-              className="w-full grow text-lg font-medium leading-6 md:max-w-96"
-              style={{
-                color: BASE_BLUE,
-                transition: 'color 0.3s ease',
-              }}
-              className="group-hover:text-white"
+              className="w-full grow text-lg font-medium leading-6 md:max-w-96 text-[#3c8aff] transition-colors duration-300 group-hover:text-white"
             >
               Fast execution, deep liquidity, and real competition to prove our edge.
             </p>
@@ -153,22 +134,12 @@ const BaseChainCard = () => {
             style={{ backgroundColor: 'rgba(0, 0, 0, 0.25)' }}
           >
             <span
-              className="text-sm font-semibold"
-              style={{
-                color: BASE_BLUE,
-                transition: 'color 0.3s ease',
-              }}
-              className="group-hover:text-white"
+              className="text-sm font-semibold text-[#3c8aff] transition-colors duration-300 group-hover:text-white"
             >
               Learn More
             </span>
             <ArrowRight
-              className="h-5 w-5"
-              style={{
-                color: BASE_BLUE,
-                transition: 'color 0.3s ease',
-              }}
-              className="group-hover:text-white"
+              className="h-5 w-5 text-[#3c8aff] transition-colors duration-300 group-hover:text-white"
             />
           </div>
         </div>

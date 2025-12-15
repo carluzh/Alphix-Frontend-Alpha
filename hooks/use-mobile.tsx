@@ -8,38 +8,18 @@ export function useIsMobile() {
   const [isMobile, setIsMobile] = React.useState<boolean | undefined>(undefined)
 
   React.useEffect(() => {
-    const checkDevice = () => {
-      let viewportWidth = window.innerWidth
+    const mql = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`)
 
-      // Use visualViewport for more accurate mobile detection (handles mobile keyboards)
-      if (window.visualViewport && window.visualViewport.width > 0) {
-        viewportWidth = window.visualViewport.width
-      }
-
-      setIsMobile(viewportWidth < MOBILE_BREAKPOINT)
-    }
+    const handleChange = () => setIsMobile(mql.matches)
 
     // Initial check
-    checkDevice()
+    handleChange()
 
-    // Listen to window resize via matchMedia (efficient)
-    const mql = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`)
-    mql.addEventListener("change", checkDevice)
-
-    // Also listen to window resize for other dimension changes
-    window.addEventListener("resize", checkDevice)
-
-    // Listen to visualViewport changes (mobile keyboard, browser chrome)
-    if (window.visualViewport) {
-      window.visualViewport.addEventListener("resize", checkDevice)
-    }
+    // Only update when crossing the breakpoint (avoid rerenders on every resize pixel)
+    mql.addEventListener("change", handleChange)
 
     return () => {
-      mql.removeEventListener("change", checkDevice)
-      window.removeEventListener("resize", checkDevice)
-      if (window.visualViewport) {
-        window.visualViewport.removeEventListener("resize", checkDevice)
-      }
+      mql.removeEventListener("change", handleChange)
     }
   }, [])
 

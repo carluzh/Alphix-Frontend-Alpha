@@ -3,7 +3,6 @@
 import React from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
-import { AppLayout } from "@/components/app-layout";
 import Image from "next/image";
 import { useMemo, useState, useEffect, useRef, useCallback, useLayoutEffect } from "react";
 import { formatUSD as formatUSDShared, formatUSDHeader as formatUSDHeaderShared, formatNumber, formatPercent } from "@/lib/format";
@@ -1991,7 +1990,7 @@ export default function PortfolioPage() {
   // Show skeleton during loading, empty state only after data is loaded
   if (showSkeletonFor.header || showSkeletonFor.table) {
     return (
-      <AppLayout>
+      <>
         <div className="flex flex-1 flex-col p-3 sm:p-6 overflow-x-hidden">
           <PortfolioHeaderSkeleton viewportWidth={viewportWidth} />
 
@@ -2021,13 +2020,13 @@ export default function PortfolioPage() {
             </div>
           </div>
         </div>
-      </AppLayout>
+      </>
     );
   }
 
   return (
     <PortfolioFilterContext.Provider value={{ activeTokenFilter, setActiveTokenFilter, isStickyHover, setIsStickyHover, hoverTokenLabel: effectiveTokenLabel }}>
-      <AppLayout>
+      <>
       <div className="flex flex-1 flex-col p-3 sm:p-6 overflow-x-hidden">
         {/* Portfolio header with skeleton gate */}
         {showSkeletonFor.header ? (
@@ -2801,7 +2800,7 @@ export default function PortfolioPage() {
         />
       )}
 
-      </AppLayout>
+      </>
     </PortfolioFilterContext.Provider>
   );
 }

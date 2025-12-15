@@ -1,6 +1,5 @@
 "use client";
 
-import { AppLayout } from "@/components/app-layout";
 import { formatUSD as formatUSDShared } from "@/lib/format";
 import { useState, useEffect, useMemo, useCallback } from "react";
 import {
@@ -22,7 +21,6 @@ import {
   SortingState,
   useReactTable,
   RowData,
-  ColumnSizingState
 } from "@tanstack/react-table";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { MobileLiquidityList } from "@/components/MobileLiquidityList";
@@ -107,7 +105,6 @@ const formatAPR = (aprValue: number) => {
 export default function LiquidityPage() {
   const [userPositions, setUserPositions] = useState<ProcessedPosition[]>([]);
   const [sorting, setSorting] = React.useState<SortingState>([]);
-  const [columnSizing, setColumnSizing] = useState<ColumnSizingState>({});
   const { networkMode } = useNetwork();
   const [optimisticPoolId, setOptimisticPoolId] = useState<string | null>(null);
   const warnedAllZeroBatchRef = React.useRef(false);
@@ -124,9 +121,6 @@ export default function LiquidityPage() {
   const isMobile = useIsMobile();
   const { address: accountAddress, isConnected, chainId } = useAccount();
   const [selectedPoolId, setSelectedPoolId] = useState<string>("");
-  const [windowWidth, setWindowWidth] = useState<number>(
-    typeof window !== 'undefined' ? window.innerWidth : 1200
-  );
   const router = useRouter();
   const [poolDataByPoolId, setPoolDataByPoolId] = useState<Record<string, any>>({});
   const [priceMap, setPriceMap] = useState<Record<string, number>>({});
@@ -322,19 +316,6 @@ export default function LiquidityPage() {
       // Consider a targeted position refresh here
     },
   });
-
-  useEffect(() => {
-    const handleResize = () => {
-      setWindowWidth(window.innerWidth);
-    };
-
-    if (typeof window !== 'undefined') {
-      window.addEventListener('resize', handleResize);
-      return () => {
-        window.removeEventListener('resize', handleResize);
-      };
-    }
-  }, []);
 
   useEffect(() => {
     if (isConnected && accountAddress && chainId) {
@@ -538,77 +519,17 @@ export default function LiquidityPage() {
     },
   ], [handleAddLiquidity]);
 
-  const visibleColumns = useMemo(() => {
-    if (isMobile) {
-      return columns;
-    }
-
-    let hideLevel = 0;
-    if (windowWidth < 1400) {
-      hideLevel = 1;
-    }
-    
-    // Filter columns based on hidePriority - proportional distribution happens automatically
-    const filteredColumns = columns.filter(
-      (column) => column.meta?.hidePriority === undefined || column.meta.hidePriority > hideLevel
-    );
-
-    // Adjust column sizes based on screen size - identical spacing for first 4, spacious last column
-    return filteredColumns.map((col) => {
-      if ('accessorKey' in col && col.accessorKey === 'pair') {
-        // Pool column: same size as others for uniform spacing
-        return { ...col, size: windowWidth >= 2000 ? 200 : windowWidth >= 1600 ? 300 : windowWidth >= 1200 ? 250 : 250 };
-      }
-      if ('accessorKey' in col && col.accessorKey === 'volume24h') {
-        // Volume column: same size as others
-        return { ...col, size: windowWidth >= 2000 ? 150 : windowWidth >= 1600 ? 180 : windowWidth >= 1200 ? 160 : 160 };
-      }
-      if ('accessorKey' in col && col.accessorKey === 'fees24h') {
-        // Fees column: same size as others
-        return { ...col, size: windowWidth >= 2000 ? 150 : windowWidth >= 1600 ? 180 : windowWidth >= 1200 ? 160 : 160 };
-      }
-      if ('accessorKey' in col && col.accessorKey === 'liquidity') {
-        // Liquidity column: same size as others
-        return { ...col, size: windowWidth >= 2000 ? 180 : windowWidth >= 1600 ? 180 : windowWidth >= 1200 ? 160 : 140 };
-      }
-      if ('accessorKey' in col && col.accessorKey === 'apr') {
-        // Yield column: takes remaining space to push right
-        return { ...col, size: windowWidth >= 2000 ? 400 : windowWidth >= 1600 ? 400 : windowWidth >= 1200 ? 320 : 260 };
-      }
-      return col;
-    });
-  }, [isMobile, windowWidth, columns]);
-
   const table = useReactTable({
     data: filteredPools,
-    columns: visibleColumns,
+    columns,
     getCoreRowModel: getCoreRowModel(),
     onSortingChange: setSorting,
     getSortedRowModel: getSortedRowModel(),
-    onColumnSizingChange: setColumnSizing,
-    enableColumnResizing: true,
     enableSorting: true,
-    columnResizeMode: 'onChange',
     state: {
       sorting,
-      columnSizing,
     },
   });
-
-  const columnSizes = React.useMemo(() => {
-    const pairCol = table.getColumn('pair' as any);
-    const volCol = table.getColumn('volume24h' as any);
-    const feesCol = table.getColumn('fees24h' as any);
-    const liqCol = table.getColumn('liquidity' as any);
-    const aprCol = table.getColumn('apr' as any);
-    return {
-      pair: pairCol ? pairCol.getSize() : (windowWidth >= 2000 ? 300 : windowWidth >= 1600 ? 300 : windowWidth >= 1200 ? 250 : 140),
-      volume24h: volCol ? volCol.getSize() : (windowWidth >= 2000 ? 180 : windowWidth >= 1600 ? 180 : windowWidth >= 1200 ? 160 : 140),
-      fees24h: feesCol ? feesCol.getSize() : (windowWidth >= 2000 ? 180 : windowWidth >= 1600 ? 180 : windowWidth >= 1200 ? 160 : 140),
-      liquidity: liqCol ? liqCol.getSize() : (windowWidth >= 2000 ? 180 : windowWidth >= 1600 ? 180 : windowWidth >= 1200 ? 160 : 140),
-      apr: aprCol ? aprCol.getSize() : (windowWidth >= 2000 ? 400 : windowWidth >= 1600 ? 400 : windowWidth >= 1200 ? 320 : 260),
-    };
-  }, [table, columnSizing, windowWidth, visibleColumns]);
 
   const poolAggregates = React.useMemo(() => {
     let totalTVL = 0;
@@ -660,43 +581,42 @@ export default function LiquidityPage() {
   );
 
   return (
-    <AppLayout>
       <div className="flex flex-1 flex-col">
         <div className="flex flex-1 flex-col p-3 sm:p-6 overflow-x-hidden">
             <div className="mb-2">
-              <div className="flex items-stretch justify-between gap-4">
-                <div className="flex flex-col">
+              <div className="flex items-stretch gap-4">
+                <div className="flex flex-col flex-1 min-w-0">
                   <h2 className="text-xl font-semibold">Liquidity Pools</h2>
                   <p className="text-sm text-muted-foreground">Explore and manage your liquidity positions.</p>
                   <div className="mt-4">
-                    <div className="rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 p-2 md:p-4">
-                      <div className="flex flex-wrap items-stretch gap-1.5 md:gap-3">
-                        <div className="flex-1 min-w-[120px] max-w-[180px] rounded-lg bg-muted/30 border border-sidebar-border/60">
+                    <div className="w-full max-w-[860px] 2xl:max-w-[920px] rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 p-2 md:p-4">
+                      <div className="grid w-full grid-cols-1 sm:grid-cols-3 gap-1.5 md:gap-3">
+                        <div className="min-w-0 rounded-lg bg-muted/30 border border-sidebar-border/60">
                           <div className="px-3 md:px-4 h-7 md:h-9 flex items-center">
                             <h2 className="text-[10px] md:text-xs tracking-wider text-muted-foreground font-mono font-bold whitespace-nowrap">TVL</h2>
                           </div>
                           <div className="px-3 md:px-4 py-1">
-                            <div className="text-base md:text-lg font-medium">
+                            <div className="h-6 md:h-7 flex items-center text-base md:text-lg font-medium">
                               {poolAggregates.isLoading ? <span className="inline-block h-5 w-16 md:h-6 md:w-20 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalTVL)}
                             </div>
                           </div>
                         </div>
-                        <div className="flex-1 min-w-[120px] max-w-[180px] rounded-lg bg-muted/30 border border-sidebar-border/60">
+                        <div className="min-w-0 rounded-lg bg-muted/30 border border-sidebar-border/60">
                           <div className="px-3 md:px-4 h-7 md:h-9 flex items-center">
                             <h2 className="text-[10px] md:text-xs tracking-wider text-muted-foreground font-mono font-bold whitespace-nowrap">VOLUME (24H)</h2>
                           </div>
                           <div className="px-3 md:px-4 py-1">
-                            <div className="text-base md:text-lg font-medium">
+                            <div className="h-6 md:h-7 flex items-center text-base md:text-lg font-medium">
                               {poolAggregates.isLoading ? <span className="inline-block h-5 w-16 md:h-6 md:w-20 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalVol24h)}
                             </div>
                           </div>
                         </div>
-                        <div className="flex-1 min-w-[120px] max-w-[180px] rounded-lg bg-muted/30 border border-sidebar-border/60">
+                        <div className="min-w-0 rounded-lg bg-muted/30 border border-sidebar-border/60">
                           <div className="px-3 md:px-4 h-7 md:h-9 flex items-center">
                             <h2 className="text-[10px] md:text-xs tracking-wider text-muted-foreground font-mono font-bold whitespace-nowrap">FEES (24H)</h2>
                           </div>
                           <div className="px-3 md:px-4 py-1">
-                            <div className="text-base md:text-lg font-medium">
+                            <div className="h-6 md:h-7 flex items-center text-base md:text-lg font-medium">
                               {poolAggregates.isLoading ? <span className="inline-block h-5 w-16 md:h-6 md:w-20 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalFees24h)}
                             </div>
                           </div>
@@ -714,15 +634,14 @@ export default function LiquidityPage() {
                 onSelectPool={navigateToPool}
               />
             ) : (
-              <div className="overflow-x-auto isolate">
-                <Table className="w-full bg-muted/30 border border-sidebar-border/60 rounded-lg overflow-hidden" style={{ tableLayout: 'fixed' }}>
+              <div className="w-full overflow-x-auto isolate">
+                <Table className="w-full bg-muted/30 border border-sidebar-border/60 rounded-lg overflow-hidden">
                   <TableHeader>
                     <TableRow className="hover:bg-transparent">
                       {table.getVisibleLeafColumns().map((col, index, arr) => (
                         <TableHead
                           key={`cat-${col.id}`}
-                          className={`px-2 relative text-xs text-muted-foreground ${index === 0 ? 'pl-6' : ''} ${index === arr.length - 1 ? 'pr-6' : ''}`}
-                          style={{ width: `${col.getSize()}px` }}
+                          className={`px-2 relative text-xs text-muted-foreground ${col.id === 'fees24h' ? 'hidden min-[1400px]:table-cell' : ''} ${index === 0 ? 'pl-6' : ''} ${index === arr.length - 1 ? 'pr-6' : ''}`}
                         >
                           {col.id === 'pair' ? (
                             <span className="text-muted-foreground">Pool</span>
@@ -763,8 +682,7 @@ export default function LiquidityPage() {
                                   {row.getVisibleCells().map((cell, index) => (
                                     <TableCell 
                                       key={cell.id}
-                                      className={`relative py-4 px-2 ${index === 0 ? 'pl-6' : ''} ${index === row.getVisibleCells().length - 1 ? 'pr-6' : ''}`}
-                                      style={{ width: `${cell.column.getSize()}px` }}
+                                      className={`relative py-4 px-2 ${cell.column.id === 'fees24h' ? 'hidden min-[1400px]:table-cell' : ''} ${index === 0 ? 'pl-6' : ''} ${index === row.getVisibleCells().length - 1 ? 'pr-6' : ''}`}
                                     >
                                       {flexRender(
                                         cell.column.columnDef.cell,
@@ -792,7 +710,6 @@ export default function LiquidityPage() {
               </div>
             )}
           </div>
-        </div>
-      </AppLayout>
+      </div>
     );
   } 

@@ -1,6 +1,7 @@
 'use client'
 
 import type React from "react"
+import { useEffect } from "react"
 import AppKitProvider from '@/components/AppKitProvider'
 import { ThemeProvider } from "@/components/theme-provider"
 import { NetworkProvider, type NetworkMode } from "@/lib/network-context"
@@ -19,6 +20,25 @@ export default function AppProviders({
   cookieString: string
   initialNetworkMode: NetworkMode
 }) {
+  useEffect(() => {
+    let t: ReturnType<typeof setTimeout> | null = null
+    const onResize = () => {
+      document.documentElement.classList.add("is-resizing")
+      if (t) clearTimeout(t)
+      t = setTimeout(() => {
+        document.documentElement.classList.remove("is-resizing")
+        t = null
+      }, 150)
+    }
+
+    window.addEventListener("resize", onResize)
+    return () => {
+      window.removeEventListener("resize", onResize)
+      if (t) clearTimeout(t)
+      document.documentElement.classList.remove("is-resizing")
+    }
+  }, [])
+
   return (
     <ThemeProvider
       attribute="class"

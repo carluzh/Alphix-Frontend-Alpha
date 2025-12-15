@@ -21,9 +21,9 @@ export const SectionDescription = ({
 }) => {
   return (
     <div className="flex w-full flex-col gap-1">
-      <h2 className="text-lg font-medium">{title}</h2>
+      <h2 className="text-lg font-semibold text-foreground">{title}</h2>
       {description && (
-        <p className="text-sm text-muted-foreground">{description}</p>
+        <p className="text-sm text-muted-foreground leading-relaxed">{description}</p>
       )}
     </div>
   )

@@ -1,6 +1,5 @@
 "use client"
 
-import { AppLayout } from "@/components/app-layout"
 import { SwapInterface } from "@/components/swap/swap-interface"
 import type { Metadata } from 'next'
 import React, { useState, useCallback } from "react";
@@ -29,21 +28,19 @@ export default function Page() {
   }, [currentRoute, selectedPoolIndexForChart]);
 
   return (
-    <AppLayout>
-      <div className="flex flex-1 flex-col">
-        <div className="flex flex-1 justify-center p-3 sm:p-6">
-          <div className="w-full max-w-lg">
-            <SwapInterface
-              currentRoute={currentRoute}
-              setCurrentRoute={setCurrentRoute}
-              selectedPoolIndexForChart={selectedPoolIndexForChart}
-              setSelectedPoolIndexForChart={setSelectedPoolIndexForChart}
-              handleSelectPoolForChart={handleSelectPoolForChart}
-            />
-            <div id="swap-fee-hover-container" className="mt-2 flex justify-end pointer-events-none" />
-          </div>
+    <div className="flex flex-1 flex-col">
+      <div className="flex flex-1 justify-center p-3 sm:p-6">
+        <div className="w-full max-w-lg">
+          <SwapInterface
+            currentRoute={currentRoute}
+            setCurrentRoute={setCurrentRoute}
+            selectedPoolIndexForChart={selectedPoolIndexForChart}
+            setSelectedPoolIndexForChart={setSelectedPoolIndexForChart}
+            handleSelectPoolForChart={handleSelectPoolForChart}
+          />
+          <div id="swap-fee-hover-container" className="mt-2 flex justify-end pointer-events-none" />
         </div>
       </div>
-    </AppLayout>
+    </div>
   )
 } 

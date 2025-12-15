@@ -1,7 +1,6 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { AppLayout } from "@/components/app-layout";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { PlusIcon, RefreshCwIcon, Check, BadgeCheck, OctagonX, ChevronLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -1313,23 +1312,21 @@ export default function PoolDetailPage() {
 
   // Early return only if pool config doesn't exist (invalid poolId)
   if (!currentPoolData) return (
-    <AppLayout>
-      <div className="flex flex-1 justify-center items-center p-6">
-        <Image
-          src="/LogoIconWhite.svg"
-          alt="Loading..."
-          width={48}
-          height={48}
-          className="animate-pulse opacity-75"
-        />
-      </div>
-    </AppLayout>
+    <div className="flex flex-1 justify-center items-center p-6">
+      <Image
+        src="/LogoIconWhite.svg"
+        alt="Loading..."
+        width={48}
+        height={48}
+        className="animate-pulse opacity-75"
+      />
+    </div>
   );
 
   
 
   return (
-    <AppLayout>
+    <>
       <div className="flex flex-1 flex-col">
         <div className="flex flex-1 flex-col p-3 sm:p-6 max-w-full overflow-hidden">
 
@@ -2876,7 +2873,6 @@ export default function PoolDetailPage() {
           chainId={chainId}
         />
       )}
-
-    </AppLayout>
-  );
+    </>
+  )
 }

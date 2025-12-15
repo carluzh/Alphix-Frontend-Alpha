@@ -11,10 +11,10 @@ export const SettingsGroup: React.FC<SettingsGroupProps> = ({
 }) => (
   <div
     className={cn(
-      'w-full flex-col divide-y overflow-hidden rounded-lg',
+      'w-full flex-col divide-y overflow-hidden rounded-lg shadow-sm',
       striped
         ? 'divide-dashed divide-sidebar-border/60 border border-dashed border-sidebar-border/60 bg-muted/10'
-        : 'divide-sidebar-border border border-sidebar-border bg-container'
+        : 'divide-sidebar-border/60 border border-sidebar-border/60 bg-background'
     )}
   >
     {children}
@@ -39,13 +39,13 @@ export const SettingsGroupItem: React.FC<
       vertical
         ? 'flex-col'
         : 'flex-col md:flex-row md:items-start md:justify-between',
-      clickable && 'cursor-pointer hover:bg-muted/20 transition-colors'
+      clickable && 'cursor-pointer hover:bg-muted/30 transition-colors'
     )}
   >
     <div className="flex w-full flex-col md:max-w-[50%]">
-      <h3 className="text-sm font-medium">{title}</h3>
+      <h3 className="text-sm font-medium text-foreground">{title}</h3>
       {description && (
-        <p className="text-xs text-muted-foreground/60">{description}</p>
+        <p className="text-sm text-muted-foreground">{description}</p>
       )}
     </div>
     {children && (

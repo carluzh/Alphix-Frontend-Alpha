@@ -2655,42 +2655,55 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     };
   }, []);
 
+  const rectRafRef = useRef<number | null>(null)
+  const scheduleRectUpdate = useCallback(() => {
+    if (rectRafRef.current !== null) return
+    rectRafRef.current = requestAnimationFrame(() => {
+      rectRafRef.current = null
+      setCombinedRect(getContainerRect())
+    })
+  }, [getContainerRect])
+
   useEffect(() => {
-    // Update rect calculation with a small delay to ensure DOM has updated
-    const updateRect = () => {
-      // Immediate update
-      setCombinedRect(getContainerRect());
-      
-      // Delayed update to catch any async DOM changes
-      setTimeout(() => {
-        setCombinedRect(getContainerRect());
-      }, 10);
-    };
+    if (!isMounted) return
 
-    updateRect(); 
+    scheduleRectUpdate()
 
-    // Add listeners for dynamic changes
-    window.addEventListener('resize', updateRect);
-    window.addEventListener('scroll', updateRect);
+    const onScroll = () => scheduleRectUpdate()
+    window.addEventListener("scroll", onScroll, { passive: true })
+
+    let ro: ResizeObserver | null = null
+    if (typeof ResizeObserver !== "undefined" && containerRef.current) {
+      ro = new ResizeObserver(() => scheduleRectUpdate())
+      ro.observe(containerRef.current)
+    } else {
+      window.addEventListener("resize", scheduleRectUpdate, { passive: true } as any)
+    }
 
     return () => {
-      window.removeEventListener('resize', updateRect);
-      window.removeEventListener('scroll', updateRect);
-    };
+      window.removeEventListener("scroll", onScroll as any)
+      window.removeEventListener("resize", scheduleRectUpdate as any)
+      ro?.disconnect()
+      if (rectRafRef.current !== null) cancelAnimationFrame(rectRafRef.current)
+      rectRafRef.current = null
+    }
+  }, [isMounted, scheduleRectUpdate])
+
+  // If swap UI content changes height, schedule a rect refresh (no listener rebind)
+  useEffect(() => {
+    scheduleRectUpdate()
   }, [
-    isMounted, // Ensures window is available
-    getContainerRect,
-    // Add dependencies that affect SwapInputView height
-    fromAmount, // When amount changes, fee info appears/disappears
-    toAmount, // When quote changes, it might affect height
-    routeInfo, // When route changes, route info appears/disappears
-    routeFees, // When route fees load, fee info changes
-    routeFeesLoading, // When fees are loading, content changes
-    isConnected, // Connection state affects what's shown
-    currentChainId, // Chain affects what's shown
-    quoteLoading, // When quote is loading, content might change
-    calculatedValues, // When calculated values change, minimum received changes
-  ]);
+    scheduleRectUpdate,
+    fromAmount,
+    toAmount,
+    routeInfo,
+    routeFees,
+    routeFeesLoading,
+    isConnected,
+    currentChainId,
+    quoteLoading,
+    calculatedValues,
+  ])
   
   // NEW: Add navigation handlers for chart preview
   const handleNextPool = useCallback(() => {

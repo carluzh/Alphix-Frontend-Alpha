@@ -87,6 +87,17 @@
   html, body {
     overscroll-behavior: none;
   }
+  .no-scrollbar {
+    scrollbar-width: none; /* Firefox */
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none; /* Chrome/Safari */
+  }
+  html.is-resizing *,
+  html.is-resizing *::before,
+  html.is-resizing *::after {
+    transition: none !important;
+  }
   body {
     @apply bg-background text-foreground;
     font-feature-settings: "rlig" 1, "calt" 1;

@@ -12,7 +12,19 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion";
 
-export function UpdatesNotification({ open = false, onClose }: { open?: boolean; onClose?: () => void }) {
+export function UpdatesNotification({
+  open = false,
+  onClose,
+  stackAboveAnnouncement = false,
+  stackOffsetPx,
+  edgeOffsetPx,
+}: {
+  open?: boolean;
+  onClose?: () => void;
+  stackAboveAnnouncement?: boolean;
+  stackOffsetPx?: number;
+  edgeOffsetPx?: number;
+}) {
   const [activeIndex, setActiveIndex] = useState(0);
 
   useEffect(() => {
@@ -21,7 +33,12 @@ export function UpdatesNotification({ open = false, onClose }: { open?: boolean;
 
   const current = VERSION_LOG[activeIndex];
   const hasPrevious = Boolean(VERSION_LOG[activeIndex + 1]);
-  const isPatch = (current?.title || '').toLowerCase().startsWith('patch');
+  const isPatch = (current?.title || "").toLowerCase().startsWith("patch");
+  const hasDetails = (current?.newFeatures?.length || 0) > 0 || (current?.improvements?.length || 0) > 0;
+
+  const handleClose = () => {
+    onClose?.();
+  };
 
   return (
     <AnimatePresence>
@@ -31,28 +48,19 @@ export function UpdatesNotification({ open = false, onClose }: { open?: boolean;
           animate={{ y: 0, opacity: 1 }}
           exit={{ y: 24, opacity: 0 }}
           transition={{ type: 'spring', stiffness: 380, damping: 28 }}
-          className="fixed bottom-14 right-4 z-40 max-w-md w-full"
+          className="fixed right-3 sm:right-6 z-40 max-w-md w-full"
+          style={{
+            bottom: stackAboveAnnouncement
+              ? stackOffsetPx ?? undefined
+              : edgeOffsetPx ?? undefined,
+          }}
           onClick={(e) => e.stopPropagation()}
         >
           <div className="rounded-lg border border-[#2a2a2a] overflow-hidden bg-[var(--modal-background)] max-h-[85vh] flex flex-col">
             <div className="flex items-center justify-between px-3 py-1.5 border-b border-[#2a2a2a]">
               <div className="flex items-center gap-1">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220.8 220.8" className="h-3 w-3 mr-1">
-                  <defs>
-                    <style>{`.cls-1{fill:var(--sidebar-primary);}`}</style>
-                  </defs>
-                  <g id="Layer_2" data-name="Layer 2">
-                    <g id="Layer_1-2" data-name="Layer 1">
-                      <g id="Layer_2-2" data-name="Layer 2">
-                        <g id="Layer_1-2-2" data-name="Layer 1-2">
-                          <path className="cls-1" d="M110.4,0A110.4,110.4,0,1,0,220.8,110.4h0A110.49,110.49,0,0,0,110.4,0ZM26,110.4A84.49,84.49,0,0,1,97.4,27V193.8A84.49,84.49,0,0,1,26,110.4Zm97.4,83.4V27a84.41,84.41,0,0,1,0,166.8Z"/>
-                        </g>
-                      </g>
-                    </g>
-                  </g>
-                </svg>
                 <span
-                  className={`text-xs tracking-wider font-mono font-bold ${isPatch ? 'text-white' : 'text-sidebar-primary'}`}
+                  className={`text-sm font-medium ${isPatch ? "text-foreground" : "text-sidebar-primary"}`}
                 >
                   {current?.title}
                 </span>
@@ -61,7 +69,7 @@ export function UpdatesNotification({ open = false, onClose }: { open?: boolean;
                 {hasPrevious && (
                   <Button
                     variant="ghost"
-                    className="h-8 px-2 text-xs font-mono font-semibold text-muted-foreground hover:bg-transparent hover:text-white"
+                    className="h-8 px-2 text-xs font-medium text-muted-foreground hover:bg-transparent hover:text-muted-foreground hover:underline underline-offset-4"
                     onClick={() => setActiveIndex((i) => Math.min(i + 1, VERSION_LOG.length - 1))}
                   >
                     See Previous
@@ -71,7 +79,7 @@ export function UpdatesNotification({ open = false, onClose }: { open?: boolean;
                   variant="ghost"
                   className="group -my-1 -me-1 size-8 p-0 hover:bg-transparent"
                   aria-label="Close notification"
-                  onClick={() => onClose?.()}
+                  onClick={handleClose}
                 >
                   <X size={16} strokeWidth={2} className="opacity-100" />
                 </Button>
@@ -88,17 +96,17 @@ export function UpdatesNotification({ open = false, onClose }: { open?: boolean;
               >
                 {/* TLDR */}
                 {current?.tldr && current.tldr.length > 0 && (
-                  <div className="mb-4 pb-3 border-b border-sidebar-border">
-                    <h4 className="text-xs font-semibold text-white mb-2.5 font-mono">TLDR</h4>
+                  <div className={`mb-4 ${hasDetails ? "pb-3 border-b border-sidebar-border" : ""}`}>
+                    <h4 className="text-xs font-medium text-foreground mb-2">TLDR</h4>
                     <ul className="flex flex-col gap-2">
                       {current.tldr.map((item, index) => {
-                        const [title, ...descParts] = item.split(' - ');
-                        const description = descParts.join(' - ');
+                        const [title, ...descParts] = item.split(" - ");
+                        const description = descParts.join(" - ");
                         return (
                           <li key={index} className="flex items-start text-xs">
                             <span className="text-sidebar-primary mr-2 mt-0.5">•</span>
-                            <span className="text-white">
-                              <strong>{title}</strong>
+                            <span className="text-foreground">
+                              <span className="font-medium">{title}</span>
                               {description && <span className="text-muted-foreground"> - {description}</span>}
                             </span>
                           </li>
@@ -108,23 +116,24 @@ export function UpdatesNotification({ open = false, onClose }: { open?: boolean;
                   </div>
                 )}
 
-                <Accordion type="multiple" className="w-full space-y-0" defaultValue={[]}>
+                {hasDetails && (
+                  <Accordion type="multiple" className="w-full space-y-0 [&>*:last-child]:border-b-0" defaultValue={[]}>
                   {/* New Features */}
-                  {current?.newFeatures?.length > 0 && (
+                  {(current?.newFeatures?.length ?? 0) > 0 && (
                     <AccordionItem value="features" className="border-sidebar-border">
-                      <AccordionTrigger className="text-white hover:no-underline text-xs font-semibold py-2 font-mono">
-                        New Features ({current.newFeatures.length})
+                      <AccordionTrigger className="text-foreground hover:no-underline text-xs font-medium py-2">
+                        New Features ({current?.newFeatures?.length ?? 0})
                       </AccordionTrigger>
                       <AccordionContent className="text-muted-foreground text-xs pt-1 pb-3">
                         <ul className="flex flex-col gap-2">
-                          {current.newFeatures.map((feature, index) => {
-                            const [title, ...descParts] = feature.split(' - ');
-                            const description = descParts.join(' - ');
+                          {current?.newFeatures?.map((feature, index) => {
+                            const [title, ...descParts] = feature.split(" - ");
+                            const description = descParts.join(" - ");
                             return (
                               <li key={index} className="flex items-start">
                                 <span className="text-sidebar-primary mr-2">•</span>
                                 <span>
-                                  <strong className="text-white">{title}</strong>
+                                  <span className="text-foreground font-medium">{title}</span>
                                   {description && <span className="text-muted-foreground"> - {description}</span>}
                                 </span>
                               </li>
@@ -136,21 +145,21 @@ export function UpdatesNotification({ open = false, onClose }: { open?: boolean;
                   )}
 
                   {/* Improvements */}
-                  {current?.improvements?.length > 0 && (
+                  {(current?.improvements?.length ?? 0) > 0 && (
                     <AccordionItem value="improvements" className="border-sidebar-border">
-                      <AccordionTrigger className="text-white hover:no-underline text-xs font-semibold py-2 font-mono">
-                        Improvements ({current.improvements.length})
+                      <AccordionTrigger className="text-foreground hover:no-underline text-xs font-medium py-2">
+                        Improvements ({current?.improvements?.length ?? 0})
                       </AccordionTrigger>
                       <AccordionContent className="text-muted-foreground text-xs pt-1 pb-3">
                         <ul className="flex flex-col gap-2">
-                          {current.improvements.map((improvement, index) => {
-                            const [title, ...descParts] = improvement.split(' - ');
-                            const description = descParts.join(' - ');
+                          {current?.improvements?.map((improvement, index) => {
+                            const [title, ...descParts] = improvement.split(" - ");
+                            const description = descParts.join(" - ");
                             return (
                               <li key={index} className="flex items-start">
                                 <span className="text-sidebar-primary mr-2">•</span>
                                 <span>
-                                  <strong className="text-white">{title}</strong>
+                                  <span className="text-foreground font-medium">{title}</span>
                                   {description && <span className="text-muted-foreground"> - {description}</span>}
                                 </span>
                               </li>
@@ -160,7 +169,8 @@ export function UpdatesNotification({ open = false, onClose }: { open?: boolean;
                       </AccordionContent>
                     </AccordionItem>
                   )}
-                </Accordion>
+                  </Accordion>
+                )}
               </motion.div>
             </AnimatePresence>
           </div>

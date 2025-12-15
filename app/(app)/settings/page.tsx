@@ -1,6 +1,5 @@
 "use client";
 
-import { AppLayout } from "@/components/app-layout";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
@@ -228,10 +227,10 @@ export default function SettingsPage() {
   const showHighlight = isCustom || presetValues.includes(slippageTolerance);
 
   return (
-    <AppLayout>
+    <>
       {/* Password Dialog for Mainnet Access */}
       <Dialog open={showPasswordDialog} onOpenChange={setShowPasswordDialog}>
-        <DialogContent className="sm:max-w-md bg-surface border-sidebar-border">
+        <DialogContent className="sm:max-w-md bg-background border-sidebar-border/60">
           <DialogHeader>
             <DialogTitle>Enter Password</DialogTitle>
             <DialogDescription>
@@ -245,7 +244,7 @@ export default function SettingsPage() {
               value={mainnetPassword}
               onChange={(e) => setMainnetPassword(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handlePasswordSubmit()}
-              className="bg-surface border-sidebar-border"
+              className="bg-background border-sidebar-border/60"
               autoFocus
             />
           </div>
@@ -256,7 +255,7 @@ export default function SettingsPage() {
                 setShowPasswordDialog(false);
                 setMainnetPassword("");
               }}
-              className="border-sidebar-border"
+              className="border-sidebar-border/60"
             >
               Cancel
             </Button>
@@ -270,7 +269,7 @@ export default function SettingsPage() {
         </DialogContent>
       </Dialog>
 
-      <div className="flex flex-1 flex-col font-sans">
+      <div className="flex flex-1 flex-col">
         <div className="relative flex min-w-0 flex-1 flex-col items-center p-3 sm:p-6">
           <div className="flex h-full w-full max-w-xl flex-col">
             {/* Settings Sections */}
@@ -326,7 +325,7 @@ export default function SettingsPage() {
                     {/* Unified pill with animated highlight */}
                     <div
                       ref={containerRef}
-                      className="relative flex items-center h-9 rounded-lg border border-sidebar-border bg-surface"
+                      className="relative flex items-center h-9 rounded-lg border border-sidebar-border/60 bg-background"
                     >
                       {/* Animated highlight */}
                       {showHighlight && (
@@ -387,7 +386,7 @@ export default function SettingsPage() {
                         type="number"
                         value={transactionDeadline}
                         onChange={(e) => setTransactionDeadline(e.target.value)}
-                        className="h-9 w-[72px] bg-surface border-sidebar-border text-sm text-center"
+                        className="h-9 w-[72px] bg-background border-sidebar-border/60 text-sm text-center"
                       />
                       <span className="text-sm text-muted-foreground">minutes</span>
                     </div>
@@ -402,10 +401,10 @@ export default function SettingsPage() {
                     }
                   >
                     <Select value={approvalMode} onValueChange={handleApprovalModeChange}>
-                      <SelectTrigger className="w-[100px] h-9 bg-surface border-sidebar-border text-sm">
+                      <SelectTrigger className="w-[100px] h-9 bg-background border-sidebar-border/60 text-sm">
                         <SelectValue />
                       </SelectTrigger>
-                      <SelectContent className="bg-selector border-sidebar-border">
+                      <SelectContent className="bg-background border-sidebar-border/60">
                         <SelectItem value="exact">Exact</SelectItem>
                         <SelectItem value="infinite">Infinite</SelectItem>
                       </SelectContent>
@@ -430,6 +429,6 @@ export default function SettingsPage() {
           </div>
         </div>
       </div>
-    </AppLayout>
+    </>
   );
 }
