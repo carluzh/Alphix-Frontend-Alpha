@@ -25,8 +25,12 @@
 	url = https://github.com/uniswap/v2-core
 [submodule "lib/universal-router"]
 	branch = main
+	path = lib/universal-router
+	url = https://github.com/uniswap/universal-router
 [submodule "lib/v4-core"]
 	branch = main
+	path = lib/v4-core
+	url = https://github.com/uniswap/v4-core
 [submodule "test_sdk/Frontend/swap/lib/v4-periphery"]
 	path = test_sdk/Frontend/swap/lib/v4-periphery
 	url = https://github.com/uniswap/v4-periphery

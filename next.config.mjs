@@ -20,6 +20,16 @@ const nextConfig = {
     NEXT_PUBLIC_APP_VERSION: appVersion,
     NEXT_PUBLIC_GIT_COMMIT: gitCommitHash,
   },
+  webpack: (config, { isServer }) => {
+    // MetaMask SDK includes a React-Native async-storage import path in its browser bundle.
+    // For web builds we don't use that storage adapter, so stub it to an empty module.
+    if (!isServer) {
+      config.resolve = config.resolve || {};
+      config.resolve.alias = config.resolve.alias || {};
+      config.resolve.alias['@react-native-async-storage/async-storage'] = false;
+    }
+    return config;
+  },
   typescript: {
     ignoreBuildErrors: true,
   },
@@ -32,7 +42,6 @@ const nextConfig = {
     webpackBuildWorker: true,
     parallelServerBuildTraces: true,
     parallelServerCompiles: true,
-    viewTransitions: true,
   },
   // Exclude WalletConnect packages from Turbopack bundling due to incompatible test files
   serverExternalPackages: [
