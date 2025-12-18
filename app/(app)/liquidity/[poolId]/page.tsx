@@ -632,8 +632,8 @@ export default function PoolDetailPage() {
             const bps = Number(e?.newFeeBps ?? 0);
             // newFeeBps value needs to be divided by 10000 to get percentage
             curFeePct = Number.isFinite(bps) ? (bps / 10000) : curFeePct;
-            curRatio = scaleRatio(e?.currentRatio); // Activity
-            curEma = scaleRatio(e?.newTargetRatio); // Target
+            curRatio = scaleRatio(e?.currentRatio);    // Vol/TVL activity (volatile)
+            curEma = scaleRatio(e?.newTargetRatio);    // EMA target (smooth)
             ei++;
           }
           feeByDate.set(dateStr, { ratio: curRatio, ema: curEma, feePct: curFeePct });
@@ -2510,7 +2510,7 @@ export default function PoolDetailPage() {
               Add liquidity to the {currentPoolData?.pair} pool
             </DialogDescription>
           </DialogHeader>
-          <div className="py-4">
+          <div className="pt-4">
             {/* Lazy-load form only when modal is open to prevent duplicate API calls */}
             {addLiquidityFormOpen && (
               <AddLiquidityFormMemo

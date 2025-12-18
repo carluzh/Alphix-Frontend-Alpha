@@ -4,8 +4,9 @@ import { cn } from '@/lib/utils'
 import { useInView } from '@/hooks/useInView'
 import { Check, ArrowUpRight, ChevronUp, ChevronDown } from 'lucide-react'
 import Link from 'next/link'
-import { useMemo, useRef, useState, useEffect } from 'react'
+import { useMemo, useRef, useState, useEffect, useCallback } from 'react'
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer } from 'recharts'
+import { Button } from '@/components/ui/button'
 
 // Types
 interface FeeHistoryPoint {
@@ -111,12 +112,17 @@ const chartConfig = {
 
 export const DynamicFeeSection = () => {
   const [isMobile, setIsMobile] = useState(false)
+  const [mobileAnimationStarted, setMobileAnimationStarted] = useState(false)
   const { ref, inView } = useInView<HTMLDivElement>({ once: true, threshold: 0.1 })
   const [isInView, setIsInView] = useState(false)
 
   useEffect(() => {
     const checkMobile = () => setIsMobile(window.innerWidth < 768)
     checkMobile()
+  }, [])
+
+  const handlePlayClick = useCallback(() => {
+    setMobileAnimationStarted(true)
   }, [])
 
   // Track when component comes into view for animation
@@ -166,7 +172,7 @@ export const DynamicFeeSection = () => {
   const [chartData, setChartData] = useState<FeeHistoryPoint[]>(initialHistory)
   const [activityUpdates, setActivityUpdates] = useState<FeeUpdateItem[]>(initialFeeUpdates)
 
-  const MICRO_STEPS_PER_MAJOR = isMobile ? 5 : 15
+  const MICRO_STEPS_PER_MAJOR = isMobile ? 10 : 15  // Mobile: 1 update per ~2 simulated days
   const TOTAL_POINTS = 30 * MICRO_STEPS_PER_MAJOR
 
   const catmullRom = (p0: number, p1: number, p2: number, p3: number, t: number): number => {
@@ -268,7 +274,9 @@ export const DynamicFeeSection = () => {
   }, [expandedInitialHistory])
 
   useEffect(() => {
-    if (!isInView || isMobile) return
+    // Run animation on desktop when in view, or on mobile when play button clicked
+    const shouldAnimate = isInView && (!isMobile || mobileAnimationStarted)
+    if (!shouldAnimate) return
 
     const FRAME_INTERVAL_MS = 120
     let lastFrameTime = performance.now()
@@ -384,7 +392,7 @@ export const DynamicFeeSection = () => {
     return () => {
       if (animationRef.current) cancelAnimationFrame(animationRef.current)
     }
-  }, [isInView, isMobile])
+  }, [isInView, isMobile, mobileAnimationStarted])
 
   const currentFee = useMemo(
     () => (chartData.length > 0 ? chartData[chartData.length - 1].dynamicFee : 0.3),
@@ -462,11 +470,35 @@ export const DynamicFeeSection = () => {
         <div className="flex flex-row items-center justify-between gap-x-4 mb-4">
           <h3>Fee Algorithm</h3>
           <div className="flex flex-row items-center gap-x-4">
-            <div className="flex flex-row items-center gap-x-4 text-xs font-sans">
+            {/* Desktop: show fee, Mobile: show play button or fee after started */}
+            <div className="hidden md:flex flex-row items-center gap-x-4 text-xs font-sans">
               <span>Dynamic Fee</span>
               <span className="text-muted-foreground">
                 {currentFee.toFixed(2)}%
               </span>
+            </div>
+            {/* Mobile: play button or fee display */}
+            <div className="md:hidden">
+              {!mobileAnimationStarted ? (
+                <Button
+                  onClick={handlePlayClick}
+                  size="sm"
+                  variant="outline"
+                  className="h-7 gap-1.5 pl-2.5 pr-3 text-xs font-medium border-sidebar-border bg-[#1b1b1b] hover:bg-[#252525] hover:border-sidebar-border"
+                >
+                  <svg style={{ width: '12px', height: '12px', minWidth: '12px', minHeight: '12px' }} viewBox="0 0 8 8" fill="currentColor" className="text-muted-foreground shrink-0">
+                    <path d="M1.5 1.2a.5.5 0 0 1 .75-.43l4.5 2.8a.5.5 0 0 1 0 .86l-4.5 2.8a.5.5 0 0 1-.75-.43V1.2z" />
+                  </svg>
+                  <span className="text-muted-foreground text-[11px]">Play</span>
+                </Button>
+              ) : (
+                <div className="flex flex-row items-center gap-x-2 text-xs font-sans">
+                  <span className="text-muted-foreground/70">Dynamic Fee</span>
+                  <span className="text-muted-foreground">
+                    {currentFee.toFixed(2)}%
+                  </span>
+                </div>
+              )}
             </div>
           </div>
         </div>

@@ -70,7 +70,9 @@
       "Bash(dir:*)",
       "Bash(move \"app\\page.tsx\" \"app\\(marketing)\\page.tsx\")",
       "Bash(ANALYZE=true npm run build:*)",
-      "Bash(npx sharp-cli:*)"
+      "Bash(npx sharp-cli:*)",
+      "Bash(git log:*)",
+      "Bash(git diff:*)"
     ],
     "deny": [],
     "ask": []

@@ -42,6 +42,7 @@ import { useDecreaseLiquidity, type DecreasePositionData } from "@/components/li
 import { toast as sonnerToast } from "sonner";
 import { waitForSubgraphBlock } from "@/lib/client-cache";
 import { prefetchService } from "@/lib/prefetch-service";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 
 const SDK_MIN_TICK = -887272;
@@ -368,6 +369,30 @@ export default function LiquidityPage() {
     return poolsWithPositionCounts;
   }, [poolsWithPositionCounts]);
 
+  // Mobile-only: search + sort for pool cards (desktop table remains unchanged)
+  const [mobileSortBy, setMobileSortBy] = useState<"apr" | "tvl" | "volume">("tvl");
+
+  const mobilePools = useMemo(() => {
+    if (!isMobile) return filteredPools;
+
+    const parseApr = (apr: unknown) => {
+      if (typeof apr !== "string") return 0;
+      if (!apr || apr === "Loading..." || apr === "N/A" || apr === "—") return 0;
+      const isK = apr.includes("K%");
+      const n = parseFloat(apr.replace(/[~%K]/g, ""));
+      if (!Number.isFinite(n)) return 0;
+      return isK ? n * 1000 : n;
+    };
+
+    const getMetric = (p: any) => {
+      if (mobileSortBy === "apr") return parseApr(p?.apr);
+      if (mobileSortBy === "volume") return Number.isFinite(p?.volume24hUSD) ? Number(p.volume24hUSD) : 0;
+      return Number.isFinite(p?.tvlUSD) ? Number(p.tvlUSD) : 0; // tvl
+    };
+
+    return [...filteredPools].sort((a: any, b: any) => getMetric(b) - getMetric(a));
+  }, [filteredPools, isMobile, mobileSortBy]);
+
   const handleAddLiquidity = useCallback((e: React.MouseEvent, poolId: string) => {
     e.stopPropagation();
     router.push(`/liquidity/${poolId}`);
@@ -590,8 +615,8 @@ export default function LiquidityPage() {
                   <p className="text-sm text-muted-foreground">Explore and manage your liquidity positions.</p>
                   <div className="mt-4">
                     <div className="w-full max-w-[860px] 2xl:max-w-[920px] rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 p-2 md:p-4">
-                      <div className="grid w-full grid-cols-1 sm:grid-cols-3 gap-1.5 md:gap-3">
-                        <div className="min-w-0 rounded-lg bg-muted/30 border border-sidebar-border/60">
+                      <div className="grid w-full grid-cols-2 sm:grid-cols-3 gap-1.5 md:gap-3">
+                        <div className="min-w-0 rounded-lg bg-muted/30 border border-sidebar-border/60 col-span-2 sm:col-span-1">
                           <div className="px-3 md:px-4 h-7 md:h-9 flex items-center">
                             <h2 className="text-[10px] md:text-xs tracking-wider text-muted-foreground font-mono font-bold whitespace-nowrap">TVL</h2>
                           </div>
@@ -629,10 +654,28 @@ export default function LiquidityPage() {
             </div>
 
             {isMobile ? (
-              <MobileLiquidityList
-                pools={filteredPools}
-                onSelectPool={navigateToPool}
-              />
+              <div className="mt-4">
+                <div className="w-full max-w-[860px] 2xl:max-w-[920px] space-y-2">
+                  {mobilePools.length >= 3 ? (
+                    <div className="flex items-center justify-end">
+                      <Select value={mobileSortBy} onValueChange={(v) => setMobileSortBy(v as any)}>
+                        <SelectTrigger className="h-9 w-[128px] bg-muted/30 border-sidebar-border/60">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="apr">APR</SelectItem>
+                          <SelectItem value="tvl">TVL</SelectItem>
+                          <SelectItem value="volume">Volume</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="mt-3">
+                  <MobileLiquidityList pools={mobilePools} onSelectPool={navigateToPool} />
+                </div>
+              </div>
             ) : (
               <div className="w-full overflow-x-auto isolate">
                 <Table className="w-full bg-muted/30 border border-sidebar-border/60 rounded-lg overflow-hidden">

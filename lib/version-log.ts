@@ -11,6 +11,15 @@ export interface VersionEntry {
 
 export const VERSION_LOG: VersionEntry[] = [
   {
+    version: "1.5.2",
+    title: "Patch - v1.5.2",
+    tldr: [
+      "Improved mobile interface",
+      "Miscellaneous improvements and fixes"
+    ],
+    releaseDate: "2025-12-18"
+  },
+  {
     version: "1.5.1",
     title: "Patch - v1.5.1",
     tldr: [

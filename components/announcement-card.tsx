@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from "react"
+import { createPortal } from "react-dom"
 import Link from "next/link"
 import { ArrowRight, X } from "lucide-react"
 import { useAccount } from "wagmi"
@@ -104,7 +105,7 @@ export function AnnouncementCard() {
   const ui = {
     contentWidth: "w-3/5 pr-2",
     title: "text-sm font-semibold",
-    desc: "text-sm leading-relaxed",
+    desc: "text-xs sm:text-sm leading-relaxed line-clamp-2 sm:line-clamp-none",
     ctaWrap: "mt-2 px-4 py-2 gap-2",
     ctaText: "text-sm font-semibold",
     ctaIcon: "h-5 w-5",
@@ -174,7 +175,7 @@ export function AnnouncementCard() {
       <div className="absolute right-3 top-3 sm:right-4 sm:top-4 min-[1700px]:right-5 min-[1700px]:top-5 z-20">
         <button
           type="button"
-          className="opacity-0 group-hover:opacity-100 transition-opacity duration-150 relative h-7 w-7 rounded-full grid place-items-center bg-black/35 hover:bg-black/55 text-white"
+          className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity duration-150 relative h-7 w-7 rounded-full grid place-items-center bg-black/35 hover:bg-black/55 text-white"
           aria-label="Close announcements"
           onClick={(e) => {
             e.preventDefault()
@@ -235,14 +236,15 @@ export function AnnouncementCard() {
   const className = cn(
     "group ann-card relative flex items-center overflow-hidden rounded-lg border border-sidebar-border/60 shadow-sm",
     "bg-white dark:bg-[#131313]",
-    "max-w-[calc(100vw-2rem)]",
-    "p-4 sm:p-5 min-[1700px]:p-6 w-[300px] sm:w-[360px] min-[1700px]:w-[420px] h-[170px] sm:h-[190px] min-[1700px]:h-[210px]"
+    // Mobile only: keep it narrower than swap content.
+    "w-full max-w-md mx-auto sm:max-w-none sm:mx-0 sm:w-[360px] min-[1700px]:w-[420px]",
+    "p-4 sm:p-5 min-[1700px]:p-6 h-[150px] sm:h-[190px] min-[1700px]:h-[210px]"
   )
 
-  return (
+  const Card = (
     <div
       ref={cardRef}
-      className="fixed bottom-3 right-3 sm:bottom-6 sm:right-6 z-40"
+      className="fixed bottom-3 left-0 right-0 px-3 sm:bottom-6 sm:left-auto sm:right-6 sm:px-0 z-40"
     >
       {announcement.href ? (
         isExternal ? (
@@ -271,4 +273,8 @@ export function AnnouncementCard() {
       )}
     </div>
   )
+
+  // Portal to body so `position: fixed` is truly viewport-fixed (avoids transform/stacking-context issues).
+  if (!mounted || typeof document === "undefined") return null
+  return createPortal(Card, document.body)
 }

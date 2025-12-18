@@ -6,6 +6,7 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { ArrowUpRight } from "lucide-react";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 interface FeeHistoryPoint {
   timeLabel: string;
@@ -33,6 +34,7 @@ interface DynamicFeeChartPreviewProps {
 
 function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = false, onContentStableChange, alwaysShowSkeleton = false }: DynamicFeeChartPreviewProps) {
   const router = useRouter();
+  const isMobile = useIsMobile();
 
   // State to track if the content is stable and rendered
   const [isContentStable, setIsContentStable] = useState(false);
@@ -113,8 +115,8 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
           .map((e: any) => ({
             ts: Number(e?.timestamp) || 0,
             feeBps: Number(e?.newFeeBps ?? e?.newFeeRateBps ?? 0),
-            ratio: e?.currentRatio, // Normalized in API (Activity)
-            ema: e?.newTargetRatio, // Target
+            ratio: e?.currentRatio,    // Vol/TVL activity measurement (volatile, jumps around)
+            ema: e?.newTargetRatio,    // EMA target (smooth, changes gradually)
           }))
           .filter((e: any) => e.ts >= thirtyDaysAgoSec) // Keep only last 30 days
           .sort((a: any, b: any) => a.ts - b.ts);
@@ -162,25 +164,6 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
 
   // No diffing. Keep this preview dead simple and render as soon as we have data
 
-  // Effect to signal when content is stable
-  useEffect(() => {
-    if (!isActuallyLoading && data && data.length > 0) {
-      // Allow a small delay for any internal animations to settle
-      const timer = setTimeout(() => {
-        setIsContentStable(true);
-        onContentStableChange?.(true);
-      }, 50); // Small delay to ensure render
-
-      return () => clearTimeout(timer);
-    } else {
-      // Reset if data is loading or not available
-      if (isContentStable) {
-        setIsContentStable(false);
-        onContentStableChange?.(false);
-      }
-    }
-  }, [isActuallyLoading, data, onContentStableChange, isContentStable]);
-  
   // Keep skeleton visible exactly while loading (or when forced)
   useEffect(() => {
     setShowLoadingSkeleton(Boolean(alwaysShowSkeleton || isActuallyLoading));
@@ -206,9 +189,8 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
     if (targetId) {
       const href = `/liquidity/${targetId}`;
       if (typeof window !== 'undefined') {
-        // On mobile, navigate in same page; on desktop, open new tab
-        const isMobile = window.innerWidth < 768;
-        if (isMobile) {
+        const isMobileView = window.innerWidth < 768;
+        if (isMobileView) {
           router.push(href);
         } else {
           window.open(href, '_blank', 'noopener,noreferrer');
@@ -216,14 +198,31 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
       } else {
         router.push(href);
       }
-    } else {
-
     }
   };
 
-
   // Build chart data from supplied series (preferred only if usable) or fetched fallback
   const effectiveData = isParentDataUsable ? data : (autoData || []);
+  const effectiveCount = Array.isArray(effectiveData) ? effectiveData.length : 0;
+  const hasMinimumData = effectiveCount >= 2;
+
+  // Effect to signal when content is stable (avoid "top-down" partial paint on load)
+  useEffect(() => {
+    if (alwaysShowSkeleton) return;
+
+    if (!isActuallyLoading && hasMinimumData) {
+      const timer = setTimeout(() => {
+        setIsContentStable(true);
+        onContentStableChange?.(true);
+      }, 50);
+      return () => clearTimeout(timer);
+    }
+
+    if (isContentStable) {
+      setIsContentStable(false);
+      onContentStableChange?.(false);
+    }
+  }, [alwaysShowSkeleton, isActuallyLoading, hasMinimumData, isContentStable, onContentStableChange]);
 
   // Determine if we should animate: only on first render with data, using ref to avoid re-renders
   const shouldAnimate = !hasAnimatedRef.current && !isHovering;
@@ -314,10 +313,8 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
 
   // Removed change-point dots per design preference; keep normalization only
 
-    const hasData = Array.isArray(effectiveData) && effectiveData.length > 0;
-    const dataPointsCount = hasData ? effectiveData.length : 0;
-    // Require at least 2 data points to draw a line chart (1 point shows only a dot)
-    const hasMinimumData = hasData && dataPointsCount >= 2;
+    const hasData = Array.isArray(effectiveData) && effectiveCount > 0;
+    const dataPointsCount = hasData ? effectiveCount : 0;
 
   // Render different Card structures based on data availability
   if (alwaysShowSkeleton) {
@@ -373,8 +370,8 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
     );
   }
 
-  // If insufficient data and not loading, show the initializing state. If loading, fall through to the chart card (it shows a skeleton inside).
-  if (!hasMinimumData && !isActuallyLoading) {
+  // If insufficient data, keep the skeleton approach (avoid layout jumps / partial paints)
+  if (!hasMinimumData) {
     return (
       <div
         className="w-full rounded-lg border border-primary transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow bg-container-secondary"
@@ -419,10 +416,8 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
              <ArrowUpRight aria-hidden="true" data-arrow className="h-4 w-4 text-muted-foreground transition-colors duration-150" />
           </div>
         </div>
-        <div className="px-2 py-2 h-[120px] relative">
-              <div className="w-full h-full flex items-center justify-center text-xs font-mono text-muted-foreground/50 animate-pulse">
-                Pool Initializing ({dataPointsCount}/2 updates)
-              </div>
+        <div className="px-2 pb-2 pt-2 h-[100px] relative">
+          <div className="w-full h-full bg-muted/40 rounded animate-pulse" />
         </div>
         
       </div>
@@ -481,7 +476,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
         <div className="px-2 py-2 h-[120px] relative">
           <div
             className="w-full h-full cursor-pointer [&_.recharts-wrapper]:outline-none [&_.recharts-wrapper]:focus:outline-none [&_.recharts-surface]:outline-none"
-            onMouseMove={(e) => {
+            onMouseMove={isMobile ? undefined : (e) => {
               // Calculate which data point based on mouse position
               if (chartData && chartData.length > 0) {
                 const rect = e.currentTarget.getBoundingClientRect();
@@ -493,12 +488,12 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
                 setIsHovering(true);
               }
             }}
-            onMouseLeave={() => {
+            onMouseLeave={isMobile ? undefined : () => {
               setHoveredIndex(null);
               setIsHovering(false);
             }}
           >
-            {showLoadingSkeleton && isActuallyLoading ? (
+            {showLoadingSkeleton || !isContentStable ? (
               <div className="w-full h-full bg-muted/40 rounded flex items-center justify-center">
                 <div className="animate-pulse">
                   <Image 
@@ -516,13 +511,13 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
                   data={chartData || []}
                   margin={{ top: 0, right: 8, bottom: 0, left: 8 }}
                   style={{ cursor: 'pointer' }}
-                  onMouseMove={(e: any) => {
+                  onMouseMove={isMobile ? undefined : (e: any) => {
                     if (e && e.activeTooltipIndex !== undefined && typeof e.activeTooltipIndex === 'number') {
                       setHoveredIndex(e.activeTooltipIndex);
                       setIsHovering(true);
                     }
                   }}
-                  onMouseLeave={() => {
+                  onMouseLeave={isMobile ? undefined : () => {
                     setHoveredIndex(null);
                     setIsHovering(false);
                   }}
@@ -622,7 +617,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
         </div>
       </div>
       {/* Hover footer tooltip - separate container below chart card, right-aligned */}
-      {footerDisplay && (
+      {!isMobile && footerDisplay && (
         <div className="mt-2 flex justify-end pointer-events-none">
           <div className="rounded-md border border-primary bg-container-secondary px-2.5 py-1.5 shadow-sm inline-flex">
             <div className="flex items-center gap-4 text-[10px] md:text-xs font-mono">

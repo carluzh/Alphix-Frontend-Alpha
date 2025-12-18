@@ -23,6 +23,7 @@ import { findBestRoute } from '@/lib/routing-engine';
 import { SlippageControl } from './SlippageControl';
 import { useTokenUSDPrice } from '@/hooks/useTokenUSDPrice';
 import { useSlippageValidation } from '@/hooks/useSlippage';
+import { useIsMobile } from "@/hooks/use-mobile";
 
 interface SwapInputViewProps {
   displayFromToken: Token;
@@ -80,6 +81,7 @@ interface SwapInputViewProps {
     message: string;
   } | null;
   onNetworkSwitch?: () => void;
+  onClearFromAmount?: () => void;
 }
 
 export function SwapInputView({
@@ -127,7 +129,9 @@ export function SwapInputView({
   onRouteHoverChange,
   priceImpactWarning,
   onNetworkSwitch,
+  onClearFromAmount,
 }: SwapInputViewProps) {
+  const isMobile = useIsMobile();
   const [hoveredRouteIndex, setHoveredRouteIndex] = React.useState<number | null>(null);
   const [clickedTokenIndex, setClickedTokenIndex] = React.useState<number | null>(0);
   const ignoreNextOutsideClickRef = React.useRef(false);
@@ -244,14 +248,25 @@ export function SwapInputView({
           >
         <div className="flex items-center justify-between mb-2">
           <Label className="text-sm font-medium">Sell</Label>
-          <Button
-            variant="ghost"
-            className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent"
-            onClick={() => handleUsePercentage(100, true)}
-            disabled={!isConnected}
-          >
-            {isConnected ? (isLoadingCurrentFromTokenBalance ? <span className="inline-block h-3 w-16 bg-muted/60 rounded animate-pulse" /> : displayFromToken.balance) : "~"} {displayFromToken.symbol}
-          </Button>
+          {/* Mobile: Show "Clear" when input has value, otherwise show balance */}
+          {isMobile && onClearFromAmount && fromAmount.length > 0 ? (
+            <button
+              type="button"
+              className="h-auto p-0 text-xs text-muted-foreground hover:text-foreground bg-transparent border-0 cursor-pointer"
+              onClick={onClearFromAmount}
+            >
+              Clear
+            </button>
+          ) : (
+            <Button
+              variant="ghost"
+              className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent"
+              onClick={() => handleUsePercentage(100, true)}
+              disabled={!isConnected}
+            >
+              {isConnected ? (isLoadingCurrentFromTokenBalance ? <span className="inline-block h-3 w-16 bg-muted/60 rounded animate-pulse" /> : displayFromToken.balance) : "~"} {displayFromToken.symbol}
+            </Button>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <TokenSelector
@@ -264,6 +279,9 @@ export function SwapInputView({
           />
           <div className="flex-1">
             <Input
+              type={isMobile ? "number" : "text"}
+              inputMode={isMobile ? "decimal" : undefined}
+              step={isMobile ? "any" : undefined}
               value={fromAmount}
               onChange={handleFromAmountChangeWithWiggle}
               onFocus={() => setIsSellInputFocused(true)}
@@ -319,7 +337,7 @@ export function SwapInputView({
       </div>
 
       {/* Arrow button */}
-      <div className="flex justify-center relative" style={{ minHeight: '32px' }}>
+      <div className={cn("flex justify-center relative", isMobile ? "min-h-[44px]" : "min-h-[32px]")}>
         <style dangerouslySetInnerHTML={{__html: `
           @keyframes arrowGlare {
             from { background-position: 0% 0%; }
@@ -337,6 +355,14 @@ export function SwapInputView({
             color: inherit;
             border-radius: 8px;
             overflow: visible;
+          }
+
+          /* Mobile: larger touch target (44px minimum) */
+          .arrow-loading-wrapper.mobile-size {
+            left: calc(50% - 22px);
+            width: 44px;
+            height: 44px;
+            border-radius: 10px;
           }
 
           .arrow-loading-wrapper::before {
@@ -360,6 +386,10 @@ export function SwapInputView({
             animation: arrowGlare 1.5s linear infinite;
           }
 
+          .arrow-loading-wrapper.mobile-size::before {
+            border-radius: 11px;
+          }
+
           .arrow-loading-wrapper.loading::before {
             opacity: 1;
           }
@@ -378,12 +408,22 @@ export function SwapInputView({
             z-index: 1;
           }
 
+          .arrow-loading-wrapper.mobile-size .arrow-loading-inner {
+            border-radius: 10px;
+          }
+
           .arrow-loading-wrapper:not(.loading):hover {
             cursor: pointer;
           }
 
           .arrow-loading-wrapper:not(.loading):hover .arrow-loading-inner {
             border-color: rgba(50, 50, 50, 0.6);
+          }
+
+          /* Mobile: active state for touch feedback */
+          .arrow-loading-wrapper:not(.loading):active .arrow-loading-inner {
+            border-color: rgba(70, 70, 70, 0.8);
+            background: var(--muted);
           }
 
           .arrow-loading-wrapper.loading .arrow-loading-inner {
@@ -393,13 +433,14 @@ export function SwapInputView({
         <div
           className={cn(
             "arrow-loading-wrapper",
+            isMobile && "mobile-size",
             quoteLoading && "loading",
             isAttemptingSwitch && "cursor-not-allowed"
           )}
           onClick={isAttemptingSwitch || quoteLoading ? undefined : handleSwapTokens}
         >
           <div className="arrow-loading-inner">
-            <ArrowDownIcon className="h-4 w-4" />
+            <ArrowDownIcon className={cn(isMobile ? "h-5 w-5" : "h-4 w-4")} />
           </div>
           <span className="sr-only">Swap tokens</span>
         </div>
@@ -436,6 +477,9 @@ export function SwapInputView({
           />
           <div className="flex-1">
             <Input
+              type={isMobile ? "number" : "text"}
+              inputMode={isMobile ? "decimal" : undefined}
+              step={isMobile ? "any" : undefined}
               value={toAmount}
               onChange={onToAmountChange}
               onFocus={() => setIsBuyInputFocused(true)}
@@ -517,7 +561,8 @@ export function SwapInputView({
                   const isMultiHop = (routeInfo?.path?.length || 2) > 2;
                   if (!isMultiHop) return null;
                   
-                  return clickedTokenIndex !== null && routeFees?.[selectedPoolIndexForChart] ? (
+                  const showDesktopSelection = !isMobile && clickedTokenIndex !== null;
+                  return showDesktopSelection && routeFees?.[selectedPoolIndexForChart] ? (
                     <div className="flex items-center gap-1.5">
                       <span className="text-muted-foreground text-xs">
                         {quoteError ? (
@@ -549,7 +594,8 @@ export function SwapInputView({
 
                     const rawPoolIndex = selectedPoolIndexForChart;
                     const poolIndex = Math.max(0, Math.min(rawPoolIndex, path.length - 2));
-                    if (clickedTokenIndex !== null) {
+                    const showDesktopSelection = !isMobile && clickedTokenIndex !== null;
+                    if (showDesktopSelection) {
                       if (poolIndex > 0) gaps[poolIndex - 1] = Math.max(gaps[poolIndex - 1], pairMargin);
                       if (poolIndex < path.length - 2) gaps[poolIndex + 1] = Math.max(gaps[poolIndex + 1], pairMargin);
                     }
@@ -580,7 +626,7 @@ export function SwapInputView({
                         animate={{ width: animatedWidth }}
                         transition={{ type: "spring", stiffness: 300, damping: 30 }}
                       >
-                        {clickedTokenIndex !== null && (() => {
+                        {showDesktopSelection && (() => {
                           const ringPadding = 3;
 
                           const token1FinalLeft = (poolIndex * step) + offsets[poolIndex];
@@ -619,7 +665,7 @@ export function SwapInputView({
                           const tokenConfig = getToken(tokenSymbol);
                           const tokenIcon = tokenConfig?.icon || "/placeholder-logo.svg";
 
-                          const isSelected = clickedTokenIndex !== null && (index === poolIndex || index === poolIndex + 1);
+                          const isSelected = showDesktopSelection && (index === poolIndex || index === poolIndex + 1);
 
                           const leftPos = index * step;
                           const xOffset = offsets[index];
@@ -679,7 +725,25 @@ export function SwapInputView({
                                           padding: `${iconSize * 0.1}px`,
                                           margin: `-${iconSize * 0.1}px`
                                         }}
-                                        onClick={() => {}}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          if (!isMobile) setClickedTokenIndex(index);
+
+                                          const n = path.length;
+                                          if (n >= 2 && onSelectPoolForChart) {
+                                            const poolsCount = (routeInfo?.pools.length || Math.max(1, n - 1));
+                                            const maxPoolIdx = Math.max(0, poolsCount - 1);
+                                            const poolStart = Math.max(0, Math.min(Math.min(index, n - 2), maxPoolIdx));
+
+                                            committedPoolIndexRef.current = poolStart;
+                                            onSelectPoolForChart(poolStart);
+
+                                            if (!hoverPreviewActiveRef.current) {
+                                              hoverPreviewActiveRef.current = true;
+                                              onRouteHoverChange?.(true);
+                                            }
+                                          }
+                                        }}
                                       >
                                         <Image
                                           src={tokenIcon}

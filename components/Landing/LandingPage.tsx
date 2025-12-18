@@ -201,7 +201,7 @@ export const PageContent = () => {
         <FeatureCards features={heroFeatures} />
       </Section>
 
-      <Section className="flex flex-col gap-y-8 md:gap-y-12 mt-6 md:mt-8">
+      <Section className="flex flex-col gap-y-8 md:gap-y-12 py-0 md:py-0 mt-8 md:mt-12">
         <DynamicFeeSectionLazy />
 
         <SplitPromo

@@ -128,17 +128,17 @@ const PortfolioHeaderSkeleton = ({ viewportWidth = 1440 }: { viewportWidth?: num
   if (viewportWidth <= 1000) {
     // Mobile/Tablet collapsible header skeleton
     return (
-      <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4 animate-skeleton-pulse">
-        <div className="flex items-center justify-between gap-4">
+      <div className="w-full max-w-full overflow-x-clip rounded-lg bg-muted/30 border border-sidebar-border/60 p-4 animate-skeleton-pulse">
+        <div className="flex items-center justify-between gap-3 min-w-0">
           <div className="flex-1 min-w-0 space-y-3">
             <SkeletonLine className="h-3 w-24" />
-            <SkeletonBlock className="h-10 w-40" />
+            <SkeletonBlock className="h-10 w-full max-w-[180px]" />
             <SkeletonLine className="h-3 w-32" />
           </div>
-          <div className="flex-none min-w-[140px] space-y-2">
-            <div className="flex justify-between items-center pl-4"><SkeletonLine className="h-3 w-16" /><SkeletonLine className="h-3 w-8" /></div>
-            <div className="flex justify-between items-center pl-4"><SkeletonLine className="h-3 w-12" /><SkeletonLine className="h-3 w-10" /></div>
-            <div className="flex justify-between items-center pl-4"><SkeletonLine className="h-3 w-8" /><SkeletonLine className="h-3 w-12" /></div>
+          <div className="flex-none w-[120px] max-w-[42%] min-w-0 space-y-2">
+            <div className="flex justify-between items-center pl-2"><SkeletonLine className="h-3 w-16" /><SkeletonLine className="h-3 w-8" /></div>
+            <div className="flex justify-between items-center pl-2"><SkeletonLine className="h-3 w-12" /><SkeletonLine className="h-3 w-10" /></div>
+            <div className="flex justify-between items-center pl-2"><SkeletonLine className="h-3 w-8" /><SkeletonLine className="h-3 w-12" /></div>
           </div>
           <div className="h-5 w-5 bg-muted/60 rounded-full" />
         </div>

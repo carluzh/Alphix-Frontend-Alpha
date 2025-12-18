@@ -15,6 +15,7 @@ import { getOptimalBaseToken } from "@/lib/denomination-utils";
 import { Token } from '@uniswap/sdk-core';
 import { Pool as V4Pool, Position as V4Position } from '@uniswap/v4-sdk';
 import JSBI from 'jsbi';
+import { useIsMobile } from '@/hooks/use-mobile';
 
 interface RangeSelectionModalV2Props {
   isOpen: boolean;
@@ -72,6 +73,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
     poolMetricsData = null
   } = props;
 
+  const isMobile = useIsMobile();
   const containerRef = useRef<HTMLDivElement>(null);
   const suppressNextClick = useRef(false);
   const minPriceInputRef = useRef<HTMLInputElement>(null);
@@ -526,11 +528,11 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
           </div>
 
           {/* Content */}
-          <div className="overflow-y-auto px-4 pt-4 space-y-4 flex-1 min-h-0">
+          <div className={`overflow-y-auto px-4 pt-4 flex-1 min-h-0 ${isMobile ? 'space-y-3' : 'space-y-4'}`}>
             {/* Pool Price + Help Link */}
             {currentPrice && (
               <div className="flex gap-3">
-                <div className="rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 p-4" style={{ width: '50%' }}>
+                <div className={`rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 p-4 ${isMobile ? 'flex-1' : ''}`} style={isMobile ? undefined : { width: '50%' }}>
                   <div className="flex flex-col gap-1">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-bold text-muted-foreground">Pool Price</span>
@@ -552,24 +554,26 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                   </div>
                 </div>
 
-                <div className="flex-1 flex items-start justify-end pt-1">
-                  <a
-                    href="https://alphix.gitbook.io/docs/quick-start/liquidity#adding--managing-liquidity"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer hover:underline"
-                  >
-                    <CircleHelp className="h-3.5 w-3.5" />
-                    <span>Help</span>
-                  </a>
-                </div>
+                {!isMobile && (
+                  <div className="flex-1 flex items-start justify-end pt-1">
+                    <a
+                      href="https://alphix.gitbook.io/docs/quick-start/liquidity#adding--managing-liquidity"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer hover:underline"
+                    >
+                      <CircleHelp className="h-3.5 w-3.5" />
+                      <span>Help</span>
+                    </a>
+                  </div>
+                )}
               </div>
             )}
 
             {/* Range Types */}
             <div className="space-y-2">
               <span className="text-xs font-bold text-muted-foreground">Range Types</span>
-              <div className="grid grid-cols-4 gap-2">
+              <div className={`grid gap-2 ${isMobile ? 'grid-cols-2' : 'grid-cols-4'}`}>
                 {(() => {
                   // Determine which range types to show based on presetOptions
                   const isStable = presetOptions.includes("±0.5%");
@@ -609,14 +613,14 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                     <div
                       key={rangeType}
                       onClick={() => rangeType !== "Custom" && handlePresetClick(rangeType)}
-                      className={`relative h-12 px-4 flex items-center justify-between rounded-md border transition-all duration-200 overflow-hidden ${
+                      className={`relative ${isMobile ? 'h-10 px-3' : 'h-12 px-4'} flex items-center justify-between rounded-md border transition-all duration-200 overflow-hidden ${
                         rangeType === "Custom"
                           ? `cursor-default ${isActive ? 'text-sidebar-primary border-sidebar-primary bg-button-primary' : 'border-sidebar-border/50 bg-muted/20 text-muted-foreground'}`
                           : `cursor-pointer ${isActive ? 'text-sidebar-primary border-sidebar-primary bg-button-primary' : 'border-sidebar-border bg-button hover:bg-accent hover:brightness-110 hover:border-white/30 text-white'}`
                       }`}
                       style={!isActive && rangeType !== "Custom" ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
                     >
-                      <span className="text-sm font-medium relative z-10">{labels[rangeType] || rangeType}</span>
+                      <span className={`${isMobile ? 'text-xs' : 'text-sm'} font-medium relative z-10`}>{labels[rangeType] || rangeType}</span>
                       <span className="text-xs text-muted-foreground relative z-10">{apyDisplay}</span>
                     </div>
                   );
@@ -629,7 +633,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
             <div className="space-y-2">
               <span className="text-xs font-bold text-muted-foreground">Range Preview</span>
               <div className="rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 pt-4 px-4 pb-2">
-                <div style={{ height: '180px' }} className="relative">
+                <div style={{ height: isMobile ? '140px' : '180px' }} className="relative">
                   {isChartLoading && (
                     <div className="absolute inset-0 flex items-center justify-center bg-muted/10 rounded">
                       <Image
@@ -668,33 +672,33 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
               </div>
             </div>
 
-            {/* Price Inputs - Two Cards Side by Side */}
-            <div className="grid grid-cols-2 gap-3">
+            {/* Price Inputs - Two Cards Side by Side (stacked on mobile) */}
+            <div className={`grid gap-3 ${isMobile ? 'grid-cols-1' : 'grid-cols-2'}`}>
               {/* Min Price Card */}
-              <div className="rounded-lg border border-sidebar-border bg-muted/30 p-4">
-                <div className="space-y-3">
+              <div className={`rounded-lg border border-sidebar-border bg-muted/30 ${isMobile ? 'p-3' : 'p-4'}`}>
+                <div className={isMobile ? 'space-y-1' : 'space-y-3'}>
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold text-muted-foreground">Min Price</span>
                     <div className="flex gap-1.5">
                       <button
                         onClick={() => adjustTick(true, false)}
-                        className="h-7 w-7 rounded-md transition-colors flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+                        className={`${isMobile ? 'h-6 w-6' : 'h-7 w-7'} rounded-md transition-colors flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed`}
                         style={{ backgroundColor: 'rgba(64, 64, 64, 0.4)' }}
                         onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(113, 113, 122, 0.4)'}
                         onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'rgba(64, 64, 64, 0.4)'}
                         disabled={parseInt(localTickLower) <= sdkMinTick}
                       >
-                        <MinusIcon className="h-3.5 w-3.5" />
+                        <MinusIcon className={isMobile ? 'h-3 w-3' : 'h-3.5 w-3.5'} />
                       </button>
                       <button
                         onClick={() => adjustTick(true, true)}
-                        className="h-7 w-7 rounded-md transition-colors flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+                        className={`${isMobile ? 'h-6 w-6' : 'h-7 w-7'} rounded-md transition-colors flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed`}
                         style={{ backgroundColor: 'rgba(64, 64, 64, 0.4)' }}
                         onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(113, 113, 122, 0.4)'}
                         onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'rgba(64, 64, 64, 0.4)'}
                         disabled={parseInt(localTickLower) >= parseInt(localTickUpper) - defaultTickSpacing}
                       >
-                        <PlusIcon className="h-3.5 w-3.5" />
+                        <PlusIcon className={isMobile ? 'h-3 w-3' : 'h-3.5 w-3.5'} />
                       </button>
                     </div>
                   </div>
@@ -720,7 +724,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                       setMinPriceInput(abbreviateDecimal(minPriceFullPrecision));
                     }}
                     className="font-semibold h-auto border-0 bg-transparent px-0 focus-visible:ring-0 focus-visible:ring-offset-0"
-                    style={{ fontSize: '18px' }}
+                    style={{ fontSize: isMobile ? '16px' : '18px' }}
                     placeholder="0"
                     autoComplete="off"
                   />
@@ -729,30 +733,30 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
               </div>
 
               {/* Max Price Card */}
-              <div className="rounded-lg border border-sidebar-border bg-muted/30 p-4">
-                <div className="space-y-3">
+              <div className={`rounded-lg border border-sidebar-border bg-muted/30 ${isMobile ? 'p-3' : 'p-4'}`}>
+                <div className={isMobile ? 'space-y-1' : 'space-y-3'}>
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold text-muted-foreground">Max Price</span>
                     <div className="flex gap-1.5">
                       <button
                         onClick={() => adjustTick(false, false)}
-                        className="h-7 w-7 rounded-md transition-colors flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+                        className={`${isMobile ? 'h-6 w-6' : 'h-7 w-7'} rounded-md transition-colors flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed`}
                         style={{ backgroundColor: 'rgba(64, 64, 64, 0.4)' }}
                         onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(113, 113, 122, 0.4)'}
                         onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'rgba(64, 64, 64, 0.4)'}
                         disabled={parseInt(localTickUpper) <= parseInt(localTickLower) + defaultTickSpacing}
                       >
-                        <MinusIcon className="h-3.5 w-3.5" />
+                        <MinusIcon className={isMobile ? 'h-3 w-3' : 'h-3.5 w-3.5'} />
                       </button>
                       <button
                         onClick={() => adjustTick(false, true)}
-                        className="h-7 w-7 rounded-md transition-colors flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+                        className={`${isMobile ? 'h-6 w-6' : 'h-7 w-7'} rounded-md transition-colors flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed`}
                         style={{ backgroundColor: 'rgba(64, 64, 64, 0.4)' }}
                         onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(113, 113, 122, 0.4)'}
                         onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'rgba(64, 64, 64, 0.4)'}
                         disabled={parseInt(localTickUpper) >= sdkMaxTick}
                       >
-                        <PlusIcon className="h-3.5 w-3.5" />
+                        <PlusIcon className={isMobile ? 'h-3 w-3' : 'h-3.5 w-3.5'} />
                       </button>
                     </div>
                   </div>
@@ -778,7 +782,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                       setMaxPriceInput(abbreviateDecimal(maxPriceFullPrecision));
                     }}
                     className="font-semibold h-auto border-0 bg-transparent px-0 focus-visible:ring-0 focus-visible:ring-offset-0"
-                    style={{ fontSize: '18px' }}
+                    style={{ fontSize: isMobile ? '16px' : '18px' }}
                     placeholder="0"
                     autoComplete="off"
                   />

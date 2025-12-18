@@ -19,10 +19,9 @@ interface ChartDataPoint {
 interface DynamicFeeEvent {
   timestamp: string;
   newFeeBps?: string;
-  currentRatio?: string;
-  currentTargetRatio?: string;
-  newTargetRatio?: string;
-  oldTargetRatio?: string;
+  currentRatio?: string;      // Current Vol/TVL activity measurement (volatile)
+  newTargetRatio?: string;    // New EMA target after this update (smooth)
+  oldTargetRatio?: string;    // Previous EMA target before this update
 }
 
 interface ChartDataResponse {

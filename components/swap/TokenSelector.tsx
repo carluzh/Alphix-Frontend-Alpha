@@ -8,6 +8,12 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
 import { useAccount } from 'wagmi';
 import { getAllTokenPrices } from '@/lib/price-service';
@@ -16,6 +22,7 @@ import { useNetwork } from '@/lib/network-context';
 import { readContract, getBalance } from '@wagmi/core';
 import { erc20Abi, formatUnits } from 'viem';
 import { config } from '@/lib/wagmiConfig';
+import { useIsMobile } from '@/hooks/use-mobile';
 
 export interface TokenSelectorToken {
   address: `0x${string}`;
@@ -116,6 +123,7 @@ export function TokenSelector({
   className,
   swapContainerRect // New prop
 }: TokenSelectorProps) {
+  const isMobile = useIsMobile();
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [tokenPrices, setTokenPrices] = useState<{ BTC: number; USDC: number; ETH: number }>({
@@ -282,6 +290,98 @@ export function TokenSelector({
     setSearchTerm('');
   };
 
+  // Shared token list content (used by both mobile sheet and desktop modal)
+  const TokenListContent = () => (
+    <>
+      {/* Search Input */}
+      <div className="p-4">
+        <div className="relative">
+          <SearchIcon className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="Search token"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="pl-10 rounded-lg bg-muted/30 border-0 focus-visible:ring-1 focus-visible:ring-muted-foreground/30 h-12 text-base"
+            autoFocus={!isMobile}
+          />
+        </div>
+      </div>
+
+      {/* Token List */}
+      <div className={cn(
+        "overflow-y-auto",
+        isMobile ? "flex-1" : ""
+      )} style={isMobile ? undefined : { maxHeight: `calc(100% - 125px)` }}>
+        {filteredTokens.length === 0 ? (
+          <div className="p-6 text-center text-muted-foreground text-sm">
+            No tokens found matching "{searchTerm}"
+          </div>
+        ) : (
+          <div className="py-2">
+            {filteredTokens.map((token) => {
+              const isSelected = token.address === selectedToken.address;
+              const balanceData = tokenBalances[token.address];
+              const isLoadingBalance = balanceData?.isLoading || false;
+              const displayBalance = balanceData?.balance || "~";
+              const usdValue = balanceData?.usdValue || 0;
+
+              return (
+                <button
+                  key={token.address}
+                  className={cn(
+                    "w-full flex items-center gap-3 px-5 py-3.5 hover:bg-muted/50 text-left",
+                    { "bg-muted/30": isSelected }
+                  )}
+                  onClick={() => handleTokenSelect(token)}
+                >
+                  <Image
+                    src={token.icon}
+                    alt={token.symbol}
+                    width={32}
+                    height={32}
+                    className="rounded-full"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between">
+                      <div className="flex flex-col">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium">{token.symbol}</span>
+                          {isSelected && (
+                            <CheckIcon className="h-3 w-3 text-primary" />
+                          )}
+                        </div>
+                        <div className="text-xs text-muted-foreground font-mono">
+                          {formatTokenAddress(token.address)}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        {isLoadingBalance ? (
+                          <>
+                            <div className="h-4 w-16 bg-muted/60 rounded loading-skeleton mb-1"></div>
+                            <div className="h-3 w-12 bg-muted/60 rounded loading-skeleton"></div>
+                          </>
+                        ) : (
+                          <>
+                            <div className="text-sm font-medium">
+                              {displayBalance}
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              {formatCurrency(usdValue.toString())}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </>
+  );
+
   return (
     <div ref={containerRef} className={cn("relative", className)}>
       {/* Selected Token Button */}
@@ -294,149 +394,88 @@ export function TokenSelector({
             "bg-muted/30": isOpen
           }
         )}
-        onClick={() => setIsOpen(!isOpen)} // Directly toggle isOpen
+        onClick={() => setIsOpen(!isOpen)}
         disabled={disabled}
       >
-        <Image 
-          src={selectedToken.icon} 
-          alt={selectedToken.symbol} 
-          width={20} 
-          height={20} 
+        <Image
+          src={selectedToken.icon}
+          alt={selectedToken.symbol}
+          width={20}
+          height={20}
           className="rounded-full"
         />
         <span className="text-sm font-medium">{selectedToken.symbol}</span>
-        <ChevronDownIcon 
+        <ChevronDownIcon
           className={cn(
             "h-4 w-4 text-muted-foreground transition-transform duration-200",
             { "rotate-180": isOpen }
-          )} 
+          )}
         />
       </Button>
 
-      {/* Token Selection Modal - rendered via portal to escape stacking context */}
-      {isOpen && typeof document !== 'undefined' && createPortal(
-        <div
-          className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm"
-          onClick={() => setIsOpen(false)}
-        >
-          {/* Modal positioned to overlay SwapInputView */}
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 10 }}
-            transition={{ duration: 0.2, ease: "easeOut" }}
-            className="fixed rounded-lg shadow-2xl border border-primary overflow-hidden bg-popover"
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              top: swapContainerRect.top,
-              left: swapContainerRect.left,
-              width: swapContainerRect.width,
-              height: swapContainerRect.height,
-            }}
+      {/* Mobile: Bottom Sheet */}
+      {isMobile ? (
+        <Sheet open={isOpen} onOpenChange={setIsOpen}>
+          <SheetContent
+            side="bottom"
+            className="h-[85vh] rounded-t-2xl border-t border-primary p-0 flex flex-col bg-popover"
           >
+            {/* Header */}
+            <SheetHeader className="px-4 pt-4 pb-2 border-b border-sidebar-border/60">
+              <SheetTitle className="text-base font-medium text-left">
+                {excludeToken ? 'Swap From Token' : 'Swap To Token'}
+              </SheetTitle>
+            </SheetHeader>
+
+            {/* Token List Content */}
+            <div className="flex-1 flex flex-col overflow-hidden">
+              <TokenListContent />
+            </div>
+          </SheetContent>
+        </Sheet>
+      ) : (
+        /* Desktop: Portal Modal */
+        isOpen && typeof document !== 'undefined' && createPortal(
+          <div
+            className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm"
+            onClick={() => setIsOpen(false)}
+          >
+            {/* Modal positioned to overlay SwapInputView */}
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 10 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+              className="fixed rounded-lg shadow-2xl border border-primary overflow-hidden bg-popover"
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                top: swapContainerRect.top,
+                left: swapContainerRect.left,
+                width: swapContainerRect.width,
+                height: swapContainerRect.height,
+              }}
+            >
               {/* Header */}
               <div className="flex items-center justify-between p-4 border-b border-primary">
                 <h2 className="text-sm font-medium">
-                  {excludeToken ? 'Swap From Token' : 'Swap To Token'} {/* Reverted header text logic */}
+                  {excludeToken ? 'Swap From Token' : 'Swap To Token'}
                 </h2>
                 <Button
                   variant="ghost"
                   size="icon"
                   className="h-6 w-6 rounded-full"
-                  onClick={() => setIsOpen(false)} // Directly close isOpen
+                  onClick={() => setIsOpen(false)}
                 >
                   <XIcon className="h-3 w-3" />
                 </Button>
               </div>
 
-              {/* Search Input */}
-              <div className="p-4">
-                <div className="relative">
-                  <SearchIcon className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    placeholder="Search token"
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-10 rounded-lg bg-muted/30 border-0 focus-visible:ring-1 focus-visible:ring-muted-foreground/30 h-12 text-base"
-                    autoFocus
-                  />
-                </div>
-              </div>
-
-              {/* Token List - Simple Layout */}
-              <div className="overflow-y-auto" style={{ maxHeight: `calc(100% - 125px)` }}> {/* Adjusted for larger search */}
-                {filteredTokens.length === 0 ? (
-                  <div className="p-6 text-center text-muted-foreground text-sm">
-                    No tokens found matching "{searchTerm}"
-                  </div>
-                ) : (
-                  <div className="py-2">
-                    {filteredTokens.map((token) => {
-                      const isSelected = token.address === selectedToken.address;
-                      const balanceData = tokenBalances[token.address];
-                      const isLoadingBalance = balanceData?.isLoading || false;
-                      const displayBalance = balanceData?.balance || "~";
-                      const usdValue = balanceData?.usdValue || 0;
-
-                      return (
-                        <button
-                          key={token.address}
-                          className={cn(
-                            "w-full flex items-center gap-3 px-5 py-3.5 hover:bg-muted/50 text-left",
-                            {
-                              "bg-muted/30": isSelected
-                            }
-                          )}
-                          onClick={() => handleTokenSelect(token)}
-                        >
-                          <Image
-                            src={token.icon}
-                            alt={token.symbol}
-                            width={32}
-                            height={32}
-                            className="rounded-full"
-                          />
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center justify-between">
-                              <div className="flex flex-col">
-                                <div className="flex items-center gap-2">
-                                  <span className="text-sm font-medium">{token.symbol}</span>
-                                  {isSelected && (
-                                    <CheckIcon className="h-3 w-3 text-primary" />
-                                  )}
-                                </div>
-                                <div className="text-xs text-muted-foreground font-mono">
-                                  {formatTokenAddress(token.address)}
-                                </div>
-                              </div>
-                              <div className="text-right">
-                                {isLoadingBalance ? (
-                                  <>
-                                    <div className="h-4 w-16 bg-muted/60 rounded loading-skeleton mb-1"></div>
-                                    <div className="h-3 w-12 bg-muted/60 rounded loading-skeleton"></div>
-                                  </>
-                                ) : (
-                                  <>
-                                    <div className="text-sm font-medium">
-                                      {displayBalance}
-                                    </div>
-                                    <div className="text-xs text-muted-foreground">
-                                      {formatCurrency(usdValue.toString())}
-                                    </div>
-                                  </>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
+              {/* Token List Content */}
+              <TokenListContent />
             </motion.div>
           </div>,
-        document.body
+          document.body
+        )
       )}
     </div>
   );

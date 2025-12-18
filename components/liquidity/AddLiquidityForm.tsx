@@ -2187,7 +2187,7 @@ export function AddLiquidityForm({
 
               {/* Range Section - Step 1 - Hide when showing transaction steps */}
               {!showingTransactionSteps && (
-              <div className="border border-dashed rounded-md mb-6 bg-muted/10 p-3">
+              <div className="border border-dashed rounded-md bg-muted/10 p-3">
                 {/* Range Label */}
                 <div className="flex items-center justify-between mb-2">
                   <Label className="text-sm font-medium">Range</Label>
@@ -2368,7 +2368,7 @@ export function AddLiquidityForm({
                   resetTransaction();
                 }}
                 className={cn(
-                  "cursor-pointer hover:bg-muted/20 transition-colors p-4 rounded-lg bg-surface border border-sidebar-border/60 mb-4",
+                  "cursor-pointer hover:bg-muted/20 transition-colors p-4 rounded-lg bg-surface border border-sidebar-border/60",
                   isWorking || showingTransactionSteps ? "opacity-50 pointer-events-none" : ""
                 )}
               >

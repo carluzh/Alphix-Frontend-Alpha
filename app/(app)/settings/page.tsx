@@ -230,7 +230,7 @@ export default function SettingsPage() {
     <>
       {/* Password Dialog for Mainnet Access */}
       <Dialog open={showPasswordDialog} onOpenChange={setShowPasswordDialog}>
-        <DialogContent className="sm:max-w-md bg-background border-sidebar-border/60">
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Enter Password</DialogTitle>
             <DialogDescription>

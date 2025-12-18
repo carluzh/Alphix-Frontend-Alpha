@@ -12,11 +12,16 @@ interface MobileLiquidityListProps {
 
 // Helper function to format USD values, similar to the one in app/liquidity/page.tsx
 const formatUSD = (value: number) => {
-  if (value < 0.01 && value > 0) return "< $0.01"; // Handle very small positive values
-  if (value === 0) return "$0.00";
-  if (Math.abs(value) < 0.01) return "< $0.01"; // For small negative values if they ever occur
-  if (Math.abs(value) < 1000) return `$${value.toFixed(2)}`;
-  return `$${(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "$0.00";
+  const abs = Math.abs(n);
+  const sign = n < 0 ? "-" : "";
+  const fmt = (v: number) => `${sign}$${v.toFixed(2)}`;
+
+  if (abs >= 1_000_000_000) return `${fmt(abs / 1_000_000_000)}B`;
+  if (abs >= 1_000_000) return `${fmt(abs / 1_000_000)}M`;
+  if (abs >= 1_000) return `${fmt(abs / 1_000)}K`;
+  return `${sign}$${abs.toFixed(2)}`;
 };
 
 export function MobileLiquidityList({ pools, onSelectPool }: MobileLiquidityListProps) {
@@ -67,7 +72,7 @@ export function MobileLiquidityList({ pools, onSelectPool }: MobileLiquidityList
           <CardContent className="px-3 pb-3 pt-1.5">
             <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs">
               <div className="text-muted-foreground">Volume (24h)</div>
-              <div className="text-right text-muted-foreground">
+              <div className="text-right text-foreground font-medium">
                 {typeof pool.volume24hUSD === 'number' ? formatUSD(pool.volume24hUSD) : pool.volume24h === "Loading..." ? (
                   <div className="inline-block h-3 w-16 bg-muted/60 rounded animate-pulse"></div>
                 ) : (
@@ -76,7 +81,7 @@ export function MobileLiquidityList({ pools, onSelectPool }: MobileLiquidityList
               </div>
 
               <div className="text-muted-foreground">TVL</div>
-              <div className="text-right text-muted-foreground">
+              <div className="text-right text-foreground font-medium">
                 {typeof pool.tvlUSD === 'number' ? formatUSD(pool.tvlUSD) : pool.liquidity === "Loading..." ? (
                   <div className="inline-block h-3 w-16 bg-muted/60 rounded animate-pulse"></div>
                 ) : (

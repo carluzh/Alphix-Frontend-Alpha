@@ -49,9 +49,9 @@ const GET_LAST_HOOK_EVENTS_TESTNET = `
 type HookEvent = {
   timestamp: string;
   newFeeBps?: string;
-  currentRatio?: string;
-  newTargetRatio?: string;
-  oldTargetRatio?: string;
+  currentRatio?: string;      // Current Vol/TVL activity measurement (volatile)
+  newTargetRatio?: string;    // New EMA target after this update (smooth)
+  oldTargetRatio?: string;    // Previous EMA target before this update
 };
 
 type HookResp = { data?: { alphixHooks?: HookEvent[] }, errors?: any[] };

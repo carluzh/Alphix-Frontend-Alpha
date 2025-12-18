@@ -71,7 +71,7 @@ export const SplitPromo: React.FC<SplitPromoProps> = ({
       </div>
       {/* Image Container - nested rounded box like DynamicFeeSection */}
       <div className="flex w-full flex-1 flex-col rounded-lg bg-gray-50 dark:bg-[#161616] overflow-hidden">
-        <div className="relative flex w-full h-full min-h-[200px] md:min-h-[300px]">
+        <div className="relative flex w-full h-full min-h-[280px] md:min-h-[300px]">
           <Image
             className="absolute inset-0 h-full w-full object-cover object-center"
             src={image}

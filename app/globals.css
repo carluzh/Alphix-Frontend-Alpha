@@ -32,7 +32,7 @@
 
   .dark {
     /* Dark theme - using custom variables */
-    --background: var(--main-bg);
+    --background: 0 0% 6%; /* #0f0f0f in HSL - must be HSL for Tailwind's hsl() wrapper */
     --foreground: 0 0% 98%; /* light grey (almost white) */
     --card: 0 0% 3.9%; /* very dark grey */
     --card-foreground: 0 0% 98%; /* light grey (almost white) */
@@ -109,7 +109,7 @@
   }
 
   .dark {
-    --background: var(--main-bg) !important;
+    --background: 0 0% 6% !important; /* #0f0f0f in HSL */
   }
 }
 

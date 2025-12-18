@@ -11,6 +11,7 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 export function UpdatesNotification({
   open = false,
@@ -26,6 +27,7 @@ export function UpdatesNotification({
   edgeOffsetPx?: number;
 }) {
   const [activeIndex, setActiveIndex] = useState(0);
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     if (open) setActiveIndex(0);
@@ -39,6 +41,9 @@ export function UpdatesNotification({
   const handleClose = () => {
     onClose?.();
   };
+
+  // Hide on mobile
+  if (isMobile) return null;
 
   return (
     <AnimatePresence>

@@ -2718,6 +2718,43 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     }
   }, [currentRoute, selectedPoolIndexForChart]);
 
+  // Mobile: swipe left/right on the preview to navigate multihop pools without losing click navigation.
+  const swipeStartRef = useRef<{ x: number; y: number; t: number } | null>(null)
+  const ignoreNextPreviewClickRef = useRef(false)
+  const handlePreviewTouchStart = (e: React.TouchEvent) => {
+    if (!isMobile) return
+    if (!currentRoute || currentRoute.pools.length <= 1) return
+    const t = e.touches?.[0]
+    if (!t) return
+    swipeStartRef.current = { x: t.clientX, y: t.clientY, t: Date.now() }
+  }
+  const handlePreviewTouchEnd = (e: React.TouchEvent) => {
+    if (!isMobile) return
+    if (!currentRoute || currentRoute.pools.length <= 1) return
+    const start = swipeStartRef.current
+    swipeStartRef.current = null
+    if (!start) return
+
+    const t = e.changedTouches?.[0]
+    if (!t) return
+
+    const dx = t.clientX - start.x
+    const dy = t.clientY - start.y
+
+    // Require a deliberate horizontal swipe; ignore vertical scroll gestures.
+    if (Math.abs(dx) < 48) return
+    if (Math.abs(dx) < Math.abs(dy) * 1.2) return
+
+    ignoreNextPreviewClickRef.current = true
+    // Reset after this tick so normal taps still work.
+    window.setTimeout(() => {
+      ignoreNextPreviewClickRef.current = false
+    }, 0)
+
+    if (dx < 0) handleNextPool()
+    else handlePreviousPool()
+  }
+
   // NEW: Determine if chart preview should be shown at all (always show; content decides skeleton vs data)
   // Force show preview container even when not mounted/connected; content will skeletonize as needed
   const showChartPreviewRegardlessOfData = true;
@@ -2797,6 +2834,10 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 onCustomSlippageToggle={handleCustomSlippageToggle}
                 priceImpactWarning={priceImpactWarning}
                 onNetworkSwitch={handleNetworkSwitch}
+                onClearFromAmount={() => {
+                  setFromAmount("");
+                  setToAmount("");
+                }}
               />
             )}
 
@@ -2831,10 +2872,10 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
 
       {/* Preview Chart Row with external nav arrows */}
       <div className="w-full relative">
-        <div className="w-full relative group">
+        <div className="w-full relative group overflow-x-hidden overflow-y-visible sm:overflow-visible">
           {/* Hover buffer extends horizontally so arrows remain clickable while visible */}
-          <div className="absolute inset-y-0 left-[-2.75rem] right-[-2.75rem]"></div>
-          <div className="relative">
+          <div className="absolute inset-y-0 left-0 right-0 sm:left-[-2.75rem] sm:right-[-2.75rem]"></div>
+          <div className="relative touch-pan-y" onTouchStart={handlePreviewTouchStart} onTouchEnd={handlePreviewTouchEnd}>
           <AnimatePresence>
             {/* The motion.div is now always mounted, and its animation controls its visibility/size. */}
             <motion.div
@@ -2849,7 +2890,10 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
             >
               <DynamicFeeChartPreview 
                 data={isFeeHistoryLoading ? [] : feeHistoryData} 
-                onClick={handlePreviewChartClick}
+                onClick={() => {
+                  if (isMobile && ignoreNextPreviewClickRef.current) return
+                  handlePreviewChartClick()
+                }}
                 poolInfo={poolInfo || fallbackPoolInfo}
                 isLoading={isFeeHistoryLoading}
                 alwaysShowSkeleton={false}
@@ -2867,7 +2911,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                   type="button"
                   aria-label="Previous pool"
                   onClick={handlePreviousPool}
-                  className="absolute left-[-2.5rem] top-1/2 -translate-y-1/2 h-8 w-8 flex items-center justify-center text-muted-foreground hover:text-white opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity duration-150"
+                  className="absolute left-0 sm:left-[-2.5rem] top-1/2 -translate-y-1/2 h-8 w-8 flex items-center justify-center text-muted-foreground hover:text-white opacity-100 pointer-events-auto sm:opacity-0 sm:pointer-events-none sm:group-hover:opacity-100 sm:group-hover:pointer-events-auto transition-opacity duration-150"
                 >
                   <ChevronLeftIcon className="h-4 w-4" />
                 </button>
@@ -2877,7 +2921,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                   type="button"
                   aria-label="Next pool"
                   onClick={handleNextPool}
-                  className="absolute right-[-2.5rem] top-1/2 -translate-y-1/2 h-8 w-8 flex items-center justify-center text-muted-foreground hover:text-white opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity duration-150"
+                  className="absolute right-0 sm:right-[-2.5rem] top-1/2 -translate-y-1/2 h-8 w-8 flex items-center justify-center text-muted-foreground hover:text-white opacity-100 pointer-events-auto sm:opacity-0 sm:pointer-events-none sm:group-hover:opacity-100 sm:group-hover:pointer-events-auto transition-opacity duration-150"
                 >
                   <ChevronRightIcon className="h-4 w-4" />
                 </button>

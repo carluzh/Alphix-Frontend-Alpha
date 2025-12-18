@@ -14,7 +14,7 @@ export const SettingsGroup: React.FC<SettingsGroupProps> = ({
       'w-full flex-col divide-y overflow-hidden rounded-lg shadow-sm',
       striped
         ? 'divide-dashed divide-sidebar-border/60 border border-dashed border-sidebar-border/60 bg-muted/10'
-        : 'divide-sidebar-border/60 border border-sidebar-border/60 bg-background'
+        : 'divide-sidebar-border/60 border border-sidebar-border/60 bg-container'
     )}
   >
     {children}
