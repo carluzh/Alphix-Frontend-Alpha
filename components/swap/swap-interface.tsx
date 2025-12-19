@@ -43,11 +43,7 @@ import { swapStore, useSwapStore } from "./swapStore"
 import { Card, CardContent } from "@/components/ui/card"
 import { formatTokenDisplayAmount } from "@/lib/utils"
 
-// Modal Imports
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-
 // Chart Import
-import { DynamicFeeChart } from "../dynamic-fee-chart";
 import { DynamicFeeChartPreview } from "../dynamic-fee-chart-preview";
 // Deprecated cache functions removed - dynamic fee fetching happens directly via API
 import { SwapRoute } from "@/lib/routing-engine";
@@ -191,7 +187,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   const { address: accountAddress, isConnected, chainId: currentChainId } = useAccount();
 
   // State for historical fee data
-  const [isFeeChartModalOpen, setIsFeeChartModalOpen] = useState(false); // New state for modal
   // Chart stability tracking no longer needed with simple rect approach
 
 
@@ -519,17 +514,9 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   // Its previous logic (toggling isFeeChartPreviewVisible) has been removed.
   const handleFeePercentageClick = () => {};
 
-  const handlePreviewChartClick = useCallback(() => {
-    if (!isMobile) {
-      setIsFeeChartModalOpen(true);
-    }
-  }, [isMobile]);
 
   const handleConfirmSwap = () => swapActions.handleConfirmSwap();
 
-  // This function now opens the MODAL
-  // No changes needed here, as it's correctly linked to setIsFeeChartModalOpen
-  // The logic for handling isMobile is already in place.
 
   // --- RENDER LOGIC --- 
         // Determine which token is aUSDC and which is aUSDT for display purposes, regardless of from/to state
@@ -842,7 +829,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
 
   // Mobile: swipe left/right on the preview to navigate multihop pools without losing click navigation.
   const swipeStartRef = useRef<{ x: number; y: number; t: number } | null>(null)
-  const ignoreNextPreviewClickRef = useRef(false)
   const handlePreviewTouchStart = (e: React.TouchEvent) => {
     if (!isMobile) return
     if (!currentRoute || currentRoute.pools.length <= 1) return
@@ -867,11 +853,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     if (Math.abs(dx) < 48) return
     if (Math.abs(dx) < Math.abs(dy) * 1.2) return
 
-    ignoreNextPreviewClickRef.current = true
-    // Reset after this tick so normal taps still work.
-    window.setTimeout(() => {
-      ignoreNextPreviewClickRef.current = false
-    }, 0)
 
     if (dx < 0) handleNextPool()
     else handlePreviousPool()
@@ -990,10 +971,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
               ) : (
                 <DynamicFeeChartPreview 
                   data={isFeeHistoryLoading ? [] : feeHistoryData} 
-                  onClick={() => {
-                    if (ignoreNextPreviewClickRef.current) return
-                    handlePreviewChartClick()
-                  }}
                   poolInfo={poolInfo || fallbackPoolInfo}
                   isLoading={isFeeHistoryLoading}
                   alwaysShowSkeleton={false}
@@ -1045,15 +1022,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       </div>
       </div>
 
-      {/* Full Chart Modal - Controlled by isFeeChartModalOpen - Moved outside the mapping */}
-      <Dialog open={isFeeChartModalOpen} onOpenChange={setIsFeeChartModalOpen}>
-        {/* No DialogTrigger here, it's opened programmatically via the preview click */}
-        <DialogContent className="sm:max-w-3xl p-0 outline-none ring-0 border-0 shadow-2xl rounded-lg">
-          <DialogTitle className="sr-only">Dynamic Fee Chart</DialogTitle>
-          <DynamicFeeChart data={feeHistoryData} />
-          {/* Default Dialog close button will be used */}
-        </DialogContent>
-      </Dialog>
     </div> /* Ensure this closing div is correct */
   );
 }

@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { PlusIcon, RefreshCwIcon, Check, BadgeCheck, OctagonX, ChevronLeft } from "lucide-react";
+import { PlusIcon, RefreshCwIcon, Check, BadgeCheck, OctagonX, ChevronLeft, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -225,6 +225,48 @@ export default function PoolDetailPage() {
   // Pool activity height management - capture initial height on mount only
   const poolActivityRef = useRef<HTMLDivElement>(null);
   const [poolActivityHeight, setPoolActivityHeight] = useState<number | null>(null);
+
+  // Sheet drag-to-close refs and state for Add Liquidity drawer
+  const sheetDragStartYRef = useRef<number | null>(null);
+  const sheetTranslateYRef = useRef(0);
+  const sheetRafRef = useRef<number | null>(null);
+  const sheetContentRef = useRef<HTMLDivElement | null>(null);
+  const [isSheetDragging, setIsSheetDragging] = useState(false);
+
+  const scheduleSheetTransform = useCallback(() => {
+    if (sheetRafRef.current != null) return;
+    sheetRafRef.current = requestAnimationFrame(() => {
+      sheetRafRef.current = null;
+      const el = sheetContentRef.current;
+      if (!el) return;
+      const y = sheetTranslateYRef.current;
+      el.style.transform = y ? `translate3d(0, ${y}px, 0)` : "translate3d(0, 0, 0)";
+    });
+  }, []);
+
+  const onSheetHandleTouchStart = useCallback((e: React.TouchEvent) => {
+    sheetDragStartYRef.current = e.touches[0]?.clientY ?? null;
+    setIsSheetDragging(true);
+  }, []);
+
+  const onSheetHandleTouchMove = useCallback((e: React.TouchEvent) => {
+    const startY = sheetDragStartYRef.current;
+    if (startY == null) return;
+    const currentY = e.touches[0]?.clientY ?? startY;
+    const dy = currentY - startY;
+    if (dy <= 0) return;
+    sheetTranslateYRef.current = Math.min(dy, 220);
+    scheduleSheetTransform();
+  }, [scheduleSheetTransform]);
+
+  const onSheetHandleTouchEnd = useCallback(() => {
+    const shouldClose = sheetTranslateYRef.current > 90;
+    sheetDragStartYRef.current = null;
+    setIsSheetDragging(false);
+    sheetTranslateYRef.current = 0;
+    scheduleSheetTransform();
+    if (shouldClose) setAddLiquidityFormOpen(false);
+  }, [scheduleSheetTransform]);
 
   const { address: accountAddress, isConnected, chainId } = useAccount();
   const { networkMode } = useNetwork();
@@ -2550,8 +2592,32 @@ export default function PoolDetailPage() {
         );
         return isMobile ? (
           <Sheet open={addLiquidityFormOpen} onOpenChange={setAddLiquidityFormOpen}>
-            <SheetContent side="bottom" className="rounded-t-2xl border-t border-primary p-0 flex flex-col bg-popover [&>button]:hidden" style={{ height: 'min(95dvh, 95vh)', paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
-              <div className="flex items-center justify-center h-10 touch-none flex-shrink-0">
+            <SheetContent
+              side="bottom"
+              ref={sheetContentRef}
+              className="rounded-t-2xl border-t border-primary p-0 flex flex-col bg-popover [&>button]:hidden"
+              style={{
+                height: 'min(95dvh, 95vh)',
+                paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+                transition: isSheetDragging ? "none" : "transform 160ms ease-out",
+              }}
+              onPointerDownOutside={() => setAddLiquidityFormOpen(false)}
+            >
+              {/* X close button */}
+              <button
+                onClick={() => setAddLiquidityFormOpen(false)}
+                className="absolute top-3 right-3 z-10 p-1.5 rounded-full bg-muted/50 hover:bg-muted transition-colors"
+                aria-label="Close"
+              >
+                <X className="h-4 w-4 text-muted-foreground" />
+              </button>
+              {/* Drag handle */}
+              <div
+                className="flex items-center justify-center h-10 touch-none flex-shrink-0"
+                onTouchStart={onSheetHandleTouchStart}
+                onTouchMove={onSheetHandleTouchMove}
+                onTouchEnd={onSheetHandleTouchEnd}
+              >
                 <div className="h-1.5 w-12 rounded-full bg-muted-foreground/30" />
               </div>
               <SheetHeader className="px-4 pb-2 flex-shrink-0">

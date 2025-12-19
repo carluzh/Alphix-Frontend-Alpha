@@ -201,8 +201,11 @@ export const PageContent = () => {
         <FeatureCards features={heroFeatures} />
       </Section>
 
-      <Section className="flex flex-col gap-y-8 md:gap-y-12 py-0 md:py-0 mt-8 md:mt-12">
-        <DynamicFeeSectionLazy />
+      <Section className="flex flex-col gap-y-8 md:gap-y-12 py-0 md:py-0 mt-16 md:mt-24">
+        {/* Min-height wrapper to reserve space and prevent layout shift during lazy load */}
+        <div className="min-h-[700px] md:min-h-[520px] xl:min-h-[480px]">
+          <DynamicFeeSectionLazy />
+        </div>
 
         <SplitPromo
           title="More Yield for Everyone"

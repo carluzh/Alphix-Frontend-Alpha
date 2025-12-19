@@ -1,6 +1,9 @@
+'use client'
+
 import { Check } from 'lucide-react'
 import Image from 'next/image'
 import React from 'react'
+import { useInView } from '@/hooks/useInView'
 
 interface SplitPromoProps {
   title: string
@@ -26,9 +29,12 @@ export const SplitPromo: React.FC<SplitPromoProps> = ({
   reverse = false,
   badge,
 }) => {
+  const { ref, inView } = useInView({ once: true, threshold: 0.1 })
+
   return (
     <div
-      className={`animate-on-scroll flex w-full flex-col gap-y-6 overflow-hidden rounded-lg border border-sidebar-border/60 bg-white dark:bg-[#131313] p-2 xl:flex-row ${reverse ? 'xl:flex-row-reverse' : ''}`}
+      ref={ref}
+      className={`animate-on-scroll flex w-full flex-col gap-y-6 overflow-hidden rounded-lg border border-sidebar-border/60 bg-white dark:bg-[#131313] p-2 xl:flex-row ${reverse ? 'xl:flex-row-reverse' : ''} ${inView ? 'in-view' : ''}`}
     >
       {/* Text Content */}
       <div className="flex w-full flex-1 flex-col gap-y-8 p-6 md:p-12">

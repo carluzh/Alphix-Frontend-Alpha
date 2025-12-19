@@ -72,7 +72,8 @@
       "Bash(ANALYZE=true npm run build:*)",
       "Bash(npx sharp-cli:*)",
       "Bash(git log:*)",
-      "Bash(git diff:*)"
+      "Bash(git diff:*)",
+      "Bash(npx tsc --noEmit)"
     ],
     "deny": [],
     "ask": []

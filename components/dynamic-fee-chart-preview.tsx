@@ -4,7 +4,6 @@ import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, ReferenceLine, Tool
 import { getToken, getPoolByTokens } from "@/lib/pools-config";
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import Image from "next/image";
 import { ArrowUpRight } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -170,33 +169,35 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
     setShowLoadingSkeleton(Boolean(alwaysShowSkeleton || isActuallyLoading));
   }, [isActuallyLoading, alwaysShowSkeleton]);
 
-  const targetHref = useMemo(() => {
-    if (!poolInfo) return null;
+  // Handle click to navigate to pool page
+  const handleClick = () => {
+    if (!poolInfo) return;
+
+    // Derive a friendly route id; avoid using raw subgraph id (0x...) in the URL
     const maybeCanonical = (poolInfo as any).id || (poolInfo as any).poolId;
     let targetId: string | undefined;
+
+    // If a provided id is a friendly slug (not 0x...), use it directly
     if (maybeCanonical && !String(maybeCanonical).startsWith('0x')) {
       targetId = String(maybeCanonical);
     } else {
+      // Fallback: map from token symbols to configured pool
       const poolConfig = getPoolByTokens(poolInfo.token0Symbol, poolInfo.token1Symbol);
       if (poolConfig) targetId = poolConfig.id;
     }
-    return targetId ? `/liquidity/${targetId}` : null;
-  }, [poolInfo]);
 
-  const handleClick = () => {
-    if (onClick) {
-      onClick();
-      return;
-    }
-    if (!targetHref) return;
-    if (typeof window !== 'undefined') {
-      if (isMobile) {
-        router.push(targetHref);
+    if (targetId) {
+      const href = `/liquidity/${targetId}`;
+      if (typeof window !== 'undefined') {
+        const isMobileView = window.innerWidth < 768;
+        if (isMobileView) {
+          router.push(href);
+        } else {
+          window.open(href, '_blank', 'noopener,noreferrer');
+        }
       } else {
-        window.open(targetHref, '_blank', 'noopener,noreferrer');
+        router.push(href);
       }
-    } else {
-      router.push(targetHref);
     }
   };
 
@@ -316,24 +317,20 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
     const dataPointsCount = hasData ? effectiveCount : 0;
 
   // Render different Card structures based on data availability
-  const Root: React.FC<React.PropsWithChildren<{ className: string }>> = ({ className, children }) => {
-    if (!onClick && isMobile && targetHref) {
-      return (
-        <Link href={targetHref} prefetch className={`block ${className}`}>
-          {children}
-        </Link>
-      );
-    }
-    return (
-      <div className={className} onClick={handleClick}>
-        {children}
-      </div>
-    );
-  };
-
   if (alwaysShowSkeleton) {
     return (
-      <Root className="w-full rounded-lg border border-primary transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow bg-container-secondary">
+      <div
+        className="w-full rounded-lg border border-primary transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow bg-container-secondary"
+        onClick={handleClick}
+        onMouseEnter={(e) => {
+          const arrow = e.currentTarget.querySelector('[data-arrow]') as HTMLElement;
+          if (arrow) arrow.style.color = 'white';
+        }}
+        onMouseLeave={(e) => {
+          const arrow = e.currentTarget.querySelector('[data-arrow]') as HTMLElement;
+          if (arrow) arrow.style.color = '';
+        }}
+      >
         <div className="flex items-center justify-between px-4 py-2 border-b border-primary">
           <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">DYNAMIC FEE TREND</h2>
                      <div className="flex items-center gap-3">
@@ -366,17 +363,38 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
           </div>
         </div>
         <div className="px-2 pb-2 pt-2 h-[100px] relative">
-          <div className="w-full h-full bg-muted/40 rounded animate-pulse" />
+          <div className="w-full h-full bg-muted/40 rounded flex items-center justify-center">
+            <div className="animate-pulse">
+              <Image
+                src="/LogoIconWhite.svg"
+                alt="Loading"
+                width={24}
+                height={24}
+                className="opacity-60"
+              />
+            </div>
+          </div>
         </div>
-        
-      </Root>
+
+      </div>
     );
   }
 
   // If insufficient data, keep the skeleton approach (avoid layout jumps / partial paints)
   if (!hasMinimumData) {
     return (
-      <Root className="w-full rounded-lg border border-primary transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow bg-container-secondary">
+      <div
+        className="w-full rounded-lg border border-primary transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow bg-container-secondary"
+        onClick={handleClick}
+        onMouseEnter={(e) => {
+          const arrow = e.currentTarget.querySelector('[data-arrow]') as HTMLElement;
+          if (arrow) arrow.style.color = 'white';
+        }}
+        onMouseLeave={(e) => {
+          const arrow = e.currentTarget.querySelector('[data-arrow]') as HTMLElement;
+          if (arrow) arrow.style.color = '';
+        }}
+      >
         <div className="flex items-center justify-between px-4 py-2 border-b border-primary">
           <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">DYNAMIC FEE TREND</h2>
                      <div className="flex items-center gap-3">
@@ -384,21 +402,21 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
                <div className="flex items-center">
                  <div className="relative w-8 h-4">
                    <div className="absolute top-0 left-0 w-4 h-4 rounded-full overflow-hidden bg-background border border-border/50">
-                     <Image 
-                       src={getToken(poolInfo.token0Symbol)?.icon || "/placeholder-logo.svg"} 
-                       alt={poolInfo.token0Symbol} 
-                       width={16} 
-                       height={16} 
-                       className="w-full h-full object-cover" 
+                     <Image
+                       src={getToken(poolInfo.token0Symbol)?.icon || "/placeholder-logo.svg"}
+                       alt={poolInfo.token0Symbol}
+                       width={16}
+                       height={16}
+                       className="w-full h-full object-cover"
                      />
                    </div>
                    <div className="absolute top-0 left-2.5 w-4 h-4 rounded-full overflow-hidden bg-background border border-border/50">
-                     <Image 
-                       src={getToken(poolInfo.token1Symbol)?.icon || "/placeholder-logo.svg"} 
-                       alt={poolInfo.token1Symbol} 
-                       width={16} 
-                       height={16} 
-                       className="w-full h-full object-cover" 
+                     <Image
+                       src={getToken(poolInfo.token1Symbol)?.icon || "/placeholder-logo.svg"}
+                       alt={poolInfo.token1Symbol}
+                       width={16}
+                       height={16}
+                       className="w-full h-full object-cover"
                      />
                    </div>
                  </div>
@@ -409,10 +427,20 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
           </div>
         </div>
         <div className="px-2 pb-2 pt-2 h-[100px] relative">
-          <div className="w-full h-full bg-muted/40 rounded animate-pulse" />
+          <div className="w-full h-full bg-muted/40 rounded flex items-center justify-center">
+            <div className="animate-pulse">
+              <Image
+                src="/LogoIconWhite.svg"
+                alt="Loading"
+                width={24}
+                height={24}
+                className="opacity-60"
+              />
+            </div>
+          </div>
         </div>
         
-      </Root>
+      </div>
     );
   } else {
 
@@ -421,8 +449,19 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
     const effectiveMaxValue: any = 'auto';
 
     return (
-      <>
-      <Root className="w-full rounded-lg border border-primary transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow bg-container-secondary">
+      <div className="relative">
+      <div
+        className="w-full rounded-lg border border-primary transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow bg-container-secondary"
+        onClick={handleClick}
+        onMouseEnter={(e) => {
+          const arrow = e.currentTarget.querySelector('[data-arrow]') as HTMLElement;
+          if (arrow) arrow.style.color = 'white';
+        }}
+        onMouseLeave={(e) => {
+          const arrow = e.currentTarget.querySelector('[data-arrow]') as HTMLElement;
+          if (arrow) arrow.style.color = '';
+        }}
+      >
         <div className="flex items-center justify-between px-4 py-2 border-b border-primary">
           <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">DYNAMIC FEE TREND</h2>
                      <div className="flex items-center gap-3">
@@ -596,10 +635,10 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
             )}
           </div>
         </div>
-      </Root>
-      {/* Hover footer tooltip - separate container below chart card, right-aligned */}
+      </div>
+      {/* Hover footer tooltip - absolutely positioned to not affect layout */}
       {!isMobile && footerDisplay && (
-        <div className="mt-2 flex justify-end pointer-events-none">
+        <div className="absolute top-full right-0 mt-2 pointer-events-none z-10">
           <div className="rounded-md border border-primary bg-container-secondary px-2.5 py-1.5 shadow-sm inline-flex">
             <div className="flex items-center gap-4 text-[10px] md:text-xs font-mono">
               <span className="text-muted-foreground">{footerDisplay.daysAgoLabel}</span>
@@ -608,7 +647,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
           </div>
         </div>
       )}
-      </>
+      </div>
     );
   }
 }

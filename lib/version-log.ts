@@ -11,11 +11,22 @@ export interface VersionEntry {
 
 export const VERSION_LOG: VersionEntry[] = [
   {
+    version: "1.5.3",
+    title: "Patch - v1.5.3",
+    tldr: [
+      "Swap engine refactor - modular hook architecture for reliability",
+      "Mobile drawer patterns - bottom sheets for token selector, range selection, add liquidity",
+      "Responsive polish - overflow fixes, version badge placement, narrow screen handling"
+    ],
+    releaseDate: "2025-12-19"
+  },
+  {
     version: "1.5.2",
     title: "Patch - v1.5.2",
     tldr: [
-      "Improved mobile interface",
-      "Miscellaneous improvements and fixes"
+      "Mobile page layouts - pool detail, portfolio, swap optimized for mobile",
+      "Position cards - compact design with responsive mini charts",
+      "Announcement system - dismissible notification cards"
     ],
     releaseDate: "2025-12-18"
   },
