@@ -34,6 +34,7 @@ import { motion, useAnimation } from "framer-motion";
 import { getTokenSymbolByAddress } from "@/lib/utils";
 import { useQueryClient } from "@tanstack/react-query";
 import { invalidateAfterTx } from "@/lib/invalidation";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 // Define modal view types
 type ModalView = 'default' | 'add-liquidity' | 'remove-liquidity';
@@ -168,6 +169,7 @@ export function PositionDetailsModal({
   const [mounted, setMounted] = useState(false);
   const [chartKey, setChartKey] = useState(0);
   const [currentView, setCurrentView] = useState<ModalView>('default');
+  const isMobile = useIsMobile();
 
   // Preview state for showing impact of actions
   const [previewAddAmount0, setPreviewAddAmount0] = useState<number>(0);
@@ -981,14 +983,16 @@ export function PositionDetailsModal({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[9999] flex items-center justify-center backdrop-blur-md cursor-default"
+      className={`fixed inset-0 z-[9999] flex backdrop-blur-md cursor-default ${isMobile ? 'items-end' : 'items-center justify-center'}`}
       style={{
         pointerEvents: 'auto',
         top: 0,
         left: 0,
         right: 0,
         bottom: 0,
-        backgroundColor: 'rgba(0, 0, 0, 0.5)'
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        paddingTop: isMobile ? 'env(safe-area-inset-top, 0px)' : undefined,
+        paddingBottom: isMobile ? 'env(safe-area-inset-bottom, 0px)' : undefined,
       }}
       onMouseDown={(e) => {
         // Only close if clicking directly on backdrop (not bubbling from child)
@@ -998,17 +1002,18 @@ export function PositionDetailsModal({
       }}
     >
       <div
-        className="relative rounded-lg border border-solid shadow-2xl flex flex-col cursor-default"
+        className={`relative rounded-lg border border-solid shadow-2xl flex flex-col cursor-default ${isMobile ? 'w-full rounded-b-none' : ''}`}
         style={{
-          width: '1000px',
-          maxWidth: '95vw',
-          maxHeight: '95vh',
+          width: isMobile ? '100%' : '1000px',
+          maxWidth: isMobile ? '100%' : '95vw',
+          maxHeight: isMobile ? 'min(95dvh, 95vh)' : '95vh',
           backgroundColor: 'var(--modal-background)',
-          borderColor: 'var(--border-primary)'
+          borderColor: 'var(--border-primary)',
+          borderRadius: isMobile ? '16px 16px 0 0' : undefined,
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="rounded-lg bg-muted/10 border-0 transition-colors flex flex-col flex-1 min-h-0">
+        <div className="rounded-lg bg-muted/10 border-0 transition-colors flex flex-col flex-1 min-h-0 overflow-hidden">
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-2 border-b border-sidebar-border/60 flex-shrink-0">
             <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">POSITION INFORMATION</h2>
@@ -1023,7 +1028,10 @@ export function PositionDetailsModal({
           </div>
 
           {/* Content */}
-          <div className="overflow-y-auto overflow-x-hidden px-4 pt-4 pb-4 space-y-4 flex-1 min-h-0">
+          <div
+            className="overflow-y-auto overflow-x-hidden px-4 pt-4 pb-4 space-y-4 flex-1 min-h-0 overscroll-contain touch-pan-y"
+            style={{ WebkitOverflowScrolling: 'touch' as any }}
+          >
             {/* Pool Info */}
             <div className="overflow-hidden rounded-lg bg-muted/30 border border-sidebar-border/60">
               <div

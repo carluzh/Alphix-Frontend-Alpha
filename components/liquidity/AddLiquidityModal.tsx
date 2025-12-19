@@ -14,6 +14,11 @@ import {
   DialogHeader,
   DialogTitle
 } from "@/components/ui/dialog";
+import {
+  Sheet,
+  SheetContent,
+} from "@/components/ui/sheet";
+import { useIsMobile } from '@/hooks/use-mobile';
 import Image from "next/image";
 import { useAccount, useBalance, useSignTypedData, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { toast } from "sonner";
@@ -122,7 +127,64 @@ export function AddLiquidityModal({
   const { data: incApproveHash, writeContractAsync: approveERC20Async, reset: resetIncreaseApprove } = useWriteContract();
   const { isLoading: isIncreaseApproving, isSuccess: isIncreaseApproved } = useWaitForTransactionReceipt({ hash: incApproveHash });
   const { data: allPrices } = useAllPrices();
-  
+  const isMobile = useIsMobile();
+
+  // Mobile sheet drag refs and state
+  const sheetDragStartYRef = useRef<number | null>(null);
+  const sheetTranslateYRef = useRef(0);
+  const sheetRafRef = useRef<number | null>(null);
+  const sheetContentRef = useRef<HTMLDivElement | null>(null);
+  const sheetInitialFocusRef = useRef<HTMLDivElement | null>(null);
+  const [isSheetDragging, setIsSheetDragging] = useState(false);
+
+  // Sheet drag handlers
+  const scheduleSheetTransform = useCallback(() => {
+    if (sheetRafRef.current != null) return;
+    sheetRafRef.current = requestAnimationFrame(() => {
+      sheetRafRef.current = null;
+      const el = sheetContentRef.current;
+      if (!el) return;
+      const y = sheetTranslateYRef.current;
+      el.style.transform = y ? `translate3d(0, ${y}px, 0)` : "translate3d(0, 0, 0)";
+    });
+  }, []);
+
+  const onSheetHandleTouchStart = useCallback((e: React.TouchEvent) => {
+    sheetDragStartYRef.current = e.touches[0]?.clientY ?? null;
+    setIsSheetDragging(true);
+  }, []);
+
+  const onSheetHandleTouchMove = useCallback((e: React.TouchEvent) => {
+    const startY = sheetDragStartYRef.current;
+    if (startY == null) return;
+    const currentY = e.touches[0]?.clientY ?? startY;
+    const dy = currentY - startY;
+    if (dy <= 0) return;
+    sheetTranslateYRef.current = Math.min(dy, 220);
+    scheduleSheetTransform();
+  }, [scheduleSheetTransform]);
+
+  const onSheetHandleTouchEnd = useCallback(() => {
+    const shouldClose = sheetTranslateYRef.current > 90;
+    sheetDragStartYRef.current = null;
+    setIsSheetDragging(false);
+    sheetTranslateYRef.current = 0;
+    scheduleSheetTransform();
+    if (shouldClose) onOpenChange(false);
+  }, [scheduleSheetTransform, onOpenChange]);
+
+  // Reset sheet drag state when closed
+  useEffect(() => {
+    if (!isOpen) {
+      setIsSheetDragging(false);
+      sheetDragStartYRef.current = null;
+      sheetTranslateYRef.current = 0;
+      if (sheetRafRef.current != null) cancelAnimationFrame(sheetRafRef.current);
+      sheetRafRef.current = null;
+      if (sheetContentRef.current) sheetContentRef.current.style.transform = "translate3d(0, 0, 0)";
+    }
+  }, [isOpen]);
+
   // Determine if this is for an existing position or new position
   const isExistingPosition = !!positionToModify;
 
@@ -1316,14 +1378,15 @@ export function AddLiquidityModal({
   }, [increaseInvolvedTokensCount, increaseNeedsERC20Approvals.length]);
 
 
-  return (
-    <Dialog open={isOpen} onOpenChange={(open) => { 
-        onOpenChange(open); 
-        if (!open) {
-            resetForm();
-        }
-    }}>
-      <DialogContent className="p-0 border-0 bg-transparent shadow-none max-w-lg w-[calc(100%-2rem)] sm:w-full [&>button]:hidden">
+  const handleOpenChange = (open: boolean) => {
+    onOpenChange(open);
+    if (!open) {
+      resetForm();
+    }
+  };
+
+  const innerContent = (
+    <>
         {!showSuccessView ? (
           <div className="space-y-6">
             <style dangerouslySetInnerHTML={{__html: `
@@ -2390,7 +2453,55 @@ export function AddLiquidityModal({
             </Button>
           </div>
           )}
+    </>
+  );
 
+  // Mobile: Bottom Sheet with drag-to-dismiss
+  if (isMobile) {
+    return (
+      <Sheet open={isOpen} onOpenChange={handleOpenChange}>
+        <SheetContent
+          side="bottom"
+          ref={sheetContentRef}
+          tabIndex={-1}
+          className="rounded-t-2xl border-t border-primary p-0 flex flex-col bg-popover [&>button]:hidden"
+          style={{
+            height: 'min(95dvh, 95vh)',
+            maxHeight: 'min(95dvh, 95vh)',
+            paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+            transition: isSheetDragging ? "none" : "transform 160ms ease-out",
+          }}
+          onPointerDownOutside={() => handleOpenChange(false)}
+          onOpenAutoFocus={(e) => {
+            e.preventDefault();
+            sheetInitialFocusRef.current?.focus?.();
+          }}
+        >
+          <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
+            <div ref={sheetInitialFocusRef} tabIndex={-1} aria-hidden className="h-0 w-0 overflow-hidden" />
+            {/* Drag handle */}
+            <div
+              className="flex items-center justify-center h-10 touch-none flex-shrink-0"
+              onTouchStart={onSheetHandleTouchStart}
+              onTouchMove={onSheetHandleTouchMove}
+              onTouchEnd={onSheetHandleTouchEnd}
+            >
+              <div className="h-1.5 w-12 rounded-full bg-muted-foreground/30" />
+            </div>
+            <div className="flex-1 overflow-y-auto overscroll-contain px-4 pb-4">
+              {innerContent}
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
+    );
+  }
+
+  // Desktop: Dialog
+  return (
+    <Dialog open={isOpen} onOpenChange={handleOpenChange}>
+      <DialogContent className="p-0 border-0 bg-transparent shadow-none max-w-lg w-[calc(100%-2rem)] sm:w-full [&>button]:hidden">
+        {innerContent}
       </DialogContent>
     </Dialog>
   );

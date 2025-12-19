@@ -497,17 +497,19 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
   // Shared inner content for both mobile and desktop
   const innerContent = (
     <div className="rounded-lg bg-muted/10 border-0 transition-colors flex flex-col flex-1 min-h-0">
-          {/* Header - Alphix Style */}
+          {/* Header - Alphix Style (no X button on mobile, use drag handle) */}
           <div className="flex items-center justify-between px-4 py-2 border-b border-sidebar-border/60 flex-shrink-0">
             <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">SET PRICE RANGE</h2>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={onClose}
-              className="h-6 w-6 -mr-1 text-muted-foreground hover:text-foreground"
-            >
-              <span className="text-lg">×</span>
-            </Button>
+            {!isMobile && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={onClose}
+                className="h-6 w-6 -mr-1 text-muted-foreground hover:text-foreground"
+              >
+                <span className="text-lg">×</span>
+              </Button>
+            )}
           </div>
 
           {/* Content */}
@@ -685,6 +687,32 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                 </div>
               </div>
             </div>
+
+            {/* Compact Price Display - shown in chart mode on mobile */}
+            {isMobile && mobileViewMode === 'chart' && (
+              <div className="grid grid-cols-2 gap-2">
+                <div
+                  className="rounded-lg border border-sidebar-border bg-muted/30 p-3 cursor-pointer active:bg-muted/50 transition-colors"
+                  onClick={() => setMobileViewMode('inputs')}
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[10px] font-bold text-muted-foreground uppercase">Min Price</span>
+                  </div>
+                  <div className="font-semibold text-sm truncate">{abbreviateDecimal(minPriceFullPrecision, 6)}</div>
+                  <div className="text-[10px] text-muted-foreground truncate">{pricePerText}</div>
+                </div>
+                <div
+                  className="rounded-lg border border-sidebar-border bg-muted/30 p-3 cursor-pointer active:bg-muted/50 transition-colors"
+                  onClick={() => setMobileViewMode('inputs')}
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[10px] font-bold text-muted-foreground uppercase">Max Price</span>
+                  </div>
+                  <div className="font-semibold text-sm truncate">{abbreviateDecimal(maxPriceFullPrecision, 6)}</div>
+                  <div className="text-[10px] text-muted-foreground truncate">{pricePerText}</div>
+                </div>
+              </div>
+            )}
 
             {/* Price Inputs - Two Cards Side by Side (stacked on mobile) */}
             <div className={`grid gap-3 ${isMobile ? 'grid-cols-1' : 'grid-cols-2'} ${isMobile && mobileViewMode === 'chart' ? 'hidden' : ''}`}>
