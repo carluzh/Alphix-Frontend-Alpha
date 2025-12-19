@@ -129,7 +129,7 @@ export function TokenSelector({
   const sheetDragStartYRef = useRef<number | null>(null);
   const sheetTranslateYRef = useRef(0);
   const sheetRafRef = useRef<number | null>(null);
-  const sheetInnerRef = useRef<HTMLDivElement | null>(null);
+  const sheetContentRef = useRef<HTMLDivElement | null>(null);
   const [isSheetDragging, setIsSheetDragging] = useState(false);
   const [tokenPrices, setTokenPrices] = useState<{ BTC: number; USDC: number; ETH: number }>({
     BTC: 77000,
@@ -162,7 +162,7 @@ export function TokenSelector({
       sheetTranslateYRef.current = 0;
       if (sheetRafRef.current != null) cancelAnimationFrame(sheetRafRef.current);
       sheetRafRef.current = null;
-      if (sheetInnerRef.current) sheetInnerRef.current.style.transform = "translateY(0px)";
+      if (sheetContentRef.current) sheetContentRef.current.style.transform = "translate3d(0, 0, 0)";
     }
   }, [isOpen]);
 
@@ -170,10 +170,10 @@ export function TokenSelector({
     if (sheetRafRef.current != null) return;
     sheetRafRef.current = requestAnimationFrame(() => {
       sheetRafRef.current = null;
-      const el = sheetInnerRef.current;
+      const el = sheetContentRef.current;
       if (!el) return;
       const y = sheetTranslateYRef.current;
-      el.style.transform = y ? `translateY(${y}px)` : "translateY(0px)";
+      el.style.transform = y ? `translate3d(0, ${y}px, 0)` : "translate3d(0, 0, 0)";
     });
   };
 
@@ -447,7 +447,14 @@ export function TokenSelector({
             "bg-muted/30": isOpen
           }
         )}
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={() => {
+          if (isMobile) {
+            // Prevent the underlying amount input (or Radix auto-focus) from leaving the keyboard up.
+            const el = document.activeElement as HTMLElement | null;
+            el?.blur?.();
+          }
+          setIsOpen(!isOpen);
+        }}
         disabled={disabled}
       >
         <Image
@@ -471,19 +478,22 @@ export function TokenSelector({
         <Sheet open={isOpen} onOpenChange={setIsOpen}>
           <SheetContent
             side="bottom"
+            ref={sheetContentRef}
             className="rounded-t-2xl border-t border-primary p-0 flex flex-col bg-popover"
             style={{
               height: 'min(85dvh, 85vh)',
               maxHeight: 'min(85dvh, 85vh)',
               paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+              transition: isSheetDragging ? "none" : "transform 160ms ease-out",
             }}
             onPointerDownOutside={() => setIsOpen(false)}
+            onOpenAutoFocus={(e) => {
+              // Radix auto-focuses the first focusable element (our search input), which opens the keyboard.
+              // On mobile, keep focus where it is unless the user taps the search box intentionally.
+              e.preventDefault();
+            }}
           >
-            <div
-              ref={sheetInnerRef}
-              className="flex flex-col flex-1"
-              style={{ transition: isSheetDragging ? "none" : "transform 160ms ease-out" }}
-            >
+            <div className="flex flex-col flex-1">
               {/* Drag handle */}
               <div
                 className="flex justify-center pt-2 pb-1"

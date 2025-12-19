@@ -2205,9 +2205,12 @@ export function AddLiquidityForm({
                       <>
                         {/* Clickable price range display - opens modal */}
                         {getPriceRangeDisplay() && (
-                          <div className="flex items-center gap-1 text-xs">
+                          <div className="flex items-center gap-1 text-xs min-w-0">
                             <div
-                              className={`${(isDraggingRange === 'left' || isDraggingRange === 'center') ? 'text-white' : 'text-muted-foreground'} hover:text-white px-1 py-1 transition-colors cursor-pointer`}
+                              className={cn(
+                                `${(isDraggingRange === 'left' || isDraggingRange === 'center') ? 'text-white' : 'text-muted-foreground'} hover:text-white px-1 py-1 transition-colors cursor-pointer`,
+                                "truncate max-w-[110px] sm:max-w-[160px]"
+                              )}
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setModalInitialFocusField('min');
@@ -2218,7 +2221,10 @@ export function AddLiquidityForm({
                             </div>
                             <span className="text-muted-foreground">-</span>
                             <div
-                              className={`${(isDraggingRange === 'right' || isDraggingRange === 'center') ? 'text-white' : 'text-muted-foreground'} hover:text-white px-1 py-1 transition-colors cursor-pointer`}
+                              className={cn(
+                                `${(isDraggingRange === 'right' || isDraggingRange === 'center') ? 'text-white' : 'text-muted-foreground'} hover:text-white px-1 py-1 transition-colors cursor-pointer`,
+                                "truncate max-w-[110px] sm:max-w-[160px]"
+                              )}
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setModalInitialFocusField('max');

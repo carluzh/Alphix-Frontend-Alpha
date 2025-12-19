@@ -503,7 +503,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
             animate={{ scale: 1, opacity: 1 }}
             exit={{ scale: 0.95, opacity: 0 }}
             transition={{ duration: 0.2, ease: 'easeOut' }}
-            className="relative rounded-lg border border-solid shadow-2xl flex flex-col cursor-default"
+            className="relative rounded-lg border border-solid shadow-2xl flex flex-col cursor-default min-h-0 overflow-hidden"
             style={{
               width: '900px',
               maxWidth: '95vw',
@@ -530,7 +530,10 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
           </div>
 
           {/* Content */}
-          <div className={`overflow-y-auto px-4 pt-4 flex-1 min-h-0 ${isMobile ? 'space-y-3' : 'space-y-4'}`}>
+          <div
+            className={`overflow-y-auto overscroll-contain touch-pan-y px-4 pt-4 flex-1 min-h-0 ${isMobile ? 'space-y-3' : 'space-y-4'}`}
+            style={{ WebkitOverflowScrolling: 'touch' as any }}
+          >
             {/* Pool Price + Help Link */}
             {currentPrice && (
               <div className="flex gap-3">

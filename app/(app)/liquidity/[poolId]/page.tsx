@@ -1339,7 +1339,10 @@ export default function PoolDetailPage() {
             {/* Mobile layout < 768px */}
             <div className="min-[900px]:hidden space-y-3 overflow-x-hidden mb-2">
                 {/* Identification above for mobile */}
-                <Link href="/liquidity" className="rounded-lg bg-muted/30 border border-sidebar-border/60 cursor-pointer block">
+                <Link
+                  href="/liquidity"
+                  className="rounded-lg bg-muted/30 border border-sidebar-border/60 cursor-pointer block transition-[background-color,border-color,transform] duration-150 active:scale-[0.99] active:bg-muted/40 active:border-white/30"
+                >
                   <div className="px-4 py-3 flex items-center w-full">
                     <div className="flex items-center gap-1 min-w-0">
                       <ChevronLeft className="h-4 w-4 text-muted-foreground mr-1 flex-shrink-0" />

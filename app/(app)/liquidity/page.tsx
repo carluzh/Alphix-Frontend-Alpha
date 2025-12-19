@@ -673,7 +673,7 @@ export default function LiquidityPage() {
                 </div>
 
                 <div className="mt-3">
-                  <MobileLiquidityList pools={mobilePools} onSelectPool={navigateToPool} />
+                  <MobileLiquidityList pools={mobilePools} onSelectPool={navigateToPool} optimisticPoolId={optimisticPoolId} />
                 </div>
               </div>
             ) : (
