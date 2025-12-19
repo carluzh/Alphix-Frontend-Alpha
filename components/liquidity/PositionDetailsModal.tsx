@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { ChevronLeft, RefreshCw as RefreshCwIcon, BadgeCheck, OctagonX, Info, ArrowUpRight, CornerRightUp, Minus } from "lucide-react";
+import { ChevronLeft, BadgeCheck, OctagonX, Info, CornerRightUp, Minus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { TokenStack } from "./TokenStack";
@@ -1023,12 +1023,12 @@ export function PositionDetailsModal({
           </div>
 
           {/* Content */}
-          <div className="overflow-y-auto px-4 pt-4 pb-4 space-y-4 flex-1 min-h-0">
+          <div className="overflow-y-auto overflow-x-hidden px-4 pt-4 pb-4 space-y-4 flex-1 min-h-0">
             {/* Pool Info */}
             <div className="overflow-hidden rounded-lg bg-muted/30 border border-sidebar-border/60">
               <div
                 className={cn(
-                  "px-4 py-3 flex items-center gap-3",
+                  "px-4 py-3 flex flex-col gap-3 md:flex-row md:items-center",
                   showViewPoolButton && onViewPool && "cursor-pointer hover:bg-muted/20 transition-colors"
                 )}
                 onClick={() => {
@@ -1038,34 +1038,38 @@ export function PositionDetailsModal({
                   }
                 }}
               >
-                <TokenStack position={position as any} />
-                <div className="flex flex-col gap-1 flex-1 min-w-0">
-                  <h3 className="text-base font-semibold">
-                    {position.token0.symbol} / {position.token1.symbol}
-                  </h3>
-                  <div className="flex items-center gap-2">
-                    {feeTierDisplay && (
-                      <Badge
-                        variant="secondary"
-                        className="bg-muted/30 text-muted-foreground border border-sidebar-border/60 text-[11px] h-5 px-1.5"
-                      >
-                        {feeTierDisplay}
-                      </Badge>
-                    )}
-                    <div className={cn("flex items-center gap-1.5", statusColor)}>
-                      <StatusIndicatorCircle className={statusColor} />
-                      <span className="text-[11px] font-medium">{statusText}</span>
+                {/* Row 1 (mobile): token images + pair + status */}
+                <div className="flex items-center gap-3 min-w-0 w-full">
+                  <TokenStack position={position as any} />
+                  <div className="flex flex-col gap-1 flex-1 min-w-0">
+                    <h3 className="text-base font-semibold truncate">
+                      {position.token0.symbol} / {position.token1.symbol}
+                    </h3>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {feeTierDisplay && (
+                        <Badge
+                          variant="secondary"
+                          className="bg-muted/30 text-muted-foreground border border-sidebar-border/60 text-[11px] h-5 px-1.5"
+                        >
+                          {feeTierDisplay}
+                        </Badge>
+                      )}
+                      <div className={cn("flex items-center gap-1.5", statusColor)}>
+                        <StatusIndicatorCircle className={statusColor} />
+                        <span className="text-[11px] font-medium">{statusText}</span>
+                      </div>
                     </div>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-1 flex-shrink-0 ml-auto mt-[25px]">
+                {/* Row 2 (mobile): actions */}
+                <div className="flex items-center justify-end gap-1 w-full flex-wrap md:flex-nowrap md:w-auto md:ml-auto md:mt-[25px]">
                   <Button
                     onClick={(e) => { e.stopPropagation(); handleAddLiquidityClick(); }}
                     variant="ghost"
                     size="sm"
                     className={cn(
-                      "h-7 px-2.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50",
+                      "h-7 px-2 text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted/50 md:px-2.5 md:text-xs",
                       currentView === 'add-liquidity' && "bg-muted/50 text-foreground"
                     )}
                   >
@@ -1076,7 +1080,7 @@ export function PositionDetailsModal({
                     variant="ghost"
                     size="sm"
                     className={cn(
-                      "h-7 px-2.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50",
+                      "h-7 px-2 text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted/50 md:px-2.5 md:text-xs",
                       currentView === 'remove-liquidity' && "bg-muted/50 text-foreground"
                     )}
                   >
@@ -1088,7 +1092,7 @@ export function PositionDetailsModal({
                     variant="ghost"
                     size="sm"
                     className={cn(
-                      "h-7 px-2.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 disabled:opacity-40",
+                      "h-7 px-2 text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted/50 disabled:opacity-40 md:px-2.5 md:text-xs",
                       isDecreasingLiquidity && currentView === 'default' && "animate-pulse"
                     )}
                   >
@@ -1139,8 +1143,8 @@ export function PositionDetailsModal({
               /* Default view: side-by-side grid */
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {/* Position Section */}
-                <div className="bg-container-secondary border border-sidebar-border rounded-lg p-5">
-                <div className="flex flex-col gap-5">
+                <div className="bg-container-secondary border border-sidebar-border rounded-lg p-4 md:p-5">
+                <div className="flex flex-col gap-3 md:gap-5">
                   {/* Label + Total USD */}
                   <div className="flex flex-col gap-2 relative">
                     {/* APY - only show if there are actual fees earned */}
@@ -1166,7 +1170,7 @@ export function PositionDetailsModal({
                     )}
 
                     <div className="text-[11px] text-muted-foreground uppercase tracking-wide">Position</div>
-                    <div className="text-xl font-semibold">
+                    <div className="text-lg md:text-xl font-semibold">
                       {new Intl.NumberFormat('en-US', {
                         style: 'currency',
                         currency: 'USD',
@@ -1192,7 +1196,7 @@ export function PositionDetailsModal({
 
                   {/* Stacked Bars */}
                   {positionBars && (
-                    <div className="flex flex-col gap-2">
+                    <div className="hidden md:flex flex-col gap-2">
                       <div className="flex h-1 rounded-full overflow-hidden gap-0.5">
                         <div
                           className="h-full"
@@ -1242,7 +1246,7 @@ export function PositionDetailsModal({
                   )}
 
                   {/* Token Amounts */}
-                  <div className="flex flex-col gap-4">
+                  <div className="flex flex-col gap-3 md:gap-4">
                     {/* Token 0 Row */}
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
@@ -1363,8 +1367,8 @@ export function PositionDetailsModal({
                 </div>
 
                 {/* Fees Earned Section */}
-                <div className="bg-container-secondary border border-dashed border-sidebar-border rounded-lg p-5 relative">
-                <div className="flex flex-col gap-5">
+                <div className="bg-container-secondary border border-dashed border-sidebar-border rounded-lg p-4 md:p-5 relative">
+                <div className="flex flex-col gap-3 md:gap-5">
                   {/* Badge - Top Right */}
                   {isAddingLiquidity && !hasZeroFees && (
                     <div className="absolute top-5 right-5 group">
@@ -1403,7 +1407,7 @@ export function PositionDetailsModal({
                   {/* Label + Total Fees */}
                   <div className="flex flex-col gap-2">
                     <div className="text-[11px] text-muted-foreground uppercase tracking-wide">Fees Earned</div>
-                    <div className={cn("text-xl font-semibold",
+                    <div className={cn("text-lg md:text-xl font-semibold",
                       isAddingLiquidity && !hasZeroFees && !hasUncollectedFees() && "text-green-500",
                       isAddingLiquidity && !hasZeroFees && hasUncollectedFees() && "text-red-500",
                       isRemovingLiquidity && !hasZeroFees && "text-red-500"
@@ -1419,7 +1423,7 @@ export function PositionDetailsModal({
 
                   {/* Stacked Bars for Fees */}
                   {feesBars && (
-                    <div className="flex flex-col gap-2">
+                    <div className="hidden md:flex flex-col gap-2">
                       <div className="flex h-1 rounded-full overflow-hidden gap-0.5">
                         <div
                           className="h-full"
@@ -1533,14 +1537,14 @@ export function PositionDetailsModal({
               /* Action views: stacked left + form right */
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {/* Left Column - Position and Fees stacked */}
-                <div className="flex flex-col gap-4">
+                <div className="hidden md:flex flex-col gap-4">
                   {/* Position Section */}
-                  <div className="bg-container-secondary border border-sidebar-border rounded-lg p-5">
-                  <div className="flex flex-col gap-5">
+                  <div className="bg-container-secondary border border-sidebar-border rounded-lg p-4 md:p-5">
+                  <div className="flex flex-col gap-3 md:gap-5">
                     {/* Label + Total USD */}
                     <div className="flex flex-col gap-2">
                       <div className="text-[11px] text-muted-foreground uppercase tracking-wide">Position</div>
-                      <div className="text-xl font-semibold">
+                      <div className="text-lg md:text-xl font-semibold">
                         {new Intl.NumberFormat('en-US', {
                           style: 'currency',
                           currency: 'USD',
@@ -1566,7 +1570,7 @@ export function PositionDetailsModal({
 
                     {/* Stacked Bars */}
                     {positionBars && (
-                      <div className="flex flex-col gap-2">
+                      <div className="hidden md:flex flex-col gap-2">
                         <div className="flex h-1 rounded-full overflow-hidden gap-0.5">
                           <div
                             className="h-full"
@@ -1616,7 +1620,7 @@ export function PositionDetailsModal({
                     )}
 
                     {/* Token Amounts */}
-                    <div className="flex flex-col gap-4">
+                    <div className="flex flex-col gap-3 md:gap-4">
                       {/* Token 0 Row */}
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
@@ -1737,8 +1741,8 @@ export function PositionDetailsModal({
                   </div>
 
                   {/* Fees Earned Section */}
-                  <div className="bg-container-secondary border border-dashed border-sidebar-border rounded-lg p-5 relative">
-                  <div className="flex flex-col gap-5">
+                  <div className="bg-container-secondary border border-dashed border-sidebar-border rounded-lg p-4 md:p-5 relative">
+                  <div className="flex flex-col gap-3 md:gap-5">
                     {/* Badge - Top Right */}
                     {isAddingLiquidity && !hasZeroFees && (
                       <div className="absolute top-5 right-5 group">
@@ -1777,7 +1781,7 @@ export function PositionDetailsModal({
                     {/* Label + Total Fees */}
                     <div className="flex flex-col gap-2">
                       <div className="text-[11px] text-muted-foreground uppercase tracking-wide">Fees Earned</div>
-                      <div className={cn("text-xl font-semibold",
+                    <div className={cn("text-lg md:text-xl font-semibold",
                         isAddingLiquidity && !hasZeroFees && !hasUncollectedFees() && "text-green-500",
                         isAddingLiquidity && !hasZeroFees && hasUncollectedFees() && "text-red-500",
                         isRemovingLiquidity && !hasZeroFees && "text-red-500"
@@ -1793,7 +1797,7 @@ export function PositionDetailsModal({
 
                     {/* Stacked Bars for Fees */}
                     {feesBars && (
-                      <div className="flex flex-col gap-2">
+                      <div className="hidden md:flex flex-col gap-2">
                         <div className="flex h-1 rounded-full overflow-hidden gap-0.5">
                           <div
                             className="h-full"
@@ -1905,7 +1909,7 @@ export function PositionDetailsModal({
                 </div>
 
               {/* Form Panel - Right side in action views */}
-              <div className="bg-container-secondary border border-sidebar-border rounded-lg p-5 self-start">
+              <div className="bg-container-secondary border border-sidebar-border rounded-lg p-4 md:p-5 self-start">
                   {/* Keep FormPanel mounted but hidden to preserve state */}
                   <div className={showInterimConfirmation ? "hidden" : ""}>
                     {/* Back Button */}

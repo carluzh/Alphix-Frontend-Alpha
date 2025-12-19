@@ -14,18 +14,12 @@ import { useAccount } from "wagmi";
 import { useEffect } from "react";
 import { Token, SwapTxInfo } from './swap-interface';
 import { getExplorerUrl } from '@/lib/wagmiConfig';
+import type { SwapTradeModel } from "./useSwapTrade";
 
 interface SwapSuccessViewProps {
   displayFromToken: Token;
   displayToToken: Token;
-  calculatedValues: {
-    fromTokenAmount: string;
-    fromTokenValue: string;
-    toTokenAmount: string;
-    toTokenValue: string;
-    fees: Array<{ name: string; value: string; type: string }>;
-    slippage: string;
-  };
+  trade: SwapTradeModel;
   swapTxInfo: SwapTxInfo | null;
   handleChangeButton: () => void;
   formatTokenAmountDisplay: (amount: string, token: Token) => string; // Updated to use Token objects
@@ -34,7 +28,7 @@ interface SwapSuccessViewProps {
 export function SwapSuccessView({ 
   displayFromToken,
   displayToToken,
-  calculatedValues,
+  trade,
   swapTxInfo,
   handleChangeButton,
   formatTokenAmountDisplay
@@ -67,7 +61,7 @@ export function SwapSuccessView({
               )}
               <span className="ml-1 text-xs text-muted-foreground">{swapTxInfo?.fromSymbol || displayFromToken.symbol}</span>
             </div>
-            <div className="text-xs text-muted-foreground">{calculatedValues.fromTokenValue}</div>
+            <div className="text-xs text-muted-foreground">{trade.calculatedValues.fromTokenValue}</div>
           </div>
         </div>
         <ChevronRightIcon className="h-4 w-4 text-muted-foreground mx-2" />
@@ -81,7 +75,7 @@ export function SwapSuccessView({
               )}
               <span className="ml-1 text-xs text-muted-foreground">{swapTxInfo?.toSymbol || displayToToken.symbol}</span>
             </div>
-            <div className="text-xs text-muted-foreground">{calculatedValues.toTokenValue}</div>
+            <div className="text-xs text-muted-foreground">{trade.calculatedValues.toTokenValue}</div>
           </div>
           <Image src={displayToToken.icon} alt={displayToToken.symbol} width={32} height={32} className="rounded-full"/>
         </div>

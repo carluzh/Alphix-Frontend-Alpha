@@ -16,14 +16,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { Token, FeeDetail } from './swap-interface';
+import { Token } from './swap-interface';
 import { TokenSelector, TokenSelectorToken } from './TokenSelector';
 import { getToken } from '@/lib/pools-config';
-import { findBestRoute } from '@/lib/routing-engine';
 import { SlippageControl } from './SlippageControl';
 import { useTokenUSDPrice } from '@/hooks/useTokenUSDPrice';
 import { useSlippageValidation } from '@/hooks/useSlippage';
 import { useIsMobile } from "@/hooks/use-mobile";
+import type { SwapTradeModel } from "./useSwapTrade";
 
 interface SwapInputViewProps {
   displayFromToken: Token;
@@ -38,18 +38,11 @@ interface SwapInputViewProps {
   availableTokens: Token[];
   onFromTokenSelect: (token: Token) => void;
   onToTokenSelect: (token: Token) => void;
-  formatCurrency: (value: string) => string;
   isConnected: boolean;
   isAttemptingSwitch: boolean;
   isLoadingCurrentFromTokenBalance: boolean;
   isLoadingCurrentToTokenBalance: boolean;
-  calculatedValues: {
-    fees: FeeDetail[];
-    minimumReceived: string;
-  };
-  dynamicFeeLoading: boolean;
-  quoteLoading: boolean;
-  quoteError?: string | null;
+  trade: SwapTradeModel;
   actionButtonText: string;
   actionButtonDisabled: boolean;
   handleSwap: () => void;
@@ -57,14 +50,6 @@ interface SwapInputViewProps {
   currentChainId: number | undefined;
   TARGET_CHAIN_ID: number;
   strokeWidth?: number;
-  routeInfo?: {
-    path: string[];
-    hops: number;
-    isDirectRoute: boolean;
-    pools: string[];
-  } | null;
-  routeFees?: Array<{ poolName: string; fee: number }>;
-  routeFeesLoading?: boolean;
   selectedPoolIndexForChart?: number;
   onSelectPoolForChart?: (poolIndex: number) => void;
   swapContainerRect: { top: number; left: number; width: number; height: number; };
@@ -76,10 +61,6 @@ interface SwapInputViewProps {
   onCustomSlippageToggle: () => void;
   showRoute?: boolean;
   onRouteHoverChange?: (hover: boolean) => void;
-  priceImpactWarning?: {
-    severity: 'medium' | 'high';
-    message: string;
-  } | null;
   onNetworkSwitch?: () => void;
   onClearFromAmount?: () => void;
 }
@@ -97,15 +78,11 @@ export function SwapInputView({
   availableTokens,
   onFromTokenSelect,
   onToTokenSelect,
-  formatCurrency,
   isConnected,
   isAttemptingSwitch,
   isLoadingCurrentFromTokenBalance,
   isLoadingCurrentToTokenBalance,
-  calculatedValues,
-  dynamicFeeLoading,
-  quoteLoading,
-  quoteError,
+  trade,
   actionButtonText,
   actionButtonDisabled,
   handleSwap,
@@ -113,9 +90,6 @@ export function SwapInputView({
   currentChainId,
   TARGET_CHAIN_ID,
   strokeWidth = 2,
-  routeInfo,
-  routeFees,
-  routeFeesLoading,
   selectedPoolIndexForChart = 0,
   onSelectPoolForChart,
   swapContainerRect,
@@ -127,7 +101,6 @@ export function SwapInputView({
   onCustomSlippageToggle,
   showRoute = true,
   onRouteHoverChange,
-  priceImpactWarning,
   onNetworkSwitch,
   onClearFromAmount,
 }: SwapInputViewProps) {
@@ -190,7 +163,7 @@ export function SwapInputView({
       parseFloat(displayFromToken.balance || "0") < parseFloat(fromAmount || "0")
     );
 
-  const isSwapBaseDisabled = actionButtonDisabled || quoteLoading;
+  const isSwapBaseDisabled = actionButtonDisabled || trade.quoteLoading;
   const isSwapDisabled = isSwapBaseDisabled || swapDisabledDueToBalance;
 
   return (
@@ -233,7 +206,6 @@ export function SwapInputView({
             z-index: 0;
             animation: inputGradientFlow 10s linear infinite;
           }
-          .input-gradient-hover:hover::before,
           .input-gradient-hover:focus-within::before {
             opacity: 1;
           }
@@ -269,14 +241,17 @@ export function SwapInputView({
           )}
         </div>
         <div className="flex items-center gap-2">
-          <TokenSelector
-            selectedToken={displayFromToken as TokenSelectorToken}
-            availableTokens={availableTokens as TokenSelectorToken[]}
-            onTokenSelect={onFromTokenSelect}
-            excludeToken={displayToToken as TokenSelectorToken}
-            disabled={isAttemptingSwitch}
-            swapContainerRect={swapContainerRect}
-          />
+          {/* Token Selector - prevent keyboard popup on mobile by stopping propagation */}
+          <div onClick={isMobile ? (e) => e.stopPropagation() : undefined}>
+            <TokenSelector
+              selectedToken={displayFromToken as TokenSelectorToken}
+              availableTokens={availableTokens as TokenSelectorToken[]}
+              onTokenSelect={onFromTokenSelect}
+              excludeToken={displayToToken as TokenSelectorToken}
+              disabled={isAttemptingSwitch}
+              swapContainerRect={swapContainerRect}
+            />
+          </div>
           <div className="flex-1">
             <Input
               type={isMobile ? "number" : "text"}
@@ -288,7 +263,7 @@ export function SwapInputView({
               onBlur={() => setIsSellInputFocused(false)}
               className={cn(
                 "border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto input-enhanced focus-visible:rounded-none focus-visible:outline-none",
-                { "opacity-50": quoteLoading && activelyEditedSide === 'to' }
+                { "opacity-50": trade.quoteLoading && activelyEditedSide === 'to' }
               )}
               placeholder="0"
               disabled={isAttemptingSwitch}
@@ -296,10 +271,10 @@ export function SwapInputView({
             <div className="relative text-right text-xs min-h-5">
               {/* USD Value - hide on hover */}
               <div className={cn("text-muted-foreground transition-opacity duration-100", {
-                "opacity-50": quoteLoading && activelyEditedSide === 'to',
+                "opacity-50": trade.quoteLoading && activelyEditedSide === 'to',
                 "group-hover:opacity-0": isConnected && parseFloat(displayFromToken.balance || "0") > 0
               })}>
-                {formatCurrency((parseFloat(fromAmount || "0") * (fromTokenPrice.price || displayFromToken.usdPrice || 0)).toString())}
+                {trade.formatCurrency((parseFloat(fromAmount || "0") * (fromTokenPrice.price || displayFromToken.usdPrice || 0)).toString())}
               </div>
               {/* Percentage buttons - show on hover */}
               {isConnected && parseFloat(displayFromToken.balance || "0") > 0 && (
@@ -434,10 +409,10 @@ export function SwapInputView({
           className={cn(
             "arrow-loading-wrapper",
             isMobile && "mobile-size",
-            quoteLoading && "loading",
+            trade.quoteLoading && "loading",
             isAttemptingSwitch && "cursor-not-allowed"
           )}
-          onClick={isAttemptingSwitch || quoteLoading ? undefined : handleSwapTokens}
+          onClick={isAttemptingSwitch || trade.quoteLoading ? undefined : handleSwapTokens}
         >
           <div className="arrow-loading-inner">
             <ArrowDownIcon className={cn(isMobile ? "h-5 w-5" : "h-4 w-4")} />
@@ -467,14 +442,17 @@ export function SwapInputView({
           </Button>
         </div>
         <div className="flex items-center gap-2">
-          <TokenSelector
-            selectedToken={displayToToken as TokenSelectorToken}
-            availableTokens={availableTokens as TokenSelectorToken[]}
-            onTokenSelect={onToTokenSelect}
-            excludeToken={displayFromToken as TokenSelectorToken}
-            disabled={isAttemptingSwitch}
-            swapContainerRect={swapContainerRect}
-          />
+          {/* Token Selector - prevent keyboard popup on mobile by stopping propagation */}
+          <div onClick={isMobile ? (e) => e.stopPropagation() : undefined}>
+            <TokenSelector
+              selectedToken={displayToToken as TokenSelectorToken}
+              availableTokens={availableTokens as TokenSelectorToken[]}
+              onTokenSelect={onToTokenSelect}
+              excludeToken={displayFromToken as TokenSelectorToken}
+              disabled={isAttemptingSwitch}
+              swapContainerRect={swapContainerRect}
+            />
+          </div>
           <div className="flex-1">
             <Input
               type={isMobile ? "number" : "text"}
@@ -487,20 +465,20 @@ export function SwapInputView({
               disabled={isAttemptingSwitch}
               className={cn(
                 "text-right text-xl md:text-xl font-medium h-auto p-0 focus-visible:ring-0 focus-visible:ring-offset-0 border-0 bg-transparent",
-                { "opacity-50": quoteLoading && activelyEditedSide === 'from' }
+                { "opacity-50": trade.quoteLoading && activelyEditedSide === 'from' }
               )}
               placeholder="0"
             />
             <div className="relative text-right text-xs min-h-5">
               {/* USD Value - hide on hover */}
               <div className={cn("text-muted-foreground transition-opacity duration-100", {
-                "opacity-50": quoteLoading && activelyEditedSide === 'from',
+                "opacity-50": trade.quoteLoading && activelyEditedSide === 'from',
                 "group-hover:opacity-0": isConnected && parseFloat(displayToToken.balance || "0") > 0
               })}>
                 {(() => {
                   const amount = parseFloat(toAmount || "");
                   if (!toAmount || isNaN(amount)) return "$0.00";
-                  return formatCurrency((amount * (toTokenPrice.price || displayToToken.usdPrice || 0)).toString());
+                  return trade.formatCurrency((amount * (toTokenPrice.price || displayToToken.usdPrice || 0)).toString());
                 })()}
               </div>
               {/* Percentage buttons - show on hover */}
@@ -540,7 +518,7 @@ export function SwapInputView({
 
       {/* Route, Fee, and Slippage Information */}
       <div className="mt-4 space-y-1.5">
-        {showRoute && !!routeInfo && (
+        {showRoute && !!trade.routeInfo && (
           <>
             <div
               className="flex items-center justify-between text-xs text-muted-foreground"
@@ -558,19 +536,19 @@ export function SwapInputView({
 
               <div className="flex items-center gap-3">
                 {(() => {
-                  const isMultiHop = (routeInfo?.path?.length || 2) > 2;
+                  const isMultiHop = (trade.routeInfo?.path?.length || 2) > 2;
                   if (!isMultiHop) return null;
                   
                   const showDesktopSelection = !isMobile && clickedTokenIndex !== null;
-                  return showDesktopSelection && routeFees?.[selectedPoolIndexForChart] ? (
+                  return showDesktopSelection && trade.routeFees?.[selectedPoolIndexForChart] ? (
                     <div className="flex items-center gap-1.5">
                       <span className="text-muted-foreground text-xs">
-                        {quoteError ? (
+                        {trade.quoteError ? (
                           "-"
-                        ) : routeFeesLoading ? (
+                        ) : trade.routeFeesLoading ? (
                           <div className="h-3 w-8 bg-muted/60 rounded animate-pulse"></div>
                         ) : (
-                          formatPercentFromBps(routeFees[selectedPoolIndexForChart].fee)
+                          formatPercentFromBps(trade.routeFees[selectedPoolIndexForChart].fee)
                         )}
                       </span>
                     </div>
@@ -580,7 +558,7 @@ export function SwapInputView({
                 {/* Animated token picker */}
                 <div className="relative flex items-center h-7">
                   {(() => {
-                    const path = routeInfo?.path || [displayFromToken.symbol, displayToToken.symbol];
+                    const path = trade.routeInfo?.path || [displayFromToken.symbol, displayToToken.symbol];
                     const iconSize = 20;
                     const overlap = 0.3 * iconSize;
                     const step = iconSize - overlap;
@@ -684,7 +662,7 @@ export function SwapInputView({
                                 setHoveredRouteIndex(index);
                                 const n = path.length;
                                 if (n >= 2 && onSelectPoolForChart) {
-                                  const poolsCount = (routeInfo?.pools.length || Math.max(1, n - 1));
+                    const poolsCount = (trade.routeInfo?.pools.length || Math.max(1, n - 1));
                                   const maxPoolIdx = Math.max(0, poolsCount - 1);
 
                                   const currentStart = Math.max(0, Math.min((committedPoolIndexRef.current ?? selectedPoolIndexForChart), maxPoolIdx));
@@ -731,7 +709,7 @@ export function SwapInputView({
 
                                           const n = path.length;
                                           if (n >= 2 && onSelectPoolForChart) {
-                                            const poolsCount = (routeInfo?.pools.length || Math.max(1, n - 1));
+                                            const poolsCount = (trade.routeInfo?.pools.length || Math.max(1, n - 1));
                                             const maxPoolIdx = Math.max(0, poolsCount - 1);
                                             const poolStart = Math.max(0, Math.min(Math.min(index, n - 2), maxPoolIdx));
 
@@ -782,7 +760,7 @@ export function SwapInputView({
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
                   {(() => {
-                    const isMultiHop = (routeInfo?.path?.length || 2) > 2;
+                    const isMultiHop = (trade.routeInfo?.path?.length || 2) > 2;
                     if (isMultiHop) {
                       return (
                         <TooltipProvider delayDuration={0}>
@@ -801,20 +779,20 @@ export function SwapInputView({
                   })()}
                   <div className="flex items-center gap-1.5 min-w-0">
                     {(() => {
-                      if (quoteError) {
+                      if (trade.quoteError) {
                         return <span className="text-muted-foreground">-</span>;
                       }
-                      if (routeFeesLoading) {
+                      if (trade.routeFeesLoading) {
                         return <div className="h-3 w-16 bg-muted/60 rounded animate-pulse"></div>;
                       }
-                      if (!routeFees || routeFees.length === 0) {
+                      if (!trade.routeFees || trade.routeFees.length === 0) {
                         return <span className="text-muted-foreground">N/A</span>;
                       }
-                      const totalFeeBps = routeFees.reduce((total, routeFee) => total + routeFee.fee, 0);
+                      const totalFeeBps = trade.routeFees.reduce((total, routeFee) => total + routeFee.fee, 0);
                       const inputAmountUSD = parseFloat(fromAmount || "0") * (fromTokenPrice.price || displayFromToken.usdPrice || 0);
                       const feeInUSD = inputAmountUSD * (totalFeeBps / 10000);
                       const percentDisplay = formatPercentFromBps(totalFeeBps);
-                      const amountDisplay = feeInUSD > 0 && feeInUSD < 0.01 ? "< $0.01" : formatCurrency(feeInUSD.toString());
+                      const amountDisplay = feeInUSD > 0 && feeInUSD < 0.01 ? "< $0.01" : trade.formatCurrency(feeInUSD.toString());
 
                       return (
                         <div className="relative inline-flex items-center justify-end h-5 group cursor-default">
@@ -838,7 +816,7 @@ export function SwapInputView({
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
                   <span>Minimum Received</span>
                   <span className="text-muted-foreground">
-                    {calculatedValues.minimumReceived} {displayToToken.symbol}
+                    {trade.calculatedValues.minimumReceived} {displayToToken.symbol}
                   </span>
                 </div>
               </div>
@@ -848,15 +826,15 @@ export function SwapInputView({
       </div>
 
       {/* Price Impact Warning */}
-      {priceImpactWarning && (
+      {trade.priceImpactWarning && (
         <div className={cn(
           "mt-3 flex items-center gap-2 rounded-md px-3 py-2 text-xs",
-          priceImpactWarning.severity === 'high'
+          trade.priceImpactWarning.severity === 'high'
             ? "bg-red-500/10 text-red-500 border border-red-500/20"
             : "bg-orange-500/10 text-orange-500 border border-orange-500/20"
         )}>
           <AlertTriangle className="h-3 w-3 shrink-0" />
-          <span className="font-medium">{priceImpactWarning.message}</span>
+          <span className="font-medium">{trade.priceImpactWarning.message}</span>
         </div>
       )}
 
@@ -889,11 +867,11 @@ export function SwapInputView({
                 isSwapBaseDisabled
                   ? "relative border border-primary bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 !opacity-100 text-white/75"
                   : "text-sidebar-primary border border-sidebar-primary bg-button-primary hover-button-primary",
-                isSwapBaseDisabled ? (quoteLoading ? "cursor-wait" : "cursor-default") : null
+                isSwapBaseDisabled ? (trade.quoteLoading ? "cursor-wait" : "cursor-default") : null
               )}
               onClick={handleSwap}
               disabled={isSwapDisabled}
-              aria-busy={quoteLoading}
+              aria-busy={trade.quoteLoading}
               style={isSwapBaseDisabled ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
             >
               {actionButtonText}

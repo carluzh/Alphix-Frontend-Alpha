@@ -1128,9 +1128,9 @@ export function InteractiveRangeChart({
           </div>
         )}
 
-        {/* Hover-only zoom controls */}
+        {/* Zoom controls - always visible on mobile, hover-only on desktop */}
         {!readOnly && (
-          <div className={`absolute top-1 right-1 flex gap-1 pointer-events-auto transition-opacity duration-200 gpu-accelerated ${isHovering ? 'opacity-100' : 'opacity-0'}`}>
+          <div className={`absolute top-1 right-1 flex gap-1 pointer-events-auto transition-opacity duration-200 gpu-accelerated ${isMobile ? 'opacity-100' : (isHovering ? 'opacity-100' : 'opacity-0')}`}>
           <button
             type="button"
             className="h-5 w-5 flex items-center justify-center rounded border border-sidebar-border bg-button hover:brightness-110 hover:border-white/30"

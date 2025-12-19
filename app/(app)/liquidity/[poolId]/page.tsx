@@ -219,7 +219,6 @@ export default function PoolDetailPage() {
   const poolActivityRef = useRef<HTMLDivElement>(null);
   const [poolActivityHeight, setPoolActivityHeight] = useState<number | null>(null);
 
-
   const { address: accountAddress, isConnected, chainId } = useAccount();
   const { networkMode } = useNetwork();
   const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
@@ -1378,17 +1377,17 @@ export default function PoolDetailPage() {
                   </div>
                 </Link>
                 {/* Dotted container grid 2x2 */}
-                <div className="rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 p-4 mb-2 w-full">
-                  <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 p-2 md:p-4 mb-2 w-full">
+                  <div className="grid grid-cols-2 gap-1.5 md:gap-3">
                     {/* Volume */}
                     <div className="rounded-lg bg-muted/30 border border-sidebar-border/60">
-                      <div className="flex items-center justify-between px-4 h-9">
-                        <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">VOLUME (24H)</h2>
+                      <div className="px-3 md:px-4 h-7 md:h-9 flex items-center">
+                        <h2 className="text-[10px] md:text-xs tracking-wider text-muted-foreground font-mono font-bold whitespace-nowrap">VOLUME (24H)</h2>
                       </div>
-                      <div className="px-4 py-1">
-                        <div className="text-lg font-medium truncate">
+                      <div className="px-3 md:px-4 py-1">
+                        <div className="h-6 md:h-7 flex items-center text-base md:text-lg font-medium">
                           {currentPoolData.volume24h === "Loading..." ? (
-                            <span className="inline-block h-5 w-20 bg-muted/60 rounded animate-pulse" />
+                            <span className="inline-block h-5 w-16 md:h-6 md:w-20 bg-muted/60 rounded animate-pulse" />
                           ) : (
                             currentPoolData.volume24h
                           )}
@@ -1397,13 +1396,13 @@ export default function PoolDetailPage() {
                     </div>
                     {/* Fees */}
                     <div className="rounded-lg bg-muted/30 border border-sidebar-border/60">
-                      <div className="flex items-center justify-between px-4 h-9">
-                        <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">FEES (24H)</h2>
+                      <div className="px-3 md:px-4 h-7 md:h-9 flex items-center">
+                        <h2 className="text-[10px] md:text-xs tracking-wider text-muted-foreground font-mono font-bold whitespace-nowrap">FEES (24H)</h2>
                       </div>
-                      <div className="px-4 py-1">
-                        <div className="text-lg font-medium truncate">
+                      <div className="px-3 md:px-4 py-1">
+                        <div className="h-6 md:h-7 flex items-center text-base md:text-lg font-medium">
                           {currentPoolData.fees24h === "Loading..." ? (
-                            <span className="inline-block h-5 w-20 bg-muted/60 rounded animate-pulse" />
+                            <span className="inline-block h-5 w-16 md:h-6 md:w-20 bg-muted/60 rounded animate-pulse" />
                           ) : (
                             currentPoolData.fees24h
                           )}
@@ -1412,13 +1411,13 @@ export default function PoolDetailPage() {
                     </div>
                     {/* TVL */}
                     <div className="rounded-lg bg-muted/30 border border-sidebar-border/60">
-                      <div className="flex items-center justify-between px-4 h-9">
-                        <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">TVL</h2>
+                      <div className="px-3 md:px-4 h-7 md:h-9 flex items-center">
+                        <h2 className="text-[10px] md:text-xs tracking-wider text-muted-foreground font-mono font-bold whitespace-nowrap">TVL</h2>
                       </div>
-                      <div className="px-4 py-1">
-                        <div className="text-lg font-medium truncate">
+                      <div className="px-3 md:px-4 py-1">
+                        <div className="h-6 md:h-7 flex items-center text-base md:text-lg font-medium">
                           {currentPoolData.liquidity === "Loading..." ? (
-                            <span className="inline-block h-5 w-20 bg-muted/60 rounded animate-pulse" />
+                            <span className="inline-block h-5 w-16 md:h-6 md:w-20 bg-muted/60 rounded animate-pulse" />
                           ) : (
                             currentPoolData.liquidity
                           )}
@@ -1434,20 +1433,20 @@ export default function PoolDetailPage() {
                               ? 'border border-sidebar-primary'
                               : 'border border-sidebar-border/60'
                           }`}>
-                            <div className="flex items-center justify-between px-4 h-9">
-                              <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">APY</h2>
+                            <div className="px-3 md:px-4 h-7 md:h-9 flex items-center justify-between">
+                              <h2 className="text-[10px] md:text-xs tracking-wider text-muted-foreground font-mono font-bold whitespace-nowrap">APY</h2>
                               {formRangeInfo?.hasUserInteracted && formRangeInfo.estimatedApy !== "0.00" && formRangeInfo.estimatedApy !== "—" && formRangeInfo.label !== "Select Range" && (
-                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-sidebar-primary/20 text-sidebar-primary border border-sidebar-primary/40">
+                                <span className="inline-flex items-center px-1 py-0.5 rounded text-[8px] md:text-[10px] font-medium bg-sidebar-primary/20 text-sidebar-primary border border-sidebar-primary/40">
                                   {formRangeInfo.label}
                                 </span>
                               )}
                             </div>
-                            <div className="px-4 py-1">
-                              <div className="text-lg font-medium truncate">
+                            <div className="px-3 md:px-4 py-1">
+                              <div className="h-6 md:h-7 flex items-center text-base md:text-lg font-medium">
                                 {currentPoolData.apr === "Loading..." ? (
-                                  <span className="inline-block h-5 w-20 bg-muted/60 rounded animate-pulse" />
+                                  <span className="inline-block h-5 w-16 md:h-6 md:w-20 bg-muted/60 rounded animate-pulse" />
                                 ) : formRangeInfo?.isCalculating ? (
-                                  <span className="inline-block h-5 w-20 bg-muted/60 rounded animate-pulse" />
+                                  <span className="inline-block h-5 w-16 md:h-6 md:w-20 bg-muted/60 rounded animate-pulse" />
                                 ) : formRangeInfo?.hasUserInteracted && formRangeInfo.estimatedApy !== "0.00" && formRangeInfo.estimatedApy !== "—" ? (
                                   `${formRangeInfo.estimatedApy}%`
                                 ) : (
@@ -2363,20 +2362,22 @@ export default function PoolDetailPage() {
             {/* Static title - always visible */}
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-medium">Your Positions</h3>
-              {/* Add Liquidity button - only show below 1500px */}
-              <a
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setAddLiquidityFormOpen(true);
-                }}
-                className="flex h-9 cursor-pointer items-center justify-center gap-2 rounded-md border border-sidebar-border bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 min-[1400px]:hidden"
-                style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
-              >
-                <PlusIcon className="h-4 w-4 relative z-0" />
-                <span className="relative z-0 whitespace-nowrap">Add Liquidity</span>
-              </a>
+              {/* Add Liquidity button - only show below 1400px AND when there are positions (on mobile, large button shows when no positions) */}
+              {(userPositions.length > 0 || isDerivingNewPosition || !isMobile) && (
+                <a
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setAddLiquidityFormOpen(true);
+                  }}
+                  className="flex h-9 cursor-pointer items-center justify-center gap-2 rounded-md border border-sidebar-border bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 min-[1400px]:hidden"
+                  style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+                >
+                  <PlusIcon className="h-4 w-4 relative z-0" />
+                  <span className="relative z-0 whitespace-nowrap">Add Liquidity</span>
+                </a>
+              )}
             </div>
-            
+
             {isLoadingPositions ? (
               <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4 h-20 animate-pulse" />
             ) : userPositions.length > 0 || isDerivingNewPosition ? (
@@ -2429,11 +2430,25 @@ export default function PoolDetailPage() {
                 </div>
               </div>
             ) : (
-              /* Dashed outline container with centered text */
+              /* Dashed outline container - with Add Liquidity button on mobile, text on desktop */
               <div className="border border-dashed rounded-lg bg-muted/10 p-8 flex items-center justify-center">
-                <div className="text-sm font-medium text-white/75">
-                  No Positions
-                </div>
+                {isMobile ? (
+                  <a
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setAddLiquidityFormOpen(true);
+                    }}
+                    className="flex h-9 cursor-pointer items-center justify-center gap-2 rounded-md border border-sidebar-border bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30"
+                    style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+                  >
+                    <PlusIcon className="h-4 w-4 relative z-0" />
+                    <span className="relative z-0 whitespace-nowrap">Add Liquidity</span>
+                  </a>
+                ) : (
+                  <div className="text-sm font-medium text-white/75">
+                    No Positions
+                  </div>
+                )}
               </div>
             )}
           </div>

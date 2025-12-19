@@ -105,7 +105,7 @@ export function AnnouncementCard() {
   const ui = {
     contentWidth: "w-3/5 pr-2",
     title: "text-sm font-semibold",
-    desc: "text-xs sm:text-sm leading-relaxed line-clamp-2 sm:line-clamp-none",
+    desc: "text-xs sm:text-sm leading-relaxed",
     ctaWrap: "mt-2 px-4 py-2 gap-2",
     ctaText: "text-sm font-semibold",
     ctaIcon: "h-5 w-5",
@@ -205,7 +205,7 @@ export function AnnouncementCard() {
         )}
 
         {announcement.href && announcement.ctaLabel && (
-          <div className={cn("flex items-center justify-center rounded-3xl w-fit bg-black/25", ui.ctaWrap)}>
+          <div className={cn("hidden sm:flex items-center justify-center rounded-3xl w-fit bg-black/25", ui.ctaWrap)}>
             <span className={cn(ui.ctaText, "text-foreground")}>{announcement.ctaLabel}</span>
             <ArrowRight className={cn(ui.ctaIcon, "text-foreground")} />
           </div>

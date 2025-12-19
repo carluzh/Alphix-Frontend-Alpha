@@ -64,11 +64,11 @@ export const ANNOUNCEMENTS: Announcement[] = [
   {
     id: "marketing-sherlock",
     kind: "marketing",
-    title: "Audit in Progress",
+    title: "Audit Completed",
     description:
-      "The final steps before launch. Unified Pools. Soon on Base.",
-    href: undefined,
-    ctaLabel: undefined,
+      "The final step before launch. Unified Pools. Soon on Base.",
+    href: "https://github.com/alphixfi/alphix-core/blob/main/security/2025.12.17-Final-AlphixCollaborativeAuditReport.pdf",
+    ctaLabel: "Learn More",
     image: "/ann/Sherlock.png",
     imageClassName: "translate-x-[5%]",
     bgColor: "#18131d",

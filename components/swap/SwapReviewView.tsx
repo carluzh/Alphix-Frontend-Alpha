@@ -14,17 +14,13 @@ import { Button } from "@/components/ui/button";
 import { Token, SwapProgressState } from './swap-interface'; // Removed FeeDetail and SwapTxInfo as they are not directly used in this simplified props interface yet
 import { formatTokenAmount } from "@/lib/utils";
 import { Spinner } from "@/components/ui/spinner";
+import type { SwapTradeModel } from "./useSwapTrade";
 
 // Forward declare props that might come from the main interface or be defined here
 interface SwapReviewViewProps {
   displayFromToken: Token;
   displayToToken: Token;
-  calculatedValues: {
-    fromTokenAmount: string;
-    fromTokenValue: string;
-    toTokenAmount: string;
-    toTokenValue: string;
-  };
+  trade: SwapTradeModel;
   handleChangeButton: () => void;
   handleConfirmSwap: () => void;
   swapProgressState: SwapProgressState;
@@ -160,7 +156,7 @@ const isStepWaiting = (step: 'approval' | 'signature' | 'transaction', swapProgr
 export function SwapReviewView({ 
   displayFromToken,
   displayToToken,
-  calculatedValues,
+  trade,
   handleChangeButton,
   handleConfirmSwap,
   swapProgressState,
@@ -177,28 +173,28 @@ export function SwapReviewView({
           <Image src={displayFromToken.icon} alt={displayFromToken.symbol} width={32} height={32} className="rounded-full"/>
           <div className="text-left flex flex-col">
             <div className="font-medium flex items-baseline">
-              {calculatedValues.fromTokenAmount === "< 0.001" ? (
-                <span className="text-xs text-muted-foreground">{calculatedValues.fromTokenAmount}</span>
+              {trade.calculatedValues.fromTokenAmount === "< 0.001" ? (
+                <span className="text-xs text-muted-foreground">{trade.calculatedValues.fromTokenAmount}</span>
               ) : (
-                <span className="text-sm">{formatTokenAmount(calculatedValues.fromTokenAmount)}</span>
+                <span className="text-sm">{formatTokenAmount(trade.calculatedValues.fromTokenAmount)}</span>
               )}
               <span className="ml-1 text-xs text-muted-foreground">{displayFromToken.symbol}</span>
             </div>
-            <div className="text-xs text-muted-foreground">{calculatedValues.fromTokenValue}</div>
+            <div className="text-xs text-muted-foreground">{trade.calculatedValues.fromTokenValue}</div>
           </div>
         </div>
         <ChevronRightIcon className="h-4 w-4 text-muted-foreground mx-2" />
         <div className="flex items-center gap-3">
           <div className="text-right flex flex-col">
             <div className="font-medium flex items-baseline">
-              {calculatedValues.toTokenAmount === "< 0.001" ? (
-                <span className="text-xs text-muted-foreground">{calculatedValues.toTokenAmount}</span>
+              {trade.calculatedValues.toTokenAmount === "< 0.001" ? (
+                <span className="text-xs text-muted-foreground">{trade.calculatedValues.toTokenAmount}</span>
               ) : (
-                <span className="text-sm">{formatTokenAmount(calculatedValues.toTokenAmount)}</span>
+                <span className="text-sm">{formatTokenAmount(trade.calculatedValues.toTokenAmount)}</span>
               )}
               <span className="ml-1 text-xs text-muted-foreground">{displayToToken.symbol}</span>
             </div>
-            <div className="text-xs text-muted-foreground">{calculatedValues.toTokenValue}</div>
+            <div className="text-xs text-muted-foreground">{trade.calculatedValues.toTokenValue}</div>
           </div>
           <Image src={displayToToken.icon} alt={displayToToken.symbol} width={32} height={32} className="rounded-full"/>
         </div>
@@ -262,7 +258,7 @@ export function SwapReviewView({
             {(() => {
               const currentStepIndex = getCurrentStepIndex(swapProgressState);
               const currentStep = ['approval', 'signature', 'transaction'][currentStepIndex] as 'approval' | 'signature' | 'transaction';
-              return getStepSubtitle(currentStep, displayFromToken, displayToToken, calculatedValues.fromTokenAmount);
+              return getStepSubtitle(currentStep, displayFromToken, displayToToken, trade.calculatedValues.fromTokenAmount);
             })()}
           </p>
         </div>

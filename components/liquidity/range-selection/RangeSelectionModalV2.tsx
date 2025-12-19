@@ -483,17 +483,19 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
             left: 0,
             right: 0,
             bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.5)'
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            paddingTop: 'env(safe-area-inset-top, 0px)',
+            paddingBottom: 'env(safe-area-inset-bottom, 0px)',
           }}
           onMouseDown={(e) => {
+            // Only close when clicking the backdrop itself, not children
             if (e.target === e.currentTarget) {
               e.preventDefault();
               e.stopPropagation();
               swallowNextClick();
               onClose();
-              return;
             }
-            e.stopPropagation();
+            // Don't stopPropagation for child elements - allows inputs to focus
           }}
         >
           <motion.div
@@ -505,7 +507,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
             style={{
               width: '900px',
               maxWidth: '95vw',
-              maxHeight: '95vh',
+              maxHeight: 'min(95dvh, 95vh)',
               backgroundColor: 'var(--modal-background)',
             }}
             role="dialog"
@@ -705,6 +707,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                   <Input
                     ref={minPriceInputRef}
                     type="text"
+                    inputMode="decimal"
                     value={minPriceInput}
                     onChange={(e) => {
                       const value = e.target.value.replace(',', '.');
@@ -763,6 +766,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                   <Input
                     ref={maxPriceInputRef}
                     type="text"
+                    inputMode="decimal"
                     value={maxPriceInput}
                     onChange={(e) => {
                       const value = e.target.value.replace(',', '.');

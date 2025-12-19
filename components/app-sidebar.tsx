@@ -186,7 +186,7 @@ export function AppSidebar({ variant = "floating", onBetaClick, ...props }: AppS
                   <Image src="/Logo Type (black).svg" alt="Alphix Logo" width={112} height={24} priority className="block dark:hidden" />
                 </Link>
                 <div>
-                  {/* Show 'Beta' by default; on hover swap to version text without resizing */}
+                  {/* Show 'Beta' by default; on hover/glow swap to version text (desktop only) */}
                   <div
                     role="button"
                     tabIndex={0}
@@ -203,7 +203,11 @@ export function AppSidebar({ variant = "floating", onBetaClick, ...props }: AppS
                       onFocus={() => setBadgeHovered(true)}
                       onBlur={() => setBadgeHovered(false)}
                     >
-                      <span className="inline-flex items-center justify-center" style={{ minWidth: 28 }}>
+                      {/* Mobile: Always show "Beta", Desktop: Show version on hover/glow */}
+                      <span className="inline-flex items-center justify-center sm:hidden" style={{ minWidth: 28 }}>
+                        Beta
+                      </span>
+                      <span className="hidden sm:inline-flex items-center justify-center" style={{ minWidth: 28 }}>
                         {shouldGlow ? latestVersion.version : badgeHovered ? latestVersion.version : 'Beta'}
                       </span>
                     </Badge>
@@ -267,6 +271,19 @@ export function AppSidebar({ variant = "floating", onBetaClick, ...props }: AppS
                     </a>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
+                {/* Version info - shown below Discord */}
+                <div className="px-1.5 pt-3 pb-1">
+                  <div
+                    className="text-xs text-muted-foreground/50 font-mono select-none cursor-pointer hover:text-muted-foreground/70 transition-colors"
+                    onClick={handleBetaBadgeClick}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleBetaBadgeClick(e as unknown as React.MouseEvent<HTMLDivElement>); } }}
+                    title="Click to show update info"
+                  >
+                    v{latestVersion.version}<span className="opacity-60">+{process.env.NEXT_PUBLIC_GIT_COMMIT || 'dev'}</span>
+                  </div>
+                </div>
               </SidebarMenu>
           </SidebarGroup>
         </div>

@@ -1949,7 +1949,7 @@ export function AddLiquidityModal({
                             {(increaseStep === 'approve' && increaseIsWorking) ? (
                               <RefreshCwIcon className="h-4 w-4 animate-spin" />
                             ) : (
-                              <motion.span 
+                              <motion.span
                                 animate={approvalWiggleControls}
                                 className={`text-xs font-mono ${increaseCompletedERC20ApprovalsCount === increaseInvolvedTokensCount && increaseInvolvedTokensCount > 0 ? 'text-green-500' : approvalWiggleCount > 0 ? 'text-red-500' : 'text-muted-foreground'}`}
                               >
@@ -2038,7 +2038,7 @@ export function AddLiquidityModal({
                           { (step === 'approve' && (isApproveWritePending || isApproving))
                             ? <RefreshCwIcon className="h-4 w-4 animate-spin" />
                             : (
-                              <motion.span 
+                              <motion.span
                                 animate={approvalWiggleControls}
                                 className={`text-xs font-mono ${completedERC20ApprovalsCount === involvedTokensCount && involvedTokensCount > 0 ? 'text-green-500' : approvalWiggleCount > 0 ? 'text-red-500' : 'text-muted-foreground'}`}
                               >
@@ -2048,7 +2048,7 @@ export function AddLiquidityModal({
                           }
                         </span>
                     </div>
-                    
+
                     {/* Permit2 Signature */}
                     <div className="flex items-center justify-between">
                         <span>Permit Signature</span>
@@ -2063,7 +2063,7 @@ export function AddLiquidityModal({
                           }
                         </span>
                     </div>
-                    
+
                     {/* Deposit Transaction */}
                     <div className="flex items-center justify-between">
                         <span>Deposit Transaction</span>
@@ -2078,7 +2078,7 @@ export function AddLiquidityModal({
                           }
                         </span>
                     </div>
-                    
+
                 </div>
               </div>
             )}

@@ -1,27 +1,5 @@
 "use client"
 
-/**
- * Position Card - Mirroring Uniswap's FULL LiquidityPositionCard design
- *
- * Structure:
- * ┌─────────────────────────────────────────────────────────────┐
- * │ Top Section (padding 24px)                                  │
- * │ ┌──────────────┬──────────────┬──────────────┐             │
- * │ │ Token Info   │ Price Chart  │ (Range)      │             │
- * │ │ - Icons      │              │              │             │
- * │ │ - Pair       │              │              │             │
- * │ │ - Badges     │              │              │             │
- * │ │ - Status     │              │              │             │
- * │ └──────────────┴──────────────┴──────────────┘             │
- * ├─────────────────────────────────────────────────────────────┤
- * │ Bottom Section (padding 16px, background surface2)          │
- * │ ┌──────────┬──────────┬──────────┬──────────────┐          │
- * │ │ Position │ Fees     │ APY      │ Min-Max Range│          │
- * │ │ $X.XX    │ $X.XX    │ X.X%     │ X - Y        │          │
- * │ └──────────┴──────────┴──────────┴──────────────┘          │
- * └─────────────────────────────────────────────────────────────┘
- */
-
 import React, { useState, useMemo } from 'react';
 import Image from "next/image";
 import { formatUnits } from "viem";
@@ -244,6 +222,19 @@ export function PositionCardCompact({
                 </div>
 
                 {/* Right: Mini Chart */}
+                <div className="flex lg:hidden w-[120px] h-9 ml-auto cursor-pointer">
+                    <MiniPoolChart
+                        token0={position.token0.symbol}
+                        token1={position.token1.symbol}
+                        denominationBase={denominationBase}
+                        currentPrice={displayedCurrentPrice?.toString() || null}
+                        minPrice={minPrice}
+                        maxPrice={maxPrice}
+                        isInRange={position.isInRange}
+                        isFullRange={isFullRange}
+                        className="w-full h-full"
+                    />
+                </div>
                 <div className="hidden lg:flex flex-1 max-w-[200px] h-9 ml-auto cursor-pointer">
                     <MiniPoolChart
                         token0={position.token0.symbol}

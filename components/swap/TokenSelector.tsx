@@ -126,6 +126,11 @@ export function TokenSelector({
   const isMobile = useIsMobile();
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const sheetDragStartYRef = useRef<number | null>(null);
+  const sheetTranslateYRef = useRef(0);
+  const sheetRafRef = useRef<number | null>(null);
+  const sheetInnerRef = useRef<HTMLDivElement | null>(null);
+  const [isSheetDragging, setIsSheetDragging] = useState(false);
   const [tokenPrices, setTokenPrices] = useState<{ BTC: number; USDC: number; ETH: number }>({
     BTC: 77000,
     USDC: 1,
@@ -149,6 +154,54 @@ export function TokenSelector({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setIsSheetDragging(false);
+      sheetDragStartYRef.current = null;
+      sheetTranslateYRef.current = 0;
+      if (sheetRafRef.current != null) cancelAnimationFrame(sheetRafRef.current);
+      sheetRafRef.current = null;
+      if (sheetInnerRef.current) sheetInnerRef.current.style.transform = "translateY(0px)";
+    }
+  }, [isOpen]);
+
+  const scheduleSheetTransform = () => {
+    if (sheetRafRef.current != null) return;
+    sheetRafRef.current = requestAnimationFrame(() => {
+      sheetRafRef.current = null;
+      const el = sheetInnerRef.current;
+      if (!el) return;
+      const y = sheetTranslateYRef.current;
+      el.style.transform = y ? `translateY(${y}px)` : "translateY(0px)";
+    });
+  };
+
+  const onSheetHandleTouchStart = (e: React.TouchEvent) => {
+    sheetDragStartYRef.current = e.touches[0]?.clientY ?? null;
+    setIsSheetDragging(true);
+  };
+
+  const onSheetHandleTouchMove = (e: React.TouchEvent) => {
+    const startY = sheetDragStartYRef.current;
+    if (startY == null) return;
+
+    const currentY = e.touches[0]?.clientY ?? startY;
+    const dy = currentY - startY;
+    if (dy <= 0) return;
+
+    sheetTranslateYRef.current = Math.min(dy, 220);
+    scheduleSheetTransform();
+  };
+
+  const onSheetHandleTouchEnd = () => {
+    const shouldClose = sheetTranslateYRef.current > 90;
+    sheetDragStartYRef.current = null;
+    setIsSheetDragging(false);
+    sheetTranslateYRef.current = 0;
+    scheduleSheetTransform();
+    if (shouldClose) setIsOpen(false);
+  };
 
   // Filter out the excluded token and apply search filter - memoized to prevent infinite loops
   const filteredTokens = useMemo(() => {
@@ -418,18 +471,39 @@ export function TokenSelector({
         <Sheet open={isOpen} onOpenChange={setIsOpen}>
           <SheetContent
             side="bottom"
-            className="h-[85vh] rounded-t-2xl border-t border-primary p-0 flex flex-col bg-popover"
+            className="rounded-t-2xl border-t border-primary p-0 flex flex-col bg-popover"
+            style={{
+              height: 'min(85dvh, 85vh)',
+              maxHeight: 'min(85dvh, 85vh)',
+              paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+            }}
+            onPointerDownOutside={() => setIsOpen(false)}
           >
-            {/* Header */}
-            <SheetHeader className="px-4 pt-4 pb-2 border-b border-sidebar-border/60">
-              <SheetTitle className="text-base font-medium text-left">
-                {excludeToken ? 'Swap From Token' : 'Swap To Token'}
-              </SheetTitle>
-            </SheetHeader>
+            <div
+              ref={sheetInnerRef}
+              className="flex flex-col flex-1"
+              style={{ transition: isSheetDragging ? "none" : "transform 160ms ease-out" }}
+            >
+              {/* Drag handle */}
+              <div
+                className="flex justify-center pt-2 pb-1"
+                onTouchStart={onSheetHandleTouchStart}
+                onTouchMove={onSheetHandleTouchMove}
+                onTouchEnd={onSheetHandleTouchEnd}
+              >
+                <div className="h-1 w-10 rounded-full bg-muted-foreground/30" />
+              </div>
+              {/* Header */}
+              <SheetHeader className="px-4 pt-4 pb-2 border-b border-sidebar-border/60 flex-shrink-0">
+                <SheetTitle className="text-base font-medium text-left">
+                  {excludeToken ? 'Swap From Token' : 'Swap To Token'}
+                </SheetTitle>
+              </SheetHeader>
 
-            {/* Token List Content */}
-            <div className="flex-1 flex flex-col overflow-hidden">
-              <TokenListContent />
+              {/* Token List Content */}
+              <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+                <TokenListContent />
+              </div>
             </div>
           </SheetContent>
         </Sheet>
