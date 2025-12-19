@@ -23,7 +23,7 @@ interface RangeSelectionModalV2Props {
   onConfirm: (tickLower: string, tickUpper: string, selectedPreset?: string | null, denomination?: TokenSymbol) => void;
   initialTickLower: string;
   initialTickUpper: string;
-  initialActivePreset?: string | null; // Pass current preset from form
+  initialActivePreset?: string | null;
   selectedPoolId?: string;
   chainId?: number;
   token0Symbol: TokenSymbol;
@@ -47,12 +47,11 @@ interface RangeSelectionModalV2Props {
   poolMetricsData?: { poolId: string; metrics: any; poolLiquidity: string } | null;
 }
 
-// Helper to abbreviate decimal numbers beyond 10 decimals
 const abbreviateDecimal = (value: string, maxDecimals: number = 10): string => {
   if (!value || value === "" || value === "0") return value;
   
   const parts = value.split('.');
-  if (parts.length === 1) return value; // No decimal
+  if (parts.length === 1) return value;
   
   const [whole, decimal] = parts;
   if (decimal.length <= maxDecimals) return value;
@@ -80,7 +79,6 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
   const maxPriceInputRef = useRef<HTMLInputElement>(null);
   const [mounted, setMounted] = useState(false);
 
-  // Ensure we're mounted before rendering portal (SSR safety)
   useEffect(() => {
     setMounted(true);
     return () => setMounted(false);
@@ -103,7 +101,6 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
       e.preventDefault();
       e.stopPropagation();
     };
-    // Use capture so we beat React handlers; once so it auto-cleans
     document.addEventListener('click', handler, { capture: true, once: true } as any);
     document.addEventListener('mouseup', handler, { capture: true, once: true } as any);
     document.addEventListener('pointerup', handler, { capture: true, once: true } as any);
@@ -115,21 +112,17 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
   const [localXDomain, setLocalXDomain] = useState<[number, number]>(xDomain);
   const [selectedPreset, setSelectedPreset] = useState<string | null>(null);
   
-  // Full precision values for backend
   const [minPriceFullPrecision, setMinPriceFullPrecision] = useState(minPriceDisplay);
   const [maxPriceFullPrecision, setMaxPriceFullPrecision] = useState(maxPriceDisplay);
   
-  // Display values (abbreviated)
   const [minPriceInput, setMinPriceInput] = useState(abbreviateDecimal(minPriceDisplay));
   const [maxPriceInput, setMaxPriceInput] = useState(abbreviateDecimal(maxPriceDisplay));
   const [isChartLoading, setIsChartLoading] = useState(true);
   const [isDragging, setIsDragging] = useState(false);
 
-  // Track which input is focused
   const [isMinPriceFocused, setIsMinPriceFocused] = useState(false);
   const [isMaxPriceFocused, setIsMaxPriceFocused] = useState(false);
 
-  // Local denomination - use centralized logic for initial value
   const initialDenomination = useMemo(() => {
     const currentPriceNum = currentPrice ? parseFloat(currentPrice) : undefined;
     return getOptimalBaseToken(token0Symbol, token1Symbol, currentPriceNum);
@@ -137,24 +130,18 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
 
   const [denominationBase, setDenominationBase] = useState<TokenSymbol>(initialDenomination);
 
-  // APY values calculated from parent's cached metrics
   const [apyValues, setApyValues] = useState<Record<string, number>>({});
 
-  // Calculate if we need to invert based on our local denomination choice
   const shouldInvert = denominationBase === token0Symbol;
 
-  // Get token configs
   const denominationToken = getToken(denominationBase);
   const quoteTokenSymbol = denominationBase === token0Symbol ? token1Symbol : token0Symbol;
 
-  // Display decimals for current price (capped at 4 or 2 for USD)
   const isUSDDenom = ['aUSDT', 'aUSDC', 'USDT', 'USDC', 'aDAI', 'DAI'].includes(denominationBase);
   const poolPriceDecimals = isUSDDenom ? 2 : 6;
 
-  // Price label text - denomination is the unit, quote is what we're pricing
   const pricePerText = `${denominationBase} per ${quoteTokenSymbol}`;
 
-  // Transform currentPrice for display
   const displayCurrentPrice = useMemo(() => {
     if (!currentPrice) return null;
     const numeric = parseFloat(currentPrice);
@@ -163,7 +150,6 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
     return price.toFixed(poolPriceDecimals);
   }, [currentPrice, shouldInvert, poolPriceDecimals]);
 
-  // Calculate price from tick with full precision
   const calculatePriceFromTick = (tick: number): string => {
     if (!currentPrice || currentPoolTick === null || isNaN(tick)) return "0";
     const currentPriceNum = parseFloat(currentPrice);
@@ -175,14 +161,11 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
 
     if (!isFinite(price) || isNaN(price)) return "0";
 
-    // Return full precision (use token decimals)
     const decimals = denominationToken?.decimals ?? 18;
     return price.toFixed(decimals);
   };
 
-  // Detect which preset matches current ticks (if any)
   const detectedPreset = useMemo(() => {
-    // Check Full Range - need to align to tickSpacing first
     const alignedMinTick = Math.ceil(sdkMinTick / defaultTickSpacing) * defaultTickSpacing;
     const alignedMaxTick = Math.floor(sdkMaxTick / defaultTickSpacing) * defaultTickSpacing;
 
@@ -211,23 +194,17 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
     return null;
   }, [localTickLower, localTickUpper, currentPoolTick, sdkMinTick, sdkMaxTick, defaultTickSpacing]);
 
-  // Use manually selected preset if explicitly set (including null for "Custom")
-  // Only fall back to detection if user hasn't made a manual selection
   const activePreset = selectedPreset !== undefined ? selectedPreset : detectedPreset;
 
-  // Initialize modal state when opened
   useEffect(() => {
     if (isOpen) {
       setLocalTickLower(initialTickLower);
       setLocalTickUpper(initialTickUpper);
       setLocalXDomain(xDomain);
-      // Use the preset passed from the form (deterministic)
       setSelectedPreset(initialActivePreset !== undefined ? initialActivePreset : null);
-      // Use centralized denomination logic on open, but allow baseTokenSymbol override if explicitly set
       const optimalDenom = getOptimalBaseToken(token0Symbol, token1Symbol, currentPrice ? parseFloat(currentPrice) : undefined);
       setDenominationBase(baseTokenSymbol || optimalDenom);
       
-      // Calculate and set full precision values
       const minPrice = shouldInvert
         ? calculatePriceFromTick(parseInt(initialTickUpper))
         : calculatePriceFromTick(parseInt(initialTickLower));
@@ -242,10 +219,8 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
     }
   }, [isOpen, initialTickLower, initialTickUpper, initialActivePreset, xDomain, token1Symbol]);
 
-  // Auto-focus input field based on initialFocusField
   useEffect(() => {
     if (isOpen && initialFocusField) {
-      // Small delay to ensure modal is fully rendered
       const timeoutId = setTimeout(() => {
         if (initialFocusField === 'min' && minPriceInputRef.current) {
           minPriceInputRef.current.focus();
@@ -260,7 +235,6 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
     }
   }, [isOpen, initialFocusField]);
 
-  // Global outside-click close (capturing phase to beat internal stops)
   useEffect(() => {
     if (!isOpen) return;
     const handleGlobalPointerDown = (e: Event) => {
@@ -268,22 +242,18 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
       if (!node) return;
       const target = e.target as Node | null;
       if (target && !node.contains(target)) {
-        // Prevent underlying click handlers from firing (reopen bug)
         e.preventDefault();
         e.stopPropagation();
         swallowNextClick();
         onClose();
       }
     };
-    document.addEventListener('mousedown', handleGlobalPointerDown, true);
-    document.addEventListener('touchstart', handleGlobalPointerDown, true);
+    document.addEventListener('pointerdown', handleGlobalPointerDown, true);
     return () => {
-      document.removeEventListener('mousedown', handleGlobalPointerDown, true);
-      document.removeEventListener('touchstart', handleGlobalPointerDown, true);
+      document.removeEventListener('pointerdown', handleGlobalPointerDown, true);
     };
   }, [isOpen, onClose]);
 
-  // Update price inputs when ticks or denomination changes
   useEffect(() => {
     if (!isOpen) return;
 
@@ -297,7 +267,6 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
     setMinPriceFullPrecision(minPrice);
     setMaxPriceFullPrecision(maxPrice);
 
-    // Only update display if not focused
     if (!isMinPriceFocused) {
       setMinPriceInput(abbreviateDecimal(minPrice));
     }
@@ -306,9 +275,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
     }
   }, [localTickLower, localTickUpper, denominationBase, shouldInvert, isMinPriceFocused, isMaxPriceFocused, isOpen]);
 
-  // Calculate APY values from parent's cached metrics (no fetching needed)
   useEffect(() => {
-    // Use metrics passed from parent - no fetching!
     const poolMetrics = poolMetricsData?.metrics;
     const poolLiquidity = poolMetricsData?.poolLiquidity;
 
@@ -318,11 +285,9 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
 
     const calculateAPYs = async () => {
       try {
-        // Get pool configuration
         const poolConfig = getPoolById(selectedPoolId);
         if (!poolConfig) return;
 
-        // Create SDK Token objects
         const effectiveChainId = chainId || getChainId();
         const token0 = new Token(
           effectiveChainId,
@@ -337,7 +302,6 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
           poolToken1.symbol
         );
 
-        // Create V4Pool
         const pool = new V4Pool(
           token0,
           token1,
@@ -363,9 +327,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
 
         const newApyValues: Record<string, number> = {};
 
-        // Calculate APY for each range type
         for (const rangeType of rangeTypes) {
-          // Skip Custom for now, it will be calculated when active
           if (rangeType === "Custom") continue;
 
           let tickLower, tickUpper;
@@ -397,7 +359,6 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
           newApyValues[rangeType] = apy;
         }
 
-        // Also calculate APY for current custom selection (only if valid ticks)
         const customTickLower = parseInt(localTickLower);
         const customTickUpper = parseInt(localTickUpper);
         if (!isNaN(customTickLower) && !isNaN(customTickUpper) && customTickLower < customTickUpper) {
@@ -488,14 +449,12 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
             paddingBottom: 'env(safe-area-inset-bottom, 0px)',
           }}
           onMouseDown={(e) => {
-            // Only close when clicking the backdrop itself, not children
             if (e.target === e.currentTarget) {
               e.preventDefault();
               e.stopPropagation();
               swallowNextClick();
               onClose();
             }
-            // Don't stopPropagation for child elements - allows inputs to focus
           }}
         >
           <motion.div
@@ -828,6 +787,5 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
     </AnimatePresence>
   );
 
-  // Render modal at document body level to escape layout constraints
   return createPortal(modalContent, document.body);
 }

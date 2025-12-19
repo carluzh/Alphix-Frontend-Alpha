@@ -49,7 +49,6 @@ const SDK_MIN_TICK = -887272;
 const SDK_MAX_TICK = 887272;
 const DEFAULT_TICK_SPACING = 60;
 
-// Generate pools from config - called reactively based on network mode
 const generatePoolsFromConfig = (): Pool[] => {
   const enabledPools = getEnabledPools();
 
@@ -99,7 +98,6 @@ const formatUSD = (value: number) => {
 const formatAPR = (aprValue: number) => {
   if (!isFinite(aprValue)) return '—';
   if (aprValue < 1000) return `${aprValue.toFixed(2)}%`;
-  // large APRs: compact to K with two decimals
   return `${(aprValue / 1000).toFixed(2)}K%`;
 };
 
@@ -110,11 +108,9 @@ export default function LiquidityPage() {
   const [optimisticPoolId, setOptimisticPoolId] = useState<string | null>(null);
   const warnedAllZeroBatchRef = React.useRef(false);
 
-  // Generate pools based on current network mode - regenerates when network changes
   const initialPools = useMemo(() => generatePoolsFromConfig(), [networkMode]);
   const [poolsData, setPoolsData] = useState<Pool[]>([]);
 
-  // Sync poolsData with network mode changes
   useEffect(() => {
     setPoolsData(initialPools);
   }, [initialPools]);
@@ -368,7 +364,6 @@ export default function LiquidityPage() {
     return poolsWithPositionCounts;
   }, [poolsWithPositionCounts]);
 
-  // Mobile-only: search + sort for pool cards (desktop table remains unchanged)
   const [mobileSortBy, setMobileSortBy] = useState<"apr" | "tvl" | "volume">("tvl");
 
   const mobilePools = useMemo(() => {
@@ -386,7 +381,7 @@ export default function LiquidityPage() {
     const getMetric = (p: any) => {
       if (mobileSortBy === "apr") return parseApr(p?.apr);
       if (mobileSortBy === "volume") return Number.isFinite(p?.volume24hUSD) ? Number(p.volume24hUSD) : 0;
-      return Number.isFinite(p?.tvlUSD) ? Number(p.tvlUSD) : 0; // tvl
+      return Number.isFinite(p?.tvlUSD) ? Number(p.tvlUSD) : 0;
     };
 
     return [...filteredPools].sort((a: any, b: any) => getMetric(b) - getMetric(a));
@@ -401,7 +396,7 @@ export default function LiquidityPage() {
     {
       accessorKey: "pair",
       header: "Pool",
-      size: 240, // Compact size for first column
+      size: 240,
       cell: ({ row }) => {
         const pool = row.original;
         return (
@@ -672,7 +667,7 @@ export default function LiquidityPage() {
                 </div>
 
                 <div className="mt-3">
-                  <MobileLiquidityList pools={mobilePools} onSelectPool={navigateToPool} />
+                  <MobileLiquidityList pools={mobilePools} />
                 </div>
               </div>
             ) : (

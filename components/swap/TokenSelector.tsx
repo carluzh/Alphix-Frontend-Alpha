@@ -40,18 +40,16 @@ interface TokenSelectorProps {
   availableTokens: TokenSelectorToken[];
   onTokenSelect: (token: TokenSelectorToken) => void;
   disabled?: boolean;
-  excludeToken?: TokenSelectorToken; // Token to exclude from dropdown (e.g., the other token in swap)
+  excludeToken?: TokenSelectorToken;
   className?: string;
-  swapContainerRect: { top: number; left: number; width: number; height: number; }; // New prop
+  swapContainerRect: { top: number; left: number; width: number; height: number; };
 }
 
-// Helper function to format token address (6 + ... + 5)
 const formatTokenAddress = (address: string): string => {
   if (address.length <= 11) return address;
   return `${address.slice(0, 6)}...${address.slice(-5)}`;
 };
 
-// Helper function to format currency
 const formatCurrency = (value: string): string => {
   const num = parseFloat(value || "0");
   if (num === 0) return "$0.00";
@@ -59,7 +57,6 @@ const formatCurrency = (value: string): string => {
   return `$${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
-// Helper function for formatting balance display
 const getFormattedDisplayBalance = (numericBalance: number | undefined): string => {
   if (numericBalance === undefined || isNaN(numericBalance)) {
     numericBalance = 0;
@@ -69,25 +66,21 @@ const getFormattedDisplayBalance = (numericBalance: number | undefined): string 
   } else if (numericBalance > 0 && numericBalance < 0.001) {
     return "< 0.001";
   } else {
-    // Default to 4 decimals for display
     const displayDecimals = 4;
     return numericBalance.toFixed(displayDecimals);
   }
 };
 
-// Get token price mapping for quote API prices using pools.json data
 const getTokenPriceMapping = (tokenSymbol: string): 'BTC' | 'USDC' | 'ETH' | 'DAI' => {
-  // Get token config from pools.json
   const tokenConfig = getToken(tokenSymbol);
-  if (!tokenConfig) return 'USDC'; // fallback
+  if (!tokenConfig) return 'USDC';
   
-  // Map based on token names and symbols from pools.json
   switch (tokenSymbol) {
     case 'aBTC':
       return 'BTC';
     case 'aUSDC':
     case 'aUSDT':
-      return 'USDC'; // Stablecoins
+      return 'USDC';
     case 'aDAI':
     case 'DAI':
       return 'DAI';
@@ -95,7 +88,6 @@ const getTokenPriceMapping = (tokenSymbol: string): 'BTC' | 'USDC' | 'ETH' | 'DA
     case 'ETH':
       return 'ETH';
     default:
-      // Fallback logic based on token name
       if (tokenConfig.name.toLowerCase().includes('bitcoin') || tokenConfig.name.toLowerCase().includes('btc')) {
         return 'BTC';
       } else if (tokenConfig.name.toLowerCase().includes('ethereum') || tokenConfig.name.toLowerCase().includes('eth')) {
@@ -103,7 +95,7 @@ const getTokenPriceMapping = (tokenSymbol: string): 'BTC' | 'USDC' | 'ETH' | 'DA
       } else if (tokenConfig.name.toLowerCase().includes('dai')) {
         return 'DAI';
       } else {
-        return 'USDC'; // Default to USDC for stablecoins and unknown tokens
+        return 'USDC';
       }
   }
 };
@@ -144,7 +136,6 @@ export function TokenSelector({
   const currentChainId = chain?.id;
   const { chainId: targetChainId } = useNetwork();
 
-  // Parent (SwapInputView) re-renders frequently; keep token lists stable to avoid remount-y flashes.
   const availableTokensKey = useMemo(
     () => availableTokens.map((t) => t.address).join("|"),
     [availableTokens]
@@ -182,8 +173,6 @@ export function TokenSelector({
     }
   }, [isOpen]);
 
-  // When mobile sheet opens, focus a non-input node inside the dialog to satisfy Radix focus trap
-  // without triggering the keyboard. This also prevents "tap search -> keyboard flashes then disappears".
   useEffect(() => {
     if (!isOpen || !isMobile) return;
     const raf = requestAnimationFrame(() => {
@@ -229,7 +218,6 @@ export function TokenSelector({
     if (shouldClose) setIsOpen(false);
   };
 
-  // Filter out the excluded token and apply search filter - memoized to prevent infinite loops
   const filteredTokens = useMemo(() => {
     return stableAvailableTokens
       .filter(token => excludeAddress ? token.address !== excludeAddress : true)
@@ -258,22 +246,17 @@ export function TokenSelector({
     [tokenPrices.BTC, tokenPrices.USDC, tokenPrices.ETH]
   );
 
-  // Position modal to overlay the SwapInputView - Now uses prop directly
-
-  // Fetch token prices when modal opens
   useEffect(() => {
     if (isOpen) {
       const fetchPrices = async () => {
         try {
-          // Use the existing price service with cache
           const prices = await getAllTokenPrices();
           setTokenPrices({
             BTC: prices.BTC.usd,
             USDC: prices.USDC.usd,
-            ETH: prices.ETH?.usd || 3500 // fallback
+            ETH: prices.ETH?.usd || 3500
           });
         } catch (error) {
-          // Error fetching token prices
         }
       };
 
@@ -295,7 +278,6 @@ export function TokenSelector({
       return;
     }
 
-    // Initialize only when the visible token set actually changes (prevents flashing on unrelated re-renders).
     const initialBalances: Record<string, TokenBalanceData> = {};
     const tokens = filteredTokensRef.current?.value || filteredTokens;
     tokens.forEach(token => {
@@ -385,8 +367,7 @@ export function TokenSelector({
     setSearchTerm('');
   };
 
-  // Shared token list content (used by both mobile sheet and desktop modal)
-  const TokenListContent = () => (
+  const tokenListContent = (
     <>
       {/* Search Input */}
       <div className="p-4">
@@ -403,10 +384,10 @@ export function TokenSelector({
       </div>
 
       {/* Token List */}
-      <div className={cn(
-        "overflow-y-auto",
-        isMobile ? "flex-1" : ""
-      )} style={isMobile ? undefined : { maxHeight: `calc(100% - 125px)` }}>
+      <div
+        className={cn("overflow-y-auto", isMobile ? "flex-1" : "")}
+        style={isMobile ? undefined : { maxHeight: `calc(100% - 125px)` }}
+      >
         {filteredTokens.length === 0 ? (
           <div className="p-6 text-center text-muted-foreground text-sm">
             No tokens found matching "{searchTerm}"
@@ -441,9 +422,7 @@ export function TokenSelector({
                       <div className="flex flex-col">
                         <div className="flex items-center gap-2">
                           <span className="text-sm font-medium">{token.symbol}</span>
-                          {isSelected && (
-                            <CheckIcon className="h-3 w-3 text-primary" />
-                          )}
+                          {isSelected && <CheckIcon className="h-3 w-3 text-primary" />}
                         </div>
                         <div className="text-xs text-muted-foreground font-mono">
                           {formatTokenAddress(token.address)}
@@ -457,9 +436,7 @@ export function TokenSelector({
                           </>
                         ) : (
                           <>
-                            <div className="text-sm font-medium">
-                              {displayBalance}
-                            </div>
+                            <div className="text-sm font-medium">{displayBalance}</div>
                             <div className="text-xs text-muted-foreground">
                               {formatCurrency(usdValue.toString())}
                             </div>
@@ -491,7 +468,6 @@ export function TokenSelector({
         )}
         onClick={() => {
           if (isMobile) {
-            // Prevent the underlying amount input (or Radix auto-focus) from leaving the keyboard up.
             const el = document.activeElement as HTMLElement | null;
             el?.blur?.();
           }
@@ -531,23 +507,19 @@ export function TokenSelector({
             }}
             onPointerDownOutside={() => setIsOpen(false)}
             onOpenAutoFocus={(e) => {
-              // Radix auto-focuses the first focusable element (our search input), which opens the keyboard.
-              // On mobile, keep focus where it is unless the user taps the search box intentionally.
               e.preventDefault();
               sheetInitialFocusRef.current?.focus?.();
             }}
           >
             <div className="flex flex-col flex-1">
-              {/* Focus sink for mobile: avoids keyboard + keeps focus trap stable */}
               <div ref={sheetInitialFocusRef} tabIndex={-1} aria-hidden className="h-0 w-0 overflow-hidden" />
-              {/* Drag handle */}
               <div
-                className="flex justify-center pt-2 pb-1"
+                className="flex items-center justify-center h-10 -mb-1 touch-none"
                 onTouchStart={onSheetHandleTouchStart}
                 onTouchMove={onSheetHandleTouchMove}
                 onTouchEnd={onSheetHandleTouchEnd}
               >
-                <div className="h-1 w-10 rounded-full bg-muted-foreground/30" />
+                <div className="h-1.5 w-12 rounded-full bg-muted-foreground/30" />
               </div>
               {/* Header */}
               <SheetHeader className="px-4 pt-4 pb-2 border-b border-sidebar-border/60 flex-shrink-0">
@@ -558,7 +530,7 @@ export function TokenSelector({
 
               {/* Token List Content */}
               <div className="flex-1 flex flex-col overflow-hidden min-h-0">
-                <TokenListContent />
+                {tokenListContent}
               </div>
             </div>
           </SheetContent>
@@ -601,7 +573,7 @@ export function TokenSelector({
               </div>
 
               {/* Token List Content */}
-              <TokenListContent />
+              {tokenListContent}
             </motion.div>
           </div>,
           document.body
