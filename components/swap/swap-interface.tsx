@@ -519,15 +519,8 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   // Its previous logic (toggling isFeeChartPreviewVisible) has been removed.
   const handleFeePercentageClick = () => {};
 
-  // This function opens the MODAL
   const handlePreviewChartClick = useCallback(() => {
-    if (isMobile) {
-      toast.error("Unsupported Device", {
-        icon: <OctagonX className="h-4 w-4 text-red-500" />,
-        description: "This feature is unavailable on mobile (Alpha). Please use a desktop browser.",
-        duration: 4000
-      });
-    } else {
+    if (!isMobile) {
       setIsFeeChartModalOpen(true);
     }
   }, [isMobile]);
@@ -987,8 +980,8 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
             >
               <DynamicFeeChartPreview 
                 data={isFeeHistoryLoading ? [] : feeHistoryData} 
-                onClick={() => {
-                  if (isMobile && ignoreNextPreviewClickRef.current) return
+                onClick={isMobile ? undefined : () => {
+                  if (ignoreNextPreviewClickRef.current) return
                   handlePreviewChartClick()
                 }}
                 poolInfo={poolInfo || fallbackPoolInfo}

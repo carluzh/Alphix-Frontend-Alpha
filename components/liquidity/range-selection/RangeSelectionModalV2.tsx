@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { TokenSymbol, getToken, getChainId } from "@/lib/pools-config";
 import { InteractiveRangeChart } from "../InteractiveRangeChart";
-import { PlusIcon, MinusIcon, ArrowLeftRight, CircleHelp } from "lucide-react";
+import { PlusIcon, MinusIcon, ArrowLeftRight, CircleHelp, ChartBarBig, SquarePen } from "lucide-react";
 import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
 import { calculatePositionAPY, formatAPY, type PoolMetrics } from "@/lib/apy-calculator";
@@ -122,6 +122,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
 
   const [isMinPriceFocused, setIsMinPriceFocused] = useState(false);
   const [isMaxPriceFocused, setIsMaxPriceFocused] = useState(false);
+  const [mobileViewMode, setMobileViewMode] = useState<'chart' | 'inputs'>('chart');
 
   const initialDenomination = useMemo(() => {
     const currentPriceNum = currentPrice ? parseFloat(currentPrice) : undefined;
@@ -597,8 +598,36 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
 
             {/* Interactive Chart */}
             <div className="space-y-2">
-              <span className="text-xs font-bold text-muted-foreground">Range Preview</span>
-              <div className="rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 pt-4 px-4 pb-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-muted-foreground">Range Preview</span>
+                {isMobile && (
+                  <div className="flex items-center gap-1 rounded-full border border-sidebar-border/60 bg-muted/20 p-0.5">
+                    <button
+                      onClick={() => setMobileViewMode('chart')}
+                      className={`flex items-center justify-center rounded-full transition-all ${
+                        mobileViewMode === 'chart'
+                          ? 'bg-button-primary text-sidebar-primary'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                      style={{ padding: '4px 8px' }}
+                    >
+                      <ChartBarBig className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      onClick={() => setMobileViewMode('inputs')}
+                      className={`flex items-center justify-center rounded-full transition-all ${
+                        mobileViewMode === 'inputs'
+                          ? 'bg-button-primary text-sidebar-primary'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                      style={{ padding: '4px 8px' }}
+                    >
+                      <SquarePen className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                )}
+              </div>
+              <div className={`rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 pt-4 px-4 pb-2 ${isMobile && mobileViewMode === 'inputs' ? 'hidden' : ''}`}>
                 <div style={{ height: isMobile ? '140px' : '180px' }} className="relative">
                   {isChartLoading && (
                     <div className="absolute inset-0 flex items-center justify-center bg-muted/10 rounded">
@@ -639,7 +668,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
             </div>
 
             {/* Price Inputs - Two Cards Side by Side (stacked on mobile) */}
-            <div className={`grid gap-3 ${isMobile ? 'grid-cols-1' : 'grid-cols-2'}`}>
+            <div className={`grid gap-3 ${isMobile ? 'grid-cols-1' : 'grid-cols-2'} ${isMobile && mobileViewMode === 'chart' ? 'hidden' : ''}`}>
               {/* Min Price Card */}
               <div className={`rounded-lg border border-sidebar-border bg-muted/30 ${isMobile ? 'p-3' : 'p-4'}`}>
                 <div className={isMobile ? 'space-y-1' : 'space-y-3'}>
