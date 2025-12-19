@@ -319,7 +319,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
   const Root: React.FC<React.PropsWithChildren<{ className: string }>> = ({ className, children }) => {
     if (!onClick && isMobile && targetHref) {
       return (
-        <Link href={targetHref} prefetch className={className}>
+        <Link href={targetHref} prefetch className={`block ${className}`}>
           {children}
         </Link>
       );

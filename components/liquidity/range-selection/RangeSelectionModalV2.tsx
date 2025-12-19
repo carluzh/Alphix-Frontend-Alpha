@@ -4,6 +4,12 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { TokenSymbol, getToken, getChainId } from "@/lib/pools-config";
 import { InteractiveRangeChart } from "../InteractiveRangeChart";
 import { PlusIcon, MinusIcon, ArrowLeftRight, CircleHelp, ChartBarBig, SquarePen } from "lucide-react";
@@ -79,10 +85,68 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
   const maxPriceInputRef = useRef<HTMLInputElement>(null);
   const [mounted, setMounted] = useState(false);
 
+  // Mobile sheet drag refs and state (similar to TokenSelector)
+  const sheetDragStartYRef = useRef<number | null>(null);
+  const sheetTranslateYRef = useRef(0);
+  const sheetRafRef = useRef<number | null>(null);
+  const sheetContentRef = useRef<HTMLDivElement | null>(null);
+  const sheetInitialFocusRef = useRef<HTMLDivElement | null>(null);
+  const [isSheetDragging, setIsSheetDragging] = useState(false);
+
   useEffect(() => {
     setMounted(true);
     return () => setMounted(false);
   }, []);
+
+  // Reset sheet drag state when closed
+  useEffect(() => {
+    if (!isOpen) {
+      setIsSheetDragging(false);
+      sheetDragStartYRef.current = null;
+      sheetTranslateYRef.current = 0;
+      if (sheetRafRef.current != null) cancelAnimationFrame(sheetRafRef.current);
+      sheetRafRef.current = null;
+      if (sheetContentRef.current) sheetContentRef.current.style.transform = "translate3d(0, 0, 0)";
+    }
+  }, [isOpen]);
+
+  // Sheet drag handlers
+  const scheduleSheetTransform = () => {
+    if (sheetRafRef.current != null) return;
+    sheetRafRef.current = requestAnimationFrame(() => {
+      sheetRafRef.current = null;
+      const el = sheetContentRef.current;
+      if (!el) return;
+      const y = sheetTranslateYRef.current;
+      el.style.transform = y ? `translate3d(0, ${y}px, 0)` : "translate3d(0, 0, 0)";
+    });
+  };
+
+  const onSheetHandleTouchStart = (e: React.TouchEvent) => {
+    sheetDragStartYRef.current = e.touches[0]?.clientY ?? null;
+    setIsSheetDragging(true);
+  };
+
+  const onSheetHandleTouchMove = (e: React.TouchEvent) => {
+    const startY = sheetDragStartYRef.current;
+    if (startY == null) return;
+
+    const currentY = e.touches[0]?.clientY ?? startY;
+    const dy = currentY - startY;
+    if (dy <= 0) return;
+
+    sheetTranslateYRef.current = Math.min(dy, 220);
+    scheduleSheetTransform();
+  };
+
+  const onSheetHandleTouchEnd = () => {
+    const shouldClose = sheetTranslateYRef.current > 90;
+    sheetDragStartYRef.current = null;
+    setIsSheetDragging(false);
+    sheetTranslateYRef.current = 0;
+    scheduleSheetTransform();
+    if (shouldClose) onClose();
+  };
 
   useEffect(() => {
     if (!isOpen) return;
@@ -430,54 +494,9 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
   // Don't render portal until mounted (SSR safety)
   if (!mounted) return null;
 
-  const modalContent = (
-    <AnimatePresence>
-      {isOpen && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.3 }}
-          className={`fixed inset-0 z-[9999] flex justify-center backdrop-blur-md cursor-default ${isMobile ? 'items-end' : 'items-center'}`}
-          style={{
-            pointerEvents: 'auto',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.5)',
-            paddingTop: 'env(safe-area-inset-top, 0px)',
-            paddingBottom: 'env(safe-area-inset-bottom, 0px)',
-          }}
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) {
-              e.preventDefault();
-              e.stopPropagation();
-              swallowNextClick();
-              onClose();
-            }
-          }}
-        >
-          <motion.div
-            initial={{ scale: 0.95, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            exit={{ scale: 0.95, opacity: 0 }}
-            transition={{ duration: 0.2, ease: 'easeOut' }}
-            className="relative rounded-lg border border-solid shadow-2xl flex flex-col cursor-default min-h-0 overflow-hidden"
-            style={{
-              width: isMobile ? '100vw' : '900px',
-              maxWidth: isMobile ? '100vw' : '95vw',
-              height: isMobile ? 'auto' : undefined,
-              maxHeight: isMobile ? 'min(95dvh, 95vh)' : 'min(95dvh, 95vh)',
-              backgroundColor: 'var(--modal-background)',
-              borderRadius: isMobile ? '16px 16px 0 0' : undefined,
-            }}
-            role="dialog"
-            aria-modal="true"
-            ref={containerRef}
-            onClick={(e) => e.stopPropagation()}
-          >
-        <div className="rounded-lg bg-muted/10 border-0 transition-colors flex flex-col flex-1 min-h-0">
+  // Shared inner content for both mobile and desktop
+  const innerContent = (
+    <div className="rounded-lg bg-muted/10 border-0 transition-colors flex flex-col flex-1 min-h-0">
           {/* Header - Alphix Style */}
           <div className="flex items-center justify-between px-4 py-2 border-b border-sidebar-border/60 flex-shrink-0">
             <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">SET PRICE RANGE</h2>
@@ -719,7 +738,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                       // Re-abbreviate on blur
                       setMinPriceInput(abbreviateDecimal(minPriceFullPrecision));
                     }}
-                    className="font-semibold h-auto border-0 bg-transparent px-0 focus-visible:ring-0 focus-visible:ring-offset-0"
+                    className="font-semibold border-0 bg-transparent px-0 py-2 focus-visible:ring-0 focus-visible:ring-offset-0 cursor-text min-h-[44px] touch-manipulation"
                     style={{ fontSize: isMobile ? '16px' : '18px' }}
                     placeholder="0"
                     autoComplete="off"
@@ -778,7 +797,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                       // Re-abbreviate on blur
                       setMaxPriceInput(abbreviateDecimal(maxPriceFullPrecision));
                     }}
-                    className="font-semibold h-auto border-0 bg-transparent px-0 focus-visible:ring-0 focus-visible:ring-offset-0"
+                    className="font-semibold border-0 bg-transparent px-0 py-2 focus-visible:ring-0 focus-visible:ring-offset-0 cursor-text min-h-[44px] touch-manipulation"
                     style={{ fontSize: isMobile ? '16px' : '18px' }}
                     placeholder="0"
                     autoComplete="off"
@@ -809,12 +828,98 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
               Confirm
             </Button>
           </div>
+    </div>
+  );
+
+  // Mobile: Bottom Sheet with drag-to-dismiss
+  if (isMobile) {
+    return (
+      <Sheet open={isOpen} onOpenChange={(open) => !open && onClose()}>
+        <SheetContent
+          side="bottom"
+          ref={sheetContentRef}
+          tabIndex={-1}
+          className="rounded-t-2xl border-t border-primary p-0 flex flex-col bg-popover [&>button]:hidden"
+          style={{
+            height: 'min(95dvh, 95vh)',
+            maxHeight: 'min(95dvh, 95vh)',
+            paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+            transition: isSheetDragging ? "none" : "transform 160ms ease-out",
+          }}
+          onPointerDownOutside={() => onClose()}
+          onOpenAutoFocus={(e) => {
+            e.preventDefault();
+            sheetInitialFocusRef.current?.focus?.();
+          }}
+        >
+          <div className="flex flex-col flex-1 min-h-0">
+            <div ref={sheetInitialFocusRef} tabIndex={-1} aria-hidden className="h-0 w-0 overflow-hidden" />
+            {/* Drag handle */}
+            <div
+              className="flex items-center justify-center h-10 -mb-1 touch-none flex-shrink-0"
+              onTouchStart={onSheetHandleTouchStart}
+              onTouchMove={onSheetHandleTouchMove}
+              onTouchEnd={onSheetHandleTouchEnd}
+            >
+              <div className="h-1.5 w-12 rounded-full bg-muted-foreground/30" />
+            </div>
+            {innerContent}
           </div>
+        </SheetContent>
+      </Sheet>
+    );
+  }
+
+  // Desktop: Portal modal with AnimatePresence
+  const desktopModalContent = (
+    <AnimatePresence>
+      {isOpen && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.3 }}
+          className="fixed inset-0 z-[9999] flex justify-center backdrop-blur-md cursor-default items-center"
+          style={{
+            pointerEvents: 'auto',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          }}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) {
+              e.preventDefault();
+              e.stopPropagation();
+              swallowNextClick();
+              onClose();
+            }
+          }}
+        >
+          <motion.div
+            initial={{ scale: 0.95, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.95, opacity: 0 }}
+            transition={{ duration: 0.2, ease: 'easeOut' }}
+            className="relative rounded-lg border border-solid shadow-2xl flex flex-col cursor-default min-h-0 overflow-hidden"
+            style={{
+              width: '900px',
+              maxWidth: '95vw',
+              maxHeight: 'min(95dvh, 95vh)',
+              backgroundColor: 'var(--modal-background)',
+            }}
+            role="dialog"
+            aria-modal="true"
+            ref={containerRef}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {innerContent}
           </motion.div>
         </motion.div>
       )}
     </AnimatePresence>
   );
 
-  return createPortal(modalContent, document.body);
+  return createPortal(desktopModalContent, document.body);
 }
