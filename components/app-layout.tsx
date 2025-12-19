@@ -17,7 +17,7 @@ function VersionBadge() {
 
   return (
     <div className="fixed bottom-3 right-3 sm:bottom-6 sm:right-6 z-10 text-xs text-muted-foreground/50 font-mono select-none pointer-events-none hidden sm:block">
-      v{version}<span className="opacity-60">+{commit}</span>
+      v{version} <span className="opacity-60">+{commit}</span>
     </div>
   );
 }

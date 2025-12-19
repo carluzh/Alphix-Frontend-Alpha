@@ -272,7 +272,7 @@ export function AppSidebar({ variant = "floating", onBetaClick, ...props }: AppS
                   </SidebarMenuButton>
                 </SidebarMenuItem>
                 {/* Version info - shown below Discord */}
-                <div className="px-1.5 pt-3 pb-1">
+                <div className="px-1.5 pt-3 pb-1 sm:hidden">
                   <div
                     className="text-xs text-muted-foreground/50 font-mono select-none cursor-pointer hover:text-muted-foreground/70 transition-colors"
                     onClick={handleBetaBadgeClick}
@@ -281,7 +281,7 @@ export function AppSidebar({ variant = "floating", onBetaClick, ...props }: AppS
                     onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleBetaBadgeClick(e as unknown as React.MouseEvent<HTMLDivElement>); } }}
                     title="Click to show update info"
                   >
-                    v{latestVersion.version}<span className="opacity-60">+{process.env.NEXT_PUBLIC_GIT_COMMIT || 'dev'}</span>
+                    v{latestVersion.version} <span className="opacity-60">+{process.env.NEXT_PUBLIC_GIT_COMMIT || 'dev'}</span>
                   </div>
                 </div>
               </SidebarMenu>

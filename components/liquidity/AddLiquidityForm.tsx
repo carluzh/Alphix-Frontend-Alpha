@@ -2291,7 +2291,7 @@ export function AddLiquidityForm({
                           }`}
                           style={!isActive ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
                         >
-                          {isCustom && <Maximize className={`w-3 h-3 relative z-10 ${isActive ? 'text-sidebar-primary' : 'text-muted-foreground'}`} />}
+                          {isCustom && <Maximize className={`w-3 h-3 relative z-10 max-[399px]:hidden ${isActive ? 'text-sidebar-primary' : 'text-muted-foreground'}`} />}
                           <span className="relative z-10">{preset}</span>
                         </button>
                       );

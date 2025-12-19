@@ -842,7 +842,7 @@ export default function PortfolioPage() {
   // Derive responsive flags from viewportWidth so they update on resize
   const isHiddenVis = viewportWidth <= 1000;
   const isVerySmallScreen = viewportWidth < 695;
-  const isNarrowScreen = viewportWidth < 300;
+  const isNarrowScreen = viewportWidth < 400;
   const poolConfigBySubgraphId = useMemo(() => {
     try {
       const map = new Map<string, any>();
@@ -2028,7 +2028,7 @@ export default function PortfolioPage() {
   return (
     <PortfolioFilterContext.Provider value={{ activeTokenFilter, setActiveTokenFilter, isStickyHover, setIsStickyHover, hoverTokenLabel: effectiveTokenLabel }}>
       <>
-      <div className="flex flex-1 flex-col p-3 sm:p-6 overflow-x-hidden">
+      <div className="flex flex-1 flex-col p-3 sm:p-6 overflow-x-hidden max-w-full w-full">
         {/* Portfolio header with skeleton gate */}
         {showSkeletonFor.header ? (
           <PortfolioHeaderSkeleton viewportWidth={viewportWidth} />
@@ -2249,42 +2249,44 @@ export default function PortfolioPage() {
                       )}
                     </div>
                   </div>
-                  {/* Right: metrics rows */}
-                  <div className={`flex-none ${isNarrowScreen ? 'min-w-0' : 'min-w-[140px]'}`}>
-                    <div className="space-y-2">
-                      <div className="flex justify-between items-center pl-4">
-                        <span className="text-[11px] tracking-wider text-muted-foreground font-mono font-bold uppercase">Positions</span>
-                        <span className="text-[11px] font-medium">{filteredPositionCount}</span>
-                      </div>
-                      <div className="flex justify-between items-center pl-4">
-                        <span className="text-[11px] tracking-wider text-muted-foreground font-mono font-bold uppercase">Net APY</span>
-                        <span className="text-[11px] font-medium">
-                          {isPlaceholderComposition ? (
-                            '-'
-                          ) : (
-                            effectiveAprPct !== null ? (
-                              effectiveAprPct > 999 ? (
-                                <TooltipProvider>
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <span className="cursor-default">&gt;999%</span>
-                                    </TooltipTrigger>
-                                    <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">{formatPercent(effectiveAprPct, { min: 2, max: 2 })}</TooltipContent>
-                                  </Tooltip>
-                                </TooltipProvider>
-                              ) : (
-                                formatPercent(effectiveAprPct, { min: 1, max: 1 })
-                              )
-                            ) : '—'
-                          )}
-                        </span>
-                      </div>
-                      <div className="flex justify-between items-center pl-4">
-                        <span className="text-[11px] tracking-wider text-muted-foreground font-mono font-bold uppercase">Fees</span>
-                        <span className="text-[11px] font-medium">{formatUSD(totalFeesUSD)}</span>
+                  {/* Right: metrics rows - hidden below 400px */}
+                  {!isNarrowScreen && (
+                    <div className="flex-none min-w-[140px]">
+                      <div className="space-y-2">
+                        <div className="flex justify-between items-center pl-4">
+                          <span className="text-[11px] tracking-wider text-muted-foreground font-mono font-bold uppercase">Positions</span>
+                          <span className="text-[11px] font-medium">{filteredPositionCount}</span>
+                        </div>
+                        <div className="flex justify-between items-center pl-4">
+                          <span className="text-[11px] tracking-wider text-muted-foreground font-mono font-bold uppercase">Net APY</span>
+                          <span className="text-[11px] font-medium">
+                            {isPlaceholderComposition ? (
+                              '-'
+                            ) : (
+                              effectiveAprPct !== null ? (
+                                effectiveAprPct > 999 ? (
+                                  <TooltipProvider>
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <span className="cursor-default">&gt;999%</span>
+                                      </TooltipTrigger>
+                                      <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">{formatPercent(effectiveAprPct, { min: 2, max: 2 })}</TooltipContent>
+                                    </Tooltip>
+                                  </TooltipProvider>
+                                ) : (
+                                  formatPercent(effectiveAprPct, { min: 1, max: 1 })
+                                )
+                              ) : '—'
+                            )}
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center pl-4">
+                          <span className="text-[11px] tracking-wider text-muted-foreground font-mono font-bold uppercase">Fees</span>
+                          <span className="text-[11px] font-medium">{formatUSD(totalFeesUSD)}</span>
+                        </div>
                       </div>
                     </div>
-                  </div>
+                  )}
                 </div>
               </div>
           )}

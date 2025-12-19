@@ -38,6 +38,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+} from "@/components/ui/sheet";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { useQueryClient } from '@tanstack/react-query';
@@ -2520,39 +2527,52 @@ export default function PoolDetailPage() {
       />
 
       {/* Add Liquidity Form Modal - for top button */}
-      <Dialog open={addLiquidityFormOpen} onOpenChange={setAddLiquidityFormOpen}>
-        <DialogContent className="w-[calc(100%-2rem)] sm:w-full max-w-2xl max-h-[90vh] overflow-y-auto" style={{ backgroundColor: 'var(--modal-background)' }}>
-          <DialogHeader>
-            <DialogTitle>Add Liquidity</DialogTitle>
-            <DialogDescription>
-              Add liquidity to the {currentPoolData?.pair} pool
-            </DialogDescription>
-          </DialogHeader>
-          <div className="pt-4">
-            {/* Lazy-load form only when modal is open to prevent duplicate API calls */}
-            {addLiquidityFormOpen && (
-              <AddLiquidityFormMemo
-                selectedPoolId={poolId}
-                onLiquidityAdded={(token0Symbol?: string, token1Symbol?: string, txInfo?) => {
-                  setAddLiquidityFormOpen(false);
-                  refreshAfterLiquidityAddedWithSkeleton(token0Symbol, token1Symbol, txInfo);
-                }}
-                sdkMinTick={SDK_MIN_TICK}
-                sdkMaxTick={SDK_MAX_TICK}
-                defaultTickSpacing={getPoolById(poolId)?.tickSpacing || DEFAULT_TICK_SPACING}
-                activeTab="deposit"
-                onRangeChange={setFormRangeInfo}
-                poolState={poolState ? {
-                  currentPrice: String(poolState.currentPrice),
-                  currentPoolTick: Number(poolState.currentPoolTick),
-                  sqrtPriceX96: String(poolState.sqrtPriceX96 || ''),
-                  liquidity: String(poolState.liquidity || ''),
-                } : undefined}
-              />
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
+      {(() => {
+        const formElement = addLiquidityFormOpen && (
+          <AddLiquidityFormMemo
+            selectedPoolId={poolId}
+            onLiquidityAdded={(token0Symbol?: string, token1Symbol?: string, txInfo?) => {
+              setAddLiquidityFormOpen(false);
+              refreshAfterLiquidityAddedWithSkeleton(token0Symbol, token1Symbol, txInfo);
+            }}
+            sdkMinTick={SDK_MIN_TICK}
+            sdkMaxTick={SDK_MAX_TICK}
+            defaultTickSpacing={getPoolById(poolId)?.tickSpacing || DEFAULT_TICK_SPACING}
+            activeTab="deposit"
+            onRangeChange={setFormRangeInfo}
+            poolState={poolState ? {
+              currentPrice: String(poolState.currentPrice),
+              currentPoolTick: Number(poolState.currentPoolTick),
+              sqrtPriceX96: String(poolState.sqrtPriceX96 || ''),
+              liquidity: String(poolState.liquidity || ''),
+            } : undefined}
+          />
+        );
+        return isMobile ? (
+          <Sheet open={addLiquidityFormOpen} onOpenChange={setAddLiquidityFormOpen}>
+            <SheetContent side="bottom" className="rounded-t-2xl border-t border-primary p-0 flex flex-col bg-popover [&>button]:hidden" style={{ height: 'min(95dvh, 95vh)', paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
+              <div className="flex items-center justify-center h-10 touch-none flex-shrink-0">
+                <div className="h-1.5 w-12 rounded-full bg-muted-foreground/30" />
+              </div>
+              <SheetHeader className="px-4 pb-2 flex-shrink-0">
+                <SheetTitle>Add Liquidity</SheetTitle>
+                <SheetDescription>Add liquidity to the {currentPoolData?.pair} pool</SheetDescription>
+              </SheetHeader>
+              <div className="flex-1 overflow-y-auto overscroll-contain px-4 pb-4">{formElement}</div>
+            </SheetContent>
+          </Sheet>
+        ) : (
+          <Dialog open={addLiquidityFormOpen} onOpenChange={setAddLiquidityFormOpen}>
+            <DialogContent className="w-[calc(100%-2rem)] sm:w-full max-w-2xl max-h-[90vh] overflow-y-auto" style={{ backgroundColor: 'var(--modal-background)' }}>
+              <DialogHeader>
+                <DialogTitle>Add Liquidity</DialogTitle>
+                <DialogDescription>Add liquidity to the {currentPoolData?.pair} pool</DialogDescription>
+              </DialogHeader>
+              <div className="pt-4">{formElement}</div>
+            </DialogContent>
+          </Dialog>
+        );
+      })()}
 
       {/* Decrease Position Modal */}
       <Dialog open={showDecreaseModal} onOpenChange={setShowDecreaseModal}>

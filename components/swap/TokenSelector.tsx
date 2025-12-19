@@ -385,7 +385,7 @@ export function TokenSelector({
 
       {/* Token List */}
       <div
-        className={cn("overflow-y-auto", isMobile ? "flex-1" : "")}
+        className={cn("overflow-y-auto", isMobile ? "flex-1 overscroll-contain" : "")}
         style={isMobile ? undefined : { maxHeight: `calc(100% - 125px)` }}
       >
         {filteredTokens.length === 0 ? (
