@@ -130,6 +130,7 @@ export function TokenSelector({
   const sheetTranslateYRef = useRef(0);
   const sheetRafRef = useRef<number | null>(null);
   const sheetContentRef = useRef<HTMLDivElement | null>(null);
+  const sheetInitialFocusRef = useRef<HTMLDivElement | null>(null);
   const [isSheetDragging, setIsSheetDragging] = useState(false);
   const [tokenPrices, setTokenPrices] = useState<{ BTC: number; USDC: number; ETH: number }>({
     BTC: 77000,
@@ -142,6 +143,21 @@ export function TokenSelector({
   const { address: accountAddress, isConnected, chain } = useAccount();
   const currentChainId = chain?.id;
   const { chainId: targetChainId } = useNetwork();
+
+  // Parent (SwapInputView) re-renders frequently; keep token lists stable to avoid remount-y flashes.
+  const availableTokensKey = useMemo(
+    () => availableTokens.map((t) => t.address).join("|"),
+    [availableTokens]
+  );
+  const stableAvailableTokensRef = useRef<{ key: string; value: TokenSelectorToken[] } | null>(null);
+  const stableAvailableTokens = useMemo(() => {
+    const prev = stableAvailableTokensRef.current;
+    if (prev?.key === availableTokensKey) return prev.value;
+    stableAvailableTokensRef.current = { key: availableTokensKey, value: availableTokens };
+    return availableTokens;
+  }, [availableTokensKey, availableTokens]);
+
+  const excludeAddress = excludeToken?.address;
 
   useEffect(() => {
     if (!isOpen) return;
@@ -165,6 +181,16 @@ export function TokenSelector({
       if (sheetContentRef.current) sheetContentRef.current.style.transform = "translate3d(0, 0, 0)";
     }
   }, [isOpen]);
+
+  // When mobile sheet opens, focus a non-input node inside the dialog to satisfy Radix focus trap
+  // without triggering the keyboard. This also prevents "tap search -> keyboard flashes then disappears".
+  useEffect(() => {
+    if (!isOpen || !isMobile) return;
+    const raf = requestAnimationFrame(() => {
+      sheetInitialFocusRef.current?.focus?.();
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [isOpen, isMobile]);
 
   const scheduleSheetTransform = () => {
     if (sheetRafRef.current != null) return;
@@ -205,8 +231,8 @@ export function TokenSelector({
 
   // Filter out the excluded token and apply search filter - memoized to prevent infinite loops
   const filteredTokens = useMemo(() => {
-    return availableTokens
-      .filter(token => excludeToken ? token.address !== excludeToken.address : true)
+    return stableAvailableTokens
+      .filter(token => excludeAddress ? token.address !== excludeAddress : true)
       .filter(token => {
         if (!searchTerm) return true;
         const search = searchTerm.toLowerCase();
@@ -216,7 +242,21 @@ export function TokenSelector({
           token.address.toLowerCase().includes(search)
         );
       });
-  }, [availableTokens, excludeToken, searchTerm]);
+  }, [stableAvailableTokens, excludeAddress, searchTerm]);
+
+  const filteredTokensKey = useMemo(
+    () => filteredTokens.map((t) => t.address).join("|"),
+    [filteredTokens]
+  );
+  const filteredTokensRef = useRef<{ key: string; value: TokenSelectorToken[] } | null>(null);
+  useEffect(() => {
+    filteredTokensRef.current = { key: filteredTokensKey, value: filteredTokens };
+  }, [filteredTokensKey, filteredTokens]);
+
+  const tokenPricesKey = useMemo(
+    () => `${tokenPrices.BTC}|${tokenPrices.USDC}|${tokenPrices.ETH}`,
+    [tokenPrices.BTC, tokenPrices.USDC, tokenPrices.ETH]
+  );
 
   // Position modal to overlay the SwapInputView - Now uses prop directly
 
@@ -244,7 +284,7 @@ export function TokenSelector({
   useEffect(() => {
     if (!isOpen || !isConnected || currentChainId !== targetChainId || !accountAddress) {
       const resetBalances: Record<string, TokenBalanceData> = {};
-      filteredTokens.forEach(token => {
+      (filteredTokensRef.current?.value || filteredTokens).forEach(token => {
         resetBalances[token.address] = {
           balance: token.balance || "~",
           usdValue: token.value ? parseFloat(token.value.replace(/[~$,]/g, '') || "0") : 0,
@@ -255,8 +295,10 @@ export function TokenSelector({
       return;
     }
 
+    // Initialize only when the visible token set actually changes (prevents flashing on unrelated re-renders).
     const initialBalances: Record<string, TokenBalanceData> = {};
-    filteredTokens.forEach(token => {
+    const tokens = filteredTokensRef.current?.value || filteredTokens;
+    tokens.forEach(token => {
       initialBalances[token.address] = {
         balance: token.balance || "Loading...",
         usdValue: token.value ? parseFloat(token.value.replace(/[~$,]/g, '') || "0") : 0,
@@ -266,7 +308,7 @@ export function TokenSelector({
     setTokenBalances(initialBalances);
 
     const fetchBalances = async () => {
-      const balancePromises = filteredTokens.map(async (token) => {
+      const balancePromises = tokens.map(async (token) => {
         try {
           let balance = '0';
 
@@ -324,7 +366,7 @@ export function TokenSelector({
     };
 
     fetchBalances();
-  }, [isOpen, isConnected, currentChainId, accountAddress, filteredTokens]);
+  }, [isOpen, isConnected, currentChainId, targetChainId, accountAddress, filteredTokensKey, tokenPricesKey]);
 
   const handleTokenSelect = (token: TokenSelectorToken) => {
     onTokenSelect(token);
@@ -479,6 +521,7 @@ export function TokenSelector({
           <SheetContent
             side="bottom"
             ref={sheetContentRef}
+            tabIndex={-1}
             className="rounded-t-2xl border-t border-primary p-0 flex flex-col bg-popover"
             style={{
               height: 'min(85dvh, 85vh)',
@@ -491,9 +534,12 @@ export function TokenSelector({
               // Radix auto-focuses the first focusable element (our search input), which opens the keyboard.
               // On mobile, keep focus where it is unless the user taps the search box intentionally.
               e.preventDefault();
+              sheetInitialFocusRef.current?.focus?.();
             }}
           >
             <div className="flex flex-col flex-1">
+              {/* Focus sink for mobile: avoids keyboard + keeps focus trap stable */}
+              <div ref={sheetInitialFocusRef} tabIndex={-1} aria-hidden className="h-0 w-0 overflow-hidden" />
               {/* Drag handle */}
               <div
                 className="flex justify-center pt-2 pb-1"

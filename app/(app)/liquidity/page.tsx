@@ -128,7 +128,6 @@ export default function LiquidityPage() {
   const [isLoadingPoolStates, setIsLoadingPoolStates] = useState(true);
 
   const navigateToPool = useCallback((poolId: string) => {
-    setOptimisticPoolId(poolId);
     router.push(`/liquidity/${poolId}`);
   }, [router]);
 
@@ -673,7 +672,7 @@ export default function LiquidityPage() {
                 </div>
 
                 <div className="mt-3">
-                  <MobileLiquidityList pools={mobilePools} onSelectPool={navigateToPool} optimisticPoolId={optimisticPoolId} />
+                  <MobileLiquidityList pools={mobilePools} onSelectPool={navigateToPool} />
                 </div>
               </div>
             ) : (

@@ -8,7 +8,6 @@ import type { Pool } from "@/types"; // Import the centralized Pool type
 interface MobileLiquidityListProps {
   pools: Pool[];
   onSelectPool: (poolId: string) => void;
-  optimisticPoolId?: string | null;
 }
 
 // Helper function to format USD values, similar to the one in app/liquidity/page.tsx
@@ -25,7 +24,7 @@ const formatUSD = (value: number) => {
   return `${sign}$${abs.toFixed(2)}`;
 };
 
-export function MobileLiquidityList({ pools, onSelectPool, optimisticPoolId }: MobileLiquidityListProps) {
+export function MobileLiquidityList({ pools, onSelectPool }: MobileLiquidityListProps) {
   if (!pools || pools.length === 0) {
     return <div className="p-4 text-center text-muted-foreground">No pools available.</div>;
   }
@@ -37,11 +36,10 @@ export function MobileLiquidityList({ pools, onSelectPool, optimisticPoolId }: M
           key={pool.id}
           onClick={() => onSelectPool(pool.id)}
           className={[
-            "cursor-pointer bg-muted/30 border border-sidebar-border/60 transition-[background-color,border-color,transform] duration-150",
+            "cursor-pointer bg-muted/30 border border-sidebar-border/60 transition-[background-color,border-color,transform] duration-150 touch-manipulation select-none",
             "hover:bg-muted/40",
             // Mobile-only "this is clickable" feedback
-            "active:scale-[0.99] active:bg-muted/50 active:border-white/30",
-            optimisticPoolId === pool.id ? "bg-muted/50 border-sidebar-primary" : "",
+            "active:scale-[0.99] active:bg-muted/40 active:border-white/30",
           ].join(" ")}
         >
           <CardHeader className="space-y-0 flex flex-row items-center justify-between py-3 px-3">

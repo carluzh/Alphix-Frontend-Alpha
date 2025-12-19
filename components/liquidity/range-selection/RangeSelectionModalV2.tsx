@@ -476,7 +476,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.3 }}
-          className="fixed inset-0 z-[9999] flex items-center justify-center backdrop-blur-md cursor-default"
+          className={`fixed inset-0 z-[9999] flex justify-center backdrop-blur-md cursor-default ${isMobile ? 'items-end' : 'items-center'}`}
           style={{
             pointerEvents: 'auto',
             top: 0,
@@ -505,10 +505,12 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
             transition={{ duration: 0.2, ease: 'easeOut' }}
             className="relative rounded-lg border border-solid shadow-2xl flex flex-col cursor-default min-h-0 overflow-hidden"
             style={{
-              width: '900px',
-              maxWidth: '95vw',
-              maxHeight: 'min(95dvh, 95vh)',
+              width: isMobile ? '100vw' : '900px',
+              maxWidth: isMobile ? '100vw' : '95vw',
+              height: isMobile ? 'min(95dvh, 95vh)' : undefined,
+              maxHeight: isMobile ? 'min(95dvh, 95vh)' : 'min(95dvh, 95vh)',
               backgroundColor: 'var(--modal-background)',
+              borderRadius: isMobile ? '16px 16px 0 0' : undefined,
             }}
             role="dialog"
             aria-modal="true"
