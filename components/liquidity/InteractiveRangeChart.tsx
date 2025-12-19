@@ -995,11 +995,7 @@ export function InteractiveRangeChart({
         onMouseEnter={() => !readOnly && setIsHovering(true)}
         onMouseLeave={() => { !readOnly && setIsHovering(false); !readOnly && stopBackgroundPan(); }}
         onMouseDown={readOnly ? undefined : handleBackgroundMouseDown}
-        onTouchStart={readOnly ? undefined : (e) => {
-          if (e.touches.length === 1) {
-            e.preventDefault();
-          }
-        }}
+        onTouchStart={readOnly ? undefined : undefined}
       >
         {/* Chart */}
         <ResponsiveContainer width="100%" height="100%">

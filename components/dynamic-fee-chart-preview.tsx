@@ -4,6 +4,7 @@ import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, ReferenceLine, Tool
 import { getToken, getPoolByTokens } from "@/lib/pools-config";
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import Image from "next/image";
 import { ArrowUpRight } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -169,35 +170,33 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
     setShowLoadingSkeleton(Boolean(alwaysShowSkeleton || isActuallyLoading));
   }, [isActuallyLoading, alwaysShowSkeleton]);
 
-  // Handle click to navigate to pool page
-  const handleClick = () => {
-    if (!poolInfo) return;
-
-    // Derive a friendly route id; avoid using raw subgraph id (0x...) in the URL
+  const targetHref = useMemo(() => {
+    if (!poolInfo) return null;
     const maybeCanonical = (poolInfo as any).id || (poolInfo as any).poolId;
     let targetId: string | undefined;
-
-    // If a provided id is a friendly slug (not 0x...), use it directly
     if (maybeCanonical && !String(maybeCanonical).startsWith('0x')) {
       targetId = String(maybeCanonical);
     } else {
-      // Fallback: map from token symbols to configured pool
       const poolConfig = getPoolByTokens(poolInfo.token0Symbol, poolInfo.token1Symbol);
       if (poolConfig) targetId = poolConfig.id;
     }
+    return targetId ? `/liquidity/${targetId}` : null;
+  }, [poolInfo]);
 
-    if (targetId) {
-      const href = `/liquidity/${targetId}`;
-      if (typeof window !== 'undefined') {
-        const isMobileView = window.innerWidth < 768;
-        if (isMobileView) {
-          router.push(href);
-        } else {
-          window.open(href, '_blank', 'noopener,noreferrer');
-        }
+  const handleClick = () => {
+    if (onClick) {
+      onClick();
+      return;
+    }
+    if (!targetHref) return;
+    if (typeof window !== 'undefined') {
+      if (isMobile) {
+        router.push(targetHref);
       } else {
-        router.push(href);
+        window.open(targetHref, '_blank', 'noopener,noreferrer');
       }
+    } else {
+      router.push(targetHref);
     }
   };
 
@@ -317,20 +316,24 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
     const dataPointsCount = hasData ? effectiveCount : 0;
 
   // Render different Card structures based on data availability
+  const Root: React.FC<React.PropsWithChildren<{ className: string }>> = ({ className, children }) => {
+    if (!onClick && isMobile && targetHref) {
+      return (
+        <Link href={targetHref} prefetch className={className}>
+          {children}
+        </Link>
+      );
+    }
+    return (
+      <div className={className} onClick={handleClick}>
+        {children}
+      </div>
+    );
+  };
+
   if (alwaysShowSkeleton) {
     return (
-      <div
-        className="w-full rounded-lg border border-primary transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow bg-container-secondary"
-        onClick={handleClick}
-        onMouseEnter={(e) => {
-          const arrow = e.currentTarget.querySelector('[data-arrow]') as HTMLElement;
-          if (arrow) arrow.style.color = 'white';
-        }}
-        onMouseLeave={(e) => {
-          const arrow = e.currentTarget.querySelector('[data-arrow]') as HTMLElement;
-          if (arrow) arrow.style.color = '';
-        }}
-      >
+      <Root className="w-full rounded-lg border border-primary transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow bg-container-secondary">
         <div className="flex items-center justify-between px-4 py-2 border-b border-primary">
           <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">DYNAMIC FEE TREND</h2>
                      <div className="flex items-center gap-3">
@@ -366,25 +369,14 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
           <div className="w-full h-full bg-muted/40 rounded animate-pulse" />
         </div>
         
-      </div>
+      </Root>
     );
   }
 
   // If insufficient data, keep the skeleton approach (avoid layout jumps / partial paints)
   if (!hasMinimumData) {
     return (
-      <div
-        className="w-full rounded-lg border border-primary transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow bg-container-secondary"
-        onClick={handleClick}
-        onMouseEnter={(e) => {
-          const arrow = e.currentTarget.querySelector('[data-arrow]') as HTMLElement;
-          if (arrow) arrow.style.color = 'white';
-        }}
-        onMouseLeave={(e) => {
-          const arrow = e.currentTarget.querySelector('[data-arrow]') as HTMLElement;
-          if (arrow) arrow.style.color = '';
-        }}
-      >
+      <Root className="w-full rounded-lg border border-primary transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow bg-container-secondary">
         <div className="flex items-center justify-between px-4 py-2 border-b border-primary">
           <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">DYNAMIC FEE TREND</h2>
                      <div className="flex items-center gap-3">
@@ -420,7 +412,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
           <div className="w-full h-full bg-muted/40 rounded animate-pulse" />
         </div>
         
-      </div>
+      </Root>
     );
   } else {
 
@@ -430,18 +422,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
 
     return (
       <>
-      <div
-        className="w-full rounded-lg border border-primary transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow bg-container-secondary"
-        onClick={handleClick}
-        onMouseEnter={(e) => {
-          const arrow = e.currentTarget.querySelector('[data-arrow]') as HTMLElement;
-          if (arrow) arrow.style.color = 'white';
-        }}
-        onMouseLeave={(e) => {
-          const arrow = e.currentTarget.querySelector('[data-arrow]') as HTMLElement;
-          if (arrow) arrow.style.color = '';
-        }}
-      >
+      <Root className="w-full rounded-lg border border-primary transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow bg-container-secondary">
         <div className="flex items-center justify-between px-4 py-2 border-b border-primary">
           <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">DYNAMIC FEE TREND</h2>
                      <div className="flex items-center gap-3">
@@ -615,7 +596,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
             )}
           </div>
         </div>
-      </div>
+      </Root>
       {/* Hover footer tooltip - separate container below chart card, right-aligned */}
       {!isMobile && footerDisplay && (
         <div className="mt-2 flex justify-end pointer-events-none">
