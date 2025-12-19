@@ -842,6 +842,7 @@ export default function PortfolioPage() {
   // Derive responsive flags from viewportWidth so they update on resize
   const isHiddenVis = viewportWidth <= 1000;
   const isVerySmallScreen = viewportWidth < 695;
+  const isNarrowScreen = viewportWidth < 300;
   const poolConfigBySubgraphId = useMemo(() => {
     try {
       const map = new Map<string, any>();
@@ -2249,7 +2250,7 @@ export default function PortfolioPage() {
                     </div>
                   </div>
                   {/* Right: metrics rows */}
-                  <div className="flex-none min-w-[140px]">
+                  <div className={`flex-none ${isNarrowScreen ? 'min-w-0' : 'min-w-[140px]'}`}>
                     <div className="space-y-2">
                       <div className="flex justify-between items-center pl-4">
                         <span className="text-[11px] tracking-wider text-muted-foreground font-mono font-bold uppercase">Positions</span>
@@ -2496,12 +2497,14 @@ export default function PortfolioPage() {
                                   </div>
                                   <div className="flex items-center gap-3">
                                     <TooltipProvider delayDuration={0}>
-                                      <Tooltip>
-                                        <TooltipTrigger asChild>
-                                          <div className="text-xs text-muted-foreground whitespace-nowrap cursor-default">{formatUSD(totalUSD)}</div>
-                                        </TooltipTrigger>
-                                        <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">Total Value</TooltipContent>
-                                      </Tooltip>
+                                      {!isNarrowScreen && (
+                                        <Tooltip>
+                                          <TooltipTrigger asChild>
+                                            <div className="text-xs text-muted-foreground whitespace-nowrap cursor-default">{formatUSD(totalUSD)}</div>
+                                          </TooltipTrigger>
+                                          <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">Total Value</TooltipContent>
+                                        </Tooltip>
+                                      )}
                                       <Tooltip>
                                         <TooltipTrigger asChild>
                                           <div>

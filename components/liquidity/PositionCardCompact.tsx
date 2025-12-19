@@ -222,7 +222,7 @@ export function PositionCardCompact({
                 </div>
 
                 {/* Right: Mini Chart */}
-                <div className="flex lg:hidden w-[120px] h-9 ml-auto cursor-pointer">
+                <div className="flex lg:hidden w-[100px] sm:w-[120px] h-9 ml-auto cursor-pointer flex-shrink-0">
                     <MiniPoolChart
                         token0={position.token0.symbol}
                         token1={position.token1.symbol}

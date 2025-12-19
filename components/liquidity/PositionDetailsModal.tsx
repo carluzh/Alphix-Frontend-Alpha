@@ -605,6 +605,30 @@ export function PositionDetailsModal({
     return () => setMounted(false);
   }, []);
 
+  // Lock body scroll when modal is open on mobile to prevent background scrolling
+  useEffect(() => {
+    if (!isOpen || !isMobile) return;
+
+    const originalOverflow = document.body.style.overflow;
+    const originalPosition = document.body.style.position;
+    const originalWidth = document.body.style.width;
+    const originalTop = document.body.style.top;
+    const scrollY = window.scrollY;
+
+    document.body.style.overflow = 'hidden';
+    document.body.style.position = 'fixed';
+    document.body.style.width = '100%';
+    document.body.style.top = `-${scrollY}px`;
+
+    return () => {
+      document.body.style.overflow = originalOverflow;
+      document.body.style.position = originalPosition;
+      document.body.style.width = originalWidth;
+      document.body.style.top = originalTop;
+      window.scrollTo(0, scrollY);
+    };
+  }, [isOpen, isMobile]);
+
   useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -993,11 +1017,19 @@ export function PositionDetailsModal({
         backgroundColor: 'rgba(0, 0, 0, 0.5)',
         paddingTop: isMobile ? 'env(safe-area-inset-top, 0px)' : undefined,
         paddingBottom: isMobile ? 'env(safe-area-inset-bottom, 0px)' : undefined,
+        overflow: 'hidden',
+        overscrollBehavior: 'contain',
       }}
       onMouseDown={(e) => {
         // Only close if clicking directly on backdrop (not bubbling from child)
         if (e.target === e.currentTarget) {
           onClose();
+        }
+      }}
+      onTouchMove={(e) => {
+        // Prevent touch scroll on backdrop from scrolling background
+        if (e.target === e.currentTarget) {
+          e.preventDefault();
         }
       }}
     >
