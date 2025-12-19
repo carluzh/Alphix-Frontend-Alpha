@@ -978,18 +978,29 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 setCombinedRect(getContainerRect());
               }}
             >
-              <DynamicFeeChartPreview 
-                data={isFeeHistoryLoading ? [] : feeHistoryData} 
-                onClick={isMobile ? undefined : () => {
-                  if (ignoreNextPreviewClickRef.current) return
-                  handlePreviewChartClick()
-                }}
-                poolInfo={poolInfo || fallbackPoolInfo}
-                isLoading={isFeeHistoryLoading}
-                alwaysShowSkeleton={false}
-                totalPools={currentRoute?.pools?.length}
-                activePoolIndex={selectedPoolIndexForChart}
-              />
+              {isMobile ? (
+                <DynamicFeeChartPreview 
+                  data={isFeeHistoryLoading ? [] : feeHistoryData} 
+                  poolInfo={poolInfo || fallbackPoolInfo}
+                  isLoading={isFeeHistoryLoading}
+                  alwaysShowSkeleton={false}
+                  totalPools={currentRoute?.pools?.length}
+                  activePoolIndex={selectedPoolIndexForChart}
+                />
+              ) : (
+                <DynamicFeeChartPreview 
+                  data={isFeeHistoryLoading ? [] : feeHistoryData} 
+                  onClick={() => {
+                    if (ignoreNextPreviewClickRef.current) return
+                    handlePreviewChartClick()
+                  }}
+                  poolInfo={poolInfo || fallbackPoolInfo}
+                  isLoading={isFeeHistoryLoading}
+                  alwaysShowSkeleton={false}
+                  totalPools={currentRoute?.pools?.length}
+                  activePoolIndex={selectedPoolIndexForChart}
+                />
+              )}
             </motion.div>
           </AnimatePresence>
 

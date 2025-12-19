@@ -467,7 +467,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
             style={{
               width: isMobile ? '100vw' : '900px',
               maxWidth: isMobile ? '100vw' : '95vw',
-              height: isMobile ? 'min(95dvh, 95vh)' : undefined,
+              height: isMobile ? 'auto' : undefined,
               maxHeight: isMobile ? 'min(95dvh, 95vh)' : 'min(95dvh, 95vh)',
               backgroundColor: 'var(--modal-background)',
               borderRadius: isMobile ? '16px 16px 0 0' : undefined,
@@ -606,7 +606,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                       onClick={() => setMobileViewMode('chart')}
                       className={`flex items-center justify-center rounded-full transition-all ${
                         mobileViewMode === 'chart'
-                          ? 'bg-button-primary text-sidebar-primary'
+                          ? 'bg-muted/40 text-foreground'
                           : 'text-muted-foreground hover:text-foreground'
                       }`}
                       style={{ padding: '4px 8px' }}
@@ -617,7 +617,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                       onClick={() => setMobileViewMode('inputs')}
                       className={`flex items-center justify-center rounded-full transition-all ${
                         mobileViewMode === 'inputs'
-                          ? 'bg-button-primary text-sidebar-primary'
+                          ? 'bg-muted/40 text-foreground'
                           : 'text-muted-foreground hover:text-foreground'
                       }`}
                       style={{ padding: '4px 8px' }}
